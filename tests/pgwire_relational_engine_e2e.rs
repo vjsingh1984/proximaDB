@@ -575,6 +575,28 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "plain EXPLAIN omits ANALYZE execution metrics: {plan}"
     );
 
+    // (3h-trace) ADR-064 / TD-TRACE-1: EXPLAIN over a query the native frontend
+    // DECLINES surfaces the REAL structured decline reason ({node, why}) — not
+    // silence, and not the legacy text-guessed mask ("comma-separated table
+    // list"). An IN-subquery under an OR is not a liftable conjunct, so native
+    // lowering declines with node="subquery"; the query still engages PATH B
+    // (the WHERE carries a subquery) so the decline is captured and disclosed.
+    let rows = client
+        .simple_query(&format!(
+            "EXPLAIN SELECT ename FROM {emp} WHERE dept_id > 0 OR dept_id IN (SELECT id FROM {dept})"
+        ))
+        .await
+        .expect("EXPLAIN declining subquery");
+    let plan = query_plan_cell(&rows);
+    assert!(
+        plan.contains("declines") && plan.contains("subquery"),
+        "EXPLAIN discloses the REAL structured lowering decline (node=subquery): {plan}"
+    );
+    assert!(
+        !plan.contains("comma-separated"),
+        "the decline is the real reason, NOT the legacy text-guessed mask: {plan}"
+    );
+
     // (3h-batch) TD-128: EXPLAIN discloses a `PK IN (...)` rewrite as a
     // PkLookupBatch scan access path (the EXPLAIN-access-path evidence, not a
     // microbenchmark). Under an aggregate so the query engages PATH B.

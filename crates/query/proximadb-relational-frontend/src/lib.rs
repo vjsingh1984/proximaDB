@@ -77,6 +77,73 @@ pub enum FrontendError {
     Type(String),
 }
 
+/// Machine-readable reason a query shape could not be lowered to a native
+/// `LogicalNode`. `node` is the declining construct class (a coarse label used
+/// to group declines in the ADR-064 query trace); `why` is the specific,
+/// human-readable limitation (the error's `Display`).
+///
+/// Produced by [`FrontendError::decline`]. Structuring the existing error
+/// message (rather than surfacing a flat string, or dropping it entirely) lets
+/// `EXPLAIN` disclose the *real* reason a query declined instead of the pgwire
+/// path re-guessing it from the raw SQL text (ADR-064 Decision 3 / TD-TRACE-1).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct LoweringDecline {
+    /// Coarse construct class of the decline (`subquery`, `having`, `join`,
+    /// `cte`, `group_by`, `distinct`, `window`, `table`, `column`, `literal`,
+    /// `type`, `statement`, `parse`, or `unsupported`).
+    pub node: String,
+    /// The specific limitation — the error's `Display` string.
+    pub why: String,
+}
+
+impl FrontendError {
+    /// Structured `{node, why}` view of this error for the ADR-064 query trace /
+    /// `EXPLAIN` surface. `why` is the `Display` string this error already
+    /// carries; `node` is a coarse construct class (see
+    /// [`classify_unsupported`] for the `Unsupported` case). Cheap: one small
+    /// static label plus the already-owned message.
+    pub fn decline(&self) -> LoweringDecline {
+        let node = match self {
+            FrontendError::Parse(_) => "parse",
+            FrontendError::TableNotFound(_) => "table",
+            FrontendError::ColumnNotFound(_) | FrontendError::AmbiguousColumn(_) => "column",
+            FrontendError::Unsupported(msg) => classify_unsupported(msg),
+            FrontendError::InvalidLiteral(_) => "literal",
+            FrontendError::StatementCount(_) => "statement",
+            FrontendError::Type(_) => "type",
+        };
+        LoweringDecline {
+            node: node.to_string(),
+            why: self.to_string(),
+        }
+    }
+}
+
+/// Classify an `Unsupported` feature message into a coarse construct class for
+/// the query trace. Substring match over the stable message literals this crate
+/// emits (e.g. `"correlated scalar subquery"`, `"HAVING with aggregate calls"`,
+/// `"EXISTS / IN subquery in expression position"`). Best-effort labelling —
+/// the authoritative reason is always the full `why` string, never the label.
+fn classify_unsupported(msg: &str) -> &'static str {
+    if msg.contains("subquery") || msg.contains("EXISTS") || msg.contains("IN subquery") {
+        "subquery"
+    } else if msg.contains("HAVING") {
+        "having"
+    } else if msg.contains("JOIN") || msg.contains("join") {
+        "join"
+    } else if msg.contains("CTE") || msg.contains("WITH") {
+        "cte"
+    } else if msg.contains("GROUP BY") {
+        "group_by"
+    } else if msg.contains("DISTINCT") {
+        "distinct"
+    } else if msg.contains("window") || msg.contains("WINDOW") {
+        "window"
+    } else {
+        "unsupported"
+    }
+}
+
 // =========================================================================
 // Catalog lookup trait
 // =========================================================================
@@ -3653,6 +3720,45 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, FrontendError::Unsupported(_)));
+    }
+
+    #[test]
+    fn decline_structures_unsupported_reason_for_trace() {
+        // ADR-064 / TD-TRACE-1: a decline must carry a structured {node, why}
+        // (the real reason), not be dropped so the pgwire path re-guesses it.
+        // Subquery-in-expression-position (the Q18/Q20 shape) → node="subquery".
+        let err = lower_sql(
+            "SELECT id FROM users WHERE age > 1 OR id IN (SELECT uid FROM orders)",
+            &catalog(),
+        )
+        .unwrap_err();
+        let d = err.decline();
+        assert_eq!(d.node, "subquery", "unexpected node for {err:?}");
+        assert_eq!(d.why, err.to_string(), "why must be the Display reason");
+        assert!(
+            !d.why.contains("comma-separated"),
+            "must not be a masked guess"
+        );
+
+        // Node classification covers the other declining families the arc hit.
+        assert_eq!(
+            FrontendError::Unsupported(
+                "HAVING with aggregate calls (use a sub-select for now)".into()
+            )
+            .decline()
+            .node,
+            "having"
+        );
+        assert_eq!(
+            FrontendError::Unsupported("correlated scalar subquery".into())
+                .decline()
+                .node,
+            "subquery"
+        );
+        assert_eq!(
+            FrontendError::TableNotFound("orders".into()).decline().node,
+            "table"
+        );
     }
 
     #[test]
