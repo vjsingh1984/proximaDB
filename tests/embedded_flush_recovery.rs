@@ -1,4 +1,4 @@
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 
 // Verifies that a close/flush cycle writes data to the UUID-based storage path
 // and that reopening the embedded database can search the flushed data without
@@ -156,7 +156,7 @@ fn embedded_flush_persists_many_vectors() {
 /// This ensures the writer format is compatible with the reader format.
 #[test]
 fn sst_block_serialization_roundtrip() {
-    use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+    use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let data_path = temp_dir.path().join("data");
@@ -260,7 +260,7 @@ fn sst_block_serialization_roundtrip() {
 /// This ensures no hidden limits on search results.
 #[test]
 fn test_large_k_search_returns_correct_count() {
-    use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+    use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let data_path = temp_dir.path().join("data");
@@ -384,7 +384,7 @@ fn test_large_k_search_returns_correct_count() {
 /// `free_wal=true` (TD-163) would expose if TD-165's fix were incomplete.
 #[test]
 fn cold_read_recall_survives_flush_and_reopen() {
-    use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+    use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 
     // Deterministic splitmix64 PRNG (no `rand` dev-dep) → reproducible unit vectors.
     fn next_u64(seed: &mut u64) -> u64 {

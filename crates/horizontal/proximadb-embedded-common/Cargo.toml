@@ -10,3 +10,5 @@ homepage.workspace = true
 description = "Reusable embedded-mode support types for ProximaDB workspace crates"
 
 [dependencies]
+proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
+serde_json = "1.0"

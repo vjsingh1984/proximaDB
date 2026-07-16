@@ -742,6 +742,10 @@ jobs:
           # than relying on a PR being correctly labelled as mechanical.
           - { label: "no-default-features",  pkg: proximadb,        args: "--no-default-features" }
           - { label: "experimental-engines", pkg: proximadb,        args: "--features experimental-engines" }
+          # Embedded crate (default, no language bindings) — validates the extracted
+          # crate compiles against root at every tier. Python-feature + wheel build
+          # is a qa→main (FULL) concern (heavy pyo3/numpy deps).
+          - { label: "embedded",             pkg: proximadb-embedded, args: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0

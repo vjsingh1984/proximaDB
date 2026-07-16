@@ -56,6 +56,7 @@ members = [
     "crates/horizontal/proximadb-codec",
     "crates/horizontal/proximadb-compression",
     "crates/horizontal/proximadb-embedded-common",
+    "crates/binding/proximadb-embedded",
     "crates/horizontal/proximadb-recall-bench",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-serialization",
@@ -588,7 +589,6 @@ moka = { version = "0.12", features = ["future"] }
 
 # Language bindings (optional, for embedded mode)
 # Python bindings via PyO3
-pyo3 = { workspace = true, optional = true }
 # Vendored OpenSSL for the embedded wheel build only (see the `python` feature).
 # `openssl-sys` reaches the tree transitively (sqlx tls-native-tls + reqwest 0.11
 # default-tls). The manylinux wheel container has no system openssl, so the
@@ -596,15 +596,10 @@ pyo3 = { workspace = true, optional = true }
 # gating it under `python` makes only the wheel build compile OpenSSL from source
 # (portable, cross-target-safe); the OSS server build never pulls this dep and
 # keeps dynamic system openssl.
-openssl = { version = "0.10", optional = true }
 # Zero-copy NumPy array access (matches PyO3 version)
 # Provides direct buffer access to numpy arrays without Python .tolist() conversion
-numpy = { workspace = true, optional = true }
 # Java bindings via JNI
-jni = { version = "0.21", optional = true }
 # Node.js bindings via NAPI-RS
-napi = { version = "2.14", features = ["napi9"], optional = true }
-napi-derive = { version = "2.14", optional = true }
 proximadb-raptor-common = { version = "0.2.0", path = "crates/storage/proximadb-raptor-common" }
 proximadb-raptor-engine = { version = "0.2.0", path = "crates/storage/proximadb-raptor-engine" }
 proximadb-engine-core = { version = "0.2.0", path = "crates/storage/proximadb-engine-core" }
@@ -650,6 +645,9 @@ proximadb-sdk = { path = "clients/rust", default-features = false, features = ["
 # gates load docs/openapi/proximadb-openapi.yaml directly.
 httpmock = "0.7"
 serde_yaml = "0.9"
+# Test-only: integration tests use EmbeddedProximaDB from the embedded crate.
+# Dev-deps don't create build cycles (test-mode only).
+proximadb-embedded = { path = "crates/binding/proximadb-embedded" }
 
 [features]
 # Default feature set as of 2026-05-26 (ADR-020 Tier 2.2 / TD-065 default-enable).
@@ -831,29 +829,10 @@ debug-filters = []  # Enable debug filtering for search operations
 experimental-cdc-connectors = ["dep:tokio-postgres"]
 
 # ============================================================================
-# EMBEDDED DATABASE MODE FEATURES
-# ============================================================================
-# Enable language-specific bindings for embedded database mode
-
-# Python embedded mode (PyO3 bindings with zero-copy numpy support)
-python = ["dep:pyo3", "dep:numpy", "arrow/pyarrow", "dep:openssl", "openssl/vendored"]  # Enable Python bindings with zero-copy numpy support (arrow/pyarrow pulls pyo3 → gated here so the OSS server build stays Python-free). openssl/vendored statically builds OpenSSL so the manylinux wheel needs no system openssl (transitive via sqlx/reqwest).
-
-# Python cdylib output (for PyO3/FFI builds)
-# When enabled, changes crate-type to include cdylib for Python shared library generation
-# See ADR-006: Feature-gated approach prevents test exclusion issues
-pylib = []  # Enable cdylib output for Python/FFI builds
-
-# Java embedded mode (JNI bindings)
-java = ["dep:jni"]  # Enable Java bindings for embedded database mode
-
-# Node.js embedded mode (NAPI-RS bindings)
-nodejs = ["dep:napi", "dep:napi-derive"]  # Enable Node.js bindings
-
-# C FFI for Go CGO and other C-compatible languages
-c_ffi = []  # Enable C FFI for Go/CGO, C, C++
-
-# All embedded language bindings
-embedded-all = ["python", "java", "nodejs", "c_ffi"]
+# EMBEDDED features moved to the proximadb-embedded crate (crates/binding/proximadb-embedded).
+c_ffi = []  # Stub — the C-FFI bindings live in proximadb-embedded; kept here for the duckdb connector cfg.
+python = []  # Stub — the python bindings live in proximadb-embedded; kept here for the windows CI.
+# The server binary no longer compiles language bindings (Python/Java/Node.js/C-FFI).
 
 # CPU optimizations - Disabled Intel MKL on ARM64
 # cpu-optimized = ["intel-mkl"]

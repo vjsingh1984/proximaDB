@@ -46,7 +46,7 @@ use super::{
     AccessMode, EmbeddedConfig, EmbeddedProximaDB, EmbeddedSqlQueryResult, StorageLocationConfig,
     json_to_proxima_value, proxima_value_to_json,
 };
-use crate::core::config::{AdvancedPruneConfig, PruneModeConfig};
+use proximadb::core::config::{AdvancedPruneConfig, PruneModeConfig};
 
 /// Python wrapper for disk configuration
 #[pyclass(name = "DiskConfig", from_py_object)]
@@ -3657,20 +3657,16 @@ impl PyProximaDB {
 
     /// Create a DataFusion session for distributed execution (Proxima-Spark)
     #[cfg(feature = "datafusion-integration")]
-    fn dataframe_session(
-        &self,
-    ) -> PyResult<crate::embedded::python_dataframe::PyDataFusionSession> {
+    fn dataframe_session(&self) -> PyResult<crate::python_dataframe::PyDataFusionSession> {
         let db = self.db()?;
         let vector_ops = db.shared_services().vector_operations_service.clone();
 
-        let ctx =
-            crate::datafusion::create_session_context_with_vector_ops(vector_ops).map_err(|e| {
+        let ctx = proximadb::datafusion::create_session_context_with_vector_ops(vector_ops)
+            .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create DataFusion context: {}", e))
             })?;
 
-        Ok(crate::embedded::python_dataframe::PyDataFusionSession::new(
-            ctx, db,
-        ))
+        Ok(crate::python_dataframe::PyDataFusionSession::new(ctx, db))
     }
 
     #[pyo3(signature = (collection, ipc_stream, mode="insert", tenant_id=None))]
@@ -4581,7 +4577,7 @@ fn notebook_is_simple_ident(value: &str) -> bool {
 fn notebook_partitions_to_json(
     collection: &str,
     requested: u32,
-    partitions: &[crate::connectors::spark::SparkInputPartition],
+    partitions: &[proximadb::connectors::spark::SparkInputPartition],
 ) -> serde_json::Value {
     serde_json::json!({
         "collection": collection,
@@ -4601,7 +4597,7 @@ fn notebook_partitions_to_json(
 }
 
 fn notebook_partition_to_json(
-    partition: &crate::connectors::spark::SparkInputPartition,
+    partition: &proximadb::connectors::spark::SparkInputPartition,
 ) -> serde_json::Value {
     serde_json::json!({
         "partition_id": partition.partition_id,
@@ -4612,7 +4608,7 @@ fn notebook_partition_to_json(
     })
 }
 
-fn notebook_split_to_json(split: &crate::storage::formats::FileSplit) -> serde_json::Value {
+fn notebook_split_to_json(split: &proximadb::storage::formats::FileSplit) -> serde_json::Value {
     serde_json::json!({
         "split_id": &split.split_id,
         "file_path": &split.file_path,
@@ -4822,7 +4818,7 @@ fn register_python_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // DataFusion DataFrame API (Proxima-Spark)
     #[cfg(feature = "datafusion-integration")]
-    crate::embedded::python_dataframe::register_dataframe_module(m)?;
+    crate::python_dataframe::register_dataframe_module(m)?;
 
     Ok(())
 }

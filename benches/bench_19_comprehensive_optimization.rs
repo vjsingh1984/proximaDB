@@ -11,7 +11,7 @@ mod common;
 use common::benchmark_utils::print_system_info;
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
@@ -153,7 +153,7 @@ fn run_benchmark(engine: &str, search_mode: &str, vector_count: usize) -> Benchm
         cache_size_mb: 64,
         default_engine: engine.to_string(),
         enable_wal: false, // Disable WAL for benchmark speed
-        access_mode: proximadb::embedded::AccessMode::Exclusive,
+        access_mode: proximadb_embedded::AccessMode::Exclusive,
         node_id: Some("benchmark-node".to_string()),
         wal_sync_mode: "batch".to_string(),
         block_prune_mode: "sqrt".to_string(),
@@ -270,7 +270,7 @@ fn setup_search_db(engine: &str, vector_count: usize) -> SearchState {
         cache_size_mb: 64,
         default_engine: engine.to_string(),
         enable_wal: false,
-        access_mode: proximadb::embedded::AccessMode::Exclusive,
+        access_mode: proximadb_embedded::AccessMode::Exclusive,
         node_id: Some("benchmark-node".to_string()),
         wal_sync_mode: "batch".to_string(),
         block_prune_mode: "sqrt".to_string(),

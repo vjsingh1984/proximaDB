@@ -3,7 +3,7 @@
 //! Tests edge cases and boundary conditions for AXIS index integration
 //! across all 6 storage engines: SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR.
 
-use proximadb::embedded::{AccessMode, EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
+use proximadb_embedded::{AccessMode, EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
 use tempfile::TempDir;
 
 /// Test engines to validate.

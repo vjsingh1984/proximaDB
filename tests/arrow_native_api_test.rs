@@ -259,13 +259,13 @@ mod file_split_tests {
 
 mod spark_tests {
     use super::*;
-    use proximadb::connectors::{
-        SparkConnectorConfig, SparkFilter, SparkFilterType, SparkInputPartition, SparkScanBuilder,
-        SparkTable, SparkWriteBuilder, SparkWriteMode,
-    };
     use proximadb::storage::formats::FileSplit;
     use proximadb::storage::schema::{ProximaColumn, ProximaSchema};
     use proximadb_data_model::ProximaType;
+    use proximadb_embedded::spark::{
+        SparkConnectorConfig, SparkFilter, SparkFilterType, SparkInputPartition, SparkScanBuilder,
+        SparkTable, SparkWriteBuilder, SparkWriteMode,
+    };
 
     fn make_column(id: i32, name: &str, data_type: ProximaType) -> ProximaColumn {
         ProximaColumn {

@@ -24,9 +24,7 @@
 
 use std::collections::HashSet;
 
-use proximadb::embedded::{
-    EmbeddedConfig, EmbeddedGraphEdge, EmbeddedGraphNode, EmbeddedProximaDB,
-};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedGraphEdge, EmbeddedGraphNode, EmbeddedProximaDB};
 
 const VEC_COLLECTION: &str = "code_vecs";
 

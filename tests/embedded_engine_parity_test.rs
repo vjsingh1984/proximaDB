@@ -1,4 +1,4 @@
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 use tempfile::TempDir;
 
 #[test]

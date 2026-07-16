@@ -260,10 +260,10 @@ pub mod bench;
 
 pub mod version;
 
-/// Embedded mode for in-process database usage without network layer
-/// Enable with feature flag: --features python
-#[allow(missing_docs)]
-pub mod embedded;
+// Embedded mode has been extracted to the `proximadb-embedded` crate
+// (crates/horizontal/proximadb-embedded). The server binary no longer compiles
+// language bindings (Python/Java/Node.js/C-FFI); embedded builds as its own
+// wheel/cdylib depending on this root library.
 
 /// Core database instance and lifecycle management
 /// Moved from lib.rs to improve modularity

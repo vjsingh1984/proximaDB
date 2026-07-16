@@ -18,5 +18,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 proximadb = { path = "../../..", default-features = false, features = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store"] }
+proximadb-embedded = { path = "../proximadb-embedded" }
 jni = "0.21"
 tracing = "0.1"

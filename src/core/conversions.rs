@@ -367,7 +367,7 @@ pub fn proxima_values_to_json_map(
     items
         .into_iter()
         .map(|(k, v)| {
-            let json = crate::embedded::proxima_value_to_json(v);
+            let json = proximadb_embedded_common::proxima_value_to_json(v);
             (k, json)
         })
         .collect()
