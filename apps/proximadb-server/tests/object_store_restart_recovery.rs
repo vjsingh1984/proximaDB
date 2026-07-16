@@ -253,6 +253,151 @@ async fn assert_recovered(base: &str, collection: &str, phase: &str) -> anyhow::
     Ok(())
 }
 
+/// TD-OBJSTORE-1 batch 3: seed a dim-1 "zero-vector" KV collection.
+///
+/// anvaiops uses `vector: [0.0]` rows as a durable KV store (API keys, tenant
+/// registry, billing). The engine skips embedding for zero-vector rows and
+/// serves them by id. `rec-zero` is the KV record under test; `rec-ctrl` is a
+/// non-zero dim-1 control that isolates the zero-vector-ness as the variable.
+async fn create_and_insert_kv(base: &str, collection: &str, engine: &str) -> anyhow::Result<()> {
+    let http = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let response = http
+        .post(format!("{base}/api/v2/collections"))
+        .json(&json!({
+            "name": collection,
+            "dimension": 1,
+            "engine": engine,
+            "distance_metric": "cosine",
+            "canonical_embedding_precision": "fp32",
+            "enable_proxima_record": false
+        }))
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    anyhow::ensure!(status.is_success(), "kv create failed: {status} {body}");
+
+    let response = http
+        .post(format!(
+            "{base}/api/v2/collections/{collection}/records/batch"
+        ))
+        .json(&json!({
+            "records": [
+                { "id": "rec-ctrl", "vector": [0.5], "props": { "kind": "control" } },
+                { "id": "rec-zero", "vector": [0.0], "props": { "kind": "api_key", "secret": "sk-anvaiops" } }
+            ]
+        }))
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    anyhow::ensure!(status.is_success(), "kv insert failed: {status} {body}");
+    // Both records must exist immediately after seed (matches the TD: the KV
+    // record is queryable at seed time; it only 404s after restart).
+    for id in ["rec-ctrl", "rec-zero"] {
+        let r = http
+            .get(format!(
+                "{base}/api/v2/collections/{collection}/records/{id}"
+            ))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            r.status().is_success(),
+            "kv seed: {id} not readable at seed time: {}",
+            r.status()
+        );
+    }
+    Ok(())
+}
+
+/// Assert the dim-1 zero-vector KV record survived restart. The TD symptom is a
+/// 404 on `GET .../records/rec-zero` (and `record_count=0`) after the VM restart.
+async fn assert_kv_recovered(base: &str, collection: &str, phase: &str) -> anyhow::Result<()> {
+    let http = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    // Collection must recover from the catalog.
+    let response = http
+        .get(format!("{base}/api/v2/collections/{collection}"))
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    anyhow::ensure!(
+        status.is_success(),
+        "{phase}: catalog did not recover kv collection: {status} {body}"
+    );
+
+    // Each record must be readable by id after restart (the actual TD symptom).
+    for id in ["rec-ctrl", "rec-zero"] {
+        let response = http
+            .get(format!(
+                "{base}/api/v2/collections/{collection}/records/{id}"
+            ))
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        anyhow::ensure!(
+            status.is_success(),
+            "{phase}: kv record {id} gone after restart ({status}): {body}"
+        );
+        let record: Value = serde_json::from_str(&body)?;
+        anyhow::ensure!(
+            record.get("id").and_then(Value::as_str) == Some(id),
+            "{phase}: kv point read returned the wrong record: {body}"
+        );
+    }
+    Ok(())
+}
+
+/// TD-OBJSTORE-1 batch 3 regression: a dim-1 zero-vector KV record written to an
+/// object-store backend, then lost after a crash+restart. Reproduces on
+/// `adls://`/`s3://`/`gs://` (whole-object-overwrite WAL); passes trivially on
+/// `file://`. Runs against Azurite/MinIO/fake-gcs via
+/// `scripts/run_cloud_emulator_tests.sh` or a real cloud
+/// `PROXIMADB_OBJECT_STORE_URL` (TD-OBJSTORE-5 tiers).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn zero_vector_kv_record_survives_restart() -> anyhow::Result<()> {
+    let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
+    anyhow::ensure!(
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
+    );
+    let root = format!(
+        "{}/td-objstore-1-kv/{}",
+        base.trim_end_matches('/'),
+        uuid::Uuid::new_v4().simple()
+    );
+    let tmp = tempfile::tempdir()?;
+    let collection = format!("kv_{}", uuid::Uuid::new_v4().simple());
+
+    let vm1 = tmp.path().join("vm1");
+    let vm2 = tmp.path().join("vm2");
+    for dir in [&vm1, &vm2] {
+        std::fs::create_dir_all(dir)?;
+    }
+
+    // Phase 1: seed the KV records, then SIGKILL before any flush (WAL-only).
+    let first = ServerProcess::start(&root, &vm1, &tmp.path().join("vm1.toml")).await?;
+    create_and_insert_kv(&first.base_url, &collection, "sst").await?;
+    first.crash()?;
+
+    // Phase 2: restart on a fresh local disk → WAL replay from object store.
+    let wal_replay = ServerProcess::start(&root, &vm2, &tmp.path().join("vm2.toml")).await?;
+    assert_kv_recovered(&wal_replay.base_url, &collection, "KV WAL replay").await?;
+    wal_replay.crash()?;
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires PROXIMADB_OBJECT_STORE_URL plus S3/ADLS credentials"]
 async fn catalog_wal_and_sst_survive_fresh_local_disks() -> anyhow::Result<()> {
