@@ -10,6 +10,54 @@ fn test_frontend_message() {
 }
 
 #[test]
+fn transaction_control_is_rejected_until_atomic_semantics_exist() {
+    for statement in [
+        "BEGIN",
+        "BEGIN TRANSACTION;",
+        "BEGIN ISOLATION LEVEL SERIALIZABLE",
+        "START TRANSACTION",
+        "START TRANSACTION READ ONLY",
+        "COMMIT",
+        "COMMIT AND CHAIN",
+        "END WORK",
+        "ROLLBACK",
+        "ROLLBACK AND NO CHAIN",
+        "ABORT TRANSACTION",
+        "SAVEPOINT nested",
+        "RELEASE nested",
+        "RELEASE SAVEPOINT nested",
+        "ROLLBACK TO nested",
+        "PREPARE TRANSACTION 'tx-1'",
+        "COMMIT PREPARED 'tx-1'",
+        "ROLLBACK PREPARED 'tx-1'",
+        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+        "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+        "SET CONSTRAINTS ALL DEFERRED",
+    ] {
+        assert_eq!(
+            transaction_control_policy(statement),
+            Some(TransactionControlPolicy::Unsupported),
+            "{statement} must not report false transaction success"
+        );
+    }
+
+    assert_eq!(transaction_control_policy("SELECT 1"), None);
+}
+
+#[test]
+fn transaction_control_is_detected_before_a_multi_statement_batch_runs() {
+    let statements = PostgresProtocol::split_sql_statements(
+        "BEGIN; INSERT INTO orders (id) VALUES (1); COMMIT;",
+    );
+
+    assert!(
+        statements
+            .iter()
+            .any(|statement| transaction_control_policy(statement).is_some())
+    );
+}
+
+#[test]
 fn substitute_placeholders_handles_two_digit_indices() {
     // The old ordered str::replace turned "$10" into "<val1>0"; verify each
     // placeholder is matched by its full digit run.
