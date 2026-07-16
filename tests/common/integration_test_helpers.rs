@@ -40,6 +40,14 @@ use proximadb::storage::persistence::write_ahead_log::{
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 use proximadb_data_model::ProximaValue;
 use proximadb_records::ProximaRecord;
+// TD-ORION-1 test harness: the real vector-operations service stack.
+// (DistanceMetric, StorageEngine, CollectionConfig, WriteBufferStrategyType,
+// WAL*/SstEngine/FilesystemFactory/VectorOperationsService are already imported above.)
+use proximadb::catalog::CatalogManager;
+use proximadb::core::config::StorageConfig;
+use proximadb::index::axis::{AxisConfig, AxisManager};
+use proximadb::services::collection::manager::CollectionService;
+use proximadb_runtime::CollectionPort;
 
 static HARDWARE_INIT: Once = Once::new();
 
@@ -152,6 +160,72 @@ impl UnifiedTestEnvironment {
         );
 
         ViperEngine::new().await
+    }
+
+    /// Assemble the **real** `VectorOperationsService` stack (SST + WAL + Axis +
+    /// Catalog + CollectionService) over this environment's tempdir — the same
+    /// recipe as the in-crate `src/services/operations/vectors_test.rs::create_test_service`,
+    /// exposed for `tests/` so integration tests use the real search path instead
+    /// of a mock. Returns the service plus its backing `CollectionService` (needed
+    /// to create collections). Keep `self` (the env) alive for the service's
+    /// lifetime — it owns the tempdir.
+    pub async fn vector_operations_service(
+        &self,
+    ) -> Result<(Arc<VectorOperationsService>, Arc<CollectionService>)> {
+        let metadata_url = format!("file://{}", self.persistent_dir.join("metadata").display());
+
+        let sst_engine = Arc::new(SstEngine::new().await?);
+
+        let wal_config = WALConfig::default();
+        let strategy = WALBatchFactory::create_batch_serialization_strategy(
+            WriteBufferStrategyType::BincodeBatch,
+            &wal_config,
+            self.filesystem.clone(),
+        )
+        .await?;
+        let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
+
+        let axis_manager = Arc::new(AxisManager::new(AxisConfig::default()).await?);
+
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &metadata_url)
+            .await?;
+        let storage_config = StorageConfig {
+            metadata_url,
+            ..Default::default()
+        };
+        let collection_service = Arc::new(
+            CollectionService::new(storage_config)
+                .await?
+                .with_catalog_manager(catalog_manager),
+        );
+
+        let vector_ops = Arc::new(VectorOperationsService::new(
+            sst_engine,
+            wal_manager,
+            axis_manager,
+            collection_service.clone() as Arc<dyn CollectionPort>,
+        ));
+        Ok((vector_ops, collection_service))
+    }
+
+    /// Create a dense vector collection on the given `CollectionService`
+    /// (cosine / SST), for use with the `vector_operations_service()` stack.
+    pub async fn create_vector_collection(
+        collections: &CollectionService,
+        name: &str,
+        dimension: u32,
+    ) -> Result<()> {
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension,
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
+            ..Default::default()
+        };
+        collections.create_collection(&config).await?;
+        Ok(())
     }
 
     /// Get the data directory path for SST operations
@@ -1223,39 +1297,32 @@ pub async fn flush_sst_with_pq_sorting(
     .await
 }
 
-/// Create VectorOperationsService with WAL manager for testing
+/// Create a real `VectorOperationsService` for testing (owned).
+///
+/// Previously a `todo!()` stub (which panicked every caller). Now delegates to
+/// the canonical `UnifiedTestEnvironment::vector_operations_service()` harness —
+/// the real SST + WAL + Axis + Catalog + CollectionService stack over a leaked
+/// tempdir (kept alive for the returned service's lifetime, per the file-backed
+/// test-store convention). The harness returns an `Arc`; this owned variant
+/// unwraps it (unique at construction) for the legacy callers that bind by value.
 pub async fn create_test_vector_operations_service() -> Result<VectorOperationsService> {
-    todo!("CollectionService creation requires complex setup - implement test-specific version")
+    let env = UnifiedTestEnvironment::new().await?;
+    let (vector_ops, _collections) = env.vector_operations_service().await?;
+    // Keep the env's tempdir/files alive for the service's lifetime.
+    std::mem::forget(env);
+    Arc::try_unwrap(vector_ops)
+        .map_err(|_| anyhow::anyhow!("test VectorOperationsService Arc must be unique"))
 }
 
-/// Create VectorOperationsService with custom storage for testing
+/// Create a real `VectorOperationsService` for testing (custom-storage variant).
+///
+/// The canonical harness builds its own `SstEngine`, so the passed `_storage` is
+/// no longer needed; delegates to `create_test_vector_operations_service()`
+/// (previously this bailed with an error).
 pub async fn create_test_vector_operations_service_with_storage(
     _storage: Arc<SstEngine>,
 ) -> Result<VectorOperationsService> {
-    setup_hardware_capabilities();
-
-    // Create WAL manager
-    let _wal_config = WALConfig::default();
-    let _filesystem_factory =
-        Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
-    let strategy_type = WriteBufferStrategyType::AvroBatch;
-    let _strategy = WALBatchFactory::create_batch_serialization_strategy(
-        strategy_type,
-        &_wal_config,
-        _filesystem_factory.clone(),
-    )
-    .await?;
-    let _wal_manager = Arc::new(WriteAheadLogManager::new(_strategy, _wal_config).await?);
-    let _axis_manager = Arc::new(
-        proximadb::index::axis::AxisManager::new(proximadb::index::axis::AxisConfig::default())
-            .await?,
-    );
-
-    // TODO: VectorOperationsService creation requires CollectionService which needs complex setup
-    // For now, return an error to indicate this test helper needs implementation
-    Err(anyhow::anyhow!(
-        "VectorOperationsService creation disabled - requires CollectionService setup"
-    ))
+    create_test_vector_operations_service().await
 }
 
 #[cfg(test)]
