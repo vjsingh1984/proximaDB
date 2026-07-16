@@ -1,0 +1,41 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-TRACE-1: Structured per-query route + decline + execution trace (one source of truth for EXPLAIN / cost model / billing)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open** — filed 2026-07-16 under link:../../12-design/adr/ADR-064-query-engine-pipeline-decision-dispatch-lowering-trace.adoc[ADR-064] (Decision 3). Phase-1 (highest ROI) of the ADR-064 rollout.
+| Priority | P1 — leverage multiplier. The native-coverage arc (#1003→#1044) repeatedly paid to *manually unmask* silent declines and confirm routes by hand; a structured trace turns each into a one-line read and fixes the ADR-050 cost mis-attribution.
+| Component | `crates/modalities/proximadb-observability-engine` (`io_trace.rs` `IoTraceSnapshot`), `src/query/compute_scheduler.rs` (routing reasons), `src/network/postgres/relational_pipeline.rs` (dispatch + `record_route`), `crates/query/proximadb-relational-frontend` (decline reasons), EXPLAIN surface.
+| Evidence | `IoTraceSnapshot` (io_trace.rs:535-594) records `bytes_read`/`range_gets`/`compute_ms` + ONE `route` stamp, set last-write-wins (`record_route` io_trace.rs:258; re-stamped at relational_pipeline.rs:729-732) — the ADR-050 mis-attribution the cost comments already flag. Declines are a silent `None` → legacy → masking message.
+|===
+
+== The finding
+
+Observability today answers "how much I/O / compute" but not **"why this route"** or **"why this
+decline"**. The route is a single stamped tuple (last write wins), so a primary-then-floor fall-through
+attributes the floor's measured quantities to the wrong cost cell. Frontend declines vanish into the
+legacy path behind a generic message.
+
+== Direction (per ADR-064 §2.3)
+
+Elevate the snapshot to a structured `QueryTrace`: `routing{ eligible, selected, reasons }` +
+`lowering{ rules_fired, declines:[{node, why}] }` + `exec:[{op, rows_in/out, ms, bytes, spill}]`,
+layered ON the existing `IoTraceSnapshot` substrate (no new observer plumbing — reuse the always-on
+billing observer + the harness capture). Default-**lean** (cheap counters always; the verbose
+reason/op detail materializes only under `EXPLAIN [ANALYZE]` or a debug gate) so the hot path stays
+allocation-cheap. The cost model consumes the *decision that was made* (with reasons), not the last
+stamp; billing hangs off the same trace (co-design "meter every dimension").
+
+== Gate
+
+Unit: a route decision records its eligibility/selection/trust reasons; a frontend decline records
+`{node, why}`. e2e: `EXPLAIN` over a declining query surfaces the real reason (not the masking
+message); `EXPLAIN ANALYZE` shows per-op rows/ms. No change to served results; cost-cell attribution
+regression test (floor fall-through attributes to the floor, not the primary).
+
+== Non-goals
+
+Distributed tracing / OpenTelemetry export (separate); the vector-search `predicate_diagnostics` bus
+(ADR-023, already exists) — this is the *relational* query trace.
