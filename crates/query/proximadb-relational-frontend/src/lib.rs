@@ -1218,17 +1218,16 @@ fn lower_correlated_scalar_aggregate(
     let [item] = select.projection.as_slice() else {
         return Err(unsupported());
     };
-    let (agg_sql, alias) = match item {
+    let (proj_sql, alias) = match item {
         SelectItem::UnnamedExpr(e) => (e, None),
         SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.clone())),
         _ => return Err(unsupported()),
     };
-    let SqlExpr::Function(f) = agg_sql else {
-        return Err(unsupported());
-    };
-    if !is_aggregate_function_name(&f.name) {
-        return Err(unsupported());
-    }
+    // The projection is a single aggregate, optionally wrapped in scalar
+    // arithmetic over constants / outer columns (e.g. `0.2 * avg(x)` in TPC-H
+    // Q17, `sum(x)/7.0`). Decorrelate the one aggregate as usual; the wrapper is
+    // re-applied to its post-join value column at the end (`build_scalar_over_agg`).
+    let f = single_aggregate_call(proj_sql).ok_or_else(unsupported)?;
     let (inner_plan, inner_scope) = lower_table_factor(&select.from[0].relation, catalog)?;
     let agg = lower_aggregate_call(f, &inner_scope)?;
     // The count-bug: COUNT over an empty correlated group must be 0, but the
@@ -1304,12 +1303,73 @@ fn lower_correlated_scalar_aggregate(
     );
     let value_ty = agg.result_type();
     ctx.hoisted.push(HoistedSub { plan, on: Some(on) });
-    Ok(Expr::column(ColumnRef {
+    let agg_col = Expr::column(ColumnRef {
         name: agg_name,
         ordinal: base + 1,
         ty: value_ty,
         nullable: true,
-    }))
+    });
+    // Re-apply the scalar arithmetic that wrapped the aggregate (a no-op when the
+    // projection was a bare aggregate), with the aggregate replaced by its
+    // post-join value column. Non-aggregate leaves (literals, outer columns)
+    // resolve against the outer scope — valid because the LEFT JOIN places the
+    // outer columns first, so their ordinals are unchanged in the combined row.
+    build_scalar_over_agg(proj_sql, &agg_col, outer_scope)
+}
+
+/// The single aggregate call inside a scalar-subquery projection, which may be
+/// wrapped in scalar arithmetic (`0.2 * avg(x)`, `sum(x) / 7.0`). Returns `None`
+/// when the projection has zero or more than one aggregate (the correlated
+/// scalar-aggregate decorrelation handles exactly one).
+fn single_aggregate_call(sql: &SqlExpr) -> Option<&sqlparser::ast::Function> {
+    fn collect<'a>(sql: &'a SqlExpr, out: &mut Vec<&'a sqlparser::ast::Function>) {
+        match sql {
+            SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => out.push(f),
+            SqlExpr::BinaryOp { left, right, .. } => {
+                collect(left, out);
+                collect(right, out);
+            }
+            SqlExpr::UnaryOp { expr, .. } => collect(expr, out),
+            SqlExpr::Nested(e) => collect(e, out),
+            _ => {}
+        }
+    }
+    let mut v = Vec::new();
+    collect(sql, &mut v);
+    (v.len() == 1).then(|| v[0])
+}
+
+/// Rebuild the scalar arithmetic that wrapped a correlated scalar aggregate,
+/// substituting the (single) aggregate call with `agg_col` — the decorrelated
+/// aggregate's post-join value column. Arithmetic-spine nodes recurse; any other
+/// leaf (a literal or an outer column) lowers against `outer_scope`. There is
+/// exactly one aggregate (guaranteed by [`single_aggregate_call`]), so matching
+/// any aggregate function here yields `agg_col`.
+fn build_scalar_over_agg(
+    sql: &SqlExpr,
+    agg_col: &Expr,
+    outer_scope: &Scope,
+) -> Result<Expr, FrontendError> {
+    match sql {
+        SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => Ok(agg_col.clone()),
+        SqlExpr::BinaryOp { left, op, right } => Ok(Expr::bin(
+            lower_binary_op(op)?,
+            build_scalar_over_agg(left, agg_col, outer_scope)?,
+            build_scalar_over_agg(right, agg_col, outer_scope)?,
+        )),
+        SqlExpr::UnaryOp { op, expr } => {
+            let inner = build_scalar_over_agg(expr, agg_col, outer_scope)?;
+            match lower_unary_op(op)? {
+                Some(u) => Ok(Expr::UnaryOp {
+                    op: u,
+                    expr: Box::new(inner),
+                }),
+                None => Ok(inner),
+            }
+        }
+        SqlExpr::Nested(e) => build_scalar_over_agg(e, agg_col, outer_scope),
+        other => lower_expr_sealed(other, outer_scope),
+    }
 }
 
 /// Resolve a correlation equality's two operands into `(inner_key, outer_key)`
@@ -2523,6 +2583,46 @@ mod tests {
 
     fn lower(sql: &str) -> LogicalNode {
         lower_sql(sql, &catalog()).unwrap_or_else(|e| panic!("lower failed: {e:?}"))
+    }
+
+    #[test]
+    fn correlated_scalar_aggregate_allows_arithmetic_wrapper() {
+        // TD-REL-LOWER-8 (TPC-H Q17): a correlated scalar aggregate wrapped in
+        // scalar arithmetic (`0.5 * avg(total)`) must decorrelate — previously
+        // only a BARE aggregate lowered; the `k *` wrapper declined.
+        let wrapped = lower_sql(
+            "SELECT id FROM users WHERE age < \
+             (SELECT 0.5 * avg(total) FROM orders WHERE orders.uid = users.id)",
+            &catalog(),
+        );
+        assert!(
+            wrapped.is_ok(),
+            "wrapped correlated scalar agg must lower: {wrapped:?}"
+        );
+
+        // No regression: the bare form still lowers.
+        assert!(
+            lower_sql(
+                "SELECT id FROM users WHERE age < \
+                 (SELECT avg(total) FROM orders WHERE orders.uid = users.id)",
+                &catalog()
+            )
+            .is_ok()
+        );
+
+        // A non-aggregate scalar subquery projection is still not this path
+        // (declines or takes the uncorrelated path) — the wrapper must contain
+        // exactly one aggregate. `count` over an empty correlated group is still
+        // declined (NULL-vs-0 bug).
+        assert!(
+            lower_sql(
+                "SELECT id FROM users WHERE age < \
+                 (SELECT count(total) FROM orders WHERE orders.uid = users.id)",
+                &catalog()
+            )
+            .is_err(),
+            "correlated COUNT still declines (empty-group NULL-vs-0)"
+        );
     }
 
     fn parse_where(sql: &str) -> Option<SqlExpr> {
