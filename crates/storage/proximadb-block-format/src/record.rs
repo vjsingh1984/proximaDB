@@ -438,10 +438,28 @@ impl FlatRow {
             .unwrap_or_default();
 
         // Embedding stripes are contiguous from EMBED_BASE; probe until absent.
+        // When the independently declared exact tier is present, prefer it for
+        // materialization. This is the compaction/rebuild authority boundary:
+        // EMBED_BASE may be SQ8/RaBitQ and must not silently replace original
+        // f32 merely because it is the primary scan stripe.
         let mut embedding_stripes: Vec<Vec<Option<Vec<f32>>>> = Vec::new();
         let mut e = 0;
-        while let Some(stripe) = reader.decode_f32_vec_stripe(col_id::EMBED_BASE + e) {
-            embedding_stripes.push(stripe);
+        while let Some(base) = reader.decode_f32_vec_stripe(col_id::EMBED_BASE + e) {
+            let exact_column = col_id::F32_TIER_BASE + e;
+            let exact = reader
+                .vector_params()
+                .get(exact_column)
+                .filter(|entry| entry.quant_kind == crate::vparam::QUANT_RAW_F32)
+                .and_then(|_| reader.decode_f32_vec_stripe(exact_column));
+            let materialized = match exact {
+                Some(exact) if exact.len() == base.len() => base
+                    .into_iter()
+                    .zip(exact)
+                    .map(|(approximate, exact)| exact.or(approximate))
+                    .collect(),
+                _ => base,
+            };
+            embedding_stripes.push(materialized);
             e += 1;
         }
 

@@ -918,7 +918,7 @@ impl PaxSegmentWriter {
             embed_dim: dim,
             embed_count: self.embedding_count as u32,
             embed_quant_tag: 1, // SQ8 (the survivor-rerank data tier)
-            has_f32_tier: false,
+            has_f32_tier: self.f32_tier,
             blocks,
         };
         let footer_body = footer.to_bytes();
@@ -1231,6 +1231,20 @@ pub fn compact_pax_segments(
     tenant_ctx: Option<&str>,
     now_ns: i64,
 ) -> Result<CompactionStats> {
+    let preserve_exact = !inputs.is_empty()
+        && inputs.iter().all(|input| {
+            let Ok(mut scanner) = PaxSegmentScanner::open(input, ScanPredicate::default()) else {
+                return false;
+            };
+            let mut saw_block = false;
+            while let Some(block) = scanner.next_block() {
+                saw_block = true;
+                if !block.has_exact_vector_authority() {
+                    return false;
+                }
+            }
+            saw_block
+        });
     let mut writer = PaxSegmentWriter::new(
         output,
         mode,
@@ -1239,7 +1253,8 @@ pub fn compact_pax_segments(
         schema_fingerprint,
         embedding_count,
         None,
-    );
+    )
+    .with_f32_tier(preserve_exact);
     let mut records_in = 0u64;
     let mut records_out = 0u64;
     let mut tombstones_dropped = 0u64;
@@ -1680,6 +1695,122 @@ mod tests {
                 .iter()
                 .all(|r| r.origin.as_deref() != Some("delete")),
             "the delete tombstone must not survive compaction"
+        );
+    }
+
+    #[test]
+    fn compaction_preserves_exact_only_when_every_input_has_authority() {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        let vector_record = |oid: &str, values: Vec<f32>| {
+            let mut record = make_record(oid, "t", 1);
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: values.len() as u32,
+                values: EmbeddingValues::Fp32(values),
+                ..Default::default()
+            });
+            record
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let exact_input = dir.path().join("exact.pax");
+        let lossy_input = dir.path().join("lossy.pax");
+        let exact_output = dir.path().join("exact-output.pax");
+        let mixed_output = dir.path().join("mixed-output.pax");
+        let exact_records = vec![
+            vector_record("exact-a", vec![-3.25, 0.123_456_7, 8.75]),
+            vector_record("exact-b", vec![2.5, 4.765_432, -1.125]),
+        ];
+        let lossy_records = vec![
+            vector_record("lossy-a", vec![11.0, -7.123_456, 0.375]),
+            vector_record("lossy-b", vec![6.25, 9.765_432, -4.5]),
+        ];
+
+        let mut exact_writer = PaxSegmentWriter::new(
+            &exact_input,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_f32_tier(true);
+        for record in &exact_records {
+            exact_writer.add_record(record).unwrap();
+        }
+        exact_writer.finish().unwrap();
+
+        let mut lossy_writer = PaxSegmentWriter::new(
+            &lossy_input,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RaBitQ);
+        for record in &lossy_records {
+            lossy_writer.add_record(record).unwrap();
+        }
+        lossy_writer.finish().unwrap();
+
+        compact_pax_segments(
+            std::slice::from_ref(&exact_input),
+            &exact_output,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            &[],
+            &[],
+            None,
+            i64::MAX,
+        )
+        .unwrap();
+        {
+            let mut exact_scanner =
+                PaxSegmentScanner::open(&exact_output, ScanPredicate::default()).unwrap();
+            let exact_block = exact_scanner.next_block().expect("exact compacted block");
+            assert!(exact_block.has_exact_vector_authority());
+        }
+        let mut exact_scanner =
+            PaxSegmentScanner::open(&exact_output, ScanPredicate::default()).unwrap();
+        let exact_back = exact_scanner.read_records(&[], &[], None).unwrap();
+        for got in &exact_back {
+            let want = exact_records
+                .iter()
+                .find(|record| record.oid == got.oid)
+                .unwrap();
+            assert_eq!(
+                got.embeddings[0].as_fp32_slice(),
+                want.embeddings[0].as_fp32_slice()
+            );
+        }
+
+        compact_pax_segments(
+            &[exact_input, lossy_input],
+            &mixed_output,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            &[],
+            &[],
+            None,
+            i64::MAX,
+        )
+        .unwrap();
+        let mut mixed_scanner =
+            PaxSegmentScanner::open(&mixed_output, ScanPredicate::default()).unwrap();
+        let mixed_block = mixed_scanner.next_block().expect("mixed compacted block");
+        assert!(
+            !mixed_block.has_exact_vector_authority(),
+            "a lossy sibling must prevent exact output authority"
         );
     }
 

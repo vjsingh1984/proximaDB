@@ -606,6 +606,52 @@ impl<'a> PaxBlockReader<'a> {
         Some(out)
     }
 
+    /// Whether every non-null logical embedding row in this block has an
+    /// authoritative f32 representation. Raw `EMBED_BASE` is exact itself;
+    /// lossy base encodings require a matching raw `F32_TIER_BASE` row.
+    /// Decode/shape failures fail closed.
+    pub fn has_exact_vector_authority(&self) -> bool {
+        let base_entries: Vec<_> = self
+            .vparams
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.column_id >= crate::col_id::EMBED_BASE
+                    && entry.column_id < crate::col_id::USER_BASE
+            })
+            .copied()
+            .collect();
+        for base_entry in base_entries {
+            let Some(base_rows) = self.decode_f32_vec_stripe(base_entry.column_id) else {
+                return false;
+            };
+            if base_entry.quant_kind == QUANT_RAW_F32 {
+                continue;
+            }
+            let embedding_index = base_entry.column_id - crate::col_id::EMBED_BASE;
+            let exact_column = crate::col_id::F32_TIER_BASE + embedding_index;
+            if self
+                .vparams
+                .get(exact_column)
+                .is_none_or(|entry| entry.quant_kind != QUANT_RAW_F32)
+            {
+                return false;
+            }
+            let Some(exact_rows) = self.decode_f32_vec_stripe(exact_column) else {
+                return false;
+            };
+            if exact_rows.len() != base_rows.len()
+                || base_rows
+                    .iter()
+                    .zip(&exact_rows)
+                    .any(|(base, exact)| base.is_some() && exact.is_none())
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Decode opaque byte blobs from a raw length-prefixed binary stripe — the
     /// inverse of the writer's `build_bytes_stripe` (used for the msgpack `PROPS`
     /// and `LABELS` columns). Each value is a 4-byte little-endian length prefix
