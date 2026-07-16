@@ -384,7 +384,7 @@ impl GlobalManifestService {
             deduped
                 .entry(entry.batch_id.clone())
                 .and_modify(|existing| {
-                    if entry.global_lsn > existing.global_lsn {
+                    if should_replace_manifest_entry(existing, &entry) {
                         *existing = entry.clone();
                     }
                 })
@@ -985,6 +985,58 @@ impl GlobalManifestService {
 
         debug!("GlobalManifestService shut down");
         Ok(())
+    }
+}
+
+fn status_rank(status: WalEntryStatus) -> u8 {
+    match status {
+        WalEntryStatus::Active => 0,
+        WalEntryStatus::Flushed => 1,
+        WalEntryStatus::Archived | WalEntryStatus::RolledBack => 2,
+    }
+}
+
+fn should_replace_manifest_entry(
+    existing: &GlobalManifestEntry,
+    incoming: &GlobalManifestEntry,
+) -> bool {
+    incoming.global_lsn > existing.global_lsn
+        || (incoming.global_lsn == existing.global_lsn
+            && status_rank(incoming.status) > status_rank(existing.status))
+}
+
+#[cfg(test)]
+mod manifest_status_tests {
+    use super::*;
+    use crate::storage::persistence::write_ahead_log::BatchId;
+    use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
+
+    fn entry(status: WalEntryStatus) -> GlobalManifestEntry {
+        let mut entry = GlobalManifestEntry::new(
+            7,
+            "collection".to_string(),
+            &BatchId::new(),
+            "batch.bcwal".to_string(),
+            1,
+            1,
+            SerializationFormat::Bincode,
+            1,
+            "file:///tmp".to_string(),
+        );
+        entry.status = status;
+        entry
+    }
+
+    #[test]
+    fn equal_lsn_flushed_supersedes_active() {
+        assert!(should_replace_manifest_entry(
+            &entry(WalEntryStatus::Active),
+            &entry(WalEntryStatus::Flushed)
+        ));
+        assert!(!should_replace_manifest_entry(
+            &entry(WalEntryStatus::Flushed),
+            &entry(WalEntryStatus::Active)
+        ));
     }
 }
 

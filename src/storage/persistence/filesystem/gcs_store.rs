@@ -212,6 +212,37 @@ impl FileSystem for GcsFileSystem {
         Ok(())
     }
 
+    async fn write_if_absent(
+        &self,
+        path: &str,
+        data: &[u8],
+        _options: Option<FileOptions>,
+    ) -> FsResult<()> {
+        let (bucket, object) = Self::parse(path)?;
+        let upload_type = UploadType::Simple(Media::new(object));
+        let result = self
+            .client
+            .upload_object(
+                &UploadObjectRequest {
+                    bucket,
+                    if_generation_match: Some(0),
+                    ..Default::default()
+                },
+                data.to_vec(),
+                &upload_type,
+            )
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(google_cloud_storage::http::Error::Response(response))
+                if response.code == 409 || response.code == 412 =>
+            {
+                Err(FilesystemError::AlreadyExists(path.to_string()))
+            }
+            Err(error) => Err(Self::net("GCS conditional upload_object", error)),
+        }
+    }
+
     async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
         Err(FilesystemError::InvalidOperation(
             "GCS objects are immutable; append is unsupported".to_string(),

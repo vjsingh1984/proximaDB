@@ -384,6 +384,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
                 size_bytes: 0,
                 format: SerializationFormat::ProtocolBuffers,
                 encryption_metadata: None, // Delete operation doesn't need encryption metadata
+                recovery_token: None,
             };
             let _ = self.disk_manager.delete_file(&file_info).await;
         }
@@ -483,6 +484,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
                     size_bytes: 0,
                     format: SerializationFormat::ProtocolBuffers,
                     encryption_metadata: None, // Sync doesn't have encryption metadata
+                    recovery_token: None,
                 };
 
                 // Use filesystem sync_file to ensure durability

@@ -169,7 +169,18 @@ impl SstEngine {
                     (BlockFormat::PaxBlock, "pax")
                 }
             };
-        let sst_filename = codec.generate(0, file_extension); // Level 0 for flush
+        let sst_filename = params
+            .hints
+            .get("recovery_materialization_id")
+            .and_then(|value| value.as_str())
+            .map(|id| {
+                let safe_id: String = id
+                    .chars()
+                    .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+                    .collect();
+                format!("L0_recovery_{safe_id}.{file_extension}")
+            })
+            .unwrap_or_else(|| codec.generate(0, file_extension)); // Level 0 for flush
         debug!(
             "🔧 SST: Creating {} file: {} for collection: {}",
             if block_format == BlockFormat::ArrowBlock {
@@ -463,12 +474,65 @@ impl SstEngine {
         });
         let bytes_written = file_metadata.size;
 
-        // Commit the atomic operation
-        tracing::debug!(operation_id = %atomic_op.operation_id, "Committing atomic operation");
-        self.atomic_coordinator()
-            .finalize_atomic_operation(&atomic_op.operation_id)
-            .await
-            .context("Failed to commit atomic flush operation")?;
+        let recovery_materialization = params
+            .hints
+            .get("recovery_materialization_id")
+            .and_then(|value| value.as_str());
+        let mut already_materialized = false;
+        if recovery_materialization.is_some() {
+            // The deterministic segment object is the recovery commit record.
+            // Create-only publication closes the crash window between flush and
+            // WAL retirement without a second marker object.
+            let staged_bytes = fs
+                .read(&staging_url)
+                .await
+                .context("reading staged recovery segment")?;
+            let final_url = format!("{}/{}", atomic_op.final_url, filename);
+            let final_fs = self.filesystem().get_filesystem(&final_url)?;
+            match final_fs
+                .write_if_absent(
+                    &final_url,
+                    &staged_bytes,
+                    Some(crate::storage::persistence::filesystem::FileOptions {
+                        create_dirs: true,
+                        overwrite: false,
+                        ..Default::default()
+                    }),
+                )
+                .await
+            {
+                Ok(()) => {}
+                Err(crate::storage::persistence::filesystem::FilesystemError::AlreadyExists(_)) => {
+                    let existing = final_fs
+                        .read(&final_url)
+                        .await
+                        .context("verifying existing recovery segment")?;
+                    if existing != staged_bytes {
+                        anyhow::bail!(
+                            "recovery segment collision at {final_url}: deterministic name exists with different bytes"
+                        );
+                    }
+                    already_materialized = true;
+                }
+                Err(error) => return Err(error).context("publishing recovery segment"),
+            }
+            if let Err(error) = self
+                .atomic_coordinator()
+                .abort_atomic_operation(
+                    &atomic_op.operation_id,
+                    "recovery segment published with conditional create",
+                )
+                .await
+            {
+                tracing::warn!(%error, "failed to clean recovery staging operation");
+            }
+        } else {
+            tracing::debug!(operation_id = %atomic_op.operation_id, "Committing atomic operation");
+            self.atomic_coordinator()
+                .finalize_atomic_operation(&atomic_op.operation_id)
+                .await
+                .context("Failed to commit atomic flush operation")?;
+        }
         tracing::debug!(
             final_url = %atomic_op.final_url,
             filename = %filename,
@@ -543,6 +607,32 @@ impl SstEngine {
 
         let final_file_path = format!("{}/{}", atomic_op.final_url, filename);
 
+        if already_materialized {
+            return Ok(FlushResult {
+                success: true,
+                collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+                entries_flushed: Some(entries_written),
+                bytes_written: Some(bytes_written),
+                files_created: Some(0),
+                file_paths: vec![final_file_path],
+                duration_ms: Some(0),
+                completed_at: Utc::now(),
+                engine_metrics: HashMap::from([
+                    (
+                        "engine".to_string(),
+                        serde_json::Value::String("SST".to_string()),
+                    ),
+                    (
+                        "already_materialized".to_string(),
+                        serde_json::Value::Bool(true),
+                    ),
+                ]),
+                compaction_triggered: false,
+                compaction_error: None,
+                flushed_batch_ids: params.batch_ids.clone(),
+            });
+        }
+
         // Check if compaction should be triggered (per-collection tag cascade,
         // TD-WLP-2 — the global env stays the master kill-switch).
         let collection_tags: &[String] = params
@@ -551,9 +641,17 @@ impl SstEngine {
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.tags.as_slice())
             .unwrap_or(&[]);
-        let should_trigger_compaction = self
-            .should_trigger_compaction(storage_url, collection_tags)
-            .await?;
+        let suppress_recovery_compaction = params
+            .hints
+            .get("suppress_compaction_until_wal_retired")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let should_trigger_compaction = if suppress_recovery_compaction {
+            false
+        } else {
+            self.should_trigger_compaction(storage_url, collection_tags)
+                .await?
+        };
 
         // TD-WLP-7 (ADR-061 D3): actually EXECUTE compaction when armed. Before
         // this, the flush only set `compaction_triggered` and nothing scheduled
