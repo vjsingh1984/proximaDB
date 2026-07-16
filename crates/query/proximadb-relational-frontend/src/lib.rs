@@ -259,9 +259,32 @@ fn lower_select(
     // a left-deep chain of CROSS joins, with the equality predicates in WHERE
     // acting as the join conditions (the optimizer rewrites Cross+Filter into
     // hash joins). This is the classic ANSI/TPC-H join spelling.
-    let (mut plan, mut scope) = lower_table_with_joins(&select.from[0], catalog)?;
-    for twj in &select.from[1..] {
-        let (right, right_scope) = lower_table_with_joins(twj, catalog)?;
+    //
+    // Lower every top-level entry once, then ORDER the comma entries by
+    // equi-join connectivity before building the chain: a FROM-order accident
+    // (a pair with no direct equi-key placed adjacent — e.g. `part, supplier`,
+    // joined only transitively through `lineitem` in TPC-H Q9) would otherwise
+    // leave a raw cross product that the native route declines. Comma/inner
+    // joins commute and column refs resolve by name against the reordered
+    // scope, so this preserves semantics; it is a no-op when the FROM order is
+    // already fully connected or when connectivity can't be resolved.
+    let lowered = select
+        .from
+        .iter()
+        .map(|twj| lower_table_with_joins(twj, catalog))
+        .collect::<Result<Vec<_>, _>>()?;
+    let order = comma_join_order(
+        &lowered.iter().map(|(_, s)| s).collect::<Vec<_>>(),
+        select.selection.as_ref(),
+    );
+    let mut lowered: Vec<Option<(LogicalNode, Scope)>> = lowered.into_iter().map(Some).collect();
+    let mut order_iter = order.into_iter();
+    let first = order_iter
+        .next()
+        .expect("FROM is non-empty (checked above)");
+    let (mut plan, mut scope) = lowered[first].take().expect("each index taken once");
+    for idx in order_iter {
+        let (right, right_scope) = lowered[idx].take().expect("each index taken once");
         scope = scope.concat(&right_scope);
         plan = LogicalNode::Join {
             left: Box::new(plan),
@@ -459,6 +482,109 @@ fn flatten_sql_and(expr: &SqlExpr) -> Vec<&SqlExpr> {
     let mut out = Vec::new();
     rec(expr, &mut out);
     out
+}
+
+/// A column reference split into an optional table/alias qualifier and the bare
+/// column name (`n1.n_nationkey` → `(Some("n1"), "n_nationkey")`).
+type ColIdent = (Option<String>, String);
+
+/// Order comma-separated FROM entries so the left-deep CROSS chain has an
+/// equi-join key at every level. Greedy connectivity walk over the equi-graph
+/// derived from the WHERE clause: start from the first entry and always append
+/// the lowest-index remaining entry that shares an equi-key with an
+/// already-placed entry — so a FROM order that is already fully connected is
+/// reproduced unchanged. Returns the identity order when there are fewer than
+/// three entries, no WHERE clause, or a disconnected component remains (a
+/// genuine cross product). Reordering only ever helps: inner joins commute and
+/// column refs resolve by name, so a correct result never changes.
+fn comma_join_order(scopes: &[&Scope], where_clause: Option<&SqlExpr>) -> Vec<usize> {
+    let n = scopes.len();
+    if n < 3 {
+        return (0..n).collect();
+    }
+    let Some(where_expr) = where_clause else {
+        return (0..n).collect();
+    };
+    let mut adj = vec![vec![false; n]; n];
+    for conj in flatten_sql_and(where_expr) {
+        if let Some((a, b)) = equi_column_pair(conj)
+            && let (Some(i), Some(j)) = (entry_of_column(&a, scopes), entry_of_column(&b, scopes))
+            && i != j
+        {
+            adj[i][j] = true;
+            adj[j][i] = true;
+        }
+    }
+    let mut placed = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    placed[0] = true;
+    order.push(0);
+    while order.len() < n {
+        // Lowest-index unplaced entry connected to any placed entry; if the
+        // graph is disconnected, fall back to the lowest-index unplaced entry
+        // (that component genuinely cross-joins — same as before).
+        let next = (0..n)
+            .find(|&j| !placed[j] && (0..n).any(|i| placed[i] && adj[i][j]))
+            .or_else(|| (0..n).find(|&j| !placed[j]));
+        let pick = next.expect("order.len() < n implies an unplaced entry");
+        placed[pick] = true;
+        order.push(pick);
+    }
+    order
+}
+
+/// If `expr` is `col = col` between two column identifiers, return both parts.
+fn equi_column_pair(expr: &SqlExpr) -> Option<(ColIdent, ColIdent)> {
+    let SqlExpr::BinaryOp {
+        left,
+        op: BinaryOperator::Eq,
+        right,
+    } = expr
+    else {
+        return None;
+    };
+    Some((column_ident(left)?, column_ident(right)?))
+}
+
+/// A bare or qualified column identifier as `(table?, column)`; `None` for any
+/// non-identifier expression (literals, arithmetic, function calls).
+fn column_ident(expr: &SqlExpr) -> Option<ColIdent> {
+    match expr {
+        SqlExpr::Identifier(id) => Some((None, id.value.clone())),
+        SqlExpr::CompoundIdentifier(parts) if parts.len() >= 2 => Some((
+            Some(parts[parts.len() - 2].value.clone()),
+            parts[parts.len() - 1].value.clone(),
+        )),
+        SqlExpr::Nested(inner) => column_ident(inner),
+        _ => None,
+    }
+}
+
+/// Which FROM entry (index into `scopes`) owns a column identifier — qualified
+/// by table/alias match, unqualified by *unique* column-name ownership. `None`
+/// when the column resolves to no entry or is ambiguous across entries (the
+/// connectivity edge is simply dropped — conservative, never incorrect).
+fn entry_of_column(ident: &ColIdent, scopes: &[&Scope]) -> Option<usize> {
+    let (table, col) = ident;
+    match table {
+        Some(t) => scopes.iter().position(|s| {
+            s.columns
+                .iter()
+                .any(|c| &c.table == t && &c.column.name == col)
+        }),
+        None => {
+            let mut found = None;
+            for (i, s) in scopes.iter().enumerate() {
+                if s.columns.iter().any(|c| &c.column.name == col) {
+                    if found.is_some() {
+                        return None; // ambiguous across entries — drop the edge
+                    }
+                    found = Some(i);
+                }
+            }
+            found
+        }
+    }
 }
 
 /// If `conj` is a liftable subquery predicate, lower it to the parts of a Semi/Anti
@@ -2397,6 +2523,59 @@ mod tests {
 
     fn lower(sql: &str) -> LogicalNode {
         lower_sql(sql, &catalog()).unwrap_or_else(|e| panic!("lower failed: {e:?}"))
+    }
+
+    fn parse_where(sql: &str) -> Option<SqlExpr> {
+        let stmts = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+        match &stmts[0] {
+            Statement::Query(q) => match &*q.body {
+                SetExpr::Select(s) => s.selection.clone(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn comma_join_order_places_hub_between_disconnected_tables() {
+        // TD-REL-LOWER-7 (Q9 shape): `a` and `b` share no direct equi-key; both
+        // join only to the hub. FROM order [a, b, hub] would cross-join a×b, so
+        // the reorder must move the hub between them → [a, hub, b], every
+        // adjacency sharing an equi-key.
+        let schema = |cols: &[&str]| {
+            RelationalSchema::new(
+                cols.iter()
+                    .map(|c| ColumnInfo::new(*c, ProximaType::Int64, true))
+                    .collect(),
+            )
+        };
+        let a = Scope::from_table("a", &schema(&["a_id", "a_href"]));
+        let b = Scope::from_table("b", &schema(&["b_id", "b_href"]));
+        let hub = Scope::from_table("hub", &schema(&["h_id", "h_val"]));
+
+        let scopes = [&a, &b, &hub];
+        let w = parse_where(
+            "SELECT 1 FROM a, b, hub WHERE a.a_href = hub.h_id AND b.b_href = hub.h_id",
+        );
+        assert_eq!(
+            comma_join_order(&scopes, w.as_ref()),
+            vec![0, 2, 1],
+            "hub moves between the two otherwise-disconnected tables"
+        );
+
+        // An already fully-connected FROM order is reproduced unchanged.
+        let scopes2 = [&a, &hub, &b];
+        let w2 = parse_where(
+            "SELECT 1 FROM a, hub, b WHERE a.a_href = hub.h_id AND b.b_href = hub.h_id",
+        );
+        assert_eq!(
+            comma_join_order(&scopes2, w2.as_ref()),
+            vec![0, 1, 2],
+            "already-connected order is a no-op"
+        );
+
+        // No WHERE ⇒ identity (nothing to connect on).
+        assert_eq!(comma_join_order(&scopes, None), vec![0, 1, 2]);
     }
 
     /// A `DATE 'YYYY-MM-DD'` typed literal lowers to the canonical
