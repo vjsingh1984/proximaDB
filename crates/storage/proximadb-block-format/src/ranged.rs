@@ -26,7 +26,7 @@ use anyhow::{Result, bail};
 use crate::{
     reader::{
         RankMetric, decode_f32_vec_v2, decode_i64_with_encoding, decode_str_with_encoding,
-        decode_vector_payload, parse_rabitq_codes, score_rerank_row,
+        parse_rabitq_codes, score_rerank_rows_from_stripe,
     },
     record::col_id,
     rowgroup::RowGroupBlock,
@@ -310,39 +310,16 @@ impl BlockLayout {
         if entry.quant_kind != QUANT_SQ8 && entry.quant_kind != QUANT_FP16 {
             return None;
         }
-        let n = self.footer.n_rows as usize;
-        let dim = entry.dim as usize;
-        let (bitmap, payload) =
-            decode_vector_payload(stripe_bytes, n, self.vparams.transform(column_id)).ok()?;
-        let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
-        let stride = if entry.quant_kind == QUANT_FP16 {
-            dim * 2
-        } else {
-            dim
-        };
-        let mut scored: Vec<(usize, f32)> = Vec::with_capacity(rows.len());
-        let mut scratch: Vec<f32> = Vec::with_capacity(dim);
-        for &row in rows {
-            if row >= n || !is_present(row) {
-                continue;
-            }
-            let off = row * stride;
-            let end = off + stride;
-            if end > payload.len() {
-                continue;
-            }
-            let dist = score_rerank_row(
-                entry.quant_kind,
-                &entry.params,
-                &payload[off..end],
-                query,
-                metric,
-                &mut scratch,
-            );
-            scored.push((row, dist));
-        }
-        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        Some(scored)
+        score_rerank_rows_from_stripe(
+            entry,
+            self.vparams.transform(column_id),
+            stripe_bytes,
+            self.footer.n_rows as usize,
+            query,
+            rows,
+            metric,
+        )
+        .ok()
     }
 }
 

@@ -113,6 +113,88 @@ pub fn score_rerank_row(
     }
 }
 
+pub(crate) fn score_rerank_rows_from_stripe(
+    entry: &crate::vparam::VectorParamEntry,
+    transform: Option<&VectorTransformColumn>,
+    stripe: &[u8],
+    row_count: usize,
+    query: &[f32],
+    rows: &[usize],
+    metric: RankMetric,
+) -> Result<Vec<(usize, f32)>> {
+    if entry.quant_kind != QUANT_SQ8 && entry.quant_kind != QUANT_FP16 {
+        bail!("rerank stripe is neither SQ8 nor FP16");
+    }
+    let bitmap_len = row_count.div_ceil(8);
+    if stripe.len() < bitmap_len {
+        bail!("rerank stripe shorter than validity bitmap");
+    }
+    let bitmap = &stripe[..bitmap_len];
+    let stored_payload = &stripe[bitmap_len..];
+    let valid_rows: Vec<usize> = rows
+        .iter()
+        .copied()
+        .filter(|&row| row < row_count && bitmap[row / 8] & (1u8 << (row % 8)) != 0)
+        .collect();
+    let transformed_rows = match transform {
+        None => None,
+        Some(transform) if transform.transform_kind == TRANSFORM_CLUSTERED_FOR_U8 => {
+            if entry.quant_kind != QUANT_SQ8 {
+                bail!("clustered u8 transform declared for non-SQ8 rerank stripe");
+            }
+            Some(functions::clustered_for_bitpack::decode_u8_rows_selected(
+                stored_payload,
+                &valid_rows,
+            )?)
+        }
+        Some(transform) => bail!(
+            "unknown vector transform kind 0x{:02x}",
+            transform.transform_kind
+        ),
+    };
+
+    let dim = entry.dim as usize;
+    let stride = if entry.quant_kind == QUANT_FP16 {
+        dim * 2
+    } else {
+        dim
+    };
+    let mut scored = Vec::with_capacity(valid_rows.len());
+    let mut scratch = Vec::with_capacity(dim);
+    for (selected_index, &row) in valid_rows.iter().enumerate() {
+        let row_bytes = if let Some(decoded) = &transformed_rows {
+            decoded
+                .get(selected_index)
+                .map(Vec::as_slice)
+                .ok_or_else(|| anyhow::anyhow!("decoded rerank row missing"))?
+        } else {
+            let start = row
+                .checked_mul(stride)
+                .ok_or_else(|| anyhow::anyhow!("rerank row offset overflow"))?;
+            let end = start
+                .checked_add(stride)
+                .ok_or_else(|| anyhow::anyhow!("rerank row end overflow"))?;
+            stored_payload
+                .get(start..end)
+                .ok_or_else(|| anyhow::anyhow!("rerank row exceeds stripe payload"))?
+        };
+        if row_bytes.len() != stride {
+            bail!("rerank row has wrong decoded stride");
+        }
+        let distance = score_rerank_row(
+            entry.quant_kind,
+            &entry.params,
+            row_bytes,
+            query,
+            metric,
+            &mut scratch,
+        );
+        scored.push((row, distance));
+    }
+    scored.sort_by(|a, b| a.1.total_cmp(&b.1));
+    Ok(scored)
+}
+
 impl<'a> PaxBlockReader<'a> {
     /// Parse the block header and footer from `data`.
     ///
@@ -444,48 +526,16 @@ impl<'a> PaxBlockReader<'a> {
         if entry.quant_kind != QUANT_SQ8 && entry.quant_kind != QUANT_FP16 {
             return None;
         }
-        let raw = self.read_stripe_raw(column_id)?;
-        let n = self.row_count() as usize;
-        let dim = entry.dim as usize;
-        let bm_len = n.div_ceil(8);
-        if raw.len() < bm_len {
-            return None;
-        }
-        let (bitmap, payload) =
-            decode_vector_payload(raw, n, self.vparams.transform(column_id)).ok()?;
-        let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
-        // FP16: 2 bytes/value; SQ8: 1 byte/value.
-        let stride = if entry.quant_kind == QUANT_FP16 {
-            dim * 2
-        } else {
-            dim
-        };
-
-        let mut scored: Vec<(usize, f32)> = Vec::with_capacity(rows.len());
-        let mut decoded: Vec<f32> = Vec::with_capacity(dim);
-        for &row in rows {
-            if row >= n || !is_present(row) {
-                continue;
-            }
-            let off = row * stride;
-            let end = off + stride;
-            if end > payload.len() {
-                continue;
-            }
-            // Per-row decode+score via the shared primitive (the ranged Stage-2
-            // reader scores its `vector_row_range`-fetched rows with the same fn).
-            let dist = score_rerank_row(
-                entry.quant_kind,
-                &entry.params,
-                &payload[off..end],
-                query,
-                metric,
-                &mut decoded,
-            );
-            scored.push((row, dist));
-        }
-        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        Some(scored)
+        score_rerank_rows_from_stripe(
+            entry,
+            self.vparams.transform(column_id),
+            self.read_stripe_raw(column_id)?,
+            self.row_count() as usize,
+            query,
+            rows,
+            metric,
+        )
+        .ok()
     }
 
     /// Stage-2.5 EXACT rerank: like [`rerank_rows`] but reads the OPTIONAL exact-f32
