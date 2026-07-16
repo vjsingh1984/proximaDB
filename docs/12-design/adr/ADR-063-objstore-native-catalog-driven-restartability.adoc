@@ -1,0 +1,155 @@
+= ADR-063: Object-store-native catalog & catalog-driven restartability (serverless posture)
+:status: Proposed (2026-07-15)
+:date: 2026-07-15
+:deciders: architecture
+:relates-to: ADR-020 (WAL authority), ADR-028 (anvaiops object-store deployment), ADR-031 (catalog object identity), ADR-036 (flat keys / access tier), ADR-045 (durable core vs rebuildable metadata), ADR-048 (SystemCatalog authority), TD-OBJSTORE-1..5, TD-CAT-4/5, CATALOG_OBJECT_STORE_DESIGN_REVIEW_2026_07_14
+:supersedes: none
+
+== Context
+
+ProximaDB targets a **fully serverless posture on object storage**: a node is a cache; the
+object store is the database. Catalogs in this class of system (Unity Catalog, Polaris,
+Gravitino) typically lean on a side RDBMS (MySQL/Postgres) for metadata authority — which
+reintroduces a stateful, always-on, separately-HA'd dependency and defeats the serverless
+economics. The 2026-07-14 catalog design review already verified our alternative is sound:
+`SystemCatalog` publishes generation-fenced, put-if-absent versioned snapshots to
+`_operator/catalog/_manifests/` (Nessie/Delta-kernel-grade commit protocol, no RDBMS).
+
+What the review did **not** cover is the data plane's restart contract. A measured
+process-boundary reproduction (2026-07-15, Azurite emulator; test
+`zero_vector_kv_record_survives_restart` in
+`apps/proximadb-server/tests/object_store_restart_recovery.rs`) proved TD-OBJSTORE-1
+batch 3 and localized it precisely — and it is **not** a zero-vector bug:
+
+* Seed two dim-1 records (`[0.5]` control + `[0.0]` KV) → both acked and readable.
+  SIGKILL. Restart on a fresh local disk. **Both** records 404.
+* The WAL data object **is durable** (`{root}/collections/1/wal/8dWbZDDUPo.bcwal`
+  present in the store) — the sync `PerBatch` data write worked.
+* Its **pointer is not**: `disk_manager.rs:273` registers the batch in the global WAL
+  manifest via `append_async` — a channel drained by a background worker batching at
+  100 ms (`manifest/service.rs:44`). SIGKILL after ack, before the batcher flushed →
+  durable data, lost pointer, no error logged anywhere.
+* The safety net is also broken: catalog-driven per-collection recovery DID run
+  ("Found 1 collections in catalog" → engine registered), but the best-effort LIST
+  fallback (`disk_manager.rs:362 list_collection_files`) gates on
+  `filesystem.exists(dir_url)` for a **directory prefix** — on a flat-key object store
+  `exists()` is a HEAD on the literal key (`azure_blob.rs:277`), which is false for
+  prefixes → early-return **0 files** while the `.bcwal` sits right there.
+* Result: "Recovered 0 vectors from 0 files". The anvaiops KV collections (API keys,
+  tenant registry) are small and never flush, so they live-or-die on exactly this path.
+
+A parallel recovery-surface inventory found the same *class* of gap elsewhere: the legacy
+document WAL, observability WAL, external-collections registry, and primary-pod registry
+persist to **local disk only**; the AXIS event log is in-memory. Each silently violates
+the serverless contract on a fresh-disk restart.
+
+First principles for object storage:
+
+* **LIST is the ground truth.** S3/Azure/GCS LIST has been strongly consistent since
+  2020-21. An object that exists IS discoverable; no secondary pointer is needed for
+  correctness. Pointers buy ordering and latency, not truth.
+* **Ack is a durability promise.** Anything acked to a client must survive
+  SIGKILL + disk loss using object-store state alone.
+* **Round-trips are the dominant cost term** (co-design mandate): the design must not
+  buy durability by doubling PUTs per write when a boot-time LIST per collection
+  (bounded, parallel, once) achieves the same guarantee.
+
+== Decision
+
+**D1 — The catalog is object-store-native. No side RDBMS, ever.** `SystemCatalog`'s
+generation-fenced put-if-absent snapshot chain under `_operator/catalog/_manifests/`
+(ADR-048; verified state-of-the-art in the 2026-07-14 review) is the sole metadata
+authority. Any future catalog feature (multi-writer DDL, followers, account catalogs)
+must extend this protocol, not introduce a database dependency. This is the load-bearing
+serverless decision.
+
+**D2 — The catalog is the recovery root.** Restart = open catalog (snapshot + WAL tail)
+→ enumerate namespaces/collections **across all modalities** (vector, graph, document,
+timeseries, relational) → for each collection, derive its physical roots from
+`storage_assignment.base_location` / `DrPathBuilder` → recover state found **under those
+prefixes**. The catalog row is the dependency-order authority: no orphan scanning of the
+whole bucket, no recovery of collections the catalog does not know. (TD-OBJSTORE-2
+already established snapshot-before-DDL-ack; this ADR extends the same discipline to the
+data plane.)
+
+**D3 — Ack-durability invariant (write ordering).** When a write is acked, its data
+AND its discoverability are durable on the object store. Discoverability means: the data
+object itself is LISTable under the catalog-derived prefix. Because LIST is strongly
+consistent, the synchronous data PUT alone satisfies the invariant — **no second
+synchronous pointer PUT is required**, and none may be relied upon.
+
+**D4 — LIST is the recovery authority; manifests are caches.** Per-collection WAL replay
+enumerates batches by **LIST under `{collection}/wal/`**. The global WAL manifest remains
+as an *optimization* (LSN ordering, flushed-status tracking, skip-list) but is never the
+gate: recovery must not early-return because the manifest is empty, and a batch present
+in the store but absent from the manifest is an **orphan to replay**, not garbage.
+Replay stays idempotent (canonical dead-record predicate + tombstone suppression,
+mandate 16), so replaying an already-flushed orphan is safe. The 100 ms async manifest
+batcher is therefore *correct by design* — because nothing depends on it for truth.
+
+**D5 — `exists()`-before-LIST on a prefix is a forbidden pattern.** On flat keyspaces,
+prefix existence is answered by LIST (empty result = absent), never by HEAD. The
+`list_collection_files` gate is a defect; a source-guard test (pattern:
+`objstore_url_construction_test.rs`) backstops the class.
+
+**D6 — Every durable surface roots under the catalog-derived object-store prefix, or
+declares itself rebuildable.** The local-disk-only surfaces found in the inventory are
+classified: (a) *must migrate* — external-collections registry, primary-pod registry,
+legacy document WAL (superseded by the canonical record store), observability WAL;
+(b) *rebuildable projections, may stay ephemeral* — AXIS indexes/event log, caches, VOE
+directory (rebuilt from segments). Class (a) items each get a TD; class (b) items must
+document their rebuild path. Nothing may sit in class "durable on local disk only".
+
+**D7 — Tenancy scopes recovery.** The two-tier Operator/Account catalog (Phase 5) and
+`_operator/leases/{tenant}/{collection}` generation fences are also the recovery
+boundaries: a pod recovers exactly the collections its catalog role can name, under
+account-scoped prefixes (structural isolation, never a filter predicate). Recovery
+inherits `TenantContext` plumbing at every I/O boundary (billing + isolation).
+
+**D8 — Restartability is CI-gated on real object-store APIs.** The 3-emulator matrix
+(Azurite/az, MinIO/s3, fake-gcs/gs) gates **round-trip, restart, and recall** on
+object-store-affecting changes (TD-OBJSTORE-5). The process-boundary restart test
+(`object_store_restart_recovery.rs`) is the restartability ratchet: seed → SIGKILL →
+fresh-disk boot → verify by id. It caught batch 3; it stays red until D3-D5 land.
+
+== Alternatives rejected
+
+* **A1 — Side RDBMS catalog (Unity/Polaris/Gravitino shape).** Reintroduces a stateful
+  service with its own HA/backup/patching; breaks scale-to-zero; adds a second
+  consistency domain to reconcile with the store. Our put-if-absent + generation-fence
+  protocol already provides single-writer DDL commit semantics at object-store cost.
+* **A2 — Synchronous manifest pointer PUT per WAL batch.** Fixes the observed loss but
+  doubles the write-path round-trips (the dominant cost term) and still leaves a
+  window unless made atomic with the data PUT (impossible across two objects). D4
+  (LIST authority) achieves durability with zero added write-path cost; the pointer
+  stays async as a cache.
+* **A3 — Mutable "latest" tip pointer for recovery.** Already rejected in the
+  2026-07-14 review (lost-update hazard); LIST-for-latest stays the documented choice.
+* **A4 — Bucket-wide orphan scan at boot.** Violates D2 (catalog is the root) and costs
+  unbounded LIST on shared buckets; per-collection prefixes keep boot I/O proportional
+  to catalog size.
+
+== Consequences
+
+* *(+)* Acked writes survive SIGKILL + disk loss with **no added write-path round-trips**;
+  the manifest keeps its latency benefits without carrying correctness weight.
+* *(+)* One recovery model for every modality: catalog → prefix → LIST → replay/reopen.
+  New engines inherit restartability by construction instead of custom recovery code.
+* *(+)* Full serverless posture: any pod can die at any moment; a replacement boots from
+  the store alone. No RDBMS to operate, back up, or pay for at idle.
+* *(−)* Boot does one LIST per collection WAL prefix (parallelizable; bounded by catalog
+  size). Mitigation: manifest-as-cache short-circuits ordering work when present.
+* *(−)* Class-(a) local-disk surfaces need migration TDs (tracked under D6); until they
+  land, their loss windows must stay documented in TD-OBJSTORE-1's "not-VM-loss-durable"
+  list with loud runtime warnings.
+
+== Verification
+
+* `zero_vector_kv_record_survives_restart` (Azurite; red today) flips green when D4+D5
+  land — this is the batch-3 gate. The dim-8 `catalog_wal_and_sst_survive_fresh_local_disks`
+  proof must stay green.
+* `tests/objstore_zero_vector_recovery_test.rs` pins the generic `file://` path
+  (flush→restart recovery of zero-vector records) so the fix cannot regress local mode.
+* TD-OBJSTORE-5 wires the emulator matrix (roundtrip + restart + recall per store) into
+  `run_cloud_emulator_tests.sh` / `ci.yml` / `qa-gate.yml`.
+* Source-guard test for the `exists()`-before-LIST pattern (D5).

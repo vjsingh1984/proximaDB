@@ -1,0 +1,81 @@
+= TD-OBJSTORE-5: 3-store emulator CI matrix — roundtrip, restart, and recall gates on Azurite/MinIO/fake-gcs
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open.** Emulator infra + roundtrip tier tests exist (`scripts/run_cloud_emulator_tests.sh`, TD-168); restart + recall coverage per store does not.
+| Severity | High — object-store durability regressions currently surface only on the live anvaiops testbed (days-long feedback loop); batch 3 proved a class of bug the file:// suites structurally cannot catch.
+| Component | `scripts/run_cloud_emulator_tests.sh`, `.github/workflows/ci.yml` (`object-store-emulator-tests`), `.github/workflows/qa-gate.yml`, `apps/proximadb-server/tests/object_store_restart_recovery.rs`
+| Relates | ADR-063 (D8), TD-OBJSTORE-1/2/4, TD-168 (Cool-tier emulator validation)
+| Pillar | REL/OPS
+|===
+
+toc::[]
+
+== Why
+
+Every batch of TD-OBJSTORE-1 was found on a **real object-store API**, never by the
+file:// test suites: path construction (batch 1), catalog durability (batch 2), WAL
+pointer/LIST recovery (batch 3). The emulators (Azurite, MinIO, fake-gcs — all Docker,
+all already scripted) run the same wire APIs locally and in CI. Coverage today stops at
+the Cool-tier PUT roundtrip; restartability and recall never touch an emulator.
+
+Target matrix (per store: Azure=Azurite `adls://`, S3=MinIO `s3://`, GCS=fake-gcs `gs://`):
+
+[cols="2,1,1,1", options="header"]
+|===
+| Gate | Azure | S3 | GCS
+| Roundtrip (PUT-with-tier + read-back) | ✅ exists | ✅ exists | ◻ best-effort (existing skip)
+| Restart (process-boundary durability) | NEW | NEW | NEW (best-effort)
+| Recall ratchet (cold read vs f32 baseline) | NEW | NEW | NEW (best-effort)
+|===
+
+GCS stays best-effort per the documented fake-gcs/object_store incompatibility; Azure
+and S3 are strict.
+
+== Slices
+
+*S1 — Restart matrix in the emulator script.* Extend
+`run_cloud_emulator_tests.sh` with a `--restart` phase: build `proximadb-server`
+`--features cloud-full` **once**, then run `object_store_restart_recovery`
+(`zero_vector_kv_record_survives_restart` + `catalog_wal_and_sst_survive_fresh_local_disks`)
+per store by exporting the store-specific env + `PROXIMADB_OBJECT_STORE_URL`
+(Azurite: `adls://proximadb-test` with `PROXIMADB_AZURE_EMULATOR=1
+AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
+AZURE_STORAGE_ACCOUNT{,_NAME}=devstoreaccount1`; MinIO: `s3://proximadb-test` with the
+existing `AWS_*` block). One compile amortized across all stores; `CARGO_BUILD_JOBS=1`
+on hosted runners (OOM ceiling, same rationale as the existing `--all` phase).
+
+*S2 — Recall ratchet on object store.* Parameterize ONE representative cold-read recall
+gate by storage URL — the `embedded_flush_recovery recall` cold-read ratchet (already in
+qa-gate for file://) or `helix_cold_search_recall_test` — so flush → reopen → recall@k
+runs against each emulator: proves quantized cascade reads (ranged GETs, footer parse)
+are byte-correct over the real wire APIs, not just POSIX. Recall threshold identical to
+the file:// baseline (storage backend must be recall-neutral; any delta is a read-path
+bug, not a tuning knob). Full recall-matrix (SIFT-scale) stays out of scope — CI cost.
+
+*S3 — CI wiring by tier.* `ci.yml object-store-emulator-tests` (feat→develop,
+path-gated on object-store changes): `--fast` roundtrip + S1 restart on Azure+S3.
+`qa-gate.yml` (develop→qa): full matrix incl. S2 recall + GCS best-effort. Keeps the
+LIGHT tier cheap and puts the expensive compile where the promotion gate already
+budgets 90 min.
+
+*S4 — Local parity.* `make cloud-emulator-test` runs the identical script — every CI
+failure is reproducible on a workstation with Docker (single source of truth, same as
+today).
+
+== Gates
+
+* S1 red-first: the restart phase must FAIL on current develop (batch 3) and flip green
+  with TD-OBJSTORE-4 — proving the CI gate actually guards the bug class.
+* S2: recall on each store within ratchet tolerance of the file:// baseline.
+* Script exits non-zero on any strict-store failure; GCS failures warn only.
+
+== Notes
+
+* Azurite requires the server binary built with `--features azure` (else boot fails
+  with `feature for MicrosoftAzure not enabled`) — S1 uses `cloud-full` to cover all
+  three in one build.
+* Docker-credential-helper quirk on WSL workstations: pull with a clean
+  `docker --config` dir if `docker-credential-desktop.exe` errors (documented in the
+  script header, not code).

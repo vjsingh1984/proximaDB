@@ -1,0 +1,84 @@
+= TD-OBJSTORE-4: LIST-authority WAL recovery (batch-3 fix: unflushed records lost on object-store restart)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open — fix spec for TD-OBJSTORE-1 batch 3.** Root cause measured 2026-07-15 (Azurite process-boundary repro); red test committed.
+| Severity | Critical — acked, WAL-durable records are silently unrecoverable after restart on every object-store backend; blocks ADR-028 anvaiops deployment (#960).
+| Component | `src/storage/persistence/write_ahead_log/{disk_manager.rs,recovery_manager.rs,manifest/}`, `src/storage/persistence/filesystem/azure_blob.rs` (+ s3/gcs siblings)
+| Relates | ADR-063 (D3-D5), TD-OBJSTORE-1 (batch 3), TD-OBJSTORE-2 (catalog-driven registration), TD-OBJSTORE-5 (CI gate)
+| Pillar | REL/DR
+|===
+
+toc::[]
+
+== Measured root cause (supersedes the "zero-vector" attribution)
+
+The batch-3 symptom was reported as "dim-1 zero-vector KV records not recovered". The
+reproduction (`zero_vector_kv_record_survives_restart`,
+`apps/proximadb-server/tests/object_store_restart_recovery.rs`, run against Azurite)
+shows it is **not** zero-vector- or dim-1-specific: a non-zero `[0.5]` control record is
+lost identically. The variable is **unflushed (WAL-only) data on an object-store
+backend**. anvaiops' KV collections are simply the only collections small enough to
+never flush — flushed collections survive via segment discovery, masking the bug.
+
+Two stacked defects:
+
+. **Pointer write is async while ack is sync.** `disk_manager.rs:273` registers each
+  WAL batch in the global manifest via `append_async` → channel → background worker
+  batching at 100 ms (`manifest/service.rs:44,133-177`). The `.bcwal` data PUT is
+  synchronous (`PerBatch`), the ack returns, SIGKILL lands, the pointer dies in the
+  channel. Evidence: post-crash blob listing shows the data object present and **zero**
+  manifest objects under `{base}/wal/`; no warn/error anywhere in the boot-1 log.
+. **The LIST fallback is dead code on object stores.** Catalog-driven recovery correctly
+  enumerated the collection and registered its engine (TD-OBJSTORE-2 works), then
+  `recover_collection_internal`'s best-effort `list_collection_files`
+  (`disk_manager.rs:362`) gates on `filesystem.exists(dir_url)` for a directory prefix.
+  Flat-key `exists()` is a HEAD on the literal key (`azure_blob.rs:277`) → false for
+  prefixes → early-return 0 files. (`parse_wal_filename` and `collection_wal_url` are
+  correct; the LIST would have found `8dWbZDDUPo.bcwal` had it run.)
+
+Net: "Recovered 0 vectors from 0 files" while the data sits durable in the store.
+
+== Fix specification (ADR-063 D4/D5)
+
+*S1 — Kill the prefix-`exists()` gate.* `list_collection_files` LISTs directly; an empty
+result is the "absent" signal. Add a source-guard test for the
+`exists(...)-before-list(...)` pattern on WAL paths (model:
+`objstore_url_construction_test.rs::no_strip_and_reprepend_pattern_in_src`).
+
+*S2 — LIST is the recovery authority.* Per-collection recovery merges: (a) manifest
+entries for the collection (LSN-ordered, carries flushed-status), (b) **LIST of
+`{collection}/wal/`**. Batches found by LIST but absent from the manifest are orphans to
+replay, not garbage. `recover_all` must not early-return solely because
+`get_active_entries()` is empty when the catalog has collections to recover.
+
+*S3 — Replay ordering & idempotency.* Order by manifest LSN when present; orphans order
+by batch-id/object timestamp after all manifested batches. Replay is already idempotent
+(canonical `is_dead` predicate + same-delta tombstone suppression, mandate 16a/16d) —
+re-replaying an already-flushed orphan is safe; assert this with a test that flushes,
+leaves the WAL object in place, restarts, and verifies no duplicates.
+
+*S4 — Manifest stays async, demoted to cache.* No new synchronous PUT on the write path
+(ADR-063 A2 rejected). On successful recovery of an orphan, register it in the fresh
+manifest (or mark flushed) so subsequent boots don't re-list it as an orphan.
+
+*S5 — Mixed-read-safe.* No on-disk format change; read-side only. Legacy layouts
+(`{collection}/write_buffer/` fallback) keep working.
+
+== Gates (TDD)
+
+* RED→GREEN: `zero_vector_kv_record_survives_restart` (Azurite, and MinIO once
+  TD-OBJSTORE-5 wires it) — both `rec-ctrl` and `rec-zero` readable by id after
+  SIGKILL + fresh-disk restart.
+* STAYS GREEN: `catalog_wal_and_sst_survive_fresh_local_disks` (dim-8, 3-boot proof);
+  `tests/objstore_zero_vector_recovery_test.rs` (file:// flush-path guard);
+  `tests/recovery/*` corruption/stress suites.
+* NEW: idempotent-orphan-replay test (S3); source-guard for prefix-`exists()` (S1).
+
+== Deferred / adjacent (do not fold into this fix)
+
+Local-disk-only durable surfaces classified by ADR-063 D6 (external-collections
+registry, primary-pod registry, legacy document WAL, observability WAL) — file separate
+TDs per surface as they are prioritized. Env-var bootstrap consolidation stays
+TD-OBJSTORE-3.
