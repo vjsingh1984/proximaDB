@@ -22,6 +22,33 @@ The ADR carries the *why* (the measured GET ceiling, first principles, alternati
 this TD carries the *what/how* (byte layout, writer/reader changes, read path, sizing,
 compaction, stats, phasing, verification). Read the ADR first.
 
+== Downstream pricing dependency (2026-07-16 — this TD is revenue-gating)
+
+The commercial layer (AnvaiOps ADR-0041 D2/D2a) re-priced retrieval to a
+two-part rate whose flat per-query component must cover the object-store
+read-transaction floor — and on Azure, read txns are ~10–16× S3 GET pricing,
+so **GETs/query is the billing-cost KPI, not just a perf number**. Against
+the measured points (`19` GETs/q cold at N=100k, `61` at N=1M), the flat rate
+is 3–10× underwater on cold traffic and 5×/16× the per-query price of Amazon
+S3 Vectors; **coverage break-even is a blended ~6 GETs/query** (≈80%
+cache-hit at ≤5 hot / ≤10 cold). Three levers in this TD close it, in order:
+
+1. PR2 per-file RaBitQ/footer **LRU cache** (hot queries skip region+footer
+   reads entirely);
+2. **GET-budget compaction** (the N=1M 19→61 rise is file/block
+   fragmentation — GETs scale with fragmentation, not bytes, at the measured
+   ~1.7–2.3 MB/GET);
+3. **tighter survivor coalescing** (19 cold GETs at 100k says survivors span
+   too many blocks; target single digits).
+
+Byte-compression of encodings does NOT help this dependency (same-AZ
+transfer is free; the TD-RDSTRAT-7 bake-off correctly produced no winner).
+The N=1M recall regression (`0.968` < the `0.98` gate; fixed survivor-M) is
+part of the same dependency — the downstream positioning claim is "the low
+price is not bought with recall". GET count itself stays an internal COGS
+KPI: the downstream meter deliberately bills queries + physical bytes, never
+GETs (fragmentation is engine state customers must not pay for).
+
 == The layout (byte-level)
 
 Same segment magic/version as today; in-place writer + readability-preserving reader (see
