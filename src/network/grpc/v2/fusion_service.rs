@@ -65,9 +65,9 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
         &self,
         request: Request<pv2::FusionSearchRequest>,
     ) -> Result<Response<pv2::FusionSearchResponse>, Status> {
-        // Tenant isolation is structural: the backing vector/graph collections are
-        // tenant-namespaced via `x-tenant-id`. We read it here only for logging.
-        let tenant_id = grpc_auth::tenant_id(&request);
+        // Tenant isolation is structural: resolve the deployment-aware identity
+        // before either backing collection can be reached.
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let principal = grpc_auth::user_id(&request);
         let req = request.into_inner();
 
@@ -108,7 +108,7 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
             route_policy: None,
             graph_id: req.graph_id.clone(),
             // Structural tenant boundary — scopes both fusion legs (TD-ENTITY-TENANT-1).
-            tenant: tenant_id.clone(),
+            tenant: Some(tenant_id.clone()),
             vector_collection: req.vector_collection.clone(),
             query_vector: req.query_vector.clone(),
             max_depth: if req.max_depth == 0 {

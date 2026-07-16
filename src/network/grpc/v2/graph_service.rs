@@ -352,7 +352,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::CreateGraphNodeRequest>,
     ) -> Result<Response<pv2::GraphNodeResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC CreateNode graph={graph_id}");
@@ -379,7 +379,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GetGraphNodeRequest>,
     ) -> Result<Response<pv2::GraphNodeResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC GetNode graph={graph_id} node={}", req.node_id);
@@ -400,7 +400,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::UpdateGraphNodeRequest>,
     ) -> Result<Response<pv2::GraphNodeResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC UpdateNode graph={graph_id}");
@@ -424,7 +424,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::DeleteGraphNodeRequest>,
     ) -> Result<Response<pv2::DeleteGraphNodeResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC DeleteNode graph={graph_id} node={}", req.node_id);
@@ -446,7 +446,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::CreateGraphEdgeRequest>,
     ) -> Result<Response<pv2::GraphEdgeResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC CreateEdge graph={graph_id}");
@@ -470,7 +470,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GetGraphEdgeRequest>,
     ) -> Result<Response<pv2::GraphEdgeResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC GetEdge graph={graph_id} edge={}", req.edge_id);
@@ -491,7 +491,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::UpdateGraphEdgeRequest>,
     ) -> Result<Response<pv2::GraphEdgeResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC UpdateEdge graph={graph_id}");
@@ -515,7 +515,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::DeleteGraphEdgeRequest>,
     ) -> Result<Response<pv2::DeleteGraphEdgeResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC DeleteEdge graph={graph_id} edge={}", req.edge_id);
@@ -537,7 +537,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::QueryGraphNodesRequest>,
     ) -> Result<Response<pv2::QueryGraphNodesResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
@@ -578,7 +578,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::QueryGraphEdgesRequest>,
     ) -> Result<Response<pv2::QueryGraphEdgesResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC QueryEdges graph={graph_id}");
@@ -618,7 +618,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GetGraphNeighborsRequest>,
     ) -> Result<Response<pv2::GetGraphNeighborsResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC GetNeighbors graph={graph_id} node={}", req.node_id);
@@ -642,7 +642,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::TraverseGraphRequest>,
     ) -> Result<Response<pv2::TraverseGraphResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         let start = Instant::now();
@@ -679,7 +679,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GraphShortestPathRequest>,
     ) -> Result<Response<pv2::GraphShortestPathResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
@@ -734,7 +734,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GetGraphStatsRequest>,
     ) -> Result<Response<pv2::GraphStats>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         debug!("v2 gRPC GetGraphStats graph={graph_id}");
         match self.graph.for_tenant(&tenant).get_stats(&graph_id).await {
@@ -755,7 +755,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::TraverseGraphRequest>,
     ) -> Result<Response<Self::StreamTraverseStream>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         let start = Instant::now();
@@ -799,7 +799,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GraphConnectedComponentsRequest>,
     ) -> Result<Response<pv2::GraphConnectedComponentsResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         debug!("v2 gRPC GetConnectedComponents graph={graph_id}");
         match self
@@ -822,7 +822,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GraphHasCycleRequest>,
     ) -> Result<Response<pv2::GraphHasCycleResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         debug!("v2 gRPC HasCycle graph={graph_id}");
         match self.graph.for_tenant(&tenant).has_cycle(&graph_id).await {
@@ -837,7 +837,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GraphUniqueConstraintRequest>,
     ) -> Result<Response<pv2::GraphUniqueConstraintResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
@@ -867,7 +867,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GraphUniqueConstraintRequest>,
     ) -> Result<Response<pv2::GraphUniqueConstraintResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
@@ -897,7 +897,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::BatchCreateGraphNodesRequest>,
     ) -> Result<Response<pv2::BatchCreateGraphNodesResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
@@ -931,7 +931,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::BatchCreateGraphEdgesRequest>,
     ) -> Result<Response<pv2::BatchCreateGraphEdgesResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
@@ -973,7 +973,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::ExecuteGraphQueryRequest>,
     ) -> Result<Response<pv2::ExecuteGraphQueryResponse>, Status> {
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(

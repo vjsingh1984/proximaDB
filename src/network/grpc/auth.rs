@@ -24,6 +24,55 @@ use proximadb_tenant::identity_trust::{
 use crate::network::auth::middleware::DataPlaneCapability;
 use crate::security::{AuthenticationData, SecurityCoordinator, UnifiedUserContext};
 
+/// Adds the deployment-wide tenant resolution mode to every gRPC request.
+/// Authentication is an independent optional layer, so this layer is always
+/// installed even in development deployments with security disabled.
+#[derive(Clone)]
+pub struct GrpcTenantModeLayer {
+    mode: proximadb_tenant::TenantDeploymentMode,
+}
+
+impl GrpcTenantModeLayer {
+    pub fn new(mode: proximadb_tenant::TenantDeploymentMode) -> Self {
+        Self { mode }
+    }
+}
+
+#[derive(Clone)]
+pub struct GrpcTenantModeService<S> {
+    inner: S,
+    mode: proximadb_tenant::TenantDeploymentMode,
+}
+
+impl<S> Layer<S> for GrpcTenantModeLayer {
+    type Service = GrpcTenantModeService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        GrpcTenantModeService {
+            inner,
+            mode: self.mode.clone(),
+        }
+    }
+}
+
+impl<S, B> Service<HttpRequest<B>> for GrpcTenantModeService<S>
+where
+    S: Service<HttpRequest<B>>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut request: HttpRequest<B>) -> Self::Future {
+        request.extensions_mut().insert(self.mode.clone());
+        self.inner.call(request)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GrpcAuthContext {
     pub user_context: UnifiedUserContext,
@@ -217,12 +266,26 @@ pub fn tenant_id<T>(request: &Request<T>) -> Option<String> {
     tenant_id_from_metadata(request.metadata())
 }
 
-/// The RESOLVED request tenant for gRPC + Arrow Flight — the authenticated /
-/// `x-tenant-id`-metadata tenant, else the ONE canonical [`DEFAULT_TENANT`]
-/// (`proximadb_tenant::resolve_request_tenant`). Data-plane handlers call this so
-/// a bare request lands in the SAME bucket as REST/pgwire instead of `""`.
-pub fn resolved_tenant_id<T>(request: &Request<T>) -> String {
-    proximadb_tenant::resolve_request_tenant(tenant_id(request).as_deref())
+/// Resolve and validate the request tenant under the deployment mode installed
+/// by [`GrpcTenantModeLayer`]. Missing identity fails closed in multi-tenant
+/// mode; an absent layer preserves embedded single-tenant compatibility.
+pub fn resolved_tenant_id<T>(request: &Request<T>) -> Result<String, Status> {
+    let fallback_mode = proximadb_tenant::TenantDeploymentMode::single_tenant_default();
+    let mode = request
+        .extensions()
+        .get::<proximadb_tenant::TenantDeploymentMode>()
+        .unwrap_or(&fallback_mode);
+
+    proximadb_tenant::resolve_request_tenant_for_mode(tenant_id(request).as_deref(), mode).map_err(
+        |error| match error {
+            proximadb_tenant::ResolveRequestTenantError::MissingTenant => {
+                Status::unauthenticated(error.to_string())
+            }
+            proximadb_tenant::ResolveRequestTenantError::InvalidTenant(_) => {
+                Status::invalid_argument(error.to_string())
+            }
+        },
+    )
 }
 
 /// Acting principal (user id) for within-tenant row-level RBAC
@@ -468,13 +531,43 @@ mod tests {
     use crate::security::{AuditConfig, SecurityConfig, SecurityMode};
 
     #[test]
-    fn resolved_tenant_id_defaults_when_no_tenant_present() {
+    fn resolved_tenant_id_defaults_in_single_tenant_mode() {
         // A bare gRPC/Flight request (no auth context, no `x-tenant-id` metadata)
         // resolves to the ONE canonical default — the same bucket REST and pgwire
         // use — instead of the old `""` that split it from REST's `"default"`.
-        let req = Request::new(());
+        let mut req = Request::new(());
+        req.extensions_mut()
+            .insert(proximadb_tenant::TenantDeploymentMode::single_tenant_default());
         assert_eq!(tenant_id(&req), None);
-        assert_eq!(resolved_tenant_id(&req), proximadb_tenant::DEFAULT_TENANT);
+        assert_eq!(
+            resolved_tenant_id(&req).unwrap(),
+            proximadb_tenant::DEFAULT_TENANT
+        );
+    }
+
+    #[test]
+    fn resolved_tenant_id_rejects_missing_tenant_in_multi_tenant_mode() {
+        let mut req = Request::new(());
+        req.extensions_mut()
+            .insert(proximadb_tenant::TenantDeploymentMode::MultiTenant);
+
+        let status = resolved_tenant_id(&req).unwrap_err();
+        assert_eq!(status.code(), Code::Unauthenticated);
+        assert_eq!(
+            status.message(),
+            "tenant id is required in multi-tenant mode"
+        );
+    }
+
+    #[test]
+    fn resolved_tenant_id_accepts_explicit_tenant_in_multi_tenant_mode() {
+        let mut req = Request::new(());
+        req.metadata_mut()
+            .insert("x-tenant-id", "tenant-a".parse().unwrap());
+        req.extensions_mut()
+            .insert(proximadb_tenant::TenantDeploymentMode::MultiTenant);
+
+        assert_eq!(resolved_tenant_id(&req).unwrap(), "tenant-a");
     }
 
     fn security_config() -> SecurityConfig {

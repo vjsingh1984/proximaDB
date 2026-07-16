@@ -58,6 +58,28 @@ fn transaction_control_is_detected_before_a_multi_statement_batch_runs() {
 }
 
 #[test]
+fn pgwire_startup_tenant_is_required_in_multi_tenant_mode() {
+    let error = PostgresProtocol::resolve_startup_tenant(
+        None,
+        &proximadb_tenant::TenantDeploymentMode::MultiTenant,
+    )
+    .unwrap_err();
+
+    assert_eq!(error, "tenant id is required in multi-tenant mode");
+}
+
+#[test]
+fn pgwire_startup_tenant_defaults_only_in_single_tenant_mode() {
+    let tenant = PostgresProtocol::resolve_startup_tenant(
+        None,
+        &proximadb_tenant::TenantDeploymentMode::single_tenant("embedded"),
+    )
+    .unwrap();
+
+    assert_eq!(tenant, "embedded");
+}
+
+#[test]
 fn substitute_placeholders_handles_two_digit_indices() {
     // The old ordered str::replace turned "$10" into "<val1>0"; verify each
     // placeholder is matched by its full digit run.

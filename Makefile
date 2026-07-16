@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check status-asof-check release-smoke cloud-emulator-test
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check tenant-ingress-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check status-asof-check release-smoke cloud-emulator-test
 
 # Default target
 all: build test
@@ -185,7 +185,11 @@ tenant-path-check:
 	@echo "🏢 Validating tenant path isolation guard..."
 	python3 scripts/check_tenant_path_guard.py
 
-work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check status-asof-check capability-matrix-check workspace-boundaries-check tenant-path-check panic-policy-module-guard hygiene-check
+tenant-ingress-check:
+	@echo "Validating deployment-aware tenant ingress..."
+	python3 scripts/check_tenant_ingress_contract.py
+
+work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check status-asof-check capability-matrix-check workspace-boundaries-check tenant-path-check tenant-ingress-check panic-policy-module-guard hygiene-check
 	@echo "✅ work-commit-check: deterministic architecture and commit guardrails passed"
 
 validated-commit-check: work-commit-check
@@ -405,6 +409,7 @@ help:
 	@echo "  capability-matrix-check - Validate docs/_internal/roadmap/CAPABILITY_MATRIX.toml"
 	@echo "  deterministic-commit-contract-check - Validate zero-retry/test/docs guard wiring"
 	@echo "  tenant-path-check  - Enforce DrPathBuilder tenant path guard"
+	@echo "  tenant-ingress-check - Enforce deployment-aware tenant resolution at ingress"
 	@echo "  work-commit-check  - Fast deterministic architecture guard before commit/push"
 	@echo "  proto-check        - Validate generated proto crate and Python/OpenAPI contract drift"
 	@echo "  verify-openapi-spec - Regenerate OpenAPI spec from handlers; fail on drift (TD-126)"

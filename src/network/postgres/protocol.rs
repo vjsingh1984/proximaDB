@@ -110,6 +110,8 @@ pub struct PostgresProtocol {
     /// policies reject it at the assertion point (SQLSTATE 28000) through the
     /// same shared primitive REST/gRPC/Arrow Flight use. Default `Open`.
     tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// Request-tenant presence/defaulting contract for this deployment.
+    tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -450,6 +452,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
 
@@ -506,6 +509,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
 
@@ -554,6 +558,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
 
@@ -580,6 +585,22 @@ impl PostgresProtocol {
     pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
         self.tenant_header_trust = policy;
         self
+    }
+
+    pub fn with_tenant_deployment_mode(
+        mut self,
+        mode: proximadb_tenant::TenantDeploymentMode,
+    ) -> Self {
+        self.tenant_deployment_mode = mode;
+        self
+    }
+
+    fn resolve_startup_tenant(
+        database: Option<&str>,
+        mode: &proximadb_tenant::TenantDeploymentMode,
+    ) -> std::result::Result<String, String> {
+        proximadb_tenant::resolve_request_tenant_for_mode(database, mode)
+            .map_err(|error| error.to_string())
     }
 
     /// TD-TENANT-1: gate a pgwire tenant assertion (startup `database` or the
@@ -826,6 +847,17 @@ impl PostgresProtocol {
         let params = self.read_bytes(param_len).await?;
         let params = self.parse_startup_params(&params)?;
 
+        let startup_tenant = match Self::resolve_startup_tenant(
+            params.get("database").map(String::as_str),
+            &self.tenant_deployment_mode,
+        ) {
+            Ok(tenant) => tenant,
+            Err(message) => {
+                self.send_error("FATAL", "28000", &message).await?;
+                return Err(anyhow!("pgwire tenant resolution rejected: {message}"));
+            }
+        };
+
         // TD-TENANT-1: the startup `database` doubles as the tenant/catalog
         // (TD-064) and pgwire runs trust auth — the assertion is bare by
         // definition. Under a strict policy, reject the connection at the
@@ -843,9 +875,7 @@ impl PostgresProtocol {
             if let Some(user) = params.get("user") {
                 session.user = user.clone();
             }
-            if let Some(database) = params.get("database") {
-                session.database = database.clone();
-            }
+            session.database = startup_tenant;
             // Open-core cache tier hook: a `proximadb_tier` startup parameter
             // (control-plane supplied) records the connection tenant's tier for
             // the cache policy. database == tenant/catalog (TD-064). Opaque id.

@@ -866,14 +866,6 @@ impl ProximaRecordServiceImpl {
         ProximaRecordServiceServer::new(self)
     }
 
-    fn extract_tenant_id<T>(request: &Request<T>) -> Option<String> {
-        request
-            .metadata()
-            .get("x-tenant-id")
-            .and_then(|value| value.to_str().ok())
-            .map(|value| value.to_string())
-    }
-
     /// Spawn a background PAX write for the given records and register the resulting
     /// `SegmentMeta` with the shared `SegmentRegistry`.
     ///
@@ -1144,8 +1136,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id =
-            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         grpc_auth::enforce_data_plane_request(
             &request,
             "ingest",
@@ -1177,11 +1168,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // ApiError → tonic::Status conversion at `src/errors/mod.rs:135`
         // adds `x-primary-pod` / `x-tenant-id` / `x-collection-id`
         // trailing metadata so SDKs can parse the redirect target.
-        check_primary_pod_gate(
-            &self.primary_pod_gate,
-            tenant_id.as_deref().unwrap_or(""),
-            &batch.collection_id,
-        )?;
+        check_primary_pod_gate(&self.primary_pod_gate, &tenant_id, &batch.collection_id)?;
 
         let record_ids: Vec<String> = batch
             .records
@@ -1211,7 +1198,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
 
         match self
             .record_ops
-            .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
+            .handle_record_batch_for_tenant(rich_batch, Some(tenant_id.as_str()))
             .await
         {
             Ok(result) => {
@@ -1238,8 +1225,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id =
-            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         grpc_auth::enforce_data_plane_request(
             &request,
             "ingest",
@@ -1258,11 +1244,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // mutation must gate — not just insert — or a displaced pod silently
         // accepts upserts that the new primary's reader never sees. Runs after
         // auth/validation, before the lane router / storage path.
-        check_primary_pod_gate(
-            &self.primary_pod_gate,
-            tenant_id.as_deref().unwrap_or(""),
-            &batch.collection_id,
-        )?;
+        check_primary_pod_gate(&self.primary_pod_gate, &tenant_id, &batch.collection_id)?;
 
         let record_ids: Vec<String> = batch
             .records
@@ -1292,7 +1274,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
 
         match self
             .record_ops
-            .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
+            .handle_record_batch_for_tenant(rich_batch, Some(tenant_id.as_str()))
             .await
         {
             Ok(result) => {
@@ -1319,8 +1301,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id =
-            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         grpc_auth::enforce_data_plane_request(
             &request,
             "ingest",
@@ -1336,11 +1317,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         );
 
         // Primary-pod write-router gate (symmetric with `insert_records`).
-        check_primary_pod_gate(
-            &self.primary_pod_gate,
-            tenant_id.as_deref().unwrap_or(""),
-            &batch.collection_id,
-        )?;
+        check_primary_pod_gate(&self.primary_pod_gate, &tenant_id, &batch.collection_id)?;
 
         let record_ids: Vec<String> = batch
             .records
@@ -1365,7 +1342,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
 
         match self
             .record_ops
-            .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
+            .handle_record_batch_for_tenant(rich_batch, Some(tenant_id.as_str()))
             .await
         {
             Ok(result) => Ok(Response::new(Self::batch_result_to_response(
@@ -1385,8 +1362,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id =
-            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         grpc_auth::enforce_data_plane_request(
             &request,
             "ingest",
@@ -1402,11 +1378,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         );
 
         // Primary-pod write-router gate (symmetric with `insert_records`).
-        check_primary_pod_gate(
-            &self.primary_pod_gate,
-            tenant_id.as_deref().unwrap_or(""),
-            &batch.collection_id,
-        )?;
+        check_primary_pod_gate(&self.primary_pod_gate, &tenant_id, &batch.collection_id)?;
 
         let record_ids: Vec<String> = batch
             .records
@@ -1443,7 +1415,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                     collection_id: batch.collection_id.clone(),
                     record_ids: record_ids.clone(),
                 },
-                tenant_id.as_deref(),
+                Some(tenant_id.as_str()),
             )
             .await
         {
@@ -1475,8 +1447,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<TypedSearchRequest>,
     ) -> Result<Response<TypedSearchResponse>, Status> {
-        let tenant_id =
-            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         grpc_auth::enforce_data_plane_request(
             &request,
             "search",
@@ -1505,7 +1476,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             crate::observability::predicate_diagnostics::scope(async {
                 let outcome = self
                     .record_ops
-                    .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
+                    .handle_record_search_for_tenant(search_request, Some(tenant_id.as_str()))
                     .await;
                 let tq = crate::observability::predicate_diagnostics::take_turboquant_hints();
                 (outcome, tq)
@@ -1562,8 +1533,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<TypedSearchRequest>,
     ) -> Result<Response<Self::SearchStreamStream>, Status> {
-        let tenant_id =
-            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         grpc_auth::enforce_data_plane_request(
             &request,
             "search",
@@ -1589,7 +1559,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Execute search
         let response = self
             .record_ops
-            .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
+            .handle_record_search_for_tenant(search_request, Some(tenant_id.as_str()))
             .await
             .map_err(|e| Status::internal(format!("Search stream failed: {}", e)))?;
 
@@ -1644,8 +1614,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<Streaming<BatchWriteStreamRequest>>,
     ) -> Result<Response<Self::BatchWriteStreamStream>, Status> {
-        let tenant_id =
-            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let data_plane_capability = grpc_auth::data_plane_capability(&request);
         let mut inbound = request.into_inner();
 
@@ -1798,7 +1767,10 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                         | Ok(BatchWriteMode::Upsert)
                         | Ok(BatchWriteMode::Update) => {
                             record_ops
-                                .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
+                                .handle_record_batch_for_tenant(
+                                    rich_batch,
+                                    Some(tenant_id.as_str()),
+                                )
                                 .await
                         }
                         Ok(BatchWriteMode::Delete) => {
@@ -1808,7 +1780,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                                         collection_id: batch.collection_id.clone(),
                                         record_ids: vec![record.id.clone()],
                                     },
-                                    tenant_id.as_deref(),
+                                    Some(tenant_id.as_str()),
                                 )
                                 .await
                         }
@@ -1943,7 +1915,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<CreateSchemaRequest>,
     ) -> Result<Response<CreateSchemaResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
         info!("V2 gRPC: CreateSchema - collection='{}'", req.collection_id);
 
@@ -1954,7 +1926,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let schema_id = update.schema_id.clone();
 
         self.api_handlers
-            .update_collection_schema_metadata(&req.collection_id, update, tenant_id.as_deref())
+            .update_collection_schema_metadata(&req.collection_id, update, Some(tenant_id.as_str()))
             .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {
@@ -1976,13 +1948,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<GetSchemaRequest>,
     ) -> Result<Response<GetSchemaResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
         debug!("V2 gRPC: GetSchema - collection='{}'", req.collection_id);
 
         let metadata = self
             .api_handlers
-            .get_collection_schema_metadata(&req.collection_id, tenant_id.as_deref())
+            .get_collection_schema_metadata(&req.collection_id, Some(tenant_id.as_str()))
             .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {
@@ -2016,13 +1988,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ListSchemasRequest>,
     ) -> Result<Response<ListSchemasResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
         debug!("V2 gRPC: ListSchemas - collection='{}'", req.collection_id);
 
         let metadata = self
             .api_handlers
-            .get_collection_schema_metadata(&req.collection_id, tenant_id.as_deref())
+            .get_collection_schema_metadata(&req.collection_id, Some(tenant_id.as_str()))
             .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {
@@ -2048,7 +2020,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<EvolveSchemaRequest>,
     ) -> Result<Response<EvolveSchemaResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
         info!(
             "V2 gRPC: EvolveSchema - collection='{}', base_schema='{}'",
@@ -2089,7 +2061,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Persist the evolved canonical schema to the catalog sidecar (authority flows
         // through the runtime `UnifiedHandlers` impl of `ApiHandlersPort`).
         self.api_handlers
-            .update_collection_schema_metadata(&req.collection_id, update, tenant_id.as_deref())
+            .update_collection_schema_metadata(&req.collection_id, update, Some(tenant_id.as_str()))
             .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {
@@ -2116,7 +2088,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<V2CollectionConfig>,
     ) -> Result<Response<V2Collection>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let cfg = request.into_inner();
         info!("V2 gRPC: CreateCollection - name='{}'", cfg.name);
 
@@ -2189,7 +2161,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         let resp = self
             .api_handlers
-            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .handle_collection_operation_for_tenant(req, Some(tenant_id.as_str()))
             .await
             .map_err(|e| Status::internal(format!("CreateCollection failed: {e}")))?;
         let coll = resp
@@ -2215,7 +2187,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         if let Err(e) = self
             .api_handlers
-            .update_collection_schema_metadata(&cfg.name, canonical_update, tenant_id.as_deref())
+            .update_collection_schema_metadata(
+                &cfg.name,
+                canonical_update,
+                Some(tenant_id.as_str()),
+            )
             .await
         {
             warn!(
@@ -2232,7 +2208,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<V2GetCollectionRequest>,
     ) -> Result<Response<V2Collection>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let req_in = request.into_inner();
         let req = CollectionRequest {
             operation: CollectionOperation::CollectionGet as i32,
@@ -2244,7 +2220,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         let resp = self
             .api_handlers
-            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .handle_collection_operation_for_tenant(req, Some(tenant_id.as_str()))
             .await
             .map_err(|e| Status::internal(format!("GetCollection failed: {e}")))?;
         let coll = resp.collection.ok_or_else(|| {
@@ -2257,7 +2233,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<V2ListCollectionsRequest>,
     ) -> Result<Response<V2ListCollectionsResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let _ = request.into_inner();
         let req = CollectionRequest {
             operation: CollectionOperation::CollectionList as i32,
@@ -2269,7 +2245,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         let resp = self
             .api_handlers
-            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .handle_collection_operation_for_tenant(req, Some(tenant_id.as_str()))
             .await
             .map_err(|e| Status::internal(format!("ListCollections failed: {e}")))?;
         let collections = resp.collections.into_iter().map(collection_to_v2).collect();
@@ -2280,7 +2256,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<V2DeleteCollectionRequest>,
     ) -> Result<Response<V2DeleteCollectionResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let req_in = request.into_inner();
         info!("V2 gRPC: DeleteCollection - id='{}'", req_in.collection_id);
         let req = CollectionRequest {
@@ -2292,7 +2268,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             migration_config: Default::default(),
         };
         self.api_handlers
-            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .handle_collection_operation_for_tenant(req, Some(tenant_id.as_str()))
             .await
             .map_err(|e| Status::internal(format!("DeleteCollection failed: {e}")))?;
         Ok(Response::new(V2DeleteCollectionResponse { success: true }))
@@ -2304,7 +2280,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<V2QueryRequest>,
     ) -> Result<Response<V2QueryResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let q = request.into_inner();
         let collection = if q.collection_id.is_empty() {
             None
@@ -2313,7 +2289,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         let resp = self
             .api_handlers
-            .execute_sql_v1(q.query, None, collection, tenant_id.as_deref())
+            .execute_sql_v1(q.query, None, collection, Some(tenant_id.as_str()))
             .await
             .map_err(|e| {
                 // A DML lock conflict → ABORTED (retryable); other errors → INTERNAL.
@@ -2353,7 +2329,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<proximadb_v2::GetRecordRequest>,
     ) -> Result<Response<proximadb_v2::GetRecordResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
         let result = self
             .record_ops
@@ -2364,7 +2340,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                     include_vector: req.include_vector,
                     include_props: true,
                 },
-                tenant_id.as_deref(),
+                Some(tenant_id.as_str()),
             )
             .await
             .map_err(|e| Status::internal(format!("GetRecord failed: {e}")))?;

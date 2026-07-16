@@ -147,6 +147,18 @@ def check_gate_wiring(findings: list[Finding]) -> None:
         ".github/workflows/layering-check.yml",
         "python3 scripts/check_tenant_path_guard.py",
     )
+    require_contains(
+        findings,
+        "gate-wiring",
+        "Makefile",
+        "tenant-ingress-check",
+    )
+    require_contains(
+        findings,
+        "gate-wiring",
+        ".github/workflows/layering-check.yml",
+        "python3 scripts/check_tenant_ingress_contract.py",
+    )
 
 
 def check_architecture_contract(findings: list[Finding]) -> None:

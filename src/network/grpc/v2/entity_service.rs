@@ -166,7 +166,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
     ) -> Result<Response<pv2::UpsertEntityResponse>, Status> {
         // Tenant-CLEAN collection name; each leg is scoped structurally by the resolved tenant.
         let collection = request.get_ref().collection_id.clone();
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
         let entity = req
             .entity
@@ -392,7 +392,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         request: Request<pv2::GetEntityRequest>,
     ) -> Result<Response<pv2::GetEntityResponse>, Status> {
         let collection = request.get_ref().collection_id.clone();
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
 
         debug!(
@@ -419,7 +419,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         request: Request<pv2::DeleteEntityRequest>,
     ) -> Result<Response<pv2::DeleteEntityResponse>, Status> {
         let collection = request.get_ref().collection_id.clone();
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
 
         debug!(
@@ -454,7 +454,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         request: Request<pv2::SearchEntitiesRequest>,
     ) -> Result<Response<pv2::SearchEntitiesResponse>, Status> {
         let collection = request.get_ref().collection_id.clone();
-        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let principal = grpc_auth::user_id(&request);
         let req = request.into_inner();
 
