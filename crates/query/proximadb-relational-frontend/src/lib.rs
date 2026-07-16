@@ -1361,10 +1361,12 @@ fn lower_correlated_scalar_aggregate(
     if matches!(agg, AggregateExpr::Count { .. }) {
         return Err(unsupported());
     }
-    // Split WHERE: inner-local predicates → Filter; exactly one correlation equi
-    // `inner_col = outer_col` → the GROUP BY key / join key.
+    // Split WHERE: inner-local predicates → Filter; correlation equis
+    // `inner_col = outer_col` → the GROUP BY keys / join keys. N keys are supported
+    // (TPC-H Q20's inner scalar correlates on TWO keys: `l_partkey = ps_partkey AND
+    // l_suppkey = ps_suppkey`).
     let mut inner_local: Option<Expr> = None;
-    let mut group_key: Option<(ColumnRef, ColumnRef)> = None; // (inner_key, outer_key)
+    let mut group_keys: Vec<(ColumnRef, ColumnRef)> = Vec::new(); // (inner_key, outer_key)
     for conj in flatten_sql_and(where_expr) {
         if let Ok(local) = lower_expr_sealed(conj, &inner_scope) {
             inner_local = Some(match inner_local {
@@ -1383,15 +1385,16 @@ fn lower_correlated_scalar_aggregate(
         else {
             return Err(unsupported());
         };
-        let pair = resolve_correlation_pair(left, right, &inner_scope, outer_scope)?;
-        if group_key.is_some() {
-            return Err(unsupported()); // single correlation key only (MVP)
-        }
-        group_key = Some(pair);
+        group_keys.push(resolve_correlation_pair(
+            left,
+            right,
+            &inner_scope,
+            outer_scope,
+        )?);
     }
-    let Some((inner_key, outer_key)) = group_key else {
-        return Err(unsupported());
-    };
+    if group_keys.is_empty() {
+        return Err(unsupported()); // not correlated → not this path
+    }
     let inner = match inner_local {
         Some(predicate) => LogicalNode::Filter {
             input: Box::new(inner_plan),
@@ -1399,39 +1402,50 @@ fn lower_correlated_scalar_aggregate(
         },
         None => inner_plan,
     };
-    // GROUP BY the inner correlation key; the aggregate is the scalar value. The
-    // aggregate output schema is [group_key, agg_value].
+    // GROUP BY every inner correlation key; the aggregate is the scalar value. The
+    // aggregate output schema is [group_key_0 .. group_key_{n-1}, agg_value].
     let agg_name = alias.unwrap_or_else(|| f.name.to_string().to_lowercase());
     let plan = LogicalNode::Aggregate {
         input: Box::new(inner),
-        group_by: vec![NamedExpr {
-            name: inner_key.name.clone(),
-            expr: Expr::column(inner_key.clone()),
-        }],
+        group_by: group_keys
+            .iter()
+            .map(|(inner_key, _)| NamedExpr {
+                name: inner_key.name.clone(),
+                expr: Expr::column(inner_key.clone()),
+            })
+            .collect(),
         aggregates: vec![NamedAggregate {
             name: agg_name.clone(),
             agg: agg.clone(),
         }],
         having: None,
     };
-    // In the combined row after the LEFT JOIN, the group key sits at `base` and the
-    // aggregate value at `base + 1` (group keys precede aggregate slots).
+    // In the combined row after the LEFT JOIN, the N group keys sit at `base .. base+n`
+    // and the aggregate value at `base + n` (group keys precede the aggregate slot).
+    // The join ON is the conjunction of every `outer_key_i = inner_key_i` pair.
     let base = ctx.next_ordinal();
-    let on = Expr::bin(
-        BinaryOp::Eq,
-        Expr::column(outer_key),
-        Expr::column(ColumnRef {
-            name: inner_key.name.clone(),
-            ordinal: base,
-            ty: inner_key.ty.clone(),
-            nullable: true,
-        }),
-    );
+    let on = group_keys
+        .iter()
+        .enumerate()
+        .map(|(i, (inner_key, outer_key))| {
+            Expr::bin(
+                BinaryOp::Eq,
+                Expr::column(outer_key.clone()),
+                Expr::column(ColumnRef {
+                    name: inner_key.name.clone(),
+                    ordinal: base + i,
+                    ty: inner_key.ty.clone(),
+                    nullable: true,
+                }),
+            )
+        })
+        .reduce(|acc, e| Expr::bin(BinaryOp::And, acc, e))
+        .expect("group_keys is non-empty (checked above)");
     let value_ty = agg.result_type();
     ctx.hoisted.push(HoistedSub { plan, on: Some(on) });
     let agg_col = Expr::column(ColumnRef {
         name: agg_name,
-        ordinal: base + 1,
+        ordinal: base + group_keys.len(),
         ty: value_ty,
         nullable: true,
     });
@@ -3271,6 +3285,49 @@ mod tests {
             ),
             other => panic!("expected LEFT JOIN with equi ON over Aggregate, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn two_key_correlated_scalar_aggregate_groups_and_joins_on_both_keys() {
+        // TD-REL-LOWER-5 slice 3 (TPC-H Q20): a correlated scalar aggregate with TWO
+        // correlation keys (`orders.uid = users.id AND orders.oid = users.age`) →
+        // LEFT JOIN over `orders GROUP BY uid, oid` with the join ON = both key
+        // equalities ANDed. Previously declined at the single-key MVP guard. This is
+        // the root cause of Q20 (masked upstream as "IN in expression position").
+        let plan = lower(
+            "SELECT id FROM users WHERE age > \
+             (SELECT avg(total) FROM orders WHERE orders.uid = users.id AND orders.oid = users.age)",
+        );
+        let LogicalNode::Project { input, .. } = plan else {
+            panic!("expected Project");
+        };
+        let LogicalNode::Filter { input, .. } = *input else {
+            panic!("expected Filter over the LEFT JOIN, got {input:?}");
+        };
+        let LogicalNode::Join {
+            kind: JoinKind::Left,
+            on: Some(on),
+            right,
+            ..
+        } = *input
+        else {
+            panic!("expected LEFT JOIN over the decorrelated aggregate");
+        };
+        // The join ON conjoins BOTH key equalities.
+        assert!(
+            matches!(
+                on,
+                Expr::BinaryOp {
+                    op: BinaryOp::And,
+                    ..
+                }
+            ),
+            "2-key correlation joins on both keys ANDed, got {on:?}"
+        );
+        let LogicalNode::Aggregate { group_by, .. } = *right else {
+            panic!("join right must be the GROUP BY aggregate");
+        };
+        assert_eq!(group_by.len(), 2, "GROUP BY both inner correlation keys");
     }
 
     #[test]
