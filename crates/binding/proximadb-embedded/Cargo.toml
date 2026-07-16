@@ -57,5 +57,8 @@ nodejs = ["dep:napi", "dep:napi-derive"]
 # C FFI bindings.
 c_ffi = []
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true
