@@ -410,31 +410,72 @@ fn lower_select(
             })
             .collect::<Result<_, _>>()?;
         // 4b) Project + aggregate extraction.
-        let (post_agg_outputs, aggregates) =
+        let (post_agg_outputs, mut aggregates) =
             lower_projection_with_aggregates(&select.projection, &scope, &group_by)?;
-        // 4c) HAVING — for MVP we only support HAVING
-        //     expressions that reference group_by columns. Bare
-        //     aggregates inside HAVING are Phase 3 (would need a
-        //     unified aggregate-extraction pass over both
-        //     projection AND HAVING).
-        let having = match &select.having {
-            Some(expr) if expr_contains_aggregate(expr) => {
-                return Err(FrontendError::Unsupported(
-                    "HAVING with aggregate calls (use a sub-select for now)".into(),
-                ));
+        // 4c) HAVING.
+        //   - Plain HAVING over group keys keeps the cheap `Aggregate.having` path.
+        //   - A HAVING that references an AGGREGATE and/or a scalar SUBQUERY
+        //     (TPC-H Q11: `having sum(x) > (select sum(x)*k from …)`) is lowered as
+        //     a POST-AGGREGATE Filter: its aggregates are extracted INTO the
+        //     Aggregate (`lower_having`), any scalar subquery is hoisted as a
+        //     `LEFT JOIN ON TRUE` above it, and the predicate — over the combined
+        //     [group keys | aggregates | hoisted] schema — becomes a Filter. The
+        //     Project outputs are unaffected (they index the group-key + projection
+        //     aggregate slots, which keep their ordinals).
+        match &select.having {
+            Some(expr) if expr_contains_aggregate(expr) || expr_contains_subquery(expr) => {
+                let group_count = group_by.len();
+                // Reserve the HAVING aggregate slots ahead of any hoisted scalar
+                // column so their ordinals never collide.
+                let base_width = group_count + aggregates.len() + count_aggregates(expr);
+                let mut ctx = LoweringCtx::new(catalog, base_width);
+                let having_expr = lower_having(
+                    expr,
+                    &scope,
+                    &group_by,
+                    group_count,
+                    &mut aggregates,
+                    &mut ctx,
+                )?;
+                plan = LogicalNode::Aggregate {
+                    input: Box::new(plan),
+                    group_by,
+                    aggregates,
+                    having: None,
+                };
+                for hoisted in ctx.hoisted.drain(..) {
+                    plan = LogicalNode::Join {
+                        left: Box::new(plan),
+                        right: Box::new(hoisted.plan),
+                        kind: JoinKind::Left,
+                        on: hoisted.on,
+                        strategy: JoinStrategy::Auto,
+                    };
+                }
+                plan = LogicalNode::Filter {
+                    input: Box::new(plan),
+                    predicate: having_expr,
+                };
             }
             Some(expr) => {
                 let post_agg_scope = post_aggregate_scope(&group_by, &aggregates);
-                Some(lower_expr_sealed(expr, &post_agg_scope)?)
+                let having = Some(lower_expr_sealed(expr, &post_agg_scope)?);
+                plan = LogicalNode::Aggregate {
+                    input: Box::new(plan),
+                    group_by,
+                    aggregates,
+                    having,
+                };
             }
-            None => None,
-        };
-        plan = LogicalNode::Aggregate {
-            input: Box::new(plan),
-            group_by,
-            aggregates,
-            having,
-        };
+            None => {
+                plan = LogicalNode::Aggregate {
+                    input: Box::new(plan),
+                    group_by,
+                    aggregates,
+                    having: None,
+                };
+            }
+        }
         plan = LogicalNode::Project {
             input: Box::new(plan),
             outputs: post_agg_outputs,
@@ -2022,6 +2063,110 @@ fn lower_agg_projection_expr(
     }
 }
 
+/// Count the aggregate function calls in an expression, over the SAME shapes
+/// [`lower_having`] extracts (arithmetic spine + bare aggregate; NOT descending
+/// into subqueries — their inner aggregates are separate). Used to RESERVE the
+/// HAVING aggregate slot space ahead of any hoisted scalar-subquery column, so a
+/// subquery hoisted before a later-extracted aggregate never collides with it.
+fn count_aggregates(sql: &SqlExpr) -> usize {
+    match sql {
+        SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => 1,
+        SqlExpr::Nested(inner) | SqlExpr::UnaryOp { expr: inner, .. } => count_aggregates(inner),
+        SqlExpr::BinaryOp { left, right, .. } => count_aggregates(left) + count_aggregates(right),
+        _ => 0,
+    }
+}
+
+/// True if an expression carries a subquery (scalar `(SELECT …)`, `EXISTS`, or
+/// `IN (SELECT …)`) in its arithmetic/boolean spine — gates the HAVING lowering
+/// onto the post-aggregate `Filter` path.
+fn expr_contains_subquery(sql: &SqlExpr) -> bool {
+    match sql {
+        SqlExpr::Subquery(_) | SqlExpr::Exists { .. } | SqlExpr::InSubquery { .. } => true,
+        SqlExpr::Nested(e) | SqlExpr::UnaryOp { expr: e, .. } => expr_contains_subquery(e),
+        SqlExpr::BinaryOp { left, right, .. } => {
+            expr_contains_subquery(left) || expr_contains_subquery(right)
+        }
+        _ => false,
+    }
+}
+
+/// Lower a HAVING predicate that may reference aggregate calls and/or an
+/// (uncorrelated) scalar subquery — TPC-H Q11:
+/// `HAVING sum(x) > (SELECT sum(x)*k FROM …)`. Mirrors [`lower_agg_projection_expr`]'s
+/// extraction over the arithmetic/boolean spine, but ALSO hoists scalar subqueries:
+/// - an aggregate call is extracted into `aggregates` (post-aggregate slot,
+///   `__agg_<slot>`) and replaced by a `ColumnRef` to that slot;
+/// - a scalar subquery is lowered + hoisted onto `ctx` (a `LEFT JOIN ON TRUE`
+///   above the Aggregate, via the shared [`lower_scalar_subquery`]) and replaced by
+///   a `ColumnRef` to the hoisted column;
+/// - an aggregate-free / subquery-free leaf is a scalar over group keys / literals
+///   (`lower_expr_sealed` + [`remap_group_key_refs`]).
+///
+/// The result is a boolean expression over the combined
+/// `[group keys | aggregates | hoisted scalars]` schema, applied as a
+/// post-aggregate `Filter`. The caller RESERVES the aggregate slot space
+/// (`ctx.base_width = group_count + aggregates.len() + count_aggregates(having)`)
+/// so hoisted-scalar ordinals never overlap a later-extracted aggregate slot.
+fn lower_having(
+    sql: &SqlExpr,
+    scope: &Scope,
+    group_by: &[NamedExpr],
+    group_count: usize,
+    aggregates: &mut Vec<NamedAggregate>,
+    ctx: &mut LoweringCtx,
+) -> Result<Expr, FrontendError> {
+    match sql {
+        SqlExpr::Nested(inner) => {
+            lower_having(inner, scope, group_by, group_count, aggregates, ctx)
+        }
+        // Uncorrelated → hoisted `LEFT JOIN ON TRUE` over `AssertMaxOneRow`;
+        // correlated → decorrelated. Reuses the shared scalar-subquery helper.
+        SqlExpr::Subquery(q) => lower_scalar_subquery(q, scope, ctx),
+        SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => {
+            let agg = lower_aggregate_call(f, scope)?;
+            let slot = group_count + aggregates.len();
+            let ty = agg.result_type();
+            let name = format!("__agg_{slot}");
+            aggregates.push(NamedAggregate {
+                name: name.clone(),
+                agg,
+            });
+            Ok(Expr::column(ColumnRef {
+                name,
+                ordinal: slot,
+                ty,
+                nullable: true,
+            }))
+        }
+        SqlExpr::BinaryOp { left, op, right } => {
+            let l = lower_having(left, scope, group_by, group_count, aggregates, ctx)?;
+            let r = lower_having(right, scope, group_by, group_count, aggregates, ctx)?;
+            Ok(Expr::BinaryOp {
+                op: lower_binary_op(op)?,
+                left: Box::new(l),
+                right: Box::new(r),
+            })
+        }
+        SqlExpr::UnaryOp { op, expr } => {
+            let inner = lower_having(expr, scope, group_by, group_count, aggregates, ctx)?;
+            match lower_unary_op(op)? {
+                Some(u) => Ok(Expr::UnaryOp {
+                    op: u,
+                    expr: Box::new(inner),
+                }),
+                None => Ok(inner),
+            }
+        }
+        // A subtree with neither aggregate nor subquery: a scalar over group keys /
+        // literals — lower directly, remapping group-key refs to their post-agg slot.
+        _ => {
+            let lowered = lower_expr_sealed(sql, scope)?;
+            Ok(remap_group_key_refs(lowered, group_by))
+        }
+    }
+}
+
 /// Remap every `Expr::Column` in `expr` that references a GROUP BY key to that
 /// key's post-aggregate slot (`ordinal` = its position in `group_by`, `name` =
 /// the group-key's declared name). Non-group columns and literals pass through
@@ -3539,6 +3684,100 @@ mod tests {
             },
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn having_with_aggregate_lowers_to_filter_over_aggregate() {
+        // TD-REL-LOWER-5 slice 3 (Q11): `HAVING sum(total) > 100` — an aggregate
+        // in HAVING — is extracted into the Aggregate and applied as a
+        // POST-AGGREGATE Filter (was declined: "HAVING with aggregate calls").
+        let plan = lower("SELECT uid, sum(total) FROM orders GROUP BY uid HAVING sum(total) > 100");
+        let LogicalNode::Project { input, .. } = plan else {
+            panic!("expected Project");
+        };
+        let LogicalNode::Filter { input, predicate } = *input else {
+            panic!("expected HAVING as a post-aggregate Filter, got {input:?}");
+        };
+        // Filter compares the extracted HAVING aggregate slot to the literal.
+        assert!(
+            matches!(
+                predicate,
+                Expr::BinaryOp {
+                    op: BinaryOp::Gt,
+                    ..
+                }
+            ),
+            "HAVING predicate is `agg > lit`, got {predicate:?}"
+        );
+        let LogicalNode::Aggregate {
+            aggregates, having, ..
+        } = *input
+        else {
+            panic!("Filter input must be the Aggregate");
+        };
+        assert!(
+            having.is_none(),
+            "HAVING moved to the Filter, not the field"
+        );
+        assert_eq!(
+            aggregates.len(),
+            2,
+            "projection sum + extracted HAVING sum (dedup is a later optimization)"
+        );
+    }
+
+    #[test]
+    fn having_with_scalar_subquery_hoists_left_join_over_aggregate() {
+        // Q11 shape: `HAVING sum(total) > (SELECT sum(total)*k FROM orders)` — an
+        // aggregate compared to an uncorrelated scalar subquery. The subquery is
+        // hoisted as a LEFT JOIN ON TRUE above the Aggregate; the predicate refs
+        // the extracted agg slot and the hoisted scalar column.
+        let plan = lower(
+            "SELECT uid, sum(total) FROM orders GROUP BY uid \
+             HAVING sum(total) > (SELECT sum(total) * 2 FROM orders)",
+        );
+        let LogicalNode::Project { input, .. } = plan else {
+            panic!("expected Project");
+        };
+        let LogicalNode::Filter { input, .. } = *input else {
+            panic!("expected post-aggregate Filter");
+        };
+        let LogicalNode::Join {
+            kind: JoinKind::Left,
+            on: None,
+            left,
+            right,
+            ..
+        } = *input
+        else {
+            panic!("expected LEFT JOIN ON TRUE for the hoisted scalar subquery, got {input:?}");
+        };
+        assert!(
+            matches!(*left, LogicalNode::Aggregate { .. }),
+            "join left is the Aggregate"
+        );
+        assert!(
+            matches!(*right, LogicalNode::AssertMaxOneRow { .. }),
+            "join right is the AssertMaxOneRow-guarded uncorrelated scalar"
+        );
+    }
+
+    #[test]
+    fn plain_having_over_group_key_keeps_aggregate_having_field() {
+        // No-regression: a HAVING with neither aggregate nor subquery
+        // (`HAVING age > 30`, over the group key) keeps the cheap
+        // `Aggregate.having` path — no Filter, no restructure.
+        let plan = lower("SELECT age, count(*) FROM users GROUP BY age HAVING age > 30");
+        let LogicalNode::Project { input, .. } = plan else {
+            panic!("expected Project");
+        };
+        let LogicalNode::Aggregate { having, .. } = *input else {
+            panic!("expected Aggregate directly under Project (no Filter)");
+        };
+        assert!(
+            having.is_some(),
+            "plain HAVING stays on the Aggregate.having field"
+        );
     }
 
     #[test]
