@@ -35,7 +35,8 @@ hard-bounded, so a purpose-built mutable index would optimize a large-unflushed-
 bounded-working-set premise excludes — it is not built. TD-WLP-8's mutable-index/fusion/guard scope
 is superseded: 8a (observability) shipped; the mutable index is retired (future evidence-gated
 option); a `Churn`-specific tighter flush threshold is deferred to TD-WLP-10 (evidence-gated); ORION
-`oid` fusion is deferred to TD-ORION-1 (blocked on an ORION `oid`→node index). See D4.
+`oid` match-then-traverse fusion is **already shipped** (TD-045, the `/rag` endpoint — the graph node
+id *is* the `oid`, so no index was needed; TD-ORION-1 corrected, residual is a relevance eval). See D4.
 
 == Context
 
@@ -85,7 +86,7 @@ read-acceleration projection strategy. It is deliberately **distinct** from the 
 |===
 | Profile | Read-acceleration projection | Freshness | Clustering
 | `AppendBulk` (`append` / `bulk`) | Durable clustered PAX-LSM segments + VOE directory | flush + delta-merge | fp32-PCA IVF/Hilbert **at compaction**
-| `Churn` (code-RAG) | Bounded (~2 MB) memtable delta + Strong brute-force merge (TD-WLP-5) footnote:[Amended 2026-07-15 — see D4. The original "in-memory mutable ANN index + `oid` fusion" mechanism is retired as unnecessary: the unflushed delta is already backpressure-bounded to ~2 MB, so a Strong brute-force merge is sub-ms and already correct. ORION `oid` fusion is deferred to TD-ORION-1.] | immediate (pre-flush, Strong-merged) | none — small memory-resident delta; no compaction-cluster staleness
+| `Churn` (code-RAG) | Bounded (~2 MB) memtable delta + Strong brute-force merge (TD-WLP-5) footnote:[Amended 2026-07-15 — see D4. The original "in-memory mutable ANN index + `oid` fusion" mechanism is retired as unnecessary: the unflushed delta is already backpressure-bounded to ~2 MB, so a Strong brute-force merge is sub-ms and already correct. ORION `oid` match-then-traverse fusion is already shipped (TD-045 `/rag`; graph node id == `oid`, no index needed — TD-ORION-1).] | immediate (pre-flush, Strong-merged) | none — small memory-resident delta; no compaction-cluster staleness
 |===
 
 === D1 — `StorageProfile` is a per-collection attribute via the existing tag cascade
@@ -148,10 +149,14 @@ Two pieces of the original D4 are **deferred, not adopted**:
   write-path serialization strategies and is not profile-parameterized, so a per-`Churn` override is
   real hot-path plumbing for a sub-2 MB gain. Revisit only if a measured `Churn` trace shows the
   bounded delta hurts read latency/freshness. Tracked in link:../../10-quality/td/TD-WLP-10-churn-evidence-gated-flush-threshold.adoc[TD-WLP-10].
-* **ORION `oid` match-then-traverse fusion** is **blocked**: `ProximaRecord.oid` is populated (the
-  SDK mints the ADR-044 stable oid, consumed verbatim), but ORION has **no `oid`→node index today**
-  (only `NodeId` lookups). Building that index + the fusion read path is a separate workitem, tracked
-  in link:../../10-quality/td/TD-ORION-1-oid-node-index-and-vector-graph-fusion.adoc[TD-ORION-1].
+* **ORION `oid` match-then-traverse fusion is already shipped** (correction 2026-07-15): the SDK uses
+  ONE id — `record_symbol_id()` (ADR-044) — for both the vector record id and the graph node id
+  (`code_knowledge.py:527`/`:561`), so the graph `NodeId` *is* the `oid` and ORION's `node_to_index`
+  already resolves it — **no `oid`→node index was needed**. The fusion itself is TD-045 "Modular Graph
+  RAG" (`src/graph/rag/`: `VectorNodeRetriever` → `KHopSubgraphBuilder` → `RagPipeline`), exposed at
+  `POST /graphs/{id}/rag` (`network/rest/canonical/graph.rs:852`). The only residual is a relevance
+  **eval** (mandate #13) — tracked in
+  link:../../10-quality/td/TD-ORION-1-oid-node-index-and-vector-graph-fusion.adoc[TD-ORION-1].
 
 A dedicated mutable ANN index remains a *future evidence-gated option* (revisit if update-heavy
 `Churn` LSM tombstone/version churn — GC'd by compaction, D5 — is measured to be a real cost), not a
