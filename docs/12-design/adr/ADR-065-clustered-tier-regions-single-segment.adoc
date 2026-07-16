@@ -1,0 +1,123 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-065: Clustered tier regions (column families) within the single atomic segment — extend ADR-062's hoisted-region pattern to SQ8 / fp32 / row data
+
+:status: Proposed (2026-07-16 — awaiting co-design + first-principles review; see the tier-regions handoff)
+:date: 2026-07-16
+:deciders: architecture
+:relates-to: link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (extends D2; upholds D1), ADR-052 (round-trips dominate), ADR-020 (WAL authority; manifest-level atomicity), ADR-036 (per-object access tier), ADR-055 (P-Shred user columns → the row-data family), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6] (PR2 measured baseline), link:../../10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7] (bytes phase; codec bake-off rejected)
+
+== Status
+
+**Proposed.** Drafted from the post-PR2 measured evidence (#1060 stack: recall
+0.987/0.990, GETs 8/36 at 100k/1M) and a downstream cost analysis. Needs the
+co-design review round before acceptance; the open questions are owned by the
+tier-regions handoff document.
+
+== Context — the remaining cost term is block dead weight, not GETs
+
+Post-PR2 at N=1M: 36 GETs but **250 MB/query** (up from 139 MB — bigger
+encoding-aware blocks trade bytes for GETs). The read unit is the PAX
+*block*, which co-locates OID/timestamps/PROPS(text)/LABELS/SQ8/fp32 stripes:
+fetching survivors drags the full stripe set of every bystander row in each
+touched block. Measured shape: a 1000-row block fetched for 10 survivors
+reads ~1.28 KB of useful SQ8 against the full block payload — >99% dead
+weight on document (PROPS-heavy) corpora. Same-AZ bytes are free in $, but
+250 MB/query is ~2.5 Gbps of NIC + decode at 10 QPS/node — a latency and
+throughput ceiling, and it inflates every cache tier's working set.
+
+ADR-062 D2 already proved the fix pattern for one tier: the RaBitQ codes
+were hoisted out of blocks into a coalesced same-file region, collapsing the
+scan from ~370 GETs to 1. **Object storage bills per ranged GET, not per
+file** — so column-family separation does not require HBase-style multi-file
+layouts; it requires contiguous per-tier regions inside the one segment
+object.
+
+== Decision (proposed)
+
+Extend the segment layout from one hoisted region to four, all in the same
+clustered row order (`cluster_order_pca_ivf`):
+
+----
+[header-prefix: magic | version | region offset/len table]
+[Region A: RaBitQ codes      — exists today (ADR-062 D2); rank scan tier]
+[Region B: SQ8 codes         — NEW; rerank tier]
+[Region C: fp32 vectors      — NEW, optional; exact/materialization tier]
+[Region D: row blocks        — OID/props/labels/edges: the result store]
+[footer-index: schema | region table | block table | stats]
+[footer_len | SEGMENT_MAGIC]
+----
+
+D1 (ADR-062) is **upheld**: one self-contained object per segment. All
+atomicity properties are preserved by construction — flush is one PUT,
+compaction is one fresh-name `put_if_absent` + WAL manifest advance (the
+commit point was always manifest-level, not file-level), lifecycle/DR/CRR
+mechanisms remain one-object-per-segment.
+
+=== Read-path effects (per scenario, N=1M, 128d, k=10, M≈10K)
+
+|===
+| Scenario | Today (inline blocks) | Tier regions
+
+| Rank scan | 1 GET (region A) | identical
+| Rerank | ~36 GETs over block region incl. all bystander stripes → ~250 MB | ranged GETs into the pure ~128 MB Region B — ~10× byte density, survivors sit closer → **fewer GETs AND ~10× fewer bytes**
+| Result: top-k text | rode along in rerank block fetches | ≤ k coalesced GETs into Region D (top-k cluster adjacently)
+| Result: `include_vectors` fp32 | inlined — **every** rerank fetch pays fp32 weight whether requested or not | ≤ k GETs into Region C, only on request
+| Cache | hot set polluted by text/fp32 | Regions A+B are small and pure → per-byte cache effectiveness ~10×
+|===
+
+Worst case on the result side (all top-k spread): ≤ k GETs (text) + ≤ k
+GETs (fp32 on request) = 2k — bounded, small (k ≪ M), and cheaper than
+today's k *block-sized* fetches; clustering adjacency coalesces below the
+bound in practice.
+
+=== Explicitly rejected / deferred
+
+* **Separate files per family** — needs a multi-object commit protocol
+  (grouped `put_if_absent` / completion object), N× lifecycle + replication
+  objects, per-file open overhead. Deferred behind named triggers where
+  files genuinely win: per-family storage-class tiering, per-family CRR
+  exclusion (e.g. don't replicate fp32 cross-region), independent
+  compaction cadence per family.
+* **Intra-block column projection** (sub-block ranged reads per stripe) —
+  strictly worse than regions: per-block stripe offsets multiply range count
+  (GETs) instead of consolidating them.
+
+=== Phasing (proposed)
+
+1. **PR3 — Region B (SQ8 hoist):** the dominant lever; rerank stops paying
+   bystander props/fp32. Gates: recall unchanged; GETs ≤ PR2 baseline;
+   bytes/query target ≥5× reduction at 1M; result-path p95 bounded.
+2. **PR4 — Region C (fp32, optional per collection):** `include_vectors`
+   and exact-rerank move to on-demand region reads.
+3. Region D becomes the pure result store (synergy: ADR-055 P-Shred user
+   columns and OLAP scans get a props-contiguous layout for free).
+
+== Open questions (handoff-owned)
+
+1. Writer buffering: regions are written sequentially in one PUT — memory
+   budget for buffering B/C during flush at large segments; streaming
+   multi-part upload interaction.
+2. Region ↔ block row-order coupling and the footer region table shape
+   (self-describing invariants from ADR-062 must extend cleanly).
+3. Cache tiering engagement: the RAM LRU (PR2) covers A(+B); local NVMe/SSD
+   for larger regions — `SstTieringIntegration` exists but is whole-file
+   *placement* tiering (opt-in, off): is it the right seam for a
+   read-through range cache for PAX regions, or does that need a new
+   `FileSystem`-layer cache? (Downstream cost model: blended COGS =
+   miss-rate × cloud GET price — AnvaiOps ADR-0043.)
+4. Result-store block sizing once vectors leave the blocks (row-data blocks
+   can shrink toward result-read granularity).
+5. Mixed legacy/coalesced/region segments in one collection — chooser +
+   mixed-read policy (ADR-061/045 pattern).
+
+== Consequences
+
+* GET count stays governed by ADR-062's budget; this ADR attacks the bytes/
+  latency/cache term the block unit couples to it.
+* Downstream pricing dependency (TD-RDSTRAT-6 § downstream note): region
+  reads shrink the physical-bytes meter input and raise cache hit rates —
+  both move the blended per-query COGS down.
+* If rejected at review, the fallback lever set is TD-RDSTRAT-7 (lossless
+  clustered bytes) + result-store PROPS stripe reordering — weaker but
+  in-block.
