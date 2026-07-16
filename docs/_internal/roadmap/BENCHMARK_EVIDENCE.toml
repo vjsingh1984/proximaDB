@@ -77,6 +77,22 @@ date = "2026-07-16"
 version = "flat eae1cdf4e; SQ6 base 4f0cccf30 + diff sha256 9bddadab; TQ4 3a091c254; RaBitQ4 b4abf4cbc"
 notes = "N=100k flat/SQ6/TQ4/RaBitQ4 recall = 0.991/0.981/0.921/0.917; bytes/query = 32020233/29775220/25124981/25124830; GETs/query = 19. Verified TEXMEX N=1M: flat recall 0.968, 61 GETs, 138851704 bytes/query; SQ6 recall 0.950, 61 GETs, 128722140 bytes/query. Prototype code intentionally discarded after rejection; artifact records source states and dataset hashes. Indicative dev-machine evidence, not an SLA."
 
+[[claims]]
+id = "coalesced_rabitq_noivf_decisive_sift1m"
+claim = "ADR-065 gated question RESOLVED: the coalesced scan-then-rerank layout does NOT need cluster_order_pca_ivf ordering. The production flush path (sign-bit bootstrap, no IVF opt-in) measures recall@10 = 0.985 and GETs/query = 40 at full SIFT1M — both gates cleared (>=0.98 recall, <=50 GETs) — with flush wall time 35 s (~80x faster than the 47 min IVF-at-flush path). IVF's only benefit is the bytes term (250 MB with vs 430 MB without), which is precisely the block dead weight ADR-065 Region B (SQ8 hoist) removes via density, not ordering. Decision: drop IVF; regions in sign-bit row order; PR3 = Region B."
+metric = "recall@10 + range_gets_per_query + bytes_read_per_query + flush_wall_time"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_QUERIES=100 PROXIMADB_SIFT_IVF_FLUSH=0 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture"
+artifact = "docs/_internal/status/SIFT1M_NOIVF_DECISIVE_2026_07_16.adoc"
+hardware = "Local macOS arm64 (Apple Silicon)"
+date = "2026-07-16"
+version = "develop @ 549b77fa6 (+ perf/coalesced-pr2-cache-geometry PR2 stack)"
+notes = "Full SIFT1M, single-file collection, 100 queries, top-10, Euclidean, provided GT. IVF OFF = sign-bit bootstrap = the production L0 flush path. Baseline IVF ON (PR2): recall 0.990, 36 GETs, 250 MB, ~47 min flush. The 0.985 recall / 40 GETs here are the production-representative numbers (no eval-only IVF opt-in). The bytes rise (250->430 MB) is the block dead weight Region B will remove via SQ8 density. NOTE: the PROXIMADB_SIFT_IVF_FLUSH=0 knob was added transiently to the eval (gates the set_var at line 486) for this measurement; landing it as a committed eval feature is a pending harness follow-up so the bench_command is reproducible as-is. Indicative dev-machine run, not an SLA."
+
 # ---------------------------------------------------------------------------
 # UNVERIFIED — a bench exists, but no dated artifact backs the claimed number.
 # ---------------------------------------------------------------------------

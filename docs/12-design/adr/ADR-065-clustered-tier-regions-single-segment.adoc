@@ -2,29 +2,36 @@
 // SPDX-License-Identifier: Apache-2.0
 = ADR-065: Clustered tier regions (column families) within the single atomic segment — extend ADR-062's hoisted-region pattern to SQ8 / fp32 / row data
 
-:status: Proposed (2026-07-16 — awaiting co-design + first-principles review; see the tier-regions handoff)
+:status: Accepted (2026-07-16 — co-design review complete; gated IVF-ordering question resolved by a decisive no-IVF SIFT1M measurement)
 :date: 2026-07-16
 :deciders: architecture
 :relates-to: link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (extends D2; upholds D1), ADR-052 (round-trips dominate), ADR-020 (WAL authority; manifest-level atomicity), ADR-036 (per-object access tier), ADR-055 (P-Shred user columns → the row-data family), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6] (PR2 measured baseline), link:../../10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7] (bytes phase; codec bake-off rejected)
 
 == Status
 
-**Proposed.** Drafted from the post-PR2 measured evidence (#1060 stack: recall
-0.987/0.990, GETs 8/36 at 100k/1M) and a downstream cost analysis. Needs the
-co-design review round before acceptance; the open questions are owned by the
-tier-regions handoff document.
+**Accepted (2026-07-16).** Drafted from the post-PR2 measured evidence (#1060
+stack: recall 0.987/0.990, GETs 8/36 at 100k/1M) and a downstream cost
+analysis, then taken through the co-design review round.
 
-**Co-design review (2026-07-16):** the open questions are resolved inline below
-— Q1 (reuse the #1061 recovery staging seam), Q3 (a `FileSystem`-layer
-read-through range cache, NOT `SstTieringIntegration` — the coalesced reader
-bypasses tiering), and io-trace visibility (the two-class trace system already
-exists: ADR-027/030/TD-160 — PR3 measures bytes/query from day one). Q2/Q4/Q5
-are refined and deferred to PR3/PR4 implementation. **One NEW question gates
-Acceptance:** whether the coalesced layout needs `cluster_order_pca_ivf`
-ordering at all (recall is ordering-independent; the bytes win is Region B
-density, not IVF co-location) — decided by a decisive no-IVF SIFT1M run that
-also collapses the ~47 min eval flush. Acceptance is held until that result
-folds back.
+**Co-design review (2026-07-16) — open questions resolved inline below:** Q1
+(reuse the #1061 recovery staging seam), Q3 (a `FileSystem`-layer read-through
+range cache, NOT `SstTieringIntegration` — the coalesced reader bypasses
+tiering), and io-trace visibility (the two-class trace system already exists:
+ADR-027/030/TD-160 — PR3 measures bytes/query from day one). Q2/Q4/Q5 are
+refined and deferred to PR3/PR4 implementation.
+
+**Gated question RESOLVED — the coalesced layout does NOT need
+`cluster_order_pca_ivf` ordering.** The decisive no-IVF SIFT1M run (production
+flush path = sign-bit bootstrap; eval knob `PROXIMADB_SIFT_IVF_FLUSH=0`)
+measured **recall@10 = 0.985, GETs/query = 40, flush = 35 s** — both gates
+cleared (≥0.98 recall, ≤50 GETs), and the flush dropped ~80× (47 min → 35 s).
+IVF's only benefit was the bytes term (250 MB with IVF vs 430 MB without — it
+co-locates survivors into tighter coalesced ranges), but that bytes bloat is
+*exactly the block dead weight this ADR's Region B (SQ8 hoist) removes via
+density, not ordering*. **Decision: drop IVF from the coalesced path; regions
+are written in sign-bit (cheap) row order; PR3 = Region B restores the bytes
+term to ~25–43 MB via SQ8 density.** The `PROXIMADB_PAX_FLUSH_CLUSTER=ivf` opt-in
+remains available for IVF-quality A/B but is no longer the eval default.
 
 == Context — the remaining cost term is block dead weight, not GETs
 
@@ -161,19 +168,20 @@ bound in practice.
   region-count in the header prefix); migration via normal compaction
   (mixed-read-safe, ADR-061/045).
 
-=== NEW — gated on the decisive measurement (2026-07-16)
+=== Resolved — the IVF-ordering question (decisive measurement, 2026-07-16)
 
-* **Does the coalesced layout need `cluster_order_pca_ivf` ordering at all?**
-  This ADR assumes regions are written in IVF order. But recall is driven by
-  adaptive-M + scan-then-rerank (ordering-independent), and the bytes/GET win
-  comes from Region B *density* (pure SQ8 → the coalescing gap absorbs ~10×
-  more survivors per range), **not** from IVF co-location. The decisive no-IVF
-  run (production flush path = sign-bit bootstrap; eval knob
-  `PROXIMADB_SIFT_IVF_FLUSH=0`) tests it: if recall holds ≈0.99 and GETs ≤50,
-  IVF ordering is unnecessary for the coalesced layout — which also collapses
-  the ~47 min SIFT1M flush (the PCA+IVF re-cluster dominates it; it is an eval
-  opt-in `PROXIMADB_PAX_FLUSH_CLUSTER=ivf`, not the production write path).
-  *Status: measurement in flight; result folds back here before Acceptance.*
+* **The coalesced layout does NOT need `cluster_order_pca_ivf` ordering.**
+  Recall is driven by adaptive-M + scan-then-rerank (ordering-independent), and
+  the bytes/GET win comes from Region B *density* (pure SQ8 → the coalescing gap
+  absorbs ~10× more survivors per range), **not** from IVF co-location. The
+  decisive no-IVF SIFT1M run (production flush path = sign-bit bootstrap; eval
+  knob `PROXIMADB_SIFT_IVF_FLUSH=0`) measured **recall@10 = 0.985, GETs/query =
+  40, flush = 35 s** — both gates cleared, flush down ~80× (47 min → 35 s).
+  IVF's only benefit was the bytes term (250 MB with IVF vs 430 MB without);
+  that is precisely the block dead weight Region B removes via density.
+  *Result: drop IVF from the coalesced path; regions in sign-bit row order; PR3
+  = Region B restores bytes via SQ8 density. Recorded in
+  link:../../_internal/status/SIFT1M_NOIVF_DECISIVE_2026_07_16.adoc[the artifact].*
 
 == Consequences
 

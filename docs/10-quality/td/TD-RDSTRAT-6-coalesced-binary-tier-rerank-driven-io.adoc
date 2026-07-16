@@ -295,3 +295,15 @@ the bytes phase.
 * 2026-07-16 — full N=1M follow-up measured recall `0.968` and `61` GETs/query
   for flat SQ8. The bytes bake-off found no winner; adaptive M, actual-byte
   `IopsBudget` geometry, and scalable cluster fitting are prerequisites.
+* 2026-07-16 — PR2 stack (#1060) cleared both gates: recall `0.990`, `36`
+  GETs/query at SIFT1M (adaptive-M + per-segment invariants cache +
+  encoding-aware block threshold + per-provider `IopsBudget` + zstd). The
+  decisive no-IVF run (production sign-bit-bootstrap flush path) then measured
+  recall `0.985`, `40` GETs, `35 s` flush — clearing both gates *without*
+  `cluster_order_pca_ivf` ordering (~80x faster than the IVF-at-flush eval
+  opt-in). **IVF ordering is not load-bearing** for the coalesced layout; its
+  only benefit (bytes: 250 MB with vs 430 MB without) is the block dead weight
+  link:../../12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065]
+  Region B removes via density. ADR-065 flipped to Accepted; regions use
+  sign-bit row order, PR3 = Region B (SQ8 hoist). `PROXIMADB_PAX_FLUSH_CLUSTER=ivf`
+  remains available for A/B but is no longer the eval default.
