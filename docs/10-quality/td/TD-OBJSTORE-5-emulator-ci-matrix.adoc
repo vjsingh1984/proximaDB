@@ -29,34 +29,45 @@ Target coverage by tier (Azure=Azurite `adls://`, S3=MinIO `s3://`, GCS=fake-gcs
 |===
 | Tier | Coverage | Cost bound
 | PR (path-gated) | Azurite restart repro STRICT (`--features azure` only) + backend contract tests (object-store crate, all 3 emulators, no main-crate compile) | one single-backend server build
-| QA (develop→qa) | one `cloud-full` build; Azure then S3 emulators SEQUENTIALLY (stop each before the next); restart proof per store; recall ratchet on ONE strict backend (Azure) | fits the existing 90 min budget
+| QA (develop→qa) | one `cloud-full` build; Azure then S3 emulators SEQUENTIALLY (stop each before the next); restart proof per store; recall ratchet on ONE strict backend (Azure) | measured ratchet — record the cold-cache wall time on first run (existing emulator QA job alone ≈52 min)
 | Nightly / 32 GB runner | GCS compatibility (restart + recall, best-effort) + cross-backend recall | off the promotion path
 |===
 
 == Slices
 
-*S1 — PR tier.* Extend `run_cloud_emulator_tests.sh` with `--restart-azure`: build
-`proximadb-server --features azure` (single backend keeps the compile cheap), run
+*S1 — PR tier.* Extend `run_cloud_emulator_tests.sh` with `--restart-azure`: **build
+`proximadb-server --features azure` BEFORE starting any emulator** (single backend
+keeps the compile cheap; emulators only run while tests run), then run
 `zero_vector_kv_record_survives_restart` against Azurite
 (`PROXIMADB_OBJECT_STORE_URL=adls://proximadb-test`, `PROXIMADB_AZURE_EMULATOR=1
 AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
 AZURE_STORAGE_ACCOUNT{,_NAME}=devstoreaccount1`). Wire into `ci.yml
-object-store-emulator-tests` (path-gated on object-store changes). **Red-first**: this
-phase must FAIL on current develop (batch 3) and flip green with TD-OBJSTORE-4.
+object-store-emulator-tests` (path-gated on object-store changes) and **raise that
+job's timeout from 15 to 30-45 min** — a server integration-test build plus Azurite
+has no reliable cold-cache headroom at 15. **Red-first**: this phase must FAIL on
+current develop (batch 3) and flip green with TD-OBJSTORE-4.
 
-*S2 — Backend contract tests.* In `proximadb-object-store` (small crate, no main-crate
-compile): for each emulator, `PUT key under prefix → LIST(prefix) sees it` and
-`HEAD(prefix) is negative while LIST(prefix) is positive` — pinning the exact D5
-semantics that broke recovery. Runs in the PR tier.
+*S2 — Backend contract tests (r3: production backends).* The tests must exercise the
+**production root `FileSystem` azure/s3/gcs implementations**
+(`src/storage/persistence/filesystem/`) — the server does not use the
+`proximadb-object-store` wrapper crate for WAL/SST I/O, so wrapper-crate tests alone
+cannot catch production regressions (e.g. the GCS single-page LIST). For each
+emulator: `PUT key under prefix → LIST(prefix) sees it`, `HEAD(prefix) negative while
+LIST(prefix) positive`, **multi-page LIST returns all keys**, and
+`write_if_absent` conflict semantics (TD-OBJSTORE-4 S3). Runs in the PR tier; keep a
+thin mirror in `proximadb-object-store` for the warehouse path.
 
-*S3 — QA tier.* `qa-gate.yml`: one `cloud-full` server build; run Azure then S3
-**sequentially**, stopping each emulator before starting the next (memory headroom on
-the 16 GB runner); restart proof (`zero_vector_kv_record_survives_restart` +
-`catalog_wal_and_sst_survive_fresh_local_disks`) per store; ONE cold-read recall ratchet
-(`embedded_flush_recovery recall` or `helix_cold_search_recall_test`) parameterized by
-storage URL, on Azure only — recall is a ranged-read/footer correctness test, not the
-restart gate; threshold identical to the file:// baseline (backend must be
-recall-neutral; any delta is a read-path bug).
+*S3 — QA tier.* `qa-gate.yml`: one `cloud-full` server build (before emulators); run
+Azure then S3 **sequentially**, stopping each emulator before starting the next
+(memory headroom on the 16 GB runner); restart proof
+(`zero_vector_kv_record_survives_restart` +
+`catalog_wal_and_sst_survive_fresh_local_disks`) per store; ONE cold-read recall
+ratchet (`embedded_flush_recovery recall` or `helix_cold_search_recall_test`)
+parameterized by storage URL, on Azure only — recall is a ranged-read/footer
+correctness test, not the restart gate; threshold identical to the file:// baseline
+(backend must be recall-neutral; any delta is a read-path bug). The "fits the 90 min
+budget" claim becomes a **measured ratchet on a cold-cache run** (record the first
+run's wall time in this TD), not an assertion.
 
 *S4 — Nightly tier.* GCS: restart (`gs://` now accepted by the test) + recall,
 best-effort per the documented fake-gcs/object_store incompatibility; plus
@@ -76,8 +87,8 @@ failure is reproducible on a workstation with Docker (single source of truth).
 == Notes
 
 * Azurite requires the server binary built with `--features azure` (else boot fails
-  with `feature for MicrosoftAzure not enabled`) — S1 uses `cloud-full` to cover all
-  three in one build.
+  with `feature for MicrosoftAzure not enabled`). S1 (PR tier) builds **azure only**;
+  the single `cloud-full` build belongs to the QA tier (S3) where all backends run.
 * Docker-credential-helper quirk on WSL workstations: pull with a clean
   `docker --config` dir if `docker-credential-desktop.exe` errors (documented in the
   script header, not code).
