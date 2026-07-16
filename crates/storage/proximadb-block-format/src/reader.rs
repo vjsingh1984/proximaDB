@@ -15,6 +15,8 @@
 //! locate a row by its id_hash and retrieve its row_index; then all column
 //! stripes are read at that index position.
 
+use std::borrow::Cow;
+
 use anyhow::{Result, bail};
 use crc32fast::Hasher as Crc32;
 use proximadb_codec::{ProximaScheme, functions};
@@ -24,7 +26,10 @@ use crate::{
     row_dir::{ROW_ENTRY_SIZE, RowDirectory},
     rowgroup::RowGroupBlock,
     stripe::{COLUMN_META_SIZE, ColumnMeta},
-    vparam::{QUANT_FP16, QUANT_RABITQ, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock},
+    vparam::{
+        QUANT_FP16, QUANT_RABITQ, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn,
+        TRANSFORM_CLUSTERED_FOR_U8, VectorParamBlock, VectorTransformColumn,
+    },
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
 use proximadb_codec::functions::{rabitq, sq8};
@@ -368,7 +373,7 @@ impl<'a> PaxBlockReader<'a> {
             let col = self.vparams.rabitq_column(column_id)?;
             return decode_rabitq_reconstruct(raw, n, entry, col).ok();
         }
-        decode_f32_vec_v2(raw, n, entry).ok()
+        decode_f32_vec_v2(raw, n, entry, self.vparams.transform(column_id)).ok()
     }
 
     /// Return the per-row RaBitQ codes for a binary-quantized vector column,
@@ -446,8 +451,8 @@ impl<'a> PaxBlockReader<'a> {
         if raw.len() < bm_len {
             return None;
         }
-        let bitmap = &raw[..bm_len];
-        let payload = &raw[bm_len..];
+        let (bitmap, payload) =
+            decode_vector_payload(raw, n, self.vparams.transform(column_id)).ok()?;
         let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
         // FP16: 2 bytes/value; SQ8: 1 byte/value.
         let stride = if entry.quant_kind == QUANT_FP16 {
@@ -928,14 +933,10 @@ pub(crate) fn decode_f32_vec_v2(
     data: &[u8],
     count: usize,
     entry: &crate::vparam::VectorParamEntry,
+    transform: Option<&VectorTransformColumn>,
 ) -> Result<Vec<Option<Vec<f32>>>> {
     let dim = entry.dim as usize;
-    let bm_len = count.div_ceil(8);
-    if data.len() < bm_len {
-        bail!("vector stripe shorter than validity bitmap");
-    }
-    let bitmap = &data[..bm_len];
-    let payload = &data[bm_len..];
+    let (bitmap, payload) = decode_vector_payload(data, count, transform)?;
     let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
 
     let mut out = Vec::with_capacity(count);
@@ -977,6 +978,30 @@ pub(crate) fn decode_f32_vec_v2(
         other => bail!("unknown vector quant_kind: {other}"),
     }
     Ok(out)
+}
+
+pub(crate) fn decode_vector_payload<'a>(
+    data: &'a [u8],
+    count: usize,
+    transform: Option<&VectorTransformColumn>,
+) -> Result<(&'a [u8], Cow<'a, [u8]>)> {
+    let bitmap_len = count.div_ceil(8);
+    if data.len() < bitmap_len {
+        bail!("vector stripe shorter than validity bitmap");
+    }
+    let bitmap = &data[..bitmap_len];
+    let stored_payload = &data[bitmap_len..];
+    let payload = match transform {
+        None => Cow::Borrowed(stored_payload),
+        Some(transform) if transform.transform_kind == TRANSFORM_CLUSTERED_FOR_U8 => Cow::Owned(
+            functions::clustered_for_bitpack::decode_u8_rows(stored_payload)?,
+        ),
+        Some(transform) => bail!(
+            "unknown vector transform kind 0x{:02x}",
+            transform.transform_kind
+        ),
+    };
+    Ok((bitmap, payload))
 }
 
 const PAX_BLOOM_SALTS: [u64; 3] = [
@@ -1304,6 +1329,108 @@ mod tests {
                 assert!((g - o).abs() <= bound + 1e-6, "got {g}, orig {o}");
             }
         }
+    }
+
+    #[test]
+    fn clustered_sq8_transform_is_exact_smaller_and_metadata_driven() -> Result<()> {
+        const ROWS_PER_CLUSTER: usize = 256;
+        const DIM: usize = 32;
+
+        let mut flat = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::Sq8);
+        let mut clustered =
+            PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+                .with_quant(crate::writer::VectorQuant::Sq8)
+                .with_clustered_sq8_lossless(true);
+
+        for row in 0..(ROWS_PER_CLUSTER * 2) {
+            if row == ROWS_PER_CLUSTER {
+                clustered.start_cluster_run();
+            }
+            let center = if row < ROWS_PER_CLUSTER { -10.0 } else { 10.0 };
+            let embedding: Vec<f32> = (0..DIM)
+                .map(|lane| center + ((row + lane) % 3) as f32 * 0.01)
+                .collect();
+            let record =
+                make_record_with_embedding(&format!("r{row}"), "t", 1_000 + row as i64, embedding);
+            flat.add_record(&record)?;
+            clustered.add_record(&record)?;
+        }
+
+        let flat_block = flat.flush()?;
+        let clustered_block = clustered.flush()?;
+        let flat_reader = PaxBlockReader::open(&flat_block)?;
+        let clustered_reader = PaxBlockReader::open(&clustered_block)?;
+        let flat_meta = flat_reader
+            .column_metas()
+            .iter()
+            .find(|meta| meta.column_id == col_id::EMBED_BASE)
+            .ok_or_else(|| anyhow::anyhow!("flat SQ8 stripe metadata missing"))?;
+        let clustered_meta = clustered_reader
+            .column_metas()
+            .iter()
+            .find(|meta| meta.column_id == col_id::EMBED_BASE)
+            .ok_or_else(|| anyhow::anyhow!("clustered SQ8 stripe metadata missing"))?;
+
+        assert!(
+            clustered_meta.stripe_len < flat_meta.stripe_len,
+            "clustered {} bytes is not smaller than flat {} bytes",
+            clustered_meta.stripe_len,
+            flat_meta.stripe_len
+        );
+        assert!(
+            flat_reader
+                .vector_params()
+                .transform(col_id::EMBED_BASE)
+                .is_none()
+        );
+        assert_eq!(
+            clustered_reader
+                .vector_params()
+                .transform(col_id::EMBED_BASE)
+                .map(|transform| transform.transform_kind),
+            Some(crate::vparam::TRANSFORM_CLUSTERED_FOR_U8)
+        );
+        assert_eq!(
+            clustered_reader.decode_f32_vec_stripe(col_id::EMBED_BASE),
+            flat_reader.decode_f32_vec_stripe(col_id::EMBED_BASE)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn clustered_sq8_transform_falls_back_when_not_smaller() -> Result<()> {
+        const DIM: usize = 16;
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::Sq8)
+            .with_clustered_sq8_lossless(true);
+        for row in 0..8usize {
+            let embedding: Vec<f32> = (0..DIM)
+                .map(|lane| ((row * DIM + lane) % 256) as f32)
+                .collect();
+            writer.add_record(&make_record_with_embedding(
+                &format!("r{row}"),
+                "t",
+                1_000 + row as i64,
+                embedding,
+            ))?;
+        }
+
+        let block = writer.flush()?;
+        let reader = PaxBlockReader::open(&block)?;
+        assert!(
+            reader
+                .vector_params()
+                .transform(col_id::EMBED_BASE)
+                .is_none()
+        );
+        let meta = reader
+            .column_metas()
+            .iter()
+            .find(|meta| meta.column_id == col_id::EMBED_BASE)
+            .ok_or_else(|| anyhow::anyhow!("SQ8 stripe metadata missing"))?;
+        assert_eq!(meta.stripe_len as usize, 1 + 8 * DIM);
+        Ok(())
     }
 
     #[test]
@@ -2085,7 +2212,7 @@ mod tests {
                 vmax: 0.4,
             },
         };
-        let decoded = decode_f32_vec_v2(&data, rows.len(), &entry).unwrap();
+        let decoded = decode_f32_vec_v2(&data, rows.len(), &entry, None).unwrap();
         assert_eq!(decoded[0], Some(vec![0.1, 0.2]));
         assert_eq!(decoded[1], None);
         assert_eq!(decoded[2], Some(vec![0.3, 0.4]));

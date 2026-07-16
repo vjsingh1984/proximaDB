@@ -26,7 +26,7 @@ use anyhow::{Result, bail};
 use crate::{
     reader::{
         RankMetric, decode_f32_vec_v2, decode_i64_with_encoding, decode_str_with_encoding,
-        parse_rabitq_codes, score_rerank_row,
+        decode_vector_payload, parse_rabitq_codes, score_rerank_row,
     },
     record::col_id,
     rowgroup::RowGroupBlock,
@@ -180,6 +180,12 @@ impl BlockLayout {
         end_row: u32,
     ) -> Option<Range<u64>> {
         let entry = self.vparams.get(column_id)?;
+        if self.vparams.transform(column_id).is_some() {
+            // Transformed stripes are microchunk-addressable rather than
+            // fixed-stride. Until the planner consumes the codec directory,
+            // callers must fetch the full (smaller) stripe.
+            return None;
+        }
         let m = self.meta(column_id)?;
         let n = self.footer.n_rows;
         if start_row > end_row || end_row > n {
@@ -212,7 +218,12 @@ impl BlockLayout {
             .vparams
             .get(column_id)
             .ok_or_else(|| anyhow::anyhow!("no vector params for column {column_id}"))?;
-        decode_f32_vec_v2(stripe_bytes, self.footer.n_rows as usize, entry)
+        decode_f32_vec_v2(
+            stripe_bytes,
+            self.footer.n_rows as usize,
+            entry,
+            self.vparams.transform(column_id),
+        )
     }
 
     /// Decode a string column (e.g. `col_id::OID`) from its range-fetched stripe
@@ -301,12 +312,8 @@ impl BlockLayout {
         }
         let n = self.footer.n_rows as usize;
         let dim = entry.dim as usize;
-        let bm_len = n.div_ceil(8);
-        if stripe_bytes.len() < bm_len {
-            return None;
-        }
-        let bitmap = &stripe_bytes[..bm_len];
-        let payload = &stripe_bytes[bm_len..];
+        let (bitmap, payload) =
+            decode_vector_payload(stripe_bytes, n, self.vparams.transform(column_id)).ok()?;
         let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
         let stride = if entry.quant_kind == QUANT_FP16 {
             dim * 2

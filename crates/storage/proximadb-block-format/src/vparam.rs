@@ -44,6 +44,9 @@ pub const QUANT_RABITQ: u8 = 2;
 /// Vector stripe is stored as FP16 (2 bytes/value, near-lossless).
 pub const QUANT_FP16: u8 = 3;
 
+/// Exact clustered frame-of-reference/bit-pack transform over SQ8 code bytes.
+pub const TRANSFORM_CLUSTERED_FOR_U8: u8 = 1;
+
 /// Bytes per [`VectorParamEntry`] on the wire.
 pub const ENTRY_SIZE: usize = 28;
 
@@ -102,6 +105,52 @@ pub struct RaBitQColumn {
     pub centroid: Vec<f32>,
 }
 
+/// Block-local reversible transform applied after the value codec.
+///
+/// This optional trailer is absent from legacy `VectorParamBlock` payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VectorTransformColumn {
+    pub column_id: i32,
+    pub transform_kind: u8,
+    pub transform_version: u8,
+}
+
+impl VectorTransformColumn {
+    const SIZE: usize = 8;
+
+    fn to_bytes(self) -> [u8; Self::SIZE] {
+        let mut bytes = [0u8; Self::SIZE];
+        bytes[0..4].copy_from_slice(&self.column_id.to_le_bytes());
+        bytes[4] = self.transform_kind;
+        bytes[5] = self.transform_version;
+        bytes
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < Self::SIZE {
+            bail!("VectorTransformColumn slice too short: {}", bytes.len());
+        }
+        let transform = Self {
+            column_id: i32::from_le_bytes(bytes[0..4].try_into()?),
+            transform_kind: bytes[4],
+            transform_version: bytes[5],
+        };
+        if transform.transform_kind != TRANSFORM_CLUSTERED_FOR_U8 {
+            bail!(
+                "unknown vector transform kind 0x{:02x}",
+                transform.transform_kind
+            );
+        }
+        if transform.transform_version != 1 {
+            bail!(
+                "unsupported vector transform version {}",
+                transform.transform_version
+            );
+        }
+        Ok(transform)
+    }
+}
+
 impl RaBitQColumn {
     fn to_bytes(&self) -> Vec<u8> {
         let mut b = Vec::with_capacity(16 + self.centroid.len() * 4);
@@ -148,6 +197,7 @@ impl RaBitQColumn {
 pub struct VectorParamBlock {
     pub entries: Vec<VectorParamEntry>,
     pub rabitq: Vec<RaBitQColumn>,
+    pub transforms: Vec<VectorTransformColumn>,
 }
 
 impl VectorParamBlock {
@@ -165,6 +215,14 @@ impl VectorParamBlock {
         buf.extend_from_slice(&(self.rabitq.len() as u32).to_le_bytes());
         for r in &self.rabitq {
             buf.extend_from_slice(&r.to_bytes());
+        }
+        // Optional lossless-transform trailer. Omit it when empty so default-OFF
+        // writers retain the legacy VectorParamBlock bytes exactly.
+        if !self.transforms.is_empty() {
+            buf.extend_from_slice(&(self.transforms.len() as u32).to_le_bytes());
+            for transform in &self.transforms {
+                buf.extend_from_slice(&transform.to_bytes());
+            }
         }
         buf
     }
@@ -196,7 +254,41 @@ impl VectorParamBlock {
                 cur += consumed;
             }
         }
-        Ok(Self { entries, rabitq })
+        let mut transforms = Vec::new();
+        if cur < b.len() {
+            if b.len() - cur < 4 {
+                bail!("VectorParamBlock truncated at transform count");
+            }
+            let transform_count = u32::from_le_bytes(b[cur..cur + 4].try_into()?) as usize;
+            cur += 4;
+            if transform_count > b.len().saturating_sub(cur) / VectorTransformColumn::SIZE {
+                bail!("VectorParamBlock transform count exceeds remaining bytes");
+            }
+            transforms.reserve(transform_count);
+            for _ in 0..transform_count {
+                let end = cur + VectorTransformColumn::SIZE;
+                let transform = VectorTransformColumn::from_bytes(&b[cur..end])?;
+                let Some(entry) = entries
+                    .iter()
+                    .find(|entry| entry.column_id == transform.column_id)
+                else {
+                    bail!("vector transform references unknown column");
+                };
+                if entry.quant_kind != QUANT_SQ8 {
+                    bail!("clustered u8 transform requires an SQ8 vector column");
+                }
+                transforms.push(transform);
+                cur = end;
+            }
+        }
+        if cur != b.len() {
+            bail!("VectorParamBlock has trailing bytes");
+        }
+        Ok(Self {
+            entries,
+            rabitq,
+            transforms,
+        })
     }
 
     /// Find the entry for `column_id`, if present.
@@ -207,6 +299,13 @@ impl VectorParamBlock {
     /// Find the RaBitQ side data for `column_id`, if present.
     pub fn rabitq_column(&self, column_id: i32) -> Option<&RaBitQColumn> {
         self.rabitq.iter().find(|r| r.column_id == column_id)
+    }
+
+    /// Find a reversible transform declaration for `column_id`.
+    pub fn transform(&self, column_id: i32) -> Option<&VectorTransformColumn> {
+        self.transforms
+            .iter()
+            .find(|transform| transform.column_id == column_id)
     }
 }
 
@@ -242,15 +341,27 @@ mod tests {
                 },
             ],
             rabitq: Vec::new(),
+            transforms: vec![VectorTransformColumn {
+                column_id: 20,
+                transform_kind: TRANSFORM_CLUSTERED_FOR_U8,
+                transform_version: 1,
+            }],
         };
         let bytes = block.to_bytes();
-        // entries + the (empty) RaBitQ trailer count.
-        assert_eq!(bytes.len(), 4 + 2 * ENTRY_SIZE + 4);
+        // Entries + empty RaBitQ count + one transform-trailer entry.
+        assert_eq!(
+            bytes.len(),
+            4 + 2 * ENTRY_SIZE + 4 + 4 + VectorTransformColumn::SIZE
+        );
         let back = VectorParamBlock::from_bytes(&bytes).unwrap();
         assert_eq!(back, block);
         assert_eq!(back.get(20).unwrap().dim, 384);
         assert_eq!(back.get(20).unwrap().quant_kind, QUANT_SQ8);
         assert_eq!(back.get(21).unwrap().quant_kind, QUANT_RAW_F32);
+        assert_eq!(
+            back.transform(20).map(|transform| transform.transform_kind),
+            Some(TRANSFORM_CLUSTERED_FOR_U8)
+        );
         assert!(back.get(99).is_none());
     }
 
@@ -273,6 +384,7 @@ mod tests {
                 seed: 0xDEAD_BEEF_1234_5678,
                 centroid: vec![0.1, -0.2, 0.3, -0.4],
             }],
+            transforms: Vec::new(),
         };
         let back = VectorParamBlock::from_bytes(&block.to_bytes()).unwrap();
         assert_eq!(back, block);
@@ -289,5 +401,47 @@ mod tests {
         // entries count (0) + RaBitQ trailer count (0).
         assert_eq!(bytes.len(), 8);
         assert!(VectorParamBlock::from_bytes(&bytes).unwrap().is_empty());
+    }
+
+    #[test]
+    fn legacy_vparam_without_transform_trailer_remains_readable() -> Result<()> {
+        let entry = VectorParamEntry {
+            column_id: 20,
+            dim: 4,
+            quant_kind: QUANT_SQ8,
+            params: Sq8Params {
+                scale: 1.0,
+                offset: 0.0,
+                vmin: 0.0,
+                vmax: 255.0,
+            },
+        };
+        let mut legacy = Vec::new();
+        legacy.extend_from_slice(&1u32.to_le_bytes());
+        legacy.extend_from_slice(&entry.to_bytes());
+        legacy.extend_from_slice(&0u32.to_le_bytes());
+
+        let parsed = VectorParamBlock::from_bytes(&legacy)?;
+        assert!(parsed.transforms.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_vector_transform_fails_closed() {
+        let block = VectorParamBlock {
+            entries: Vec::new(),
+            rabitq: Vec::new(),
+            transforms: vec![VectorTransformColumn {
+                column_id: 20,
+                transform_kind: TRANSFORM_CLUSTERED_FOR_U8,
+                transform_version: 1,
+            }],
+        };
+        let mut bytes = block.to_bytes();
+        let transform_kind_offset = 4 + 4 + 4 + 4;
+        if let Some(kind) = bytes.get_mut(transform_kind_offset) {
+            *kind = 0xfe;
+        }
+        assert!(VectorParamBlock::from_bytes(&bytes).is_err());
     }
 }
