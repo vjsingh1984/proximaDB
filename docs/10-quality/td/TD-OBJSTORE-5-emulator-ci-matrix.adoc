@@ -28,7 +28,7 @@ Target coverage by tier (Azure=Azurite `adls://`, S3=MinIO `s3://`, GCS=fake-gcs
 [cols="2,2,2", options="header"]
 |===
 | Tier | Coverage | Cost bound
-| PR (path-gated) | Azurite restart repro STRICT (`--features azure` only) + backend contract tests (object-store crate, all 3 emulators, no main-crate compile) | one single-backend server build
+| PR (path-gated) | Azurite restart repro STRICT (`--features azure` only) + backend contract tests (production root `FileSystem` backends, all 3 emulators) | one single-backend server build
 | QA (develop→qa) | one `cloud-full` build; Azure then S3 emulators SEQUENTIALLY (stop each before the next); restart proof per store; recall ratchet on ONE strict backend (Azure) | measured ratchet — record the cold-cache wall time on first run (existing emulator QA job alone ≈52 min)
 | Nightly / 32 GB runner | GCS compatibility (restart + recall, best-effort) + cross-backend recall | off the promotion path
 |===
