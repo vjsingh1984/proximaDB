@@ -461,21 +461,6 @@ pub fn coalesced_rabitq_enabled() -> bool {
     )
 }
 
-/// Whether the cost-driven selective (striped) read is engaged (ADR-057 /
-/// TD-RDSTRAT-3 Slice C). Default OFF — the whole-segment read stays the default
-/// until the observe→flip gate; `PROXIMADB_PAX_STRIPED_READ=1` opts in.
-pub fn striped_read_enabled() -> bool {
-    matches!(
-        std::env::var("PROXIMADB_PAX_STRIPED_READ")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("1" | "true" | "on" | "yes")
-    )
-}
-
 /// A coalesced ranged GET over one or more survivor data blocks.
 struct CoalescedFetch {
     start: u64,
