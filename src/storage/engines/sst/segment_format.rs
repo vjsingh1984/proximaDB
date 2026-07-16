@@ -134,8 +134,8 @@ pub fn write_pax_segment(
 }
 
 /// Like [`write_pax_segment`] but optionally emits the exact-f32 tier (P3 Phase
-/// D). When `f32_tier` is true (and the quant is RaBitQ), each embedding also
-/// gets a co-located raw-f32 stripe at `col_id::F32_TIER_BASE + i` for an exact
+/// D). When `f32_tier` is true, each embedding also gets a co-located raw-f32
+/// stripe at `col_id::F32_TIER_BASE + i` for an exact
 /// final rerank / `include_vectors`. The flush path calls this with the resolved
 /// `pax_f32_tier` opt-in; compaction/tests use [`write_pax_segment`] (no tier).
 pub fn write_pax_segment_with_f32_tier(
@@ -297,38 +297,45 @@ fn write_pax_segment_ordered(
     writer.finish()
 }
 
-/// True if any input `.pax` segment carries the opt-in exact-f32 tier
-/// (`F32_TIER_BASE`). Compaction calls this to PRESERVE the tier across
-/// re-encoding — otherwise [`write_pax_segment`] drops it. Reads each `.pax`
-/// input's block metadata only; the inputs are page-cached (just read into
-/// records), so this is cheap. Correct for both env- and tag-opt-in (the source
-/// segment reflects whatever the collection wrote).
+/// True only when every vector row in every input `.pax` segment has an exact
+/// f32 authority. Compaction uses this to decide whether its rewritten RaBitQ
+/// output may retain an exact tier. A raw-f32 `EMBED_BASE` is authoritative;
+/// otherwise every non-null base vector must have a matching raw
+/// `F32_TIER_BASE` row. One exact input never upgrades lossy siblings.
+///
+/// Legacy ProximaBlocks (`.sst` or no extension) are exact authorities. Other
+/// physical formats are not assumed exact without an explicit contract. At
+/// least one PAX input must request/preserve exactness; this keeps the optional
+/// tier default-OFF for legacy-only compactions. Read/parse/decode failures fail
+/// closed to `false`.
 pub fn pax_inputs_have_f32_tier(input_files: &[std::path::PathBuf]) -> bool {
-    use proximadb_block_format::col_id;
+    let mut saw_pax = false;
     for f in input_files {
-        if f.extension().and_then(|e| e.to_str()) != Some("pax") {
-            continue;
+        match f.extension().and_then(|e| e.to_str()) {
+            Some("pax") => {}
+            Some("sst") | None => continue,
+            Some(_) => return false,
         }
+        saw_pax = true;
         let Ok(bytes) = std::fs::read(f) else {
-            continue;
+            return false;
         };
-        // Read block 0's column metadata via the segment scanner. A `.pax`
-        // SEGMENT file is laid out `[block(s)][segment_index][SEGMENT_MAGIC]`;
-        // `PaxBlockReader::open` parses a SINGLE block and reads its footer from
-        // the trailing `BLOCK_FOOTER_SIZE` bytes, so opening the whole file
-        // misreads the segment index/magic as a block footer. The scanner parses
-        // the trailing index + magic and hands back block 0 correctly.
         let Ok(mut scanner) = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()) else {
-            continue;
+            return false;
         };
-        let Some(reader) = scanner.next_block() else {
-            continue;
-        };
-        if reader.vector_params().get(col_id::F32_TIER_BASE).is_some() {
-            return true;
+
+        let mut saw_block = false;
+        while let Some(reader) = scanner.next_block() {
+            saw_block = true;
+            if !reader.has_exact_vector_authority() {
+                return false;
+            }
+        }
+        if !saw_block {
+            return false;
         }
     }
-    false
+    saw_pax
 }
 
 /// True iff `bytes` is a `.pax` SEGMENT whose `EMBED_BASE` column is RaBitQ-coded
@@ -409,9 +416,9 @@ pub fn pax_inputs_rerank_quant(
     VectorQuant::Sq8
 }
 
-/// One scored hit from a RaBitQ cascade segment scan: the record's `oid` and its
-/// L2 distance to the query (smaller = nearer), reranked against the co-located
-/// SQ8 column.
+/// One scored hit from the coalesced RaBitQ segment scan, reranked against the
+/// co-located SQ8 column. `distance` carries the canonical public metric value:
+/// Euclidean distance, cosine distance, or positive dot-product similarity.
 #[derive(Debug, Clone)]
 pub struct CascadeHit {
     pub oid: String,
@@ -527,6 +534,18 @@ fn rerank_distance(metric: RankMetric, q: &[f32], v: &[f32]) -> f32 {
             1.0 - dot / (nq * nv + 1e-12)
         }
         RankMetric::DotProduct => -q.iter().zip(v).map(|(a, b)| a * b).sum::<f32>(),
+    }
+}
+
+/// Convert the coalesced reranker's lower-is-better ordering score into the
+/// canonical metric value consumed by the public score conversion. This is a
+/// one-way boundary: sorting happens before it, and callers must not negate or
+/// square-root the value again.
+fn canonical_score_from_rank_score(metric: RankMetric, rank_score: f32) -> f32 {
+    match metric {
+        RankMetric::L2 => rank_score.max(0.0).sqrt(),
+        RankMetric::Cosine => rank_score,
+        RankMetric::DotProduct => -rank_score,
     }
 }
 
@@ -681,6 +700,9 @@ pub async fn rabitq_search_segment_coalesced(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     hits.truncate(k);
+    for hit in &mut hits {
+        hit.distance = canonical_score_from_rank_score(metric, hit.distance);
+    }
     Ok(Some(hits))
 }
 
@@ -975,6 +997,121 @@ mod tests {
         unsafe {
             std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "0");
         }
+    }
+
+    #[test]
+    fn coalesced_requested_f32_tier_is_emitted_and_materializes_exact() {
+        enable_coalesced_rabitq();
+        use proximadb_block_format::col_id;
+        use proximadb_storage_common::segment_layout::SegmentFooterIndex;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coalesced-exact.pax");
+        let records = vec![
+            rec("a", 1, vec![-7.25, 0.123_456_7, 3.141_592_7]),
+            rec("b", 2, vec![2.75, 8.765_432, -0.333_333_34]),
+            rec("c", 3, vec![11.125, -4.567_891, 9.999_991]),
+        ];
+
+        write_pax_segment_with_f32_tier(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            true,
+            Some(1024),
+        )
+        .unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let footer = SegmentFooterIndex::locate_in_segment(&bytes)
+            .unwrap()
+            .expect("coalesced footer");
+        assert!(footer.has_f32_tier, "footer must declare the exact tier");
+
+        let mut scanner =
+            PaxSegmentScanner::from_bytes(bytes.clone(), ScanPredicate::default()).unwrap();
+        while let Some(block) = scanner.next_block() {
+            assert!(
+                block.vector_params().get(col_id::F32_TIER_BASE).is_some(),
+                "every coalesced block must emit the requested exact tier"
+            );
+        }
+
+        let materialized = read_segment_records(&bytes, &[], &[], None).unwrap();
+        assert_eq!(materialized.len(), records.len());
+        for got in &materialized {
+            let want = records.iter().find(|r| r.oid == got.oid).unwrap();
+            assert_eq!(
+                got.embeddings[0].as_fp32_slice(),
+                want.embeddings[0].as_fp32_slice(),
+                "compaction materialization must prefer exact f32 for {}",
+                got.oid
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_exact_and_lossy_inputs_do_not_claim_exact_output() {
+        disable_coalesced_rabitq();
+        let dir = tempfile::tempdir().unwrap();
+        let exact = dir.path().join("exact.pax");
+        let lossy = dir.path().join("lossy.pax");
+        let records = vec![
+            rec("a", 1, vec![-1.0, 0.123_456_7, 7.0]),
+            rec("b", 2, vec![3.0, 4.765_432, -2.0]),
+        ];
+
+        write_pax_segment_with_f32_tier(
+            &exact,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            true,
+            None,
+        )
+        .unwrap();
+        write_pax_segment_with_f32_tier(
+            &lossy,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert!(pax_inputs_have_f32_tier(std::slice::from_ref(&exact)));
+        assert!(
+            !pax_inputs_have_f32_tier(&[exact.clone(), lossy]),
+            "one exact input must not make a mixed compacted output exact"
+        );
+        assert!(
+            !pax_inputs_have_f32_tier(&[exact, dir.path().join("unknown.arrow")]),
+            "an unrelated physical format must not be assumed exact"
+        );
+    }
+
+    #[test]
+    fn coalesced_rank_scores_cross_the_public_metric_boundary_once() {
+        assert_eq!(
+            canonical_score_from_rank_score(RankMetric::L2, 25.0),
+            5.0,
+            "squared L2 rank score must become canonical Euclidean distance"
+        );
+        assert_eq!(
+            canonical_score_from_rank_score(RankMetric::DotProduct, -6.0),
+            6.0,
+            "negated-dot rank score must become public positive-dot similarity"
+        );
+        assert_eq!(
+            canonical_score_from_rank_score(RankMetric::Cosine, 0.25),
+            0.25,
+            "cosine distance is already canonical"
+        );
     }
 
     /// A coalesced-RaBitQ segment (opt-in) is detected as Pax, carries a non-zero

@@ -146,8 +146,8 @@ pub struct PaxBlockWriter {
     /// retained. Default from `PROXIMADB_PAX_DROP_TENANT_COL` (off) so the write
     /// format only changes once readers that stamp tenant are deployed.
     drop_tenant_col: bool,
-    /// Opt-in exact-f32 tier (P3 Phase D): when true + RaBitQ quant, the writer
-    /// ALSO emits the raw f32 embedding at `col_id::F32_TIER_BASE + i` (one
+    /// Opt-in exact-f32 tier (P3 Phase D): when true, the writer ALSO emits the
+    /// raw f32 embedding at `col_id::F32_TIER_BASE + i` (one
     /// stripe per embedding column). Read LAZILY — only an exact final rerank or
     /// `include_vectors` decodes it; id+score queries never touch it (zero scan /
     /// egress cost when unused). Default OFF (set via `with_f32_tier`).
@@ -251,7 +251,7 @@ impl PaxBlockWriter {
     }
 
     /// Enable (or disable) the optional exact-f32 tier (P3 Phase D). When true,
-    /// each RaBitQ-coded embedding also gets a co-located raw-f32 stripe at
+    /// each embedding also gets a co-located raw-f32 stripe at
     /// `col_id::F32_TIER_BASE + i` for an exact final rerank / `include_vectors`.
     /// Default OFF; the flush path enables it from the `pax_f32_tier` tag / env.
     pub fn with_f32_tier(mut self, enabled: bool) -> Self {
@@ -529,7 +529,7 @@ impl PaxBlockWriter {
                 // and exact `include_vectors`. The stripe is read LAZILY — id+score
                 // queries never decode it — so the only always-paid cost is the
                 // storage bytes (the egress/scan cost is paid only when used).
-                if self.include_f32_tier && is_rabitq {
+                if self.include_f32_tier {
                     let (f32_stripe, f32_entry) =
                         self.build_raw_f32_vec_stripe(col_id::F32_TIER_BASE + i as i32, &refs)?;
                     stripes.push(f32_stripe);
