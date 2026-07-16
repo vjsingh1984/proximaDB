@@ -72,3 +72,12 @@ default 0.95 — recall 0.984 clears it; the ratchet only goes up. GET budget fl
 * PR3 per-block OID bloom (`vector_by_id` fast path) — the `StatsKind` structure
   is emitted now; population/wiring is PR3.
 * Multi-file GET scaling, footer/bloom sizing at scale, schema-evolution — all PR2/PR3/follow-on.
+
+== 2026-07-16 full-scale follow-up
+
+This artifact is intentionally the N=100k PR1 measurement; its `0.984` recall
+and `20` GETs/query must not be generalized to N=1M. A verified full TEXMEX
+N=1M, 100-query follow-up measured flat SQ8 at recall@10 `0.968`, `61`
+GETs/query, and `138,851,704` bytes/query. The deferred-bytes bake-off and the
+scale prerequisites it exposed are recorded in
+link:RDSTRAT6_BYTES_BAKEOFF_SIFT_2026_07_16.adoc[the 2026-07-16 evidence].
