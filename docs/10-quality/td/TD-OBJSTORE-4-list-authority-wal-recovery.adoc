@@ -62,11 +62,14 @@ test for the `exists(...)-before-list(...)` pattern on WAL paths (model:
 *S2 — Self-describing, pre-PUT-ordered WAL objects (r3: incarnation-unique epoch,
 epoch-first keys).* Before the data PUT the writer allocates `{epoch, per-collection
 sequence}` and encodes it **epoch-first** — `{epoch:020}-{sequence:020}-{batch_id}.bcwal`
-(sequence-first is not lexicographically ordered across sequence resets) — and in the
-**serialized batch header** together with checksum, format/version, encryption metadata
-(today `WalFileInfo.encryption_metadata` is `None` on recovery — the header closes
-that), and a per-record ordinal (duplicate OIDs in one request replay in request
-order). The epoch comes from **`begin_writer_incarnation`** — a CAS generation bump
+(sequence-first is not lexicographically ordered across sequence resets) — and in a
+**plaintext authenticated OUTER envelope** — `{magic/version, recovery token, payload
+checksum, encryption key/version/nonce metadata}`, bound to the (possibly encrypted)
+serialized batch payload as AEAD associated data (r3.1: the write path serializes then
+encrypts at `disk_manager.rs:202`, so metadata INSIDE the serialized header could
+never be read to decrypt it; today `WalFileInfo.encryption_metadata` is `None` on
+recovery — the envelope closes that). The batch payload carries a per-record ordinal
+(duplicate OIDs in one request replay in request order). The epoch comes from **`begin_writer_incarnation`** — a CAS generation bump
 once per process incarnation, even for the same pod ID (plain lease renewal at
 `partition_lease.rs:1988` reuses the generation for a matching pod, so a container
 restart would reuse the epoch and reset the sequence). The manager caches
@@ -146,7 +149,9 @@ bounding the legacy window; the anvaiops testbed can re-seed.
   (S1); backend contract tests (PUT→prefix-LIST positive, prefix-HEAD-negative,
   multi-page) against the production root FileSystem backends, all three emulators.
 * Failure-mode coverage: every row of ADR-063's "Failure modes covered (r2)" table maps
-  to a slice above; the ADR flips Accepted only when each has a landed mechanism.
+  to a slice above; the ADR flips Accepted when each has a specified normative
+  mechanism with an implementation gate (this table); the gates themselves land
+  with the slices.
 
 == Deferred / adjacent (do not fold into this fix)
 
