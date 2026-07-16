@@ -63,60 +63,6 @@ pub fn flush_cluster_ivf() -> bool {
     )
 }
 
-/// TD-RDSTRAT-5 S3 (read side): opt-in for the VOE-directory centroid probe-prune
-/// at the PAX cascade. Default OFF — the cascade scans every block; set
-/// `PROXIMADB_PAX_CENTROID_PRUNE=1` to load the Vector Object Economy directory
-/// (cache-first) and scan only the blocks whose centroid survives the prune.
-/// Recall-affecting, so it stays default-OFF behind this flag until the SIFT1M
-/// recall ratchet (CI gate) clears the flip. Falls back to the unfiltered scan
-/// whenever the directory is absent/stale or the segment wasn't clustered.
-pub fn centroid_prune_enabled() -> bool {
-    env_flag_on("PROXIMADB_PAX_CENTROID_PRUNE")
-}
-
-/// Shared truthy-env parser for the block-clustering flags.
-fn env_flag_on(var: &str) -> bool {
-    match std::env::var(var).ok().as_deref().map(str::trim) {
-        Some(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"),
-        None => false,
-    }
-}
-
-/// TD-RDSTRAT-5 S3: the centroid probe-prune config, tunable via env so operators
-/// (and the recall gate) can set the `nprobe` aggressiveness and force pruning on
-/// small segments. Defaults to [`BlockPruneConfig::default`] (Sqrt mode, the
-/// production `MIN_BLOCKS_FOR_PRUNING`=100 threshold). Env overrides:
-///   * `PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS` — bypass the 100-block threshold
-///     (e.g. `2` to prune small segments; the recall gate uses this).
-///   * `PROXIMADB_PAX_CENTROID_PRUNE_RATIO` — switch to Ratio mode keeping this
-///     fraction of blocks (0.0–1.0) instead of Sqrt.
-///   * `PROXIMADB_PAX_CENTROID_RADIUS_K` — lever-3 radius weight `k` in the prune
-///     score `d(q,centroid) − k·radius` (default `0.0` = raw centroid distance).
-pub fn centroid_prune_config() -> crate::core::search::BlockPruneConfig {
-    use crate::core::search::{BlockPruneConfig, BlockPruneMode};
-    let mut cfg = BlockPruneConfig::default();
-    if let Some(mb) = std::env::var("PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-    {
-        cfg.min_blocks_override = Some(mb);
-    }
-    if let Some(r) = std::env::var("PROXIMADB_PAX_CENTROID_PRUNE_RATIO")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
-    {
-        cfg.mode = BlockPruneMode::Ratio;
-        cfg.ratio = r.clamp(0.0, 1.0);
-    }
-    if let Some(k) = std::env::var("PROXIMADB_PAX_CENTROID_RADIUS_K")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
-    {
-        cfg.radius_k = k.max(0.0);
-    }
-    cfg
-}
-
 /// The f32 vector of `record`'s embedding `idx`, if present and Fp32-typed (the
 /// canonical write-time embedding representation — quantization happens inside the
 /// block writer). Non-Fp32 variants return `None` (they don't contribute a key).
