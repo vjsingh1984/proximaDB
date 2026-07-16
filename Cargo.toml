@@ -831,6 +831,7 @@ experimental-cdc-connectors = ["dep:tokio-postgres"]
 # ============================================================================
 # EMBEDDED features moved to the proximadb-embedded crate (crates/binding/proximadb-embedded).
 c_ffi = []  # Stub — the C-FFI bindings live in proximadb-embedded; kept here for the duckdb connector cfg.
+python = []  # Stub — the python bindings live in proximadb-embedded; kept here for the windows CI.
 # The server binary no longer compiles language bindings (Python/Java/Node.js/C-FFI).
 
 # CPU optimizations - Disabled Intel MKL on ARM64

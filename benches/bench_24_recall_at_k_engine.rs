@@ -21,7 +21,7 @@
 //! API), but focused on a single engine and Recall@{1,10,100} for the evidence
 //! ledger's `recall_at_10` claim.
 
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
