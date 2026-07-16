@@ -357,16 +357,20 @@ async fn assert_kv_recovered(base: &str, collection: &str, phase: &str) -> anyho
 
 /// TD-OBJSTORE-1 batch 3 regression: a dim-1 zero-vector KV record written to an
 /// object-store backend, then lost after a crash+restart. Reproduces on
-/// `adls://`/`s3://` (whole-object-overwrite WAL); passes trivially on `file://`.
-/// Runs against Azurite via `scripts/run_cloud_emulator_tests.sh` or a real cloud
-/// `PROXIMADB_OBJECT_STORE_URL`.
+/// `adls://`/`s3://`/`gs://` (whole-object-overwrite WAL); passes trivially on
+/// `file://`. Runs against Azurite/MinIO/fake-gcs via
+/// `scripts/run_cloud_emulator_tests.sh` or a real cloud
+/// `PROXIMADB_OBJECT_STORE_URL` (TD-OBJSTORE-5 tiers).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite or s3://MinIO or real cloud)"]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
 async fn zero_vector_kv_record_survives_restart() -> anyhow::Result<()> {
     let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
     anyhow::ensure!(
-        base.starts_with("s3://") || base.starts_with("adls://") || base.starts_with("az://"),
-        "test URL must use s3://, adls:// or az:// (got {base})"
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
     );
     let root = format!(
         "{}/td-objstore-1-kv/{}",

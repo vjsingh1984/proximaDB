@@ -1,5 +1,5 @@
 = ADR-063: Object-store-native catalog & catalog-driven restartability (serverless posture)
-:status: Proposed (2026-07-15)
+:status: Proposed (2026-07-15; r2 amended same day per adversarial review — D4 rewritten with pre-PUT fenced ordering + crash-idempotent materialization, D6 inventory corrected boot-constructor-derived, D3/D7/D8 scoped)
 :date: 2026-07-15
 :deciders: architecture
 :relates-to: ADR-020 (WAL authority), ADR-028 (anvaiops object-store deployment), ADR-031 (catalog object identity), ADR-036 (flat keys / access tier), ADR-045 (durable core vs rebuildable metadata), ADR-048 (SystemCatalog authority), TD-OBJSTORE-1..5, TD-CAT-4/5, CATALOG_OBJECT_STORE_DESIGN_REVIEW_2026_07_14
@@ -70,22 +70,61 @@ timeseries, relational) → for each collection, derive its physical roots from
 prefixes**. The catalog row is the dependency-order authority: no orphan scanning of the
 whole bucket, no recovery of collections the catalog does not know. (TD-OBJSTORE-2
 already established snapshot-before-DDL-ack; this ADR extends the same discipline to the
-data plane.)
+data plane.) _Scope note (r2): this describes the **target** architecture. Today only
+vector WAL recovery is catalog-enumerated; graph, document, and observability recovery
+run through separate boot paths (see D6 inventory). Convergence is incremental — the
+binding rule now is that **new** engines/surfaces must enumerate from the catalog, and
+each existing separate path converges via its D6 migration TD._
 
 **D3 — Ack-durability invariant (write ordering).** When a write is acked, its data
 AND its discoverability are durable on the object store. Discoverability means: the data
 object itself is LISTable under the catalog-derived prefix. Because LIST is strongly
 consistent, the synchronous data PUT alone satisfies the invariant — **no second
-synchronous pointer PUT is required**, and none may be relied upon.
+synchronous pointer PUT is required**, and none may be relied upon. _Scope (r2): the
+strong-LIST premise is certified only for the **primary endpoints** of AWS S3, Azure
+Blob, and GCS (each documents strongly consistent listing). S3-compatible third-party
+implementations, secondary/replication endpoints, and proxies are NOT certified by
+carrying an `s3://` URL — deployments on such stores must declare it, and recovery
+treats any LIST error (authorization, network, throttle) as **fail-closed** (retry then
+loud per-collection recovery failure), never as an empty prefix._
 
-**D4 — LIST is the recovery authority; manifests are caches.** Per-collection WAL replay
-enumerates batches by **LIST under `{collection}/wal/`**. The global WAL manifest remains
-as an *optimization* (LSN ordering, flushed-status tracking, skip-list) but is never the
-gate: recovery must not early-return because the manifest is empty, and a batch present
-in the store but absent from the manifest is an **orphan to replay**, not garbage.
-Replay stays idempotent (canonical dead-record predicate + tombstone suppression,
-mandate 16), so replaying an already-flushed orphan is safe. The 100 ms async manifest
-batcher is therefore *correct by design* — because nothing depends on it for truth.
+**D4 — LIST is the discovery authority; correctness travels IN the WAL object
+(self-describing, pre-PUT-ordered); manifests are caches.** _(Revised after review:
+the r1 claim that replay was already idempotent via mandate 16 was wrong — the dead-record
+predicate and tombstone suppression are read-merge semantics, not `do_flush` invariants,
+and `do_flush` mints a fresh L0 segment per call. Ordering by object timestamp / legacy
+batch-id was also unsafe: wall-clock + process-local counters can resurrect old state
+when an old same-key orphan replays after a newer manifested batch.)_
+
+Per-collection WAL replay enumerates batches by **LIST under `{collection}/wal/`**; the
+global WAL manifest remains a pure cache (skip-list, flushed-status) and is never the
+gate. To make that sound, every WAL object must be **self-describing and totally
+ordered before it is written**:
+
+* *Pre-PUT ordering token.* Before the data PUT, the writer allocates
+  `{recovery_epoch, per-collection monotonic sequence}` — the epoch from the
+  collection's generation-fenced lease (D7), the sequence durable-monotonic within the
+  epoch. The token is encoded in the **object key** (lexicographically sortable) and in
+  the serialized **batch header**, together with checksum, format/version, and
+  encryption metadata. The WAL object is created with **conditional create
+  (put-if-absent)** so key collisions are impossible. LIST alone then yields a totally
+  ordered, integrity-checkable, decryptable replay set — zero extra write-path
+  round-trips, no second correctness object. (The current manifest LSN cannot serve:
+  it is allocated *after* the data PUT.)
+* *Crash-idempotent materialization.* Recovery resolves all recovered same-key
+  mutations in token order **in memory**, then materializes through **deterministic
+  segment naming derived from the replayed token range + conditional create** — so a
+  crash after a successful flush but before WAL deletion/status persistence makes the
+  re-run a no-op instead of a duplicate L0 segment.
+* *Fail-closed on ambiguity and error.* Legacy orphan batches without tokens replay
+  automatically only when unambiguous (at most one legacy orphan for the collection);
+  otherwise recovery halts loudly for operator decision (pre-GA acceptable — the token
+  naming ships with this ADR, bounding the legacy window). A LIST failure
+  (authorization, network) is **never** interpreted as an empty prefix: retry, then
+  fail recovery for that collection loudly.
+* *Manifest-state fix folded in:* manifest load must dedup equal-LSN entries
+  status-aware (`Flushed` supersedes `Active` at the same LSN), closing the stale-Active
+  reload defect.
 
 **D5 — `exists()`-before-LIST on a prefix is a forbidden pattern.** On flat keyspaces,
 prefix existence is answered by LIST (empty result = absent), never by HEAD. The
@@ -93,24 +132,61 @@ prefix existence is answered by LIST (empty result = absent), never by HEAD. The
 `objstore_url_construction_test.rs`) backstops the class.
 
 **D6 — Every durable surface roots under the catalog-derived object-store prefix, or
-declares itself rebuildable.** The local-disk-only surfaces found in the inventory are
-classified: (a) *must migrate* — external-collections registry, primary-pod registry,
-legacy document WAL (superseded by the canonical record store), observability WAL;
-(b) *rebuildable projections, may stay ephemeral* — AXIS indexes/event log, caches, VOE
-directory (rebuilt from segments). Class (a) items each get a TD; class (b) items must
-document their rebuild path. Nothing may sit in class "durable on local disk only".
+declares itself rebuildable.** _(Revised r2: the r1 classification was partly stale;
+this inventory is now **boot-constructor-derived** — from `src/database.rs` +
+`SharedServices` construction — and must be re-derived, not copied, whenever this ADR is
+amended.)_
 
-**D7 — Tenancy scopes recovery.** The two-tier Operator/Account catalog (Phase 5) and
+[cols="2,2,3", options="header"]
+|===
+| Surface | Current state | Disposition
+| External-collections registry | local `data_dir` JSON | (a) migrate — TD to file
+| Collection-pinning registry | local `data_dir/pinning/registry.json` | (a) migrate — TD to file
+| Primary-pod registry | catalog hydration/migration EXISTS; local fallback remains | (a) finish migration, then remove the local fallback
+| Legacy document service WAL | still constructed at boot; canonical record store (ADR-055) has not replaced it | (a) supersede via canonical record store; audit its buffering/ack durability on scheme-qualified URLs
+| Observability WAL | accepts scheme-qualified storage URLs on some paths; ack/buffer durability unaudited | (a) audit, then certify or migrate
+| AXIS event log | **filesystem-backed** (not in-memory as r1 claimed); rebuildable projection | (b) document the rebuild + compaction consequences of loss
+| Graph (ORION) checkpoints | object-store durable, but recovered via a separate boot path | converge to D2 enumeration (migration TD)
+| VOE directory / caches / query plans | rebuilt from segments | (b) rebuildable, ephemeral OK
+|===
+
+Class (a) items each get a TD; class (b) items must document their rebuild path.
+Nothing may sit in class "durable on local disk only".
+
+**D7 — Tenancy scopes recovery; recovery is single-writer per collection.** The
+two-tier Operator/Account catalog (Phase 5) and
 `_operator/leases/{tenant}/{collection}` generation fences are also the recovery
 boundaries: a pod recovers exactly the collections its catalog role can name, under
 account-scoped prefixes (structural isolation, never a filter predicate). Recovery
 inherits `TenantContext` plumbing at every I/O boundary (billing + isolation).
+_Amendment (r2): before replaying a collection, the recoverer must **acquire that
+collection's generation-fenced lease** (the existing partition-lease primitive). This
+makes concurrent recoverer pods safe, and the acquired lease epoch IS the
+`recovery_epoch` in D4's ordering token — one fencing mechanism covers stale writers
+and concurrent recoverers._
 
-**D8 — Restartability is CI-gated on real object-store APIs.** The 3-emulator matrix
-(Azurite/az, MinIO/s3, fake-gcs/gs) gates **round-trip, restart, and recall** on
-object-store-affecting changes (TD-OBJSTORE-5). The process-boundary restart test
-(`object_store_restart_recovery.rs`) is the restartability ratchet: seed → SIGKILL →
-fresh-disk boot → verify by id. It caught batch 3; it stays red until D3-D5 land.
+**D8 — Restartability is CI-gated on real object-store APIs, in cost-credible tiers.**
+_(Revised r2: the r1 "full matrix everywhere" framing was not credible on 16 GB hosted
+runners — a cloud-emulator QA run already takes ~52 min before adding a server build,
+and the root-crate compile is pinned to `jobs=1` for OOM safety.)_ Tiering
+(TD-OBJSTORE-5):
+
+* *PR tier (path-gated):* Azurite-only strict restart repro (`--features azure` only —
+  one cloud backend compiled) + cheap **backend contract tests** in the small
+  object-store crate (PUT → prefix-LIST sees it; prefix-HEAD-negative) against all
+  three emulators — no main-crate compile.
+* *QA tier:* one `cloud-full` server build; Azure and S3 emulators run **sequentially**
+  (stop one before starting the next — memory headroom); restart proof per store;
+  recall ratchet on **one** strict backend (recall is a ranged-read/footer test, not
+  the restart correctness gate).
+* *Nightly / large-runner tier:* GCS compatibility (restart + recall) and cross-backend
+  recall. GCS is explicitly **not called a gate** while its failures are best-effort
+  warnings.
+
+The process-boundary restart test (`object_store_restart_recovery.rs`, now accepting
+`gs://` too) is the restartability ratchet: seed → SIGKILL → fresh-disk boot → verify
+by id. It caught batch 3; it stays red until D3-D5 land, and the CI wiring must be
+**red-first** on develop to prove the gate bites.
 
 == Alternatives rejected
 
@@ -120,9 +196,14 @@ fresh-disk boot → verify by id. It caught batch 3; it stays red until D3-D5 la
   protocol already provides single-writer DDL commit semantics at object-store cost.
 * **A2 — Synchronous manifest pointer PUT per WAL batch.** Fixes the observed loss but
   doubles the write-path round-trips (the dominant cost term) and still leaves a
-  window unless made atomic with the data PUT (impossible across two objects). D4
-  (LIST authority) achieves durability with zero added write-path cost; the pointer
-  stays async as a cache.
+  window unless made atomic with the data PUT — and no object-store primitive
+  (conditional PUT, append blob, GCS generation match, multipart completion) can
+  atomically commit **two independent objects**; a conditional pointer only prevents
+  pointer lost-updates while keeping the cross-object failure window. The
+  zero-extra-round-trip resolution is D4's **self-describing WAL object**: the ordering
+  token, checksum, format/version, encryption metadata, and fencing identity travel in
+  the object's key/header, so LIST discovers everything recovery needs from ONE object.
+  The pointer stays async as a cache.
 * **A3 — Mutable "latest" tip pointer for recovery.** Already rejected in the
   2026-07-14 review (lost-update hazard); LIST-for-latest stays the documented choice.
 * **A4 — Bucket-wide orphan scan at boot.** Violates D2 (catalog is the root) and costs
@@ -143,6 +224,25 @@ fresh-disk boot → verify by id. It caught batch 3; it stays red until D3-D5 la
   land, their loss windows must stay documented in TD-OBJSTORE-1's "not-VM-loss-durable"
   list with loud runtime warnings.
 
+== Failure modes covered (r2)
+
+Each must have an explicit mechanism in TD-OBJSTORE-4 before this ADR flips Accepted:
+
+[cols="3,3", options="header"]
+|===
+| Failure mode | Mechanism
+| Crash after SST flush, before WAL deletion/status persistence | deterministic recovery-segment naming + conditional create (re-run = no-op)
+| Equal-LSN `Active`/`Flushed` manifest entries survive reload | status-aware dedup on manifest load (`Flushed` wins)
+| Encrypted WAL recovery loses key metadata | encryption metadata in the self-describing batch header
+| LIST-discovered orphan lacks integrity metadata | checksum + format/version in key/header
+| Same-key update/delete/tombstone split across manifested + orphan batches | total order by pre-PUT token; in-memory resolution before one flush
+| Clock rollback / batch-id collision / process restart / concurrent writers | fenced `{epoch, sequence}` token + conditional create; epoch from the lease
+| Concurrent recovery pods | D7 lease acquisition before replay
+| LIST permission/transient failure read as "empty collection" | fail-closed policy (retry → loud per-collection failure)
+| Legacy unordered orphans with ambiguous same-key order | fail-closed: auto-replay only when ≤1 legacy orphan; else operator override
+| GCS restart coverage missing from the test | `gs://` accepted by the restart test; exercised in the nightly tier
+|===
+
 == Verification
 
 * `zero_vector_kv_record_survives_restart` (Azurite; red today) flips green when D4+D5
@@ -150,6 +250,9 @@ fresh-disk boot → verify by id. It caught batch 3; it stays red until D3-D5 la
   proof must stay green.
 * `tests/objstore_zero_vector_recovery_test.rs` pins the generic `file://` path
   (flush→restart recovery of zero-vector records) so the fix cannot regress local mode.
-* TD-OBJSTORE-5 wires the emulator matrix (roundtrip + restart + recall per store) into
-  `run_cloud_emulator_tests.sh` / `ci.yml` / `qa-gate.yml`.
+* NEW (r2): double-replay idempotency test (flush succeeds, WAL deletion suppressed,
+  restart → no duplicate segments/records); equal-LSN manifest dedup unit test;
+  backend contract tests (PUT→prefix-LIST, prefix-HEAD-negative) on all three emulators.
+* TD-OBJSTORE-5 wires the tiered emulator gates (D8) into
+  `run_cloud_emulator_tests.sh` / `ci.yml` / `qa-gate.yml` / nightly — red-first.
 * Source-guard test for the `exists()`-before-LIST pattern (D5).

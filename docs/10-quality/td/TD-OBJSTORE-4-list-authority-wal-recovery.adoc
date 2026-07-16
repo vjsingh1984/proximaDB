@@ -40,41 +40,75 @@ Two stacked defects:
 
 Net: "Recovered 0 vectors from 0 files" while the data sits durable in the store.
 
-== Fix specification (ADR-063 D4/D5)
+== Fix specification (ADR-063 D3/D4/D5/D7 — r2, post-review)
 
-*S1 — Kill the prefix-`exists()` gate.* `list_collection_files` LISTs directly; an empty
-result is the "absent" signal. Add a source-guard test for the
-`exists(...)-before-list(...)` pattern on WAL paths (model:
-`objstore_url_construction_test.rs::no_strip_and_reprepend_pattern_in_src`).
+_(r1's S3 claimed replay was already idempotent via mandate 16a/16d — WRONG: those are
+read-merge semantics, not `do_flush` invariants; `do_flush` mints a fresh
+time/random-named L0 segment per call, and legacy batch-ids are wall-clock +
+process-local. The r2 spec below is the reviewed protocol.)_
 
-*S2 — LIST is the recovery authority.* Per-collection recovery merges: (a) manifest
-entries for the collection (LSN-ordered, carries flushed-status), (b) **LIST of
-`{collection}/wal/`**. Batches found by LIST but absent from the manifest are orphans to
-replay, not garbage. `recover_all` must not early-return solely because
-`get_active_entries()` is empty when the catalog has collections to recover.
+*S1 — Kill the prefix-`exists()` gate; fail closed on LIST errors.*
+`list_collection_files` LISTs directly; an **empty result** is the absent signal, a
+**LIST error** (auth/network/throttle) is retried then fails that collection's recovery
+loudly — never treated as empty. All three backends' `exists()` are exact-key probes
+(`azure_blob.rs:277`, `aws_s3.rs:226`, `gcs_store.rs:180`), so this defect is
+backend-wide. Source-guard test for the `exists(...)-before-list(...)` pattern on WAL
+paths (model: `objstore_url_construction_test.rs::no_strip_and_reprepend_pattern_in_src`).
 
-*S3 — Replay ordering & idempotency.* Order by manifest LSN when present; orphans order
-by batch-id/object timestamp after all manifested batches. Replay is already idempotent
-(canonical `is_dead` predicate + same-delta tombstone suppression, mandate 16a/16d) —
-re-replaying an already-flushed orphan is safe; assert this with a test that flushes,
-leaves the WAL object in place, restarts, and verifies no duplicates.
+*S2 — Self-describing, pre-PUT-ordered WAL objects.* Before the data PUT the writer
+allocates `{recovery_epoch, per-collection monotonic sequence}` — epoch from the
+collection's generation-fenced lease (S5), sequence durable-monotonic within the epoch.
+Encode the token in the **object key** (lexicographically sortable, e.g.
+`{seq:020}-{epoch}-{batch_id}.bcwal`) and in the **serialized batch header** together
+with checksum, format/version, and encryption metadata (today
+`WalFileInfo.encryption_metadata` is `None` on recovery — the header closes that).
+Create with **put-if-absent** so collisions are impossible. The manifest LSN cannot be
+reused for this: it is allocated after the data PUT.
 
-*S4 — Manifest stays async, demoted to cache.* No new synchronous PUT on the write path
-(ADR-063 A2 rejected). On successful recovery of an orphan, register it in the fresh
-manifest (or mark flushed) so subsequent boots don't re-list it as an orphan.
+*S3 — LIST-authority recovery with crash-idempotent materialization.* Per-collection
+recovery merges manifest entries (cache: flushed-status skip-list) with the LIST of
+`{collection}/wal/`; batches present in the store but unflushed are replayed regardless
+of manifest presence. Replay resolves ALL same-key mutations in token order **in
+memory**, then materializes via **deterministic segment naming derived from the
+replayed token range + conditional create** — a crash after flush but before WAL
+deletion/status persistence re-runs to a no-op (no duplicate L0 segment, no repeated
+index/statistics side effects). `recover_all` must not early-return on an empty
+manifest while the catalog has collections.
 
-*S5 — Mixed-read-safe.* No on-disk format change; read-side only. Legacy layouts
-(`{collection}/write_buffer/` fallback) keep working.
+*S4 — Manifest-state fixes; manifest stays an async cache.* (a) Manifest load dedups
+equal-LSN entries status-aware — `Flushed` supersedes `Active` at the same LSN (today
+the earlier `Active` can survive reload). (b) On successful orphan recovery, register/
+mark-flushed in the fresh manifest so later boots skip it. (c) No new synchronous PUT
+on the write path (ADR-063 A2 stays rejected; the self-describing object is the
+zero-round-trip answer).
+
+*S5 — Single-recoverer fencing.* Acquire the collection's generation-fenced lease
+(existing partition-lease primitive) before replay; the acquired epoch IS S2's
+`recovery_epoch`. Concurrent recoverer pods and stale writers are fenced by the same
+mechanism.
+
+*S6 — Fail-closed legacy-orphan policy (pre-GA).* Token-less orphan batches replay
+automatically only when unambiguous (≤1 legacy orphan for the collection); otherwise
+recovery halts loudly and requires an explicit operator override. Acceptable pre-GA:
+the token naming ships with this TD, bounding the legacy window; the anvaiops testbed
+can re-seed.
 
 == Gates (TDD)
 
-* RED→GREEN: `zero_vector_kv_record_survives_restart` (Azurite, and MinIO once
-  TD-OBJSTORE-5 wires it) — both `rec-ctrl` and `rec-zero` readable by id after
-  SIGKILL + fresh-disk restart.
+* RED→GREEN: `zero_vector_kv_record_survives_restart` (Azurite strict; MinIO in the QA
+  tier, gs:// nightly — TD-OBJSTORE-5) — both `rec-ctrl` and `rec-zero` readable by id
+  after SIGKILL + fresh-disk restart.
 * STAYS GREEN: `catalog_wal_and_sst_survive_fresh_local_disks` (dim-8, 3-boot proof);
   `tests/objstore_zero_vector_recovery_test.rs` (file:// flush-path guard);
   `tests/recovery/*` corruption/stress suites.
-* NEW: idempotent-orphan-replay test (S3); source-guard for prefix-`exists()` (S1).
+* NEW: **double-replay idempotency** test — flush succeeds, WAL deletion suppressed,
+  restart again → no duplicate segments/records (S3); **equal-LSN dedup** unit test
+  (S4a); **out-of-order orphan** test — old same-key orphan + newer manifested batch →
+  newer value wins (S2/S3); source-guard for prefix-`exists()` (S1); backend contract
+  tests (PUT→prefix-LIST positive, prefix-HEAD-negative) in the object-store crate
+  against all three emulators.
+* Failure-mode coverage: every row of ADR-063's "Failure modes covered (r2)" table maps
+  to a slice above; the ADR flips Accepted only when each has a landed mechanism.
 
 == Deferred / adjacent (do not fold into this fix)
 

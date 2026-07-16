@@ -20,56 +20,58 @@ pointer/LIST recovery (batch 3). The emulators (Azurite, MinIO, fake-gcs — all
 all already scripted) run the same wire APIs locally and in CI. Coverage today stops at
 the Cool-tier PUT roundtrip; restartability and recall never touch an emulator.
 
-Target matrix (per store: Azure=Azurite `adls://`, S3=MinIO `s3://`, GCS=fake-gcs `gs://`):
+Target coverage by tier (Azure=Azurite `adls://`, S3=MinIO `s3://`, GCS=fake-gcs
+`gs://`) — _r2, cost-corrected after review: a cloud-emulator QA run already takes
+~52 min before adding a server build; the root-crate compile is `jobs=1`-pinned on
+16 GB runners; and GCS must not be called a "gate" while its failures warn only:_
 
-[cols="2,1,1,1", options="header"]
+[cols="2,2,2", options="header"]
 |===
-| Gate | Azure | S3 | GCS
-| Roundtrip (PUT-with-tier + read-back) | ✅ exists | ✅ exists | ◻ best-effort (existing skip)
-| Restart (process-boundary durability) | NEW | NEW | NEW (best-effort)
-| Recall ratchet (cold read vs f32 baseline) | NEW | NEW | NEW (best-effort)
+| Tier | Coverage | Cost bound
+| PR (path-gated) | Azurite restart repro STRICT (`--features azure` only) + backend contract tests (object-store crate, all 3 emulators, no main-crate compile) | one single-backend server build
+| QA (develop→qa) | one `cloud-full` build; Azure then S3 emulators SEQUENTIALLY (stop each before the next); restart proof per store; recall ratchet on ONE strict backend (Azure) | fits the existing 90 min budget
+| Nightly / 32 GB runner | GCS compatibility (restart + recall, best-effort) + cross-backend recall | off the promotion path
 |===
-
-GCS stays best-effort per the documented fake-gcs/object_store incompatibility; Azure
-and S3 are strict.
 
 == Slices
 
-*S1 — Restart matrix in the emulator script.* Extend
-`run_cloud_emulator_tests.sh` with a `--restart` phase: build `proximadb-server`
-`--features cloud-full` **once**, then run `object_store_restart_recovery`
-(`zero_vector_kv_record_survives_restart` + `catalog_wal_and_sst_survive_fresh_local_disks`)
-per store by exporting the store-specific env + `PROXIMADB_OBJECT_STORE_URL`
-(Azurite: `adls://proximadb-test` with `PROXIMADB_AZURE_EMULATOR=1
+*S1 — PR tier.* Extend `run_cloud_emulator_tests.sh` with `--restart-azure`: build
+`proximadb-server --features azure` (single backend keeps the compile cheap), run
+`zero_vector_kv_record_survives_restart` against Azurite
+(`PROXIMADB_OBJECT_STORE_URL=adls://proximadb-test`, `PROXIMADB_AZURE_EMULATOR=1
 AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
-AZURE_STORAGE_ACCOUNT{,_NAME}=devstoreaccount1`; MinIO: `s3://proximadb-test` with the
-existing `AWS_*` block). One compile amortized across all stores; `CARGO_BUILD_JOBS=1`
-on hosted runners (OOM ceiling, same rationale as the existing `--all` phase).
+AZURE_STORAGE_ACCOUNT{,_NAME}=devstoreaccount1`). Wire into `ci.yml
+object-store-emulator-tests` (path-gated on object-store changes). **Red-first**: this
+phase must FAIL on current develop (batch 3) and flip green with TD-OBJSTORE-4.
 
-*S2 — Recall ratchet on object store.* Parameterize ONE representative cold-read recall
-gate by storage URL — the `embedded_flush_recovery recall` cold-read ratchet (already in
-qa-gate for file://) or `helix_cold_search_recall_test` — so flush → reopen → recall@k
-runs against each emulator: proves quantized cascade reads (ranged GETs, footer parse)
-are byte-correct over the real wire APIs, not just POSIX. Recall threshold identical to
-the file:// baseline (storage backend must be recall-neutral; any delta is a read-path
-bug, not a tuning knob). Full recall-matrix (SIFT-scale) stays out of scope — CI cost.
+*S2 — Backend contract tests.* In `proximadb-object-store` (small crate, no main-crate
+compile): for each emulator, `PUT key under prefix → LIST(prefix) sees it` and
+`HEAD(prefix) is negative while LIST(prefix) is positive` — pinning the exact D5
+semantics that broke recovery. Runs in the PR tier.
 
-*S3 — CI wiring by tier.* `ci.yml object-store-emulator-tests` (feat→develop,
-path-gated on object-store changes): `--fast` roundtrip + S1 restart on Azure+S3.
-`qa-gate.yml` (develop→qa): full matrix incl. S2 recall + GCS best-effort. Keeps the
-LIGHT tier cheap and puts the expensive compile where the promotion gate already
-budgets 90 min.
+*S3 — QA tier.* `qa-gate.yml`: one `cloud-full` server build; run Azure then S3
+**sequentially**, stopping each emulator before starting the next (memory headroom on
+the 16 GB runner); restart proof (`zero_vector_kv_record_survives_restart` +
+`catalog_wal_and_sst_survive_fresh_local_disks`) per store; ONE cold-read recall ratchet
+(`embedded_flush_recovery recall` or `helix_cold_search_recall_test`) parameterized by
+storage URL, on Azure only — recall is a ranged-read/footer correctness test, not the
+restart gate; threshold identical to the file:// baseline (backend must be
+recall-neutral; any delta is a read-path bug).
 
-*S4 — Local parity.* `make cloud-emulator-test` runs the identical script — every CI
-failure is reproducible on a workstation with Docker (single source of truth, same as
-today).
+*S4 — Nightly tier.* GCS: restart (`gs://` now accepted by the test) + recall,
+best-effort per the documented fake-gcs/object_store incompatibility; plus
+cross-backend recall. Scheduled workflow or 32 GB runner; failures file issues, never
+block promotion.
+
+*S5 — Local parity.* `make cloud-emulator-test` runs the identical script — every CI
+failure is reproducible on a workstation with Docker (single source of truth).
 
 == Gates
 
-* S1 red-first: the restart phase must FAIL on current develop (batch 3) and flip green
-  with TD-OBJSTORE-4 — proving the CI gate actually guards the bug class.
-* S2: recall on each store within ratchet tolerance of the file:// baseline.
-* Script exits non-zero on any strict-store failure; GCS failures warn only.
+* S1 red-first on develop, green with TD-OBJSTORE-4 — proving the gate bites.
+* S2 contract tests strict on all three emulators (they need no server).
+* S3 recall within ratchet tolerance of the file:// baseline.
+* Script exits non-zero on any strict-tier failure; GCS/nightly failures warn + file.
 
 == Notes
 
