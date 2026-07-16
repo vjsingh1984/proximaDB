@@ -255,45 +255,7 @@ fn lower_select(
     if select.from.is_empty() {
         return Err(FrontendError::Unsupported("SELECT without FROM".into()));
     }
-    // Comma-separated FROM is an implicit cross join: `FROM a, b, c` becomes
-    // a left-deep chain of CROSS joins, with the equality predicates in WHERE
-    // acting as the join conditions (the optimizer rewrites Cross+Filter into
-    // hash joins). This is the classic ANSI/TPC-H join spelling.
-    //
-    // Lower every top-level entry once, then ORDER the comma entries by
-    // equi-join connectivity before building the chain: a FROM-order accident
-    // (a pair with no direct equi-key placed adjacent — e.g. `part, supplier`,
-    // joined only transitively through `lineitem` in TPC-H Q9) would otherwise
-    // leave a raw cross product that the native route declines. Comma/inner
-    // joins commute and column refs resolve by name against the reordered
-    // scope, so this preserves semantics; it is a no-op when the FROM order is
-    // already fully connected or when connectivity can't be resolved.
-    let lowered = select
-        .from
-        .iter()
-        .map(|twj| lower_table_with_joins(twj, catalog))
-        .collect::<Result<Vec<_>, _>>()?;
-    let order = comma_join_order(
-        &lowered.iter().map(|(_, s)| s).collect::<Vec<_>>(),
-        select.selection.as_ref(),
-    );
-    let mut lowered: Vec<Option<(LogicalNode, Scope)>> = lowered.into_iter().map(Some).collect();
-    let mut order_iter = order.into_iter();
-    let first = order_iter
-        .next()
-        .expect("FROM is non-empty (checked above)");
-    let (mut plan, mut scope) = lowered[first].take().expect("each index taken once");
-    for idx in order_iter {
-        let (right, right_scope) = lowered[idx].take().expect("each index taken once");
-        scope = scope.concat(&right_scope);
-        plan = LogicalNode::Join {
-            left: Box::new(plan),
-            right: Box::new(right),
-            kind: JoinKind::Cross,
-            on: None,
-            strategy: JoinStrategy::Auto,
-        };
-    }
+    let (mut plan, mut scope) = lower_from(&select.from, select.selection.as_ref(), catalog)?;
 
     // 2) WHERE — lift uncorrelated IN / EXISTS / NOT EXISTS subqueries that appear
     //    as top-level AND-conjuncts into Semi/Anti joins; the remaining conjuncts
@@ -890,6 +852,57 @@ fn projection_alias_for_expr(e: &SqlExpr) -> Option<String> {
 // FROM clause + joins
 // =========================================================================
 
+/// Lower a FROM clause (one entry, explicit joins, or comma-separated) into a
+/// plan + combined scope. Comma-separated FROM is an implicit cross join:
+/// `FROM a, b, c` becomes a left-deep chain of CROSS joins, with the equality
+/// predicates in WHERE acting as the join conditions (the optimizer rewrites
+/// Cross+Filter into hash joins). This is the classic ANSI/TPC-H join spelling.
+///
+/// Lower every top-level entry once, then ORDER the comma entries by equi-join
+/// connectivity (`comma_join_order`, using `where_clause`) before building the
+/// chain: a FROM-order accident (a pair with no direct equi-key placed adjacent —
+/// e.g. `part, supplier`, joined only transitively through `lineitem` in TPC-H
+/// Q9) would otherwise leave a raw cross product that the native route declines.
+/// Comma/inner joins commute and column refs resolve by name against the
+/// reordered scope, so this preserves semantics; it is a no-op when the FROM
+/// order is already fully connected or when connectivity can't be resolved.
+///
+/// Shared by `lower_select` and the correlated-scalar-subquery decorrelator
+/// (TD-REL-LOWER-5), so a correlated subquery may have a multi-table body.
+/// `from` must be non-empty (callers check).
+fn lower_from(
+    from: &[sqlparser::ast::TableWithJoins],
+    where_clause: Option<&SqlExpr>,
+    catalog: &dyn CatalogLookup,
+) -> Result<(LogicalNode, Scope), FrontendError> {
+    let lowered = from
+        .iter()
+        .map(|twj| lower_table_with_joins(twj, catalog))
+        .collect::<Result<Vec<_>, _>>()?;
+    let order = comma_join_order(
+        &lowered.iter().map(|(_, s)| s).collect::<Vec<_>>(),
+        where_clause,
+    );
+    let mut lowered: Vec<Option<(LogicalNode, Scope)>> = lowered.into_iter().map(Some).collect();
+    let mut order_iter = order.into_iter();
+    let first = order_iter
+        .next()
+        .expect("FROM is non-empty (callers check)");
+    let (mut plan, mut scope) = lowered[first].take().expect("each index taken once");
+    for idx in order_iter {
+        let (right, right_scope) = lowered[idx].take().expect("each index taken once");
+        scope = scope.concat(&right_scope);
+        plan = LogicalNode::Join {
+            left: Box::new(plan),
+            right: Box::new(right),
+            kind: JoinKind::Cross,
+            on: None,
+            strategy: JoinStrategy::Auto,
+        };
+    }
+    Ok((plan, scope))
+}
+
 fn lower_table_with_joins(
     twj: &sqlparser::ast::TableWithJoins,
     catalog: &dyn CatalogLookup,
@@ -1201,9 +1214,14 @@ fn lower_correlated_scalar_aggregate(
     let SetExpr::Select(select) = q.body.as_ref() else {
         return Err(unsupported());
     };
-    if select.from.len() != 1 || !select.from[0].joins.is_empty() {
+    if select.from.is_empty() {
         return Err(unsupported());
     }
+    // The subquery body may be MULTI-TABLE (TPC-H Q2: `min(ps_supplycost) from
+    // partsupp, supplier, nation, region where …`). It lowers exactly like the
+    // main FROM — a connectivity-ordered cross chain the planner equi-fies — via
+    // the shared `lower_from`. The single correlation equi is still split out
+    // below; inner join conditions and inner-local filters fold into the Filter.
     let has_group_by = match &select.group_by {
         GroupByExpr::All(_) => true,
         GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
@@ -1228,7 +1246,7 @@ fn lower_correlated_scalar_aggregate(
     // Q17, `sum(x)/7.0`). Decorrelate the one aggregate as usual; the wrapper is
     // re-applied to its post-join value column at the end (`build_scalar_over_agg`).
     let f = single_aggregate_call(proj_sql).ok_or_else(unsupported)?;
-    let (inner_plan, inner_scope) = lower_table_factor(&select.from[0].relation, catalog)?;
+    let (inner_plan, inner_scope) = lower_from(&select.from, Some(where_expr), catalog)?;
     let agg = lower_aggregate_call(f, &inner_scope)?;
     // The count-bug: COUNT over an empty correlated group must be 0, but the
     // LEFT JOIN + GROUP BY rewrite yields NULL. Decline COUNT.
@@ -3041,6 +3059,92 @@ mod tests {
             ),
             other => panic!("expected LEFT JOIN with equi ON over Aggregate, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn multi_table_correlated_scalar_aggregate_lowers_to_left_join_over_grouped_inner_join() {
+        // TD-REL-LOWER-5 slice 1 (TPC-H Q2): a correlated scalar aggregate whose
+        // body is MULTI-TABLE — `min(cost) FROM ps, s WHERE ps_sk = sk AND
+        // ps_pk = p.pk` — decorrelates. The inner join conditions + inner-local
+        // filters fold into the inner Filter (the ONE correlation equi `ps_pk =
+        // pk` becomes the group/join key), so the aggregate groups the joined
+        // inner body. Previously declined at the single-table guard.
+        let mut c = InMemoryCatalog::new();
+        c.register(
+            "p",
+            RelationalSchema::new(vec![
+                ColumnInfo::new("pk", ProximaType::Int64, false),
+                ColumnInfo::new("budget", ProximaType::Float64, true),
+            ]),
+        );
+        c.register(
+            "ps",
+            RelationalSchema::new(vec![
+                ColumnInfo::new("ps_pk", ProximaType::Int64, false),
+                ColumnInfo::new("ps_sk", ProximaType::Int64, false),
+                ColumnInfo::new("cost", ProximaType::Float64, false),
+            ]),
+        );
+        c.register(
+            "s",
+            RelationalSchema::new(vec![ColumnInfo::new("sk", ProximaType::Int64, false)]),
+        );
+
+        let plan = lower_sql(
+            "SELECT pk FROM p WHERE budget = \
+             (SELECT min(cost) FROM ps, s WHERE ps_sk = sk AND ps_pk = pk)",
+            &c,
+        )
+        .expect("multi-table correlated scalar aggregate must lower");
+
+        // Project over Filter over `p LEFT JOIN Aggregate(...) ON p.pk = grp_key`.
+        let filter = under_project(plan);
+        let LogicalNode::Filter { input, .. } = filter else {
+            panic!("expected Filter, got {filter:?}");
+        };
+        let LogicalNode::Join {
+            kind: JoinKind::Left,
+            on: Some(Expr::BinaryOp {
+                op: BinaryOp::Eq, ..
+            }),
+            right,
+            ..
+        } = *input
+        else {
+            panic!("expected LEFT JOIN with equi ON over the decorrelated aggregate");
+        };
+        // The aggregate's input is the MULTI-TABLE inner body (a Join under the
+        // inner Filter) — the crux of this slice.
+        let LogicalNode::Aggregate {
+            input: agg_input,
+            group_by,
+            ..
+        } = *right
+        else {
+            panic!("right side must be the GROUP BY aggregate");
+        };
+        assert_eq!(group_by.len(), 1, "single correlation group key");
+        let inner_has_join = |mut node: &LogicalNode| loop {
+            match node {
+                LogicalNode::Filter { input, .. } => node = input,
+                LogicalNode::Join { .. } => break true,
+                _ => break false,
+            }
+        };
+        assert!(
+            inner_has_join(&agg_input),
+            "the decorrelated aggregate must group a multi-table (joined) inner body, got {agg_input:?}"
+        );
+
+        // No regression: the single-table body still lowers.
+        assert!(
+            lower_sql(
+                "SELECT id FROM users WHERE age < \
+                 (SELECT avg(total) FROM orders WHERE orders.uid = users.id)",
+                &catalog()
+            )
+            .is_ok()
+        );
     }
 
     #[test]
