@@ -27,6 +27,7 @@
 
 pub mod adaptive;
 pub mod bitpack;
+pub mod clustered_for_bitpack;
 pub mod delta;
 pub mod double_delta;
 pub mod frame_of_ref;
