@@ -1233,6 +1233,22 @@ jobs:
           - profile: release
             args: "--release"
     steps:
+      - name: Reclaim disk space
+        # ubuntu-latest ships ~25 GB of preinstalled toolchains this build never
+        # uses (Android SDK, .NET, GHC/Haskell, boost). Removing them frees the
+        # disk the large Rust target/ dir needs — otherwise the runner hits
+        # "No space left on device" and fails the job at random (infra, not code).
+        run: |
+          echo "Disk before reclaim:"; df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/boost || true
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          echo "Disk after reclaim:"; df -h /
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -1296,6 +1312,22 @@ jobs:
             args: "--doc"
             threads: 4
     steps:
+      - name: Reclaim disk space
+        # ubuntu-latest ships ~25 GB of preinstalled toolchains this build never
+        # uses (Android SDK, .NET, GHC/Haskell, boost). Removing them frees the
+        # disk the large Rust target/ dir needs — otherwise the runner hits
+        # "No space left on device" and fails the job at random (infra, not code).
+        run: |
+          echo "Disk before reclaim:"; df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/boost || true
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          echo "Disk after reclaim:"; df -h /
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@1.95.0
