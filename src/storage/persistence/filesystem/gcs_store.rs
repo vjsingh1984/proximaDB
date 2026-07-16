@@ -86,6 +86,59 @@ impl GcsFileSystem {
     fn net(ctx: &str, e: impl std::fmt::Display) -> FilesystemError {
         FilesystemError::Network(format!("{ctx}: {e}"))
     }
+
+    async fn list_paginated(
+        &self,
+        path: &str,
+        max_results: Option<i32>,
+    ) -> FsResult<Vec<DirEntry>> {
+        let (bucket, prefix) = Self::parse(path)?;
+        let mut entries = Vec::new();
+        let mut page_token = None;
+
+        loop {
+            let requested_page_token = page_token.clone();
+            let res = self
+                .client
+                .list_objects(&ListObjectsRequest {
+                    bucket: bucket.clone(),
+                    prefix: Some(prefix.clone()),
+                    max_results,
+                    page_token: requested_page_token.clone(),
+                    ..Default::default()
+                })
+                .await
+                .map_err(|e| Self::net("GCS list_objects", e))?;
+
+            for obj in res.items.unwrap_or_default() {
+                let name = obj.name.rsplit('/').next().unwrap_or(&obj.name).to_string();
+                entries.push(DirEntry {
+                    name,
+                    url: format!("gs://{bucket}/{}", obj.name),
+                    metadata: FsFileMetadata {
+                        path: format!("gs://{bucket}/{}", obj.name),
+                        size: obj.size.max(0) as u64,
+                        is_directory: false,
+                        etag: Some(obj.etag),
+                        ..Default::default()
+                    },
+                });
+            }
+
+            page_token = res.next_page_token.filter(|token| !token.is_empty());
+            match &page_token {
+                None => break,
+                Some(next) if Some(next) == requested_page_token.as_ref() => {
+                    return Err(FilesystemError::Network(format!(
+                        "GCS list_objects returned a repeated page token for {path}"
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+
+        Ok(entries)
+    }
 }
 
 #[async_trait]
@@ -211,32 +264,7 @@ impl FileSystem for GcsFileSystem {
     }
 
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>> {
-        let (bucket, prefix) = Self::parse(path)?;
-        let res = self
-            .client
-            .list_objects(&ListObjectsRequest {
-                bucket: bucket.clone(),
-                prefix: Some(prefix),
-                ..Default::default()
-            })
-            .await
-            .map_err(|e| Self::net("GCS list_objects", e))?;
-        let mut entries = Vec::new();
-        for obj in res.items.unwrap_or_default() {
-            let name = obj.name.rsplit('/').next().unwrap_or(&obj.name).to_string();
-            entries.push(DirEntry {
-                name,
-                url: format!("gs://{bucket}/{}", obj.name),
-                metadata: FsFileMetadata {
-                    path: format!("gs://{bucket}/{}", obj.name),
-                    size: obj.size.max(0) as u64,
-                    is_directory: false,
-                    etag: Some(obj.etag),
-                    ..Default::default()
-                },
-            });
-        }
-        Ok(entries)
+        self.list_paginated(path, None).await
     }
 
     async fn create_dir(&self, _path: &str) -> FsResult<()> {
@@ -308,5 +336,44 @@ mod tests {
         })
         .await;
         assert!(fs.is_ok(), "anonymous+endpoint client should build offline");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs fake-gcs-server — set PROXIMADB_GCS_TEST_ENDPOINT"]
+    async fn list_consumes_all_pages_against_fake_gcs() {
+        let Ok(endpoint) = std::env::var("PROXIMADB_GCS_TEST_ENDPOINT") else {
+            eprintln!("skip: set PROXIMADB_GCS_TEST_ENDPOINT with fake-gcs-server running");
+            return;
+        };
+        let bucket = std::env::var("PROXIMADB_GCS_TEST_BUCKET")
+            .unwrap_or_else(|_| "proximadb-test".to_string());
+        let fs = GcsFileSystem::new(GcsConfig {
+            endpoint_url: Some(endpoint),
+            anonymous: true,
+            project_id: Some("proximadb".to_string()),
+        })
+        .await
+        .expect("fake-gcs client");
+        let prefix = format!("td-objstore-4/{}/", uuid::Uuid::new_v4());
+
+        for index in 0..5 {
+            let path = format!("gs://{bucket}/{prefix}{index}.bcwal");
+            fs.write(&path, &[index], None).await.expect("seed object");
+        }
+
+        let prefix_path = format!("gs://{bucket}/{prefix}");
+        assert!(
+            !fs.exists(&prefix_path).await.expect("prefix HEAD"),
+            "a flat-key prefix must not exist as an exact object"
+        );
+        let entries = fs
+            .list_paginated(&prefix_path, Some(2))
+            .await
+            .expect("multi-page prefix LIST");
+        assert_eq!(entries.len(), 5, "LIST must consume every GCS page");
+
+        for entry in entries {
+            fs.delete(&entry.url).await.expect("cleanup object");
+        }
     }
 }

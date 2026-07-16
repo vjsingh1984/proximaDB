@@ -11,7 +11,9 @@ use tracing::{debug, info, warn};
 
 use crate::storage::encryption::WALEncryptionLayer;
 use crate::storage::encryption::wal_encryption::WalSegmentMetadata;
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::{
+    DirEntry, FileSystem, FilesystemError, FilesystemFactory,
+};
 use crate::storage::persistence::write_ahead_log::BatchId;
 use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
 use proximadb_kernel::checksum::Crc32;
@@ -56,6 +58,8 @@ pub struct WalFileInfo {
 }
 
 impl WriteAheadLogDiskManager {
+    const LIST_ATTEMPTS: usize = 3;
+
     /// Create a new disk manager
     pub fn new(filesystem_factory: Arc<FilesystemFactory>, wal_base_url: impl AsRef<str>) -> Self {
         Self::with_encryption(filesystem_factory, wal_base_url, None)
@@ -368,14 +372,7 @@ impl WriteAheadLogDiskManager {
         );
 
         let filesystem = self.filesystem_factory.get_filesystem(&dir_url)?;
-
-        // Check if directory exists
-        if !filesystem.exists(&dir_url).await? {
-            debug!("WriteBuffer directory does not exist: {}", dir_url);
-            return Ok(Vec::new());
-        }
-
-        let entries = filesystem.list(&dir_url).await?;
+        let entries = Self::list_prefix(&*filesystem, &dir_url).await?;
         let mut wal_files = Vec::new();
 
         debug!("Raw entries from filesystem: {} entries", entries.len());
@@ -396,14 +393,10 @@ impl WriteAheadLogDiskManager {
             // Backward-compat path: {base}/{collection_id}/write_buffer/
             let legacy_url =
                 Self::join_url(&self.wal_base_url, &[collection_id, "write_buffer"], true);
-            if filesystem.exists(&legacy_url).await.unwrap_or(false)
-                && let Ok(legacy_fs) = self.filesystem_factory.get_filesystem(&legacy_url)
-                && let Ok(entries) = legacy_fs.list(&legacy_url).await
-            {
-                for entry in entries {
-                    if let Some(file_info) = self.parse_wal_filename(&entry.url, collection_id) {
-                        wal_files.push(file_info);
-                    }
+            let legacy_fs = self.filesystem_factory.get_filesystem(&legacy_url)?;
+            for entry in Self::list_prefix(&*legacy_fs, &legacy_url).await? {
+                if let Some(file_info) = self.parse_wal_filename(&entry.url, collection_id) {
+                    wal_files.push(file_info);
                 }
             }
         }
@@ -414,6 +407,44 @@ impl WriteAheadLogDiskManager {
             collection_id
         );
         Ok(wal_files)
+    }
+
+    /// LIST is authoritative for a prefix. Object stores return an empty page for an
+    /// absent prefix; the local backend reports a missing directory as NotFound.
+    /// Normalize only those absent forms to empty. Every other failure is retried and
+    /// then returned so recovery cannot silently reinterpret an auth/network/throttle
+    /// failure as data absence (ADR-063 D3-D5 / TD-OBJSTORE-4 S1).
+    async fn list_prefix(filesystem: &dyn FileSystem, prefix: &str) -> Result<Vec<DirEntry>> {
+        for attempt in 1..=Self::LIST_ATTEMPTS {
+            match filesystem.list(prefix).await {
+                Ok(entries) => return Ok(entries),
+                Err(error) if Self::is_absent_list_error(&error) => return Ok(Vec::new()),
+                Err(error) if attempt < Self::LIST_ATTEMPTS => {
+                    warn!(
+                        "WAL prefix LIST failed for {} (attempt {}/{}): {}",
+                        prefix,
+                        attempt,
+                        Self::LIST_ATTEMPTS,
+                        error
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(50 * attempt as u64)).await;
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("Failed to LIST WAL prefix {prefix}"));
+                }
+            }
+        }
+
+        unreachable!("LIST retry loop always returns")
+    }
+
+    fn is_absent_list_error(error: &FilesystemError) -> bool {
+        match error {
+            FilesystemError::NotFound(_) => true,
+            FilesystemError::Io(error) => error.kind() == std::io::ErrorKind::NotFound,
+            _ => false,
+        }
     }
 
     /// Delete a WAL file
@@ -638,5 +669,54 @@ mod tests {
             .await
             .expect("Failed to list files");
         assert_eq!(final_list.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn list_missing_prefix_is_empty_and_legacy_prefix_is_discoverable() {
+        let (manager, temp_dir) = create_test_manager().await;
+        let collection_id = "legacy_collection";
+
+        assert!(
+            manager
+                .list_collection_files(collection_id)
+                .await
+                .expect("missing prefixes are empty")
+                .is_empty()
+        );
+
+        let batch_id = BatchId::new();
+        let legacy_dir = temp_dir.path().join(collection_id).join("write_buffer");
+        std::fs::create_dir_all(&legacy_dir).expect("legacy directory");
+        std::fs::write(
+            legacy_dir.join(format!("{}.bcwal", batch_id.to_base62())),
+            b"legacy WAL",
+        )
+        .expect("legacy WAL object");
+
+        let files = manager
+            .list_collection_files(collection_id)
+            .await
+            .expect("legacy LIST fallback");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].batch_id, batch_id);
+        assert!(files[0].file_url.contains("/write_buffer/"));
+    }
+
+    #[tokio::test]
+    async fn list_error_fails_closed_instead_of_looking_empty() {
+        let (manager, temp_dir) = create_test_manager().await;
+        let collection_id = "broken_collection";
+        let collection_dir = temp_dir.path().join(collection_id);
+        std::fs::create_dir_all(&collection_dir).expect("collection directory");
+        std::fs::write(collection_dir.join("wal"), b"not a directory").expect("blocking file");
+
+        let error = manager
+            .list_collection_files(collection_id)
+            .await
+            .expect_err("a LIST failure must not be treated as an empty prefix");
+        assert!(
+            error.to_string().contains("Failed to LIST WAL prefix"),
+            "unexpected error: {error:#}"
+        );
     }
 }
