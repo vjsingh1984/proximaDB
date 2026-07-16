@@ -1434,6 +1434,52 @@ mod tests {
     }
 
     #[test]
+    fn clustered_sq8_rerank_is_metric_neutral() -> Result<()> {
+        const ROWS_PER_CLUSTER: usize = 128;
+        const DIM: usize = 32;
+        let mut flat = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ);
+        let mut clustered =
+            PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+                .with_quant(crate::writer::VectorQuant::RaBitQ)
+                .with_clustered_sq8_lossless(true);
+        for row in 0..(ROWS_PER_CLUSTER * 2) {
+            if row == ROWS_PER_CLUSTER {
+                clustered.start_cluster_run();
+            }
+            let center = if row < ROWS_PER_CLUSTER { -4.0 } else { 7.0 };
+            let embedding: Vec<f32> = (0..DIM)
+                .map(|lane| center + ((row + lane) % 4) as f32 * 0.01)
+                .collect();
+            let record =
+                make_record_with_embedding(&format!("r{row}"), "t", 1_000 + row as i64, embedding);
+            flat.add_record(&record)?;
+            clustered.add_record(&record)?;
+        }
+        let flat_block = flat.flush()?;
+        let clustered_block = clustered.flush()?;
+        let flat_reader = PaxBlockReader::open(&flat_block)?;
+        let clustered_reader = PaxBlockReader::open(&clustered_block)?;
+        assert!(
+            clustered_reader
+                .vector_params()
+                .transform(col_id::RERANK_BASE)
+                .is_some()
+        );
+
+        let rows: Vec<usize> = (0..ROWS_PER_CLUSTER * 2).collect();
+        let query: Vec<f32> = (0..DIM).map(|lane| 7.0 + lane as f32 * 0.001).collect();
+        for metric in [RankMetric::L2, RankMetric::Cosine, RankMetric::DotProduct] {
+            assert_eq!(
+                clustered_reader.rerank_rows(0, &query, &rows, metric),
+                flat_reader.rerank_rows(0, &query, &rows, metric),
+                "lossless transform changed {metric:?} rerank"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn f32_vec_stripe_no_per_row_dim_header() {
         // v2 vector stripes are fixed-stride with no per-row dim prefix: an SQ8
         // stripe is exactly ceil(n/8) validity bytes + n*dim code bytes.
