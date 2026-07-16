@@ -24,6 +24,17 @@ compaction, stats, phasing, verification). Read the ADR first.
 
 == Downstream pricing dependency (2026-07-16 — this TD is revenue-gating)
 
+*Resolution note (2026-07-16, later the same day):* the PR2 stack (#1060)
+cleared both gates on the measured eval — recall `0.987`/`0.990` and `8`/`36`
+GETs/query at 100k/1M (46×/10.3× vs legacy) — and the downstream card
+re-rated the flat component accordingly (AnvaiOps ADR-0042: coverage 14×/3.2×
+at 100k/1M). This dependency drops from *blocking* to **standing guard**: the
+downstream coverage rule re-fires if #1060 stalls a quarter or at the first
+10M-vector corpus (recall + coverage unmeasured past 1M). The remaining
+bytes/latency term (250 MB/query at 1M) is proposed for
+link:../../12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065]
+(tier regions). The section below is retained as written for the record.
+
 The commercial layer (AnvaiOps ADR-0041 D2/D2a) re-priced retrieval to a
 two-part rate whose flat per-query component must cover the object-store
 read-transaction floor — and on Azure, read txns are ~10–16× S3 GET pricing,
