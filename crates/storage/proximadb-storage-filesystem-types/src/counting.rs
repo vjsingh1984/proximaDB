@@ -195,6 +195,14 @@ impl FileSystem for CountingFileSystem {
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
         self.inner.write(path, data, options).await
     }
+    async fn write_if_absent(
+        &self,
+        path: &str,
+        data: &[u8],
+        options: Option<FileOptions>,
+    ) -> FsResult<()> {
+        self.inner.write_if_absent(path, data, options).await
+    }
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()> {
         self.inner.append(path, data).await
     }

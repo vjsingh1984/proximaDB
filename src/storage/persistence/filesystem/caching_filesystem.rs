@@ -340,6 +340,24 @@ impl FileSystem for UnifiedCachingFilesystem {
         Ok(())
     }
 
+    async fn write_if_absent(
+        &self,
+        path: &str,
+        data: &[u8],
+        options: Option<FileOptions>,
+    ) -> FsResult<()> {
+        let cache_key = self.cache_key(path);
+        self.metadata_cache.invalidate(&cache_key).await;
+        self.disk_cache.invalidate(path).await;
+        self.underlying_fs
+            .write_if_absent(path, data, options)
+            .await?;
+        if self.should_cache_locally(path, data.len()) {
+            self.disk_cache.put(path, data).await;
+        }
+        Ok(())
+    }
+
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()> {
         let cache_key = self.cache_key(path);
 

@@ -285,20 +285,39 @@ impl RecordOpsService {
 
     /// Lease-on-write: make the shared primary-pod registry truthful for
     /// `(tenant, collection)` by acquiring/confirming this pod's durable
-    /// collection lease before the write proceeds. Keyed by the collection NAME
-    /// (`request.collection_id`) and the transport tenant id — the exact pair the
-    /// network gates' `consult_for_write` uses — so the binding this populates is
-    /// the one the gates read. Idempotent + cheap after the first write (registry
-    /// fast-path; the renew loop keeps the lease warm). A missing manager still
+    /// collection lease before the write proceeds. The durable key is always the
+    /// resolved canonical collection UUID; aliases/names must never fork the
+    /// generation fence used by WAL recovery. Idempotent + cheap after the first
+    /// write (registry fast-path; the renew loop keeps the lease warm). A missing manager still
     /// indicates embedded/single-node operation; once a manager is wired, conflicts
     /// and acquire errors reject the write instead of proceeding fail-open.
-    async fn ensure_collection_lease(&self, tenant_id: &str, collection_name: &str) -> Result<()> {
+    async fn ensure_collection_lease(
+        &self,
+        tenant_id: &str,
+        collection_name: &str,
+        canonical_collection_id: &str,
+    ) -> Result<()> {
         let Some(manager) = self.lease_manager.read().ok().and_then(|g| g.clone()) else {
             return Ok(());
         };
         let now_ms = chrono::Utc::now().timestamp_millis();
+        let routing_owned = manager
+            .ensure_owned(tenant_id, canonical_collection_id, now_ms)
+            .await?;
+        if !routing_owned {
+            tracing::warn!(
+                target = "proximadb.primary_pod.lease_on_write",
+                tenant_id = %tenant_id,
+                collection_id = %collection_name,
+                "lease-on-write: this pod is not the primary for the collection; rejecting write"
+            );
+            return Err(anyhow!(
+                "this pod is not the primary for collection '{}'",
+                collection_name
+            ));
+        }
         match manager
-            .ensure_owned(tenant_id, collection_name, now_ms)
+            .begin_writer_incarnation(tenant_id, canonical_collection_id, now_ms)
             .await
         {
             Ok(true) => Ok(()),
@@ -306,12 +325,12 @@ impl RecordOpsService {
                 tracing::warn!(
                     target = "proximadb.primary_pod.lease_on_write",
                     tenant_id = %tenant_id,
-                    collection_id = %collection_name,
-                    "lease-on-write: this pod is not the primary for the collection; rejecting write"
+                    collection_id = %canonical_collection_id,
+                    "writer incarnation is fenced; rejecting WAL write"
                 );
                 Err(anyhow!(
                     "this pod is not the primary for collection '{}'",
-                    collection_name
+                    canonical_collection_id
                 ))
             }
             Err(e) => {
@@ -491,7 +510,7 @@ impl RecordOpsService {
             ));
         }
         if let Err(e) = self
-            .ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
+            .ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name, &collection_id)
             .await
         {
             return Ok(BatchOperationResult::failure(
@@ -561,7 +580,7 @@ impl RecordOpsService {
             ));
         }
         if let Err(e) = self
-            .ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
+            .ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name, &collection_id)
             .await
         {
             return Ok(BatchOperationResult::failure(
@@ -642,7 +661,7 @@ impl RecordOpsService {
             ));
         }
         if let Err(e) = self
-            .ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
+            .ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name, &collection_id)
             .await
         {
             return Ok(BatchOperationResult::failure(

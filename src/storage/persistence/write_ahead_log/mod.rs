@@ -114,6 +114,7 @@ pub mod pitr; // Point-in-Time Recovery manager
 pub mod proto_serialization_strategy; // Clean architecture proto implementation
 pub mod recovery_manager; // New centralized recovery operations
 pub mod recovery_thread_pool; // Thread pool for parallel recovery
+pub mod recovery_token;
 pub mod serialization; // New pure serialization layer // Slug codec for collection paths
 
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WriteAheadLogManager
@@ -158,6 +159,7 @@ pub use recovery_thread_pool::{
     RecoveryPoolStats, RecoveryThreadPool, get_recovery_thread_pool,
     initialize_recovery_thread_pool,
 };
+pub use recovery_token::{RecoveryToken, RecoveryTokenProvider};
 
 // DIP: Re-export path resolver types for convenient access
 pub use crate::storage::trait_components::path_resolver::{

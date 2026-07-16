@@ -521,6 +521,22 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Write file contents
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()>;
 
+    /// Atomically create a new file/object, failing with [`FilesystemError::AlreadyExists`]
+    /// when the key is already present. Recovery protocols use this as their commit
+    /// primitive; implementations must not emulate it with a racy exists-then-write.
+    async fn write_if_absent(
+        &self,
+        path: &str,
+        data: &[u8],
+        options: Option<FileOptions>,
+    ) -> FsResult<()> {
+        let _ = (data, options);
+        Err(FilesystemError::InvalidOperation(format!(
+            "{} does not support conditional create for {path}",
+            self.filesystem_type()
+        )))
+    }
+
     /// Sync file data to disk (fsync/fdatasync)
     /// Ensures data durability after write operations
     /// Returns Ok(()) if sync is not supported by the filesystem

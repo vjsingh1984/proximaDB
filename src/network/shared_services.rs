@@ -2120,6 +2120,9 @@ impl SharedServices {
                         pod_id.clone(),
                         10_000,
                     ));
+                    crate::cluster::partition_lease::install_global_partition_lease_manager(
+                        manager.clone(),
+                    );
                     // P1a: keep held leases warm. Without this the renew loop
                     // never runs in production (it was only spawned in tests),
                     // so held leases lapse after the 10s TTL and the
