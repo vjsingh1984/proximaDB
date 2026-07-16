@@ -287,7 +287,7 @@ impl WriteAheadLogDiskManager {
             vector_count,
             encryption_metadata: encryption_metadata.clone(),
             record_ordinals: (0..vector_count)
-                .map(|ordinal| u32::try_from(ordinal))
+                .map(u32::try_from)
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .context("WAL batch has more records than the recovery ordinal can represent")?,
         };
