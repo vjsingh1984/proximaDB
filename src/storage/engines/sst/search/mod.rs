@@ -266,7 +266,6 @@ impl SstEngine {
             .filesystem()
             .get_filesystem(sstable_path)
             .map_err(|e| anyhow::anyhow!("opening PAX segment {sstable_path}: {e}"))?;
-        let pool = Self::pax_rabitq_pool_for_top_k(k);
 
         // ADR-062 / TD-RDSTRAT-6: a coalesced-RaBitQ segment takes the
         // scan-then-rerank path — one RaBitQ-region GET (keep=100% rank) + one
@@ -292,7 +291,6 @@ impl SstEngine {
                     sstable_path,
                     query_vector,
                     k,
-                    pool,
                     rank_metric,
                 )
                 .await?;
@@ -328,27 +326,8 @@ impl SstEngine {
         Ok(None)
     }
 
-    /// Default RaBitQ candidate-pool size for top-`k` (recall: pool=200→0.708,
-    /// 1000→0.932 @ N=100k). `max(k * mult, min)`; the defaults (mult=100,
-    /// min=1000) reproduce the largest validated config (pool=1000 @ N=100k) at
-    /// k=10 and scale up for larger k, so recall holds across segment sizes until
-    /// the SIFT1M real-dataset validation lands. Env-overridable via
-    /// `PROXIMADB_PAX_RABITQ_POOL_MULT` / `_MIN`.
-    fn pax_rabitq_pool_for_top_k(k: usize) -> usize {
-        static C: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock::new();
-        let (mult, min) = C.get_or_init(|| {
-            let mult = std::env::var("PROXIMADB_PAX_RABITQ_POOL_MULT")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(100);
-            let min = std::env::var("PROXIMADB_PAX_RABITQ_POOL_MIN")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(1000);
-            (mult, min)
-        });
-        k.saturating_mul(*mult).max(*min)
-    }
+    // pax_rabitq_pool_for_top_k moved to segment_format.rs (PR2: adaptive M,
+    // now scales with the segment's row count N via region.n_rows()).
 
     /// Main unified search implementation with orchestration
     ///
