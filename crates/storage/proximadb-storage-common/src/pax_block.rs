@@ -48,7 +48,10 @@ use proximadb_block_format::{
 use proximadb_records::{EmbeddingValues, ProximaRecord};
 use serde::{Deserialize, Serialize};
 
-use crate::engine_constants::{DEFAULT_TARGET_BLOCK_SIZE_BYTES, MAX_TARGET_BLOCK_SIZE_BYTES};
+use crate::engine_constants::{
+    DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES, DEFAULT_TARGET_BLOCK_SIZE_BYTES,
+    MAX_TARGET_BLOCK_SIZE_BYTES,
+};
 use crate::segment_layout::{
     FooterBlockEntry, SEG_HEADER_PREFIX_LEN, SEG_LAYOUT_VERSION, SegmentFooterIndex,
     SegmentHeaderPrefix, StatsKind, is_coalesced_segment, segment_tail,
@@ -547,6 +550,10 @@ pub struct PaxSegmentWriter {
     /// Embedding-0 f32 vectors in cluster (add) order, buffered for the
     /// segment-level RaBitQ region. Populated only when `coalesced_rabitq` is on.
     rabitq_vectors: Vec<Option<Vec<f32>>>,
+    /// Encoding-aware per-row byte estimate (computed from the first record's
+    /// dim + the quant/f32_tier/embedding_count config). Replaces the flat 1024
+    /// that overestimated SQ8 blocks by ~4.5×. 0 = not yet computed.
+    per_row_estimate: usize,
 }
 
 impl PaxSegmentWriter {
@@ -601,6 +608,7 @@ impl PaxSegmentWriter {
             block_radii: Vec::new(),
             coalesced_rabitq: false,
             rabitq_vectors: Vec::new(),
+            per_row_estimate: 0,
         }
     }
 
@@ -689,6 +697,30 @@ impl PaxSegmentWriter {
         .with_shred_spec(self.shred_spec.clone())
     }
 
+    /// Encoding-aware per-row byte estimate (uncompressed). Controls the block
+    /// COUNT (how many blocks → how many survivor GETs). Compression is a
+    /// separate, orthogonal lever (reduces on-disk bytes/GET, not GET count).
+    /// `DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES` covers OID + timestamps + props.
+    fn estimate_per_row_bytes(&self, dim: usize) -> usize {
+        let vector_bytes = if self.coalesced_rabitq {
+            // RaBitQ is in the header region; blocks carry SQ8 (the rerank data).
+            let sq8 = dim;
+            let f32 = if self.f32_tier { dim * 4 } else { 0 };
+            (sq8 + f32) * self.embedding_count.max(1)
+        } else {
+            // Non-coalesced: EMBED_BASE carries the tier-1 encoding directly.
+            let tier1 = match self.quant {
+                VectorQuant::RawF32 => dim * 4,
+                VectorQuant::Fp16 => dim * 2,
+                VectorQuant::RaBitQ => dim.div_ceil(8) + 8 + dim, // code + SQ8 rerank
+                _ => dim,                                         // SQ8 / Auto
+            };
+            let f32 = if self.f32_tier { dim * 4 } else { 0 };
+            (tier1 + f32) * self.embedding_count.max(1)
+        };
+        vector_bytes + DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES
+    }
+
     /// Append a record to the current block.
     ///
     /// Flushes the block automatically when it exceeds `block_size_threshold`.
@@ -709,10 +741,31 @@ impl PaxSegmentWriter {
             self.rabitq_vectors.push(v);
         }
 
-        // Rough size estimate: each record contributes ~1 KB in the worst case.
-        // We flush based on row count as a proxy when threshold is not hit yet.
-        let approx_bytes = self.current_writer.row_count() * 1024;
-        if approx_bytes >= self.block_size_threshold {
+        // Encoding-aware size estimate: compute the per-row byte cost from the
+        // encoding config (quant, coalesced, f32_tier) + the vector dim once
+        // (from the first record). This replaces the flat 1024 B/row estimate
+        // that overestimated SQ8 blocks by ~4.5× (actual ~228 B/row for 128d).
+        if self.per_row_estimate == 0
+            && let Some(dim) = record.embeddings.first().and_then(|e| match &e.values {
+                EmbeddingValues::Fp32(v) => Some(v.len()),
+                _ => None,
+            })
+        {
+            self.per_row_estimate = self.estimate_per_row_bytes(dim);
+        }
+        // PR2: accurate block-flush threshold — actual metadata bytes (tracked from the
+        // records, includes real text/props) + predicted vector bytes (deterministic from
+        // the encoding config). Replaces the flat per-row estimate.
+        let per_row = if self.per_row_estimate > 0 {
+            self.per_row_estimate
+        } else {
+            1024 // safe fallback for non-vector records
+        };
+        let vector_bytes = self.current_writer.row_count() * per_row;
+        let metadata_bytes = self.current_writer.accumulated_metadata_bytes();
+        let block_overhead = 1024; // header(64B) + footer(32B) + column footer — amortized
+        let total = vector_bytes + metadata_bytes + block_overhead;
+        if total >= self.block_size_threshold {
             self.flush_current_block()?;
         }
         Ok(())

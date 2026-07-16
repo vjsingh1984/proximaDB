@@ -192,6 +192,11 @@ pub struct PaxBlockWriter {
     tenant_id_hash_set: u64,
     min_ts: i64,
     max_ts: i64,
+    /// ACTUAL accumulated metadata bytes (oids + props + labels + timestamps —
+    /// excludes embeddings, which are quantized at flush and predicted separately
+    /// by PaxSegmentWriter). Used by PaxSegmentWriter for an accurate block-flush
+    /// threshold (replaces the flat per-row estimate).
+    accumulated_metadata_bytes: usize,
 }
 
 impl PaxBlockWriter {
@@ -232,6 +237,7 @@ impl PaxBlockWriter {
             tenant_id_hash_set: 0,
             min_ts: i64::MAX,
             max_ts: i64::MIN,
+            accumulated_metadata_bytes: 0,
         }
     }
 
@@ -281,6 +287,13 @@ impl PaxBlockWriter {
         self.oids.len()
     }
 
+    /// Actual accumulated metadata bytes (oids + props + labels + timestamps —
+    /// excludes embeddings, which are quantized at flush). Used by PaxSegmentWriter
+    /// for an accurate block-flush threshold.
+    pub fn accumulated_metadata_bytes(&self) -> usize {
+        self.accumulated_metadata_bytes
+    }
+
     pub fn is_empty(&self) -> bool {
         self.oids.is_empty()
     }
@@ -324,6 +337,22 @@ impl PaxBlockWriter {
         } else if self.tenant_id_hash_set != th {
             self.tenant_id_hash_set = 0; // mixed tenants
         }
+
+        // Track ACTUAL metadata bytes (oids + props + labels + timestamps — NOT embeddings,
+        // which are quantized at flush and predicted separately by PaxSegmentWriter).
+        // Computed BEFORE the fields are moved into the column buffers below.
+        self.accumulated_metadata_bytes += flat.oid.len() + flat.tenant_id.len()
+            + 8 + 8 // created_at_ns + updated_at_ns (i64 each)
+            + flat.valid_from_ns.map_or(0, |_| 8)
+            + flat.valid_to_ns.map_or(0, |_| 8)
+            + flat.actor.as_ref().map_or(0, |s| s.len())
+            + flat.origin.as_ref().map_or(0, |s| s.len())
+            + flat.props_bytes.as_ref().map_or(0, |b| b.len())
+            + flat.labels_bytes.as_ref().map_or(0, |b| b.len())
+            + flat.edge_src.as_ref().map_or(0, |s| s.len())
+            + flat.edge_tgt.as_ref().map_or(0, |s| s.len())
+            + flat.edge_type.as_ref().map_or(0, |s| s.len())
+            + flat.edge_weight.map_or(0, |_| 8);
 
         self.oids.push(flat.oid);
         self.tenant_ids.push(flat.tenant_id);
@@ -702,6 +731,7 @@ impl PaxBlockWriter {
         self.tenant_id_hash_set = 0;
         self.min_ts = i64::MAX;
         self.max_ts = i64::MIN;
+        self.accumulated_metadata_bytes = 0;
     }
 
     // ---- Private helpers ----

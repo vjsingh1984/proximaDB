@@ -547,9 +547,13 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
     // compaction (the flush→compaction scheduler is unwired).
     let temp_dir = TempDir::new().unwrap();
     let collection = collection("sift_coalesced_eval", &temp_dir);
-    let engine = SstEngine::new().await.unwrap().with_directory_cache(Arc::new(
-        proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
-    ));
+    let engine = SstEngine::new().await.unwrap()
+        .with_directory_cache(Arc::new(
+            proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
+        ))
+        .with_segment_invariants_cache(Arc::new(
+            proximadb::storage::engines::sst::segment_format::SegmentInvariantsCache::new(64),
+        ));
     let batch: Vec<VectorRecord> = base
         .iter()
         .enumerate()

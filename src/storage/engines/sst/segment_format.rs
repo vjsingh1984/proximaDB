@@ -268,7 +268,7 @@ fn write_pax_segment_ordered(
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,
-        BlockCompression::None,
+        BlockCompression::Zstd,
         collection_id,
         0, // schema_fingerprint — derived from the catalog schema in a later phase
         embedding_count.max(1),

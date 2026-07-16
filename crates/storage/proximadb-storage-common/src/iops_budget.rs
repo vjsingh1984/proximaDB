@@ -45,6 +45,30 @@ impl IopsBudget {
         max: 8 * 1024 * 1024,
     };
 
+    /// Azure Blob Storage budget: 4 MiB target (the SDK chunks ranged reads at
+    /// 4 MiB — a block > 4 MiB uncompressed + overhead could split into 2 GETs).
+    /// zstd compression brings ~4 MiB uncompressed → ~2 MiB on-disk (safe).
+    pub const AZURE: Self = Self {
+        min: 512 * 1024,
+        target: 4 * 1024 * 1024,
+        max: 4 * 1024 * 1024,
+    };
+
+    /// AWS S3 budget: 8 MiB target (no hard range limit; sweet spot for
+    /// throughput vs per-GET cost). Compression → ~4 MiB on-disk.
+    pub const S3: Self = Self {
+        min: 512 * 1024,
+        target: 8 * 1024 * 1024,
+        max: 16 * 1024 * 1024,
+    };
+
+    /// Google Cloud Storage budget: same as S3 (no hard range limit).
+    pub const GCS: Self = Self {
+        min: 512 * 1024,
+        target: 8 * 1024 * 1024,
+        max: 16 * 1024 * 1024,
+    };
+
     /// Local disk / MinIO budget (no round-trip cost):
     /// ~256 KiB min · 1 MiB target · 8 MiB max.
     pub const LOCAL: Self = Self {
@@ -63,18 +87,20 @@ impl IopsBudget {
 
     /// Resolve the budget from a storage path's URL scheme (ADR-036 / ADR-062 D6).
     ///
-    /// Cloud object-store schemes (`s3`, `gs`, `azure`, `abfs`, `adls`, `az`,
-    /// `http`, `https`) → [`IopsBudget::CLOUD`]; bare local paths / `file` /
-    /// `minio` → [`IopsBudget::LOCAL`]; anything else → [`IopsBudget::DEFAULT`].
-    /// MinIO behind an `s3://` endpoint is detected as cloud (4 MiB) — still a
-    /// safe block size; explicit `minio://` resolves to the local budget.
+    /// Per-provider: Azure schemes → [`IopsBudget::AZURE`] (4 MiB — SDK chunks
+    /// ranged reads at 4 MiB); S3 / HTTP → [`IopsBudget::S3`] (8 MiB — no hard
+    /// limit); GCS → [`IopsBudget::GCS`] (8 MiB); local / `file` / `minio` /
+    /// bare paths → [`IopsBudget::LOCAL`]; unknown → [`IopsBudget::DEFAULT`].
     pub fn for_path(path: &str) -> Self {
         let scheme = path.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
         match scheme.as_deref() {
-            // Cloud object stores — pay a GET round-trip → large target.
-            Some("s3" | "gs" | "azure" | "abfs" | "adls" | "az" | "http" | "https") => Self::CLOUD,
-            // Explicit local/minio schemes, or a bare local path (no scheme) —
-            // no round-trip cost → smaller target.
+            // Azure: hard 4 MiB SDK chunk boundary for ranged reads.
+            Some("azure" | "abfs" | "adls" | "az") => Self::AZURE,
+            // S3 / HTTP: no hard range limit; 8 MiB sweet spot.
+            Some("s3" | "http" | "https") => Self::S3,
+            // GCS: same as S3.
+            Some("gs") => Self::GCS,
+            // Local / MinIO / bare path: no round-trip cost.
             Some("file" | "minio") | None => Self::LOCAL,
             Some(_) => Self::DEFAULT,
         }
