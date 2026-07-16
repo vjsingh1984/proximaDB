@@ -1473,7 +1473,7 @@ mod tests {
         let recall = truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32;
         assert!(
             recall >= 0.90,
-            "coalesced scan-then-rerank recall@{K} = {recall:.2} (N={N}, pool={POOL})"
+            "coalesced scan-then-rerank recall@{K} = {recall:.2} (N={N})"
         );
 
         // The nearest neighbour (r137 is the query itself) must be ranked first.

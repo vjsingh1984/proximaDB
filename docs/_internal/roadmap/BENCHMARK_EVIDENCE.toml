@@ -62,7 +62,7 @@ notes = "Single-file collection (one flush batch) with the IVF flush opt-in ON (
 
 [[claims]]
 id = "coalesced_rabitq_adaptive_m_sift1m"
-claim = "ADR-062 PR2: adaptive survivor pool M (scales with N at rate=0.01) lifts recall@10 from 0.968 (fixed M=1000, 0.1% of 1M) to 0.989 at full SIFT1M (N=1,000,000) — clearing the 0.98 gate WITHOUT per-cell RaBitQ (pool-starvation was the sole cause, not centroid distortion). GETs/query=70 (≪370 legacy, 5.3x reduction; target ≤50 pending the cache + block-geometry PRs)"
+claim = "ADR-062 PR2 FULL STACK (adaptive survivor pool M + per-segment invariants cache + encoding-aware block threshold + per-provider IopsBudget + zstd): recall@10 = 0.990 and GETs/query = 36 at full SIFT1M (N=1,000,000) — BOTH gates cleared (recall >=0.98, GETs <=50) WITHOUT per-cell RaBitQ. Adaptive-M alone lifts recall 0.968 -> 0.989 (pool-starvation was the sole cause, not centroid distortion); the cache + block-geometry + zstd stack then drives GETs 70 -> 36 (<<370 legacy, 10.3x reduction; within budget). The single segment-level RaBitQ centroid is NOT the wall."
 metric = "recall@10 + range_gets_per_query"
 status = "measured"
 asserted_in = [
@@ -74,8 +74,8 @@ bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_QUERIES=
 artifact = "docs/_internal/status/SIFT1M_ADAPTIVE_M_RECALL_2026_07_16.adoc"
 hardware = "Local macOS arm64 (Apple Silicon), no other workload"
 date = "2026-07-16"
-version = "develop @ a310a4e87 (+ perf/coalesced-pr2-cost-scale: adaptive-M + coalescing)"
-notes = "Full SIFT1M (1,000,000 vectors, 128d, Euclidean), single-file collection with IVF flush opt-in ON. Provided ground truth (10k queries x 100 neighbors, ANN-benchmarks). Adaptive-M: M = max(k*100, ceil(N*0.01), 1000) = 10,000 at 1M (vs the fixed 1000 = 0.1% that gave 0.968). The single segment-level RaBitQ centroid is NOT the wall — pool-starvation was the sole cause of the 1M recall drop. GETs/query=70 (above the 50 budget due to 10k survivors spanning more blocks — the cache PR + tighter block geometry will close this). Total wall time ~47 min (flush-dominated)."
+version = "develop @ a310a4e87 (+ perf/coalesced-pr2-cost-scale: full PR2 stack — adaptive-M + per-segment invariants cache + encoding-aware block threshold + per-provider IopsBudget + zstd)"
+notes = "Full SIFT1M (1,000,000 vectors, 128d, Euclidean), single-file collection with IVF flush opt-in ON. Provided ground truth (10k queries x 100 neighbors, ANN-benchmarks). Adaptive-M: M = max(k*100, ceil(N*0.01), 1000) = 10,000 at 1M (vs the fixed 1000 = 0.1% that gave 0.968). The single segment-level RaBitQ centroid is NOT the wall — pool-starvation was the sole cause of the 1M recall drop. Full PR2 stack: the per-segment invariants cache elides the header+region+footer read_range on hot queries; the encoding-aware block threshold (actual metadata + SQ8 prediction, replacing the flat row*1024 over-estimate) + per-provider IopsBudget (Azure 4MB / S3 8MB targets) + zstd compression cut the block count so the 10k survivors span fewer coalesced ranges — driving GETs/query 70 -> 36 (within the <=50 budget). Total wall time ~47 min is the IVF flush opt-in (PROXIMADB_PAX_FLUSH_CLUSTER=ivf, eval-only) PCA+IVF re-cluster at flush — NOT a production write-path cost (production flush = cheap sign-bit bootstrap; PCA+IVF is a compaction-time event). Indicative dev-machine run, not an SLA."
 
 [[claims]]
 id = "rdstrat6_bytes_codec_bakeoff_sift"
