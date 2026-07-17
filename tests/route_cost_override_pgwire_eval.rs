@@ -298,6 +298,7 @@ async fn override_eval_body() {
                 ..Default::default()
             },
             Some(&GLOBAL_ROUTE_COST_MODEL),
+            proximadb::query::compute_scheduler::RouteFlags::default(),
         );
     assert_eq!(
         decision.backend,
