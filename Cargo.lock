@@ -6770,6 +6770,7 @@ dependencies = [
  "proximadb-index-storage",
  "proximadb-index-traits",
  "proximadb-index-types",
+ "proximadb-interner",
  "proximadb-kernel",
  "proximadb-mcp",
  "proximadb-metrics",
@@ -7117,6 +7118,9 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "arrow-schema",
+ "prost-types",
+ "proximadb-interner",
+ "proximadb-proto",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -7440,6 +7444,14 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-interner"
+version = "0.2.0"
+dependencies = [
+ "dashmap",
+ "proximadb-kernel",
 ]
 
 [[package]]
