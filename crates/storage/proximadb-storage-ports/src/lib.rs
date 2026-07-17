@@ -13,6 +13,7 @@
 
 use anyhow::Result;
 use proximadb_distance_kernel::DistanceMetric;
+use proximadb_graph_model::{GraphOperation, MarkerKind};
 use proximadb_proto::proximadb_v1::Collection;
 use proximadb_storage_common::StorageEngineType;
 use proximadb_storage_filesystem_types::{FileOptions, FileSystem, FsResult};
@@ -263,4 +264,22 @@ pub trait AxisClusteringPort: Send + Sync {
         distance_metric: DistanceMetric,
         boosting_weights: &[f32],
     ) -> Result<Vec<(usize, f32)>>;
+}
+
+/// Dependency-inversion port for a graph engine's WAL sink (ORION extraction).
+///
+/// ORION (and future graph engines) append graph operations + canonical-sync
+/// markers through this port rather than naming the concrete unified WAL
+/// writer/operation types, so the engine can be extracted to a crate without a
+/// cyclic dependency on the root crate's storage layer. The composition root
+/// injects a concrete impl (e.g. the unified WAL writer, which wraps
+/// [`GraphOperation`] / [`MarkerKind`] into the unified operation enum).
+#[async_trait::async_trait]
+pub trait GraphWalPort: Send + Sync {
+    /// Append a graph operation; returns the assigned sequence number (LSN).
+    async fn append_graph_op(&mut self, op: GraphOperation) -> Result<u64>;
+
+    /// Append a non-data canonical-sync marker; returns the assigned sequence
+    /// number (LSN).
+    async fn append_graph_marker(&mut self, marker: MarkerKind) -> Result<u64>;
 }
