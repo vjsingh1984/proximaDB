@@ -461,11 +461,25 @@ pub async fn try_run_select(
         geometry,
         join_bearing: query_join_bearing(query),
     };
+    // TD-ROUTE-3: read the env master switches ONCE here (both are OnceLock-cached)
+    // and thread them into the decision so `route_select_advised` — not the
+    // dispatch — decides whether a native/duckdb primary is engaged. The decision
+    // core stays env-free / unit-testable.
+    let route_flags = crate::query::compute_scheduler::RouteFlags {
+        native_route: crate::query::execution::native_engine::native_route_enabled(),
+        // `duckdb_engine` compiles only under the `duckdb` feature; without it the
+        // switch is inert (false), matching the absent DuckDB dispatch arm.
+        #[cfg(feature = "duckdb")]
+        duckdb_route: crate::query::execution::duckdb_engine::duckdb_route_enabled(),
+        #[cfg(not(feature = "duckdb"))]
+        duckdb_route: false,
+    };
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         shape,
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
+        route_flags,
     );
     tracing::debug!(
         target: "proximadb::compute_route",
@@ -477,17 +491,17 @@ pub async fn try_run_select(
         decision.explain_line()
     );
 
-    // P1 dispatch driven by the scheduler decision. The DataFusion arm exists only
-    // under the feature (and `parquet_backed` — hence a `DataFusionLocal` decision —
-    // is only reachable there), so a default build never enters it and stays Volcano.
+    // P1 dispatch driven by the AUTHORITATIVE scheduler decision (TD-ROUTE-3).
+    // `route_select_advised` has already folded eligibility (ADR-058) + the env
+    // master switches + any cost-model override into `decision.backend`, so this
+    // block does NOT re-decide — it is a thin `match decision.backend` over the
+    // parquet-OLAP engines, each PRIMARY owning its own fall-through to the shared
+    // DataFusion floor. The DataFusion arm exists only under the feature (and
+    // `parquet_backed`), so a default build never enters it and stays Volcano.
     //
-    // The block is entered for the OLAP-over-parquet route: a static `DataFusionLocal`
-    // decision, OR a cost-model override/exploration flip to `Native` on the
-    // `olap/parquet` class (the only class with two freshness-safe engines,
-    // `freshness_safe_backends_from_class`). Routing the override-`Native` case here
-    // rather than to the Volcano keeps a warmed override on the native-over-parquet
-    // path (which reads the external parquet) with DataFusion as the floor — never on
-    // the Volcano, which has no external-parquet scan wired.
+    // The outer guard restricts entry to the three parquet-OLAP backends; any
+    // other `decision.backend` (never produced for a parquet-OLAP shape) falls
+    // through to the Volcano path below — exactly as before.
     #[cfg(feature = "datafusion-integration")]
     if parquet_backed
         && matches!(
@@ -497,78 +511,15 @@ pub async fn try_run_select(
                 | crate::query::table_write_plan::ComputeBackend::DuckDbCompat
         )
     {
-        // TD-OLAP-4 "favor native by operation": for the operation classes native
-        // measurably wins — footer-elidable `COUNT(*)`/`MIN`/`MAX` (MetadataElidable)
-        // and narrow unfiltered scalar aggregates (ScalarAggregate) — run the native
-        // vectorized engine over the SAME external parquet as the PRIMARY backend and
-        // return ITS result. DataFusion stays the correctness floor: any decline
-        // (ineligible shape, wide/filtered/grouped scan, native error) falls through
-        // to the DataFusion execution below, so correctness never depends on native.
-        //
-        // Trigger (default-OFF): the explicit `PROXIMADB_NATIVE_ROUTE` master switch,
-        // OR a warmed cost-model override/exploration that advised `Native` for this
-        // operation-keyed `olap/parquet` cell (`PROXIMADB_ROUTE_COST_OVERRIDE`, with
-        // its freshness/RTT/min-advantage gating). Either way the shape gate is the
-        // same measured win-set, and DataFusion is the fallback.
-        let native_advised = matches!(
-            decision.backend,
-            crate::query::table_write_plan::ComputeBackend::Native
-        ) && matches!(
-            decision.source,
-            crate::query::compute_scheduler::RouteSource::OverrideExploit
-                | crate::query::compute_scheduler::RouteSource::OverrideExplore
-        );
-        let native_eligible_op = matches!(
-            operation_class,
-            crate::query::compute_scheduler::OperationClass::MetadataElidable
-                | crate::query::compute_scheduler::OperationClass::ScalarAggregate
-        );
-        if native_eligible_op
-            && (crate::query::execution::native_engine::native_route_enabled() || native_advised)
-        {
-            let native_snapshot = SnapshotCatalog {
-                dml: dml.clone(),
-                tables: tables.clone(),
-                tenant: tenant_ctx.clone(),
-            };
-            // Setup (planning/route) time is attributed here; the native engine records
-            // its own `native-vectorized` compute sample inside the run.
-            crate::observability::io_trace::record_setup_ms(
-                setup_start.elapsed().as_millis() as u64
-            );
-            if let Some(result) = try_native_over_parquet(
-                sql,
-                &native_snapshot,
-                &parquet_loc_by_key,
-                &parquet_trust_by_key,
-            )
-            .await
-            {
-                tracing::debug!(
-                    target: "proximadb::compute_route",
-                    "native-over-parquet served as PRIMARY (op={:?}); DataFusion floor bypassed",
-                    operation_class
-                );
-                if let Some((skey, lsn)) = &cache_ctx {
-                    populate_olap_result_cache(
-                        result_cache,
-                        skey,
-                        *lsn,
-                        result.clone(),
-                        &native_snapshot.tables,
-                    );
-                }
-                return Some(Ok(result));
-            }
-            // Native declined → fall through to the DataFusion floor below.
-        }
+        // Shared prep for the DuckDB primary + the DataFusion floor: per-table
+        // Parquet locations and (ADR-058 D5 / §9.A) per-table footer-stats trust,
+        // keyed by table_name (matching `parquet_tables`) and derived from
+        // `parquet_trust_by_key` (keyed by the canonical table key). Drives adapter
+        // elision gating.
         let parquet_tables: Vec<(String, String)> = tables
             .iter()
             .map(|(k, t)| (t.table_name.clone(), parquet_loc_by_key[k].clone()))
             .collect();
-        // ADR-058 D5/§9.A: per-table footer-stats trust, keyed by table_name
-        // (matching `parquet_tables`), derived from `parquet_trust_by_key`
-        // (keyed by the canonical table key). Drives adapter elision gating.
         let parquet_table_trust: HashMap<String, StatsTrust> = tables
             .iter()
             .filter_map(|(k, t)| {
@@ -577,42 +528,69 @@ pub async fn try_run_select(
                     .map(|tr| (t.table_name.clone(), *tr))
             })
             .collect();
-        // ADR-059 rollout step 2: DuckDB-Local as PRIMARY for the join/agg-shaped
-        // parquet OLAP route — the shapes with the measured 100–700× DataFusion
-        // join-plan gap (TD-OLAP-15/TD-OLAP-2). DataFusion remains the correctness
-        // floor: any DuckDB error falls through to the DataFusion execution below.
-        // Trigger (default-OFF): the PROXIMADB_DUCKDB_ROUTE master switch, OR a
-        // warmed cost-model override/exploration that advised DuckDbCompat (the
-        // #946 per-class staged enable). Eligibility (ADR-058: precedes selection):
-        // join-bearing or grouped shape, AND every referenced table's ADR-025
-        // post-snapshot WAL delta is EMPTY — DuckDB reads bare parquet and cannot
-        // reconcile a delta, so it serves only when base parquet == current state
-        // (the delta-merging DataFusion floor serves everything else; errors from
-        // the delta probe fail closed to the floor). The probe is the TD-OLAP-17
-        // per-collection high-water check DataFusion itself pays at table open, so
-        // the common no-writes case costs no scan. The io_trace route is
-        // re-stamped to the engine that actually served ("last write wins" by
-        // design), so cost cells never mis-attribute.
-        #[cfg(feature = "duckdb")]
-        {
-            let duckdb_advised = matches!(
-                decision.backend,
-                crate::query::table_write_plan::ComputeBackend::DuckDbCompat
-            ) && matches!(
-                decision.source,
-                crate::query::compute_scheduler::RouteSource::OverrideExploit
-                    | crate::query::compute_scheduler::RouteSource::OverrideExplore
-            );
-            let duckdb_eligible_shape = shape.join_bearing
-                || matches!(
-                    operation_class,
-                    crate::query::compute_scheduler::OperationClass::Grouped
+
+        // PRIMARY dispatch — a thin match over the authoritative backend. Each arm
+        // attempts its engine and RETURNS on success; on decline it falls through
+        // to the shared DataFusion floor below (which re-stamps the io_trace route
+        // so cost cells attribute to the engine that actually served). Eligibility
+        // + enablement were decided upstream, so reaching an arm IS the
+        // authorization to attempt it — no re-decision here (the TD-ROUTE-3 fix).
+        match decision.backend {
+            // TD-OLAP-4 "favor native by operation": the native vectorized engine
+            // over the SAME external parquet, for the footer-elidable `COUNT(*)` /
+            // `MIN` / `MAX` (MetadataElidable) and narrow unfiltered scalar
+            // aggregates (ScalarAggregate) it measurably wins on. Its own fine
+            // plan-shape gates (single-scan / width / trust) live inside
+            // `try_native_over_parquet`; any decline falls to the floor.
+            crate::query::table_write_plan::ComputeBackend::Native => {
+                let native_snapshot = SnapshotCatalog {
+                    dml: dml.clone(),
+                    tables: tables.clone(),
+                    tenant: tenant_ctx.clone(),
+                };
+                // Setup (planning/route) time is attributed here; the native engine
+                // records its own `native-vectorized` compute sample inside the run.
+                crate::observability::io_trace::record_setup_ms(
+                    setup_start.elapsed().as_millis() as u64
                 );
-            let duckdb_delta_clean =
-                if (crate::query::execution::duckdb_engine::duckdb_route_enabled()
-                    || duckdb_advised)
-                    && duckdb_eligible_shape
+                if let Some(result) = try_native_over_parquet(
+                    sql,
+                    &native_snapshot,
+                    &parquet_loc_by_key,
+                    &parquet_trust_by_key,
+                )
+                .await
                 {
+                    tracing::debug!(
+                        target: "proximadb::compute_route",
+                        "native-over-parquet served as PRIMARY (op={:?}); DataFusion floor bypassed",
+                        operation_class
+                    );
+                    if let Some((skey, lsn)) = &cache_ctx {
+                        populate_olap_result_cache(
+                            result_cache,
+                            skey,
+                            *lsn,
+                            result.clone(),
+                            &native_snapshot.tables,
+                        );
+                    }
+                    return Some(Ok(result));
+                }
+                // Native declined → fall through to the DataFusion floor below.
+            }
+            // ADR-059: DuckDB-Local as PRIMARY for the join/agg-shaped parquet route
+            // (the measured 100–700× DataFusion join-plan gap, TD-OLAP-15/TD-OLAP-2).
+            // The remaining gate is the ADR-025 TRUST probe: DuckDB reads bare
+            // parquet and cannot reconcile a post-snapshot WAL delta, so it serves
+            // only when every referenced table's delta is EMPTY (the delta-merging
+            // DataFusion floor serves everything else; a probe error fails closed to
+            // the floor). The probe is the TD-OLAP-17 per-collection high-water
+            // check DataFusion itself pays at table open, so the common no-writes
+            // case costs no scan.
+            #[cfg(feature = "duckdb")]
+            crate::query::table_write_plan::ComputeBackend::DuckDbCompat => {
+                let duckdb_delta_clean = {
                     use crate::query::execution::olap_delta_merge::OlapDeltaSource;
                     let mut clean = true;
                     for (tkey, params) in &olap_delta_tables {
@@ -628,57 +606,65 @@ pub async fn try_run_select(
                         }
                     }
                     clean
-                } else {
-                    false
                 };
-            if duckdb_delta_clean {
-                let duck_context = QueryExecutionContext {
-                    parquet_tables: parquet_tables.clone(),
-                    parquet_table_trust: parquet_table_trust.clone(),
-                    tenant_id: tenant.map(str::to_string),
-                    controls: controls.clone(),
-                    ..Default::default()
-                };
-                crate::observability::io_trace::record_setup_ms(
-                    setup_start.elapsed().as_millis() as u64
-                );
-                match execute_sql_with_backend(
-                    crate::query::table_write_plan::ComputeBackend::DuckDbCompat,
-                    sql,
-                    duck_context,
-                )
-                .await
-                {
-                    Ok(result) => {
-                        crate::observability::io_trace::record_route(
-                            &crate::query::route_cost_model::shape_class(&shape),
-                            "DuckDbCompat",
-                        );
-                        tracing::debug!(
-                            target: "proximadb::compute_route",
-                            "duckdb-local served as PRIMARY (join/agg parquet shape); \
-                             DataFusion floor bypassed"
-                        );
-                        if let Some((skey, lsn)) = &cache_ctx {
-                            populate_olap_result_cache(
-                                result_cache,
-                                skey,
-                                *lsn,
-                                result.clone(),
-                                &tables,
+                if duckdb_delta_clean {
+                    let duck_context = QueryExecutionContext {
+                        parquet_tables: parquet_tables.clone(),
+                        parquet_table_trust: parquet_table_trust.clone(),
+                        tenant_id: tenant.map(str::to_string),
+                        controls: controls.clone(),
+                        ..Default::default()
+                    };
+                    crate::observability::io_trace::record_setup_ms(
+                        setup_start.elapsed().as_millis() as u64,
+                    );
+                    match execute_sql_with_backend(
+                        crate::query::table_write_plan::ComputeBackend::DuckDbCompat,
+                        sql,
+                        duck_context,
+                    )
+                    .await
+                    {
+                        Ok(result) => {
+                            crate::observability::io_trace::record_route(
+                                &crate::query::route_cost_model::shape_class(&shape),
+                                "DuckDbCompat",
+                            );
+                            tracing::debug!(
+                                target: "proximadb::compute_route",
+                                "duckdb-local served as PRIMARY (join/agg parquet shape); \
+                                 DataFusion floor bypassed"
+                            );
+                            if let Some((skey, lsn)) = &cache_ctx {
+                                populate_olap_result_cache(
+                                    result_cache,
+                                    skey,
+                                    *lsn,
+                                    result.clone(),
+                                    &tables,
+                                );
+                            }
+                            return Some(Ok(result));
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                target: "proximadb::compute_route",
+                                "duckdb-local PRIMARY declined ({e}); DataFusion floor serves"
                             );
                         }
-                        return Some(Ok(result));
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            target: "proximadb::compute_route",
-                            "duckdb-local PRIMARY declined ({e}); DataFusion floor serves"
-                        );
                     }
                 }
+                // Not delta-clean or DuckDB declined → fall through to the floor.
             }
+            // DataFusionLocal (or a DuckDbCompat decision in a non-`duckdb` build) →
+            // the floor serves directly, no primary attempt.
+            _ => {}
         }
+
+        // === DataFusion floor (shared) ===
+        // Reached directly for a DataFusionLocal decision, or by fall-through when a
+        // Native/DuckDB PRIMARY declined. This IS the correctness floor for the
+        // OLAP-over-parquet route.
         let context = QueryExecutionContext {
             parquet_tables,
             parquet_table_trust,
@@ -705,23 +691,18 @@ pub async fn try_run_select(
             allow_engine_sql_fallback: true,
             controls: controls.clone(),
         };
-        // ADR-030 / TD-158: time the DataFusion (engine-SQL fallback) execution so
-        // the always-on billing observer can attribute KRU to this engine at scope
-        // close. `record_compute_ms` no-ops outside an `io_trace` scope.
+        // ADR-030 / TD-158: time the DataFusion execution so the always-on billing
+        // observer can attribute KRU to this engine at scope close. `record_compute_ms`
+        // no-ops outside an `io_trace` scope.
         crate::observability::io_trace::record_setup_ms(setup_start.elapsed().as_millis() as u64);
         let started = std::time::Instant::now();
-        // This block IS the DataFusion floor for the OLAP-over-parquet route, so
-        // execute on DataFusion regardless of the scheduler's advised label — a
-        // cost-model override may have set `decision.backend = Native` (routed here
-        // for the native-primary attempt above), but `execute_sql_with_backend` only
-        // serves `DataFusionLocal`; anything else errors `UnsupportedBackend`.
         let floor_backend = crate::query::table_write_plan::ComputeBackend::DataFusionLocal;
-        // Fold-attribution correctness: the decision stamp may carry an advised
-        // Native/DuckDbCompat backend whose PRIMARY attempt declined above — the
-        // floor is about to serve, so re-stamp the route to DataFusion ("last
-        // write wins"). Without this, a gap-missed flip poisons the advised
-        // engine's cost cells with DataFusion's measured quantities (the
-        // TD-ROUTE-1 §review failure mode).
+        // Fold-attribution correctness (TD-ROUTE-3): if a Native/DuckDB PRIMARY was
+        // decided but declined above, the floor is about to serve — re-stamp the
+        // route to DataFusion ("last write wins") so the declined engine's cost
+        // cells are not poisoned with DataFusion's measured quantities. A direct
+        // DataFusionLocal decision was already stamped by `finalize_route`, so the
+        // guard skips the redundant re-stamp.
         if !matches!(
             decision.backend,
             crate::query::table_write_plan::ComputeBackend::DataFusionLocal
@@ -2062,6 +2043,9 @@ pub fn classify_select_route(
                 ..Default::default()
             },
             Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
+            // `parquet_backed: false` here — the env master switches gate only the
+            // parquet-OLAP primary arm, so flags are inert; default is exact.
+            crate::query::compute_scheduler::RouteFlags::default(),
         ),
     )
 }
@@ -2409,6 +2393,15 @@ async fn route_and_plan_select(
             ..Default::default()
         },
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
+        // EXPLAIN must disclose the SAME backend the real path picks, so thread the
+        // real env master switches (TD-ROUTE-3), not a default.
+        crate::query::compute_scheduler::RouteFlags {
+            native_route: crate::query::execution::native_engine::native_route_enabled(),
+            #[cfg(feature = "duckdb")]
+            duckdb_route: crate::query::execution::duckdb_engine::duckdb_route_enabled(),
+            #[cfg(not(feature = "duckdb"))]
+            duckdb_route: false,
+        },
     );
     let mut explanation = decision_to_explanation(&decision);
 

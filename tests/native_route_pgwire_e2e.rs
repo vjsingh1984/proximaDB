@@ -268,3 +268,78 @@ async fn native_route_aggregates_equal_datafusion_over_pgwire() {
         GLOBAL_ROUTE_COST_MODEL.learned_cell_keys()
     );
 }
+
+/// TD-ROUTE-3 fold-attribution: a native PRIMARY that DECLINES must attribute its
+/// query to the DataFusion FLOOR, never to the declined native engine.
+///
+/// With the decision now authoritative (`route_select_advised` folds the native
+/// master switch + op eligibility into `decision.backend`), the dispatch is a thin
+/// `match decision.backend`. For a native-eligible op the decision selects the
+/// native primary; when `try_native_over_parquet` declines the shape (here: a
+/// FILTERED scan — native has no predicate pushdown), the shared floor serves and
+/// RE-STAMPS the io_trace route to DataFusion. This test proves the cost cells
+/// learn the engine that ACTUALLY served:
+///   * a `NativeVectorized` cell exists → native genuinely engaged as PRIMARY on
+///     the unfiltered shape (so the filtered case is a real primary→floor
+///     fall-through, not "native was never eligible"), AND
+///   * a `DataFusionLocal` cell exists → the filtered decline attributed to the
+///     floor. A broken re-stamp would leave the filtered query stamped as the
+///     native backend, so NO `DataFusionLocal` cell would appear here (every query
+///     run is a native-eligible aggregate) and this test would fail.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn native_decline_attributes_to_datafusion_floor_not_the_declined_primary() {
+    let server = PgServer::start().await.expect("server start");
+    let (client, conn) = tokio_postgres::connect(&server.conn_str(), tokio_postgres::NoTls)
+        .await
+        .expect("tokio-postgres connect");
+    tokio::spawn(async move {
+        if let Err(e) = conn.await {
+            eprintln!("pgwire connection error: {e}");
+        }
+    });
+
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let t = format!("nrfloor_{suffix}");
+
+    client
+        .simple_query(&format!("CREATE TABLE {t} (id INT PRIMARY KEY, v INT)"))
+        .await
+        .unwrap_or_else(|e| panic!("CREATE: {}", explain_err(&e)));
+    for (id, v) in [(1, 10), (2, 20), (3, 30), (4, 40), (5, 50)] {
+        client
+            .simple_query(&format!("INSERT INTO {t} (id, v) VALUES ({id}, {v})"))
+            .await
+            .unwrap_or_else(|e| panic!("INSERT: {}", explain_err(&e)));
+    }
+    client
+        .simple_query(&format!("ALTER TABLE {t} MATERIALIZE"))
+        .await
+        .unwrap_or_else(|e| panic!("MATERIALIZE: {}", explain_err(&e)));
+    sleep(Duration::from_millis(500)).await;
+
+    // Unfiltered scalar aggregate → native PRIMARY serves (stamps NativeVectorized).
+    let _ = scalar(&client, &format!("SELECT SUM(v) FROM {t}")).await;
+    // Filtered variant of the SAME native-eligible op → the native primary is
+    // selected but DECLINES the predicate scan → DataFusion floor serves and the
+    // route is re-stamped DataFusionLocal.
+    let _ = scalar(&client, &format!("SELECT SUM(v) FROM {t} WHERE v > 25")).await;
+
+    let cells = GLOBAL_ROUTE_COST_MODEL.learned_cell_keys();
+    let served_native = cells.iter().any(|(_c, b)| b == "NativeVectorized");
+    let served_floor = cells.iter().any(|(_c, b)| b == "DataFusionLocal");
+    assert!(
+        served_native,
+        "native PRIMARY never engaged — the filtered case would not be a genuine \
+         primary→floor fall-through. Learned cells: {cells:?}"
+    );
+    assert!(
+        served_floor,
+        "the FILTERED native-eligible aggregate declined the native primary but no \
+         DataFusionLocal cost cell was learned — the TD-ROUTE-3 fold-attribution \
+         re-stamp is broken (the floor fall-through was mis-attributed to the \
+         declined native engine). Learned cells: {cells:?}"
+    );
+}

@@ -2366,13 +2366,16 @@ mod tests {
             .with_min_advantage(0.1)
             .with_recompute_every(1);
         m.set_override_enabled(true);
+        // TD-ROUTE-3: a Native flip is only eligible for a native-servable shape
+        // (ungrouped scalar aggregate); an Unknown-op shape can never be served by
+        // native, so the override must not flip its DECISION onto Native.
         let big = QueryShape {
             engages_relational: true,
             parquet_backed: true,
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
-            operation_class: Default::default(),
+            operation_class: crate::query::compute_scheduler::OperationClass::ScalarAggregate,
             geometry: Default::default(),
             join_bearing: false,
         };
@@ -2389,7 +2392,11 @@ mod tests {
                 &snap(40, 1 << 20, 8),
             );
         }
-        let decision = ComputeScheduler::new().route_select_advised(big, Some(&m));
+        let decision = ComputeScheduler::new().route_select_advised(
+            big,
+            Some(&m),
+            crate::query::compute_scheduler::RouteFlags::default(),
+        );
         // Static rule picks DataFusion for OLAP-Parquet; the warmed model
         // overrides to freshness-safe, cheaper Native.
         assert_eq!(decision.backend, ComputeBackend::Native);
@@ -2422,14 +2429,22 @@ mod tests {
                 &snap(40, 1 << 20, 8),
             );
         }
+        // TD-ROUTE-3: native-eligible op so the override→Native flip is a valid
+        // (servable) route; the geometry refinement still exercises the ancestor
+        // consult down to the warmed coarse `olap/parquet` cells.
         let refined = QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            operation_class: crate::query::compute_scheduler::OperationClass::ScalarAggregate,
             geometry: GeometryClass::from_estimate(9, 4),
             ..Default::default()
         };
-        assert_eq!(shape_class(&refined), "olap/parquet/geom=mxhi");
-        let decision = ComputeScheduler::new().route_select_advised(refined, Some(&m));
+        assert_eq!(shape_class(&refined), "olap/parquet/op=agg/geom=mxhi");
+        let decision = ComputeScheduler::new().route_select_advised(
+            refined,
+            Some(&m),
+            crate::query::compute_scheduler::RouteFlags::default(),
+        );
         assert_eq!(decision.backend, ComputeBackend::Native);
         assert!(
             decision.reason.contains("OVERRIDE")

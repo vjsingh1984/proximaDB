@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open** — filed 2026-07-16 under link:../../12-design/adr/ADR-064-query-engine-pipeline-decision-dispatch-lowering-trace.adoc[ADR-064] (Decision 1). Phase-3 of the ADR-064 rollout; independent of the other two.
+| Status | **Done** — filed 2026-07-16, implemented 2026-07-16 under link:../../12-design/adr/ADR-064-query-engine-pipeline-decision-dispatch-lowering-trace.adoc[ADR-064] (Decision 1). Phase-3 of the ADR-064 rollout; independent of the other two. The decision is now authoritative (`route_select_advised` folds the env master switches + ADR-058 primary eligibility + the cost-model override into `decision.backend` via `RouteFlags` + `parquet_primary_eligibility`, and `flip_eligible` refuses to flip onto an ineligible primary); dispatch is a thin `match decision.backend` where each primary owns its fall-through to the shared DataFusion floor with a single io_trace stamp. `ComputeBackend` stayed a closed enum (ADR-059).
 | Priority | P2 — maintainability + testability of the hot routing path; unblocks unit-testing routing decisions without running a query, and fixes the cost-cell mis-attribution at the source.
 | Component | `src/network/postgres/relational_pipeline.rs` (the dispatch block), `src/query/compute_scheduler.rs` (`route_select` / `route_select_advised`), per-backend execution adapters.
 | Evidence | The dispatch (relational_pipeline.rs:491-750, ~260 lines) re-decides inside the God-`if`: native-over-parquet primary (:513), DuckDB primary (:596), DataFusion floor (:682), route re-stamp "last-write-wins" (:729-732), native shadow (:739) — plus a separate PAX branch. Adding an engine edits this block (Open/Closed violation); the cost model learns the last-stamped route, not the one decided.
@@ -35,9 +35,17 @@ capability descriptor per backend (ADR-058), no duplicated coverage statements.
 == Gate
 
 No-behavior-change refactor: every current route preserved, verified by the TPC-H (22) / TPC-DS (16)
-pgwire conformance ratchets + the perf ledger (same backend served per query as before). New: unit
-tests asserting `shape → RouteDecision.backend` in isolation (no query run); a cost-attribution test
-proving a floor fall-through attributes to the floor cell, not the primary.
+pgwire conformance ratchets + the perf ledger (same backend served per query as before). New:
+
+* unit tests asserting `shape + RouteFlags → RouteDecision.backend` in isolation, no query run
+  (`compute_scheduler.rs` — `native_eligible_op_with_native_flag_decides_native`,
+  `join_bearing_with_native_flag_stays_datafusion_native_ineligible`,
+  `join_bearing_with_duckdb_flag_decides_duckdb`,
+  `route_flags_inert_on_non_parquet_shapes`,
+  `native_and_duckdb_primary_eligibility_are_disjoint`);
+* a cost-attribution e2e proving a floor fall-through attributes to the floor cell, not the declined
+  primary (`tests/native_route_pgwire_e2e.rs` —
+  `native_decline_attributes_to_datafusion_floor_not_the_declined_primary`).
 
 == Non-goals
 
