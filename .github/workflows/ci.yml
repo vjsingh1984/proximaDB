@@ -773,7 +773,7 @@ jobs:
           # the per-runner overhead — checkout + toolchain + apt + cache — dominates).
           # Space-separate additional small crates here as they are extracted; the
           # step loops over every package in the list.
-          - { label: "small-crates",         pkg: "proximadb-mongodb-parser", args: "" }
+          - { label: "small-crates",         pkg: "proximadb-mongodb-parser proximadb-catalog-introspection", args: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0

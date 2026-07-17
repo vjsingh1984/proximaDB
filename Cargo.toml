@@ -59,6 +59,7 @@ members = [
     "crates/horizontal/proximadb-compression",
     "crates/horizontal/proximadb-embedded-common",
     "crates/binding/proximadb-embedded",
+    "crates/binding/proximadb-catalog-introspection",
     "crates/horizontal/proximadb-recall-bench",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-serialization",
@@ -400,6 +401,8 @@ proximadb-query-fusion = { path = "crates/query/proximadb-query-fusion" }
 proximadb-query-filter = { path = "crates/query/proximadb-query-filter" }
 proximadb-uql = { path = "crates/query/proximadb-uql" }
 proximadb-vector-query = { path = "crates/query/proximadb-vector-query" }
+# Extracted from src/services/catalog_introspection.rs (re-export shim keeps callers stable).
+proximadb-catalog-introspection = { version = "0.2.0", path = "crates/binding/proximadb-catalog-introspection" }
 
 # SQL Parsing
 sqlparser = { version = "0.59", features = ["visitor"] }

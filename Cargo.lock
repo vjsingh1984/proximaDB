@@ -6740,6 +6740,7 @@ dependencies = [
  "proximadb-bloom",
  "proximadb-cache",
  "proximadb-catalog",
+ "proximadb-catalog-introspection",
  "proximadb-clustering-kernel",
  "proximadb-codec",
  "proximadb-compression",
@@ -7022,6 +7023,20 @@ dependencies = [
  "tracing",
  "urlencoding",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-catalog-introspection"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb",
+ "proximadb-catalog",
+ "proximadb-data-model",
+ "serde",
+ "sqlparser 0.59.0",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
