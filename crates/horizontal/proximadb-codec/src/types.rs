@@ -594,13 +594,14 @@ impl ProximaScheme {
         }
     }
 
-    /// Check if scheme is lossless
-    pub fn is_lossless(&self) -> bool {
-        match self {
-            // Gorilla (XOR) and SQ8/RaBitQ (quantization) are lossy.
-            Self::Gorilla | Self::Sq8 | Self::RaBitQ => false,
-            _ => true,
-        }
+    /// Return whether this scheme preserves every value bit for `type_id`.
+    ///
+    /// This is deliberately type-aware: bit-packed and frame-of-reference
+    /// schemes are lossless only when their configured width covers the input
+    /// type. Durable canonical writers must use this method rather than a
+    /// parameter-blind scheme classification.
+    pub fn is_lossless_for(&self, type_id: TypeId) -> bool {
+        !self.is_lossy(type_id)
     }
 
     /// Check if scheme is suitable for sparse data
@@ -671,10 +672,27 @@ mod tests {
 
     #[test]
     fn test_scheme_properties() {
-        assert!(ProximaScheme::Delta { base: 0 }.is_lossless());
+        assert!(ProximaScheme::Delta { base: 0 }.is_lossless_for(TypeId::F32));
         assert!(ProximaScheme::Delta { base: 0 }.is_integer_scheme());
-        assert!(!ProximaScheme::Gorilla.is_lossless());
+        assert!(!ProximaScheme::Gorilla.is_lossless_for(TypeId::F32));
         assert!(ProximaScheme::SparseBitmap.is_sparse_scheme());
+
+        assert!(!ProximaScheme::BitPacked { bits: 8 }.is_lossless_for(TypeId::F32));
+        assert!(ProximaScheme::BitPacked { bits: 32 }.is_lossless_for(TypeId::F32));
+        assert!(
+            !ProximaScheme::FrameOfReference {
+                reference: 0,
+                bits: 16,
+            }
+            .is_lossless_for(TypeId::I32)
+        );
+        assert!(
+            ProximaScheme::FrameOfReference {
+                reference: 0,
+                bits: 32,
+            }
+            .is_lossless_for(TypeId::I32)
+        );
     }
 
     #[test]
@@ -685,14 +703,14 @@ mod tests {
         assert_eq!(recovered, ProximaScheme::Sq8);
         assert_eq!(s.name(), "SQ8");
         // SQ8 is lossy for every type and never reported lossless.
-        assert!(!s.is_lossless());
+        assert!(!s.is_lossless_for(TypeId::F32));
         assert!(s.is_lossy(TypeId::F32));
         // 0x71 is now the RaBitQ binary-quantization marker.
         let rq = ProximaScheme::from_marker(0x71).unwrap();
         assert_eq!(rq, ProximaScheme::RaBitQ);
         assert_eq!(ProximaScheme::RaBitQ.to_marker(), 0x71);
         assert_eq!(ProximaScheme::RaBitQ.name(), "RaBitQ");
-        assert!(!ProximaScheme::RaBitQ.is_lossless());
+        assert!(!ProximaScheme::RaBitQ.is_lossless_for(TypeId::F32));
         assert!(ProximaScheme::RaBitQ.is_lossy(TypeId::F32));
     }
 

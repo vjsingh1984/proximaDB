@@ -275,7 +275,7 @@ entries[] {
   auxiliary_flags:u16,       // exact-norm-sq | correction-scale
   source_role:u8,            // canonical | index-projection | rerank-projection
   source_fidelity:u8,        // exact-bitwise | lossy
-  rebuild_source_id:u16,     // 0 for canonical; canonical descriptor for projection
+  rebuild_source_id:u16,     // 0 canonical; descriptor ID, or 0xffff external authority
   projection_generation:u16
 }
 
@@ -347,6 +347,9 @@ patterns. A PAX object may omit canonical f32 only when the object is explicitly
 cataloged as a rebuildable projection and `rebuild_source_id` names durable
 canonical authority; such an object cannot serve record reconstruction,
 compaction materialization, exact vector return, or exact queries by itself.
+The reserved value `0xffff` means that authority is external to this immutable
+segment (for example WAL/catalog lineage); it is never a physical stripe ID and
+does not grant the file exact-read capability.
 
 SQ8, RaBitQ, FP16, and future quantizers are projections. Quantization is the
 sole permitted lossy boundary. Lossless transforms may reorder and recompress

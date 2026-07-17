@@ -27,11 +27,13 @@
 
 pub mod adaptive;
 pub mod bitpack;
+pub mod clustered_for_bitpack;
 pub mod delta;
 pub mod double_delta;
 pub mod frame_of_ref;
 pub mod gorilla;
 pub(crate) mod helpers;
+pub mod lossless_compression;
 pub mod patched_base;
 pub mod pfor_delta;
 pub mod pfor_double_delta;

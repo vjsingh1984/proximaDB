@@ -757,7 +757,9 @@ jobs:
           - { label: "embedded",             pkg: proximadb-embedded, args: "" }
           # Small extracted crates batched into one runner (each compiles in <1min;
           # the per-runner overhead — checkout + toolchain + apt + cache — dominates).
-          - { label: "small-crates",         pkg: "proximadb-mongodb-parser proximadb-catalog-introspection", args: "" }
+          # Space-separate additional small crates here as they are extracted; the
+          # step loops over every package in the list.
+          - { label: "small-crates",         pkg: "proximadb-mongodb-parser", args: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
