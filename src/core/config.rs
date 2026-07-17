@@ -2,6 +2,7 @@ use crate::ai::LLMConfig;
 use crate::network::NetworkConfig;
 use crate::query::unified::RerankConfig;
 use crate::security::SecurityConfig;
+use proximadb_storage_filesystem_types::ObjectAccessTier;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -188,6 +189,19 @@ impl IoTraceSinkConfig {
             .or(from_toml.format.clone())
             .unwrap_or_else(|| "jsonl".to_string());
 
+        // S2 (ADR-066 D4): optional object-store dispatch. When set, sealed segments
+        // are PUT to this store; when unset, the sink stays local-only (S1). The
+        // access tier is the at-rest GB-month cost lever — default Cold (rare
+        // access); an unrecognised value falls back to Cold rather than failing.
+        let object_store_uri = std::env::var("PROXIMADB_IO_TRACE_SINK_OBJECT_STORE_URI")
+            .ok()
+            .or(from_toml.object_store_uri.clone());
+        let access_tier = std::env::var("PROXIMADB_IO_TRACE_SINK_ACCESS_TIER")
+            .ok()
+            .or(from_toml.access_tier.clone())
+            .and_then(|s| ObjectAccessTier::parse(&s))
+            .unwrap_or(ObjectAccessTier::Cold);
+
         Some(ResolvedIoTraceSinkConfig {
             local_dir,
             segment_bytes,
@@ -195,12 +209,15 @@ impl IoTraceSinkConfig {
             spool_max_bytes,
             compression,
             format,
+            object_store_uri,
+            access_tier,
         })
     }
 }
 
-/// Resolved io_trace sink settings (S1 fields only; S2 object-store fields join
-/// later). All values populated — no Options.
+/// Resolved io_trace sink settings after the precedence layers fold. All S1 spool
+/// fields are populated; the S2 object-store fields carry the dispatch target
+/// (`object_store_uri` `None` ⇒ local-only) and the at-rest tier.
 #[derive(Debug, Clone)]
 pub struct ResolvedIoTraceSinkConfig {
     pub local_dir: String,
@@ -209,6 +226,10 @@ pub struct ResolvedIoTraceSinkConfig {
     pub spool_max_bytes: u64,
     pub compression: String,
     pub format: String,
+    /// Object-store dispatch target (S2). `None` ⇒ segments stay local-only.
+    pub object_store_uri: Option<String>,
+    /// Per-object access tier for the object-store PUT (S2). Default `Cold`.
+    pub access_tier: ObjectAccessTier,
 }
 
 /// Queue subsystem runtime configuration. Lives at the `[queue]` TOML
@@ -365,6 +386,8 @@ mod queue_config_tests {
         let _g1 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_LOCAL_DIR", None);
         let _g2 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_SEGMENT_BYTES", None);
         let _g3 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_FLUSH_INTERVAL_S", None);
+        let _g4 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_OBJECT_STORE_URI", None);
+        let _g5 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_ACCESS_TIER", None);
         let toml = IoTraceSinkConfig {
             enabled: true,
             local_dir: Some("/tmp/tr".to_string()),
@@ -377,6 +400,9 @@ mod queue_config_tests {
         assert_eq!(r.spool_max_bytes, 256 * 1024 * 1024);
         assert_eq!(r.compression, "zstd");
         assert_eq!(r.format, "jsonl");
+        // S2 defaults: no object store (local-only), Cold tier.
+        assert_eq!(r.object_store_uri, None);
+        assert_eq!(r.access_tier, ObjectAccessTier::Cold);
     }
 
     /// TOML-only flow: a TOML `[queue]` section with `root` set
