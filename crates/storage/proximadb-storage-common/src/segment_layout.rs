@@ -8,9 +8,10 @@
 //! per-block stats), located via `[footer_len u64][SEGMENT_MAGIC]`.
 //!
 //! ```text
-//! [HEADER-PREFIX 40B]                 ◄ one GET coalesces header + RaBitQ scan
-//! [coalesced RaBitQ region]           ◄ HOT SCAN, keep=100%
-//! [Block0 … BlockK]                   ◄ UNCHANGED SQ8/fp32/metadata decoder
+//! [HEADER-PREFIX 56B]                 ◄ one GET coalesces header + RaBitQ scan
+//! [Region A: coalesced RaBitQ region] ◄ HOT SCAN, keep=100%
+//! [Region B: coalesced SQ8 region]    ◄ rerank tier (ADR-065); pure dense SQ8
+//! [Block0 … BlockK]                   ◄ row data (OID/props/…) + optional f32; NO SQ8 stripe
 //! [FOOTER-INDEX]                      ◄ tail GET, cached
 //! [footer_len u64][SEGMENT_MAGIC 8B]
 //! ```
@@ -36,11 +37,13 @@ use crate::pax_block::SEGMENT_MAGIC;
 pub const SEG_HEADER_MAGIC: &[u8; 4] = b"PXH1";
 
 /// Header layout version (independent of the block/segment format family — bump
-/// only when the header-prefix byte layout changes).
+/// only when the header-prefix byte layout changes). Pre-release in-place
+/// evolution (no serialized files on disk → no versioned readers to be
+/// compatible with); versioning re-engages at GA. Constant 1 for now.
 pub const SEG_LAYOUT_VERSION: u8 = 1;
 
-/// `[magic 4][version 1][pad 3][rabitq_off 8][rabitq_len 8][footer_off 8][footer_len 8]`.
-pub const SEG_HEADER_PREFIX_LEN: usize = 40;
+/// `[magic 4][version 1][pad 3][rabitq_off 8][rabitq_len 8][sq8_off 8][sq8_len 8][footer_off 8][footer_len 8]`.
+pub const SEG_HEADER_PREFIX_LEN: usize = 56;
 
 /// True iff `bytes` carries the coalesced-RaBitQ header-prefix at offset 0 — the
 /// presence-field that selects the scan-then-rerank read path (mixed-read).
@@ -48,15 +51,20 @@ pub fn is_coalesced_segment(bytes: &[u8]) -> bool {
     bytes.len() >= SEG_HEADER_MAGIC.len() && &bytes[..SEG_HEADER_MAGIC.len()] == SEG_HEADER_MAGIC
 }
 
-/// The fixed 40 B header-prefix at offset 0. The RaBitQ scan GET reads
+/// The fixed 56 B header-prefix at offset 0. The RaBitQ scan GET reads
 /// `[0, rabitq_off + rabitq_len]`, so the prefix coalesces into that one GET.
 #[derive(Debug, Clone)]
 pub struct SegmentHeaderPrefix {
     pub layout_version: u8,
-    /// Byte offset of the coalesced RaBitQ region (== SEG_HEADER_PREFIX_LEN).
+    /// Byte offset of the coalesced RaBitQ region (Region A == SEG_HEADER_PREFIX_LEN).
     pub rabitq_off: u64,
-    /// Byte length of the coalesced RaBitQ region.
+    /// Byte length of the coalesced RaBitQ region (Region A).
     pub rabitq_len: u64,
+    /// Byte offset of the coalesced SQ8 region (Region B, ADR-065) — the rerank
+    /// tier, hoisted out of blocks so survivor fetches read pure dense SQ8.
+    pub sq8_off: u64,
+    /// Byte length of the coalesced SQ8 region (Region B).
+    pub sq8_len: u64,
     /// Byte offset of the footer-index.
     pub footer_off: u64,
     /// Byte length of the footer-index.
@@ -64,7 +72,7 @@ pub struct SegmentHeaderPrefix {
 }
 
 impl SegmentHeaderPrefix {
-    /// Serialize to a fixed 40 B buffer.
+    /// Serialize to a fixed 56 B buffer.
     pub fn to_bytes(&self) -> [u8; SEG_HEADER_PREFIX_LEN] {
         let mut buf = [0u8; SEG_HEADER_PREFIX_LEN];
         buf[..4].copy_from_slice(SEG_HEADER_MAGIC);
@@ -72,8 +80,10 @@ impl SegmentHeaderPrefix {
         // buf[5..8] reserved (zero).
         buf[8..16].copy_from_slice(&self.rabitq_off.to_le_bytes());
         buf[16..24].copy_from_slice(&self.rabitq_len.to_le_bytes());
-        buf[24..32].copy_from_slice(&self.footer_off.to_le_bytes());
-        buf[32..40].copy_from_slice(&self.footer_len.to_le_bytes());
+        buf[24..32].copy_from_slice(&self.sq8_off.to_le_bytes());
+        buf[32..40].copy_from_slice(&self.sq8_len.to_le_bytes());
+        buf[40..48].copy_from_slice(&self.footer_off.to_le_bytes());
+        buf[48..56].copy_from_slice(&self.footer_len.to_le_bytes());
         buf
     }
 
@@ -96,8 +106,10 @@ impl SegmentHeaderPrefix {
             layout_version,
             rabitq_off: u64::from_le_bytes(bytes[8..16].try_into()?),
             rabitq_len: u64::from_le_bytes(bytes[16..24].try_into()?),
-            footer_off: u64::from_le_bytes(bytes[24..32].try_into()?),
-            footer_len: u64::from_le_bytes(bytes[32..40].try_into()?),
+            sq8_off: u64::from_le_bytes(bytes[24..32].try_into()?),
+            sq8_len: u64::from_le_bytes(bytes[32..40].try_into()?),
+            footer_off: u64::from_le_bytes(bytes[40..48].try_into()?),
+            footer_len: u64::from_le_bytes(bytes[48..56].try_into()?),
         })
     }
 }
@@ -262,7 +274,6 @@ const ASSIGNMENT_SIZE: usize = 11;
 const SECTION_STRIPE_ENCODING_MAP: u8 = 2;
 const SECTION_VERSION_V1: u8 = 1;
 const FOOTER_V1: u8 = 1;
-const FOOTER_V2: u8 = 2;
 
 /// The self-describing footer-index (Parquet-style metadata hub): block table +
 /// schema snapshot + per-stripe encoding map + RaBitQ mirror + row count. Located
@@ -278,6 +289,20 @@ pub struct SegmentFooterIndex {
     /// RaBitQ region extent mirror (also in the header-prefix).
     pub rabitq_off: u64,
     pub rabitq_len: u64,
+    /// Coalesced SQ8 region (Region B, ADR-065) extent mirror (also in the
+    /// header-prefix). The rerank tier hoisted out of blocks.
+    pub sq8_off: u64,
+    pub sq8_len: u64,
+    /// Region B SQ8 dequant key mirror (ADR-065 cache-co-design). SQ8 maps each
+    /// f32 dim → 1 byte via `dequant(code) = min + code·scale`, so the read path
+    /// needs only these two. Mirrored in the footer (which the read path already
+    /// reads) so it decodes survivor SQ8 **without the separate 24 B Region-B
+    /// header GET**. Named `sq8_min` (not `sq8_offset`) to avoid collision with
+    /// `sq8_off` (the Region B file offset). The codec's `vmin == min` (redundant)
+    /// and `vmax = min + 255·scale` (recoverable) are NOT stored — only the
+    /// dequant-essential pair. `(0.0, 0.0)` when there is no Region B.
+    pub sq8_min: f32,
+    pub sq8_scale: f32,
     // -- Schema snapshot (minimal; full evolution deferred to TD-TBL-4 / ADR-047) --
     /// Embedding dimensionality (per embedding column; homogeneous in v1).
     pub embed_dim: u32,
@@ -483,14 +508,6 @@ fn parse_encoding_map_payload(
     Ok((descriptors, assignments))
 }
 
-fn legacy_quant_tag(value_codec_tag: u8) -> u8 {
-    match value_codec_tag {
-        0x01 => 0,
-        0x03 => 3,
-        _ => 1,
-    }
-}
-
 fn ensure_remaining(input: &[u8], position: usize, len: usize, message: &str) -> Result<()> {
     let end = position
         .checked_add(len)
@@ -524,6 +541,14 @@ fn read_u32(input: &[u8], position: &mut usize) -> Result<u32> {
     Ok(value)
 }
 
+fn read_f32(input: &[u8], position: &mut usize) -> Result<f32> {
+    ensure_remaining(input, *position, 4, "footer-index truncated at f32")?;
+    let end = *position + 4;
+    let value = f32::from_le_bytes(input[*position..end].try_into()?);
+    *position = end;
+    Ok(value)
+}
+
 fn read_i32(input: &[u8], position: &mut usize) -> Result<i32> {
     ensure_remaining(input, *position, 4, "footer-index truncated at i32")?;
     let end = *position + 4;
@@ -542,10 +567,10 @@ fn read_u64(input: &[u8], position: &mut usize) -> Result<u64> {
 
 #[cfg(test)]
 fn footer_v2_first_descriptor_offset(bytes: &[u8]) -> Result<usize> {
-    if bytes.first().copied() != Some(FOOTER_V2) {
-        bail!("not a footer v2 payload");
+    if bytes.first().copied() != Some(FOOTER_V1) {
+        bail!("not a footer v1 payload");
     }
-    let mut position = 1 + 8 * 3 + 4 * 2;
+    let mut position = 1 + 8 * 5 + 4 * 4 + 2;
     let block_count = read_u32(bytes, &mut position)? as usize;
     for _ in 0..block_count {
         let _ = read_u64(bytes, &mut position)?;
@@ -575,10 +600,10 @@ fn footer_v2_first_descriptor_offset(bytes: &[u8]) -> Result<usize> {
 
 #[cfg(test)]
 fn footer_v2_section_count_offset(bytes: &[u8]) -> Result<usize> {
-    if bytes.first().copied() != Some(FOOTER_V2) {
-        bail!("not a footer v2 payload");
+    if bytes.first().copied() != Some(FOOTER_V1) {
+        bail!("not a footer v1 payload");
     }
-    let mut position = 1 + 8 * 3 + 4 * 2;
+    let mut position = 1 + 8 * 5 + 4 * 4 + 2;
     let block_count = read_u32(bytes, &mut position)? as usize;
     for _ in 0..block_count {
         let _ = read_u64(bytes, &mut position)?;
@@ -593,23 +618,24 @@ fn footer_v2_section_count_offset(bytes: &[u8]) -> Result<usize> {
 }
 
 impl SegmentFooterIndex {
-    /// Serialize the footer-index body (no tail). Layout:
+    /// Serialize the footer-index body (no tail). Layout (in-place evolution —
+    /// pre-release, no versioned files on disk, so the version byte is a constant
+    /// that always matches the current code; versioning re-engages at GA):
     /// `[footer_version u8][row_count u64][rabitq_off u64][rabitq_len u64]`
+    /// `[sq8_off u64][sq8_len u64]`                                     (ADR-065 Region B)
+    /// `[sq8_min f32][sq8_scale f32]`                                   (cache-co-design: dequant key)
     /// `[embed_dim u32][embed_count u32][embed_quant_tag u8][has_f32_tier u8]`
     /// `[n_blocks u32] per block: [off u64][size u32][row_count u32][stats_tag u8][stats_len u32][stats bytes]`.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        if self.encoding_map.is_empty() && self.block_tier_assignments.is_empty() {
-            return self.to_v1_bytes();
-        }
-        self.to_v2_bytes()
-    }
-
-    fn to_v1_bytes(&self) -> Result<Vec<u8>> {
-        let mut buf = Vec::with_capacity(64 + self.blocks.len() * 24);
+        let mut buf = Vec::with_capacity(72 + self.blocks.len() * 24);
         buf.push(FOOTER_V1);
         buf.extend_from_slice(&self.row_count.to_le_bytes());
         buf.extend_from_slice(&self.rabitq_off.to_le_bytes());
         buf.extend_from_slice(&self.rabitq_len.to_le_bytes());
+        buf.extend_from_slice(&self.sq8_off.to_le_bytes());
+        buf.extend_from_slice(&self.sq8_len.to_le_bytes());
+        buf.extend_from_slice(&self.sq8_min.to_le_bytes());
+        buf.extend_from_slice(&self.sq8_scale.to_le_bytes());
         buf.extend_from_slice(&self.embed_dim.to_le_bytes());
         buf.extend_from_slice(&self.embed_count.to_le_bytes());
         buf.push(self.embed_quant_tag);
@@ -620,33 +646,22 @@ impl SegmentFooterIndex {
         for b in &self.blocks {
             write_block_entry(&mut buf, b);
         }
-        Ok(buf)
-    }
-
-    fn to_v2_bytes(&self) -> Result<Vec<u8>> {
-        self.validate_encoding_map()?;
-        let mut buf = Vec::with_capacity(96 + self.blocks.len() * 24);
-        buf.push(FOOTER_V2);
-        buf.extend_from_slice(&self.row_count.to_le_bytes());
-        buf.extend_from_slice(&self.rabitq_off.to_le_bytes());
-        buf.extend_from_slice(&self.rabitq_len.to_le_bytes());
-        buf.extend_from_slice(&self.embed_dim.to_le_bytes());
-        buf.extend_from_slice(&self.embed_count.to_le_bytes());
-        let block_count = u32::try_from(self.blocks.len())
-            .map_err(|_| anyhow::anyhow!("footer-index block count exceeds u32"))?;
-        buf.extend_from_slice(&block_count.to_le_bytes());
-        for block in &self.blocks {
-            write_block_entry(&mut buf, block);
+        // Optional stripe encoding-map section: the footer carries per-stripe
+        // lossless-transform metadata only when recorded (clustered-SQ8 / scalar
+        // LZ4, TD-RDSTRAT-7). Absent ⇒ no trailing section, smallest footer.
+        // Single version-1 layout (pre-release: no versioned files on disk;
+        // versioning re-engages at GA) — ADR-065 Region B.
+        if !self.encoding_map.is_empty() {
+            self.validate_encoding_map()?;
+            let encoding_payload = self.encoding_map_payload()?;
+            buf.extend_from_slice(&1u16.to_le_bytes());
+            buf.push(SECTION_STRIPE_ENCODING_MAP);
+            buf.push(SECTION_VERSION_V1);
+            let section_len = u32::try_from(encoding_payload.len())
+                .map_err(|_| anyhow::anyhow!("footer encoding-map section exceeds u32"))?;
+            buf.extend_from_slice(&section_len.to_le_bytes());
+            buf.extend_from_slice(&encoding_payload);
         }
-
-        let encoding_payload = self.encoding_map_payload()?;
-        buf.extend_from_slice(&1u16.to_le_bytes());
-        buf.push(SECTION_STRIPE_ENCODING_MAP);
-        buf.push(SECTION_VERSION_V1);
-        let section_len = u32::try_from(encoding_payload.len())
-            .map_err(|_| anyhow::anyhow!("footer encoding-map section exceeds u32"))?;
-        buf.extend_from_slice(&section_len.to_le_bytes());
-        buf.extend_from_slice(&encoding_payload);
         Ok(buf)
     }
 
@@ -745,7 +760,6 @@ impl SegmentFooterIndex {
         }
         match body[0] {
             FOOTER_V1 => Self::parse_v1(body),
-            FOOTER_V2 => Self::parse_v2(body),
             version => bail!("unsupported footer-index version {version}"),
         }
     }
@@ -755,6 +769,10 @@ impl SegmentFooterIndex {
         let row_count = read_u64(body, &mut p)?;
         let rabitq_off = read_u64(body, &mut p)?;
         let rabitq_len = read_u64(body, &mut p)?;
+        let sq8_off = read_u64(body, &mut p)?;
+        let sq8_len = read_u64(body, &mut p)?;
+        let sq8_min = read_f32(body, &mut p)?;
+        let sq8_scale = read_f32(body, &mut p)?;
         let embed_dim = read_u32(body, &mut p)?;
         let embed_count = read_u32(body, &mut p)?;
         if p + 2 > body.len() {
@@ -764,74 +782,43 @@ impl SegmentFooterIndex {
         let has_f32_tier = body[p + 1] != 0;
         p += 2;
         let blocks = read_blocks(body, &mut p)?;
+        // Optional trailing stripe encoding-map section (present only when the
+        // footer carries lossless-transform metadata). Absent ⇒ empty map.
+        let mut encoding_map = Vec::new();
+        let mut block_tier_assignments = Vec::new();
         if p != body.len() {
-            bail!("footer-index v1 has trailing bytes");
+            let section_count = read_u16(body, &mut p)? as usize;
+            if section_count > body.len().saturating_sub(p) / 6 {
+                bail!("footer-index section count exceeds remaining bytes");
+            }
+            for _ in 0..section_count {
+                let tag = read_u8(body, &mut p)?;
+                let version = read_u8(body, &mut p)?;
+                let section_len = read_u32(body, &mut p)? as usize;
+                ensure_remaining(body, p, section_len, "footer-index section overruns body")?;
+                let section = &body[p..p + section_len];
+                p += section_len;
+                if tag == SECTION_STRIPE_ENCODING_MAP {
+                    if version != SECTION_VERSION_V1 {
+                        bail!("unsupported stripe encoding-map section version {version}");
+                    }
+                    let (descriptors, assignments) = parse_encoding_map_payload(section)?;
+                    encoding_map = descriptors;
+                    block_tier_assignments = assignments;
+                }
+            }
+            if p != body.len() {
+                bail!("footer-index has trailing bytes");
+            }
         }
         Ok(Self {
             row_count,
             rabitq_off,
             rabitq_len,
-            embed_dim,
-            embed_count,
-            embed_quant_tag,
-            has_f32_tier,
-            blocks,
-            encoding_map: Vec::new(),
-            block_tier_assignments: Vec::new(),
-        })
-    }
-
-    fn parse_v2(body: &[u8]) -> Result<Self> {
-        let mut p = 1usize;
-        let row_count = read_u64(body, &mut p)?;
-        let rabitq_off = read_u64(body, &mut p)?;
-        let rabitq_len = read_u64(body, &mut p)?;
-        let embed_dim = read_u32(body, &mut p)?;
-        let embed_count = read_u32(body, &mut p)?;
-        let blocks = read_blocks(body, &mut p)?;
-        let section_count = read_u16(body, &mut p)? as usize;
-        if section_count > body.len().saturating_sub(p) / 6 {
-            bail!("footer-index section count exceeds remaining bytes");
-        }
-        let mut encoding_map = None;
-        let mut block_tier_assignments = Vec::new();
-        for _ in 0..section_count {
-            let tag = read_u8(body, &mut p)?;
-            let version = read_u8(body, &mut p)?;
-            let section_len = read_u32(body, &mut p)? as usize;
-            ensure_remaining(body, p, section_len, "footer-index section overruns body")?;
-            let section = &body[p..p + section_len];
-            p += section_len;
-            if tag == SECTION_STRIPE_ENCODING_MAP {
-                if version != SECTION_VERSION_V1 {
-                    bail!("unsupported stripe encoding-map section version {version}");
-                }
-                if encoding_map.is_some() {
-                    bail!("duplicate stripe encoding-map section");
-                }
-                let (descriptors, assignments) = parse_encoding_map_payload(section)?;
-                encoding_map = Some(descriptors);
-                block_tier_assignments = assignments;
-            }
-        }
-        if p != body.len() {
-            bail!("footer-index v2 has trailing bytes");
-        }
-        let encoding_map =
-            encoding_map.ok_or_else(|| anyhow::anyhow!("footer v2 lacks stripe encoding map"))?;
-        let embed_quant_tag = encoding_map
-            .iter()
-            .find(|descriptor| descriptor.tier_role == TierRole::Rerank)
-            .map(|descriptor| legacy_quant_tag(descriptor.value_codec_tag))
-            .unwrap_or(1);
-        let has_f32_tier = encoding_map.iter().any(|descriptor| {
-            descriptor.source_role == SourceRole::Canonical
-                && descriptor.source_fidelity == SourceFidelity::ExactBitwise
-        });
-        let footer = Self {
-            row_count,
-            rabitq_off,
-            rabitq_len,
+            sq8_off,
+            sq8_len,
+            sq8_min,
+            sq8_scale,
             embed_dim,
             embed_count,
             embed_quant_tag,
@@ -839,9 +826,7 @@ impl SegmentFooterIndex {
             blocks,
             encoding_map,
             block_tier_assignments,
-        };
-        footer.validate_encoding_map()?;
-        Ok(footer)
+        })
     }
 
     /// Locate + parse the footer-index from a full segment buffer (the tail
@@ -882,23 +867,27 @@ mod tests {
     fn sample_footer() -> SegmentFooterIndex {
         SegmentFooterIndex {
             row_count: 1000,
-            rabitq_off: 40,
+            rabitq_off: 56,
             rabitq_len: 24_000,
+            sq8_off: 24_056,
+            sq8_len: 128_000,
+            sq8_min: -1.0,
+            sq8_scale: 0.05,
             embed_dim: 128,
             embed_count: 1,
-            embed_quant_tag: 1, // SQ8
+            embed_quant_tag: 1, // SQ8 (Region B)
             has_f32_tier: false,
             encoding_map: Vec::new(),
             block_tier_assignments: Vec::new(),
             blocks: vec![
                 FooterBlockEntry {
-                    offset: 24_040,
+                    offset: 152_056,
                     size: 8_000,
                     row_count: 128,
                     stats_kind: StatsKind::None,
                 },
                 FooterBlockEntry {
-                    offset: 32_040,
+                    offset: 160_056,
                     size: 7_900,
                     row_count: 127,
                     stats_kind: StatsKind::None,
@@ -984,17 +973,21 @@ mod tests {
     fn header_prefix_round_trips() {
         let h = SegmentHeaderPrefix {
             layout_version: SEG_LAYOUT_VERSION,
-            rabitq_off: 40,
+            rabitq_off: 56,
             rabitq_len: 24_000,
-            footer_off: 100_000,
+            sq8_off: 24_056,
+            sq8_len: 128_000,
+            footer_off: 200_000,
             footer_len: 512,
         };
         let bytes = h.to_bytes();
         assert_eq!(bytes.len(), SEG_HEADER_PREFIX_LEN);
         let parsed = SegmentHeaderPrefix::parse(&bytes).unwrap();
-        assert_eq!(parsed.rabitq_off, 40);
+        assert_eq!(parsed.rabitq_off, 56);
         assert_eq!(parsed.rabitq_len, 24_000);
-        assert_eq!(parsed.footer_off, 100_000);
+        assert_eq!(parsed.sq8_off, 24_056);
+        assert_eq!(parsed.sq8_len, 128_000);
+        assert_eq!(parsed.footer_off, 200_000);
         assert_eq!(parsed.footer_len, 512);
     }
 
@@ -1005,6 +998,8 @@ mod tests {
             layout_version: SEG_LAYOUT_VERSION,
             rabitq_off: 0,
             rabitq_len: 0,
+            sq8_off: 0,
+            sq8_len: 0,
             footer_off: 0,
             footer_len: 0,
         }
@@ -1016,6 +1011,8 @@ mod tests {
             layout_version: SEG_LAYOUT_VERSION,
             rabitq_off: 0,
             rabitq_len: 0,
+            sq8_off: 0,
+            sq8_len: 0,
             footer_off: 0,
             footer_len: 0,
         }
@@ -1028,9 +1025,11 @@ mod tests {
     fn is_coalesced_segment_presence_field() {
         let h = SegmentHeaderPrefix {
             layout_version: SEG_LAYOUT_VERSION,
-            rabitq_off: 40,
+            rabitq_off: 56,
             rabitq_len: 1,
-            footer_off: 41,
+            sq8_off: 57,
+            sq8_len: 1,
+            footer_off: 58,
             footer_len: 1,
         }
         .to_bytes();
@@ -1046,12 +1045,14 @@ mod tests {
         let bytes = f.to_bytes().unwrap();
         let parsed = SegmentFooterIndex::parse(&bytes).unwrap();
         assert_eq!(parsed.row_count, 1000);
-        assert_eq!(parsed.rabitq_off, 40);
+        assert_eq!(parsed.rabitq_off, 56);
+        assert_eq!(parsed.sq8_off, 24_056);
+        assert_eq!(parsed.sq8_len, 128_000);
         assert_eq!(parsed.embed_dim, 128);
         assert_eq!(parsed.embed_count, 1);
         assert_eq!(parsed.embed_quant_tag, 1);
         assert_eq!(parsed.blocks.len(), 2);
-        assert_eq!(parsed.blocks[0].offset, 24_040);
+        assert_eq!(parsed.blocks[0].offset, 152_056);
         assert_eq!(parsed.blocks[1].row_count, 127);
     }
 
@@ -1085,7 +1086,7 @@ mod tests {
     #[test]
     fn footer_parse_rejects_bad_version() {
         let mut bytes = sample_footer().to_bytes().unwrap();
-        bytes[0] = 2; // unsupported version
+        bytes[0] = 2; // unsupported version (current is 1)
         assert!(SegmentFooterIndex::parse(&bytes).is_err());
     }
 
@@ -1099,7 +1100,7 @@ mod tests {
     fn footer_v2_encoding_map_round_trips() -> Result<()> {
         let footer = sample_v2_footer();
         let bytes = footer.to_bytes()?;
-        assert_eq!(bytes[0], 2);
+        assert_eq!(bytes[0], 1);
 
         let parsed = SegmentFooterIndex::parse(&bytes)?;
         assert_eq!(parsed.encoding_map, footer.encoding_map);

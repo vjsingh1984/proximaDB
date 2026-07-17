@@ -41,6 +41,7 @@ use std::sync::LazyLock;
 
 use anyhow::{Result, bail};
 use proximadb_block_format::coalesced_rabitq::{RABITQ_SEED_BASE, encode_region};
+use proximadb_block_format::coalesced_sq8::encode_region as encode_sq8_region;
 use proximadb_block_format::{
     BlockCompression, BlockMode, BlockStats, BlockZoneSource, ColumnMeta, FlatRow, PaxBlockReader,
     PaxBlockWriter, RowGroupBlock, VectorQuant, col_id, header::fnv1a_hash,
@@ -729,6 +730,7 @@ impl PaxSegmentWriter {
         .with_rerank_quant(self.rerank_quant)
         .with_clustered_sq8_lossless(self.lossless_clustered)
         .with_lossless_scalar(self.lossless_scalar)
+        .with_hoist_vector_tier(self.coalesced_rabitq)
         .with_shred_spec(self.shred_spec.clone())
     }
 
@@ -738,10 +740,10 @@ impl PaxSegmentWriter {
     /// `DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES` covers OID + timestamps + props.
     fn estimate_per_row_bytes(&self, dim: usize) -> usize {
         let vector_bytes = if self.coalesced_rabitq {
-            // RaBitQ is in the header region; blocks carry SQ8 (the rerank data).
-            let sq8 = dim;
+            // RaBitQ (Region A) + SQ8 (Region B) are hoisted out of blocks; the
+            // block carries only row data + the optional f32 exact tier (Region D).
             let f32 = if self.f32_tier { dim * 4 } else { 0 };
-            (sq8 + f32) * self.embedding_count.max(1)
+            f32 * self.embedding_count.max(1)
         } else {
             // Non-coalesced: EMBED_BASE carries the tier-1 encoding directly.
             let tier1 = match self.quant {
@@ -970,6 +972,8 @@ impl PaxSegmentWriter {
             block_radii: std::mem::take(&mut self.block_radii),
             rabitq_off: 0,
             rabitq_len: 0,
+            sq8_off: 0,
+            sq8_len: 0,
         })
     }
 
@@ -1136,12 +1140,17 @@ impl PaxSegmentWriter {
         let refs: Vec<Option<&[f32]>> = self.rabitq_vectors.iter().map(|o| o.as_deref()).collect();
         let seed = RABITQ_SEED_BASE ^ (col_id::EMBED_BASE as u64);
         let (region_bytes, _centroid) = encode_region(&refs, dim, seed)?;
+        // ADR-065 Region B: the SQ8 rerank tier, hoisted out of blocks so survivor
+        // rerank fetches read pure dense SQ8 (one segment-level Sq8Params fit).
+        let (sq8_region_bytes, sq8_params) = encode_sq8_region(&refs, dim)?;
 
         let header_len = SEG_HEADER_PREFIX_LEN as u64;
         let rabitq_off = header_len;
         let rabitq_len = region_bytes.len() as u64;
-        // Blocks begin right after the header + region.
-        let data_offset = header_len + rabitq_len;
+        let sq8_off = header_len + rabitq_len;
+        let sq8_len = sq8_region_bytes.len() as u64;
+        // Blocks (Region D) begin after header + Region A + Region B.
+        let data_offset = header_len + rabitq_len + sq8_len;
 
         // 2. Footer block table: absolute offsets = data_offset + block's 0-based
         //    offset; row_count from the block's zone summary (1:1 with the index).
@@ -1164,9 +1173,16 @@ impl PaxSegmentWriter {
             row_count: self.row_count,
             rabitq_off,
             rabitq_len,
+            sq8_off,
+            sq8_len,
+            // Cache-co-design: mirror the SQ8 dequant key (min + scale) into the
+            // footer so the read path decodes survivors without a separate 24 B
+            // Region-B-header GET. (offset == vmin == min; vmax recoverable.)
+            sq8_min: sq8_params.offset,
+            sq8_scale: sq8_params.scale,
             embed_dim: dim,
             embed_count: self.embedding_count as u32,
-            embed_quant_tag: 1, // SQ8 (the survivor-rerank data tier)
+            embed_quant_tag: 1, // SQ8 rerank tier — now Region B (hoisted out of blocks)
             has_f32_tier: self.f32_tier,
             blocks,
             encoding_map,
@@ -1180,20 +1196,24 @@ impl PaxSegmentWriter {
             layout_version: SEG_LAYOUT_VERSION,
             rabitq_off,
             rabitq_len,
+            sq8_off,
+            sq8_len,
             footer_off,
             footer_len,
         };
 
-        // 4. Assemble: header + region + blocks + [footer][footer_len][magic].
+        // 4. Assemble: header + Region A + Region B + blocks + [footer][footer_len][magic].
         let mut out = Vec::with_capacity(
             SEG_HEADER_PREFIX_LEN
                 + region_bytes.len()
+                + sq8_region_bytes.len()
                 + self.file_buf.len()
                 + footer_body.len()
                 + 16,
         );
         out.extend_from_slice(&header.to_bytes());
         out.extend_from_slice(&region_bytes);
+        out.extend_from_slice(&sq8_region_bytes);
         out.extend_from_slice(&self.file_buf);
         out.extend(segment_tail(&footer_body));
 
@@ -1208,6 +1228,8 @@ impl PaxSegmentWriter {
             block_radii: std::mem::take(&mut self.block_radii),
             rabitq_off,
             rabitq_len,
+            sq8_off,
+            sq8_len,
         })
     }
 
@@ -1250,6 +1272,8 @@ impl PaxSegmentWriter {
             block_radii: self.block_radii,
             rabitq_off: 0,
             rabitq_len: 0,
+            sq8_off: 0,
+            sq8_len: 0,
         })
     }
 }

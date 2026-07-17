@@ -150,6 +150,82 @@ pub fn cluster_plan(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan
     Some(ClusterPlan { order, runs })
 }
 
+/// ADR-065 Region B locality order: **Morton/Z-order over the segment-level SQ8
+/// codes**. The RaBitQ-top-M survivors are a spatial neighbourhood; ordering
+/// Region B by an SQ8-Morton key co-locates them (and the top-k result rows) so
+/// the survivor + OID fetches collapse to a few contiguous ranges.
+///
+/// Why SQ8 (not fp32): scalar quantization denoises (drops fp32's noisy low
+/// bits), collapses near-duplicates to the same/adjacent cell, is compact
+/// (8 bits/dim — exactly the precision a Morton key uses), and is Region B's own
+/// representation (no separate PCA/projection — flush-safe, unlike IVF).
+///
+/// One segment-level `Sq8Params` fit (same fit Region B will store), quantize,
+/// Morton-key, sort. Records with no/short embedding sort last. Returns `None`
+/// when fewer than 2 usable rows.
+pub fn cluster_order_sq8_morton(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>> {
+    use proximadb_codec::functions::sq8::{fit_params, quantize_one};
+    let usable: Vec<(usize, &[f32])> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| embedding_f32(r, idx).map(|v| (i, v)))
+        .collect();
+    if usable.len() < 2 {
+        return None;
+    }
+    let dim = usable[0].1.len();
+    // One segment-level fit over all usable vectors (flattened) — identical to the
+    // fit Region B's encode_region performs, so the order matches its stored codes.
+    let mut flat: Vec<f32> = Vec::with_capacity(usable.len() * dim);
+    for (_, v) in &usable {
+        if v.len() == dim {
+            flat.extend_from_slice(v);
+        }
+    }
+    let params = fit_params(&flat);
+
+    let key_of = |v: &[f32]| -> Vec<u8> {
+        let mut codes = vec![0u8; dim];
+        for d in 0..dim {
+            codes[d] = quantize_one(v[d], &params);
+        }
+        sq8_morton_key(&codes, dim)
+    };
+    // Records with no/short embedding sort last (all-ones key).
+    let tail_key = vec![0xFFu8; dim];
+    let mut order: Vec<usize> = (0..records.len()).collect();
+    let keys: Vec<Vec<u8>> = records
+        .iter()
+        .map(|r| match embedding_f32(r, idx) {
+            Some(v) if v.len() == dim => key_of(v),
+            _ => tail_key.clone(),
+        })
+        .collect();
+    order.sort_by(|&a, &b| keys[a].cmp(&keys[b]).then(a.cmp(&b)));
+    Some(order)
+}
+
+/// Morton/Z-order key over `dim` SQ8 bytes: interleave the 8 bits of each
+/// dimension, **MSB-first across dims then bit-7→0**, packed MSB-first into
+/// bytes → hierarchical locality (the top `dim` key bits = bit-7 of every dim =
+/// the coarse sign-level; successive levels refine). Output is `dim` bytes
+/// (`8·dim` bits). Lexicographic byte compare = Morton order.
+fn sq8_morton_key(codes: &[u8], dim: usize) -> Vec<u8> {
+    let mut key = vec![0u8; dim]; // 8·dim bits == dim bytes
+    for d in 0..dim {
+        let c = codes[d];
+        for b in 0..8u32 {
+            if (c >> (7 - b)) & 1 == 1 {
+                // sort-key bit position (0 = MSB): level `b` (bit 7-b of each dim),
+                // dim index `d` within the level.
+                let pos = b * dim as u32 + d as u32;
+                key[(pos / 8) as usize] |= 1u8 << (7 - (pos % 8));
+            }
+        }
+    }
+    key
+}
+
 /// TD-WLP-4 (ADR-061 D3): the compaction re-cluster order — **PCA + IVF
 /// (k-means) on fp32**, replacing the sign-Gray L0 bootstrap when a merged
 /// batch is worth a model. Trains a write-time PCA on this batch
@@ -173,9 +249,6 @@ pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Ve
 pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan> {
     /// Below this many usable rows a trained model can't beat the bootstrap.
     const MIN_ROWS_FOR_IVF: usize = 64;
-    /// Target rows per IVF cell — approximates rows-per-PAX-block so one cell
-    /// maps to roughly one block worth of rows.
-    const ROWS_PER_CELL: usize = 128;
 
     use crate::storage::engines::core::formats::proximablocks::spatial_clustering::{
         AdaptivePcaConfig, IncrementalPCA,
@@ -204,8 +277,14 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
     pca.finalize();
     let coords: Vec<Vec<f32>> = usable.iter().map(|(_, v)| pca.transform(v)).collect();
 
-    // IVF: k-means over the projections.
-    let k = (usable.len() / ROWS_PER_CELL).clamp(2, 1024);
+    // IVF: k-means over the projections. ADR-065 co-design — **cells ≈ blockcount**:
+    // one cell ≈ one IOP-sized block, so survivors (which span a roughly fixed
+    // *fraction* of cells) touch fewer cells → fewer survivor GETs, and each
+    // cell-fetch is one efficient IOP. k = SQ8-region bytes / IOP target
+    // (denser than the old N/128 → far fewer centroids → cheaper k-means too).
+    let iop_target =
+        proximadb_storage_common::iops_budget::IopsBudget::CLOUD.target_block_bytes() as usize;
+    let k = ((usable.len() * dim) / iop_target.max(1)).clamp(2, 4096);
     // A physical layout must not depend on thread-local RNG state: identical
     // input should produce identical IVF cells, byte counts, and eval results.
     const PAX_IVF_KMEANS_SEED: u64 = 0x5041_585F_4956_4631;

@@ -280,12 +280,11 @@ impl SstEngine {
         // matching the ranged cascade's "unfiltered only" contract.
         {
             use crate::storage::engines::sst::segment_format::rabitq_search_segment_coalesced;
-            use proximadb_storage_common::segment_layout::is_coalesced_segment;
-            if let Ok(prefix) = fs.read_range(sstable_path, 0, 4).await
-                && is_coalesced_segment(&prefix)
-                && filter_expression.is_none()
-            {
-                // `?` can't live in a let-chain condition, so bind the result first.
+            // ADR-065: call the coalesced path directly — it reads the 56 B
+            // header-prefix internally (cached) + returns Ok(None) for a non-
+            // coalesced segment, so no separate 4 B magic-detection GET is needed
+            // (collapses the redundant offset-0 prefix read the FS trace found).
+            if filter_expression.is_none() {
                 let coalesced_hits = rabitq_search_segment_coalesced(
                     fs.as_ref(),
                     sstable_path,
@@ -1346,9 +1345,10 @@ impl SstEngine {
         // Format: SST1 (4 bytes) + header_len (4 bytes) + header data
         let header_prefix = fs.read_range(file_path, 0, 8).await?;
 
-        // Verify magic
+        // Verify magic — a coalesced segment (PXH1, ADR-065) has no legacy SST1
+        // centroid; return None cleanly (no error) so partition-aware search skips it.
         if &header_prefix[0..4] != b"SST1" {
-            return Err(anyhow::anyhow!("Invalid SST file format"));
+            return Ok(None);
         }
 
         let header_len = u32::from_le_bytes([

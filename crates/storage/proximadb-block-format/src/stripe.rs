@@ -387,6 +387,14 @@ pub struct SegmentMeta {
     pub rabitq_off: u64,
     #[serde(default)]
     pub rabitq_len: u64,
+    /// ADR-065 Region B: byte offset/length of the coalesced SQ8 rerank region
+    /// (the file-level rerank tier, hoisted out of blocks). `(0, 0)` for legacy
+    /// segments; non-zero for the region layout. Threaded into the VOE
+    /// `IndexEntry`/footer so the read path fetches survivor SQ8 from Region B.
+    #[serde(default)]
+    pub sq8_off: u64,
+    #[serde(default)]
+    pub sq8_len: u64,
 }
 
 #[cfg(test)]
