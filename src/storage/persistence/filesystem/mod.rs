@@ -278,29 +278,38 @@ impl std::fmt::Debug for FilesystemFactory {
 /// outside an active `io_trace` scope and when the `io-trace` perf-emission
 /// feature is compiled out, so this impl is unconditional and zero-cost when no
 /// query is being traced.
+///
+/// **Single-source discipline (io-trace GET/bytes):** ranged reads are accounted
+/// ONCE, by the leaf backend — `LocalFileSystem`/`AzureBlob`/`Gcs`/`AwsS3` each
+/// call `record_range_gets(1)` + `record_bytes_read` in their own `read_range`,
+/// and batched reads (`read_ranges`) loop `read_range` via the trait default. So
+/// this decorator records ONLY (a) the op verb (`get_ops` — no backend records
+/// it) and (b) whole-object `read()` bytes (no backend records those). Mirroring
+/// `range_gets`/`bytes_read` here too double-counted every ranged GET whenever
+/// the counting wrapper was active (io-trace reported 2× the real GET count under
+/// `PROXIMADB_COUNT_FS_IO`). Regression: `counting_wrapper_records_ranged_gets_once_not_twice`.
 #[derive(Debug, Default)]
 struct IoTraceFsRecorder;
 
 impl proximadb_storage_filesystem_types::counting::IoRecorder for IoTraceFsRecorder {
     fn record_full_read(&self, bytes: u64) {
+        // Whole-object reads are NOT re-accounted by the leaf backends (only
+        // ranged reads are), so the recorder is the sole io_trace source here.
         crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
         if bytes > 0 {
             crate::observability::io_trace::record_bytes_read(bytes);
         }
     }
-    fn record_range_read(&self, bytes: u64) {
+    fn record_range_read(&self, _bytes: u64) {
+        // The leaf backend's `read_range` already recorded `range_gets(1)` +
+        // `bytes_read`; re-recording here double-counts. Keep only the op verb.
         crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
-        crate::observability::io_trace::record_range_gets(1);
-        if bytes > 0 {
-            crate::observability::io_trace::record_bytes_read(bytes);
-        }
     }
-    fn record_batched_ranges(&self, bytes: u64) {
+    fn record_batched_ranges(&self, _bytes: u64) {
+        // `read_ranges` loops the leaf `read_range` (trait default), which
+        // already accounted each constituent range; re-recording double-counted
+        // bytes and added a spurious +1 GET per batch. Op verb only.
         crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
-        crate::observability::io_trace::record_range_gets(1);
-        if bytes > 0 {
-            crate::observability::io_trace::record_bytes_read(bytes);
-        }
     }
 }
 
@@ -1331,6 +1340,56 @@ mod inline_tests {
                 }
             }
         }
+    }
+
+    /// Regression for the io-trace `range_gets` / `bytes_read` DOUBLE-COUNT.
+    /// `CountingFileSystem` (active under `PROXIMADB_COUNT_FS_IO`) wraps the leaf
+    /// `LocalFileSystem`; both used to call `record_range_gets(1)` +
+    /// `record_bytes_read` on every ranged GET, so io-trace reported 2× the real
+    /// GET count and 2× the real bytes whenever the counting wrapper was on (`avg_get_bytes`
+    /// self-corrected by cancelling both halves). The wrapper must now record only
+    /// the op verb + whole-read bytes; ranged GETs/bytes come once from the backend.
+    #[tokio::test]
+    async fn counting_wrapper_records_ranged_gets_once_not_twice() {
+        use crate::observability::io_trace;
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+
+        let temp = TempDir::new().unwrap();
+        let file_path = temp.path().join("seg.bin");
+        let payload = vec![7u8; 4096];
+        std::fs::write(&file_path, &payload).unwrap();
+        let url = format!("file://{}", file_path.display());
+
+        let inner = LocalFileSystem::new(LocalConfig::default()).await.unwrap();
+        let fs: Arc<dyn FileSystem> = Arc::new(CountingFileSystem::new_with_recorder(
+            Arc::new(inner),
+            global_counters(),
+            Arc::new(IoTraceFsRecorder),
+        ));
+
+        let snap = io_trace::scope(async {
+            let a = fs.read_range(&url, 0, 1024).await.unwrap();
+            let b = fs.read_range(&url, 1024, 2048).await.unwrap();
+            assert_eq!(a.len(), 1024);
+            assert_eq!(b.len(), 2048);
+            io_trace::snapshot().expect("io_trace scope active")
+        })
+        .await;
+
+        assert_eq!(
+            snap.range_gets, 2,
+            "each ranged GET must count once (leaf-backend source), not twice"
+        );
+        assert_eq!(
+            snap.bytes_read,
+            1024 + 2048,
+            "bytes must count once, not twice"
+        );
+        assert_eq!(
+            snap.get_ops, 2,
+            "op verb recorded once per read by the recorder (backends do not record it)"
+        );
     }
 
     #[tokio::test]
