@@ -708,6 +708,16 @@ fn canonical_score_from_rank_score(metric: RankMetric, rank_score: f32) -> f32 {
 /// `PROXIMADB_PAX_RABITQ_POOL_MULT` (default 100), `..._MIN` (1000),
 /// `PROXIMADB_PAX_RABITQ_POOL_RATE` (default 0.01).
 pub fn pax_rabitq_pool_for_top_k(k: usize, n: usize) -> usize {
+    // Direct override for the survivor-pool sweep (eval knob): force M to a
+    // fixed value to map the GETs-vs-recall curve and the M-scaling law
+    // (linear fraction vs N^e vs log). Must stay ≥ k (need ≥ top-k survivors).
+    if let Some(pool) = std::env::var("PROXIMADB_PAX_RABITQ_POOL")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|m| *m >= k)
+    {
+        return pool;
+    }
     static C: std::sync::OnceLock<(usize, usize, f64)> = std::sync::OnceLock::new();
     let (mult, min, rate) = C.get_or_init(|| {
         let mult = std::env::var("PROXIMADB_PAX_RABITQ_POOL_MULT")
