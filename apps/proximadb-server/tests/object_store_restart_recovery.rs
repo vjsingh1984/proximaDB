@@ -678,3 +678,120 @@ async fn graceful_flush_persists_segment_to_object_store() -> anyhow::Result<()>
     );
     Ok(())
 }
+
+/// Cloud-compaction e2e (TD-OBJSTORE-4 staged-I/O follow-up; QA tier): armed
+/// per-collection compaction (WLP-2 tags) on an object-store base must merge
+/// flushed segments through the staged write — a false-success compaction here
+/// is the data-loss shape that deletes the INPUT segments (the only copies).
+/// Three boots: seed+flush ×2 (the second flush trips l0_threshold:2 and runs
+/// compaction inline, #1012), then a fresh-disk boot proving every record from
+/// BOTH batches is still readable. Also asserts no URL-as-local-path artifact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn armed_compaction_on_object_store_preserves_all_records() -> anyhow::Result<()> {
+    let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
+    anyhow::ensure!(
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
+    );
+    let root = format!(
+        "{}/td-objstore-compaction/{}",
+        base.trim_end_matches('/'),
+        uuid::Uuid::new_v4().simple()
+    );
+    let tmp = tempfile::tempdir()?;
+    let collection = format!("compact_{}", uuid::Uuid::new_v4().simple());
+    let dirs: Vec<_> = (0..3).map(|i| tmp.path().join(format!("vm{i}"))).collect();
+    for d in &dirs {
+        std::fs::create_dir_all(d)?;
+    }
+    let scheme_dir =
+        std::path::PathBuf::from(format!("{}:", base.split("://").next().unwrap_or("adls")));
+    let artifact_preexisted = scheme_dir.exists();
+
+    let http = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    // Boot 1: create with ARMED compaction (per-collection WLP-2 override) and
+    // a low L0 threshold, seed batch A, graceful stop (flush #1).
+    let b1 = ServerProcess::start(&root, &dirs[0], &tmp.path().join("vm0.toml")).await?;
+    let response = http
+        .post(format!("{}/api/v2/collections", b1.base_url))
+        .json(&json!({
+            "name": collection,
+            "dimension": 8,
+            "engine": "sst",
+            "distance_metric": "cosine",
+            "canonical_embedding_precision": "fp32",
+            "enable_proxima_record": false,
+            "tags": ["compaction:on", "l0_threshold:2"]
+        }))
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "compaction create failed");
+    let batch_a: Vec<Value> = (0..8)
+        .map(|i| json!({ "id": format!("a-{i}"), "vector": vec![0.1_f32 * (i as f32 + 1.0); 8] }))
+        .collect();
+    let response = http
+        .post(format!(
+            "{}/api/v2/collections/{collection}/records/batch",
+            b1.base_url
+        ))
+        .json(&json!({ "records": batch_a }))
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "batch A insert failed");
+    b1.graceful()?;
+
+    // Boot 2: seed batch B, graceful stop (flush #2 → l0_threshold:2 trips →
+    // armed compaction runs inline on the flush path).
+    let b2 = ServerProcess::start(&root, &dirs[1], &tmp.path().join("vm1.toml")).await?;
+    let batch_b: Vec<Value> = (0..8)
+        .map(|i| json!({ "id": format!("b-{i}"), "vector": vec![0.05_f32 * (i as f32 + 1.0); 8] }))
+        .collect();
+    let response = http
+        .post(format!(
+            "{}/api/v2/collections/{collection}/records/batch",
+            b2.base_url
+        ))
+        .json(&json!({ "records": batch_b }))
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "batch B insert failed");
+    b2.graceful()?;
+
+    // Boot 3: fresh disk — every record from BOTH batches must be readable
+    // (compacted or not, correctness holds; a false-success compaction that
+    // deleted its inputs would lose batch A here).
+    let b3 = ServerProcess::start(&root, &dirs[2], &tmp.path().join("vm2.toml")).await?;
+    for id in (0..8)
+        .map(|i| format!("a-{i}"))
+        .chain((0..8).map(|i| format!("b-{i}")))
+    {
+        let response = http
+            .get(format!(
+                "{}/api/v2/collections/{collection}/records/{id}",
+                b3.base_url
+            ))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "record {id} unreadable after armed compaction + restart ({})",
+            response.status()
+        );
+    }
+    b3.crash()?;
+
+    anyhow::ensure!(
+        artifact_preexisted || !scheme_dir.exists(),
+        "compaction created a literal local '{}' directory (URL-as-local-path)",
+        scheme_dir.display()
+    );
+    Ok(())
+}

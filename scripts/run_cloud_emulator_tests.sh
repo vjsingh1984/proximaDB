@@ -95,6 +95,8 @@ export AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
 export AWS_ENDPOINT=http://127.0.0.1:9000 AWS_ALLOW_HTTP=true AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false
 export AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin AWS_REGION=us-east-1
 export PROXIMADB_GCS_TEST_ENDPOINT=http://127.0.0.1:4443
+# The production root FileSystem GCS backend (contract tests) reads these:
+export PROXIMADB_GCS_ENDPOINT=http://127.0.0.1:4443 PROXIMADB_GCS_ANONYMOUS=1 GCP_PROJECT=proximadb
 
 if [ "$SCOPE" = "restart" ]; then
   # TD-OBJSTORE-5 S1 (ADR-063 D8 PR tier = Azurite-strict): prove full-server
@@ -116,7 +118,14 @@ if [ "$SCOPE" = "restart" ]; then
   CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features azure \
     --test object_store_restart_recovery \
     -- --ignored --nocapture --test-threads=1
-  echo "==> Restart-recovery validation complete (cleanup trap tears emulators down)"
+  # TD-OBJSTORE-5 S2: per-primitive contract tests against the PRODUCTION root
+  # FileSystem backends (PUT->prefix-LIST, prefix-exists-false, multi-page LIST).
+  # Azure + S3 strict; GCS best-effort (skips if the backend does not register).
+  echo "==> TD-OBJSTORE-5 S2: backend contract tests (Azure/S3 strict, GCS best-effort)"
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features aws,azure,gcp \
+    --test objstore_backend_contract_test \
+    -- --ignored --nocapture --test-threads=1
+  echo "==> Restart-recovery + contract validation complete (cleanup trap tears emulators down)"
   exit 0
 fi
 
