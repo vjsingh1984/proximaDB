@@ -1,25 +1,25 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= TD-RDSTRAT-8: Two-level IVF (coarse-probe) on NOVA — break the GETs∝N scaling of single-level IVF
+= TD-RDSTRAT-8: Two-level IVF (coarse-probe) — break the GETs∝N scaling. REV 2: host on SST as a compaction-time region layout (NOVA redirect)
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open (research/proposed — not yet implemented; measurement-motivated).
-| Priority | P2 — unblocks ANN GET-cost at 10M+ scale; not blocking at SIFT1M (single-level IVF is ~50 GETs/q there).
-| Severity | n/a (new capability, no regression).
-| Component | `src/storage/engines/nova/` (progressive search / hierarchical pruning — the coarse-probe host); SST keeps single-level IVF (`src/storage/engines/sst/segment_format.rs::rabitq_search_segment_coalesced`).
-| Governs | The per-query **GET** (per-request billing) cost term at scale — the dominant cloud-DB cost dimension (ADR co-design spine, §2.1).
-| Relates to | ADR-065 (tier regions), TD-RDSTRAT-6 (coalesced binary-tier rerank-driven IO), TD-WLP-4b (IVF-at-flush cheapening — orthogonal: that's flush-time, this is query-time GET scaling).
+| Status | Open — **rev 2 (2026-07-17): implementation spec added; host redirected NOVA → SST after code review** (see §Host decision). Rev 1 filed the measured problem statement.
+| Priority | P2 → **P1 once any collection approaches ~2M vectors** — downstream, AnvaiOps ADR-0044 forbids >~5M-vector pooled onboarding until this re-measures (revenue + latency gate, successor to TD-RDSTRAT-6's role).
+| Severity | n/a (new capability, no regression). Default-OFF until gates pass.
+| Component | `src/storage/engines/sst/` — `segment_format.rs` (writer/reader), `block_cluster.rs` (clustering), `compaction.rs`/`compactor_impl.rs` (the only write path that clusters), `crates/storage/proximadb-storage-common/src/pax_block.rs` + `segment_layout.rs` (regions/footer), coalesce policy + `IopsBudget`. **NOVA is explicitly NOT the host** (rev 2).
+| Governs | The per-query **GET** (per-request billing) cost term at scale AND the Region-A scan bytes/latency at scale — both O(N) → O(nprobe)=O(1).
+| Relates to | ADR-062/ADR-065 (regions; this extends the region layout with a coarse directory), TD-RDSTRAT-6 (measured baseline), TD-WLP-4b (PCA/sample-train/NEON — reused; its deferred "persist the PCA model" item becomes REQUIRED here), TD-WLP-9 (fail-closed recall gate pattern), AnvaiOps ADR-0044 (downstream gate).
 | Pillar | COST (billing) / PERF (latency).
 |===
 
-== Why (measured)
+== Why (measured — rev 1, unchanged)
 
 Single-level IVF uses `cells = blockcount` ⇒ `k = N·dim / IOP_target ∝ N`. The RaBitQ
-survivor set is **scattered across cells** (RaBitQ ranks all N by approximate distance),
-so survivors span `O(min(M, k))` cells ⇒ **GETs/query ∝ k ∝ N**. Measured on SIFT128
-(recall@10 = 0.989 throughout, single coalesced segment, accurate io_trace):
+survivor set is scattered across cells, so survivors span `O(min(M, k))` cells ⇒
+**GETs/query ∝ k ∝ N**. Measured on SIFT128 (recall@10 = 0.989 throughout, single
+coalesced segment, accurate io_trace):
 
 [cols="3,1,1,1", options="header"]
 |===
@@ -29,66 +29,179 @@ so survivors span `O(min(M, k))` cells ⇒ **GETs/query ∝ k ∝ N**. Measured 
 | ~10 000 000 (projected) | ~305 | ~500 | the regime where this breaks
 |===
 
-Two adjacent levers were **measured and ruled out** as GET reducers:
+Measured and ruled out as GET reducers: **M** (100→10000 moves GETs only 8→10 — M is a
+bytes/recall lever) and **k tuning** (50–54 flat across k 8→128 — constant-factor only).
+The GET∝N scaling is **structural**; only a different access structure breaks the exponent.
 
-* **Survivor pool M** (TD-WLP-4b sweep, N=100k, M 100→10000): GETs move only **8→10**
-  across a 100× M range — M is a *bytes/recall* lever, not a GET lever. The coalescing
-  (`plan_coalesced_row_ranges`) merges survivors into ~fixed cell-spans regardless of how
-  many sit in them, so GET count = cells-spanned, set by k + locality, not M.
-* **k sweep** (N=1M, k 8→128): GETs are near-flat **50–54** (U-shape, minimum at k=64).
-  The current `k = N·dim/IOP` (k=30 → 51) is within 1 GET of optimal — tuning k is a
-  constant-factor win, not a scaling fix.
+**Rev-2 addition — the second O(N) term rev 1 missed:** Region A itself. Today the
+RaBitQ region is fetched whole (one GET — fine at 1M ≈ 16–24 MB). At 10M that whole-region
+fetch is ~160–240 MB *per cold query*: a bytes/latency/cache-footprint cliff that survivor-GET
+fixes alone do not touch. Coarse-probe fixes **both** terms with one layout: probed cells
+= contiguous sub-ranges of Region A ⇒ the scan reads `nprobe` sub-ranges, O(N·nprobe/k_c)
+bytes, instead of all N codes.
 
-⇒ The GET∝N scaling is **structural** to single-level IVF; only a different access
-structure breaks the exponent.
+== Host decision (rev 2): SST, not NOVA — the code review
 
-== Proposal: two-level IVF (coarse-probe), on NOVA
+Rev 1 proposed NOVA ("multi-level SuperBlock hierarchical stats, zone maps, progressive
+search"). A code review falsified each substrate claim:
 
-A coarse quantizer of `k_c ≈ √N` centroids (capped); the query ranks `k_c` coarse cells
-and probes the nearest `nprobe` (1–4). RaBitQ ranking + SQ8 rerank then run **only within
-the probed coarse cells**, so survivors span a **fixed** number of fine cells regardless of
-N ⇒ **GETs ≈ O(nprobe) ≈ O(1)** (independent of N). This is the FAISS IVF model
-(coarse quantizer + `nprobe`), proven at billion scale.
+[cols="2,3,2", options="header"]
+|===
+| Claim (rev 1) | Reality on `develop` | Citation
+| "SuperBlock hierarchical stats" | A ~140-line **stub**; types exported, never in the hot path | `nova/hierarchical_stats.rs`
+| "progressive search with early termination" = coarse→fine | Staged **full-scan filtering** (Binary→INT8→PQ→F32); every stage touches all rows; no cell selection, no routing | `nova/progressive_search.rs`, `progressive_stages.rs`
+| Zone maps as pruning substrate | Vector min/max/centroid selectivity *estimates* for cost-ordering; not block pruning in the hot path | `nova/zone_maps.rs`
+| Object-store efficiency | Plain Parquet row-groups, one ranged GET each; **no region hoisting, no coalescing, no IopsBudget-aligned layout** — none of the ADR-062/065 machinery | `nova/nova_ranged_reader.rs`, `nova/operations/*`
+| "users choose by scale" | Engine choice is **immutable per collection** — switching = full re-ingest. A forced engine migration at the 5–10M growth boundary is a product cliff | `query/query_router.rs`, `factory.rs:176–235`
+|===
 
-* Math: N=1M, `k_c≈1000`, `nprobe=4` ⇒ ~4–16 GETs/q (vs 51 today); N=10M ⇒ **same**
-~4–16 (vs ~500 projected). The exponent drops from O(N) to O(1).
-* **Target engine: NOVA** — it is production-ready and already carries the right
-  coarse→fine substrate: multi-level SuperBlock hierarchical stats, multi-dim zone maps,
-  and **progressive search with early termination** (`src/storage/engines/nova/progressive_*`).
-  SWIFT is deprecated/incomplete (its own `mod.rs`: "will be removed in v1.0… use SST,
-  VIPER, HELIX, or NOVA") — ruled out.
-* **Users choose by scale:** SST keeps single-level IVF (simple, ~50 GETs at 1M — fine for
-  small/medium); NOVA offers two-level IVF for large collections where GETs∝N breaks.
-  Engine selection already owns this (the router picks the engine per collection/profile).
+Meanwhile SST already carries ~90% of the needed substrate: `cluster_order_pca_ivf`
+(PCA → k-means → Hilbert-ordered cells, `block_cluster.rs:153–286`), per-block
+**centroid + radius** in the VOE directory (`object_economy_directory.rs:61–92` — a
+proto-coarse-layer), the region layout + footer self-description, `ObjectRangeCoalescePolicy`
++ `IopsBudget`, sample-train + NEON `sq_l2` (TD-WLP-4b), the survivor cache, and the
+compaction retrain hook (`retrain_pca_model_for_compaction`).
 
-== Co-design framing (which cost term this moves)
+**Decision: two-level IVF is an SST compaction-time segment-layout version** (v3, below),
+mixed-read-safe beside v2 segments. NOVA stays an analytics engine; if NOVA ever needs ANN
+it should adopt the PAX-region logic from the shared crates (`proximadb-storage-common` is
+already engine-neutral — SST and HELIX consume it; NOVA today consumes none of it), but that
+is out of scope here. HNSW (rev-1 Q6) is answered: **no engine implements HNSW today**
+(grep: only VIPER path *names* it), and graph traversal's dependent pointer-chasing is a
+poor fit for object-store round-trips vs IVF's parallel independent GETs — IVF coarse-probe
+first; graph/Vamana revisit only behind an NVMe-cache tier.
 
-This moves the **GET** (per-request billing) dimension — the dominant term for a same-region
-cloud DB ("same-region → bytes are free; billing = GET count", ADR-065). It does **not**
-move bytes (M does that), CPU (TD-WLP-4b SIMD/sample-train did that), or flush time. The
-`nprobe` knob directly trades recall for GETs at a fixed, N-independent budget.
+Two placement constraints inherited from ADR-065's flush findings:
 
-== Open questions / research needed
+* **Production flush stays sign-bit L0** (IVF at flush was measured ~80× flush cost and
+  dropped). The v3 layout is written **only by compaction** — which is exactly where large
+  corpora end up, and how existing collections upgrade with zero migration events.
+* L0/v2 segments keep the fetch-all single-level read path; the per-segment chooser picks
+  by layout version (the ADR-061/045 mixed-read pattern).
 
-1. **SST-coarse-probe vs route-to-NOVA.** Cheapest path: add the coarse layer to SST's
-   coalesced reader (reuse Region B). Cleanest path: realize it in NOVA's progressive
-   search. Decide by how much of NOVA's substrate is reusable vs greenfield on SST.
-2. **`nprobe` default + recall curve.** Pin `nprobe` vs recall@k on SIFT (expect a
-   knee; `nprobe` is the GET/recall dial, like `efSearch` in HNSW).
-3. **Coarse `k_c` law.** `√N` is the FAISS default; verify it (vs a fixed cap) on a range
-   of N. Coarse-centroid training cost must stay << the saving (TD-WLP-4b sample-train
-   applies).
-4. **High-dim validation.** All SIFT measurements are dim=128. Verify on a 768/1536-d
-   embedding (does the coarse layer still concentrate survivors? does `n_comp`/locality
-   hold?).
-5. **Coarse index storage + update.** Persist `k_c` coarse centroids per collection
-   (small); retrain at compaction (mirror `retrain_pca_model_for_compaction`,
-   compactor_impl.rs). Mixed-read-safe + default-OFF until baked.
-6. **HNSW (NOVA?) as the alternative.** O(log N) GETs — better at extreme scale. Confirm
-   whether NOVA already exposes graph search; if so, "route to NOVA" may subsume this.
+== The v3 layout (extends ADR-065; one atomic object, unchanged invariants)
 
-== Next action
+----
+[header-prefix v3: magic | version | region table (now incl. A0)]
+[Region A0: coarse directory  — NEW, ~100–300 KB, cached]
+[Region A : RaBitQ codes      — reordered: (coarse_cell, fine_order, row)]
+[Region B : SQ8 codes         — same order (PR3 / #1069)]
+[Region C : fp32 (optional)   — same order]
+[Region D : row blocks        — same order; block boundaries never straddle a coarse cell]
+[footer-index: block table | region table | A0 offset copy | layout_version=3]
+----
 
-Prototype the coarse-probe on NOVA's progressive search for SIFT1M: `k_c=√N≈1000`,
-`nprobe∈{1,2,4,8}`, measure GETs/q + recall@10 vs the SST single-level baseline (51 GETs,
-0.989). Target: recall ≥ 0.98 at ≤16 GETs (the O(1) claim). Gate on the recall/GET curve.
+Everything ADR-062/065 guarantees is preserved: one PUT flush, one-object compaction CAS,
+manifest-level atomicity, self-describing footer, per-provider IopsBudget geometry.
+
+=== Region A0 — the coarse directory (exact contents)
+
+[cols="2,2,3", options="header"]
+|===
+| Field | Type/size | Rationale
+| `k_c` | u32 | coarse cell count
+| `pca_model` | `n_comp` u16 + mean `dim×f32` + components `n_comp×dim×f32` | **the TD-WLP-4b deferred persistence, now required** — query-time coarse ranking needs the same projection the writer used. ~10×128×4 ≈ 5 KB at SIFT; ~10×1536×4 ≈ 61 KB at 1536d
+| `centroids` | `k_c × n_comp × f32` | in **PCA space** (small, matches assignment). k_c=1024, n_comp=10 → 40 KB
+| `radii` | `k_c × f32` | per-cell max distance member→centroid, **computed in PCA space during the assignment pass** — powers the escalation bound
+| per-cell entry ×k_c | `{row_begin,row_end: u64; a_off,a_len, b_off,b_len, c_off,c_len: u64; d_block_begin,d_block_end: u32}` (~72 B) | direct ranged-GET addressing into every region for that cell; 1024 cells → 74 KB
+| `checksum, seed, trained_on` | u64s | determinism + diagnostics
+|===
+
+Total ≈ 120–300 KB. Fetched once per segment (1 GET cold), held by the existing per-segment
+invariants cache ⇒ effectively RAM-resident; hot queries never pay it.
+
+=== Write path (compaction only)
+
+1. Merge inputs (existing compaction flow).
+2. **PCA**: sample-train (50 K cap, TD-WLP-4b), `n_comp = max(1.5·log2 dim, 1.5·log2 k_fine)`
+   (env `PROXIMADB_IVF_NCOMP_A/B`, defaults as landed).
+3. **Coarse k-means** in PCA space: `k_c = clamp(round(sqrt(N)), 64, 4096)`
+   (env `PROXIMADB_IVF2_KC`, `0` = auto). k-means++ init, deterministic seed
+   `0x5041_585F_4956_4632`, sample-train (≤200 K sample), ≤25 iterations.
+4. **Assign all N** rows to nearest coarse centroid — NEON `sq_l2` in PCA space,
+   batched. Cost note: O(N·k_c·n_comp) ≈ 10M×3162×10 ≈ 3.2e11 mul-adds worst-case; use the
+   triangle-inequality (Elkan-lite: skip centroids with `d(c_prev) + d(c_prev,c) < d_best`)
+   or a √k_c-of-√k_c pre-route to keep assignment ≤ O(N·√k_c·n_comp). Budget: coarse stage
+   ≤ 2× the current IVF-flush cost at 1M (~2 s), amortized into compaction (not flush).
+5. **Within each coarse cell**: keep it simple — **fine cells = PAX blocks** (the existing
+   `cells ≈ rows/128` granularity), rows ordered by the existing PC1-within-cell rule
+   (`block_cluster.rs` ordering, scoped per coarse cell). Do NOT nest a second k-means in v1
+   of this TD; block-granularity is already the fine unit the coalescer speaks.
+6. Emit regions in `(coarse_cell, fine_order, row)` order; **pad/flush the current PAX block
+   at every coarse-cell boundary** (same rule ADR-062 uses at block boundaries) so per-cell
+   region ranges are exact.
+7. Serialize A0; write header-prefix v3 + regions + footer; one `put_if_absent` + manifest
+   advance (unchanged).
+8. **Spill (deferred, Phase D)**: boundary rows with `d_2nd/d_1st < τ` (env
+   `PROXIMADB_IVF2_SPILL_TAU`, default off) get their **Region-A code only** duplicated
+   into the runner-up cell (~16–24 B/row for the spilled subset) — the classic IVF
+   boundary-recall fix at bounded byte cost; B/C/D never duplicated.
+
+=== Read path (query)
+
+1. Load A0 (cache-hit in steady state).
+2. Project query into PCA space (`pca_model`), rank all `k_c` centroids in RAM (µs at k_c ≤ 4096).
+3. Probe the nearest `nprobe₀ = 2` cells (env `PROXIMADB_IVF2_NPROBE0`): **ranged GETs into
+   Region A sub-ranges** via the existing `ObjectRangeCoalescePolicy` (adjacent probed cells
+   coalesce — Hilbert-order the coarse centroids at write so near cells are near in the file).
+4. RaBitQ-rank within probed rows; survivor pool `M' = max(k·100, probed_rows·0.01, 1000)`
+   (the adaptive-M law, scoped to probed rows).
+5. **Escalation — the recall guard replacing keep=100%:** with current kth-best approximate
+   distance `d_k`, compute the next unprobed cell's lower bound
+   `LB(c) = max(0, d_pca(q, centroid_c) − radius_c)`. While `LB(next) < d_k · (1+ε)`
+   (env `PROXIMADB_IVF2_EPS`, default 0.10) and `probed < nprobe_max` (default 8,
+   env `PROXIMADB_IVF2_NPROBE_MAX`): probe the next cell (goto 3). PCA-space bounds are
+   approximate (projection is contractive on retained variance, not isometric) — ε absorbs
+   the slack and the **eval gate, not the bound, is the recall authority** (TD-WLP-9
+   fail-closed pattern).
+6. Survivors → Region B ranged GETs (contiguous within probed cells), SQ8 rerank → top-k →
+   Region D fetch. Survivor cache unchanged (keys are segment+query-shaped; A0 rides the
+   invariants cache).
+7. **io_trace/metering additions** (feeds the downstream blended-cost model): per query emit
+   `coarse_cells_probed`, `coarse_escalations`, `probed_rows`, alongside the existing
+   GET/bytes counters.
+
+GET budget: A0 (cached) + ~1–3 coalesced A sub-ranges + ~2–6 B spans + ~1–3 D fetches ⇒
+**~4–12 typical, ≤16 at nprobe_max — independent of N**.
+
+=== Compatibility / rollout
+
+* `layout_version=3` in the header-prefix; v2 readers reject cleanly (magic/version check),
+  v3 reader handles v2 segments via the existing single-level path. Per-segment chooser keys
+  on the version — mixed collections are normal during rollout.
+* Default **OFF**: `PROXIMADB_IVF2=0`. Enablement = flip env + normal compaction rewrites
+  segments to v3 on their usual cadence. No migration event, no engine change, no re-ingest.
+* Auto-threshold (Phase D): compactor writes v3 only when segment rows ≥
+  `PROXIMADB_IVF2_MIN_ROWS` (default 500 000) — small segments keep the simpler v2.
+
+== Eval gates (ADR-062 pattern; eval doc in `docs/_internal/status/`)
+
+[cols="3,2", options="header"]
+|===
+| Gate | Target
+| SIFT1M recall@10 / GETs/q | **≥ 0.98 at ≤ 16 GETs** (expect ~6–10); baseline 0.989 @ 51
+| SIFT1M bytes/q | ≤ 15 MB (vs 38–42 today; A scan now nprobe-scoped)
+| 10M (SIFT-shaped synthetic) recall / GETs / cloud-derived latency | ≥ 0.98 / ≤ 16 / ≤ 0.3 s — **the ADR-0044 downstream unlock**
+| High-dim (768d) | laws hold (k_c, n_comp, recall knee) — currently 100% of data is 128d
+| Compaction overhead | ≤ +20% vs current compaction wall-clock at 1M
+| nprobe escalation histogram | p95 ≤ 4 cells at ε=0.10 (else the bound is too loose — retune)
+|===
+
+== Execution plan (sized for agents / junior devs; each PR lands green + default-off)
+
+[cols="1,3,3", options="header"]
+|===
+| PR | Scope (files) | Acceptance
+| **A — format+writer** | A0 serde + layout_version=3 (`segment_layout.rs`, `pax_block.rs` writer, header/footer); compaction coarse train/assign/order (`compactor_impl.rs`, `block_cluster.rs` — new `cluster_plan_two_level()` beside the existing fn); cell-boundary block padding | round-trip unit tests (A0 bytes → struct → bytes); determinism (fixed seed ⇒ identical segment); v2 readers reject v3 with clean error; compaction produces v3 only under `PROXIMADB_IVF2=1`
+| **B — reader, fixed nprobe** | v3 branch in `rabitq_search_segment_coalesced`; A0 → coarse rank → ranged A sub-reads → scoped RaBitQ+pool; io_trace fields; chooser on layout_version | SIFT100k v3: recall ≥ 0.985 at nprobe=4 fixed; GETs ≤ 9 (parity with today at small N); mixed v2+v3 collection returns correct merged top-k
+| **C — escalation + cache** | LB/radius escalation loop; ε/nprobe_max envs; A0 into the per-segment invariants cache; survivor-cache interplay test | SIFT1M: **≥ 0.98 @ ≤ 16 GETs** (the headline gate); escalation histogram emitted; hot-query GETs ≈ 0 preserved
+| **D — scale + hardening** | 10M + 768d evals; auto-threshold; spill knob (`SPILL_TAU`) if 10M recall needs it; eval status doc; flip Priority/Status; notify downstream (AnvaiOps ADR-0044 re-measure) | 10M gates green; TD → Implemented; ADR-0044's >5M pooled-onboarding block lifted
+|===
+
+== Open questions (narrowed from rev 1)
+
+1. Assignment cost at 10M (step-4 Elkan-lite vs two-stage pre-route) — measure both, pick in PR-A.
+2. PCA-space radius slack: if the ε=0.10 knee under-recalls on 768d, compute radii in
+   original space during the assignment pass (one extra NEON pass; A0 unchanged).
+3. Spill necessity: only if 10M recall < 0.98 at nprobe_max=8 without it.
+4. k_c cap (4096) at 100M+: revisit with a second coarse level (√k_c-of-√k_c) — out of scope.
