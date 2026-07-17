@@ -1,0 +1,86 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-TRACE-2: Structured io_trace ETL sink — local spool (JSONL+zstd) → object-store, compacted to star-schema Parquet
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open** — filed 2026-07-17 under link:../../12-design/adr/ADR-066-structured-io-trace-etl-sink.adoc[ADR-066] (which decides the data model + format + co-design). Follow-up to link:../../12-design/adr/ADR-064-query-engine-pipeline-decision-dispatch-lowering-trace.adoc[ADR-064] Decision 3 / link:TD-TRACE-1-structured-route-and-decline-trace.adoc[TD-TRACE-1] (in-process structured trace: Slice 1 #1051, Slice 2 #1076). Sequenced AFTER TD-TRACE-1 Slice 2 shipped.
+| Priority | P2 — leverage multiplier for fleet observability + cost analytics (which routes regress, which tenants pay the most GET round-trips, where the cost model mis-attributes). Not on any hot path; default-OFF.
+| Component | `crates/modalities/proximadb-observability-engine` (`io_trace.rs` — a new `set_trace_observer` seam + spool writer), `crates/storage/proximadb-object-store` + `DrPathBuilder` (dispatch), the server config (`config.toml` `[observability.io_trace_sink]` + `Config` struct), a background seal/upload task, and (later) a JSONL→Parquet compactor.
+| Evidence | Today the only external landing of a trace is a formatted `tracing::info!(target = "proximadb::io_trace")` line mixed into `./log/proximadb.log` (io-trace-gated, default OFF) — not ETL-native (must re-parse). The billing observer ships per-tenant aggregates, not the per-query evidence. `IoTraceSnapshot` is ephemeral (dies with the request) and a widening flat sparse superset (`plan_ops`, now `exec_ops`, …). ADR-066 §1.
+|===
+
+== The finding
+
+The per-query trace is captured in-process (`IoTraceSnapshot`, read by the cost/cache/billing observers)
+but is **ephemeral and shapeless**: no durable, queryable history for fleet-wide ETL, and no
+structured external stream — only a formatted, feature-gated log line that must be re-parsed. There is
+no way to ask, across the fleet, "which route regressed", "which tenant pays the most GET round-trips",
+or "which operator is slowest" without scraping logs.
+
+== Direction (per ADR-066)
+
+Add a **separate, gated trace observer** that enqueues each `IoTraceSnapshot` to a **bounded local
+spool** (JSONL + zstd); a **background task** seals a segment on size OR interval, compresses, and PUTs
+it to object storage under `DrPathBuilder` keys at the Cool/Cold access tier; an optional later step
+**compacts JSONL → star-schema Parquet** for DataFusion-native ETL. Billing stays always-on / untouched
+(ADR-027); default-OFF; TOML-configured with env override.
+
+== Slices
+
+* **S1 — Sink skeleton + spool (JSONL, local).** New `set_trace_observer` seam (mirroring
+  `set_billing_observer` but SEPARATE); mint a stable `query_id` at `instrument()` entry (if none
+  exists); a bounded local spool writer appending one **flat `IoTraceSnapshot`** per line as
+  JSONL+zstd; the `[observability.io_trace_sink]` TOML section + env overrides; default-OFF. Serialize
+  the **existing flat snapshot** — no data-model refactor yet (incremental).
+* **S2 — Object-store dispatch (the co-design cost spine).** Background async task: seal a segment on
+  `segment_bytes` OR `flush_interval_s` (whichever first), zstd-compress, PUT via
+  `proximadb-object-store` under `DrPathBuilder` keys
+  (`data/_system/observability/io_trace/dt=…/{host}-{seq}.jsonl.zst`, or per-tenant), with
+  `ObjectAccessTier = Cool/Cold`. Bounded spool → **drop-oldest** on overflow. Never compress/PUT on the
+  query path.
+* **S3 — Envelope refactor (target data model).** Migrate `IoTraceSnapshot` → **header + modality-tagged
+  payload** (ADR-066 D1) at a stable seam — billing continues to read only header-class fields
+  (`compute_ms`, `egress_bytes`), so the meter is byte-identical. The spool serializer switches to the
+  envelope shape.
+* **S4 (optional) — Parquet warehouse compaction.** Async compactor lands the JSONL segments and
+  produces a **star schema** (`trace_header` + per-modality satellites `trace_exec`/`trace_vector`/…
+  joined on `query_id`; the relational `exec[]` flattened to one row per operator). Read directly by
+  DataFusion.
+
+== Open items — resolved
+
+* **Envelope migration ordering:** sink-first on the **flat** snapshot (S1–S2), envelope refactor later
+  (S3). The durable stream does not block on the data-model change.
+* **`query_id`:** mint at `instrument()` entry if the trace scope has no stable per-query id — required
+  to join header↔satellites in the warehouse.
+* **Parquet producer placement:** land **JSONL** on the write path; async-compact to Parquet (S4) — the
+  write path stays trivial (append-only), the columnar transcode is off the hot path.
+* **Object-size math:** to land ~4MB *objects*, seal on the appropriate threshold — e.g. seal at ~4MB
+  *uncompressed* → ~1MB objects, or buffer more uncompressed to hit a 4MB *compressed* target; make
+  `segment_bytes` the knob and document which side it measures.
+* **Retention/GC:** prefer an object-store **lifecycle policy** for `retention_days`; app-side GC only
+  where lifecycle rules are unavailable.
+* **Multi-tenant isolation:** system-stream keys by default; **per-tenant** keys when the trace is
+  billing-grade evidence needing isolation (the snapshot carries `tenant_id`).
+
+== Gate
+
+Observe-only — **no served-result change**. Verified by: a JSONL (and, for S4, Parquet) **round-trip
+test** (serialize → read back → assert lossless, leveraging the existing `#[serde(default)]`
+back-compat); a bounded-spool test (drop-oldest under overflow, no OOM); the standing
+`scripts/check_billing_never_gated.py` stays green (new observer is separate, billing input unchanged);
+default-OFF ⇒ zero behavior change until opted in. `check-layering.sh` / `check_workspace_boundaries.py`
+(no new inverted dep edge — object-store is a storage-layer crate the sink may depend on from the
+platform/server layer, not from io_trace itself).
+
+== Non-goals
+
+Recall@k / ranking / quality-eval (stays on the sampled `predicate_diagnostics` bus); OpenTelemetry
+span export; a Kafka/Avro streaming bus (ADR-066 D2/D3 rejected Avro); any change to the billing meters.
+
+== Sequencing
+
+TD-TRACE-1 Slice 2 (#1076) → **this TD + ADR-066** (docs only, own PR) → S1–S2 sink (own PR) → S3
+envelope refactor (own PR) → S4 Parquet compaction (optional, own PR). Each PR single-purpose.
