@@ -607,8 +607,14 @@ impl SstEngine {
         use crate::storage::engines::sst::block_format::BlockFormat;
         match format {
             BlockFormat::ArrowBlock => {
-                let local = file.strip_prefix("file://").unwrap_or(file);
-                let reader = ArrowBlockReader::open(local)
+                // Cloud URLs download to a scratch file for the path-based reader
+                // (defect-6 read class); local paths pass through.
+                let seg = crate::storage::engines::sst::staged_write::LocalizedSegment::fetch(
+                    self.filesystem(),
+                    file,
+                )
+                .await?;
+                let reader = ArrowBlockReader::open(seg.path())
                     .map_err(|e| anyhow::anyhow!("open arrow segment {file}: {e}"))?;
                 reader
                     .read_all()
@@ -622,10 +628,12 @@ impl SstEngine {
             BlockFormat::PaxBlock => {
                 // P3: read a PAX segment via the mixed-format primitive (magic-detected,
                 // reuses PaxSegmentScanner). Best-effort schema keys (empty) for now.
-                let local = file.strip_prefix("file://").unwrap_or(file);
-                let bytes = tokio::fs::read(local)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("read pax segment {file}: {e}"))?;
+                let bytes = crate::storage::engines::sst::staged_write::read_object_bytes(
+                    self.filesystem(),
+                    file,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("read pax segment {file}: {e}"))?;
                 // tenant_ctx None: the AXIS rebuild indexes vectors per-collection and
                 // does not consume record.tenant_id. (Deriving the owning tenant from
                 // the DrPathBuilder segment path is a follow-up for when the
@@ -1567,11 +1575,16 @@ impl SstEngine {
 
         debug!("🏹 Searching Arrow file: {}", arrow_path);
 
-        // Convert file:// URL to local path
-        let local_path = arrow_path.strip_prefix("file://").unwrap_or(arrow_path);
+        // Cloud URLs download to a scratch file for the path-based reader
+        // (defect-6 read class); local paths pass through.
+        let seg = crate::storage::engines::sst::staged_write::LocalizedSegment::fetch(
+            self.filesystem(),
+            arrow_path,
+        )
+        .await?;
 
         // Open the Arrow file reader
-        let reader = ArrowBlockReader::open(local_path)
+        let reader = ArrowBlockReader::open(seg.path())
             .map_err(|e| anyhow::anyhow!("Failed to open Arrow file {}: {}", arrow_path, e))?;
 
         // Read all records from the Arrow file
@@ -1655,10 +1668,12 @@ impl SstEngine {
 
         debug!("📦 Exact PAX scan: {}", pax_path);
 
-        let local_path = pax_path.strip_prefix("file://").unwrap_or(pax_path);
-        let bytes = tokio::fs::read(local_path)
-            .await
-            .map_err(|e| anyhow::anyhow!("read pax segment {pax_path}: {e}"))?;
+        let bytes = crate::storage::engines::sst::staged_write::read_object_bytes(
+            self.filesystem(),
+            pax_path,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("read pax segment {pax_path}: {e}"))?;
         let records = crate::storage::engines::sst::segment_format::read_segment_records(
             &bytes,
             &[],

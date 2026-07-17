@@ -475,6 +475,15 @@ async fn cold_recall_ratchet_survives_restart() -> anyhow::Result<()> {
     const PROBES: usize = 8;
     const MIN_RECALL: f32 = 0.9;
 
+/// TD-OBJSTORE-4 defect-6 redux (task: normal-flush string-strip): a GRACEFUL
+/// flush on a cloud base must persist the segment INTO the object store — and
+/// must NOT write it to a literal local `adls:...` directory (the
+/// URL-as-local-path artifact). #1061 fixed the RECOVERY staging path only;
+/// the normal flush retained the false-success class (masked by WAL replay).
+/// RED on that state: no segment blob in the store + artifact dir on disk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn graceful_flush_persists_segment_to_object_store() -> anyhow::Result<()> {
     let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
     anyhow::ensure!(
         base.starts_with("s3://")
@@ -485,6 +494,7 @@ async fn cold_recall_ratchet_survives_restart() -> anyhow::Result<()> {
     );
     let root = format!(
         "{}/td-objstore-5-recall/{}",
+        "{}/td-objstore-flush-strip/{}",
         base.trim_end_matches('/'),
         uuid::Uuid::new_v4().simple()
     );
@@ -592,6 +602,62 @@ async fn cold_recall_ratchet_survives_restart() -> anyhow::Result<()> {
         recall >= MIN_RECALL,
         "cold recall@{K} on the object store = {recall:.3} < {MIN_RECALL} — \
          backend must be recall-neutral; a delta vs file:// is a read-path bug"
+    let collection = format!("flushseg_{}", uuid::Uuid::new_v4().simple());
+    let vm1 = tmp.path().join("vm1");
+    std::fs::create_dir_all(&vm1)?;
+
+    // The URL-as-local-path artifact appears under the server process CWD.
+    let scheme_dir =
+        std::path::PathBuf::from(format!("{}:", base.split("://").next().unwrap_or("adls")));
+    let artifact_preexisted = scheme_dir.exists();
+
+    // Seed dim-8 records, then SIGINT: the graceful stop flushes the segment.
+    let first = ServerProcess::start(&root, &vm1, &tmp.path().join("vm1.toml")).await?;
+    create_and_insert(&first.base_url, &collection, "sst").await?;
+    first.graceful()?;
+
+    // 1) The flushed segment must exist IN the object store under the
+    //    collection data prefix (production FileSystem, same emulator env).
+    let factory = std::sync::Arc::new(
+        proximadb::storage::persistence::filesystem::FilesystemFactory::create(
+            proximadb::storage::persistence::filesystem::FilesystemConfig::default(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("filesystem factory: {e}"))?,
+    );
+    let collections_prefix = format!("{root}/collections");
+    let fs = factory
+        .get_filesystem(&collections_prefix)
+        .map_err(|e| anyhow::anyhow!("get_filesystem: {e}"))?;
+    // LIST the whole collections prefix (flat keyspace) and look for a
+    // flushed vector segment object under a .../data/ key.
+    let entries = fs
+        .list(&collections_prefix)
+        .await
+        .map_err(|e| anyhow::anyhow!("LIST {collections_prefix}: {e}"))?;
+    let segment_blobs: Vec<&str> = entries
+        .iter()
+        .map(|e| e.url.as_str())
+        .filter(|u| u.contains("/data/") && (u.ends_with(".pax") || u.ends_with(".sst")))
+        .collect();
+    anyhow::ensure!(
+        !segment_blobs.is_empty(),
+        "graceful flush must persist a segment INTO the object store under \
+         {collections_prefix}/**/data/ — found none (URLs: {:?}). The segment \
+         was written to a literal local path instead (defect-6 class).",
+        entries
+            .iter()
+            .map(|e| e.url.as_str())
+            .take(10)
+            .collect::<Vec<_>>()
+    );
+
+    // 2) No URL-as-local-path artifact directory may appear.
+    anyhow::ensure!(
+        artifact_preexisted || !scheme_dir.exists(),
+        "flush created a literal local '{}' directory — the staging URL was \
+         string-stripped into a local path (defect-6 class)",
+        scheme_dir.display()
     );
     Ok(())
 }

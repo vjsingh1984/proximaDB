@@ -1217,17 +1217,25 @@ impl Compaction {
                 .to_string_lossy()
                 .to_string();
 
-            // Write SSTable directly to staging path
-            // Strip file:// prefix if present for local filesystem operations
-            let staging_path = if atomic_op.staging_url.starts_with("file://") {
-                atomic_op
-                    .staging_url
-                    .strip_prefix("file://")
-                    .unwrap_or(&atomic_op.staging_url)
-            } else {
-                &atomic_op.staging_url
-            };
-            let staging_file_path = PathBuf::from(format!("{}/{}", staging_path, staging_filename));
+            // Write the merged segment via a staged write (TD-OBJSTORE-4
+            // defect-6 class): the writers below are LOCAL-file writers, and a
+            // CLOUD staging URL string-stripped into a "path" writes the output
+            // to a literal local `az:...` directory — the promote then stages
+            // nothing, compaction false-succeeds, and the INPUT segments (the
+            // only copies) get deleted. Stage locally, upload on finalize.
+            let staging_file_url = format!(
+                "{}/{}",
+                atomic_op.staging_url.trim_end_matches('/'),
+                staging_filename
+            );
+            let staged = crate::storage::engines::sst::staged_write::StagedSegmentWrite::begin(
+                &staging_file_url,
+            )
+            .await
+            .map_err(|e| {
+                crate::core::StorageError::SstEngine(format!("staged compaction write: {e}"))
+            })?;
+            let staging_file_path = PathBuf::from(staged.local_path());
             debug!("Writing to staging path: {}", staging_file_path.display());
 
             // Check block format and use appropriate writer
@@ -1330,6 +1338,17 @@ impl Compaction {
                     );
                 }
             }
+
+            // Promote the locally staged merged segment to the (possibly remote)
+            // staging URL so the atomic commit has a real file to move.
+            staged
+                .finalize(&self.filesystem_factory)
+                .await
+                .map_err(|e| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "upload staged compaction segment: {e}"
+                    ))
+                })?;
 
             // Get file size for stats
             let metadata = fs
