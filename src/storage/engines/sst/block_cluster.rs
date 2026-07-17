@@ -18,6 +18,23 @@
 
 use proximadb_records::{EmbeddingValues, ProximaRecord};
 
+/// One contiguous cluster in the reordered output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrderedClusterRun {
+    pub start_row: usize,
+    pub row_count: usize,
+}
+
+/// Physical ordering plus the cluster boundaries that produced it.
+///
+/// Keeping both avoids reverse-engineering clusters from reordered vectors and
+/// lets the PAX writer apply cluster-local, exact storage transforms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterPlan {
+    pub order: Vec<usize>,
+    pub runs: Vec<OrderedClusterRun>,
+}
+
 /// Sort-by-code block clustering at PAX write (TD-RDSTRAT-5 S1, default ON
 /// since TD-WLP-4 / ADR-061 D3 — pre-GA "arm defaults" directive). Records are
 /// reordered by locality key at flush so blocks are spatially coherent and
@@ -85,6 +102,11 @@ fn embedding_f32(record: &ProximaRecord, idx: usize) -> Option<&[f32]> {
 /// Pure + deterministic (unit-tested). The key is a *proxy* for angular order,
 /// not an exact clustering — S4 replaces it with IVF/k-means.
 pub fn cluster_order(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>> {
+    cluster_plan(records, idx).map(|plan| plan.order)
+}
+
+/// Bootstrap cluster plan: Gray-key order plus exact runs of equal keys.
+pub fn cluster_plan(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan> {
     if records.len() < 2 {
         return None;
     }
@@ -123,7 +145,9 @@ pub fn cluster_order(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>
     // Precompute keys once (avoid recomputing in the comparator).
     let keys: Vec<Vec<u8>> = records.iter().map(key_of).collect();
     order.sort_by(|&a, &b| keys[a].cmp(&keys[b]).then(a.cmp(&b)));
-    Some(order)
+    let ordered_keys: Vec<&[u8]> = order.iter().map(|&row| keys[row].as_slice()).collect();
+    let runs = contiguous_runs(&ordered_keys);
+    Some(ClusterPlan { order, runs })
 }
 
 /// TD-WLP-4 (ADR-061 D3): the compaction re-cluster order — **PCA + IVF
@@ -142,6 +166,11 @@ pub fn cluster_order(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>
 /// batch-local model is discarded after ordering — persisted-model reuse
 /// (`pca_model_ref`) is the TD-WLP-4b follow-up.
 pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>> {
+    cluster_plan_pca_ivf(records, idx).map(|plan| plan.order)
+}
+
+/// Compaction-grade PCA+IVF plan, including the contiguous IVF-cell runs.
+pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan> {
     /// Below this many usable rows a trained model can't beat the bootstrap.
     const MIN_ROWS_FOR_IVF: usize = 64;
     /// Target rows per IVF cell — approximates rows-per-PAX-block so one cell
@@ -158,11 +187,11 @@ pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Ve
         .filter_map(|(i, r)| embedding_f32(r, idx).map(|v| (i, v)))
         .collect();
     if usable.len() < MIN_ROWS_FOR_IVF {
-        return cluster_order(records, idx);
+        return cluster_plan(records, idx);
     }
     let dim = usable[0].1.len();
     if usable.iter().any(|(_, v)| v.len() != dim) {
-        return cluster_order(records, idx);
+        return cluster_plan(records, idx);
     }
 
     // Batch-local PCA (one projection serves the IVF assignment, the cell
@@ -187,7 +216,7 @@ pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Ve
         1e-3,
         PAX_IVF_KMEANS_SEED,
     ) else {
-        return cluster_order(records, idx);
+        return cluster_plan(records, idx);
     };
     let assignments = proximadb_clustering_kernel::kmeans_assign(&coords, &centroids);
 
@@ -244,7 +273,38 @@ pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Ve
     order.extend(usable_sorted.iter().map(|&u| usable[u].0));
     let in_usable: std::collections::HashSet<usize> = usable.iter().map(|(i, _)| *i).collect();
     order.extend((0..records.len()).filter(|i| !in_usable.contains(i)));
-    Some(order)
+    let mut ordered_cells: Vec<usize> = usable_sorted
+        .iter()
+        .map(|&usable_row| assignments[usable_row])
+        .collect();
+    ordered_cells.extend(std::iter::repeat_n(
+        usize::MAX,
+        records.len() - usable.len(),
+    ));
+    let runs = contiguous_runs(&ordered_cells);
+    Some(ClusterPlan { order, runs })
+}
+
+fn contiguous_runs<T: PartialEq>(ordered_labels: &[T]) -> Vec<OrderedClusterRun> {
+    if ordered_labels.is_empty() {
+        return Vec::new();
+    }
+    let mut runs = Vec::new();
+    let mut start = 0usize;
+    for row in 1..ordered_labels.len() {
+        if ordered_labels[row] != ordered_labels[row - 1] {
+            runs.push(OrderedClusterRun {
+                start_row: start,
+                row_count: row - start,
+            });
+            start = row;
+        }
+    }
+    runs.push(OrderedClusterRun {
+        start_row: start,
+        row_count: ordered_labels.len() - start,
+    });
+    runs
 }
 
 /// Binary-reflected Gray code over the sign bits of `v - mean`, packed MSB-first
@@ -330,6 +390,28 @@ mod tests {
             1,
             "negative cluster members adjacent: {oids:?}"
         );
+    }
+
+    #[test]
+    fn cluster_plan_runs_cover_reordered_rows_exactly() -> anyhow::Result<()> {
+        let recs = vec![
+            rec("p1", vec![2.0, 2.0, 2.0, 2.0]),
+            rec("n1", vec![-2.0, -2.0, -2.0, -2.0]),
+            rec("p2", vec![3.0, 1.0, 2.0, 4.0]),
+            rec("n2", vec![-3.0, -1.0, -2.0, -4.0]),
+        ];
+        let plan = cluster_plan(&recs, 0)
+            .ok_or_else(|| anyhow::anyhow!("expected a bootstrap cluster plan"))?;
+        assert_eq!(plan.order.len(), recs.len());
+        assert!(plan.runs.len() >= 2);
+        let mut expected_start = 0usize;
+        for run in &plan.runs {
+            assert_eq!(run.start_row, expected_start);
+            assert!(run.row_count > 0);
+            expected_start += run.row_count;
+        }
+        assert_eq!(expected_start, recs.len());
+        Ok(())
     }
 
     #[test]

@@ -49,12 +49,27 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 use tempfile::TempDir;
 
 const DIMENSION: usize = 128;
 const TOP_K: usize = 10;
 const BATCH_SIZE: usize = 20_000;
 const DEFAULT_QUERIES: usize = 1000;
+
+fn directory_file_bytes(path: &Path) -> std::io::Result<u64> {
+    let mut bytes = 0u64;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if metadata.is_dir() {
+            bytes = bytes.saturating_add(directory_file_bytes(&entry.path())?);
+        } else if metadata.is_file() {
+            bytes = bytes.saturating_add(metadata.len());
+        }
+    }
+    Ok(bytes)
+}
 
 // ---------------------------------------------------------------------------
 // TEXMEX .fvecs / .ivecs loader (std-only, little-endian — no native dep).
@@ -559,15 +574,21 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
         .enumerate()
         .map(|(i, v)| vector_record(i as u32, v.clone()))
         .collect();
+    let flush_started = Instant::now();
     flush_batch(&engine, &collection, batch).await;
+    let flush_ms = flush_started.elapsed().as_millis();
+    let persisted_bytes = directory_file_bytes(temp_dir.path()).expect("measure persisted bytes");
     eprintln!("[coalesced] single-file collection: N={n} vectors flushed in one batch");
 
     // Search all queries in ONE io_trace scope; range_gets accumulates over the loop.
-    let (recall, measured, snap) = proximadb::observability::io_trace::scope(async {
+    let (recall, measured, snap, mut query_us) = proximadb::observability::io_trace::scope(async {
         let mut recall_sum = 0.0f64;
         let mut measured = 0usize;
+        let mut query_us = Vec::with_capacity(queries.len());
         for (qi, query) in queries.iter().enumerate() {
+            let query_started = Instant::now();
             let got = search_topk(&engine, &collection, query.clone()).await;
+            query_us.push(query_started.elapsed().as_micros() as u64);
             if got.is_empty() {
                 continue;
             }
@@ -581,9 +602,19 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
             0.0
         };
         let snap = proximadb::observability::io_trace::snapshot().expect("io_trace scope active");
-        (recall, measured, snap)
+        (recall, measured, snap, query_us)
     })
     .await;
+    query_us.sort_unstable();
+    let mean_query_us = if query_us.is_empty() {
+        0
+    } else {
+        query_us.iter().sum::<u64>() / query_us.len() as u64
+    };
+    let p95_query_us = query_us
+        .get(query_us.len().saturating_sub(1) * 95 / 100)
+        .copied()
+        .unwrap_or(0);
 
     let per_q_gets = if measured > 0 {
         snap.range_gets / measured as u64
@@ -601,6 +632,10 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
     eprintln!(
         "  recall@{TOP_K} = {recall:.4}  range_gets/query = {per_q_gets}  bytes_read/query = {per_q_bytes}  (measured={measured}, total_gets={})",
         snap.range_gets
+    );
+    eprintln!(
+        "  persisted_bytes = {persisted_bytes}  persisted_bytes/row = {:.2}  flush_ms = {flush_ms}  mean/p95_query_us = {mean_query_us}/{p95_query_us}",
+        persisted_bytes as f64 / n as f64
     );
     eprintln!("  vs legacy block-prune ~370 GETs/query — target: < {get_budget} (≪ 370)");
 

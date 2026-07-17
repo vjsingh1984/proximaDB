@@ -35,8 +35,8 @@ use crate::{
     rowgroup::{RowGroupBlock, RowGroupEntry, f64_bounds, i64_bounds},
     stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
     vparam::{
-        QUANT_FP16, QUANT_RABITQ, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
-        VectorParamEntry,
+        QUANT_FP16, QUANT_RABITQ, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn,
+        TRANSFORM_CLUSTERED_FOR_U8, VectorParamBlock, VectorParamEntry, VectorTransformColumn,
     },
 };
 
@@ -158,6 +158,15 @@ pub struct PaxBlockWriter {
     /// Only used when tier 1 is RaBitQ (the rerank column is emitted alongside
     /// RaBitQ; non-RaBitQ tier 1 doesn't need a separate rerank column).
     rerank_quant: VectorQuant,
+    /// Apply the exact clustered FOR/bit-pack transform to SQ8 code bytes when
+    /// its realized payload is smaller. Default OFF; readers key off the
+    /// VectorParamBlock transform trailer rather than inspecting payload magic.
+    clustered_sq8_lossless: bool,
+    /// Apply exact all-null elision and shared LZ4 to scalar stripes when smaller.
+    lossless_scalar: bool,
+    /// Row offsets at which a new producer-defined cluster starts. Row zero is
+    /// implicit. These boundaries are block-local and reset by [`Self::clear`].
+    cluster_run_starts: Vec<usize>,
 
     // Accumulated column data
     oids: Vec<String>,
@@ -217,6 +226,9 @@ impl PaxBlockWriter {
             drop_tenant_col: drop_tenant_col_enabled(),
             include_f32_tier: false,
             rerank_quant: VectorQuant::Sq8,
+            clustered_sq8_lossless: false,
+            lossless_scalar: false,
+            cluster_run_starts: Vec::new(),
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
@@ -271,6 +283,30 @@ impl PaxBlockWriter {
     pub fn with_rerank_quant(mut self, quant: VectorQuant) -> Self {
         self.rerank_quant = quant;
         self
+    }
+
+    /// Enable the exact clustered transform for SQ8 code bytes. The writer
+    /// still stores flat SQ8 unless the complete encoded payload is smaller.
+    pub fn with_clustered_sq8_lossless(mut self, enabled: bool) -> Self {
+        self.clustered_sq8_lossless = enabled;
+        self
+    }
+
+    /// Enable exact Parquet-style all-null pages and post-codec scalar LZ4.
+    pub fn with_lossless_scalar(mut self, enabled: bool) -> Self {
+        self.lossless_scalar = enabled;
+        self
+    }
+
+    /// Mark the next appended row as the start of a new cluster run.
+    ///
+    /// The clustering producer calls this at ordering boundaries. Calls before
+    /// the first row or repeated at the same boundary are harmless.
+    pub fn start_cluster_run(&mut self) {
+        let start = self.row_count();
+        if start > 0 && self.cluster_run_starts.last().copied() != Some(start) {
+            self.cluster_run_starts.push(start);
+        }
     }
 
     /// P-Shred (ADR-055): shred the given props keys into typed user-columns
@@ -418,6 +454,8 @@ impl PaxBlockWriter {
         let mut vparam_entries: Vec<VectorParamEntry> = Vec::new();
         // RaBitQ side data (centroid + seed) for any binary-quantized columns.
         let mut vparam_rabitq: Vec<RaBitQColumn> = Vec::new();
+        // Exact post-quantization transforms selected by realized byte size.
+        let mut vparam_transforms: Vec<VectorTransformColumn> = Vec::new();
 
         if mode.has_column_stripes() {
             stripes.push(
@@ -526,7 +564,7 @@ impl PaxBlockWriter {
 
             for (i, col) in self.embeddings.iter().enumerate() {
                 let refs: Vec<Option<&[f32]>> = col.iter().map(|v| v.as_deref()).collect();
-                let (stripe, entry, rabitq_col) =
+                let (stripe, entry, rabitq_col, transform) =
                     self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?;
                 let is_rabitq = rabitq_col.is_some();
                 stripes.push(stripe);
@@ -534,24 +572,34 @@ impl PaxBlockWriter {
                 if let Some(rc) = rabitq_col {
                     vparam_rabitq.push(rc);
                 }
+                if let Some(transform) = transform {
+                    vparam_transforms.push(transform);
+                }
                 // P3 cascade: every RaBitQ-coded embedding gets a co-located rerank
                 // column at `RERANK_BASE + i`. The rerank quant strategy is
                 // configurable (default SQ8; Fp16 for near-lossless; RawF32 for
                 // exact). RaBitQ codes drive the cheap candidate scan; the rerank
                 // pool is scored against this co-located copy before the final top-k.
                 if is_rabitq {
-                    let (rerank_stripe, rerank_entry) = match self.rerank_quant {
+                    let (rerank_stripe, rerank_entry, rerank_transform) = match self.rerank_quant {
                         VectorQuant::Fp16 => {
-                            self.build_fp16_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?
+                            let (stripe, entry) =
+                                self.build_fp16_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
+                            (stripe, entry, None)
                         }
                         VectorQuant::RawF32 => {
-                            self.build_raw_f32_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?
+                            let (stripe, entry) = self
+                                .build_raw_f32_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
+                            (stripe, entry, None)
                         }
                         // Default: SQ8 (the validated tier-2).
                         _ => self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?,
                     };
                     stripes.push(rerank_stripe);
                     vparam_entries.push(rerank_entry);
+                    if let Some(transform) = rerank_transform {
+                        vparam_transforms.push(transform);
+                    }
                 }
                 // P3 Phase D f32 tier (opt-in): an exact-f32 copy of the embedding
                 // at `F32_TIER_BASE + i`, for an exact final rerank (→ recall ≈ 1.0)
@@ -612,6 +660,7 @@ impl PaxBlockWriter {
             let block = VectorParamBlock {
                 entries: vparam_entries,
                 rabitq: vparam_rabitq,
+                transforms: vparam_transforms,
             };
             let bytes = block.to_bytes();
             let offset = col_footer_offset + col_footer_bytes.len() as u32;
@@ -728,6 +777,7 @@ impl PaxBlockWriter {
         for col in &mut self.embeddings {
             col.clear();
         }
+        self.cluster_run_starts.clear();
         self.tenant_id_hash_set = 0;
         self.min_ts = i64::MAX;
         self.max_ts = i64::MIN;
@@ -746,6 +796,8 @@ impl PaxBlockWriter {
     ) -> ColumnStripe {
         let scheme = select_str_scheme(role, nullable, vals);
         let (data, null_count) = encode_str_with_scheme(vals, &scheme);
+        let (data, is_lz4_compressed) =
+            self.encode_lossless_scalar(data, null_count as usize, vals.len());
         let stats = string_stats(vals);
         let meta = ColumnMeta {
             column_id: id,
@@ -755,6 +807,7 @@ impl PaxBlockWriter {
             nullable,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -780,7 +833,12 @@ impl PaxBlockWriter {
         &self,
         id: i32,
         vals: &[Option<&[f32]>],
-    ) -> Result<(ColumnStripe, VectorParamEntry, Option<RaBitQColumn>)> {
+    ) -> Result<(
+        ColumnStripe,
+        VectorParamEntry,
+        Option<RaBitQColumn>,
+        Option<VectorTransformColumn>,
+    )> {
         let dim = vector_column_dim(vals)?;
         let flat: Vec<f32> = vals
             .iter()
@@ -801,22 +859,19 @@ impl PaxBlockWriter {
                 (r, has_data && !r && !sq8_disabled())
             }
         };
-        let (data, scheme, quant_kind, rabitq_col) = if use_rabitq {
+        let (data, scheme, quant_kind, rabitq_col, transformed) = if use_rabitq {
             let (bytes, col) = encode_f32_vec_rabitq(vals, dim, id);
-            (bytes, ProximaScheme::RaBitQ, QUANT_RABITQ, Some(col))
+            (bytes, ProximaScheme::RaBitQ, QUANT_RABITQ, Some(col), false)
         } else if use_sq8 {
-            (
-                encode_f32_vec_sq8(vals, dim, &params),
-                ProximaScheme::Sq8,
-                QUANT_SQ8,
-                None,
-            )
+            let (bytes, transformed) = self.encode_sq8(vals, dim, &params)?;
+            (bytes, ProximaScheme::Sq8, QUANT_SQ8, None, transformed)
         } else {
             (
                 encode_f32_vec_raw_v2(vals, dim),
                 ProximaScheme::Raw,
                 QUANT_RAW_F32,
                 None,
+                false,
             )
         };
 
@@ -829,6 +884,7 @@ impl PaxBlockWriter {
             nullable: true,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed: false,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -848,7 +904,12 @@ impl PaxBlockWriter {
             quant_kind,
             params,
         };
-        Ok((ColumnStripe::new(meta, data), entry, rabitq_col))
+        let transform = transformed.then_some(VectorTransformColumn {
+            column_id: id,
+            transform_kind: TRANSFORM_CLUSTERED_FOR_U8,
+            transform_version: 1,
+        });
+        Ok((ColumnStripe::new(meta, data), entry, rabitq_col, transform))
     }
 
     /// Build an SQ8-quantized vector stripe unconditionally (ignoring the
@@ -860,7 +921,11 @@ impl PaxBlockWriter {
         &self,
         id: i32,
         vals: &[Option<&[f32]>],
-    ) -> Result<(ColumnStripe, VectorParamEntry)> {
+    ) -> Result<(
+        ColumnStripe,
+        VectorParamEntry,
+        Option<VectorTransformColumn>,
+    )> {
         let dim = vector_column_dim(vals)?;
         let flat: Vec<f32> = vals
             .iter()
@@ -868,7 +933,7 @@ impl PaxBlockWriter {
             .flat_map(|s| s.iter().copied())
             .collect();
         let params = functions::sq8::fit_params(&flat);
-        let data = encode_f32_vec_sq8(vals, dim, &params);
+        let (data, transformed) = self.encode_sq8(vals, dim, &params)?;
         let null_count = vals.iter().filter(|v| v.is_none()).count() as u32;
         let meta = ColumnMeta {
             column_id: id,
@@ -878,6 +943,7 @@ impl PaxBlockWriter {
             nullable: true,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed: false,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -897,7 +963,36 @@ impl PaxBlockWriter {
             quant_kind: QUANT_SQ8,
             params,
         };
-        Ok((ColumnStripe::new(meta, data), entry))
+        let transform = transformed.then_some(VectorTransformColumn {
+            column_id: id,
+            transform_kind: TRANSFORM_CLUSTERED_FOR_U8,
+            transform_version: 1,
+        });
+        Ok((ColumnStripe::new(meta, data), entry, transform))
+    }
+
+    fn encode_sq8(
+        &self,
+        vals: &[Option<&[f32]>],
+        dim: u32,
+        params: &functions::Sq8Params,
+    ) -> Result<(Vec<u8>, bool)> {
+        let (bitmap, codes) = encode_f32_vec_sq8_parts(vals, dim, params);
+        if !self.clustered_sq8_lossless || codes.is_empty() {
+            return Ok((join_vector_payload(bitmap, codes), false));
+        }
+
+        let runs = cluster_runs(vals.len(), &self.cluster_run_starts)?;
+        let encoded = functions::clustered_for_bitpack::encode_u8_rows(
+            &codes,
+            dim as usize,
+            &runs,
+            functions::clustered_for_bitpack::ClusteredU8Config::default(),
+        )?;
+        if encoded.as_bytes().len() >= codes.len() {
+            return Ok((join_vector_payload(bitmap, codes), false));
+        }
+        Ok((join_vector_payload(bitmap, encoded.into_bytes()), true))
     }
 
     /// Build a raw-f32 vector stripe unconditionally (the optional exact-f32
@@ -927,6 +1022,7 @@ impl PaxBlockWriter {
             nullable: true,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed: false,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -990,6 +1086,7 @@ impl PaxBlockWriter {
             nullable: true,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed: false,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -1022,6 +1119,8 @@ impl PaxBlockWriter {
         let (raw_values, null_count) = flatten_f64_values(vals);
         let scheme = select_f64_scheme(role, nullable, vals);
         let data = encode_f64_with_scheme(&raw_values, &scheme)?;
+        let (data, is_lz4_compressed) =
+            self.encode_lossless_scalar(data, null_count as usize, vals.len());
         let mut meta = ColumnMeta {
             column_id: id,
             role,
@@ -1030,6 +1129,7 @@ impl PaxBlockWriter {
             nullable,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -1117,6 +1217,8 @@ impl PaxBlockWriter {
         let (raw_values, null_count) = flatten_i64_values(vals);
         let scheme = select_i64_scheme(role, nullable, vals);
         let data = encode_i64_with_scheme(&raw_values, &scheme)?;
+        let (data, is_lz4_compressed) =
+            self.encode_lossless_scalar(data, null_count as usize, vals.len());
         let mut meta = ColumnMeta {
             column_id: id,
             role,
@@ -1125,6 +1227,7 @@ impl PaxBlockWriter {
             nullable,
             has_bloom: false,
             is_sorted: is_i64_sorted(vals),
+            is_lz4_compressed,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -1168,6 +1271,8 @@ impl PaxBlockWriter {
                 }
             }
         }
+        let (data, is_lz4_compressed) =
+            self.encode_lossless_scalar(data, null_count as usize, vals.len());
         let _ = refs; // suppress warning
         let meta = ColumnMeta {
             column_id: id,
@@ -1177,6 +1282,7 @@ impl PaxBlockWriter {
             nullable: true,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -1187,6 +1293,28 @@ impl PaxBlockWriter {
             bloom_len: 0,
         };
         ColumnStripe::new(meta, data)
+    }
+
+    /// Apply the exact post-codec storage layer selected for this block.
+    /// All-null pages use the existing `null_count` as their definition level
+    /// and need no value payload. Other pages retain the encoded bytes unless
+    /// shared LZ4 clears the realized-size threshold.
+    fn encode_lossless_scalar(
+        &self,
+        data: Vec<u8>,
+        null_count: usize,
+        row_count: usize,
+    ) -> (Vec<u8>, bool) {
+        if !self.lossless_scalar {
+            return (data, false);
+        }
+        if row_count > 0 && null_count == row_count {
+            return (Vec::new(), false);
+        }
+        match functions::lossless_compression::compress_lz4_if_smaller(&data, 8) {
+            Ok(Some(compressed)) => (compressed, true),
+            Ok(None) | Err(_) => (data, false),
+        }
     }
 }
 
@@ -1751,23 +1879,66 @@ fn vector_validity_bitmap(vals: &[Option<&[f32]>]) -> Vec<u8> {
     bm
 }
 
-/// Encode an SQ8 vector stripe: validity bitmap + `n_rows * dim` u8 codes.
-/// Null rows occupy `dim` zero bytes so every row stays seekable.
-fn encode_f32_vec_sq8(vals: &[Option<&[f32]>], dim: u32, params: &functions::Sq8Params) -> Vec<u8> {
+/// Encode the two logical parts of an SQ8 vector stripe. Null rows occupy
+/// `dim` zero bytes so the decoded code matrix remains fixed-stride.
+fn encode_f32_vec_sq8_parts(
+    vals: &[Option<&[f32]>],
+    dim: u32,
+    params: &functions::Sq8Params,
+) -> (Vec<u8>, Vec<u8>) {
     let dim = dim as usize;
-    let mut buf = vector_validity_bitmap(vals);
-    buf.reserve(vals.len() * dim);
+    let bitmap = vector_validity_bitmap(vals);
+    let mut codes = Vec::with_capacity(vals.len() * dim);
     for v in vals {
         match v {
             Some(floats) => {
                 for &f in *floats {
-                    buf.push(functions::sq8::quantize_one(f, params));
+                    codes.push(functions::sq8::quantize_one(f, params));
                 }
             }
-            None => buf.extend(std::iter::repeat_n(0u8, dim)),
+            None => codes.extend(std::iter::repeat_n(0u8, dim)),
         }
     }
-    buf
+    (bitmap, codes)
+}
+
+fn join_vector_payload(mut bitmap: Vec<u8>, payload: Vec<u8>) -> Vec<u8> {
+    bitmap.reserve(payload.len());
+    bitmap.extend_from_slice(&payload);
+    bitmap
+}
+
+fn cluster_runs(
+    row_count: usize,
+    explicit_starts: &[usize],
+) -> Result<Vec<functions::clustered_for_bitpack::ClusterRun>> {
+    if row_count == 0 {
+        return Ok(Vec::new());
+    }
+    let mut starts = Vec::with_capacity(explicit_starts.len() + 1);
+    starts.push(0usize);
+    for &start in explicit_starts {
+        if start == 0 || start >= row_count {
+            anyhow::bail!("cluster run start {start} outside row count {row_count}");
+        }
+        if starts
+            .last()
+            .copied()
+            .is_some_and(|previous| start <= previous)
+        {
+            anyhow::bail!("cluster run starts must be strictly increasing");
+        }
+        starts.push(start);
+    }
+    let mut runs = Vec::with_capacity(starts.len());
+    for (index, &start) in starts.iter().enumerate() {
+        let end = starts.get(index + 1).copied().unwrap_or(row_count);
+        runs.push(functions::clustered_for_bitpack::ClusterRun::new(
+            start,
+            end - start,
+        ));
+    }
+    Ok(runs)
 }
 
 /// Encode a raw fixed-stride f32 vector stripe: validity bitmap + `n_rows *

@@ -25,6 +25,7 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{Result, bail};
+use std::collections::HashMap;
 
 use crate::pax_block::SEGMENT_MAGIC;
 
@@ -149,6 +150,120 @@ pub struct FooterBlockEntry {
     pub stats_kind: StatsKind,
 }
 
+macro_rules! footer_tag_enum {
+    ($name:ident { $($variant:ident = $value:expr),+ $(,)? }) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[repr(u8)]
+        pub enum $name {
+            $($variant = $value),+
+        }
+
+        impl $name {
+            fn from_u8(value: u8) -> Result<Self> {
+                match value {
+                    $($value => Ok(Self::$variant),)+
+                    _ => bail!("unknown {} tag 0x{value:02x}", stringify!($name)),
+                }
+            }
+        }
+    };
+}
+
+footer_tag_enum!(TierRole {
+    Index = 0,
+    Rerank = 1,
+    Exact = 2,
+    Metadata = 3,
+});
+
+footer_tag_enum!(LosslessTransformTag {
+    None = 0,
+    ClusteredForBitpackU8 = 1,
+    ExactBaseXor = 2,
+});
+
+footer_tag_enum!(LosslessCompressionTag {
+    None = 0,
+    Lz4 = 1,
+    Zstd = 2,
+    Snappy = 3,
+});
+
+footer_tag_enum!(ParameterScope {
+    None = 0,
+    Segment = 1,
+    Block = 2,
+    ClusterRun = 3,
+    MicroChunk = 4,
+});
+
+footer_tag_enum!(VectorTransform {
+    None = 0,
+    L2Normalized = 1,
+    CenteredRotated = 2,
+});
+
+footer_tag_enum!(SourceRole {
+    Canonical = 0,
+    IndexProjection = 1,
+    RerankProjection = 2,
+});
+
+footer_tag_enum!(SourceFidelity {
+    ExactBitwise = 0,
+    Lossy = 1,
+});
+
+/// Descriptor flags for the byte-compression layer.
+pub mod compression_flags {
+    /// Compressor inverse reproduces the transform bytes exactly.
+    pub const LOSSLESS: u8 = 0b0000_0001;
+}
+
+/// Reserved rebuild-source ID for a projection-only object whose durable
+/// canonical authority is cataloged outside this segment (for example the WAL
+/// lineage). Such a file cannot independently serve exact reconstruction.
+pub const EXTERNAL_CANONICAL_SOURCE_ID: u16 = u16::MAX;
+
+/// One footer-v2 physical stripe descriptor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StripeEncodingDescriptor {
+    pub descriptor_id: u16,
+    pub logical_field_id: i32,
+    pub physical_column_id: i32,
+    pub tier_role: TierRole,
+    pub value_codec_tag: u8,
+    pub value_codec_version: u8,
+    pub transform_tag: LosslessTransformTag,
+    pub transform_version: u8,
+    pub compression_tag: LosslessCompressionTag,
+    pub compression_version: u8,
+    pub compression_flags: u8,
+    pub parameter_scope: ParameterScope,
+    pub vector_transform: VectorTransform,
+    pub auxiliary_flags: u16,
+    pub source_role: SourceRole,
+    pub source_fidelity: SourceFidelity,
+    pub rebuild_source_id: u16,
+    pub projection_generation: u16,
+}
+
+/// Selects one descriptor for one block-local physical tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockTierAssignment {
+    pub block_ordinal: u32,
+    pub physical_column_id: i32,
+    pub tier_role: TierRole,
+    pub descriptor_id: u16,
+}
+
+const DESCRIPTOR_SIZE: usize = 28;
+const ASSIGNMENT_SIZE: usize = 11;
+const SECTION_STRIPE_ENCODING_MAP: u8 = 2;
+const SECTION_VERSION_V1: u8 = 1;
+const FOOTER_V1: u8 = 1;
+const FOOTER_V2: u8 = 2;
+
 /// The self-describing footer-index (Parquet-style metadata hub): block table +
 /// schema snapshot + per-stripe encoding map + RaBitQ mirror + row count. Located
 /// via `[footer_index][footer_len u64][SEGMENT_MAGIC]` at the segment tail.
@@ -175,20 +290,323 @@ pub struct SegmentFooterIndex {
     pub has_f32_tier: bool,
     /// The block table (block 0..K in emission/cluster order).
     pub blocks: Vec<FooterBlockEntry>,
+    /// Footer-v2 physical encoding descriptors. Empty means emit footer v1.
+    pub encoding_map: Vec<StripeEncodingDescriptor>,
+    /// Per-block descriptor selections for footer v2.
+    pub block_tier_assignments: Vec<BlockTierAssignment>,
 }
 
 /// `[footer_len u64][SEGMENT_MAGIC 8B]` — the 16 B tail that locates the footer.
 pub const SEG_TAIL_LEN: usize = 8 + 8;
+
+impl StripeEncodingDescriptor {
+    fn write_to(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(&self.descriptor_id.to_le_bytes());
+        output.extend_from_slice(&self.logical_field_id.to_le_bytes());
+        output.extend_from_slice(&self.physical_column_id.to_le_bytes());
+        output.push(self.tier_role as u8);
+        output.push(self.value_codec_tag);
+        output.push(self.value_codec_version);
+        output.push(self.transform_tag as u8);
+        output.push(self.transform_version);
+        output.push(self.compression_tag as u8);
+        output.push(self.compression_version);
+        output.push(self.compression_flags);
+        output.push(self.parameter_scope as u8);
+        output.push(self.vector_transform as u8);
+        output.extend_from_slice(&self.auxiliary_flags.to_le_bytes());
+        output.push(self.source_role as u8);
+        output.push(self.source_fidelity as u8);
+        output.extend_from_slice(&self.rebuild_source_id.to_le_bytes());
+        output.extend_from_slice(&self.projection_generation.to_le_bytes());
+    }
+
+    fn read_from(input: &[u8], position: &mut usize) -> Result<Self> {
+        let descriptor = Self {
+            descriptor_id: read_u16(input, position)?,
+            logical_field_id: read_i32(input, position)?,
+            physical_column_id: read_i32(input, position)?,
+            tier_role: TierRole::from_u8(read_u8(input, position)?)?,
+            value_codec_tag: read_u8(input, position)?,
+            value_codec_version: read_u8(input, position)?,
+            transform_tag: LosslessTransformTag::from_u8(read_u8(input, position)?)?,
+            transform_version: read_u8(input, position)?,
+            compression_tag: LosslessCompressionTag::from_u8(read_u8(input, position)?)?,
+            compression_version: read_u8(input, position)?,
+            compression_flags: read_u8(input, position)?,
+            parameter_scope: ParameterScope::from_u8(read_u8(input, position)?)?,
+            vector_transform: VectorTransform::from_u8(read_u8(input, position)?)?,
+            auxiliary_flags: read_u16(input, position)?,
+            source_role: SourceRole::from_u8(read_u8(input, position)?)?,
+            source_fidelity: SourceFidelity::from_u8(read_u8(input, position)?)?,
+            rebuild_source_id: read_u16(input, position)?,
+            projection_generation: read_u16(input, position)?,
+        };
+        descriptor.validate()?;
+        Ok(descriptor)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.descriptor_id == 0 {
+            bail!("footer encoding descriptor id 0 is reserved");
+        }
+        if !matches!(self.value_codec_tag, 0x01 | 0x03 | 0x05 | 0x71) {
+            bail!(
+                "unknown required value codec tag 0x{:02x}",
+                self.value_codec_tag
+            );
+        }
+        if self.value_codec_version != 1 {
+            bail!(
+                "unsupported value codec version {}",
+                self.value_codec_version
+            );
+        }
+        let expected_transform_version = match self.transform_tag {
+            LosslessTransformTag::None => 0,
+            LosslessTransformTag::ClusteredForBitpackU8 | LosslessTransformTag::ExactBaseXor => 1,
+        };
+        if self.transform_version != expected_transform_version {
+            bail!("unsupported lossless transform version");
+        }
+        let expected_compression_version = match self.compression_tag {
+            LosslessCompressionTag::None => 0,
+            LosslessCompressionTag::Lz4
+            | LosslessCompressionTag::Zstd
+            | LosslessCompressionTag::Snappy => 1,
+        };
+        if self.compression_version != expected_compression_version {
+            bail!("unsupported lossless compression version");
+        }
+        if self.compression_flags & compression_flags::LOSSLESS == 0 {
+            bail!("durable stripe compressor must be declared lossless");
+        }
+        if self.source_role == SourceRole::Canonical {
+            if self.source_fidelity != SourceFidelity::ExactBitwise {
+                bail!("canonical stripe must be exact-bitwise");
+            }
+            if self.value_codec_tag != 0x01 {
+                bail!("canonical dense-vector stripe must use raw-f32 value codec");
+            }
+        }
+        match self.transform_tag {
+            LosslessTransformTag::ClusteredForBitpackU8 if self.value_codec_tag != 0x05 => {
+                bail!("clustered u8 transform requires the SQ8 value codec")
+            }
+            LosslessTransformTag::ExactBaseXor if self.value_codec_tag != 0x01 => {
+                bail!("exact base-XOR transform requires the raw-f32 value codec")
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+impl BlockTierAssignment {
+    fn write_to(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(&self.block_ordinal.to_le_bytes());
+        output.extend_from_slice(&self.physical_column_id.to_le_bytes());
+        output.push(self.tier_role as u8);
+        output.extend_from_slice(&self.descriptor_id.to_le_bytes());
+    }
+
+    fn read_from(input: &[u8], position: &mut usize) -> Result<Self> {
+        Ok(Self {
+            block_ordinal: read_u32(input, position)?,
+            physical_column_id: read_i32(input, position)?,
+            tier_role: TierRole::from_u8(read_u8(input, position)?)?,
+            descriptor_id: read_u16(input, position)?,
+        })
+    }
+}
+
+fn write_block_entry(output: &mut Vec<u8>, block: &FooterBlockEntry) {
+    output.extend_from_slice(&block.offset.to_le_bytes());
+    output.extend_from_slice(&block.size.to_le_bytes());
+    output.extend_from_slice(&block.row_count.to_le_bytes());
+    output.push(block.stats_kind as u8);
+    output.extend_from_slice(&0u32.to_le_bytes());
+}
+
+fn read_blocks(input: &[u8], position: &mut usize) -> Result<Vec<FooterBlockEntry>> {
+    let block_count = read_u32(input, position)? as usize;
+    if block_count > input.len().saturating_sub(*position) / 21 {
+        bail!("footer-index block count exceeds remaining bytes");
+    }
+    let mut blocks = Vec::with_capacity(block_count);
+    for _ in 0..block_count {
+        let offset = read_u64(input, position)?;
+        let size = read_u32(input, position)?;
+        let row_count = read_u32(input, position)?;
+        let stats_tag = read_u8(input, position)?;
+        let stats_len = read_u32(input, position)? as usize;
+        ensure_remaining(
+            input,
+            *position,
+            stats_len,
+            "footer-index stats payload overruns body",
+        )?;
+        *position += stats_len;
+        blocks.push(FooterBlockEntry {
+            offset,
+            size,
+            row_count,
+            stats_kind: StatsKind::from_tag(stats_tag),
+        });
+    }
+    Ok(blocks)
+}
+
+fn parse_encoding_map_payload(
+    payload: &[u8],
+) -> Result<(Vec<StripeEncodingDescriptor>, Vec<BlockTierAssignment>)> {
+    let mut position = 0usize;
+    let descriptor_count = read_u16(payload, &mut position)? as usize;
+    if descriptor_count > payload.len().saturating_sub(position) / DESCRIPTOR_SIZE {
+        bail!("stripe encoding-map descriptor count exceeds section bytes");
+    }
+    let mut descriptors = Vec::with_capacity(descriptor_count);
+    for _ in 0..descriptor_count {
+        descriptors.push(StripeEncodingDescriptor::read_from(payload, &mut position)?);
+    }
+    let assignment_count = read_u32(payload, &mut position)? as usize;
+    if assignment_count > payload.len().saturating_sub(position) / ASSIGNMENT_SIZE {
+        bail!("stripe encoding-map assignment count exceeds section bytes");
+    }
+    let mut assignments = Vec::with_capacity(assignment_count);
+    for _ in 0..assignment_count {
+        assignments.push(BlockTierAssignment::read_from(payload, &mut position)?);
+    }
+    if position != payload.len() {
+        bail!("stripe encoding-map payload has trailing bytes");
+    }
+    Ok((descriptors, assignments))
+}
+
+fn legacy_quant_tag(value_codec_tag: u8) -> u8 {
+    match value_codec_tag {
+        0x01 => 0,
+        0x03 => 3,
+        _ => 1,
+    }
+}
+
+fn ensure_remaining(input: &[u8], position: usize, len: usize, message: &str) -> Result<()> {
+    let end = position
+        .checked_add(len)
+        .ok_or_else(|| anyhow::anyhow!("{message}: length overflow"))?;
+    if end > input.len() {
+        bail!("{message}");
+    }
+    Ok(())
+}
+
+fn read_u8(input: &[u8], position: &mut usize) -> Result<u8> {
+    ensure_remaining(input, *position, 1, "footer-index truncated at u8")?;
+    let value = input[*position];
+    *position += 1;
+    Ok(value)
+}
+
+fn read_u16(input: &[u8], position: &mut usize) -> Result<u16> {
+    ensure_remaining(input, *position, 2, "footer-index truncated at u16")?;
+    let end = *position + 2;
+    let value = u16::from_le_bytes(input[*position..end].try_into()?);
+    *position = end;
+    Ok(value)
+}
+
+fn read_u32(input: &[u8], position: &mut usize) -> Result<u32> {
+    ensure_remaining(input, *position, 4, "footer-index truncated at u32")?;
+    let end = *position + 4;
+    let value = u32::from_le_bytes(input[*position..end].try_into()?);
+    *position = end;
+    Ok(value)
+}
+
+fn read_i32(input: &[u8], position: &mut usize) -> Result<i32> {
+    ensure_remaining(input, *position, 4, "footer-index truncated at i32")?;
+    let end = *position + 4;
+    let value = i32::from_le_bytes(input[*position..end].try_into()?);
+    *position = end;
+    Ok(value)
+}
+
+fn read_u64(input: &[u8], position: &mut usize) -> Result<u64> {
+    ensure_remaining(input, *position, 8, "footer-index truncated at u64")?;
+    let end = *position + 8;
+    let value = u64::from_le_bytes(input[*position..end].try_into()?);
+    *position = end;
+    Ok(value)
+}
+
+#[cfg(test)]
+fn footer_v2_first_descriptor_offset(bytes: &[u8]) -> Result<usize> {
+    if bytes.first().copied() != Some(FOOTER_V2) {
+        bail!("not a footer v2 payload");
+    }
+    let mut position = 1 + 8 * 3 + 4 * 2;
+    let block_count = read_u32(bytes, &mut position)? as usize;
+    for _ in 0..block_count {
+        let _ = read_u64(bytes, &mut position)?;
+        let _ = read_u32(bytes, &mut position)?;
+        let _ = read_u32(bytes, &mut position)?;
+        let _ = read_u8(bytes, &mut position)?;
+        let stats_len = read_u32(bytes, &mut position)? as usize;
+        ensure_remaining(bytes, position, stats_len, "footer test stats overrun")?;
+        position += stats_len;
+    }
+    let section_count = read_u16(bytes, &mut position)?;
+    if section_count == 0 {
+        bail!("footer v2 has no sections");
+    }
+    let section_tag = read_u8(bytes, &mut position)?;
+    let _ = read_u8(bytes, &mut position)?;
+    let _ = read_u32(bytes, &mut position)?;
+    if section_tag != SECTION_STRIPE_ENCODING_MAP {
+        bail!("first footer v2 section is not the encoding map");
+    }
+    let descriptor_count = read_u16(bytes, &mut position)?;
+    if descriptor_count == 0 {
+        bail!("footer v2 encoding map has no descriptors");
+    }
+    Ok(position)
+}
+
+#[cfg(test)]
+fn footer_v2_section_count_offset(bytes: &[u8]) -> Result<usize> {
+    if bytes.first().copied() != Some(FOOTER_V2) {
+        bail!("not a footer v2 payload");
+    }
+    let mut position = 1 + 8 * 3 + 4 * 2;
+    let block_count = read_u32(bytes, &mut position)? as usize;
+    for _ in 0..block_count {
+        let _ = read_u64(bytes, &mut position)?;
+        let _ = read_u32(bytes, &mut position)?;
+        let _ = read_u32(bytes, &mut position)?;
+        let _ = read_u8(bytes, &mut position)?;
+        let stats_len = read_u32(bytes, &mut position)? as usize;
+        ensure_remaining(bytes, position, stats_len, "footer test stats overrun")?;
+        position += stats_len;
+    }
+    Ok(position)
+}
 
 impl SegmentFooterIndex {
     /// Serialize the footer-index body (no tail). Layout:
     /// `[footer_version u8][row_count u64][rabitq_off u64][rabitq_len u64]`
     /// `[embed_dim u32][embed_count u32][embed_quant_tag u8][has_f32_tier u8]`
     /// `[n_blocks u32] per block: [off u64][size u32][row_count u32][stats_tag u8][stats_len u32][stats bytes]`.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        const FOOTER_VERSION: u8 = 1;
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        if self.encoding_map.is_empty() && self.block_tier_assignments.is_empty() {
+            return self.to_v1_bytes();
+        }
+        self.to_v2_bytes()
+    }
+
+    fn to_v1_bytes(&self) -> Result<Vec<u8>> {
         let mut buf = Vec::with_capacity(64 + self.blocks.len() * 24);
-        buf.push(FOOTER_VERSION);
+        buf.push(FOOTER_V1);
         buf.extend_from_slice(&self.row_count.to_le_bytes());
         buf.extend_from_slice(&self.rabitq_off.to_le_bytes());
         buf.extend_from_slice(&self.rabitq_len.to_le_bytes());
@@ -196,16 +614,124 @@ impl SegmentFooterIndex {
         buf.extend_from_slice(&self.embed_count.to_le_bytes());
         buf.push(self.embed_quant_tag);
         buf.push(if self.has_f32_tier { 1 } else { 0 });
-        buf.extend_from_slice(&(self.blocks.len() as u32).to_le_bytes());
+        let block_count = u32::try_from(self.blocks.len())
+            .map_err(|_| anyhow::anyhow!("footer-index block count exceeds u32"))?;
+        buf.extend_from_slice(&block_count.to_le_bytes());
         for b in &self.blocks {
-            buf.extend_from_slice(&b.offset.to_le_bytes());
-            buf.extend_from_slice(&b.size.to_le_bytes());
-            buf.extend_from_slice(&b.row_count.to_le_bytes());
-            buf.push(b.stats_kind as u8);
-            // PR1: no stats payload (length 0). PR3 writes the OID bloom here.
-            buf.extend_from_slice(&0u32.to_le_bytes());
+            write_block_entry(&mut buf, b);
         }
-        buf
+        Ok(buf)
+    }
+
+    fn to_v2_bytes(&self) -> Result<Vec<u8>> {
+        self.validate_encoding_map()?;
+        let mut buf = Vec::with_capacity(96 + self.blocks.len() * 24);
+        buf.push(FOOTER_V2);
+        buf.extend_from_slice(&self.row_count.to_le_bytes());
+        buf.extend_from_slice(&self.rabitq_off.to_le_bytes());
+        buf.extend_from_slice(&self.rabitq_len.to_le_bytes());
+        buf.extend_from_slice(&self.embed_dim.to_le_bytes());
+        buf.extend_from_slice(&self.embed_count.to_le_bytes());
+        let block_count = u32::try_from(self.blocks.len())
+            .map_err(|_| anyhow::anyhow!("footer-index block count exceeds u32"))?;
+        buf.extend_from_slice(&block_count.to_le_bytes());
+        for block in &self.blocks {
+            write_block_entry(&mut buf, block);
+        }
+
+        let encoding_payload = self.encoding_map_payload()?;
+        buf.extend_from_slice(&1u16.to_le_bytes());
+        buf.push(SECTION_STRIPE_ENCODING_MAP);
+        buf.push(SECTION_VERSION_V1);
+        let section_len = u32::try_from(encoding_payload.len())
+            .map_err(|_| anyhow::anyhow!("footer encoding-map section exceeds u32"))?;
+        buf.extend_from_slice(&section_len.to_le_bytes());
+        buf.extend_from_slice(&encoding_payload);
+        Ok(buf)
+    }
+
+    fn encoding_map_payload(&self) -> Result<Vec<u8>> {
+        let descriptor_count = u16::try_from(self.encoding_map.len())
+            .map_err(|_| anyhow::anyhow!("footer encoding descriptor count exceeds u16"))?;
+        let assignment_count = u32::try_from(self.block_tier_assignments.len())
+            .map_err(|_| anyhow::anyhow!("footer tier assignment count exceeds u32"))?;
+        let mut payload = Vec::with_capacity(
+            2 + self.encoding_map.len() * DESCRIPTOR_SIZE
+                + 4
+                + self.block_tier_assignments.len() * ASSIGNMENT_SIZE,
+        );
+        payload.extend_from_slice(&descriptor_count.to_le_bytes());
+        for descriptor in &self.encoding_map {
+            descriptor.write_to(&mut payload);
+        }
+        payload.extend_from_slice(&assignment_count.to_le_bytes());
+        for assignment in &self.block_tier_assignments {
+            assignment.write_to(&mut payload);
+        }
+        Ok(payload)
+    }
+
+    fn validate_encoding_map(&self) -> Result<()> {
+        if self.encoding_map.is_empty() {
+            bail!("footer v2 requires a non-empty stripe encoding map");
+        }
+        let mut descriptors = HashMap::with_capacity(self.encoding_map.len());
+        for descriptor in &self.encoding_map {
+            descriptor.validate()?;
+            if descriptors
+                .insert(descriptor.descriptor_id, descriptor)
+                .is_some()
+            {
+                bail!(
+                    "duplicate footer encoding descriptor id {}",
+                    descriptor.descriptor_id
+                );
+            }
+        }
+        for descriptor in &self.encoding_map {
+            match descriptor.source_role {
+                SourceRole::Canonical => {
+                    if descriptor.rebuild_source_id != 0 {
+                        bail!("canonical descriptor must not name a rebuild source");
+                    }
+                }
+                SourceRole::IndexProjection | SourceRole::RerankProjection => {
+                    if descriptor.rebuild_source_id == EXTERNAL_CANONICAL_SOURCE_ID {
+                        continue;
+                    }
+                    let source =
+                        descriptors
+                            .get(&descriptor.rebuild_source_id)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "projection descriptor {} has no canonical rebuild source {}",
+                                    descriptor.descriptor_id,
+                                    descriptor.rebuild_source_id
+                                )
+                            })?;
+                    if source.source_role != SourceRole::Canonical
+                        || source.source_fidelity != SourceFidelity::ExactBitwise
+                    {
+                        bail!("projection rebuild source is not exact canonical data");
+                    }
+                }
+            }
+        }
+        for assignment in &self.block_tier_assignments {
+            let block_ordinal = assignment.block_ordinal as usize;
+            if block_ordinal >= self.blocks.len() {
+                bail!("footer tier assignment references unknown block");
+            }
+            let descriptor = descriptors.get(&assignment.descriptor_id).ok_or_else(|| {
+                anyhow::anyhow!("footer tier assignment references unknown descriptor")
+            })?;
+            if descriptor.physical_column_id != assignment.physical_column_id
+                || descriptor.tier_role != assignment.tier_role
+            {
+                bail!("footer tier assignment disagrees with its descriptor");
+            }
+        }
+        Ok(())
     }
 
     /// Parse the footer-index body (the bytes between the data blocks and the
@@ -214,67 +740,32 @@ impl SegmentFooterIndex {
     /// footer version is a deliberate, gated change), but unknown `StatsKind`
     /// tags degrade to `None`.
     pub fn parse(body: &[u8]) -> Result<Self> {
-        const FOOTER_VERSION: u8 = 1;
         if body.is_empty() {
             bail!("empty footer-index body");
         }
-        if body[0] != FOOTER_VERSION {
-            bail!(
-                "unsupported footer-index version {} (expected {FOOTER_VERSION})",
-                body[0]
-            );
+        match body[0] {
+            FOOTER_V1 => Self::parse_v1(body),
+            FOOTER_V2 => Self::parse_v2(body),
+            version => bail!("unsupported footer-index version {version}"),
         }
+    }
+
+    fn parse_v1(body: &[u8]) -> Result<Self> {
         let mut p = 1usize;
-        let rd_u64 = |p: &mut usize| -> Result<u64> {
-            if *p + 8 > body.len() {
-                bail!("footer-index truncated at u64");
-            }
-            let v = u64::from_le_bytes(body[*p..*p + 8].try_into()?);
-            *p += 8;
-            Ok(v)
-        };
-        let rd_u32 = |p: &mut usize| -> Result<u32> {
-            if *p + 4 > body.len() {
-                bail!("footer-index truncated at u32");
-            }
-            let v = u32::from_le_bytes(body[*p..*p + 4].try_into()?);
-            *p += 4;
-            Ok(v)
-        };
-        let row_count = rd_u64(&mut p)?;
-        let rabitq_off = rd_u64(&mut p)?;
-        let rabitq_len = rd_u64(&mut p)?;
-        let embed_dim = rd_u32(&mut p)?;
-        let embed_count = rd_u32(&mut p)?;
+        let row_count = read_u64(body, &mut p)?;
+        let rabitq_off = read_u64(body, &mut p)?;
+        let rabitq_len = read_u64(body, &mut p)?;
+        let embed_dim = read_u32(body, &mut p)?;
+        let embed_count = read_u32(body, &mut p)?;
         if p + 2 > body.len() {
             bail!("footer-index truncated at encoding map");
         }
         let embed_quant_tag = body[p];
         let has_f32_tier = body[p + 1] != 0;
         p += 2;
-        let n_blocks = rd_u32(&mut p)? as usize;
-        let mut blocks = Vec::with_capacity(n_blocks);
-        for _ in 0..n_blocks {
-            let offset = rd_u64(&mut p)?;
-            let size = rd_u32(&mut p)?;
-            let rc = rd_u32(&mut p)?;
-            if p + 5 > body.len() {
-                bail!("footer-index truncated at block stats");
-            }
-            let stats_tag = body[p];
-            let stats_len = u32::from_le_bytes(body[p + 1..p + 5].try_into()?) as usize;
-            p += 5;
-            if p + stats_len > body.len() {
-                bail!("footer-index stats payload overruns body");
-            }
-            // PR1 ignores the (empty) stats payload; PR3 decodes the OID bloom.
-            p += stats_len;
-            blocks.push(FooterBlockEntry {
-                offset,
-                size,
-                row_count: rc,
-                stats_kind: StatsKind::from_tag(stats_tag),
-            });
+        let blocks = read_blocks(body, &mut p)?;
+        if p != body.len() {
+            bail!("footer-index v1 has trailing bytes");
         }
         Ok(Self {
             row_count,
@@ -285,7 +776,72 @@ impl SegmentFooterIndex {
             embed_quant_tag,
             has_f32_tier,
             blocks,
+            encoding_map: Vec::new(),
+            block_tier_assignments: Vec::new(),
         })
+    }
+
+    fn parse_v2(body: &[u8]) -> Result<Self> {
+        let mut p = 1usize;
+        let row_count = read_u64(body, &mut p)?;
+        let rabitq_off = read_u64(body, &mut p)?;
+        let rabitq_len = read_u64(body, &mut p)?;
+        let embed_dim = read_u32(body, &mut p)?;
+        let embed_count = read_u32(body, &mut p)?;
+        let blocks = read_blocks(body, &mut p)?;
+        let section_count = read_u16(body, &mut p)? as usize;
+        if section_count > body.len().saturating_sub(p) / 6 {
+            bail!("footer-index section count exceeds remaining bytes");
+        }
+        let mut encoding_map = None;
+        let mut block_tier_assignments = Vec::new();
+        for _ in 0..section_count {
+            let tag = read_u8(body, &mut p)?;
+            let version = read_u8(body, &mut p)?;
+            let section_len = read_u32(body, &mut p)? as usize;
+            ensure_remaining(body, p, section_len, "footer-index section overruns body")?;
+            let section = &body[p..p + section_len];
+            p += section_len;
+            if tag == SECTION_STRIPE_ENCODING_MAP {
+                if version != SECTION_VERSION_V1 {
+                    bail!("unsupported stripe encoding-map section version {version}");
+                }
+                if encoding_map.is_some() {
+                    bail!("duplicate stripe encoding-map section");
+                }
+                let (descriptors, assignments) = parse_encoding_map_payload(section)?;
+                encoding_map = Some(descriptors);
+                block_tier_assignments = assignments;
+            }
+        }
+        if p != body.len() {
+            bail!("footer-index v2 has trailing bytes");
+        }
+        let encoding_map =
+            encoding_map.ok_or_else(|| anyhow::anyhow!("footer v2 lacks stripe encoding map"))?;
+        let embed_quant_tag = encoding_map
+            .iter()
+            .find(|descriptor| descriptor.tier_role == TierRole::Rerank)
+            .map(|descriptor| legacy_quant_tag(descriptor.value_codec_tag))
+            .unwrap_or(1);
+        let has_f32_tier = encoding_map.iter().any(|descriptor| {
+            descriptor.source_role == SourceRole::Canonical
+                && descriptor.source_fidelity == SourceFidelity::ExactBitwise
+        });
+        let footer = Self {
+            row_count,
+            rabitq_off,
+            rabitq_len,
+            embed_dim,
+            embed_count,
+            embed_quant_tag,
+            has_f32_tier,
+            blocks,
+            encoding_map,
+            block_tier_assignments,
+        };
+        footer.validate_encoding_map()?;
+        Ok(footer)
     }
 
     /// Locate + parse the footer-index from a full segment buffer (the tail
@@ -332,6 +888,8 @@ mod tests {
             embed_count: 1,
             embed_quant_tag: 1, // SQ8
             has_f32_tier: false,
+            encoding_map: Vec::new(),
+            block_tier_assignments: Vec::new(),
             blocks: vec![
                 FooterBlockEntry {
                     offset: 24_040,
@@ -347,6 +905,79 @@ mod tests {
                 },
             ],
         }
+    }
+
+    fn sample_v2_footer() -> SegmentFooterIndex {
+        let mut footer = sample_footer();
+        footer.encoding_map = vec![
+            StripeEncodingDescriptor {
+                descriptor_id: 1,
+                logical_field_id: 20,
+                physical_column_id: 20,
+                tier_role: TierRole::Index,
+                value_codec_tag: 0x71,
+                value_codec_version: 1,
+                transform_tag: LosslessTransformTag::None,
+                transform_version: 0,
+                compression_tag: LosslessCompressionTag::None,
+                compression_version: 0,
+                compression_flags: compression_flags::LOSSLESS,
+                parameter_scope: ParameterScope::Block,
+                vector_transform: VectorTransform::CenteredRotated,
+                auxiliary_flags: 0,
+                source_role: SourceRole::IndexProjection,
+                source_fidelity: SourceFidelity::Lossy,
+                rebuild_source_id: 3,
+                projection_generation: 1,
+            },
+            StripeEncodingDescriptor {
+                descriptor_id: 2,
+                logical_field_id: 20,
+                physical_column_id: 30,
+                tier_role: TierRole::Rerank,
+                value_codec_tag: 0x05,
+                value_codec_version: 1,
+                transform_tag: LosslessTransformTag::ClusteredForBitpackU8,
+                transform_version: 1,
+                compression_tag: LosslessCompressionTag::None,
+                compression_version: 0,
+                compression_flags: compression_flags::LOSSLESS,
+                parameter_scope: ParameterScope::MicroChunk,
+                vector_transform: VectorTransform::None,
+                auxiliary_flags: 0,
+                source_role: SourceRole::RerankProjection,
+                source_fidelity: SourceFidelity::Lossy,
+                rebuild_source_id: 3,
+                projection_generation: 1,
+            },
+            StripeEncodingDescriptor {
+                descriptor_id: 3,
+                logical_field_id: 20,
+                physical_column_id: 40,
+                tier_role: TierRole::Exact,
+                value_codec_tag: 0x01,
+                value_codec_version: 1,
+                transform_tag: LosslessTransformTag::ExactBaseXor,
+                transform_version: 1,
+                compression_tag: LosslessCompressionTag::Zstd,
+                compression_version: 1,
+                compression_flags: compression_flags::LOSSLESS,
+                parameter_scope: ParameterScope::ClusterRun,
+                vector_transform: VectorTransform::None,
+                auxiliary_flags: 0,
+                source_role: SourceRole::Canonical,
+                source_fidelity: SourceFidelity::ExactBitwise,
+                rebuild_source_id: 0,
+                projection_generation: 0,
+            },
+        ];
+        footer.block_tier_assignments = vec![BlockTierAssignment {
+            block_ordinal: 0,
+            physical_column_id: 30,
+            tier_role: TierRole::Rerank,
+            descriptor_id: 2,
+        }];
+        footer
     }
 
     #[test]
@@ -412,7 +1043,7 @@ mod tests {
     #[test]
     fn footer_index_round_trips() {
         let f = sample_footer();
-        let bytes = f.to_bytes();
+        let bytes = f.to_bytes().unwrap();
         let parsed = SegmentFooterIndex::parse(&bytes).unwrap();
         assert_eq!(parsed.row_count, 1000);
         assert_eq!(parsed.rabitq_off, 40);
@@ -427,7 +1058,7 @@ mod tests {
     #[test]
     fn footer_locate_in_segment_round_trips() {
         let f = sample_footer();
-        let body = f.to_bytes();
+        let body = f.to_bytes().unwrap();
         // Pretend segment = [some data][footer body][footer_len][magic].
         let mut segment = vec![0xAAu8; 1000];
         segment.extend(segment_tail(&body));
@@ -453,7 +1084,7 @@ mod tests {
 
     #[test]
     fn footer_parse_rejects_bad_version() {
-        let mut bytes = sample_footer().to_bytes();
+        let mut bytes = sample_footer().to_bytes().unwrap();
         bytes[0] = 2; // unsupported version
         assert!(SegmentFooterIndex::parse(&bytes).is_err());
     }
@@ -462,5 +1093,54 @@ mod tests {
     fn stats_kind_unknown_tag_degrades_to_none() {
         assert_eq!(StatsKind::from_tag(99), StatsKind::None);
         assert_eq!(StatsKind::from_tag(1), StatsKind::BloomOid);
+    }
+
+    #[test]
+    fn footer_v2_encoding_map_round_trips() -> Result<()> {
+        let footer = sample_v2_footer();
+        let bytes = footer.to_bytes()?;
+        assert_eq!(bytes[0], 2);
+
+        let parsed = SegmentFooterIndex::parse(&bytes)?;
+        assert_eq!(parsed.encoding_map, footer.encoding_map);
+        assert_eq!(parsed.block_tier_assignments, footer.block_tier_assignments);
+        assert_eq!(
+            parsed.encoding_map[1].transform_tag,
+            LosslessTransformTag::ClusteredForBitpackU8
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn footer_v2_rejects_lossy_canonical_descriptor() {
+        let mut footer = sample_v2_footer();
+        footer.encoding_map[2].source_fidelity = SourceFidelity::Lossy;
+        assert!(footer.to_bytes().is_err());
+    }
+
+    #[test]
+    fn footer_v2_unknown_required_transform_fails_closed() -> Result<()> {
+        let footer = sample_v2_footer();
+        let mut bytes = footer.to_bytes()?;
+        let transform_offset = footer_v2_first_descriptor_offset(&bytes)? + 13;
+        bytes[transform_offset] = 0xfe;
+        assert!(SegmentFooterIndex::parse(&bytes).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn footer_v2_unknown_optional_section_is_skipped() -> Result<()> {
+        let footer = sample_v2_footer();
+        let mut bytes = footer.to_bytes()?;
+        let section_count_offset = footer_v2_section_count_offset(&bytes)?;
+        bytes[section_count_offset..section_count_offset + 2].copy_from_slice(&2u16.to_le_bytes());
+        bytes.push(0xfe);
+        bytes.push(1);
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(&[1, 2, 3]);
+
+        let parsed = SegmentFooterIndex::parse(&bytes)?;
+        assert_eq!(parsed.encoding_map, footer.encoding_map);
+        Ok(())
     }
 }

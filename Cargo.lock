@@ -7036,6 +7036,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "metal",
+ "proximadb-compression",
  "proximadb-config",
  "proximadb-hardware-caps",
  "proximadb-runtime-common",
