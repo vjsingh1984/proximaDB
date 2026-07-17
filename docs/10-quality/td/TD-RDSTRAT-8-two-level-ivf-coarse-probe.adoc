@@ -1,0 +1,94 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-RDSTRAT-8: Two-level IVF (coarse-probe) on NOVA — break the GETs∝N scaling of single-level IVF
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open (research/proposed — not yet implemented; measurement-motivated).
+| Priority | P2 — unblocks ANN GET-cost at 10M+ scale; not blocking at SIFT1M (single-level IVF is ~50 GETs/q there).
+| Severity | n/a (new capability, no regression).
+| Component | `src/storage/engines/nova/` (progressive search / hierarchical pruning — the coarse-probe host); SST keeps single-level IVF (`src/storage/engines/sst/segment_format.rs::rabitq_search_segment_coalesced`).
+| Governs | The per-query **GET** (per-request billing) cost term at scale — the dominant cloud-DB cost dimension (ADR co-design spine, §2.1).
+| Relates to | ADR-065 (tier regions), TD-RDSTRAT-6 (coalesced binary-tier rerank-driven IO), TD-WLP-4b (IVF-at-flush cheapening — orthogonal: that's flush-time, this is query-time GET scaling).
+| Pillar | COST (billing) / PERF (latency).
+|===
+
+== Why (measured)
+
+Single-level IVF uses `cells = blockcount` ⇒ `k = N·dim / IOP_target ∝ N`. The RaBitQ
+survivor set is **scattered across cells** (RaBitQ ranks all N by approximate distance),
+so survivors span `O(min(M, k))` cells ⇒ **GETs/query ∝ k ∝ N**. Measured on SIFT128
+(recall@10 = 0.989 throughout, single coalesced segment, accurate io_trace):
+
+[cols="3,1,1,1", options="header"]
+|===
+| N | k | GETs/q | notes
+| 100 000 | 3 | 9 | k = N·128/4MiB
+| 1 000 000 | 30 | 51 | 10× N → ~5.7× GETs (sub-linear; locality helps a little)
+| ~10 000 000 (projected) | ~305 | ~500 | the regime where this breaks
+|===
+
+Two adjacent levers were **measured and ruled out** as GET reducers:
+
+* **Survivor pool M** (TD-WLP-4b sweep, N=100k, M 100→10000): GETs move only **8→10**
+  across a 100× M range — M is a *bytes/recall* lever, not a GET lever. The coalescing
+  (`plan_coalesced_row_ranges`) merges survivors into ~fixed cell-spans regardless of how
+  many sit in them, so GET count = cells-spanned, set by k + locality, not M.
+* **k sweep** (N=1M, k 8→128): GETs are near-flat **50–54** (U-shape, minimum at k=64).
+  The current `k = N·dim/IOP` (k=30 → 51) is within 1 GET of optimal — tuning k is a
+  constant-factor win, not a scaling fix.
+
+⇒ The GET∝N scaling is **structural** to single-level IVF; only a different access
+structure breaks the exponent.
+
+== Proposal: two-level IVF (coarse-probe), on NOVA
+
+A coarse quantizer of `k_c ≈ √N` centroids (capped); the query ranks `k_c` coarse cells
+and probes the nearest `nprobe` (1–4). RaBitQ ranking + SQ8 rerank then run **only within
+the probed coarse cells**, so survivors span a **fixed** number of fine cells regardless of
+N ⇒ **GETs ≈ O(nprobe) ≈ O(1)** (independent of N). This is the FAISS IVF model
+(coarse quantizer + `nprobe`), proven at billion scale.
+
+* Math: N=1M, `k_c≈1000`, `nprobe=4` ⇒ ~4–16 GETs/q (vs 51 today); N=10M ⇒ **same**
+~4–16 (vs ~500 projected). The exponent drops from O(N) to O(1).
+* **Target engine: NOVA** — it is production-ready and already carries the right
+  coarse→fine substrate: multi-level SuperBlock hierarchical stats, multi-dim zone maps,
+  and **progressive search with early termination** (`src/storage/engines/nova/progressive_*`).
+  SWIFT is deprecated/incomplete (its own `mod.rs`: "will be removed in v1.0… use SST,
+  VIPER, HELIX, or NOVA") — ruled out.
+* **Users choose by scale:** SST keeps single-level IVF (simple, ~50 GETs at 1M — fine for
+  small/medium); NOVA offers two-level IVF for large collections where GETs∝N breaks.
+  Engine selection already owns this (the router picks the engine per collection/profile).
+
+== Co-design framing (which cost term this moves)
+
+This moves the **GET** (per-request billing) dimension — the dominant term for a same-region
+cloud DB ("same-region → bytes are free; billing = GET count", ADR-065). It does **not**
+move bytes (M does that), CPU (TD-WLP-4b SIMD/sample-train did that), or flush time. The
+`nprobe` knob directly trades recall for GETs at a fixed, N-independent budget.
+
+== Open questions / research needed
+
+1. **SST-coarse-probe vs route-to-NOVA.** Cheapest path: add the coarse layer to SST's
+   coalesced reader (reuse Region B). Cleanest path: realize it in NOVA's progressive
+   search. Decide by how much of NOVA's substrate is reusable vs greenfield on SST.
+2. **`nprobe` default + recall curve.** Pin `nprobe` vs recall@k on SIFT (expect a
+   knee; `nprobe` is the GET/recall dial, like `efSearch` in HNSW).
+3. **Coarse `k_c` law.** `√N` is the FAISS default; verify it (vs a fixed cap) on a range
+   of N. Coarse-centroid training cost must stay << the saving (TD-WLP-4b sample-train
+   applies).
+4. **High-dim validation.** All SIFT measurements are dim=128. Verify on a 768/1536-d
+   embedding (does the coarse layer still concentrate survivors? does `n_comp`/locality
+   hold?).
+5. **Coarse index storage + update.** Persist `k_c` coarse centroids per collection
+   (small); retrain at compaction (mirror `retrain_pca_model_for_compaction`,
+   compactor_impl.rs). Mixed-read-safe + default-OFF until baked.
+6. **HNSW (NOVA?) as the alternative.** O(log N) GETs — better at extreme scale. Confirm
+   whether NOVA already exposes graph search; if so, "route to NOVA" may subsume this.
+
+== Next action
+
+Prototype the coarse-probe on NOVA's progressive search for SIFT1M: `k_c=√N≈1000`,
+`nprobe∈{1,2,4,8}`, measure GETs/q + recall@10 vs the SST single-level baseline (51 GETs,
+0.989). Target: recall ≥ 0.98 at ≤16 GETs (the O(1) claim). Gate on the recall/GET curve.
