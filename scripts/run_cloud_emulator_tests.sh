@@ -7,13 +7,19 @@
 # `make cloud-emulator-test` (local). Single source of truth so every CI path is
 # exactly the locally-runnable path.
 #
-# Usage: run_cloud_emulator_tests.sh [--fast|--all]
+# Usage: run_cloud_emulator_tests.sh [--fast|--all|--restart]
 #   --fast : run ONLY the cheap object-store tier tests (~3-5 min — compiles just
 #            the small object-store crate, no main-crate compile, no OOM risk).
 #            Used by the develop early-detection job so a tier regression is caught
 #            on the introducing feat→develop PR.
 #   --all  : (default) also run cold_graph_record_store_round_trips_on_real_azure,
 #            which compiles the full main crate and runs under CARGO_BUILD_JOBS=2.
+#   --restart : ONLY the full-server object-store RESTARTABILITY recovery proof
+#            (TD-OBJSTORE-5 S1, ADR-063 D8 PR tier) — spawns the real
+#            `proximadb-server` binary against an Azurite (adls://) prefix, SIGKILLs
+#            it, and recovers catalog + WAL-replays collections on a fresh local
+#            disk. Compiles the server binary, so it gets its OWN scope/job (kept
+#            off --fast/--all's compile budget).
 #
 # Requires: docker, cargo, aws CLI (MinIO bucket), az CLI (Azurite container),
 # curl (fake-gcs bucket). On GitHub ubuntu-latest all are preinstalled.
@@ -33,7 +39,8 @@ for arg in "$@"; do
   case "$arg" in
     --fast) SCOPE="fast" ;;
     --all)  SCOPE="all" ;;
-    *) echo "::error::unknown argument: $arg"; echo "usage: $0 [--fast|--all]"; exit 2 ;;
+    --restart) SCOPE="restart" ;;
+    *) echo "::error::unknown argument: $arg"; echo "usage: $0 [--fast|--all|--restart]"; exit 2 ;;
   esac
 done
 echo "==> Scope: $SCOPE"
@@ -86,6 +93,31 @@ export AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
 export AWS_ENDPOINT=http://127.0.0.1:9000 AWS_ALLOW_HTTP=true AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false
 export AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin AWS_REGION=us-east-1
 export PROXIMADB_GCS_TEST_ENDPOINT=http://127.0.0.1:4443
+
+if [ "$SCOPE" = "restart" ]; then
+  # TD-OBJSTORE-5 S1 (ADR-063 D8 PR tier = Azurite-strict): prove full-server
+  # object-store RESTARTABILITY recovery in the runner. Spawns the real
+  # `proximadb-server` three times against ONE Azurite (adls://) prefix with a
+  # fresh local `server.data_dir` each time: CREATE+INSERT → SIGKILL → recover
+  # catalog from metadata_url + WAL-replay reattaches SST/HELIX collections →
+  # SIGINT (flush SST) → cold read on another empty disk. All durable state lives
+  # only in the object store (ADR-048 stateless catalog). Isolated scope: it
+  # compiles the proximadb-server binary (heavy, CARGO_BUILD_JOBS=1 for OOM
+  # safety), so it runs in its own path-gated CI job, not on --fast/--all's budget.
+  # (The zero-vector-KV restart arm stays OUT of the gate until TD-OBJSTORE-4
+  # greens it end-to-end — gating on a known-red test would just block PRs.)
+  echo "==> TD-OBJSTORE-5 S1: full-server restart recovery over Azurite (adls://)"
+  # Azurite = ADLS Blob emulator; the production adls:// from_url + emulator env.
+  export PROXIMADB_AZURE_EMULATOR=1 AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
+  export AZURE_STORAGE_ACCOUNT=devstoreaccount1 AZURE_STORAGE_ACCOUNT_NAME=devstoreaccount1
+  export PROXIMADB_OBJECT_STORE_URL="adls://$CONTAINER_BUCKET/objstore-restart-recovery"
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features azure \
+    --test object_store_restart_recovery \
+    catalog_wal_and_sst_survive_fresh_local_disks \
+    -- --ignored --nocapture --test-threads=1
+  echo "==> Restart-recovery validation complete (cleanup trap tears emulators down)"
+  exit 0
+fi
 
 cargo test -p proximadb-object-store --features aws,azure,gcp -- --ignored --nocapture \
   put_with_tier_accepted_by_azurite \

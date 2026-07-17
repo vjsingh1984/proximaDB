@@ -109,6 +109,7 @@ jobs:
       network_changes: ${{ steps.filter.outputs.network_changes }}
       pgwire_accuracy_changes: ${{ steps.filter.outputs.pgwire_accuracy_changes }}
       object_store_cloud_changes: ${{ steps.filter.outputs.object_store_cloud_changes }}
+      object_store_restart_changes: ${{ steps.filter.outputs.object_store_restart_changes }}
       # SDK change detection
       go_sdk: ${{ steps.filter.outputs.go_sdk }}
       nodejs_sdk: ${{ steps.filter.outputs.nodejs_sdk }}
@@ -223,6 +224,19 @@ jobs:
               - 'src/graph/cold_payload_store.rs'
               - 'scripts/run_cloud_emulator_tests.sh'
               - '.github/workflows/ci.yml'
+            # Full-server object-store RESTARTABILITY recovery (TD-OBJSTORE-5 S1,
+            # ADR-063 D8 PR tier). Any change to the WAL recovery / durable-write /
+            # object-store filesystem / catalog-restart path must prove a real
+            # process-boundary restart recovers over Azurite before merge — the exact
+            # regression class TD-OBJSTORE-1 batch 3 was.
+            object_store_restart_changes:
+              - 'src/storage/persistence/write_ahead_log/**'
+              - 'src/storage/persistence/filesystem/**'
+              - 'crates/storage/proximadb-object-store/**'
+              - 'crates/control/proximadb-catalog/**'
+              - 'src/storage/engine.rs'
+              - 'apps/proximadb-server/tests/object_store_restart_recovery.rs'
+              - 'scripts/run_cloud_emulator_tests.sh'
             graph_changes:
               - 'src/graph/**'
               - 'tests/*graph*'
@@ -1463,6 +1477,59 @@ jobs:
         # docker + aws/az CLIs are preinstalled on ubuntu-latest runners.
         run: bash scripts/run_cloud_emulator_tests.sh --fast
 
+  # TD-OBJSTORE-5 S1 (ADR-063 D8 PR tier): full-server object-store RESTARTABILITY
+  # recovery over Azurite (adls://). Spawns the real proximadb-server against one
+  # object-store prefix, SIGKILLs it, and recovers catalog + WAL-replays collections
+  # on a fresh local disk — the process-boundary proof for the TD-OBJSTORE-1 batch-3
+  # regression class. Path-gated on the WAL-recovery / durable-write / object-store
+  # filesystem / catalog code so it runs on the introducing PR (e.g. an in-flight
+  # recovery rework) — the exact churn a post-hoc gate would miss. Compiles the
+  # server binary (heavy), so it's a dedicated job: reclaim-disk + sccache +
+  # CARGO_BUILD_JOBS=1 (in the script) for the 16GB-runner OOM cliff. Path-gated
+  # (skipped otherwise) and in ci-success.needs so it gates when it runs.
+  object-store-restart-recovery:
+    name: Object-store restart recovery (Azurite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: [changes]
+    if: |
+      !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
+      needs.changes.outputs.object_store_restart_changes == 'true'
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
+    steps:
+      - name: Reclaim disk space
+        run: |
+          echo "Disk before reclaim:"; df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/boost || true
+          echo "Disk after reclaim:"; df -h /
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-objstore-restart"
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-restart-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-restart-${{ runner.os }}-
+      - name: Prove full-server restart recovery over Azurite (adls://)
+        # docker + aws/az CLIs preinstalled on ubuntu-latest; the script starts
+        # Azurite and runs catalog_wal_and_sst_survive_fresh_local_disks.
+        run: bash scripts/run_cloud_emulator_tests.sh --restart
+
   # Targeted integration tests based on changed components
   rust-integration-test-storage:
     name: Rust Integration Tests (storage)
@@ -2166,6 +2233,7 @@ jobs:
       - rust-integration-test-graph
       - rust-integration-test-cluster
       - object-store-emulator-tests
+      - object-store-restart-recovery
       - rust-coverage
       - python-lint
       - python-test
