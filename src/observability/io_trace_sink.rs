@@ -27,8 +27,14 @@ use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use bytes::Bytes;
+use object_store::path::Path as ObjectPath;
+use proximadb_object_store::ProximaObjectStore;
+use proximadb_storage_filesystem_types::ObjectAccessTier;
+
 use crate::core::config::ResolvedIoTraceSinkConfig;
 use crate::observability::io_trace::{self, IoTraceSnapshot};
+use crate::storage::trait_components::path_resolver::DrPathBuilder;
 
 /// One serialized trace record awaiting export (a `\n`-terminated JSON line).
 type SpoolLine = Vec<u8>;
@@ -116,6 +122,24 @@ pub fn install(cfg: ResolvedIoTraceSinkConfig) {
     let spool: SharedSpool =
         std::sync::Arc::new(Mutex::new(Spool::new(cfg.spool_max_bytes as usize)));
 
+    // S2 (ADR-066 D4): build the object store ONCE (sync `from_url`) when a URI is
+    // configured; on failure, fall back to local-only rather than dropping the sink.
+    let object_store =
+        cfg.object_store_uri
+            .as_deref()
+            .and_then(|uri| match ProximaObjectStore::from_url(uri) {
+                Ok(store) => {
+                    tracing::info!("io_trace sink: dispatching sealed segments to {uri}");
+                    Some(store)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "io_trace sink: object_store_uri {uri} unusable: {e}; local-only"
+                    );
+                    None
+                }
+            });
+
     // Observer: serialize one JSON line (cheap, per-query) and enqueue. No I/O here.
     let spool_obs = spool.clone();
     io_trace::set_trace_observer(Some(Box::new(move |snap, tenant| {
@@ -129,7 +153,7 @@ pub fn install(cfg: ResolvedIoTraceSinkConfig) {
     })));
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let worker = Worker::new(cfg, spool);
+    let worker = Worker::new(cfg, spool, object_store);
     let join = tokio::spawn(worker.run(shutdown_rx));
 
     let mut slot = sink_slot().lock().unwrap_or_else(|p| p.into_inner());
@@ -172,23 +196,41 @@ struct Worker {
     current: Vec<u8>,
     seq: u64,
     run_nonce: u128,
+    /// Object-store destination for sealed segments (S2). `None` ⇒ local-only.
+    object_store: Option<ProximaObjectStore>,
+    /// Access tier for the object-store PUT (S2).
+    tier: ObjectAccessTier,
+    /// Object-key prefix for the trace stream — the non-tenant operator root
+    /// (`_operator/io_trace/`), built once via `DrPathBuilder` (keys are never raw).
+    /// A trace segment is intentionally cross-tenant, so it lives under the
+    /// operator control-plane root, not a per-tenant `data/{tenant}/` prefix.
+    trace_prefix: String,
 }
 
 impl Worker {
-    fn new(cfg: ResolvedIoTraceSinkConfig, spool: SharedSpool) -> Self {
-        // A per-run nonce so segment filenames never collide across restarts
-        // (S2 replaces local names with DrPathBuilder object keys). Wall-clock is
-        // fine in production code (only workflow scripts forbid it).
+    fn new(
+        cfg: ResolvedIoTraceSinkConfig,
+        spool: SharedSpool,
+        object_store: Option<ProximaObjectStore>,
+    ) -> Self {
+        // A per-run nonce so segment filenames never collide across restarts.
+        // Wall-clock is fine in production code (only workflow scripts forbid it).
         let run_nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
+        let tier = cfg.access_tier;
+        let trace_prefix = DrPathBuilder::operator_subprefix("io_trace")
+            .unwrap_or_else(|_| "_operator/io_trace/".to_string());
         Self {
             cfg,
             spool,
             current: Vec::new(),
             seq: 0,
             run_nonce,
+            object_store,
+            tier,
+            trace_prefix,
         }
     }
 
@@ -228,26 +270,64 @@ impl Worker {
         }
     }
 
-    /// Compress the current buffer with zstd and write it as one segment file.
-    /// Compress + write run on a blocking thread so the worker task never stalls.
+    /// Seal the current buffer into one zstd-compressed segment. Compress off the
+    /// worker thread (`spawn_blocking`), then dispatch: to the object store when
+    /// configured (S2), else to a local file (S1). On an object PUT failure, fall
+    /// back to the local write so a sealed segment is never lost — this is
+    /// best-effort observability that must never block/panic the worker.
     async fn seal(&mut self) {
         if self.current.is_empty() {
             return;
         }
         let buf = std::mem::take(&mut self.current);
-        let path = format!(
-            "{}/trace-{}-{:08}.jsonl.zst",
-            self.cfg.local_dir.trim_end_matches('/'),
-            self.run_nonce,
-            self.seq
-        );
+        let seq = self.seq;
         self.seq += 1;
-        let write = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-            let compressed = zstd::encode_all(&buf[..], 3)?;
-            std::fs::write(&path, compressed)
-        })
-        .await;
-        match write {
+
+        // Compress off the worker's async thread.
+        let compressed =
+            match tokio::task::spawn_blocking(move || zstd::encode_all(&buf[..], 3)).await {
+                Ok(Ok(c)) => c,
+                Ok(Err(e)) => {
+                    tracing::warn!("io_trace sink: compress failed: {e}");
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!("io_trace sink: compress task panicked: {e}");
+                    return;
+                }
+            };
+        let filename = format!("trace-{}-{:08}.jsonl.zst", self.run_nonce, seq);
+
+        // S2: PUT to the object store at the access tier; local fallback on failure.
+        if let Some(store) = &self.object_store {
+            let key = format!("{}{}", self.trace_prefix, filename);
+            // `Bytes::clone` is an O(1) refcount bump (shared buffer), so keeping a
+            // copy for the fallback costs no data copy on the happy path.
+            let bytes = Bytes::from(compressed);
+            match store
+                .put_with_tier(&ObjectPath::from(key.clone()), bytes.clone(), self.tier)
+                .await
+            {
+                Ok(()) => return,
+                Err(e) => {
+                    tracing::warn!(
+                        "io_trace sink: object PUT {key} failed: {e}; writing local fallback"
+                    );
+                    self.write_local(&filename, bytes.to_vec()).await;
+                    return;
+                }
+            }
+        }
+
+        // S1 path (no object store configured): local file only.
+        self.write_local(&filename, compressed).await;
+    }
+
+    /// Write one sealed segment to the local spool dir (S1 destination + the S2
+    /// object-store fallback). Runs the blocking `fs::write` off the worker thread.
+    async fn write_local(&self, filename: &str, data: Vec<u8>) {
+        let path = format!("{}/{}", self.cfg.local_dir.trim_end_matches('/'), filename);
+        match tokio::task::spawn_blocking(move || std::fs::write(&path, data)).await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => tracing::warn!("io_trace sink: segment write failed: {e}"),
             Err(e) => tracing::warn!("io_trace sink: seal task panicked: {e}"),
@@ -267,6 +347,8 @@ mod tests {
             spool_max_bytes: spool,
             compression: "zstd".to_string(),
             format: "jsonl".to_string(),
+            object_store_uri: None,
+            access_tier: ObjectAccessTier::Cold,
         }
     }
 
@@ -302,7 +384,7 @@ mod tests {
             g.push(b"{\"query_id\":\"q1\",\"range_gets\":3}\n".to_vec());
             g.push(b"{\"query_id\":\"q2\",\"range_gets\":5}\n".to_vec());
         }
-        let mut worker = Worker::new(cfg(&dir_s, 4 * 1024 * 1024, 1 << 20), spool);
+        let mut worker = Worker::new(cfg(&dir_s, 4 * 1024 * 1024, 1 << 20), spool, None);
         worker.drain_and_seal().await;
 
         // Exactly one sealed segment; decompress → two JSONL lines round-trip.
@@ -367,6 +449,74 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// S2: with `object_store_uri` set (a `file://` store), the sealed segment is
+    /// PUT to the object store under the `DrPathBuilder` operator key
+    /// (`_operator/io_trace/…`) — NOT the local dir. Exercises the S2 dispatch path
+    /// on every PR without an emulator (`put_with_tier` degrades to a plain put on
+    /// `file://`, so the Cold tier is a no-op locally).
+    #[tokio::test]
+    async fn install_instrument_shutdown_uploads_segment_to_object_store() {
+        use crate::observability::io_trace;
+        let base = std::env::temp_dir().join(format!(
+            "iotrace_sink_obj_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let store_dir = base.join("objstore");
+        let local_dir = base.join("local");
+        std::fs::create_dir_all(&store_dir).unwrap();
+        let uri = format!("file://{}", store_dir.display());
+
+        let mut c = cfg(&local_dir.to_string_lossy(), 4 * 1024 * 1024, 1 << 20);
+        c.object_store_uri = Some(uri);
+        install(c);
+        for _ in 0..2 {
+            io_trace::instrument(Some("acme".to_string()), "test", async {
+                io_trace::record_bytes_read(128);
+            })
+            .await;
+        }
+        shutdown().await;
+
+        // The object landed under {store_dir}/_operator/io_trace/, decoding to the
+        // two records — not the local dir.
+        let obj_dir = store_dir.join("_operator").join("io_trace");
+        let segs: Vec<_> = std::fs::read_dir(&obj_dir)
+            .unwrap_or_else(|e| panic!("no _operator/io_trace under the store ({e}): {obj_dir:?}"))
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().ends_with(".jsonl.zst"))
+            .collect();
+        assert_eq!(
+            segs.len(),
+            1,
+            "one segment PUT to the object store: {segs:?}"
+        );
+        let text =
+            String::from_utf8(zstd::decode_all(&std::fs::read(&segs[0]).unwrap()[..]).unwrap())
+                .unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "both queries recorded");
+        assert!(
+            lines
+                .iter()
+                .all(|l| l.contains("\"query_id\"") && l.contains("\"tenant\":\"acme\"")),
+            "each record carries query_id + tenant: {text}"
+        );
+        // Local dir received nothing (the object store was the destination).
+        let local_segs = std::fs::read_dir(&local_dir)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .filter(|e| e.path().to_string_lossy().ends_with(".jsonl.zst"))
+                    .count()
+            })
+            .unwrap_or(0);
+        assert_eq!(local_segs, 0, "object store was the destination, not local");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[tokio::test]
     async fn empty_drain_writes_no_segment() {
         let dir = std::env::temp_dir().join(format!("iotrace_sink_empty_{}", std::process::id()));
@@ -374,7 +524,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let dir_s = dir.to_string_lossy().to_string();
         let spool: SharedSpool = std::sync::Arc::new(Mutex::new(Spool::new(1 << 20)));
-        let mut worker = Worker::new(cfg(&dir_s, 4 * 1024 * 1024, 1 << 20), spool);
+        let mut worker = Worker::new(cfg(&dir_s, 4 * 1024 * 1024, 1 << 20), spool, None);
         worker.drain_and_seal().await;
         let n = std::fs::read_dir(&dir).unwrap().count();
         assert_eq!(n, 0, "no segment written for an empty drain");
