@@ -186,6 +186,18 @@ impl ProximaDB {
         // `otlp-metering` feature is compiled out). Must run inside the runtime —
         // the grpc-tonic exporter's reader is driven on it.
         crate::observability::metering_otlp::init_from_env();
+        // TD-TRACE-2 / ADR-066: durable io_trace ETL sink. A SEPARATE, default-OFF
+        // observer (the billing observer above stays always-on/never-gated, ADR-027).
+        // Installed only when `[observability.io_trace_sink]` resolves enabled (env
+        // `PROXIMADB_IO_TRACE_SINK` or TOML); `resolve` returns None otherwise.
+        if let Some(sink_cfg) = crate::core::config::IoTraceSinkConfig::resolve(
+            config
+                .observability
+                .as_ref()
+                .and_then(|o| o.io_trace_sink.as_ref()),
+        ) {
+            crate::observability::io_trace_sink::install(sink_cfg);
+        }
         // Co-design C5 (integration): register the tenant→tier Port to read the
         // header-fed tier registry (`X-Tenant-Tier` → `record_store::TENANT_TIERS`),
         // so the per-tenant tier the cache LimitsResolver already sees also drives
@@ -805,6 +817,10 @@ impl ProximaDB {
         // Persist the learned route cost model so measured history survives the
         // restart (best-effort; off the hot path, on graceful shutdown only).
         crate::query::route_cost_model::persist_cost_model(&self._config.server.data_dir);
+
+        // TD-TRACE-2: flush + stop the durable io_trace sink so buffered trace
+        // segments are sealed to disk (no-op if the sink was not installed).
+        crate::observability::io_trace_sink::shutdown().await;
 
         // 1a. Stop the async-ingest drainer first so it stops consuming
         //     before we shut down the storage layer it inserts into.

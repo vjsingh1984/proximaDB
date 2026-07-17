@@ -75,6 +75,10 @@ pub mod ingestion;
 /// co-design cost model minimizes. See
 /// `docs/12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` §4.1.
 pub use proximadb_observability_engine::io_trace;
+/// Durable io_trace ETL sink (TD-TRACE-2 / ADR-066) — a separate, default-OFF
+/// observer that spools each per-query snapshot to local JSONL+zstd segments (S1;
+/// object-store dispatch is S2). Billing stays untouched/always-on (ADR-027).
+pub mod io_trace_sink;
 /// Metering event builder — converts SearchPlanTrace → operator metering
 /// event JSON shape so the data plane and operator pipelines can't drift.
 pub use proximadb_observability_engine::metering_event;
