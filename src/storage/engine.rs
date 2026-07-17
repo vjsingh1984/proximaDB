@@ -461,11 +461,14 @@ impl StorageEngine {
                     );
                 }
                 Err(e) => {
+                    // `{:#}` prints the FULL anyhow context chain — recovery fails
+                    // closed (ADR-063 D3), so the root cause must be diagnosable
+                    // from this line, not just the outermost context.
                     warn!(
-                        "⚠️  STORAGE_ENGINE: Failed to recover collection {}: {}",
+                        "⚠️  STORAGE_ENGINE: Failed to recover collection {}: {:#}",
                         collection.id, e
                     );
-                    recovery_failures.push(format!("{}: {}", collection.id, e));
+                    recovery_failures.push(format!("{}: {:#}", collection.id, e));
                 }
             }
         }

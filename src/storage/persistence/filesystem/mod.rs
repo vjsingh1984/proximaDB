@@ -640,6 +640,44 @@ impl FilesystemFactory {
         debug!("    [DEBUG] from_path resolved: {}", from_path);
         debug!("    [DEBUG] to_path resolved: {}", to_path);
 
+        // Same-backend fast path (TD-OBJSTORE-4 S1 review): comparing scheme
+        // STRINGS classifies az://→adls:// as cross-filesystem, and even same
+        // schemes fall into the streaming path below — which cloud backends do
+        // not support ("streaming open_file is not supported on the Azure
+        // backend"). Compare CANONICAL scheme groups (az/azure/adls/abfs are one
+        // backend; gs/gcs likewise) rather than Arc identity: per-call wrappers
+        // (the TD-096 PROXIMADB_COUNT_FS_IO CountingFileSystem) mint a fresh Arc
+        // per lookup and would silently defeat a ptr_eq check. Only cloud groups
+        // take this path — their whole-object copy() avoids the unsupported
+        // streaming API (today's backend copy() is client-side read+write;
+        // server-side copy is a follow-up optimization).
+        let same_cloud_backend = match (extract_scheme(from_url), extract_scheme(to_url)) {
+            (Ok(from_scheme), Ok(to_scheme)) => {
+                use crate::storage::persistence::filesystem::scheme_validation::FilesystemScheme;
+                let group = |s: FilesystemScheme| match s {
+                    FilesystemScheme::AzureBlobStorage | FilesystemScheme::AzureDataLakeStorage => {
+                        Some("azure")
+                    }
+                    FilesystemScheme::S3 => Some("s3"),
+                    FilesystemScheme::GoogleCloudStorage => Some("gs"),
+                    _ => None, // file/hdfs keep the existing streaming path
+                };
+                match (group(from_scheme), group(to_scheme)) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if same_cloud_backend || Arc::ptr_eq(&from_fs, &to_fs) {
+            from_fs.copy(&from_path, &to_path).await?;
+            trace!("Same-backend native copy complete");
+            debug!("    ✅ [DEBUG] Same-backend native copy complete");
+            trace!("📋 [] copy_atomic COMPLETE");
+            debug!("📋 [DEBUG] copy_atomic COMPLETE");
+            return Ok(());
+        }
+
         if from_fs.filesystem_type() == "encrypted" || to_fs.filesystem_type() == "encrypted" {
             let data = from_fs.read(&from_path).await?;
             to_fs.write_atomic(&to_path, &data, None).await?;
