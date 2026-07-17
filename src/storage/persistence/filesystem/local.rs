@@ -788,6 +788,9 @@ impl FileSystem for LocalFileSystem {
         if let Ok(ref bytes) = result {
             crate::observability::io_trace::record_range_gets(1);
             crate::observability::io_trace::record_bytes_read(bytes.len() as u64);
+            if std::env::var_os("PROXIMADB_TRACE_GETS").is_some() {
+                eprintln!("[FS GET] {path} off={offset} len={length}");
+            }
         }
         result
     }

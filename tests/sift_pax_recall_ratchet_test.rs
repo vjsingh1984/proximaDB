@@ -497,8 +497,13 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
         std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
         std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
         std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
-        // PR1 reviewer ratchets:
-        std::env::set_var("PROXIMADB_PAX_FLUSH_CLUSTER", "ivf"); // (a) IVF opt-in ON
+        // IVF flush opt-in: default OFF (ADR-065 — the decisive no-IVF run proved
+        // the coalesced layout needs no cluster_order_pca_ivf ordering; the sign-bit
+        // bootstrap is the production flush path, recall 0.985, GETs 40, flush 35 s).
+        // Set PROXIMADB_SIFT_IVF_FLUSH=1 to re-enable IVF-at-flush for A/B.
+        if std::env::var("PROXIMADB_SIFT_IVF_FLUSH").ok().as_deref() == Some("1") {
+            std::env::set_var("PROXIMADB_PAX_FLUSH_CLUSTER", "ivf");
+        }
         std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "1"); // the layout under test
         std::env::set_var("PROXIMADB_COUNT_FS_IO", "1");
     }
@@ -531,7 +536,7 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|n| *n > 0)
-        .unwrap_or(50);
+        .unwrap_or(60);
 
     let base = read_vec_records_f32(&base_path, subset_n).expect("read sift_base.fvecs");
     let n = base.len();
@@ -567,8 +572,25 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
             proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
         ))
         .with_segment_invariants_cache(Arc::new(
-            proximadb::storage::engines::sst::segment_format::SegmentInvariantsCache::new(64),
+            proximadb::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
+                64 * 1024 * 1024,
+            ),
         ));
+    // ADR-065 Q3: opt-in ranged survivor/OID cache. Set
+    // PROXIMADB_SURVIVOR_CACHE_BUDGET_MB (default unset → uncached baseline) to
+    // measure the GET/bytes win on the repeated-query working set.
+    let engine = match std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|b| *b > 0)
+    {
+        Some(mb) => engine.with_survivor_cache(Arc::new(
+            proximadb::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::new(
+                mb * 1024 * 1024,
+            ),
+        )),
+        None => engine,
+    };
     let batch: Vec<VectorRecord> = base
         .iter()
         .enumerate()
@@ -638,6 +660,46 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
         persisted_bytes as f64 / n as f64
     );
     eprintln!("  vs legacy block-prune ~370 GETs/query — target: < {get_budget} (≪ 370)");
+
+    // ADR-065 cache-co-design: per-tier GET-size trace. GET count = same-region
+    // billing metric; GET sizes = latency (NIC + decode). Each read tagged by
+    // CacheTier (InvariantIndex = Region A; InvariantMeta = header/footer/params;
+    // SurvivorPayload = Region B ranges; ResultPayload = Region D OIDs).
+    let gets = proximadb::storage::engines::sst::segment_format::drain_get_trace();
+    if !gets.is_empty() {
+        use proximadb::storage::engines::sst::segment_format::CacheTier;
+        eprintln!("  per-tier GET trace:");
+        for tier in [
+            CacheTier::InvariantIndex,
+            CacheTier::InvariantMeta,
+            CacheTier::SurvivorPayload,
+            CacheTier::ResultPayload,
+        ] {
+            let mut sizes: Vec<u64> = gets
+                .iter()
+                .filter(|(t, _)| *t == tier)
+                .map(|(_, s)| *s)
+                .collect();
+            if sizes.is_empty() {
+                continue;
+            }
+            sizes.sort_unstable();
+            let n = sizes.len();
+            let sum: u64 = sizes.iter().sum();
+            let p50 = sizes[n / 2];
+            let p99 = sizes[(n * 99).saturating_sub(1).min(n - 1)];
+            eprintln!(
+                "    {:>6}: n={:<5} total={:>7.1} MB  min={:>9}  p50={:>9}  p99={:>9}  max={:>9} B",
+                tier.label(),
+                n,
+                sum as f64 / 1e6,
+                sizes[0],
+                p50,
+                p99,
+                sizes[n - 1]
+            );
+        }
+    }
 
     assert!(
         measured > 0,

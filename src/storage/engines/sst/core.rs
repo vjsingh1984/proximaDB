@@ -301,6 +301,13 @@ pub struct SstEngine {
     pub(crate) segment_invariants_cache:
         Option<Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>>,
 
+    /// ADR-065 Q3: ranged RAM cache for survivor (Region B SQ8) + OID (Region D)
+    /// byte ranges. Hot repeat queries skip the per-range `fs.read_range` GETs.
+    /// Default `None` (read path byte-for-byte unchanged); opt in via
+    /// [`Self::with_survivor_cache`].
+    pub(crate) survivor_cache:
+        Option<Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>>,
+
     /// **Tiering Integration** (Optional)
     ///
     /// Drives access-pattern → tier-migration decisions for SST segments.
@@ -435,6 +442,7 @@ impl SstEngine {
             pca_model_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             directory_cache: None,
             segment_invariants_cache: None,
+            survivor_cache: None,
             tiering_integration: None,
             freshness_lsn_source: None,
         })
@@ -487,6 +495,16 @@ impl SstEngine {
         cache: Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
     ) -> Self {
         self.segment_invariants_cache = Some(cache);
+        self
+    }
+
+    /// ADR-065 Q3: supply a ranged survivor/OID cache. Hot repeat queries skip
+    /// the per-range `fs.read_range` GETs for survivors + OIDs → billed GETs → 0.
+    pub fn with_survivor_cache(
+        mut self,
+        cache: Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+    ) -> Self {
+        self.survivor_cache = Some(cache);
         self
     }
 

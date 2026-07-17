@@ -167,6 +167,14 @@ pub struct PaxBlockWriter {
     /// Row offsets at which a new producer-defined cluster starts. Row zero is
     /// implicit. These boundaries are block-local and reset by [`Self::clear`].
     cluster_run_starts: Vec<usize>,
+    /// ADR-065 Region B: when true, the tier-1 vector stripe (`EMBED_BASE`, e.g.
+    /// SQ8) + its co-located rerank column are **hoisted into segment-level
+    /// regions** (A: RaBitQ, B: SQ8), so the block emits neither — it is pure row
+    /// data (Region D). The f32 exact tier (`F32_TIER`) is NOT hoisted here; it
+    /// stays in the block until PR4 moves it to Region C. Set by the segment
+    /// writer in coalesced mode so survivor rerank fetches read dense Region B
+    /// instead of dragging the block's full row payload.
+    hoist_vector_tier: bool,
 
     // Accumulated column data
     oids: Vec<String>,
@@ -229,6 +237,7 @@ impl PaxBlockWriter {
             clustered_sq8_lossless: false,
             lossless_scalar: false,
             cluster_run_starts: Vec::new(),
+            hoist_vector_tier: false,
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
@@ -307,6 +316,15 @@ impl PaxBlockWriter {
         if start > 0 && self.cluster_run_starts.last().copied() != Some(start) {
             self.cluster_run_starts.push(start);
         }
+    }
+
+    /// ADR-065 Region B: when true, the tier-1 vector (`EMBED_BASE`) + its rerank
+    /// column are hoisted into segment-level regions (A/B) — this block emits
+    /// neither (pure row data, Region D); the f32 tier still emits when set via
+    /// `with_f32_tier`. Set by the segment writer in coalesced mode.
+    pub fn with_hoist_vector_tier(mut self, enabled: bool) -> Self {
+        self.hoist_vector_tier = enabled;
+        self
     }
 
     /// P-Shred (ADR-055): shred the given props keys into typed user-columns
@@ -564,43 +582,51 @@ impl PaxBlockWriter {
 
             for (i, col) in self.embeddings.iter().enumerate() {
                 let refs: Vec<Option<&[f32]>> = col.iter().map(|v| v.as_deref()).collect();
-                let (stripe, entry, rabitq_col, transform) =
-                    self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?;
-                let is_rabitq = rabitq_col.is_some();
-                stripes.push(stripe);
-                vparam_entries.push(entry);
-                if let Some(rc) = rabitq_col {
-                    vparam_rabitq.push(rc);
-                }
-                if let Some(transform) = transform {
-                    vparam_transforms.push(transform);
-                }
-                // P3 cascade: every RaBitQ-coded embedding gets a co-located rerank
-                // column at `RERANK_BASE + i`. The rerank quant strategy is
-                // configurable (default SQ8; Fp16 for near-lossless; RawF32 for
-                // exact). RaBitQ codes drive the cheap candidate scan; the rerank
-                // pool is scored against this co-located copy before the final top-k.
-                if is_rabitq {
-                    let (rerank_stripe, rerank_entry, rerank_transform) = match self.rerank_quant {
-                        VectorQuant::Fp16 => {
-                            let (stripe, entry) =
-                                self.build_fp16_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
-                            (stripe, entry, None)
-                        }
-                        VectorQuant::RawF32 => {
-                            let (stripe, entry) = self
-                                .build_raw_f32_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
-                            (stripe, entry, None)
-                        }
-                        // Default: SQ8 (the validated tier-2).
-                        _ => self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?,
-                    };
-                    stripes.push(rerank_stripe);
-                    vparam_entries.push(rerank_entry);
-                    if let Some(transform) = rerank_transform {
+                if !self.hoist_vector_tier {
+                    let (stripe, entry, rabitq_col, transform) =
+                        self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?;
+                    let is_rabitq = rabitq_col.is_some();
+                    stripes.push(stripe);
+                    vparam_entries.push(entry);
+                    if let Some(rc) = rabitq_col {
+                        vparam_rabitq.push(rc);
+                    }
+                    if let Some(transform) = transform {
                         vparam_transforms.push(transform);
                     }
-                }
+                    // P3 cascade: every RaBitQ-coded embedding gets a co-located rerank
+                    // column at `RERANK_BASE + i`. The rerank quant strategy is
+                    // configurable (default SQ8; Fp16 for near-lossless; RawF32 for
+                    // exact). RaBitQ codes drive the cheap candidate scan; the rerank
+                    // pool is scored against this co-located copy before the final top-k.
+                    if is_rabitq {
+                        let (rerank_stripe, rerank_entry, rerank_transform) = match self
+                            .rerank_quant
+                        {
+                            VectorQuant::Fp16 => {
+                                let (stripe, entry) = self
+                                    .build_fp16_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
+                                (stripe, entry, None)
+                            }
+                            VectorQuant::RawF32 => {
+                                let (stripe, entry) = self.build_raw_f32_vec_stripe(
+                                    col_id::RERANK_BASE + i as i32,
+                                    &refs,
+                                )?;
+                                (stripe, entry, None)
+                            }
+                            // Default: SQ8 (the validated tier-2).
+                            _ => {
+                                self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?
+                            }
+                        };
+                        stripes.push(rerank_stripe);
+                        vparam_entries.push(rerank_entry);
+                        if let Some(transform) = rerank_transform {
+                            vparam_transforms.push(transform);
+                        }
+                    }
+                } // end hoist_vector_tier — f32 tier below stays in the block (Region D)
                 // P3 Phase D f32 tier (opt-in): an exact-f32 copy of the embedding
                 // at `F32_TIER_BASE + i`, for an exact final rerank (→ recall ≈ 1.0)
                 // and exact `include_vectors`. The stripe is read LAZILY — id+score

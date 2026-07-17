@@ -150,6 +150,82 @@ pub fn cluster_plan(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan
     Some(ClusterPlan { order, runs })
 }
 
+/// ADR-065 Region B locality order: **Morton/Z-order over the segment-level SQ8
+/// codes**. The RaBitQ-top-M survivors are a spatial neighbourhood; ordering
+/// Region B by an SQ8-Morton key co-locates them (and the top-k result rows) so
+/// the survivor + OID fetches collapse to a few contiguous ranges.
+///
+/// Why SQ8 (not fp32): scalar quantization denoises (drops fp32's noisy low
+/// bits), collapses near-duplicates to the same/adjacent cell, is compact
+/// (8 bits/dim — exactly the precision a Morton key uses), and is Region B's own
+/// representation (no separate PCA/projection — flush-safe, unlike IVF).
+///
+/// One segment-level `Sq8Params` fit (same fit Region B will store), quantize,
+/// Morton-key, sort. Records with no/short embedding sort last. Returns `None`
+/// when fewer than 2 usable rows.
+pub fn cluster_order_sq8_morton(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>> {
+    use proximadb_codec::functions::sq8::{fit_params, quantize_one};
+    let usable: Vec<(usize, &[f32])> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| embedding_f32(r, idx).map(|v| (i, v)))
+        .collect();
+    if usable.len() < 2 {
+        return None;
+    }
+    let dim = usable[0].1.len();
+    // One segment-level fit over all usable vectors (flattened) — identical to the
+    // fit Region B's encode_region performs, so the order matches its stored codes.
+    let mut flat: Vec<f32> = Vec::with_capacity(usable.len() * dim);
+    for (_, v) in &usable {
+        if v.len() == dim {
+            flat.extend_from_slice(v);
+        }
+    }
+    let params = fit_params(&flat);
+
+    let key_of = |v: &[f32]| -> Vec<u8> {
+        let mut codes = vec![0u8; dim];
+        for d in 0..dim {
+            codes[d] = quantize_one(v[d], &params);
+        }
+        sq8_morton_key(&codes, dim)
+    };
+    // Records with no/short embedding sort last (all-ones key).
+    let tail_key = vec![0xFFu8; dim];
+    let mut order: Vec<usize> = (0..records.len()).collect();
+    let keys: Vec<Vec<u8>> = records
+        .iter()
+        .map(|r| match embedding_f32(r, idx) {
+            Some(v) if v.len() == dim => key_of(v),
+            _ => tail_key.clone(),
+        })
+        .collect();
+    order.sort_by(|&a, &b| keys[a].cmp(&keys[b]).then(a.cmp(&b)));
+    Some(order)
+}
+
+/// Morton/Z-order key over `dim` SQ8 bytes: interleave the 8 bits of each
+/// dimension, **MSB-first across dims then bit-7→0**, packed MSB-first into
+/// bytes → hierarchical locality (the top `dim` key bits = bit-7 of every dim =
+/// the coarse sign-level; successive levels refine). Output is `dim` bytes
+/// (`8·dim` bits). Lexicographic byte compare = Morton order.
+fn sq8_morton_key(codes: &[u8], dim: usize) -> Vec<u8> {
+    let mut key = vec![0u8; dim]; // 8·dim bits == dim bytes
+    for d in 0..dim {
+        let c = codes[d];
+        for b in 0..8u32 {
+            if (c >> (7 - b)) & 1 == 1 {
+                // sort-key bit position (0 = MSB): level `b` (bit 7-b of each dim),
+                // dim index `d` within the level.
+                let pos = b * dim as u32 + d as u32;
+                key[(pos / 8) as usize] |= 1u8 << (7 - (pos % 8));
+            }
+        }
+    }
+    key
+}
+
 /// TD-WLP-4 (ADR-061 D3): the compaction re-cluster order — **PCA + IVF
 /// (k-means) on fp32**, replacing the sign-Gray L0 bootstrap when a merged
 /// batch is worth a model. Trains a write-time PCA on this batch
@@ -173,13 +249,8 @@ pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Ve
 pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan> {
     /// Below this many usable rows a trained model can't beat the bootstrap.
     const MIN_ROWS_FOR_IVF: usize = 64;
-    /// Target rows per IVF cell — approximates rows-per-PAX-block so one cell
-    /// maps to roughly one block worth of rows.
-    const ROWS_PER_CELL: usize = 128;
 
-    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::{
-        AdaptivePcaConfig, IncrementalPCA,
-    };
+    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
 
     let usable: Vec<(usize, &[f32])> = records
         .iter()
@@ -194,23 +265,88 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
         return cluster_plan(records, idx);
     }
 
-    // Batch-local PCA (one projection serves the IVF assignment, the cell
-    // Hilbert order, and the within-cell order).
-    let cfg = AdaptivePcaConfig::for_vector_dim(dim);
-    let mut pca = IncrementalPCA::new(dim, cfg.n_components);
-    for (_, v) in &usable {
+    let trace_ivf = std::env::var_os("PROXIMADB_TRACE_IVF_FLUSH").is_some();
+    let t_start = std::time::Instant::now();
+
+    // IVF cells ≈ blockcount (ADR-065 co-design): one cell ≈ one IOP-sized
+    // block, so survivors span fewer cells → fewer GETs and each cell-fetch is
+    // one efficient IOP. k scales with N (more data ⇒ more cells, members/cell
+    // ~constant). Computed UP FRONT so n_components can couple to it.
+    let iop_target =
+        proximadb_storage_common::iops_budget::IopsBudget::CLOUD.target_block_bytes() as usize;
+    // `PROXIMADB_IVF_K` overrides k to map the GETs-vs-recall curve (validate
+    // the cells=blockcount formula). Default = N·dim/IOP (one cell ≈ one IOP of
+    // SQ8 survivor data). Eval knob, not a production setting.
+    let k = std::env::var("PROXIMADB_IVF_K")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| ((usable.len() * dim) / iop_target.max(1)).clamp(2, 4096));
+
+    // TD-WLP-4b: PCA projection dimensionality = max of two logarithmic terms,
+    // so n_comp stays small as embeddings/corpora grow:
+    //   (a) a·log2(dim) — the embedding's intrinsic-dim term (SIFT-128 → ~10).
+    //   (b) b·log2(k)   — partition-granularity INSURANCE: finer partitioning
+    //        (high k, i.e. large merged collections) needs more discriminative
+    //        dims to separate the cells. Bites only at high k; at SIFT's k=30
+    //        the (a) term wins (matching the Phase-0 sweep: recall@10 flat 0.989
+    //        for n_comp ∈ [4,128]). The (b) term is a conservative hedge for the
+    //        high-k regime we cannot yet measure. a, b are env-tunable
+    //        (dataset-dependent floors); `PROXIMADB_IVF_NCOMP` force-sets n_comp
+    //        for the eval sweep. Clustering-only — search-time PCA keeps its
+    //        own conservative cap (for_vector_dim).
+    let ivf_a = std::env::var("PROXIMADB_IVF_NCOMP_A")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|x| *x > 0.0)
+        .unwrap_or(1.5);
+    let ivf_b = std::env::var("PROXIMADB_IVF_NCOMP_B")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|x| *x > 0.0)
+        .unwrap_or(1.5);
+    let n_components = std::env::var("PROXIMADB_IVF_NCOMP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| {
+            let dim_term = ivf_a * (dim as f64).log2();
+            let k_term = ivf_b * (k.max(2) as f64).log2();
+            dim_term.max(k_term).floor() as usize
+        })
+        .clamp(1, dim);
+    // TD-WLP-4b sample-train: fit PCA + train k-means on a deterministic
+    // ~SAMPLE subset (the covariance / centroids converge far before N=1M),
+    // then project + assign ALL rows. Cuts pca_fit + kmeans ~N/sample (~20x at
+    // SIFT1M) with negligible recall impact; project/assign still cover all N.
+    // Deterministic stride (a physical layout must not depend on RNG).
+    let train_sample = std::env::var("PROXIMADB_IVF_TRAIN_SAMPLE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(50_000)
+        .min(usable.len());
+    let sample_step = if usable.len() > train_sample {
+        (usable.len() / train_sample).max(1)
+    } else {
+        1
+    };
+    let mut pca = IncrementalPCA::new(dim, n_components);
+    for (_, v) in usable.iter().step_by(sample_step) {
         pca.add_sample(v);
     }
     pca.finalize();
+    let t_pca = std::time::Instant::now();
     let coords: Vec<Vec<f32>> = usable.iter().map(|(_, v)| pca.transform(v)).collect();
-
-    // IVF: k-means over the projections.
-    let k = (usable.len() / ROWS_PER_CELL).clamp(2, 1024);
+    let t_proj = std::time::Instant::now();
     // A physical layout must not depend on thread-local RNG state: identical
     // input should produce identical IVF cells, byte counts, and eval results.
     const PAX_IVF_KMEANS_SEED: u64 = 0x5041_585F_4956_4631;
+    // Train k-means on the sampled projections (same stride as the PCA fit);
+    // assign ALL rows to the resulting centroids.
+    let train_coords: Vec<Vec<f32>> = coords.iter().step_by(sample_step).cloned().collect();
     let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering_seeded(
-        &coords,
+        &train_coords,
         k,
         15,
         1e-3,
@@ -218,7 +354,9 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
     ) else {
         return cluster_plan(records, idx);
     };
+    let t_kmeans = std::time::Instant::now();
     let assignments = proximadb_clustering_kernel::kmeans_assign(&coords, &centroids);
+    let t_assign = std::time::Instant::now();
 
     // Order cells by the Hilbert code of their centroid. Normalization is over
     // the CENTROID SET per dimension (per-vector min/max would destroy
@@ -282,6 +420,20 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
         records.len() - usable.len(),
     ));
     let runs = contiguous_runs(&ordered_cells);
+    let t_end = std::time::Instant::now();
+    if trace_ivf {
+        eprintln!(
+            "[IVF flush] N={n} dim={dim} k={k} n_comp={nc} | pca_fit {pca:.0} ms  project {proj:.0} ms  kmeans {km:.0} ms  assign {asg:.0} ms  order {ord:.0} ms  | total {tot:.0} ms",
+            n = usable.len(),
+            nc = n_components,
+            pca = (t_pca - t_start).as_secs_f64() * 1e3,
+            proj = (t_proj - t_pca).as_secs_f64() * 1e3,
+            km = (t_kmeans - t_proj).as_secs_f64() * 1e3,
+            asg = (t_assign - t_kmeans).as_secs_f64() * 1e3,
+            ord = (t_end - t_assign).as_secs_f64() * 1e3,
+            tot = (t_end - t_start).as_secs_f64() * 1e3,
+        );
+    }
     Some(ClusterPlan { order, runs })
 }
 
