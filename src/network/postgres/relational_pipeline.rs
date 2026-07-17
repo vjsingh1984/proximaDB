@@ -2077,6 +2077,28 @@ impl LoweringTrace {
     }
 }
 
+/// One physical-plan operator's metered execution actuals for the structured
+/// `EXPLAIN ANALYZE` surface (TD-TRACE-1 Slice 2). Pre-order, index-aligned with
+/// `physical_plan`. Mirrors the io_trace `ExecOpTrace` snapshot shape but is the
+/// EXPLAIN JSON view. `bytes`/`spill` are `None`/`false` for the row-oriented
+/// native Volcano executor (the DataFusion adapter, Slice 3, fills them).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExecOp {
+    /// Operator keyword (matches the `physical_plan` line at the same index).
+    pub op: String,
+    /// Rows fed into this operator = sum of its direct children's `rows_out`.
+    pub rows_in: u64,
+    /// Rows this operator emitted.
+    pub rows_out: u64,
+    /// Exclusive (self) milliseconds — inclusive minus children.
+    pub ms_self: u64,
+    /// Bytes processed when the engine tracks it; `None` for native.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// Whether this operator spilled to disk; always `false` for native.
+    pub spill: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SelectRouteExplanation {
     /// Selected physical engine label (e.g. `Native(Volcano)`, `DataFusionLocal`).
@@ -2136,6 +2158,13 @@ pub struct SelectRouteExplanation {
     /// (omitted) otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_rows: Option<u64>,
+    /// EXPLAIN ANALYZE only: per-operator execution actuals in pre-order
+    /// (TD-TRACE-1 Slice 2) — `{op, rows_in, rows_out, ms_self, bytes, spill}`,
+    /// index-aligned with `physical_plan`. Empty (and omitted) for plain EXPLAIN
+    /// and non-native routes; the structured counterpart of the per-op text
+    /// annotations on `physical_plan`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub exec: Vec<ExecOp>,
 }
 
 /// Build the `EXPLAIN SELECT` payload. `Err` if `sql` is not a routable single
@@ -2164,6 +2193,7 @@ fn decision_to_explanation(
         execution_elapsed_us: None,
         estimated_selectivity: None,
         estimated_rows: None,
+        exec: Vec::new(),
     }
 }
 
@@ -2467,6 +2497,26 @@ async fn route_and_plan_select(
                         execute_physical_metered(physical, &snapshot).await?;
                     explanation.execution_rows = Some(result.rows.len() as u64);
                     explanation.execution_elapsed_us = Some(started.elapsed().as_micros() as u64);
+                    // TD-TRACE-1 Slice 2: the structured per-operator vector, plus
+                    // the same data pushed into the active io_trace scope (neutral
+                    // primitive tuples, like `record_plan_geometry`) so the cost
+                    // model / billing see per-op detail. No-ops if no scope active.
+                    let exec = build_exec_ops(&node_metrics);
+                    let exec_tuples: Vec<crate::observability::io_trace::ExecOpSample> = exec
+                        .iter()
+                        .map(|e| {
+                            (
+                                e.op.as_str(),
+                                e.rows_in,
+                                e.rows_out,
+                                e.ms_self,
+                                e.bytes,
+                                e.spill,
+                            )
+                        })
+                        .collect();
+                    crate::observability::io_trace::record_exec_vector(&exec_tuples);
+                    explanation.exec = exec;
                     explanation.physical_plan =
                         Some(annotate_plan_lines(base_lines, &node_metrics));
                 } else {
@@ -2537,6 +2587,30 @@ async fn parquet_split_summary(
 /// reported) rather than mislabel. `time` is inclusive of children (Postgres "actual
 /// time"); `self` subtracts the direct children's inclusive time — the operator's own
 /// cost (the headline "which node is actually slow").
+/// Build the structured per-operator `exec[]` vector (TD-TRACE-1 Slice 2) from the
+/// metered `NodeMetric`s. Pre-order, index-aligned with the plan lines: `rows_out`
+/// is the operator's emitted rows, `rows_in` the sum of its direct children's
+/// `rows_out` (via `child_input_rows`), `ms_self` the exclusive time in
+/// milliseconds (via `self_times`, matching the `compute_ms` billing unit).
+/// `bytes`/`spill` are `None`/`false` for the row-oriented native executor (the
+/// DataFusion adapter fills them in a later slice).
+fn build_exec_ops(metrics: &[NodeMetric]) -> Vec<ExecOp> {
+    let self_ns = proximadb_relational_executor::self_times(metrics);
+    let rows_in = proximadb_relational_executor::child_input_rows(metrics);
+    metrics
+        .iter()
+        .enumerate()
+        .map(|(i, m)| ExecOp {
+            op: m.label.clone(),
+            rows_in: rows_in[i],
+            rows_out: m.rows,
+            ms_self: (self_ns[i] / 1_000_000) as u64,
+            bytes: None,
+            spill: false,
+        })
+        .collect()
+}
+
 fn annotate_plan_lines(lines: Vec<String>, metrics: &[NodeMetric]) -> Vec<String> {
     if lines.len() != metrics.len() {
         return lines;
@@ -2668,11 +2742,48 @@ mod route_explain_tests {
         let expl = explain_select_route("SELECT service, count(*) FROM events GROUP BY service")
             .expect("routable");
         assert!(expl.execution_rows.is_none() && expl.execution_elapsed_us.is_none());
+        // TD-TRACE-1 Slice 2: the per-op exec[] vector is ANALYZE-only too.
+        assert!(expl.exec.is_empty());
         let json = serde_json::to_string(&expl).unwrap();
         assert!(
-            !json.contains("execution_rows") && !json.contains("execution_elapsed_us"),
-            "None ANALYZE metrics are skipped in JSON: {json}"
+            !json.contains("execution_rows")
+                && !json.contains("execution_elapsed_us")
+                && !json.contains("\"exec\""),
+            "None ANALYZE metrics (incl. exec[]) are skipped in JSON: {json}"
         );
+    }
+
+    #[test]
+    fn build_exec_ops_maps_metered_metrics_pre_order() {
+        // Aggregate(1 child, 1 row, 5ms incl) over Scan(0 children, 10 rows, 2ms):
+        //   Aggregate: rows_in=10 (Scan's rows_out), rows_out=1, ms_self=5-2=3
+        //   Scan:      rows_in=0 (leaf),               rows_out=10, ms_self=2
+        let metrics = vec![
+            NodeMetric {
+                label: "Aggregate".into(),
+                arity: 1,
+                rows: 1,
+                elapsed_ns: 5_000_000,
+            },
+            NodeMetric {
+                label: "Scan".into(),
+                arity: 0,
+                rows: 10,
+                elapsed_ns: 2_000_000,
+            },
+        ];
+        let exec = build_exec_ops(&metrics);
+        assert_eq!(exec.len(), 2);
+        assert_eq!(exec[0].op, "Aggregate");
+        assert_eq!(exec[0].rows_in, 10);
+        assert_eq!(exec[0].rows_out, 1);
+        assert_eq!(exec[0].ms_self, 3);
+        assert_eq!(exec[1].op, "Scan");
+        assert_eq!(exec[1].rows_in, 0);
+        assert_eq!(exec[1].rows_out, 10);
+        assert_eq!(exec[1].ms_self, 2);
+        // Native never tracks per-op bytes and never spills.
+        assert!(exec.iter().all(|e| e.bytes.is_none() && !e.spill));
     }
 
     #[test]

@@ -571,8 +571,9 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         !plan.contains("execution_rows")
             && !plan.contains("execution_elapsed_us")
             && !plan.contains("actual rows=")
-            && !plan.contains("self="),
-        "plain EXPLAIN omits ANALYZE execution metrics: {plan}"
+            && !plan.contains("self=")
+            && !plan.contains("\"exec\""),
+        "plain EXPLAIN omits ANALYZE execution metrics (incl. structured exec[]): {plan}"
     );
 
     // (3h-trace) ADR-064 / TD-TRACE-1: EXPLAIN over a query the native frontend
@@ -669,6 +670,18 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
     assert!(
         plan.contains("self="),
         "EXPLAIN ANALYZE annotates per-operator self (exclusive) time: {plan}"
+    );
+    // (3h-analyze-exec) TD-TRACE-1 Slice 2: the STRUCTURED per-operator exec[]
+    // vector — `{op, rows_in, rows_out, ms_self, spill}` — alongside the text
+    // annotations. The inner join's rows_out is 3 (== execution_rows), proving the
+    // structured metrics are populated and consistent.
+    assert!(
+        plan.contains("\"exec\""),
+        "EXPLAIN ANALYZE surfaces the structured exec[] vector: {plan}"
+    );
+    assert!(
+        plan.contains("\"rows_out\": 3"),
+        "exec[] carries the join's actual rows_out (3): {plan}"
     );
 
     // (3i) EXPLAIN of a simple (non-engaging) SELECT stays route-only: no physical

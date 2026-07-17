@@ -213,6 +213,36 @@ pub fn self_times(metrics: &[NodeMetric]) -> Vec<u128> {
     out
 }
 
+/// Direct-children input rows per operator = the sum of the operator's DIRECT
+/// children's emitted rows (their `rows_out`), index-aligned with `metrics`
+/// (pre-order). A leaf (arity 0) has `rows_in = 0`; a single-child operator's
+/// `rows_in` equals that child's `rows_out`. Reconstructs the tree from each node's
+/// [`NodeMetric::arity`] exactly like [`self_times`] (a node's `arity` subtrees
+/// follow it in pre-order). `saturating_add` guards overflow; malformed arity leaves
+/// the affected node at 0 (no panic, no OOB). This is the `rows_in` half of the
+/// TD-TRACE-1 per-operator `exec[]` vector (rows_out is `NodeMetric::rows`).
+pub fn child_input_rows(metrics: &[NodeMetric]) -> Vec<u64> {
+    let mut out: Vec<u64> = vec![0; metrics.len()];
+    // Returns the index just past the subtree rooted at `pos`.
+    fn walk(metrics: &[NodeMetric], pos: usize, out: &mut [u64]) -> usize {
+        let mut child = pos + 1;
+        let mut children_rows = 0u64;
+        for _ in 0..metrics[pos].arity {
+            if child >= metrics.len() {
+                break; // malformed arity → don't index OOB
+            }
+            children_rows = children_rows.saturating_add(metrics[child].rows);
+            child = walk(metrics, child, out);
+        }
+        out[pos] = children_rows;
+        child
+    }
+    if !metrics.is_empty() {
+        walk(metrics, 0, &mut out);
+    }
+    out
+}
+
 /// Source for relational readers. The executor calls
 /// [`open_reader`] once per `Scan` in the plan; the returned
 /// reader is owned by the resulting [`ScanExec`].
@@ -3290,6 +3320,39 @@ mod tests {
         let noisy = vec![nm("Filter", 1, 5), nm("Scan", 0, 9)];
         assert_eq!(self_times(&noisy), vec![0, 9]);
         assert_eq!(self_times(&[]), Vec::<u128>::new());
+    }
+
+    fn nm_rows(label: &str, arity: usize, rows: u64) -> NodeMetric {
+        NodeMetric {
+            label: label.into(),
+            arity,
+            rows,
+            elapsed_ns: 0,
+        }
+    }
+
+    #[test]
+    fn child_input_rows_sums_direct_children() {
+        // Filter(1) over Join(2) over Scan(30), Scan(20):
+        //   rows_in(Filter) = rows_out(Join)          = 45
+        //   rows_in(Join)   = 30 + 20                  = 50
+        //   rows_in(Scan*)  = leaves → 0
+        let metrics = vec![
+            nm_rows("Filter", 1, 12),
+            nm_rows("Join", 2, 45),
+            nm_rows("Scan", 0, 30),
+            nm_rows("Scan", 0, 20),
+        ];
+        assert_eq!(child_input_rows(&metrics), vec![45, 50, 0, 0]);
+    }
+
+    #[test]
+    fn child_input_rows_tolerates_malformed_arity_and_empty() {
+        // A node claims 2 children but only 1 subtree follows → no panic / no OOB;
+        // it sums what is actually present.
+        let malformed = vec![nm_rows("Join", 2, 7), nm_rows("Scan", 0, 4)];
+        assert_eq!(child_input_rows(&malformed), vec![4, 0]);
+        assert_eq!(child_input_rows(&[]), Vec::<u64>::new());
     }
 
     async fn run_setop(op: SetOpKind, all: bool, left: &[i64], right: &[i64]) -> Vec<i64> {
