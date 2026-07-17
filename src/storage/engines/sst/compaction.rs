@@ -1341,7 +1341,10 @@ impl Compaction {
 
             // Promote the locally staged merged segment to the (possibly remote)
             // staging URL so the atomic commit has a real file to move.
-            staged
+            // finalize returns the byte count — do NOT probe the scratch path
+            // afterwards (finalize removes it; the old post-finalize local
+            // metadata probe made cloud compaction fail at 100%).
+            let written_bytes = staged
                 .finalize(&self.filesystem_factory)
                 .await
                 .map_err(|e| {
@@ -1349,15 +1352,6 @@ impl Compaction {
                         "upload staged compaction segment: {e}"
                     ))
                 })?;
-
-            // Get file size for stats
-            let metadata = fs
-                .metadata(&staging_file_path.to_string_lossy())
-                .await
-                .map_err(|e| {
-                    crate::core::StorageError::DiskIO(std::io::Error::other(e.to_string()))
-                })?;
-            let written_bytes = metadata.size;
 
             // Finalize atomic operation - this moves the file from staging to final location
             coordinator

@@ -505,7 +505,7 @@ impl SstEngine {
 
         // Promote the locally staged bytes to the (possibly remote) staging URL
         // so the atomic commit has a real file to move.
-        staged
+        let _staged_bytes = staged
             .finalize(self.filesystem())
             .await
             .context("Failed to upload staged segment to the staging URL")?;

@@ -475,15 +475,6 @@ async fn cold_recall_ratchet_survives_restart() -> anyhow::Result<()> {
     const PROBES: usize = 8;
     const MIN_RECALL: f32 = 0.9;
 
-/// TD-OBJSTORE-4 defect-6 redux (task: normal-flush string-strip): a GRACEFUL
-/// flush on a cloud base must persist the segment INTO the object store — and
-/// must NOT write it to a literal local `adls:...` directory (the
-/// URL-as-local-path artifact). #1061 fixed the RECOVERY staging path only;
-/// the normal flush retained the false-success class (masked by WAL replay).
-/// RED on that state: no segment blob in the store + artifact dir on disk.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
-async fn graceful_flush_persists_segment_to_object_store() -> anyhow::Result<()> {
     let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
     anyhow::ensure!(
         base.starts_with("s3://")
@@ -494,7 +485,6 @@ async fn graceful_flush_persists_segment_to_object_store() -> anyhow::Result<()>
     );
     let root = format!(
         "{}/td-objstore-5-recall/{}",
-        "{}/td-objstore-flush-strip/{}",
         base.trim_end_matches('/'),
         uuid::Uuid::new_v4().simple()
     );
@@ -602,6 +592,33 @@ async fn graceful_flush_persists_segment_to_object_store() -> anyhow::Result<()>
         recall >= MIN_RECALL,
         "cold recall@{K} on the object store = {recall:.3} < {MIN_RECALL} — \
          backend must be recall-neutral; a delta vs file:// is a read-path bug"
+    );
+    Ok(())
+}
+
+/// TD-OBJSTORE-4 defect-6 redux (task: normal-flush string-strip): a GRACEFUL
+/// flush on a cloud base must persist the segment INTO the object store — and
+/// must NOT write it to a literal local `adls:...` directory (the
+/// URL-as-local-path artifact). #1061 fixed the RECOVERY staging path only;
+/// the normal flush retained the false-success class (masked by WAL replay).
+/// RED on that state: no segment blob in the store + artifact dir on disk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn graceful_flush_persists_segment_to_object_store() -> anyhow::Result<()> {
+    let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
+    anyhow::ensure!(
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
+    );
+    let root = format!(
+        "{}/td-objstore-flush-strip/{}",
+        base.trim_end_matches('/'),
+        uuid::Uuid::new_v4().simple()
+    );
+    let tmp = tempfile::tempdir()?;
     let collection = format!("flushseg_{}", uuid::Uuid::new_v4().simple());
     let vm1 = tmp.path().join("vm1");
     std::fs::create_dir_all(&vm1)?;

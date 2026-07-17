@@ -65,10 +65,14 @@ impl StagedSegmentWrite {
     }
 
     /// Promote the staged bytes to the remote staging URL (no-op for local
-    /// bases). The scratch file is removed BEFORE the upload so an upload
-    /// failure cannot leak it (segment bytes are bounded by the flush size).
-    pub(crate) async fn finalize(self, factory: &Arc<FilesystemFactory>) -> Result<()> {
-        if let Some(remote) = self.remote_url {
+    /// bases) and return the segment's byte count — callers must NOT probe the
+    /// scratch path afterwards (it is removed here; the post-finalize size
+    /// probe reading the deleted scratch file made cloud compaction fail 100%
+    /// of the time in review round 1 of this fix). Sidecar-aware: an Arrow
+    /// segment's `{path}.idx` (required by `ArrowBlockReader::open`) is
+    /// uploaded alongside as `{remote}.idx` and its scratch removed too.
+    pub(crate) async fn finalize(mut self, factory: &Arc<FilesystemFactory>) -> Result<u64> {
+        if let Some(remote) = self.remote_url.take() {
             let bytes = tokio::fs::read(&self.local_path)
                 .await
                 .context("read locally staged segment for upload")?;
@@ -79,9 +83,37 @@ impl StagedSegmentWrite {
             fs.write(&remote, &bytes, None)
                 .await
                 .map_err(|e| anyhow::anyhow!("upload staged segment to {remote}: {e}"))?;
+            // Arrow sidecar pair (best-effort presence, mandatory upload if present).
+            let sidecar = format!("{}.idx", self.local_path);
+            if tokio::fs::try_exists(&sidecar).await.unwrap_or(false) {
+                let idx_bytes = tokio::fs::read(&sidecar)
+                    .await
+                    .context("read staged Arrow .idx sidecar")?;
+                let _ = tokio::fs::remove_file(&sidecar).await;
+                fs.write(&format!("{remote}.idx"), &idx_bytes, None)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("upload Arrow sidecar to {remote}.idx: {e}"))?;
+            }
             tracing::debug!(remote = %remote, bytes = bytes.len(), "staged segment uploaded");
+            Ok(bytes.len() as u64)
+        } else {
+            let meta = tokio::fs::metadata(&self.local_path)
+                .await
+                .context("stat locally written segment")?;
+            Ok(meta.len())
         }
-        Ok(())
+    }
+}
+
+impl Drop for StagedSegmentWrite {
+    /// Leak guard: a writer failure between `begin` and `finalize` must not
+    /// strand the scratch file (+ possible Arrow sidecar). After a successful
+    /// `finalize` (which takes `remote_url`) this is a no-op.
+    fn drop(&mut self) {
+        if self.remote_url.is_some() {
+            let _ = std::fs::remove_file(&self.local_path);
+            let _ = std::fs::remove_file(format!("{}.idx", self.local_path));
+        }
     }
 }
 
@@ -128,6 +160,14 @@ impl LocalizedSegment {
             tokio::fs::write(&path, &bytes)
                 .await
                 .context("stage segment for local reader")?;
+            // Sidecar pair: Arrow readers hard-require `{path}.idx` — fetch it
+            // when the remote has one (absent for PAX; best-effort probe).
+            if let Ok(fs) = factory.get_filesystem(url) {
+                let remote_idx = format!("{url}.idx");
+                if let Ok(idx_bytes) = fs.read(&remote_idx).await {
+                    let _ = tokio::fs::write(format!("{}.idx", path.display()), &idx_bytes).await;
+                }
+            }
             Ok(Self {
                 path: path.to_string_lossy().into_owned(),
                 scratch: true,
@@ -149,6 +189,7 @@ impl Drop for LocalizedSegment {
     fn drop(&mut self) {
         if self.scratch {
             let _ = std::fs::remove_file(&self.path);
+            let _ = std::fs::remove_file(format!("{}.idx", self.path));
         }
     }
 }
