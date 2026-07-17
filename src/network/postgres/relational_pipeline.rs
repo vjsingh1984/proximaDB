@@ -2502,7 +2502,7 @@ async fn route_and_plan_select(
                     // primitive tuples, like `record_plan_geometry`) so the cost
                     // model / billing see per-op detail. No-ops if no scope active.
                     let exec = build_exec_ops(&node_metrics);
-                    let exec_tuples: Vec<(&str, u64, u64, u64, Option<u64>, bool)> = exec
+                    let exec_tuples: Vec<crate::observability::io_trace::ExecOpSample> = exec
                         .iter()
                         .map(|e| {
                             (

@@ -257,6 +257,12 @@ pub struct IoTrace {
     exec_ops: Mutex<Vec<ExecOpTrace>>,
 }
 
+/// Neutral primitive tuple carrying one operator's metered actuals into
+/// [`record_exec_vector`] — `(op, rows_in, rows_out, ms_self, bytes, spill)`. A
+/// type alias so the recording API stays a neutral tuple (no cross-crate type)
+/// without tripping `clippy::type_complexity`.
+pub type ExecOpSample<'a> = (&'a str, u64, u64, u64, Option<u64>, bool);
+
 /// One physical-plan operator's metered execution actuals (TD-TRACE-1 Slice 2).
 /// A neutral, self-contained snapshot type owned by io_trace (NOT the executor's
 /// `NodeMetric`) so the modality layer never depends on the query layer. Integer /
@@ -466,7 +472,7 @@ impl IoTrace {
     /// the executor's `NodeMetric` — exactly like [`Self::record_plan_geometry`].
     /// Appended in pre-order; a normal (non-metered) query never calls this, so the
     /// hot path allocates nothing here.
-    pub fn record_exec_vector(&self, ops: &[(&str, u64, u64, u64, Option<u64>, bool)]) {
+    pub fn record_exec_vector(&self, ops: &[ExecOpSample<'_>]) {
         if ops.is_empty() {
             return;
         }
@@ -931,7 +937,7 @@ pub fn record_plan_geometry(
 /// never allocates. Neutral primitive tuples `(op, rows_in, rows_out, ms_self,
 /// bytes, spill)` so io_trace never depends on the executor's `NodeMetric`.
 /// Silently no-ops outside an active scope.
-pub fn record_exec_vector(ops: &[(&str, u64, u64, u64, Option<u64>, bool)]) {
+pub fn record_exec_vector(ops: &[ExecOpSample<'_>]) {
     let _ = IO_TRACE.try_with(|t| t.record_exec_vector(ops));
 }
 
