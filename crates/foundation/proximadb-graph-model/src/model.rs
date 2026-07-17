@@ -271,3 +271,72 @@ pub struct EdgeTypeStats {
     pub edge_type: String,
     pub count: u64,
 }
+
+// ---------------------------------------------------------------------------
+// Graph write operations (moved from src/storage/memtable/implementations/
+// graph_memtable.rs — root-crate decomposition). The unified WAL's `GraphOp`
+// variant and the ORION graph engine consume these; their payload types (Node,
+// Edge, PropertyValue, EmbeddingVersion) already live in this leaf.
+// ---------------------------------------------------------------------------
+
+/// Node / edge identifier aliases (transparent to `String`). Kept here so the
+/// graph-operation model below is self-contained.
+pub type NodeId = String;
+pub type EdgeId = String;
+
+/// Graph operation for WAL integration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GraphOperation {
+    CreateNode {
+        graph_id: String,
+        node: Node,
+    },
+    UpdateNode {
+        graph_id: String,
+        node_id: NodeId,
+        update: NodeUpdate,
+    },
+    DeleteNode {
+        graph_id: String,
+        node_id: NodeId,
+    },
+    CreateEdge {
+        graph_id: String,
+        edge: Edge,
+    },
+    UpdateEdge {
+        graph_id: String,
+        edge_id: EdgeId,
+        update: EdgeUpdate,
+    },
+    DeleteEdge {
+        graph_id: String,
+        edge_id: EdgeId,
+    },
+    BatchOperation {
+        operations: Vec<GraphOperation>,
+    },
+    CreateEdgeIndex {
+        graph_id: String,
+        index_config: String,
+    },
+    DropEdgeIndex {
+        graph_id: String,
+        index_name: String,
+    },
+}
+
+/// Node update structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeUpdate {
+    pub labels: Option<Vec<String>>,
+    pub properties: Option<HashMap<String, PropertyValue>>,
+    pub embedding: Option<EmbeddingVersion>,
+}
+
+/// Edge update structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgeUpdate {
+    pub properties: Option<HashMap<String, PropertyValue>>,
+    pub weight: Option<f64>,
+}

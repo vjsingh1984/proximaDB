@@ -31,62 +31,12 @@ use tracing::{debug, info};
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
-/// Graph operation for WAL integration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GraphOperation {
-    CreateNode {
-        graph_id: String,
-        node: Node,
-    },
-    UpdateNode {
-        graph_id: String,
-        node_id: NodeId,
-        update: NodeUpdate,
-    },
-    DeleteNode {
-        graph_id: String,
-        node_id: NodeId,
-    },
-    CreateEdge {
-        graph_id: String,
-        edge: Edge,
-    },
-    UpdateEdge {
-        graph_id: String,
-        edge_id: EdgeId,
-        update: EdgeUpdate,
-    },
-    DeleteEdge {
-        graph_id: String,
-        edge_id: EdgeId,
-    },
-    BatchOperation {
-        operations: Vec<GraphOperation>,
-    },
-    CreateEdgeIndex {
-        graph_id: String,
-        index_config: String, // Placeholder for index configuration
-    },
-    DropEdgeIndex {
-        graph_id: String,
-        index_name: String,
-    },
-}
-
-/// Node update structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeUpdate {
-    pub labels: Option<Vec<String>>,
-    pub properties: Option<std::collections::HashMap<String, crate::graph::PropertyValue>>,
-    pub embedding: Option<crate::graph::EmbeddingVersion>,
-}
-
-/// Edge update structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EdgeUpdate {
-    pub properties: Option<std::collections::HashMap<String, crate::graph::PropertyValue>>,
-    pub weight: Option<f64>,
-}
+// Graph write-operation types (GraphOperation, NodeUpdate, EdgeUpdate) moved to
+// the `proximadb-graph-model` foundation leaf (root-crate decomposition; the
+// unified WAL's `GraphOp` variant + the ORION engine consume them). Re-exported
+// here so `crate::storage::memtable::implementations::graph_memtable::*`
+// resolves unchanged.
+pub use proximadb_graph_model::{EdgeUpdate, GraphOperation, NodeUpdate};
 
 /// Graph snapshot for persistence
 #[derive(Debug, Clone, Serialize, Deserialize)]
