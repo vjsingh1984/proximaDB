@@ -576,6 +576,21 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
                 64 * 1024 * 1024,
             ),
         ));
+    // ADR-065 Q3: opt-in ranged survivor/OID cache. Set
+    // PROXIMADB_SURVIVOR_CACHE_BUDGET_MB (default unset → uncached baseline) to
+    // measure the GET/bytes win on the repeated-query working set.
+    let engine = match std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|b| *b > 0)
+    {
+        Some(mb) => engine.with_survivor_cache(Arc::new(
+            proximadb::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::new(
+                mb * 1024 * 1024,
+            ),
+        )),
+        None => engine,
+    };
     let batch: Vec<VectorRecord> = base
         .iter()
         .enumerate()

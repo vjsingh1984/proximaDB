@@ -292,6 +292,7 @@ impl SstEngine {
                     k,
                     rank_metric,
                     self.segment_invariants_cache.as_deref(),
+                    self.survivor_cache.as_deref(),
                 )
                 .await?;
                 if let Some(hits) = coalesced_hits {

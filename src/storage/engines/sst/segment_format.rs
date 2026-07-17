@@ -25,6 +25,7 @@ use anyhow::Result;
 use proximadb_block_format::{
     BLOCK_MAGIC, BlockCompression, BlockMode, RankMetric, VectorQuant, col_id,
 };
+use proximadb_cache::CacheKind;
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::pax_block::{
     PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate, SegmentMeta,
@@ -32,6 +33,7 @@ use proximadb_storage_common::pax_block::{
 use proximadb_storage_common::segment_layout::{SegmentHeaderPrefix, is_coalesced_segment};
 
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
+use crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache;
 
 /// On-disk format of a persisted vector segment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -107,24 +109,23 @@ pub fn read_segment_records(
             // recs[i] <-> Region B row i. (Exact-f32 preference via F32_TIER is a
             // follow-up; this returns the SQ8 rerank vectors so compaction / recovery
             // / full-read see the vectors rather than silently dropping them.)
-            if is_coalesced_segment(bytes) {
-                if let Ok(h) = SegmentHeaderPrefix::parse(bytes) {
-                    if h.sq8_len > 0 {
-                        let region = &bytes[h.sq8_off as usize..(h.sq8_off + h.sq8_len) as usize];
-                        if let Ok(sq8) =
-                            proximadb_block_format::coalesced_sq8::Sq8Region::from_bytes(region)
-                        {
-                            let dim = sq8.header.dim;
-                            for (i, rec) in recs.iter_mut().enumerate() {
-                                if let Some(v) = sq8.decode_row(i) {
-                                    rec.embeddings.push(proximadb_records::EmbeddingCell {
-                                        modality: "dense".into(),
-                                        dim,
-                                        values: proximadb_records::EmbeddingValues::Fp32(v),
-                                        ..Default::default()
-                                    });
-                                }
-                            }
+            if is_coalesced_segment(bytes)
+                && let Ok(h) = SegmentHeaderPrefix::parse(bytes)
+                && h.sq8_len > 0
+            {
+                let region = &bytes[h.sq8_off as usize..(h.sq8_off + h.sq8_len) as usize];
+                if let Ok(sq8) =
+                    proximadb_block_format::coalesced_sq8::Sq8Region::from_bytes(region)
+                {
+                    let dim = sq8.header.dim;
+                    for (i, rec) in recs.iter_mut().enumerate() {
+                        if let Some(v) = sq8.decode_row(i) {
+                            rec.embeddings.push(proximadb_records::EmbeddingCell {
+                                modality: "dense".into(),
+                                dim,
+                                values: proximadb_records::EmbeddingValues::Fp32(v),
+                                ..Default::default()
+                            });
                         }
                     }
                 }
@@ -800,10 +801,10 @@ impl SegmentInvariantsCache {
 
     /// Remove a path (call from flush/compaction when a segment is rewritten).
     pub fn invalidate(&self, path: &str) {
-        if let Ok(mut inner) = self.inner.lock() {
-            if let Some(removed) = inner.map.remove(path) {
-                inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&removed));
-            }
+        if let Ok(mut inner) = self.inner.lock()
+            && let Some(removed) = inner.map.remove(path)
+        {
+            inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&removed));
         }
     }
 }
@@ -893,6 +894,7 @@ pub async fn rabitq_search_segment_coalesced(
     k: usize,
     metric: RankMetric,
     cache: Option<&SegmentInvariantsCache>,
+    survivor_cache: Option<&SurvivorRangeCache>,
 ) -> Result<Option<Vec<CascadeHit>>> {
     use proximadb_block_format::{PaxBlockReader, RaBitQRegion, coalesced_sq8, col_id};
     use proximadb_storage_common::segment_layout::{
@@ -1019,13 +1021,36 @@ pub async fn rabitq_search_segment_coalesced(
         // ranges — pure dense SQ8, the minimal-bytes path.
         let dim64 = dim as u64;
         for fetch in &sq8_fetches {
-            let buf = fs
-                .read_range(path, fetch.start, fetch.end - fetch.start)
+            let start = fetch.start;
+            let range_len = fetch.end - fetch.start;
+            // ADR-065 Q3: survivor-range cache. On a hit the loader never runs,
+            // so `fs.read_range` + `record_get` (the billed GET) fire only on a
+            // miss — bytes-not-billed for free, via the existing backend seam.
+            let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
+                sc.get_or_fetch(
+                    CacheKind::QuantizedCodes,
+                    path,
+                    start,
+                    range_len,
+                    || async move {
+                        let b = fs.read_range(path, start, range_len).await?;
+                        if trace_on {
+                            record_get(CacheTier::SurvivorPayload, range_len);
+                        }
+                        Ok(b)
+                    },
+                )
                 .await
-                .map_err(|e| anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}"))?;
-            if trace_on {
-                record_get(CacheTier::SurvivorPayload, fetch.end - fetch.start);
-            }
+                .map_err(|e| anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}"))?
+            } else {
+                let b = fs.read_range(path, start, range_len).await.map_err(|e| {
+                    anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}")
+                })?;
+                if trace_on {
+                    record_get(CacheTier::SurvivorPayload, range_len);
+                }
+                Arc::from(b)
+            };
             for &g in &fetch.rows {
                 let rel = (codes_base + (g as u64) * dim64).saturating_sub(fetch.start) as usize;
                 if rel + dim > buf.len() {
@@ -1069,13 +1094,31 @@ pub async fn rabitq_search_segment_coalesced(
     let oid_fetches = plan_coalesced_block_ranges(&footer, &topk_blocks, &policy);
     let mut oid_of: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
     for fetch in &oid_fetches {
-        let buf = fs
-            .read_range(path, fetch.start, fetch.end - fetch.start)
+        let start = fetch.start;
+        let range_len = fetch.end - fetch.start;
+        // ADR-065 Q3: same read-through cache as survivors (OID ranges are also
+        // immutable per segment + repeat across hot queries). `CacheKind::Other`
+        // separates OID stats from survivor (QuantizedCodes) stats.
+        let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
+            sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
+                let b = fs.read_range(path, start, range_len).await?;
+                if trace_on {
+                    record_get(CacheTier::ResultPayload, range_len);
+                }
+                Ok(b)
+            })
             .await
-            .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?;
-        if trace_on {
-            record_get(CacheTier::ResultPayload, fetch.end - fetch.start);
-        }
+            .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?
+        } else {
+            let b = fs
+                .read_range(path, start, range_len)
+                .await
+                .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?;
+            if trace_on {
+                record_get(CacheTier::ResultPayload, range_len);
+            }
+            Arc::from(b)
+        };
         for &bi in &fetch.blocks {
             let Some(b) = footer.blocks.get(bi) else {
                 continue;
@@ -1768,6 +1811,7 @@ mod tests {
             K,
             RankMetric::L2,
             None,
+            None,
         )
         .await
         .unwrap()
@@ -1796,6 +1840,110 @@ mod tests {
         assert_eq!(
             hits[0].oid, "r137",
             "the query vector itself must be the top hit"
+        );
+    }
+
+    /// ADR-065 Q3: the survivor-range cache turns a hot repeat query into cache
+    /// hits. The second identical search issues strictly fewer ranged GETs — the
+    /// survivor (Region B) + OID (Region D) ranges are served from RAM, never
+    /// reaching the counting FS wrapper — and returns identical results. The
+    /// invariants cache is intentionally NOT injected, so the GET reduction is
+    /// attributable solely to the survivor cache.
+    #[tokio::test]
+    async fn survivor_cache_reduces_gets_on_hot_repeat_query() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::FileSystem;
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        const DIM: usize = 64;
+        const N: usize = 400;
+        const K: usize = 10;
+
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        write_pax_segment(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            Some(16 * 1024),
+        )
+        .unwrap();
+
+        let local = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let counters = global_counters();
+        let fs: Arc<dyn FileSystem> =
+            Arc::new(CountingFileSystem::new(Arc::new(local), counters.clone()));
+        let path_str = path.to_str().unwrap();
+        let cache = SurvivorRangeCache::new(8 * 1024 * 1024);
+
+        let query = corpus[137].clone();
+
+        // Search 1 (cold): every survivor + OID range misses → fetched + cached.
+        let before1 = counters.range_reads.load(Ordering::Relaxed);
+        let hits1 = rabitq_search_segment_coalesced(
+            fs.as_ref(),
+            path_str,
+            &query,
+            K,
+            RankMetric::L2,
+            None,
+            Some(&cache),
+        )
+        .await
+        .unwrap()
+        .expect("first search returns hits");
+        let gets1 = counters.range_reads.load(Ordering::Relaxed) - before1;
+
+        // Search 2 (hot): identical query → survivor + OID ranges hit RAM.
+        let before2 = counters.range_reads.load(Ordering::Relaxed);
+        let hits2 = rabitq_search_segment_coalesced(
+            fs.as_ref(),
+            path_str,
+            &query,
+            K,
+            RankMetric::L2,
+            None,
+            Some(&cache),
+        )
+        .await
+        .unwrap()
+        .expect("second search returns hits");
+        let gets2 = counters.range_reads.load(Ordering::Relaxed) - before2;
+
+        assert!(
+            gets2 < gets1,
+            "hot repeat query must issue fewer ranged GETs (got {gets2} >= {gets1}; \
+             the survivor+OID ranges should have hit the cache)"
+        );
+        // Recall is identical — the cache returns the same bytes the backend would.
+        let ids = |h: &[CascadeHit]| {
+            let mut s: Vec<String> = h.iter().map(|x| x.oid.clone()).collect();
+            s.sort();
+            s
+        };
+        assert_eq!(
+            ids(&hits1),
+            ids(&hits2),
+            "the survivor cache must not change search results"
         );
     }
 }
