@@ -245,56 +245,28 @@ pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Ve
     cluster_plan_pca_ivf(records, idx).map(|plan| plan.order)
 }
 
-/// Compaction-grade PCA+IVF plan, including the contiguous IVF-cell runs.
-pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan> {
-    /// Below this many usable rows a trained model can't beat the bootstrap.
-    const MIN_ROWS_FOR_IVF: usize = 64;
+/// Below this many usable rows a trained model can't beat the bootstrap.
+const MIN_ROWS_FOR_IVF: usize = 64;
 
-    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
-
-    let usable: Vec<(usize, &[f32])> = records
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| embedding_f32(r, idx).map(|v| (i, v)))
-        .collect();
-    if usable.len() < MIN_ROWS_FOR_IVF {
-        return cluster_plan(records, idx);
-    }
-    let dim = usable[0].1.len();
-    if usable.iter().any(|(_, v)| v.len() != dim) {
-        return cluster_plan(records, idx);
-    }
-
-    let trace_ivf = std::env::var_os("PROXIMADB_TRACE_IVF_FLUSH").is_some();
-    let t_start = std::time::Instant::now();
-
-    // IVF cells ≈ blockcount (ADR-065 co-design): one cell ≈ one IOP-sized
-    // block, so survivors span fewer cells → fewer GETs and each cell-fetch is
-    // one efficient IOP. k scales with N (more data ⇒ more cells, members/cell
-    // ~constant). Computed UP FRONT so n_components can couple to it.
+/// Fine IVF cell count ≈ blockcount (ADR-065 co-design): one cell ≈ one
+/// IOP-sized block, so survivors span fewer cells → fewer GETs and each
+/// cell-fetch is one efficient IOP. `PROXIMADB_IVF_K` overrides to map the
+/// GETs-vs-recall curve (eval knob, not a production setting).
+fn ivf_fine_cell_count(n_usable: usize, dim: usize) -> usize {
     let iop_target =
         proximadb_storage_common::iops_budget::IopsBudget::CLOUD.target_block_bytes() as usize;
-    // `PROXIMADB_IVF_K` overrides k to map the GETs-vs-recall curve (validate
-    // the cells=blockcount formula). Default = N·dim/IOP (one cell ≈ one IOP of
-    // SQ8 survivor data). Eval knob, not a production setting.
-    let k = std::env::var("PROXIMADB_IVF_K")
+    std::env::var("PROXIMADB_IVF_K")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n > 0)
-        .unwrap_or_else(|| ((usable.len() * dim) / iop_target.max(1)).clamp(2, 4096));
+        .unwrap_or_else(|| ((n_usable * dim) / iop_target.max(1)).clamp(2, 4096))
+}
 
-    // TD-WLP-4b: PCA projection dimensionality = max of two logarithmic terms,
-    // so n_comp stays small as embeddings/corpora grow:
-    //   (a) a·log2(dim) — the embedding's intrinsic-dim term (SIFT-128 → ~10).
-    //   (b) b·log2(k)   — partition-granularity INSURANCE: finer partitioning
-    //        (high k, i.e. large merged collections) needs more discriminative
-    //        dims to separate the cells. Bites only at high k; at SIFT's k=30
-    //        the (a) term wins (matching the Phase-0 sweep: recall@10 flat 0.989
-    //        for n_comp ∈ [4,128]). The (b) term is a conservative hedge for the
-    //        high-k regime we cannot yet measure. a, b are env-tunable
-    //        (dataset-dependent floors); `PROXIMADB_IVF_NCOMP` force-sets n_comp
-    //        for the eval sweep. Clustering-only — search-time PCA keeps its
-    //        own conservative cap (for_vector_dim).
+/// TD-WLP-4b: PCA projection dimensionality = max of two logarithmic terms
+/// (`a·log2 dim` intrinsic-dim, `b·log2 k` partition-granularity insurance),
+/// env-tunable (`PROXIMADB_IVF_NCOMP[_A|_B]`). See the sweep notes at the
+/// call sites.
+fn ivf_projection_dims(dim: usize, k: usize) -> usize {
     let ivf_a = std::env::var("PROXIMADB_IVF_NCOMP_A")
         .ok()
         .and_then(|v| v.parse::<f64>().ok())
@@ -305,7 +277,7 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
         .and_then(|v| v.parse::<f64>().ok())
         .filter(|x| *x > 0.0)
         .unwrap_or(1.5);
-    let n_components = std::env::var("PROXIMADB_IVF_NCOMP")
+    std::env::var("PROXIMADB_IVF_NCOMP")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n > 0)
@@ -314,58 +286,19 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
             let k_term = ivf_b * (k.max(2) as f64).log2();
             dim_term.max(k_term).floor() as usize
         })
-        .clamp(1, dim);
-    // TD-WLP-4b sample-train: fit PCA + train k-means on a deterministic
-    // ~SAMPLE subset (the covariance / centroids converge far before N=1M),
-    // then project + assign ALL rows. Cuts pca_fit + kmeans ~N/sample (~20x at
-    // SIFT1M) with negligible recall impact; project/assign still cover all N.
-    // Deterministic stride (a physical layout must not depend on RNG).
-    let train_sample = std::env::var("PROXIMADB_IVF_TRAIN_SAMPLE")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(50_000)
-        .min(usable.len());
-    let sample_step = if usable.len() > train_sample {
-        (usable.len() / train_sample).max(1)
-    } else {
-        1
-    };
-    let mut pca = IncrementalPCA::new(dim, n_components);
-    for (_, v) in usable.iter().step_by(sample_step) {
-        pca.add_sample(v);
-    }
-    pca.finalize();
-    let t_pca = std::time::Instant::now();
-    let coords: Vec<Vec<f32>> = usable.iter().map(|(_, v)| pca.transform(v)).collect();
-    let t_proj = std::time::Instant::now();
-    // A physical layout must not depend on thread-local RNG state: identical
-    // input should produce identical IVF cells, byte counts, and eval results.
-    const PAX_IVF_KMEANS_SEED: u64 = 0x5041_585F_4956_4631;
-    // Train k-means on the sampled projections (same stride as the PCA fit);
-    // assign ALL rows to the resulting centroids.
-    let train_coords: Vec<Vec<f32>> = coords.iter().step_by(sample_step).cloned().collect();
-    let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering_seeded(
-        &train_coords,
-        k,
-        15,
-        1e-3,
-        PAX_IVF_KMEANS_SEED,
-    ) else {
-        return cluster_plan(records, idx);
-    };
-    let t_kmeans = std::time::Instant::now();
-    let assignments = proximadb_clustering_kernel::kmeans_assign(&coords, &centroids);
-    let t_assign = std::time::Instant::now();
+        .clamp(1, dim)
+}
 
-    // Order cells by the Hilbert code of their centroid. Normalization is over
-    // the CENTROID SET per dimension (per-vector min/max would destroy
-    // cross-centroid comparability).
+/// Order cells by the Hilbert code of their centroid so same-region cells are
+/// physically contiguous (coalescing-friendly). Normalization is over the
+/// CENTROID SET per dimension (per-vector min/max would destroy cross-centroid
+/// comparability). Returns `(emission order, rank per cell)`.
+fn hilbert_cell_order(centroids: &[Vec<f32>]) -> (Vec<usize>, Vec<usize>) {
     let hilbert_dims = centroids.first().map(|c| c.len().clamp(1, 6)).unwrap_or(1);
     let bits_per_dim = 10usize; // 6 dims × 10 bits ≤ u64
     let mut lo = vec![f32::INFINITY; hilbert_dims];
     let mut hi = vec![f32::NEG_INFINITY; hilbert_dims];
-    for c in &centroids {
+    for c in centroids {
         for d in 0..hilbert_dims {
             lo[d] = lo[d].min(c[d]);
             hi[d] = hi[d].max(c[d]);
@@ -394,32 +327,96 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
     for (rank, &cell) in cell_order.iter().enumerate() {
         cell_rank[cell] = rank;
     }
+    (cell_order, cell_rank)
+}
+
+/// Seed for the compaction IVF k-means. A physical layout must not depend on
+/// thread-local RNG state: identical input must produce identical IVF cells,
+/// byte counts, and eval results. Shared by the single-level plan
+/// ([`cluster_plan_pca_ivf`]) and the persisted probe directory
+/// ([`cluster_plan_ivf_probe`]) — rev 3 persists the *same* plan, so the seed is
+/// the same.
+const PAX_IVF_KMEANS_SEED: u64 = 0x5041_585F_4956_4631;
+
+/// Compaction-grade PCA+IVF plan, including the contiguous IVF-cell runs.
+pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan> {
+    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
+
+    let usable: Vec<(usize, &[f32])> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| embedding_f32(r, idx).map(|v| (i, v)))
+        .collect();
+    if usable.len() < MIN_ROWS_FOR_IVF {
+        return cluster_plan(records, idx);
+    }
+    let dim = usable[0].1.len();
+    if usable.iter().any(|(_, v)| v.len() != dim) {
+        return cluster_plan(records, idx);
+    }
+
+    let trace_ivf = std::env::var_os("PROXIMADB_TRACE_IVF_FLUSH").is_some();
+    let t_start = std::time::Instant::now();
+
+    // IVF cells ≈ blockcount (ADR-065 co-design); k scales with N (more data ⇒
+    // more cells, members/cell ~constant). Computed UP FRONT so n_components
+    // can couple to it. n_comp: dim-term wins at SIFT's k (Phase-0 sweep:
+    // recall@10 flat 0.989 for n_comp ∈ [4,128]); the k-term is the high-k
+    // hedge. Clustering-only — search-time PCA keeps its own cap.
+    let k = ivf_fine_cell_count(usable.len(), dim);
+    let n_components = ivf_projection_dims(dim, k);
+    // TD-WLP-4b sample-train: fit PCA + train k-means on a deterministic
+    // ~SAMPLE subset (the covariance / centroids converge far before N=1M),
+    // then project + assign ALL rows. Cuts pca_fit + kmeans ~N/sample (~20x at
+    // SIFT1M) with negligible recall impact; project/assign still cover all N.
+    // Deterministic stride (a physical layout must not depend on RNG).
+    let train_sample = std::env::var("PROXIMADB_IVF_TRAIN_SAMPLE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(50_000)
+        .min(usable.len());
+    let sample_step = if usable.len() > train_sample {
+        (usable.len() / train_sample).max(1)
+    } else {
+        1
+    };
+    let mut pca = IncrementalPCA::new(dim, n_components);
+    for (_, v) in usable.iter().step_by(sample_step) {
+        pca.add_sample(v);
+    }
+    pca.finalize();
+    let t_pca = std::time::Instant::now();
+    let coords: Vec<Vec<f32>> = usable.iter().map(|(_, v)| pca.transform(v)).collect();
+    let t_proj = std::time::Instant::now();
+    // Train k-means on the sampled projections (same stride as the PCA fit);
+    // assign ALL rows to the resulting centroids.
+    let train_coords: Vec<Vec<f32>> = coords.iter().step_by(sample_step).cloned().collect();
+    let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering_seeded(
+        &train_coords,
+        k,
+        15,
+        1e-3,
+        PAX_IVF_KMEANS_SEED,
+    ) else {
+        return cluster_plan(records, idx);
+    };
+    let t_kmeans = std::time::Instant::now();
+    let assignments = proximadb_clustering_kernel::kmeans_assign(&coords, &centroids);
+    let t_assign = std::time::Instant::now();
+
+    // Order cells by the Hilbert code of their centroid (set-normalized).
+    let (_cell_order, cell_rank) = hilbert_cell_order(&centroids);
 
     // Records: usable ordered by (cell rank, PC1, index); unusable last, stably.
-    let mut order: Vec<usize> = Vec::with_capacity(records.len());
-    let mut usable_sorted: Vec<usize> = (0..usable.len()).collect();
-    usable_sorted.sort_by(|&a, &b| {
-        cell_rank[assignments[a]]
-            .cmp(&cell_rank[assignments[b]])
-            .then_with(|| {
-                let pa = coords[a].first().copied().unwrap_or(0.0);
-                let pb = coords[b].first().copied().unwrap_or(0.0);
-                pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| usable[a].0.cmp(&usable[b].0))
-    });
-    order.extend(usable_sorted.iter().map(|&u| usable[u].0));
-    let in_usable: std::collections::HashSet<usize> = usable.iter().map(|(i, _)| *i).collect();
-    order.extend((0..records.len()).filter(|i| !in_usable.contains(i)));
-    let mut ordered_cells: Vec<usize> = usable_sorted
-        .iter()
-        .map(|&usable_row| assignments[usable_row])
-        .collect();
-    ordered_cells.extend(std::iter::repeat_n(
-        usize::MAX,
-        records.len() - usable.len(),
-    ));
-    let runs = contiguous_runs(&ordered_cells);
+    let usable_orig: Vec<usize> = usable.iter().map(|(i, _)| *i).collect();
+    let (order, runs) = order_rows_by_cell(
+        records.len(),
+        &usable_orig,
+        &coords,
+        &assignments,
+        &cell_rank,
+    );
     let t_end = std::time::Instant::now();
     if trace_ivf {
         eprintln!(
@@ -435,6 +432,219 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
         );
     }
     Some(ClusterPlan { order, runs })
+}
+
+/// TD-RDSTRAT-8 (rev 3): opt-in gate for the persisted-IVF-probe v3 compaction
+/// layout (the IOP-derived plan written into Region A0). Default **OFF**
+/// (`PROXIMADB_IVF2=1` to enable) until the recall/GET eval gates pass;
+/// mixed-read-safe beside single-level segments either way. The env keeps its
+/// shipped `IVF2` name (the successor IVF layout), though rev 3 dropped the
+/// second `sqrt(N)` level the name originally implied.
+pub fn ivf_probe_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_IVF2")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(|v| v.to_ascii_lowercase())
+            .as_deref(),
+        Some("1") | Some("true") | Some("on") | Some("yes")
+    )
+}
+
+/// The persisted IVF probe directory compaction plan (rev 3): the physical row
+/// order + runs (one run per non-empty IOP-derived cell, in emission order) plus
+/// the trained [`CoarseModel`] the writer persists into Region A0.
+pub struct IvfProbePlan {
+    pub plan: ClusterPlan,
+    pub model: proximadb_storage_common::coarse_directory::CoarseModel,
+}
+
+/// TD-RDSTRAT-8 (rev 3): the **persisted IVF probe directory** compaction plan.
+/// Reuses the *existing* IOP-derived PCA/IVF recipe — `ivf_fine_cell_count` `k`
+/// (≈ `N·dim / IOP_target`, capped 4096), `ivf_projection_dims` `n_comp`,
+/// `PROXIMADB_IVF_TRAIN_SAMPLE` sample-train, and [`PAX_IVF_KMEANS_SEED`] — the
+/// same plan [`cluster_plan_pca_ivf`] computes for the single-level layout, and
+/// **persists it** into Region A0 rather than discarding it.
+///
+/// There is NO second `sqrt(N)` quantizer (rev 3 rejected the coarse-on-fine
+/// level): ranking the `k` IOP-derived centroids in RAM (`k` ≈ 305 at 10M,
+/// ≈ 3050 at 100M, capped 4096) is trivial and already breaks GETs ∝ N, whereas
+/// `sqrt(N)` cells would fragment Region B into sub-IOP (~128 KiB) runs — worse
+/// cloud economics. The cells here are the IOP-aligned cells the compaction
+/// already speaks; A0 just makes them query-visible so the PR-B reader ranks the
+/// directory in RAM and fetches only probed cells.
+///
+/// Write/read projection consistency: the PCA model is **truncated to the f32
+/// precision A0 persists before anything is assigned** — coordinates, centroids,
+/// and radii all come from the shared [`project_with_model`] kernel the query
+/// path uses, so a query projects into exactly the space the writer clustered
+/// (no f64-train vs f32-read drift at cell boundaries; vectors stay f32
+/// throughout, only dot-product accumulators widen transiently to f64).
+///
+/// Deterministic end to end: strided sample-train, seeded k-means, fixed-init
+/// PCA — identical input ⇒ identical plan ⇒ identical segment bytes (unit-gated
+/// in `pax_block.rs`). `PROXIMADB_IVF_K` overrides `k` (shared eval knob).
+///
+/// Returns `None` when the IOP-derived plan can't be trained (fewer than
+/// [`MIN_ROWS_FOR_IVF`] usable rows, degenerate dim, or k-means failure) — the
+/// caller falls back to [`cluster_plan_pca_ivf`] and writes the single-level
+/// layout (fail-safe, never a worse segment).
+pub fn cluster_plan_ivf_probe(records: &[ProximaRecord], idx: usize) -> Option<IvfProbePlan> {
+    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
+    use proximadb_storage_common::coarse_directory::{CoarseModel, project_with_model};
+
+    let usable: Vec<(usize, &[f32])> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| embedding_f32(r, idx).map(|v| (i, v)))
+        .collect();
+    if usable.len() < MIN_ROWS_FOR_IVF {
+        return None;
+    }
+    let dim = usable[0].1.len();
+    if dim == 0 || usable.iter().any(|(_, v)| v.len() != dim) {
+        return None;
+    }
+
+    let trace_ivf = std::env::var_os("PROXIMADB_TRACE_IVF_FLUSH").is_some();
+    let t_start = std::time::Instant::now();
+
+    // IOP-derived cell count + projection law — the SAME recipe the single-level
+    // plan uses (rev 3: reuse the existing plan, do not train a second quantizer).
+    let k = ivf_fine_cell_count(usable.len(), dim);
+    let n_comp_target = ivf_projection_dims(dim, k);
+
+    // PCA sample-train (TD-WLP-4b), deterministic stride — shared knob with the
+    // single-level plan.
+    let pca_sample = std::env::var("PROXIMADB_IVF_TRAIN_SAMPLE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(50_000)
+        .min(usable.len());
+    let pca_step = if usable.len() > pca_sample {
+        (usable.len() / pca_sample).max(1)
+    } else {
+        1
+    };
+    let mut pca = IncrementalPCA::new(dim, n_comp_target);
+    for (_, v) in usable.iter().step_by(pca_step) {
+        pca.add_sample(v);
+    }
+    pca.finalize();
+    let t_pca = std::time::Instant::now();
+
+    // Truncate the model to persisted (f32) precision FIRST; all coordinates
+    // below come from the shared projection kernel over this exact model.
+    let pca_mean: Vec<f32> = pca.mean().iter().map(|&x| x as f32).collect();
+    let components = pca.components()?;
+    let n_comp = components.len();
+    if n_comp == 0 {
+        return None;
+    }
+    let pca_components: Vec<f32> = components
+        .iter()
+        .flat_map(|row| row.iter().map(|&x| x as f32))
+        .collect();
+    let coords: Vec<Vec<f32>> = usable
+        .iter()
+        .map(|(_, v)| project_with_model(&pca_mean, &pca_components, n_comp, v))
+        .collect();
+    let t_proj = std::time::Instant::now();
+
+    // k-means over the f32-projected sample — the plan we persist IS the
+    // single-level IVF plan, so same seed + iterations. Assignment below covers
+    // ALL rows.
+    let sample_coords: Vec<Vec<f32>> = coords.iter().step_by(pca_step).cloned().collect();
+    let k = k.min(sample_coords.len());
+    let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering_seeded(
+        &sample_coords,
+        k,
+        15,
+        1e-3,
+        PAX_IVF_KMEANS_SEED,
+    ) else {
+        return None;
+    };
+    if centroids.is_empty() {
+        return None;
+    }
+    let t_kmeans = std::time::Instant::now();
+    let assignments = proximadb_clustering_kernel::kmeans_assign(&coords, &centroids);
+    // Per-cell max member→centroid distance in PCA space (diagnostic/calibration
+    // radius only; rev 3 does not use it as a correctness bound).
+    let mut radii_sq = vec![0f32; centroids.len()];
+    for (i, &cell) in assignments.iter().enumerate() {
+        let d: f32 = coords[i]
+            .iter()
+            .zip(&centroids[cell])
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum();
+        if d > radii_sq[cell] {
+            radii_sq[cell] = d;
+        }
+    }
+    let t_assign = std::time::Instant::now();
+
+    // Hilbert emission order over the centroids: near cells are near in the file,
+    // so multi-cell probes coalesce into few ranged GETs.
+    let (cell_order, cell_rank) = hilbert_cell_order(&centroids);
+
+    // Rows: usable ordered by (cell rank, PC1, index); unusable last, stably (the
+    // no-embedding tail — outside every cell, unreachable by ANN anyway).
+    let usable_orig: Vec<usize> = usable.iter().map(|(i, _)| *i).collect();
+    let (order, runs) = order_rows_by_cell(
+        records.len(),
+        &usable_orig,
+        &coords,
+        &assignments,
+        &cell_rank,
+    );
+
+    // Emission-ordered model arrays + per-cell row counts (empty cells stay — A0
+    // is dense in k so centroid ranks map 1:1 to cell entries).
+    let mut counts = vec![0u64; centroids.len()];
+    for &c in &assignments {
+        counts[c] += 1;
+    }
+    let centroids_flat: Vec<f32> = cell_order
+        .iter()
+        .flat_map(|&c| centroids[c].iter().copied())
+        .collect();
+    let radii: Vec<f32> = cell_order.iter().map(|&c| radii_sq[c].sqrt()).collect();
+    let cell_rows: Vec<u64> = cell_order.iter().map(|&c| counts[c]).collect();
+
+    let n_comp_u16 = u16::try_from(n_comp).ok()?;
+    let model = CoarseModel {
+        dim: dim as u32,
+        n_comp: n_comp_u16,
+        pca_mean,
+        pca_components,
+        centroids: centroids_flat,
+        radii,
+        cell_rows,
+        seed: PAX_IVF_KMEANS_SEED,
+        trained_on: sample_coords.len() as u64,
+    };
+    let t_end = std::time::Instant::now();
+    if trace_ivf {
+        eprintln!(
+            "[IVF probe compaction] N={n} dim={dim} k={k} n_comp={n_comp} | pca_fit {pca:.0} ms  project {proj:.0} ms  kmeans {km:.0} ms  assign+radii {asg:.0} ms  order {ord:.0} ms  | total {tot:.0} ms",
+            n = usable.len(),
+            k = centroids.len(),
+            pca = (t_pca - t_start).as_secs_f64() * 1e3,
+            proj = (t_proj - t_pca).as_secs_f64() * 1e3,
+            km = (t_kmeans - t_proj).as_secs_f64() * 1e3,
+            asg = (t_assign - t_kmeans).as_secs_f64() * 1e3,
+            ord = (t_end - t_assign).as_secs_f64() * 1e3,
+            tot = (t_end - t_start).as_secs_f64() * 1e3,
+        );
+    }
+    Some(IvfProbePlan {
+        plan: ClusterPlan { order, runs },
+        model,
+    })
 }
 
 fn contiguous_runs<T: PartialEq>(ordered_labels: &[T]) -> Vec<OrderedClusterRun> {
@@ -457,6 +667,44 @@ fn contiguous_runs<T: PartialEq>(ordered_labels: &[T]) -> Vec<OrderedClusterRun>
         row_count: ordered_labels.len() - start,
     });
     runs
+}
+
+/// Shared IVF row ordering (single-level and probe-directory plans use the same
+/// rule): usable rows sorted by `(cell rank, PC1, original index)`, then the
+/// unusable (no-embedding) rows appended last, stably. Returns the full-record
+/// permutation plus the contiguous per-cell runs (unusable tail is one trailing
+/// run keyed `usize::MAX`). Projection-agnostic — the caller decides whether
+/// `coords` came from `pca.transform` (f64 model) or `project_with_model` (f32),
+/// so extracting this keeps both plans byte-identical to their inline form.
+fn order_rows_by_cell(
+    records_len: usize,
+    usable_orig: &[usize],
+    coords: &[Vec<f32>],
+    assignments: &[usize],
+    cell_rank: &[usize],
+) -> (Vec<usize>, Vec<OrderedClusterRun>) {
+    let mut usable_sorted: Vec<usize> = (0..usable_orig.len()).collect();
+    usable_sorted.sort_by(|&a, &b| {
+        cell_rank[assignments[a]]
+            .cmp(&cell_rank[assignments[b]])
+            .then_with(|| {
+                let pa = coords[a].first().copied().unwrap_or(0.0);
+                let pb = coords[b].first().copied().unwrap_or(0.0);
+                pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| usable_orig[a].cmp(&usable_orig[b]))
+    });
+    let mut order: Vec<usize> = Vec::with_capacity(records_len);
+    order.extend(usable_sorted.iter().map(|&u| usable_orig[u]));
+    let in_usable: std::collections::HashSet<usize> = usable_orig.iter().copied().collect();
+    order.extend((0..records_len).filter(|i| !in_usable.contains(i)));
+    let mut ordered_cells: Vec<usize> = usable_sorted.iter().map(|&u| assignments[u]).collect();
+    ordered_cells.extend(std::iter::repeat_n(
+        usize::MAX,
+        records_len - usable_orig.len(),
+    ));
+    let runs = contiguous_runs(&ordered_cells);
+    (order, runs)
 }
 
 /// Binary-reflected Gray code over the sign bits of `v - mean`, packed MSB-first
@@ -733,5 +981,81 @@ mod tests {
         let mut fs = fallback.clone();
         fs.sort_unstable();
         assert_eq!(fs, vec![0, 1, 2, 3]);
+    }
+
+    /// TD-RDSTRAT-8 (rev 3): the persisted IVF probe plan is a permutation that
+    /// groups the IOP-derived cells contiguously, produces a consistent persisted
+    /// model (cell_rows partition the usable rows, arrays sized by k), puts
+    /// no-embedding rows in the tail outside every cell, and is deterministic.
+    #[test]
+    fn cluster_plan_ivf_probe_groups_cells_and_is_deterministic() {
+        // Force k=2 so the two synthetic clusters map 1:1 to cells (the shared
+        // IOP-derived override, since the plan we persist IS the single-level
+        // plan). nextest process-per-test isolation makes the env mutation safe.
+        unsafe {
+            std::env::set_var("PROXIMADB_IVF_K", "2");
+        }
+        let mut recs = Vec::new();
+        for i in 0..100 {
+            let e = (i % 5) as f32 * 0.01;
+            recs.push(rec(&format!("a{i:03}"), vec![1.0 + e; 8]));
+            recs.push(rec(&format!("b{i:03}"), vec![-1.0 - e; 8]));
+        }
+        // Two records without embeddings — must sort last, outside all cells.
+        recs.push(ProximaRecord {
+            oid: "bare1".into(),
+            ..Default::default()
+        });
+        recs.push(ProximaRecord {
+            oid: "bare2".into(),
+            ..Default::default()
+        });
+
+        let tl = cluster_plan_ivf_probe(&recs, 0).expect("ivf probe plan");
+        // Permutation over ALL records.
+        assert_eq!(tl.plan.order.len(), recs.len());
+        let mut seen = tl.plan.order.clone();
+        seen.sort_unstable();
+        assert_eq!(seen, (0..recs.len()).collect::<Vec<_>>());
+
+        // Model shape: 2 cells; usable rows partitioned; arrays sized by k_c
+        // (the directory's cell count = the plan's IOP-derived k).
+        assert!(tl.model.validate().is_ok());
+        assert_eq!(tl.model.k_c(), 2);
+        assert_eq!(tl.model.rows_covered(), 200);
+        assert_eq!(tl.model.cell_rows, vec![100, 100]);
+        assert_eq!(tl.model.dim, 8);
+        assert_eq!(
+            tl.model.centroids.len(),
+            2 * tl.model.n_comp as usize,
+            "centroids are k_c × n_comp in emission order"
+        );
+        assert!(tl.model.radii.iter().all(|r| r.is_finite() && *r >= 0.0));
+
+        // Cells are contiguous in the order: exactly one a↔b transition among
+        // the usable prefix, and the bare rows are the tail.
+        let labels: Vec<char> = tl.plan.order[..200]
+            .iter()
+            .map(|&i| recs[i].oid.chars().next().unwrap_or('?'))
+            .collect();
+        let transitions = labels.windows(2).filter(|w| w[0] != w[1]).count();
+        assert_eq!(transitions, 1, "cells must be contiguous: {labels:?}");
+        let tail: Vec<&str> = tl.plan.order[200..]
+            .iter()
+            .map(|&i| recs[i].oid.as_str())
+            .collect();
+        assert_eq!(tail, vec!["bare1", "bare2"], "no-embedding rows tail last");
+
+        // Deterministic: identical input ⇒ identical order AND model.
+        let again = cluster_plan_ivf_probe(&recs, 0).expect("second plan");
+        assert_eq!(again.plan.order, tl.plan.order);
+        assert_eq!(again.model, tl.model);
+
+        // Too-small batch ⇒ None (caller falls back to the single-level plan).
+        let small: Vec<ProximaRecord> = recs.iter().take(8).cloned().collect();
+        assert!(cluster_plan_ivf_probe(&small, 0).is_none());
+        unsafe {
+            std::env::remove_var("PROXIMADB_IVF_K");
+        }
     }
 }

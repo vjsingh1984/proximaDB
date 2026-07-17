@@ -40,8 +40,12 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use anyhow::{Result, bail};
-use proximadb_block_format::coalesced_rabitq::{RABITQ_SEED_BASE, encode_region};
-use proximadb_block_format::coalesced_sq8::encode_region as encode_sq8_region;
+use proximadb_block_format::coalesced_rabitq::{
+    RABITQ_SEED_BASE, encode_region, region_header_len as rabitq_region_header_len,
+};
+use proximadb_block_format::coalesced_sq8::{
+    codes_offset as sq8_codes_offset, encode_region as encode_sq8_region,
+};
 use proximadb_block_format::{
     BlockCompression, BlockMode, BlockStats, BlockZoneSource, ColumnMeta, FlatRow, PaxBlockReader,
     PaxBlockWriter, RowGroupBlock, VectorQuant, col_id, header::fnv1a_hash,
@@ -49,16 +53,17 @@ use proximadb_block_format::{
 use proximadb_records::{EmbeddingValues, ProximaRecord};
 use serde::{Deserialize, Serialize};
 
+use crate::coarse_directory::{CoarseCellEntry, CoarseDirectory, CoarseModel};
 use crate::engine_constants::{
     DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES, DEFAULT_TARGET_BLOCK_SIZE_BYTES,
     MAX_TARGET_BLOCK_SIZE_BYTES,
 };
 use crate::segment_layout::{
     BlockTierAssignment, EXTERNAL_CANONICAL_SOURCE_ID, FooterBlockEntry, LosslessCompressionTag,
-    LosslessTransformTag, ParameterScope, SEG_HEADER_PREFIX_LEN, SEG_LAYOUT_VERSION,
-    SegmentFooterIndex, SegmentHeaderPrefix, SourceFidelity, SourceRole, StatsKind,
-    StripeEncodingDescriptor, TierRole, VectorTransform, compression_flags, is_coalesced_segment,
-    segment_tail,
+    LosslessTransformTag, ParameterScope, SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN,
+    SEG_LAYOUT_VERSION, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentFooterIndex, SegmentHeaderPrefix,
+    SourceFidelity, SourceRole, StatsKind, StripeEncodingDescriptor, TierRole, VectorTransform,
+    compression_flags, is_coalesced_segment, segment_tail,
 };
 
 /// File extension for PAX segment files.
@@ -498,6 +503,20 @@ pub use proximadb_block_format::SegmentMeta;
 ///
 /// Records are buffered in a `PaxBlockWriter`; when the estimated block size
 /// reaches `block_size_threshold`, the block is flushed and a new one begins.
+/// TD-RDSTRAT-8 writer-side bookkeeping for the two-level (v3) layout.
+struct TwoLevelState {
+    /// The trained coarse model (validated at finish; fail-closed).
+    model: CoarseModel,
+    /// Cumulative cell-end row boundaries (prefix sums of `model.cell_rows`,
+    /// len `k_c`). Rows past the last boundary are the no-embedding tail.
+    boundaries: Vec<u64>,
+    /// Next boundary index awaiting its flush.
+    next_boundary: usize,
+    /// Block-ordinal at each crossed cell end (1:1 with `boundaries` once all
+    /// rows are fed) — the exact Region D `[d_block_begin, d_block_end)` data.
+    cell_end_blocks: Vec<u32>,
+}
+
 pub struct PaxSegmentWriter {
     path: PathBuf,
     mode: BlockMode,
@@ -562,6 +581,11 @@ pub struct PaxSegmentWriter {
     /// Embedding-0 f32 vectors in cluster (add) order, buffered for the
     /// segment-level RaBitQ region. Populated only when `coalesced_rabitq` is on.
     rabitq_vectors: Vec<Option<Vec<f32>>>,
+    /// TD-RDSTRAT-8: the two-level-IVF coarse model + boundary bookkeeping.
+    /// Present ⇒ emit the v3 layout (`[prefix][A0][A][B][D][footer]`): the
+    /// current block is force-flushed at every coarse-cell boundary (blocks
+    /// never straddle a cell) and Region A0 records per-cell byte extents.
+    two_level: Option<TwoLevelState>,
     /// Encoding-aware per-row byte estimate (computed from the first record's
     /// dim + the quant/f32_tier/embedding_count config). Replaces the flat 1024
     /// that overestimated SQ8 blocks by ~4.5×. 0 = not yet computed.
@@ -623,6 +647,7 @@ impl PaxSegmentWriter {
             block_transformed_sq8_columns: Vec::new(),
             coalesced_rabitq: false,
             rabitq_vectors: Vec::new(),
+            two_level: None,
             per_row_estimate: 0,
         }
     }
@@ -704,6 +729,40 @@ impl PaxSegmentWriter {
     pub fn with_coalesced_rabitq(mut self, enabled: bool) -> Self {
         self.coalesced_rabitq = enabled;
         self.current_writer = self.fresh_block_writer();
+        self
+    }
+
+    /// TD-RDSTRAT-8: emit the **persisted-IVF-probe (v3)** layout. The caller has
+    /// already reordered records by `(cell rank, PC1, index)` (see
+    /// `cluster_plan_ivf_probe`); `model.cell_rows` tells the writer where the
+    /// cell boundaries fall so it can pad/flush blocks there and record exact
+    /// per-cell byte extents into Region A0. Only meaningful together with
+    /// [`Self::with_coalesced_rabitq`] — without it the model is ignored
+    /// (fail-safe: a non-coalesced segment has no regions to address).
+    pub fn with_two_level(mut self, model: CoarseModel) -> Self {
+        let mut boundaries = Vec::with_capacity(model.cell_rows.len());
+        let mut acc = 0u64;
+        for &rows in &model.cell_rows {
+            acc += rows;
+            boundaries.push(acc);
+        }
+        let mut state = TwoLevelState {
+            model,
+            boundaries,
+            next_boundary: 0,
+            cell_end_blocks: Vec::new(),
+        };
+        // Leading empty cells end at row 0 — `add_record` never sees row 0, so
+        // consume them up front (their block range is empty at ordinal 0).
+        while state
+            .boundaries
+            .get(state.next_boundary)
+            .is_some_and(|&b| b == 0)
+        {
+            state.cell_end_blocks.push(0);
+            state.next_boundary += 1;
+        }
+        self.two_level = Some(state);
         self
     }
 
@@ -804,6 +863,26 @@ impl PaxSegmentWriter {
         let total = vector_bytes + metadata_bytes + block_overhead;
         if total >= self.block_size_threshold {
             self.flush_current_block()?;
+        }
+        // TD-RDSTRAT-8: pad/flush at every coarse-cell boundary so blocks never
+        // straddle a cell (per-cell Region D ranges stay exact). Empty cells
+        // share the boundary row, hence the loop. A size-triggered flush at the
+        // same row is harmless (the second flush is a no-op).
+        loop {
+            let at_boundary = self
+                .two_level
+                .as_ref()
+                .is_some_and(|tl| tl.boundaries.get(tl.next_boundary) == Some(&self.row_count));
+            if !at_boundary {
+                break;
+            }
+            self.flush_current_block()?;
+            let block_count = u32::try_from(self.index.blocks.len())
+                .map_err(|_| anyhow::anyhow!("block ordinal exceeds u32"))?;
+            if let Some(tl) = &mut self.two_level {
+                tl.cell_end_blocks.push(block_count);
+                tl.next_boundary += 1;
+            }
         }
         Ok(())
     }
@@ -1133,6 +1212,12 @@ impl PaxSegmentWriter {
     /// [blocks][FOOTER-INDEX][footer_len][SEGMENT_MAGIC]`. The RaBitQ region is
     /// one ranged GET (keep=100% scan); the footer-index block table carries
     /// absolute offsets so the read path maps survivors → blocks → coalesced GETs.
+    ///
+    /// TD-RDSTRAT-8 (v3, when [`Self::with_two_level`] armed): the same
+    /// assembly with Region A0 (the coarse directory) between the prefix and
+    /// Region A, `layout_version = 3`, and the A0 extent mirrored in the
+    /// footer. Regions A/B/D are byte-identical in format — only the row
+    /// order (coarse-cell-major) and the block padding differ.
     fn finish_coalesced(&mut self, dim: u32) -> Result<SegmentMeta> {
         // 1. Build the coalesced RaBitQ region (single segment centroid) over the
         //    cluster-ordered embedding-0 vectors. `self.file_buf` already holds the
@@ -1144,13 +1229,102 @@ impl PaxSegmentWriter {
         // rerank fetches read pure dense SQ8 (one segment-level Sq8Params fit).
         let (sq8_region_bytes, sq8_params) = encode_sq8_region(&refs, dim)?;
 
-        let header_len = SEG_HEADER_PREFIX_LEN as u64;
-        let rabitq_off = header_len;
+        // TD-RDSTRAT-8: geometry first — A0's byte length is deterministic from
+        // (k_c, dim, n_comp), so every downstream offset is known BEFORE A0's
+        // contents (which embed absolute per-cell extents) are serialized. One
+        // pass, no placeholder rewrites.
+        let two_level = self.two_level.take();
+        let (layout_version, header_len, a0_len) = match &two_level {
+            Some(tl) => {
+                tl.model.validate()?;
+                if tl.model.dim != dim {
+                    bail!(
+                        "two-level model dim {} != segment embedding dim {dim}",
+                        tl.model.dim
+                    );
+                }
+                if tl.next_boundary != tl.boundaries.len()
+                    || tl.cell_end_blocks.len() != tl.boundaries.len()
+                {
+                    bail!(
+                        "two-level cell boundaries not all reached ({}/{} — plan rows {} vs fed rows {})",
+                        tl.next_boundary,
+                        tl.boundaries.len(),
+                        tl.model.rows_covered(),
+                        self.row_count
+                    );
+                }
+                let a0_len = CoarseDirectory::serialized_len(
+                    tl.model.k_c(),
+                    dim as usize,
+                    tl.model.n_comp as usize,
+                ) as u64;
+                (
+                    SEG_LAYOUT_VERSION_TWO_LEVEL,
+                    SEG_HEADER_PREFIX_V3_LEN as u64,
+                    a0_len,
+                )
+            }
+            None => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
+        };
+        let a0_off = if two_level.is_some() { header_len } else { 0 };
+        let rabitq_off = header_len + a0_len;
         let rabitq_len = region_bytes.len() as u64;
-        let sq8_off = header_len + rabitq_len;
+        let sq8_off = rabitq_off + rabitq_len;
         let sq8_len = sq8_region_bytes.len() as u64;
-        // Blocks (Region D) begin after header + Region A + Region B.
-        let data_offset = header_len + rabitq_len + sq8_len;
+        // Blocks (Region D) begin after header [+ A0] + Region A + Region B.
+        let data_offset = sq8_off + sq8_len;
+
+        // Serialize A0 (v3 only). Per-cell extents are ABSOLUTE file offsets
+        // into the fixed-stride code payloads of Regions A/B (the writer owns
+        // the layout, so the reader never derives offsets at query time) plus
+        // the padded Region D block ranges.
+        let a0_bytes: Option<Vec<u8>> = match two_level {
+            Some(tl) => {
+                let n_rows = self.row_count as usize;
+                let stride_a = (8 + (dim as usize).div_ceil(8)) as u64;
+                let codes_base_a =
+                    rabitq_off + rabitq_region_header_len(dim) as u64 + n_rows.div_ceil(8) as u64;
+                let codes_base_b = sq8_off + sq8_codes_offset(n_rows) as u64;
+                let mut cells = Vec::with_capacity(tl.model.k_c());
+                let mut row = 0u64;
+                for (i, &rows) in tl.model.cell_rows.iter().enumerate() {
+                    let d_block_begin = if i == 0 { 0 } else { tl.cell_end_blocks[i - 1] };
+                    cells.push(CoarseCellEntry {
+                        row_begin: row,
+                        row_end: row + rows,
+                        a_off: codes_base_a + row * stride_a,
+                        a_len: rows * stride_a,
+                        b_off: codes_base_b + row * dim as u64,
+                        b_len: rows * dim as u64,
+                        c_off: 0,
+                        c_len: 0,
+                        d_block_begin,
+                        d_block_end: tl.cell_end_blocks[i],
+                    });
+                    row += rows;
+                }
+                if row > self.row_count {
+                    bail!(
+                        "two-level cell rows {row} exceed segment rows {}",
+                        self.row_count
+                    );
+                }
+                let bytes = CoarseDirectory {
+                    model: tl.model,
+                    cells,
+                }
+                .to_bytes()?;
+                if bytes.len() as u64 != a0_len {
+                    bail!(
+                        "coarse directory serialized {} bytes != planned {a0_len}",
+                        bytes.len()
+                    );
+                }
+                Some(bytes)
+            }
+            None => None,
+        };
 
         // 2. Footer block table: absolute offsets = data_offset + block's 0-based
         //    offset; row_count from the block's zone summary (1:1 with the index).
@@ -1187,24 +1361,30 @@ impl PaxSegmentWriter {
             blocks,
             encoding_map,
             block_tier_assignments,
+            a0_off,
+            a0_len,
         };
         let footer_body = footer.to_bytes()?;
         let footer_off = data_offset + self.file_buf.len() as u64;
         let footer_len = footer_body.len() as u64;
 
         let header = SegmentHeaderPrefix {
-            layout_version: SEG_LAYOUT_VERSION,
+            layout_version,
             rabitq_off,
             rabitq_len,
             sq8_off,
             sq8_len,
             footer_off,
             footer_len,
+            a0_off,
+            a0_len,
         };
 
-        // 4. Assemble: header + Region A + Region B + blocks + [footer][footer_len][magic].
+        // 4. Assemble: header [+ A0] + Region A + Region B + blocks +
+        //    [footer][footer_len][magic].
         let mut out = Vec::with_capacity(
-            SEG_HEADER_PREFIX_LEN
+            header_len as usize
+                + a0_len as usize
                 + region_bytes.len()
                 + sq8_region_bytes.len()
                 + self.file_buf.len()
@@ -1212,6 +1392,9 @@ impl PaxSegmentWriter {
                 + 16,
         );
         out.extend_from_slice(&header.to_bytes());
+        if let Some(a0) = &a0_bytes {
+            out.extend_from_slice(a0);
+        }
         out.extend_from_slice(&region_bytes);
         out.extend_from_slice(&sq8_region_bytes);
         out.extend_from_slice(&self.file_buf);
@@ -2320,5 +2503,237 @@ mod tests {
             hits += 1;
         }
         assert!(hits < meta.block_count as usize);
+    }
+
+    /// TD-RDSTRAT-8 PR-A: the two-level (v3) writer emits
+    /// `[prefix v3][A0][A][B][D][footer]` with exact per-cell extents, pads
+    /// blocks at coarse-cell boundaries (blocks never straddle a cell), keeps
+    /// the footer-driven scanner working (mixed-read), and is deterministic
+    /// (identical input ⇒ identical segment bytes).
+    #[test]
+    fn two_level_writer_emits_v3_with_exact_cell_extents() -> Result<()> {
+        use crate::segment_layout::{SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL};
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        const DIM: usize = 16;
+        // Three coarse cells (middle one empty) + 5 tail rows without embeddings.
+        let cell_rows = vec![100u64, 0, 60];
+        let n_covered = 160usize;
+        let n_rows = n_covered + 5;
+
+        let model = || CoarseModel {
+            dim: DIM as u32,
+            n_comp: 2,
+            pca_mean: vec![0.0; DIM],
+            pca_components: vec![0.1; 2 * DIM],
+            centroids: vec![0.5; 3 * 2],
+            radii: vec![1.0, 0.0, 2.0],
+            cell_rows: cell_rows.clone(),
+            seed: 42,
+            trained_on: n_covered as u64,
+        };
+        let write = |path: &Path| -> Result<SegmentMeta> {
+            let mut writer = PaxSegmentWriter::new(
+                path,
+                BlockMode::Pax,
+                BlockCompression::None,
+                "col",
+                0,
+                1,
+                Some(64 * 1024),
+            )
+            .with_quant(VectorQuant::RaBitQ)
+            .with_coalesced_rabitq(true)
+            .with_two_level(model());
+            for row in 0..n_covered {
+                let mut r = make_record(&format!("r{row:04}"), "t", 1);
+                let v: Vec<f32> = (0..DIM)
+                    .map(|d| ((row * 7 + d) % 13) as f32 - 6.0)
+                    .collect();
+                r.embeddings.push(EmbeddingCell {
+                    modality: "dense".into(),
+                    dim: DIM as u32,
+                    values: EmbeddingValues::Fp32(v),
+                    ..Default::default()
+                });
+                writer.add_record(&r)?;
+            }
+            for t in 0..(n_rows - n_covered) {
+                writer.add_record(&make_record(&format!("tail{t}"), "t", 1))?;
+            }
+            writer.finish()
+        };
+
+        let dir = tempfile::tempdir()?;
+        let p1 = dir.path().join("one.pax");
+        let p2 = dir.path().join("two.pax");
+        write(&p1)?;
+        write(&p2)?;
+        let bytes = std::fs::read(&p1)?;
+        assert_eq!(
+            bytes,
+            std::fs::read(&p2)?,
+            "v3 write must be deterministic (fixed input ⇒ identical bytes)"
+        );
+
+        // Header-prefix: version 3, A0 right after the prefix, A after A0.
+        let h = SegmentHeaderPrefix::parse(&bytes)?;
+        assert_eq!(h.layout_version, SEG_LAYOUT_VERSION_TWO_LEVEL);
+        assert_eq!(h.a0_off, SEG_HEADER_PREFIX_V3_LEN as u64);
+        assert!(h.a0_len > 0);
+        assert_eq!(h.rabitq_off, h.a0_off + h.a0_len);
+        assert_eq!(h.sq8_off, h.rabitq_off + h.rabitq_len);
+
+        // Footer mirrors the A0 extent; row count covers cells + tail.
+        let footer = SegmentFooterIndex::locate_in_segment(&bytes)?
+            .ok_or_else(|| anyhow::anyhow!("v3 segment must carry a footer-index"))?;
+        assert_eq!(footer.row_count, n_rows as u64);
+        assert_eq!(footer.a0_off, h.a0_off);
+        assert_eq!(footer.a0_len, h.a0_len);
+
+        // A0 round-trips from the segment; extents address the exact
+        // fixed-stride code runs of Regions A and B.
+        let a0 = CoarseDirectory::parse(&bytes[h.a0_off as usize..(h.a0_off + h.a0_len) as usize])?;
+        assert_eq!(a0.model.cell_rows, cell_rows);
+        assert_eq!(a0.model.rows_covered(), n_covered as u64);
+        let stride_a = 8 + DIM.div_ceil(8);
+        let codes_base_a =
+            h.rabitq_off as usize + rabitq_region_header_len(DIM as u32) + n_rows.div_ceil(8);
+        let codes_base_b = h.sq8_off as usize + sq8_codes_offset(n_rows);
+        let mut row = 0u64;
+        for (i, cell) in a0.cells.iter().enumerate() {
+            assert_eq!(cell.row_begin, row, "cell {i} row_begin");
+            assert_eq!(cell.row_end - cell.row_begin, cell_rows[i], "cell {i} rows");
+            assert_eq!(
+                cell.a_off as usize,
+                codes_base_a + row as usize * stride_a,
+                "cell {i} a_off"
+            );
+            assert_eq!(cell.a_len as usize, cell_rows[i] as usize * stride_a);
+            assert_eq!(
+                cell.b_off as usize,
+                codes_base_b + row as usize * DIM,
+                "cell {i} b_off"
+            );
+            assert_eq!(cell.b_len as usize, cell_rows[i] as usize * DIM);
+            assert_eq!((cell.c_off, cell.c_len), (0, 0), "no Region C yet");
+            row = cell.row_end;
+        }
+
+        // Blocks never straddle a cell: each cell's Region D block range holds
+        // exactly its rows, and starts exactly at its row_begin.
+        for (i, cell) in a0.cells.iter().enumerate() {
+            let (d0, d1) = (cell.d_block_begin as usize, cell.d_block_end as usize);
+            assert!(d0 <= d1 && d1 <= footer.blocks.len(), "cell {i} d-range");
+            let rows_before: u64 = footer.blocks[..d0].iter().map(|b| b.row_count as u64).sum();
+            let rows_in: u64 = footer.blocks[d0..d1]
+                .iter()
+                .map(|b| b.row_count as u64)
+                .sum();
+            assert_eq!(
+                rows_before, cell.row_begin,
+                "cell {i} starts on a block edge"
+            );
+            assert_eq!(rows_in, cell.row_end - cell.row_begin, "cell {i} padded");
+        }
+
+        // A probed cell's Region A byte slice is exactly the full-region code
+        // run for its rows (what PR-B's ranged sub-reads will fetch).
+        let cell0 = &a0.cells[0];
+        assert_eq!(
+            &bytes[cell0.a_off as usize..(cell0.a_off + cell0.a_len) as usize],
+            &bytes[codes_base_a..codes_base_a + cell_rows[0] as usize * stride_a],
+        );
+
+        // Mixed-read: the footer-driven scanner reconstructs every row of a v3
+        // segment unchanged (compaction/recovery read path).
+        let mut scanner = PaxSegmentScanner::from_bytes(bytes.clone(), ScanPredicate::default())?;
+        let recs = scanner.read_records(&[], &[], None)?;
+        assert_eq!(recs.len(), n_rows, "scanner must read all v3 rows");
+
+        // Flag-off control: the same records without `with_two_level` produce a
+        // v1 segment (no A0, version byte 1) — the two-level layout is strictly
+        // opt-in at the writer.
+        let p3 = dir.path().join("v1.pax");
+        let mut w1 = PaxSegmentWriter::new(
+            &p3,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(64 * 1024),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true);
+        for row in 0..64usize {
+            let mut r = make_record(&format!("r{row:04}"), "t", 1);
+            let v: Vec<f32> = (0..DIM)
+                .map(|d| ((row * 7 + d) % 13) as f32 - 6.0)
+                .collect();
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(v),
+                ..Default::default()
+            });
+            w1.add_record(&r)?;
+        }
+        w1.finish()?;
+        let v1_bytes = std::fs::read(&p3)?;
+        let h1 = SegmentHeaderPrefix::parse(&v1_bytes)?;
+        assert_eq!(h1.layout_version, SEG_LAYOUT_VERSION);
+        assert_eq!((h1.a0_off, h1.a0_len), (0, 0));
+        Ok(())
+    }
+
+    /// A two-level plan whose row boundaries are never reached (caller fed
+    /// fewer rows than the model claims) must fail closed at finish, not write
+    /// a mis-addressed segment.
+    #[test]
+    fn two_level_writer_fails_closed_on_row_mismatch() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        const DIM: usize = 8;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("mismatch.pax");
+        let model = CoarseModel {
+            dim: DIM as u32,
+            n_comp: 1,
+            pca_mean: vec![0.0; DIM],
+            pca_components: vec![0.1; DIM],
+            centroids: vec![0.5; 2],
+            radii: vec![1.0, 1.0],
+            cell_rows: vec![50, 50], // claims 100 rows; we feed 10
+            seed: 7,
+            trained_on: 10,
+        };
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_two_level(model);
+        for row in 0..10usize {
+            let mut r = make_record(&format!("r{row}"), "t", 1);
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(vec![row as f32; DIM]),
+                ..Default::default()
+            });
+            writer.add_record(&r)?;
+        }
+        let err = writer.finish().unwrap_err();
+        assert!(
+            err.to_string().contains("boundaries not all reached"),
+            "{err}"
+        );
+        Ok(())
     }
 }
