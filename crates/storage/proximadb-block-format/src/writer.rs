@@ -600,19 +600,25 @@ impl PaxBlockWriter {
                     // exact). RaBitQ codes drive the cheap candidate scan; the rerank
                     // pool is scored against this co-located copy before the final top-k.
                     if is_rabitq {
-                        let (rerank_stripe, rerank_entry, rerank_transform) = match self.rerank_quant {
+                        let (rerank_stripe, rerank_entry, rerank_transform) = match self
+                            .rerank_quant
+                        {
                             VectorQuant::Fp16 => {
-                                let (stripe, entry) =
-                                    self.build_fp16_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
+                                let (stripe, entry) = self
+                                    .build_fp16_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
                                 (stripe, entry, None)
                             }
                             VectorQuant::RawF32 => {
-                                let (stripe, entry) = self
-                                    .build_raw_f32_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
+                                let (stripe, entry) = self.build_raw_f32_vec_stripe(
+                                    col_id::RERANK_BASE + i as i32,
+                                    &refs,
+                                )?;
                                 (stripe, entry, None)
                             }
                             // Default: SQ8 (the validated tier-2).
-                            _ => self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?,
+                            _ => {
+                                self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?
+                            }
                         };
                         stripes.push(rerank_stripe);
                         vparam_entries.push(rerank_entry);

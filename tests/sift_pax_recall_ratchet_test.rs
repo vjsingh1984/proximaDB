@@ -536,7 +536,7 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|n| *n > 0)
-        .unwrap_or(50);
+        .unwrap_or(60);
 
     let base = read_vec_records_f32(&base_path, subset_n).expect("read sift_base.fvecs");
     let n = base.len();

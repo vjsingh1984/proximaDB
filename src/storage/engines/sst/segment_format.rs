@@ -234,11 +234,12 @@ pub fn write_pax_segment_full(
         if crate::storage::engines::sst::block_cluster::flush_cluster_ivf() {
             crate::storage::engines::sst::block_cluster::cluster_plan_pca_ivf(records, 0)
         } else if coalesced {
-            crate::storage::engines::sst::block_cluster::cluster_order_sq8_morton(records, 0)
-                .map(|order| crate::storage::engines::sst::block_cluster::ClusterPlan {
+            crate::storage::engines::sst::block_cluster::cluster_order_sq8_morton(records, 0).map(
+                |order| crate::storage::engines::sst::block_cluster::ClusterPlan {
                     order,
                     runs: Vec::new(),
-                })
+                },
+            )
         } else {
             crate::storage::engines::sst::block_cluster::cluster_plan(records, 0)
         }
