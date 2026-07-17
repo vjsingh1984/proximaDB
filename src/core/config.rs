@@ -61,6 +61,10 @@ pub struct Config {
     /// across replicas). Env vars exist for per-pod emergency tuning
     /// without rebuilding the artifact.
     pub queue: Option<QueueRuntimeConfig>,
+    /// Observability configuration (optional) — currently the durable io_trace ETL
+    /// sink (TD-TRACE-2 / ADR-066). Absent ⇒ the sink is off (default).
+    #[serde(default)]
+    pub observability: Option<ObservabilityConfig>,
 }
 
 pub use proximadb_config::{HardwareConfig, SksConfig, TlsConfig};
@@ -84,8 +88,127 @@ impl Default for Config {
             query: None, // Uses default RL planner settings when None
             llm: None,
             queue: None,
+            observability: None,
         }
     }
+}
+
+/// Observability configuration (`[observability]` TOML table). Today it carries the
+/// durable io_trace ETL sink; more observability knobs can nest here later.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ObservabilityConfig {
+    /// Durable per-query trace sink (`[observability.io_trace_sink]`, TD-TRACE-2).
+    #[serde(default)]
+    pub io_trace_sink: Option<IoTraceSinkConfig>,
+}
+
+/// Durable io_trace ETL sink configuration (`[observability.io_trace_sink]`,
+/// TD-TRACE-2 / ADR-066). The TOML is the canonical declarative source; env vars
+/// (`PROXIMADB_IO_TRACE_SINK_*`) are per-pod overrides; defaults fill the gaps —
+/// see [`IoTraceSinkConfig::resolve`]. **Default-OFF** (`enabled = false`).
+///
+/// ```toml
+/// [observability.io_trace_sink]
+/// enabled = false
+/// local_dir = "./log/io_trace"
+/// segment_bytes = 4194304
+/// flush_interval_s = 60
+/// compression = "zstd"
+/// format = "jsonl"
+/// spool_max_bytes = 268435456
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IoTraceSinkConfig {
+    /// Master switch — the sink observer is installed only when this is true.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Local directory where JSONL+zstd segments are written (S1). Default
+    /// `./log/io_trace`.
+    pub local_dir: Option<String>,
+    /// Seal a segment when its (uncompressed) size reaches this many bytes.
+    /// Default 4 MiB.
+    pub segment_bytes: Option<u64>,
+    /// Also seal + drain on this interval (seconds), whichever comes first.
+    /// Default 60.
+    pub flush_interval_s: Option<u64>,
+    /// Segment compression codec. Default (and only value in S1) `zstd`.
+    pub compression: Option<String>,
+    /// Segment record format. Default (and only value in S1) `jsonl`.
+    pub format: Option<String>,
+    /// Bounded in-memory spool cap (bytes-equivalent record budget); on overflow the
+    /// oldest queued record is dropped (best-effort). Default 256 MiB.
+    pub spool_max_bytes: Option<u64>,
+    /// Object-store destination URI (consumed in S2 — parsed now, unused in S1).
+    pub object_store_uri: Option<String>,
+    /// Per-object access tier for the object-store dispatch (S2). e.g. `cool`.
+    pub access_tier: Option<String>,
+    /// Key partitioning scheme for the object-store dispatch (S2). `date`/`tenant`/`host`.
+    pub partition_by: Option<String>,
+    /// Retention days for object-store lifecycle GC (S2).
+    pub retention_days: Option<u64>,
+}
+
+impl IoTraceSinkConfig {
+    /// Layer env (`PROXIMADB_IO_TRACE_SINK_*`) over TOML over defaults. Returns
+    /// `None` when the sink is disabled (no observer installed, no worker spawned).
+    /// Mirrors [`QueueRuntimeConfig::resolve`].
+    pub fn resolve(toml_section: Option<&IoTraceSinkConfig>) -> Option<ResolvedIoTraceSinkConfig> {
+        let from_toml = toml_section.cloned().unwrap_or_default();
+
+        let enabled = std::env::var("PROXIMADB_IO_TRACE_SINK")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(from_toml.enabled);
+        if !enabled {
+            return None;
+        }
+
+        let env_u64 = |key: &str| std::env::var(key).ok().and_then(|v| v.parse::<u64>().ok());
+
+        let local_dir = std::env::var("PROXIMADB_IO_TRACE_SINK_LOCAL_DIR")
+            .ok()
+            .or(from_toml.local_dir.clone())
+            .unwrap_or_else(|| "./log/io_trace".to_string());
+        let segment_bytes = env_u64("PROXIMADB_IO_TRACE_SINK_SEGMENT_BYTES")
+            .or(from_toml.segment_bytes)
+            .unwrap_or(4 * 1024 * 1024);
+        let flush_interval_s = env_u64("PROXIMADB_IO_TRACE_SINK_FLUSH_INTERVAL_S")
+            .or(from_toml.flush_interval_s)
+            .unwrap_or(60)
+            .max(1);
+        let spool_max_bytes = env_u64("PROXIMADB_IO_TRACE_SINK_SPOOL_MAX_BYTES")
+            .or(from_toml.spool_max_bytes)
+            .unwrap_or(256 * 1024 * 1024);
+        let compression = std::env::var("PROXIMADB_IO_TRACE_SINK_COMPRESSION")
+            .ok()
+            .or(from_toml.compression.clone())
+            .unwrap_or_else(|| "zstd".to_string());
+        let format = std::env::var("PROXIMADB_IO_TRACE_SINK_FORMAT")
+            .ok()
+            .or(from_toml.format.clone())
+            .unwrap_or_else(|| "jsonl".to_string());
+
+        Some(ResolvedIoTraceSinkConfig {
+            local_dir,
+            segment_bytes,
+            flush_interval_s,
+            spool_max_bytes,
+            compression,
+            format,
+        })
+    }
+}
+
+/// Resolved io_trace sink settings (S1 fields only; S2 object-store fields join
+/// later). All values populated — no Options.
+#[derive(Debug, Clone)]
+pub struct ResolvedIoTraceSinkConfig {
+    pub local_dir: String,
+    pub segment_bytes: u64,
+    pub flush_interval_s: u64,
+    pub spool_max_bytes: u64,
+    pub compression: String,
+    pub format: String,
 }
 
 /// Queue subsystem runtime configuration. Lives at the `[queue]` TOML
@@ -224,6 +347,36 @@ mod queue_config_tests {
         let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", None);
         assert!(QueueRuntimeConfig::resolve(None).is_none());
         assert!(QueueRuntimeConfig::resolve(Some(&QueueRuntimeConfig::default())).is_none());
+    }
+
+    /// TD-TRACE-2: the sink is default-OFF — absent config or `enabled=false`
+    /// resolves to `None` (no observer, no worker).
+    #[test]
+    fn io_trace_sink_disabled_resolves_to_none() {
+        let _g = EnvGuard::set("PROXIMADB_IO_TRACE_SINK", None);
+        assert!(IoTraceSinkConfig::resolve(None).is_none());
+        assert!(IoTraceSinkConfig::resolve(Some(&IoTraceSinkConfig::default())).is_none());
+    }
+
+    /// TD-TRACE-2: an enabled TOML section resolves; unset fields fall to defaults.
+    #[test]
+    fn io_trace_sink_enabled_toml_fills_defaults() {
+        let _g0 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK", None);
+        let _g1 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_LOCAL_DIR", None);
+        let _g2 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_SEGMENT_BYTES", None);
+        let _g3 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_FLUSH_INTERVAL_S", None);
+        let toml = IoTraceSinkConfig {
+            enabled: true,
+            local_dir: Some("/tmp/tr".to_string()),
+            ..Default::default()
+        };
+        let r = IoTraceSinkConfig::resolve(Some(&toml)).expect("enabled → Some");
+        assert_eq!(r.local_dir, "/tmp/tr");
+        assert_eq!(r.segment_bytes, 4 * 1024 * 1024);
+        assert_eq!(r.flush_interval_s, 60);
+        assert_eq!(r.spool_max_bytes, 256 * 1024 * 1024);
+        assert_eq!(r.compression, "zstd");
+        assert_eq!(r.format, "jsonl");
     }
 
     /// TOML-only flow: a TOML `[queue]` section with `root` set

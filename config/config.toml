@@ -164,6 +164,21 @@ log_level = "info"
 # Dashboard refresh interval in seconds (default: 60, minimum: 15)
 dashboard_refresh_interval_seconds = 60
 
+# Durable per-query io_trace ETL sink (TD-TRACE-2 / ADR-066). Default OFF.
+# When enabled, each query's IoTraceSnapshot is enqueued to a bounded in-memory
+# spool and a background worker writes JSONL+zstd segments to `local_dir`, sealing
+# on `segment_bytes` OR `flush_interval_s` (whichever first). Object-store dispatch
+# (object_store_uri / access_tier / partition_by / retention_days) arrives in S2.
+# Per-field env overrides: PROXIMADB_IO_TRACE_SINK[_LOCAL_DIR|_SEGMENT_BYTES|...].
+[observability.io_trace_sink]
+enabled = false
+# local_dir = "./log/io_trace"
+# segment_bytes = 4194304          # 4 MiB
+# flush_interval_s = 60
+# compression = "zstd"
+# format = "jsonl"
+# spool_max_bytes = 268435456      # 256 MiB; drop-oldest on overflow
+
 # ==============================================================================
 # LLM Integration Configuration (Q4 2025)
 # ==============================================================================
