@@ -6765,6 +6765,7 @@ dependencies = [
  "proximadb-hardware",
  "proximadb-hardware-caps",
  "proximadb-iceberg-engine",
+ "proximadb-index-storage",
  "proximadb-index-traits",
  "proximadb-index-types",
  "proximadb-kernel",
@@ -7383,6 +7384,15 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-index-storage"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "dashmap",
 ]
 
 [[package]]
