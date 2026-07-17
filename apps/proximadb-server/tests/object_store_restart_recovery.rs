@@ -438,3 +438,160 @@ async fn catalog_wal_and_sst_survive_fresh_local_disks() -> anyhow::Result<()> {
     cold_sst.crash()?;
     Ok(())
 }
+
+/// Deterministic splitmix64 (no `rand` dev-dep) — reproducible seed vectors.
+fn splitmix64(seed: &mut u64) -> u64 {
+    *seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *seed;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+fn unit_vec(seed: &mut u64, dim: usize) -> Vec<f32> {
+    let raw: Vec<f64> = (0..dim)
+        .map(|_| (splitmix64(seed) as f64 / u64::MAX as f64) * 2.0 - 1.0)
+        .collect();
+    let norm = raw.iter().map(|x| x * x).sum::<f64>().sqrt().max(1e-12);
+    raw.iter().map(|x| (x / norm) as f32).collect()
+}
+
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+
+/// TD-OBJSTORE-5 S3 (ADR-063 D8 QA tier): cold-read recall ratchet on the object
+/// store. Seeds a deterministic corpus, flushes (graceful stop), restarts on a
+/// FRESH local disk, and asserts recall@5 vs local brute force. The storage
+/// backend must be recall-NEUTRAL: this proves the quantized cascade's ranged
+/// reads + footer parse are byte-correct over the real cloud wire API — any
+/// recall delta vs the file:// baseline is a read-path bug, not a tuning knob.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn cold_recall_ratchet_survives_restart() -> anyhow::Result<()> {
+    const DIM: usize = 8;
+    const N: usize = 64;
+    const K: usize = 5;
+    const PROBES: usize = 8;
+    const MIN_RECALL: f32 = 0.9;
+
+    let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
+    anyhow::ensure!(
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
+    );
+    let root = format!(
+        "{}/td-objstore-5-recall/{}",
+        base.trim_end_matches('/'),
+        uuid::Uuid::new_v4().simple()
+    );
+    let tmp = tempfile::tempdir()?;
+    let collection = format!("recall_{}", uuid::Uuid::new_v4().simple());
+    let vm1 = tmp.path().join("vm1");
+    let vm2 = tmp.path().join("vm2");
+    for dir in [&vm1, &vm2] {
+        std::fs::create_dir_all(dir)?;
+    }
+
+    let mut seed = 0x5EED_5EED_5EED_5EEDu64;
+    let corpus: Vec<Vec<f32>> = (0..N).map(|_| unit_vec(&mut seed, DIM)).collect();
+
+    // Phase 1: seed the corpus, then GRACEFUL stop (SIGINT flushes the segment) —
+    // this ratchet targets the COLD read path, not WAL replay.
+    let first = ServerProcess::start(&root, &vm1, &tmp.path().join("vm1.toml")).await?;
+    {
+        let http = Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(30))
+            .build()?;
+        let response = http
+            .post(format!("{}/api/v2/collections", first.base_url))
+            .json(&json!({
+                "name": collection,
+                "dimension": DIM,
+                "engine": "sst",
+                "distance_metric": "cosine",
+                "canonical_embedding_precision": "fp32",
+                "enable_proxima_record": false
+            }))
+            .send()
+            .await?;
+        anyhow::ensure!(response.status().is_success(), "recall create failed");
+        let records: Vec<Value> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| json!({ "id": format!("vec-{i}"), "vector": v }))
+            .collect();
+        let response = http
+            .post(format!(
+                "{}/api/v2/collections/{collection}/records/batch",
+                first.base_url
+            ))
+            .json(&json!({ "records": records }))
+            .send()
+            .await?;
+        anyhow::ensure!(response.status().is_success(), "recall insert failed");
+    }
+    first.graceful()?;
+
+    // Phase 2: fresh local disk → cold read from the object store only.
+    let cold = ServerProcess::start(&root, &vm2, &tmp.path().join("vm2.toml")).await?;
+    let http = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let mut total_hits = 0usize;
+    for p in 0..PROBES {
+        // Probe = perturbed copy of every 8th corpus vector (deterministic).
+        let base_vec = &corpus[p * (N / PROBES)];
+        let mut pseed = 0xABCD_EF01_2345_6789u64 ^ (p as u64);
+        let noise = unit_vec(&mut pseed, DIM);
+        let probe: Vec<f32> = base_vec
+            .iter()
+            .zip(&noise)
+            .map(|(a, n)| a + 0.05 * n)
+            .collect();
+
+        // Local brute-force top-K by cosine.
+        let mut scored: Vec<(usize, f32)> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i, cosine(&probe, v)))
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let truth: Vec<String> = scored[..K]
+            .iter()
+            .map(|(i, _)| format!("vec-{i}"))
+            .collect();
+
+        let response = http
+            .post(format!(
+                "{}/api/v2/collections/{collection}/search",
+                cold.base_url
+            ))
+            .json(&json!({ "vector": probe, "top_k": K }))
+            .send()
+            .await?;
+        anyhow::ensure!(response.status().is_success(), "recall search failed");
+        let body: Value = serde_json::from_str(&response.text().await?)?;
+        let got: Vec<&str> = body
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row.get("id").and_then(Value::as_str))
+            .collect();
+        total_hits += truth.iter().filter(|t| got.contains(&t.as_str())).count();
+    }
+    let recall = total_hits as f32 / (PROBES * K) as f32;
+    cold.crash()?;
+    anyhow::ensure!(
+        recall >= MIN_RECALL,
+        "cold recall@{K} on the object store = {recall:.3} < {MIN_RECALL} — \
+         backend must be recall-neutral; a delta vs file:// is a read-path bug"
+    );
+    Ok(())
+}
