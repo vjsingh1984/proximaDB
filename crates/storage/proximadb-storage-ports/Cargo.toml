@@ -38,6 +38,9 @@ proximadb-quantization-model.workspace = true
 # Storage-tier: the FilesystemPort names FileSystem / FileOptions / FsResult from
 # this crate (the existing filesystem abstraction). Same-tier dep (storage→storage).
 proximadb-storage-filesystem-types.workspace = true
+# Foundation-tier: the GraphWalPort names GraphOperation + MarkerKind (graph
+# write-op model) — pure-data leaf types (downward dep, facade-free).
+proximadb-graph-model.workspace = true
 
 [lints]
 workspace = true

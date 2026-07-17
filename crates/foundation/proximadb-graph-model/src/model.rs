@@ -340,3 +340,15 @@ pub struct EdgeUpdate {
     pub properties: Option<HashMap<String, PropertyValue>>,
     pub weight: Option<f64>,
 }
+
+/// Non-data marker kinds carried in a graph engine's WAL stream (the payload of
+/// a `GraphMarker` frame). Moved here from the root WAL module so the
+/// `GraphWalPort` contract (storage-ports) — and the ORION graph engine — can
+/// name it without a cyclic root dependency.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MarkerKind {
+    /// "Every engine-WAL frame after this marker was emitted after the canonical
+    /// layer durably checkpointed at `lsn`." Recovery skips frames at/before the
+    /// latest such marker whose `lsn` ≤ the recovered canonical checkpoint LSN.
+    CanonicalEmission(u64),
+}

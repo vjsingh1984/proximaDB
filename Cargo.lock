@@ -8280,6 +8280,7 @@ dependencies = [
  "async-trait",
  "proximadb-distance-kernel",
  "proximadb-filter-expression",
+ "proximadb-graph-model",
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-quantization-model",

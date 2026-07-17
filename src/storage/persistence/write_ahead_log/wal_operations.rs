@@ -24,6 +24,7 @@ use crate::storage::document::DocumentRecord;
 use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb_records::ProximaRecord;
+use proximadb_storage_ports::GraphWalPort;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -84,13 +85,12 @@ pub enum UnifiedWALOperation {
 }
 
 /// Non-data marker kinds carried in [`UnifiedWALOperation::GraphMarker`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MarkerKind {
-    /// "Every engine-WAL frame after this marker was emitted after the canonical
-    /// layer durably checkpointed at `lsn`." Recovery skips frames at/before the
-    /// latest such marker whose `lsn` ≤ the recovered canonical checkpoint LSN.
-    CanonicalEmission(u64),
-}
+///
+/// Definition moved to the `proximadb-graph-model` foundation leaf (named by
+/// the `GraphWalPort` contract + the ORION graph engine); re-exported here so
+/// existing `crate::storage::persistence::write_ahead_log::...::MarkerKind`
+/// references resolve unchanged.
+pub use proximadb_graph_model::MarkerKind;
 
 /// TD-066 (c) Part 2 feature gate (default OFF per the storage-format-migration
 /// mandate). When enabled, `flush_wal` emits `CanonicalEmission` marker frames
@@ -756,6 +756,21 @@ impl UnifiedWALWriter {
     #[cfg(test)]
     pub fn set_max_segment_size_for_test(&mut self, bytes: usize) {
         self.max_segment_size = bytes;
+    }
+}
+
+/// The unified WAL writer is the composition-root-provided sink for the ORION
+/// graph engine: it implements [`GraphWalPort`] by wrapping graph operations /
+/// markers into the unified operation enum, so ORION can append through the
+/// port without naming the concrete writer or the unified operation type.
+#[async_trait::async_trait]
+impl GraphWalPort for UnifiedWALWriter {
+    async fn append_graph_op(&mut self, op: GraphOperation) -> anyhow::Result<u64> {
+        self.append(UnifiedWALOperation::GraphOp(op)).await
+    }
+
+    async fn append_graph_marker(&mut self, marker: MarkerKind) -> anyhow::Result<u64> {
+        self.append(UnifiedWALOperation::GraphMarker(marker)).await
     }
 }
 
