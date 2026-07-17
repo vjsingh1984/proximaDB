@@ -27,6 +27,7 @@ members = [
     "clients/rust",
     "crates/foundation/proximadb-cache",
     "crates/foundation/proximadb-compression-types",
+    "crates/foundation/proximadb-concurrent",
     "crates/foundation/proximadb-config",
     "crates/foundation/proximadb-data-model",
     "crates/foundation/proximadb-graph-model",
@@ -177,6 +178,7 @@ proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
 proximadb-clustering-kernel = { path = "crates/foundation/proximadb-clustering-kernel" }
+proximadb-concurrent = { path = "crates/foundation/proximadb-concurrent" }
 proximadb-memory-pool = { path = "crates/foundation/proximadb-memory-pool" }
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 proximadb-bloom = { path = "crates/foundation/proximadb-bloom" }
@@ -320,6 +322,7 @@ proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
 proximadb-clustering-kernel = { path = "crates/foundation/proximadb-clustering-kernel" }
+proximadb-concurrent = { path = "crates/foundation/proximadb-concurrent" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-graph-model = { path = "crates/foundation/proximadb-graph-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }

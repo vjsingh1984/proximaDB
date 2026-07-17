@@ -6744,6 +6744,7 @@ dependencies = [
  "proximadb-codec",
  "proximadb-compression",
  "proximadb-compression-types",
+ "proximadb-concurrent",
  "proximadb-config",
  "proximadb-data-model",
  "proximadb-distance-kernel",
@@ -7069,6 +7070,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proximadb-concurrent"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "dashmap",
+ "serde",
 ]
 
 [[package]]
