@@ -349,6 +349,18 @@ impl SstEngine {
         };
         tracing::debug!(staging_path = %staging_url, "Full staging path constructed");
 
+        // TD-OBJSTORE-4 defect 6 (normal-flush arm): the segment writers below are
+        // LOCAL-file writers. Stage through `StagedSegmentWrite` so a CLOUD staging
+        // URL gets a real local scratch file + an upload on finalize — instead of a
+        // literal local `az:...` directory, a promote that stages nothing, and a
+        // false-success that lets WAL deletion destroy the only durable copy. The
+        // recovery path's `file://{tempdir}` and plain local bases take the direct
+        // zero-copy arm (finalize is a no-op).
+        let staged =
+            crate::storage::engines::sst::staged_write::StagedSegmentWrite::begin(&staging_url)
+                .await
+                .context("Failed to prepare staged segment write")?;
+
         // Count entries for writing
         let entries_written = sorted_vectors.len() as u64;
 
@@ -386,8 +398,9 @@ impl SstEngine {
 
                 tracing::debug!(entries_written, dimension, "Writing vectors to Arrow block");
 
-                // Convert staging URL to local path for ArrowBlockWriter
-                let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
+                // Local write path from the staged write (uploaded on finalize
+                // when the staging URL is remote).
+                let staging_path = staged.local_path();
 
                 // Ensure parent directory exists
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
@@ -424,7 +437,9 @@ impl SstEngine {
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
                 use crate::storage::engines::sst::segment_format::write_pax_segment_full;
-                let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
+                // Local write path from the staged write (uploaded on finalize
+                // when the staging URL is remote).
+                let staging_path = staged.local_path();
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
                     tokio::fs::create_dir_all(parent)
                         .await
@@ -487,6 +502,13 @@ impl SstEngine {
                 }
             }
         }
+
+        // Promote the locally staged bytes to the (possibly remote) staging URL
+        // so the atomic commit has a real file to move.
+        let _staged_bytes = staged
+            .finalize(self.filesystem())
+            .await
+            .context("Failed to upload staged segment to the staging URL")?;
 
         // Get actual bytes written from the filesystem
         let fs = self.filesystem().get_filesystem(&staging_url)?;

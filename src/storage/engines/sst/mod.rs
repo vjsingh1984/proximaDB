@@ -228,6 +228,7 @@ pub mod error;
 pub mod extraction;
 pub mod filter_methods;
 pub mod flush_eventlog_integration;
+pub(crate) mod staged_write;
 // Quantization now handled by unified compute module
 pub mod compactor_impl;
 pub mod indexed_reader;

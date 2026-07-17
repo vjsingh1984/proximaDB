@@ -160,3 +160,23 @@ fallback, external-collections operational registry, collection-pinning registry
 primary-pod `SidecarOnly` default, legacy document WAL, observability WAL audit) — file
 separate TDs per surface as they are prioritized. Env-var bootstrap consolidation stays
 TD-OBJSTORE-3.
+
+From the staged-segment-I/O review (defect-6 class close-out):
+
+* *Streaming/multipart segment upload* — `StagedSegmentWrite::finalize` buffers the
+  whole segment in RAM; bounded for flush (memtable-sized) but a compaction output
+  merges N inputs. Needs a streaming `FileSystem` upload shape.
+* *Segment cache for cloud reads* — `search_arrow_file` and the exact PAX scan are
+  per-query full-object GETs on cloud bases (previously they read a broken local
+  artifact); round-trips are the dominant cost term, so front them with the
+  footer/segment cache.
+* *Scratch sweep* — `StagedSegmentWrite`/`LocalizedSegment` now carry Drop guards,
+  but crash-stranded files in `proximadb-flush-staging`/`proximadb-segment-scratch`
+  need an age-based startup sweep (uuid names make it cross-process safe).
+* *`sst/extraction.rs` audit* — retains a `file://` strip with a SILENT-skip failure
+  mode (cloud URL survives the strip, `Path::exists()` false, file quietly dropped
+  from AXIS extraction). Same class, different blast radius; also `nova`/`swift`
+  extraction + the DataFusion `pax_adapter` (local-input paths today).
+* *Cloud-compaction e2e* — the compaction staged-write arm is emulator-covered only
+  transitively; add an armed-compaction restart proof on Azurite (flush ×2 →
+  compaction:on → restart → verify) to the QA tier.
