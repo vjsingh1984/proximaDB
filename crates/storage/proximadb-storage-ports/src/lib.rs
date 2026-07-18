@@ -282,4 +282,13 @@ pub trait GraphWalPort: Send + Sync {
     /// Append a non-data canonical-sync marker; returns the assigned sequence
     /// number (LSN).
     async fn append_graph_marker(&mut self, marker: MarkerKind) -> Result<u64>;
+
+    /// Flush any buffered WAL frames to durable storage.
+    async fn flush(&mut self) -> Result<()>;
+
+    /// Reclaim WAL segments fully covered by a durable snapshot whose canonical
+    /// checkpoint is at `checkpoint_lsn` (every segment whose frames all precede
+    /// the matching `CanonicalEmission(checkpoint_lsn)` marker). Returns the
+    /// number of segments reclaimed.
+    async fn truncate_through_canonical_marker(&mut self, checkpoint_lsn: u64) -> Result<u64>;
 }

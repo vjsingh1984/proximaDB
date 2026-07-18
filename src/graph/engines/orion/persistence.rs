@@ -153,8 +153,12 @@ pub struct OrionPersistence {
     /// changes are the Part 2 follow-up slice).
     canonical_wal_path: Option<PathBuf>,
 
-    /// WAL writer for unified operations
-    wal_writer: Option<Arc<tokio::sync::Mutex<UnifiedWALWriter>>>,
+    /// WAL sink for graph operations. The engine appends through the
+    /// [`GraphWalPort`] dependency-inversion port (injected by the composition
+    /// root as the unified WAL writer), so it never names the concrete writer
+    /// or the unified operation type — a prerequisite for extracting ORION into
+    /// its own crate without a cyclic dependency on the root storage layer.
+    wal_writer: Option<Arc<tokio::sync::Mutex<dyn proximadb_storage_ports::GraphWalPort>>>,
 
     /// Compression configuration
     compression: CompressionAlgorithm,
@@ -171,7 +175,7 @@ impl std::fmt::Debug for OrionPersistence {
             .field("graph_id", &self.graph_id)
             .field("base_url", &self.base_url)
             .field("wal_path", &self.wal_path)
-            .field("wal_writer", &"<UnifiedWALWriter>")
+            .field("wal_writer", &"<dyn GraphWalPort>")
             .field("compression", &self.compression)
             .field("compression_level", &self.compression_level)
             .field("max_snapshots", &self.max_snapshots)
@@ -273,7 +277,10 @@ impl OrionPersistence {
                     ))
                 })?;
 
-            // Initialize WAL writer with path (not URL)
+            // Initialize WAL writer with path (not URL), then erase it to the
+            // GraphWalPort port the engine speaks. The unsizing coercion
+            // `Arc<Mutex<UnifiedWALWriter>>` -> `Arc<Mutex<dyn GraphWalPort>>`
+            // is sound because the writer implements the port (PR #1085).
             tracing::debug!("Creating WAL writer with path: {}", wal_path_str);
             let wal_writer = UnifiedWALWriter::new(wal_path_str.clone())
                 .await
@@ -283,11 +290,10 @@ impl OrionPersistence {
                     )
                 })?;
             tracing::debug!("WAL writer created successfully");
+            let wal_writer: Arc<tokio::sync::Mutex<dyn proximadb_storage_ports::GraphWalPort>> =
+                Arc::new(tokio::sync::Mutex::new(wal_writer));
 
-            (
-                Some(wal_path),
-                Some(Arc::new(tokio::sync::Mutex::new(wal_writer))),
-            )
+            (Some(wal_path), Some(wal_writer))
         } else {
             (None, None)
         };
@@ -774,15 +780,12 @@ impl OrionPersistence {
     /// configured.
     pub async fn append_canonical_emission_marker(&self, lsn: u64) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::wal_operations::{
-                MarkerKind, UnifiedWALOperation,
-            };
+            use proximadb_graph_model::MarkerKind;
 
-            let unified_op = UnifiedWALOperation::GraphMarker(MarkerKind::CanonicalEmission(lsn));
             wal_writer
                 .lock()
                 .await
-                .append(unified_op)
+                .append_graph_marker(MarkerKind::CanonicalEmission(lsn))
                 .await
                 .map_err(|e| {
                     tracing::error!(
@@ -849,8 +852,6 @@ impl OrionPersistence {
     /// Write node operation to WAL
     pub async fn write_node_operation(&self, node: Node) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
-
             tracing::debug!("Writing node operation to WAL for node: {}", node.id);
 
             let graph_op = GraphOperation::CreateNode {
@@ -858,11 +859,10 @@ impl OrionPersistence {
                 node,
             };
 
-            let unified_op = UnifiedWALOperation::GraphOp(graph_op);
             wal_writer
                 .lock()
                 .await
-                .append(unified_op)
+                .append_graph_op(graph_op)
                 .await
                 .map_err(|e| {
                     tracing::error!("WAL append failed: {:?}", e);
@@ -882,18 +882,15 @@ impl OrionPersistence {
     /// Write edge operation to WAL
     pub async fn write_edge_operation(&self, edge: Edge) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
-
             let graph_op = GraphOperation::CreateEdge {
                 graph_id: self.graph_id.clone(),
                 edge,
             };
 
-            let unified_op = UnifiedWALOperation::GraphOp(graph_op);
             wal_writer
                 .lock()
                 .await
-                .append(unified_op)
+                .append_graph_op(graph_op)
                 .await
                 .map_err(|e| {
                     ProximaDBError::Storage(
@@ -912,8 +909,6 @@ impl OrionPersistence {
         }
 
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
-
             // Wrap all CreateEdge operations in a single batch GraphOp to reduce WAL traffic
             let batch = GraphOperation::BatchOperation {
                 operations: edges
@@ -926,11 +921,10 @@ impl OrionPersistence {
                     .collect(),
             };
 
-            let unified_op = UnifiedWALOperation::GraphOp(batch);
             wal_writer
                 .lock()
                 .await
-                .append(unified_op)
+                .append_graph_op(batch)
                 .await
                 .map_err(|e| {
                     ProximaDBError::Storage(
@@ -949,8 +943,6 @@ impl OrionPersistence {
         }
 
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
-
             // Wrap all CreateNode operations in a single batch GraphOp to reduce WAL traffic
             let batch = GraphOperation::BatchOperation {
                 operations: nodes
@@ -963,11 +955,10 @@ impl OrionPersistence {
                     .collect(),
             };
 
-            let unified_op = UnifiedWALOperation::GraphOp(batch);
             wal_writer
                 .lock()
                 .await
-                .append(unified_op)
+                .append_graph_op(batch)
                 .await
                 .map_err(|e| {
                     ProximaDBError::Storage(
@@ -983,8 +974,6 @@ impl OrionPersistence {
     /// For updates, we write the full updated node (upsert semantic)
     pub async fn write_update_node_operation(&self, node: Node) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
-
             tracing::debug!("Writing update node operation to WAL for node: {}", node.id);
 
             // Use CreateNode with upsert semantic - during recovery, this will overwrite existing node
@@ -993,11 +982,10 @@ impl OrionPersistence {
                 node,
             };
 
-            let unified_op = UnifiedWALOperation::GraphOp(graph_op);
             wal_writer
                 .lock()
                 .await
-                .append(unified_op)
+                .append_graph_op(graph_op)
                 .await
                 .map_err(|e| {
                     tracing::error!("WAL append failed for update node: {:?}", e);
@@ -1019,8 +1007,6 @@ impl OrionPersistence {
     /// Write node delete operation to WAL
     pub async fn write_delete_node_operation(&self, node_id: &NodeId) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
-
             tracing::debug!("Writing delete node operation to WAL for node: {}", node_id);
 
             let graph_op = GraphOperation::DeleteNode {
@@ -1028,11 +1014,10 @@ impl OrionPersistence {
                 node_id: node_id.clone(),
             };
 
-            let unified_op = UnifiedWALOperation::GraphOp(graph_op);
             wal_writer
                 .lock()
                 .await
-                .append(unified_op)
+                .append_graph_op(graph_op)
                 .await
                 .map_err(|e| {
                     tracing::error!("WAL append failed for delete node: {:?}", e);
@@ -1055,8 +1040,6 @@ impl OrionPersistence {
     /// For updates, we write the full updated edge (upsert semantic)
     pub async fn write_update_edge_operation(&self, edge: Edge) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
-
             tracing::debug!("Writing update edge operation to WAL for edge: {}", edge.id);
 
             // Use CreateEdge with upsert semantic - during recovery, this will overwrite existing edge
@@ -1065,11 +1048,10 @@ impl OrionPersistence {
                 edge,
             };
 
-            let unified_op = UnifiedWALOperation::GraphOp(graph_op);
             wal_writer
                 .lock()
                 .await
-                .append(unified_op)
+                .append_graph_op(graph_op)
                 .await
                 .map_err(|e| {
                     tracing::error!("WAL append failed for update edge: {:?}", e);
@@ -1091,8 +1073,6 @@ impl OrionPersistence {
     /// Write edge delete operation to WAL
     pub async fn write_delete_edge_operation(&self, edge_id: &EdgeId) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
-
             tracing::debug!("Writing delete edge operation to WAL for edge: {}", edge_id);
 
             let graph_op = GraphOperation::DeleteEdge {
@@ -1100,11 +1080,10 @@ impl OrionPersistence {
                 edge_id: edge_id.clone(),
             };
 
-            let unified_op = UnifiedWALOperation::GraphOp(graph_op);
             wal_writer
                 .lock()
                 .await
-                .append(unified_op)
+                .append_graph_op(graph_op)
                 .await
                 .map_err(|e| {
                     tracing::error!("WAL append failed for delete edge: {:?}", e);
@@ -1126,13 +1105,10 @@ impl OrionPersistence {
     /// Log a generic graph operation to WAL
     pub async fn log_operation(&self, op: GraphOperation) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
-
-            let unified_op = UnifiedWALOperation::GraphOp(op);
             wal_writer
                 .lock()
                 .await
-                .append(unified_op)
+                .append_graph_op(op)
                 .await
                 .map_err(|e| {
                     ProximaDBError::Storage(

@@ -772,6 +772,17 @@ impl GraphWalPort for UnifiedWALWriter {
     async fn append_graph_marker(&mut self, marker: MarkerKind) -> anyhow::Result<u64> {
         self.append(UnifiedWALOperation::GraphMarker(marker)).await
     }
+
+    async fn flush(&mut self) -> anyhow::Result<()> {
+        UnifiedWALWriter::flush(self).await
+    }
+
+    async fn truncate_through_canonical_marker(
+        &mut self,
+        checkpoint_lsn: u64,
+    ) -> anyhow::Result<u64> {
+        UnifiedWALWriter::truncate_through_canonical_marker(self, checkpoint_lsn).await
+    }
 }
 
 /// WAL reader for recovery
