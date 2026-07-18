@@ -8,16 +8,14 @@
 | Field | Value
 
 | Status
-| **Lossy bake-off rejected (2026-07-16); lossless redesign active.**
-  Residual SQ6 was the only compact arm to clear recall at N=100k, but saved only
-  7.0% query bytes and was 3.4x slower. TurboQuant4 and multi-bit RaBitQ4 missed
-  recall by about six points. At genuine N=1M, flat SQ8 itself measured recall
-  `0.968` and `61` GETs/query; SQ6 fell to `0.950`. No codec/footer-v2 writer from
-  this bake-off ships. Quantization is the only permitted lossy boundary. The
-  redesign losslessly compresses the selected representation (SQ8 codes or exact
-  f32 bits), so decode reproduces it bit-for-bit; it never adds residual
-  quantization error. Adapt survivor M, wire `IopsBudget`, and scale the cluster
-  producer in parallel with this independently testable bytes lever.
+| **Partially resolved by #1064 (2026-07-17).** Footer v2, the shared exact
+  clustered-SQ8 transform, and scalar all-null/LZ4 encoding shipped default OFF.
+  The scalar arm cleared the end-to-end bytes gate (`32,020,233 -> 25,067,186`
+  bytes/query, -21.7%) with recall `0.991`, 19 GETs/query, and no p95 regression.
+  The clustered vector transform remains evidence-gated; ADR-065/#1069 hoisted
+  SQ8 into Region B for the default coalesced path, superseding inline-block SQ8
+  compression as that path's dominant lever. Exact-f32 compression and shared
+  ProximaBlocks adoption remain open and must follow current region evidence.
 
 | Severity
 | High — PR1 measured `bytes_read/query = 31.7 MB` at recall@10 `0.984` and
@@ -74,7 +72,14 @@ locality all contribute to the actual route-cost term.
 
 The 2026-07-16 equal-protocol bake-off and full N=1M follow-up are recorded in
 link:../../_internal/status/RDSTRAT6_BYTES_BAKEOFF_SIFT_2026_07_16.adoc[the dated evidence].
-No arm met this definition of done.
+No lossy bake-off arm met this definition of done.
+
+The subsequent lossless scalar arm did meet the bytes sub-gate and shipped in
+#1064. Its dated evidence is
+link:../../_internal/status/RDSTRAT7_LOSSLESS_SCALAR_BYTES_SIFT_2026_07_16.adoc[TD-RDSTRAT-7 lossless scalar bytes]
+and ledger claim `rdstrat7_lossless_scalar_bytes_sift`. ADR-065/#1069 later
+hoisted SQ8 into Region B, so future vector-byte measurements use the region
+layout rather than treating the pre-Region-B block baseline as current.
 
 == Settled constraints inherited from ADR-062
 
@@ -566,13 +571,21 @@ only when a supported stripe and cluster plan are present. Otherwise the writer
 emits the existing raw f32/SQ8 representation and declares no transform or byte
 compression in the encoding map.
 
+Scalar all-null elision and post-codec LZ4 use the independent
+`PROXIMADB_PAX_LOSSLESS_SCALAR=1` gate, also default OFF. This is the accepted
+#1064 bytes arm. `ColumnMeta` declares LZ4 in-place; realized non-wins remain
+flat, and all-null pages are declared by `null_count == row_count` with an empty
+payload. No additional lossy boundary or nested format version is introduced.
+
 Fallback is selected independently per micro-chunk for missing plans,
 inconsistent dimensions, undersized runs, unsupported compressor, or
 insufficient realized savings. Once a block explicitly declares a transform or
 compressor, decode errors fail closed; the reader does not guess raw/SQ8 bytes.
 
-The lossless encoding remains OFF until its bitwise, bytes, CPU, and latency
-gates are accepted. It does not change the coalesced-RaBitQ default.
+Both encodings remain default OFF. The scalar arm has accepted bitwise and
+end-to-end evidence; the clustered vector arm remains off pending evidence on a
+layout where it is still load-bearing. Neither changes the coalesced-RaBitQ or
+ADR-065 Region-B defaults.
 
 == TDD implementation sequence
 
@@ -647,9 +660,11 @@ survivor-block codec and is not tuned in the bytes PR.
 * All repository format, clippy/check, server-binary, TD uniqueness, attribution,
   and work-commit guards pass before the implementation PR targets `develop`.
 
-The 2026-07-16 bake-off satisfies the evidence requirement but **does not
-satisfy the acceptance gates**. The TD remains active; none of the prototype
-codec tags or footer-v2 writes are accepted for production.
+The lossy 2026-07-16 bake-off remains rejected. The later lossless #1064 scalar
+arm **does satisfy the bytes sub-gate** and its footer-v2/shared-codec foundation
+ships default OFF. This TD remains partially open for evidence-gated exact-f32
+compression and shared ProximaBlocks adoption; clustered inline SQ8 is not a
+priority on ADR-065's default coalesced Region-B path.
 
 == History
 
@@ -667,3 +682,9 @@ codec tags or footer-v2 writes are accepted for production.
   lossy boundary. Replaced residual quantization with shared lossless
   clustered-FOR/SQ8-code and exact base-XOR/f32 transforms plus optional
   lossless byte compression, each selected by realized total bytes.
+* 2026-07-17 — #1064 shipped footer v2, the default-OFF clustered SQ8 transform,
+  and the independently gated scalar all-null/LZ4 arm. The scalar arm cleared
+  the bytes gate by 21.7% at unchanged recall/GETs/p95.
+* 2026-07-17 — ADR-065/#1069 hoisted SQ8 into Region B on the default coalesced
+  layout. Remaining vector-byte work follows the region roadmap: selective
+  Region-A/B probing (TD-RDSTRAT-8) first; exact Region C only with evidence.

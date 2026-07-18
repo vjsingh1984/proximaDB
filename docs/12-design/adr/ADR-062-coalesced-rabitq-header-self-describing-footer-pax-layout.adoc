@@ -321,6 +321,17 @@ recall `0.921` and `0.917`. At genuine N=1M the flat control itself fell to reca
 durable tag. Its evidence sizes survivor and geometry prerequisites; it does not authorize
 another lossy storage tier.
 
+**Implementation reconciliation (2026-07-17).** #1064 shipped the footer-v2 and
+shared-codec foundation plus an independently gated, lossless scalar arm. Scalar
+all-null elision and post-codec LZ4 reduced the same SIFT N=100k end-to-end
+counter from `32,020,233` to `25,067,186` bytes/query (-21.7%) at recall `0.991`,
+19 GETs/query, and unchanged p95. The clustered SQ8 transform also shipped
+default OFF but has no accepted end-to-end win. ADR-065/#1069 subsequently
+hoisted SQ8 into Region B on the default coalesced layout, so Region-B density
+and selective probing supersede inline-block SQ8 compression there. D8 remains
+applicable to scalar fields, non-coalesced layouts, and a future exact-f32
+Region C only when their own evidence gates pass.
+
 The N=1M result measures two prerequisites to D6/D8. Top-M is fixed at 1,000 for top-10
 regardless of segment rows; it shrinks from 1% of N=100k to 0.1% of N=1M and must become a
 measured segment-scale/confidence rule. `IopsBudget` exists, but PAX still cuts at a 3 MiB
@@ -416,10 +427,12 @@ leaving RaBitQ at the header.
 * **TD-RDSTRAT-7 bytes ratchet:** same end-to-end protocol, recall@10 `>= 0.98`, no material
   GET regression, bytes/query materially below `31.7 MB`, lower persisted bytes, and no material
   release-profile decode-CPU or p95 latency regression. Codec-only ratios are diagnostic.
-* **N=1M scale ratchet (measured 2026-07-16, currently failing):** flat SQ8
+* **N=1M scale ratchet (historical failure, restored by #1060):** flat SQ8
   recall@10 `0.968`, `61` GETs/query, `138,851,704` bytes/query. Restore
   recall/GET via adaptive M and actual-byte block geometry before accepting
-  another bytes codec. Evidence: `RDSTRAT6_BYTES_BAKEOFF_SIFT_2026_07_16.adoc`.
+  another bytes codec. #1060 subsequently measured recall `0.990` and 36
+  GETs/query; ADR-065/#1069 then replaced inline SQ8 block fetches with Region B.
+  Evidence: `RDSTRAT6_BYTES_BAKEOFF_SIFT_2026_07_16.adoc` and ADR-065.
 * Compaction test: N→1 merge yields fewer RaBitQ GETs/query + re-clustered tighter locality.
 
 == Initial open questions and resolution

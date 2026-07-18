@@ -19,6 +19,7 @@
 //!   - `sift_base.fvecs`       (1 000 000 × 128)  — insert set
 //!   - `sift_query.fvecs`      (10 000 × 128)     — query set
 //!   - `sift_groundtruth.ivecs`(10 000 × 100)     — true neighbours (full 1M only)
+//!
 //! Download (qa-gate `sift-pax-recall` job or local):
 //! ```text
 //! curl -L -O https://huggingface.co/datasets/qbo-odp/sift1m/resolve/main/<file>
@@ -30,6 +31,8 @@
 //!                                CI floor); unset → full 1M + provided GT
 //!   PROXIMADB_SIFT_QUERIES       cap the query count (default 1000)
 //!   PROXIMADB_SIFT_RECALL_FLOOR  ratchet threshold (default 0.90)
+//!   PROXIMADB_SIFT_COALESCED_BYTE_BUDGET optional bytes/query ceiling for the
+//!                                coalesced end-to-end eval (unset = report only)
 //!   PROXIMADB_RECALL_DATASET_REQUIRED fail instead of skip when corpus is absent
 //!
 //! nextest isolates each test in its own process, so the PAX env vars set here
@@ -537,6 +540,10 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|n| *n > 0)
         .unwrap_or(60);
+    let byte_budget: Option<u64> = std::env::var("PROXIMADB_SIFT_COALESCED_BYTE_BUDGET")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|bytes| *bytes > 0);
 
     let base = read_vec_records_f32(&base_path, subset_n).expect("read sift_base.fvecs");
     let n = base.len();
@@ -713,4 +720,10 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
         per_q_gets < get_budget,
         "coalesced range_gets/query = {per_q_gets} >= budget {get_budget} (not ≪ 370)"
     );
+    if let Some(byte_budget) = byte_budget {
+        assert!(
+            per_q_bytes < byte_budget,
+            "coalesced bytes_read/query = {per_q_bytes} >= budget {byte_budget}"
+        );
+    }
 }
