@@ -362,7 +362,10 @@ pub enum MarkerKind {
 #[derive(Debug, Clone)]
 pub enum GraphWalRecord {
     /// A graph data operation (CreateNode/CreateEdge/Update*/Delete*/Batch/…).
-    Op(GraphOperation),
+    /// Boxed because `GraphOperation` (itself an enum over Node/Edge/Batch) is
+    /// far larger than [`MarkerKind`]; boxing the heavy variant keeps the enum
+    /// pointer-sized and `Vec<GraphWalEntry>` compact during replay.
+    Op(Box<GraphOperation>),
     /// A non-data canonical-sync marker.
     Marker(MarkerKind),
 }

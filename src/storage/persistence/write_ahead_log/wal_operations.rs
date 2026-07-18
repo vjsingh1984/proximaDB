@@ -798,7 +798,7 @@ impl GraphWalReaderPort for UnifiedWALReader {
         let mut out = Vec::with_capacity(entries.len());
         for entry in entries {
             let record = match entry.operation {
-                UnifiedWALOperation::GraphOp(op) => GraphWalRecord::Op(op),
+                UnifiedWALOperation::GraphOp(op) => GraphWalRecord::Op(Box::new(op)),
                 UnifiedWALOperation::GraphMarker(marker) => GraphWalRecord::Marker(marker),
                 // Non-graph unified ops (Document/Observability/Hybrid/…) are
                 // not part of a graph engine's stream — filtered out.

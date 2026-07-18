@@ -1235,7 +1235,7 @@ impl OrionPersistence {
                 // data ops and skip the canonical-sync markers (they carry no
                 // engine state to reapply).
                 if let GraphWalRecord::Op(graph_op) = entry.record {
-                    self.apply_graph_operation(engine, graph_op).await?;
+                    self.apply_graph_operation(engine, *graph_op).await?;
                     replayed += 1;
                 }
             }
