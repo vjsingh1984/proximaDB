@@ -103,7 +103,7 @@ asserted_in = [
   "docs/10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc",
 ]
 bench_source = "tests/sift_pax_recall_ratchet_test.rs"
-bench_command = "OFF (control): PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture; ON (scalar LZ4): prepend PROXIMADB_PAX_LOSSLESS_SCALAR=1"
+bench_command = "OFF (control): PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture; ON (scalar LZ4): prepend PROXIMADB_PAX_LOSSLESS_SCALAR=1 PROXIMADB_SIFT_COALESCED_BYTE_BUDGET=26000000"
 artifact = "docs/_internal/status/RDSTRAT7_LOSSLESS_SCALAR_BYTES_SIFT_2026_07_16.adoc"
 hardware = "Local macOS arm64 (Apple Silicon), serialized release runs, no competing workload"
 date = "2026-07-16"
