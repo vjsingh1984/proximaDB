@@ -1,11 +1,11 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= ADR-066: Structured io_trace ETL sink — an envelope trace model landed as JSONL+zstd spool → object-store, compacted to star-schema Parquet, co-designed for object-storage economics
+= ADR-066: Structured io_trace ETL sink — versioned envelope → JSONL+zstd landing → Iceberg-managed Parquet
 
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Proposed** (filed 2026-07-17). Follow-up to link:ADR-064-query-engine-pipeline-decision-dispatch-lowering-trace.adoc[ADR-064] Decision 3 (the in-process structured trace) — this ADR takes that trace *durable and queryable*. Decider sign-off pending. Implemented under link:../../10-quality/td/TD-TRACE-2-structured-io-trace-etl-sink.adoc[TD-TRACE-2].
+| Status | **Proposed; partially implemented** (reconciled 2026-07-17). S1 local sealing shipped in #1084 and S2 direct object-store dispatch in #1087. The current path is best-effort observability, not a durable/billing-grade ledger; acceptance is gated on the delivery, identity, governance, and warehouse-commit amendments below. Implemented under link:../../10-quality/td/TD-TRACE-2-structured-io-trace-etl-sink.adoc[TD-TRACE-2].
 | Decider | Vijaykumar Singh (2026-07-17)
 | Date | 2026-07-17
 | Relates to | link:ADR-064-query-engine-pipeline-decision-dispatch-lowering-trace.adoc[ADR-064] (the per-query TRACE this makes durable), link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (co-design spine — meter every dimension, measured-not-asserted), link:ADR-036-azure-objectstore-orientation.adoc[ADR-036] (per-object access tier = the at-rest GB-month cost lever this ADR pulls), link:ADR-027-unified-storage-and-metering-substrate.adoc[ADR-027] (metering substrate — billing never gated; this sink is a *separate* observer). Deliberately stays OFF the sampled `predicate_diagnostics` **quality/eval** bus (a distinct concern — see D2).
@@ -25,7 +25,7 @@ and read at `instrument()` exit by three observers: the cost model (route), the 
 always-on **billing** observer (ADR-027). ADR-064 Decision 3 / TD-TRACE-1 added the *structured*
 content (routing reasons, lowering declines, and — Slice 2 — the per-operator `exec[]` vector).
 
-But the trace is **ephemeral and shapeless**:
+Before #1084/#1087 the trace was **ephemeral and shapeless**:
 
 [listing]
 ----
@@ -37,13 +37,13 @@ But the trace is **ephemeral and shapeless**:
        │ no DURABLE, QUERYABLE history                                                                       │ not ETL-native: parse log lines back out
 ----
 
-Two structural problems, from first principles:
+S1/S2 now provide an external flat JSONL+zstd stream, but two target-model
+problems remain:
 
-1. **No durable, queryable history.** The snapshot dies with the request. The only external landing is
-   a *formatted `tracing::info!` line* mixed into `proximadb.log`, gated OFF by default, that must be
-   *re-parsed* to recover structure — fragile, lossy, and useless for fleet-wide analytics (which
-   routes regress, which tenants pay the most GET round-trips, where the cost model mis-attributes).
-   The billing observer ships *aggregates* per tenant, not the *per-query evidence* behind them.
+1. **External history exists, but delivery is not durable.** The old formatted-log-only path was
+   fragile and not ETL-native; #1084/#1087 now emit structured JSONL+zstd. The sink still has a
+   bounded in-memory queue, drops oldest records, and does not retry local fallback files after
+   restart. The billing observer ships aggregates per tenant, not a per-query durable ledger.
 
 2. **The snapshot is one wide, sparse, ever-widening struct.** `IoTraceSnapshot` is a flat superset:
    object-store counters, footer hits, `compute_ms`, wall spans, egress, route, the plan-geometry
@@ -86,38 +86,45 @@ storage rewards (D3). The current flat `IoTraceSnapshot` is the **migration sour
 the header↔payload split lands at a stable seam so **billing is never broken** (it already reads only
 header-class fields — `compute_ms`, `egress_bytes`).
 
-=== D2 — Two buses: cost/I-O trace (this one) vs quality/eval, never merged
+=== D2 — Two buses and two durability classes, never conflated
 
-The cost/I-O trace is **per-query, billing-grade, emitted for every query**. Quality/eval signals —
+The cost/I-O trace is intended to be **per-query**, but this sink is
+**best-effort observability evidence**, not billing authority. Quality/eval signals —
 recall@k, hybrid/RRF ranking, semantic relevance — are **sampled, eval-grade**, and already ride the
 `predicate_diagnostics` bus; TD-TRACE-1 named recall an explicit non-goal. Merging them would
-(a) tax the hot path with sampling/scoring logic it must not carry, and (b) mix billing-grade evidence
+(a) tax the hot path with sampling/scoring logic it must not carry, and (b) mix cost-accounting fields
 with sampled quality data in one schema. **They stay two buses.** This ADR governs only the cost/I-O
 trace.
+
+Billing remains the fail-closed aggregate path in ADR-027. A future per-query billing/audit ledger
+would require a separate durable outbox with explicit acknowledgement, replay, and retention—not a
+flag that silently upgrades this drop-capable sink. Therefore no ADR, UI, or downstream reconciliation
+may call the current stream “billing-grade.”
 
 === D3 — Format: two formats, two tiers, config-selected
 
 [listing]
 ----
-  HOT write path  ──▶  SPOOL  = JSONL + zstd            ──async compaction──▶  WAREHOUSE = star-schema Parquet
+  HOT write path  ──▶  LANDING = JSONL + zstd           ──async compaction──▶  WAREHOUSE = Iceberg + star-schema Parquet
                        (append-native, one record/line)                        trace_header  +  satellites:
-                       schema-evolution-free (serde #[default])                 trace_exec / trace_vector / trace_graph …
+                       additive-compatible (serde #[default])                  trace_exec / trace_vector / trace_graph …
                        modality heterogeneity for free                          joined on query_id
                        debuggable (zcat | jq)                                   each satellite internally HOMOGENEOUS
 ----
 
-* **Spool = JSONL + zstd** on the hot write path. Append-only (one record per line), so no rewrite;
-  **schema-evolution-free** because the snapshot already round-trips under `#[serde(default)]`
-  back-compat; it carries modality heterogeneity *for free* (each line is whatever payload the query
-  produced); and it is directly debuggable (`zcat | jq`). It is the *lowest-ceremony durable format* —
-  the right choice where the constraint is a cheap, robust append.
-* **Warehouse = star-schema Parquet**, produced by the async seal/compaction step:
+* **Landing format = JSONL + zstd.** One record per line avoids schema-bound encoding on the query
+  path; `#[serde(default)]` supports additive reader compatibility but does not eliminate the need
+  for an explicit envelope `schema_version`.
+  It carries modality heterogeneity cheaply and remains directly debuggable (`zcat | jq`).
+* **Warehouse = Iceberg-managed star-schema Parquet**, produced by async compaction:
   a `trace_header` fact table + **one satellite per modality** (`trace_exec`, `trace_vector`,
-  `trace_graph`, …), joined on `query_id`. Each satellite is internally homogeneous → columnar
+  `trace_graph`, …), joined on full event identity, with `query_id` retained as the analytical query
+  join key. Each satellite is internally homogeneous → columnar
   compression and projection/predicate pushdown *win* (the exact benefit the flat sparse struct
   forfeits). Flattening the relational `exec[]` LIST into one `trace_exec` **row per operator**
   sidesteps the nested-LIST concern and makes "which operator is slowest across the fleet" a trivial
-  DataFusion scan.
+  DataFusion scan. Parquet files alone are not discovery/commit authority; the standard-outside
+  warehouse surface is an Iceberg table/manifest commit.
 * **Reject Avro.** Avro is row-oriented with no predicate/projection pushdown; it earns its keep only
   as a Kafka/schema-registry wire format, which is out of scope (D2 non-goal). In a warehouse read
   through DataFusion it would be transcoded to Parquet anyway — so we produce Parquet directly.
@@ -127,21 +134,31 @@ trace.
 The dominant cost term for a cloud trace stream is **object-store request count + GB-month at rest**,
 *not* CPU. The transport is co-designed to that:
 
-* **Background async only.** The observer at `instrument()` exit *only enqueues* the record to a bounded
-  local spool. A background task **seals a segment on size OR interval (whichever first)**, compresses
-  zstd, and PUTs. The query path **never** compresses or PUTs — zero hot-path I/O, zero added latency
-  (co-design: don't pay CPU/round-trips on the hot path).
-* **Batch to the efficient PUT size.** Target **4MB objects by default (1MB option)** — a natural
-  multipart part-size, good PUT throughput, and a sensible ranged-read granularity for the downstream
-  DataFusion warehouse read. One 4MB PUT beats thousands of tiny ones (requests are the metered unit).
-* **Keys via `DrPathBuilder`**, e.g. `data/_system/observability/io_trace/dt=YYYY-MM-DD/{host}-{seq}.jsonl.zst`
-  (a system stream), or partitioned by `tenant_id` when traces are billing-grade evidence that needs
-  per-tenant isolation (D6-governance).
+* **No query-path I/O.** The observer at `instrument()` exit currently serializes one JSON record and
+  enqueues it to a bounded **in-memory ingress queue**. Serialization is real hot-path CPU; measure
+  and bound it rather than calling the path “enqueue only.” A background task seals on size OR
+  interval, compresses, and PUTs. The query path never compresses or performs filesystem/network I/O.
+  `segment_bytes` means **uncompressed JSONL bytes**. Compressed size is observed; 4 MiB is not called
+  a multipart part size (this is a single PUT, and backend multipart minimums differ).
+* **Crash-aware delivery state.** Seal locally as an immutable pending file, upload with conditional
+  create, and retire the pending file only after success or content verification. Startup inventories
+  and retries pending files. A direct PUT failure that writes a file nobody retries is not a durable
+  spool. Drops, seal failures, upload failures, pending bytes, and last-success timestamps are metrics
+  and health—not warnings alone.
+* **Collision-free identity and idempotency.** Every record carries
+  `{schema_version, writer_incarnation_uuid, sequence, query_id, event_time}`. Keys use
+  `{date}/{writer_uuid}-{first_seq}-{last_seq}-{content_digest}.jsonl.zst`; conditional create plus
+  digest verification makes retry idempotent. Wall-clock nanoseconds alone are not unique across pods.
+* **Keys via `DrPathBuilder`.** The default cross-tenant stream lives under `_operator/io_trace/` and
+  requires operator-only ACLs/encryption. Tenant-isolated mode writes one tenant per object beneath
+  that tenant's structural data root; a `tenant_id=` partition under one shared operator object is
+  partitioning, not isolation.
 * **Access tier is the at-rest lever (ADR-036).** PUT these objects **Cool/Cold** via the canonical,
   cloud-neutral `ObjectAccessTier` / `FileOptions.storage_class` (never per-cloud strings) — GB-month is
   the cost term, moved by the tier, not the scheme.
-* **Spool overflow → drop-oldest.** The spool is bounded (`spool_max_bytes`); on overflow it drops the
-  oldest segment. Observability is **best-effort** and must *never* block or OOM the database.
+* **Ingress overflow → drop-oldest.** The in-memory queue is bounded (`spool_max_bytes`); on overflow
+  it drops the oldest record. Best-effort observability must never block or OOM the database, and the
+  exact dropped records/bytes are surfaced.
 
 === D5 — Consumption: a separate, gated observer; billing untouched
 
@@ -157,19 +174,30 @@ default-**OFF**, env/TOML-gated, and reads the same snapshot without touching th
 [observability.io_trace_sink]
 enabled          = false          # default OFF; env: PROXIMADB_IO_TRACE_SINK=1
 local_dir        = "./log/io_trace"
-segment_bytes    = 4194304        # seal+compress+PUT at 4 MiB (1 MiB option)
+segment_bytes    = 4194304        # uncompressed JSONL threshold
 flush_interval_s = 60             # ...or this, whichever first (bounds latency-to-warehouse)
 compression      = "zstd"
-format           = "jsonl"        # jsonl | parquet (parquet = DataFusion-native ETL)
+format           = "jsonl"        # current landing format; warehouse compaction is separate
 object_store_uri = "az://…/io_trace"   # or reuse the data object-store
 access_tier      = "cool"         # Cool/Cold — GB-month lever (ADR-036)
 partition_by     = "date"         # date | tenant | host
 retention_days   = 30
 spool_max_bytes  = 268435456      # bounded spool; drop-oldest on overflow
+pending_max_bytes = 1073741824    # S2b target; never evict already-sealed pending files
 ----
 
-Every field takes an env override (12-factor). Config default-OFF ⇒ zero behavior change until an
-operator opts in.
+**Current code contact.** `enabled`, `local_dir`, `segment_bytes`, `flush_interval_s`,
+`spool_max_bytes`, `compression`, `format`, `object_store_uri`, and `access_tier` resolve today.
+Only JSONL+zstd is implemented; unsupported `format`/`compression` values must fail configuration
+instead of being accepted and ignored. `partition_by` and `retention_days` deserialize but are not
+carried into `ResolvedIoTraceSinkConfig` and have no runtime effect. They are reserved until their
+implementation and tests land; documentation must not advertise them as active controls.
+`pending_max_bytes` is an S2b target: once full, the worker preserves existing pending files and
+stops draining memory ingress, causing measured ingress drops; it never deletes sealed pending data
+to make room.
+
+Config remains default-OFF. Every active field gets a documented env override; startup emits the
+resolved delivery class and rejects contradictory settings.
 
 == 3. Co-design dimensional analysis (ADR-052 spine)
 
@@ -178,11 +206,11 @@ Each of the five physical dimensions, and the dominant cost term this ADR moves 
 [cols="1,3",options="header"]
 |===
 | Dimension | Decision & dominant cost term
-| **Object storage** | *Requests + GB-month.* Batch to 4MB PUTs (D4), zstd (3–5× on repetitive JSON), Cool/Cold access tier (D4/ADR-036), flat immutable keys via `DrPathBuilder`, lifecycle/retention GC. The record count → object count → PUT count is the knob.
+| **Object storage** | *Requests + GB-month + commit/discovery.* Batch records, zstd, Cool/Cold access tier, immutable idempotent keys via `DrPathBuilder`; Iceberg manifests commit warehouse outputs. Measure compressed object size and PUT count rather than asserting a codec ratio.
 | **Network** | *Egress round-trips.* Traces flow app→warehouse in-region, batched — few large requests, not per-query chatter. No cross-region egress on the hot path.
-| **Local disk / cache** | *Backpressure buffer.* The bounded local spool IS the write buffer and the backpressure absorber; drop-oldest bounds it. The seal size (4MB) sets the disk↔object-store handoff granularity.
-| **Compute-per-modality** | *Near-zero on the hot path.* The observer only enqueues; compress/transcode run on the background task. The **envelope+typed-payload** model (D1/D3) keeps downstream columnar compute cheap (homogeneous satellites → pushdown), the reason the flat sparse struct is rejected.
-| **Governance / security** | *Isolation + retention + no row leakage.* The trace carries `tenant_id` + counters + route, **never row data / vector values / raw query text** (join key is an opaque `query_id`). Per-tenant key partitioning is available when traces are billing-grade evidence; retention via lifecycle policy.
+| **Local disk / cache** | *Backpressure + crash gap.* The bounded memory ingress protects the DB; immutable pending files protect sealed batches across restart. Pending-byte caps and retry policy are separate from ingress drop policy.
+| **Compute-per-modality** | *Bounded serialization on query completion; compression/transcode off-path.* Measure serialization p95 and allocation. Envelope+typed payload keeps downstream satellites homogeneous.
+| **Governance / security** | *Structural isolation, least privilege, retention ordering.* Operator stream ACL/encryption is mandatory; tenant mode uses tenant roots. The trace excludes row/vector/raw-query payloads, but route/operator strings are still treated as potentially sensitive. Lifecycle may delete source JSONL only after the warehouse commit/watermark covers it.
 |===
 
 == 4. Alternatives considered — and rejected
@@ -200,7 +228,8 @@ Each of the five physical dimensions, and the dominant cost term this ADR moves 
   billing, violating ADR-027 (billing never gated); a separate observer keeps billing provably
   unaffected (D5).
 * **A5 — Synchronous upload at query time.** Rejected: puts compress + PUT round-trips on the hot path
-  (D4). Enqueue-only + background seal is the co-design-correct split.
+  (D4). Serialize+enqueue with background seal is the current split; a future zero-copy handoff may
+  reduce serialization CPU if measurement justifies the ownership complexity.
 * **A6 — Parquet on the hot write path.** Rejected: Parquet's schema rigidity fights modality
   heterogeneity and forces buffering/rewrite (write amplification) vs a JSONL append. Parquet is the
   *warehouse* format, produced by async compaction (D3).
@@ -211,16 +240,42 @@ Each of the five physical dimensions, and the dominant cost term this ADR moves 
   (S1–S2 in TD-TRACE-2), so no data-model refactor blocks the durable stream. The **envelope refactor**
   (D1) lands later at a stable seam (billing reads header-class fields throughout) as a separate slice.
 * **`query_id`.** A stable per-query id is needed to join header↔satellites; mint it at
-  `instrument()` entry if one does not already exist in the trace scope.
-* **Parquet producer.** Land JSONL on the write path; **async-compact JSONL→star-schema Parquet**
-  (keeps the write path trivial). Compaction is an optional later slice.
-* **Retention.** Prefer an object-store **lifecycle policy** for `retention_days` GC (no app cron);
-  fall back to an app GC only where lifecycle rules are unavailable.
-* **Gate.** Observe-only, **no served-result change**; gated by a JSONL/Parquet **round-trip test** and
-  the standing `check_billing_never_gated` guard; the spool is bounded (no OOM); default-OFF.
+  `instrument()` entry if one does not already exist. It does not replace writer UUID + sequence as
+  the ingestion/dedup identity.
+* **Warehouse producer.** Async compaction maps immutable input object identities to Iceberg commits.
+  Retry either observes the committed input set or produces the same deterministic output; source
+  JSONL is retained until the manifest commit and watermark are durable. Satellite rows carry the
+  source event identity, preventing duplicate operators after retry.
+* **Retention.** Prefer object-store lifecycle, but only after its minimum age exceeds worst-case
+  upload/compaction lag and the warehouse watermark covers the source. `retention_days` is currently
+  inert and cannot imply policy installation.
+* **Gate.** Observe-only, no served-result change; default-OFF and billing guard remain necessary but
+  are insufficient. The acceptance conditions below close the data-loss and governance surfaces.
 
-== 6. Status of related work
+== 6. Acceptance conditions from the first-principles pressure test
+
+. **S2 delivery hardening:** pending-file state machine, startup retry, collision-free writer
+  identity, conditional-create idempotency, and metrics/health for drop/seal/upload/pending state.
+. **Lifecycle:** duplicate installation is rejected or gracefully drains the prior worker; it never
+  aborts a live worker and loses its queue. Shutdown timeout/drop state is observable.
+. **Hot-path budget:** representative p50/p95 serialization+enqueue overhead and allocation are
+  recorded with sink OFF/ON; no query-path filesystem/network/compression work.
+. **S3 envelope:** explicit schema version and event identity; unknown payload variants remain
+  readable/skippable; billing observer input/output is byte-identical and separately tested.
+. **Governance:** operator-stream ACL/encryption contract and tenant-root mode are integration-tested;
+  no raw query, row, vector, secret, or unbounded user value enters the trace.
+. **S4 warehouse commit:** JSONL→Parquet round-trip under an Iceberg manifest, crash/retry dedup,
+  schema evolution, source-retirement watermark, and small-file compaction tests.
+. **Honest delivery label:** until a fail-closed outbox is separately designed, the sink stays
+  best-effort observability and cannot be used as billing/audit authority.
+
+**Flip verdict:** ADR-066 remains Proposed. S1/S2 validate the shape, but accepting the current text
+would bless a false durability contract. It may move to Accepted when these normative amendments are
+approved; implementation completion is then tracked independently in TD-TRACE-2.
+
+== 7. Status of related work
 
 ADR-064 Decision 3 / TD-TRACE-1 delivered the in-process structured trace: Slice 1 (routing reasons +
 lowering declines, #1051) and Slice 2 (the per-operator `exec[]` vector, #1076). This ADR governs the
-*durable ETL* of that trace; the implementation is sliced in TD-TRACE-2.
+external ETL of that trace; the implementation is sliced in TD-TRACE-2. S1 (#1084) and S2 (#1087)
+are shipped; delivery hardening, envelope, and Iceberg-managed warehouse compaction remain.
