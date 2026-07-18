@@ -5,10 +5,10 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open; S1 shipped #1084, S2 shipped #1087.** Current code serializes a flat snapshot into a bounded in-memory queue, seals JSONL+zstd, and PUTs directly to `_operator/io_trace/` with local-file fallback. Remaining: S2b delivery hardening, S3 envelope, S4 Iceberg-managed Parquet warehouse. The current sink is best-effort observability, not billing/audit authority.
+| Status | **Open; S1 shipped #1084, S2 shipped #1087, S2b implemented.** The sink now seals immutable pending files before conditional create, verifies digest collisions, retries on startup, and exposes bounded-delivery metrics. Remaining: S3 envelope, governance/tenant-root integration, and S4 Iceberg-managed Parquet warehouse. Ingress remains best-effort observability, not billing/audit authority.
 | Priority | P2 — leverage multiplier for fleet observability + cost analytics (which routes regress, which tenants pay the most GET round-trips, where the cost model mis-attributes). Not on any hot path; default-OFF.
 | Component | `crates/modalities/proximadb-observability-engine` (`io_trace.rs` — a new `set_trace_observer` seam + spool writer), `crates/storage/proximadb-object-store` + `DrPathBuilder` (dispatch), the server config (`config.toml` `[observability.io_trace_sink]` + `Config` struct), a background seal/upload task, and (later) a JSONL→Parquet compactor.
-| Evidence | #1084/#1087 close the “log-only” gap but expose the next correctness boundary: `Spool` is memory, drops records, and loses its `dropped` counter on shutdown; direct PUT failures write local files that startup never inventories/retries; filenames use wall-clock `run_nonce`; errors are warnings only; `partition_by`/`retention_days` are parsed but ignored. `IoTraceSnapshot` remains the flat widening source shape. ADR-066 §1/§6.
+| Evidence | #1084/#1087 exposed the delivery gap now closed by S2b: immutable pending seal, UUID+sequence+digest identity, conditional create/verification, startup retry, hard pending cap, and delivery metrics. Remaining evidence gaps are representative hot-path cost, structural tenant/operator governance, S3 envelope compatibility, and S4 warehouse commit. `partition_by`/`retention_days` remain reserved and `IoTraceSnapshot` remains the flat widening source shape. ADR-066 §1/§6.
 |===
 
 == The finding
@@ -32,13 +32,13 @@ crash-aware. Billing stays always-on/untouched (ADR-027).
   exists); a bounded memory queue and background JSONL+zstd sealer; config + env overrides;
   default-OFF. It serializes the existing flat snapshot on query completion. “Local spool” in the
   original slice name is not a durability claim.
-* **S2 — shipped #1087: direct object-store dispatch.** Background task seals on
+* **S2 — shipped #1087: initial object-store dispatch (superseded by S2b delivery).** Background task sealed on
   `segment_bytes` OR `flush_interval_s` (whichever first), zstd-compress, PUT via
   `proximadb-object-store` under `DrPathBuilder` keys
-  `_operator/io_trace/` with `ObjectAccessTier = Cold`; PUT failure writes a local fallback.
+  `_operator/io_trace/` with `ObjectAccessTier = Cold`; PUT failure wrote a local fallback.
   Compression/PUT remain off the query path. Tenant/date/host partitioning and retention are not
   implemented.
-* **S2b — delivery hardening (next).** Seal an immutable pending file before upload; startup retry;
+* **S2b — delivery hardening (implemented).** Seal an immutable pending file before upload; startup retry;
   writer-incarnation UUID + monotonic sequence + content digest; conditional create and
   AlreadyExists digest verification; retire local pending only after verified PUT. Add counters/gauges
   for dropped records/bytes, seal/upload failures, retries, pending files/bytes, and last success.
