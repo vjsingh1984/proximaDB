@@ -160,6 +160,19 @@ pub struct SearchPlanTrace {
     #[serde(default)]
     pub actual_egress_gb: f64,
 
+    // ── Physical object-store meters (TD-IOTRACE-2) ─────────────────────────
+    /// Per-query physical object-store ranged GETs — the accurate count from the
+    /// io-trace snapshot (post-#1081 single-source counting). The physical GET
+    /// billing input for the two-part KRU rate (TD-IOTRACE-3). Neutral count;
+    /// the control plane applies pricing. `#[serde(default)]` keeps older traces
+    /// (and OSS builds that don't populate it) wire-compatible.
+    #[serde(default)]
+    pub object_store_gets: u64,
+    /// Per-query physical object-store bytes read — companion to
+    /// [`object_store_gets`]; the bytes side of the KRU physical rate input.
+    #[serde(default)]
+    pub object_store_bytes_read: u64,
+
     // ── Per-index counters (also surfaced in IndexStats for backward compat) ─
     /// Index counters bundled for legacy gateway consumption.
     pub index_stats: IndexStats,
@@ -248,6 +261,8 @@ impl SearchPlanTrace {
             estimated_scan_gb: None,
             actual_scan_gb: 0.0,
             actual_egress_gb: 0.0,
+            object_store_gets: 0,
+            object_store_bytes_read: 0,
             index_stats: IndexStats::default(),
             candidate_count: 0,
             rerank_count: 0,
