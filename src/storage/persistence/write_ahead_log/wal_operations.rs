@@ -23,8 +23,9 @@ use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample};
 use crate::storage::document::DocumentRecord;
 use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb_graph_model::{GraphWalEntry, GraphWalRecord};
 use proximadb_records::ProximaRecord;
-use proximadb_storage_ports::GraphWalPort;
+use proximadb_storage_ports::{GraphWalPort, GraphWalReaderPort};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -782,6 +783,33 @@ impl GraphWalPort for UnifiedWALWriter {
         checkpoint_lsn: u64,
     ) -> anyhow::Result<u64> {
         UnifiedWALWriter::truncate_through_canonical_marker(self, checkpoint_lsn).await
+    }
+}
+
+/// The unified WAL reader is the composition-root-provided recovery source for
+/// the ORION graph engine: it implements [`GraphWalReaderPort`] by projecting
+/// graph operations / markers out of the unified entry stream, so ORION can
+/// replay through the port without naming the concrete reader or the unified
+/// operation/entry types.
+#[async_trait::async_trait]
+impl GraphWalReaderPort for UnifiedWALReader {
+    async fn read_all_graph(&self) -> anyhow::Result<Vec<GraphWalEntry>> {
+        let entries = self.read_all().await?;
+        let mut out = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let record = match entry.operation {
+                UnifiedWALOperation::GraphOp(op) => GraphWalRecord::Op(Box::new(op)),
+                UnifiedWALOperation::GraphMarker(marker) => GraphWalRecord::Marker(marker),
+                // Non-graph unified ops (Document/Observability/Hybrid/…) are
+                // not part of a graph engine's stream — filtered out.
+                _ => continue,
+            };
+            out.push(GraphWalEntry {
+                sequence_number: entry.sequence_number,
+                record,
+            });
+        }
+        Ok(out)
     }
 }
 

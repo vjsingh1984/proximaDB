@@ -13,7 +13,7 @@
 
 use anyhow::Result;
 use proximadb_distance_kernel::DistanceMetric;
-use proximadb_graph_model::{GraphOperation, MarkerKind};
+use proximadb_graph_model::{GraphOperation, GraphWalEntry, MarkerKind};
 use proximadb_proto::proximadb_v1::Collection;
 use proximadb_storage_common::StorageEngineType;
 use proximadb_storage_filesystem_types::{FileOptions, FileSystem, FsResult};
@@ -291,4 +291,20 @@ pub trait GraphWalPort: Send + Sync {
     /// the matching `CanonicalEmission(checkpoint_lsn)` marker). Returns the
     /// number of segments reclaimed.
     async fn truncate_through_canonical_marker(&mut self, checkpoint_lsn: u64) -> Result<u64>;
+}
+
+/// Dependency-inversion port for a graph engine's WAL *reader* (ORION
+/// extraction) — the read-side counterpart to [`GraphWalPort`].
+///
+/// A graph engine replays its WAL through this port rather than naming the
+/// concrete unified WAL reader/entry/operation types. The port yields only the
+/// graph-relevant frames ([`GraphWalEntry`]); non-graph unified operations are
+/// filtered out by the reader. As with [`GraphWalPort`], the composition root
+/// injects a concrete impl (e.g. the unified WAL reader), so the engine can be
+/// extracted to a crate without a cyclic dependency on the root storage layer.
+#[async_trait::async_trait]
+pub trait GraphWalReaderPort: Send + Sync {
+    /// Read every graph-relevant frame from the WAL, in append order. Returns an
+    /// empty vector when the WAL is absent or empty (e.g. before the first write).
+    async fn read_all_graph(&self) -> Result<Vec<GraphWalEntry>>;
 }
