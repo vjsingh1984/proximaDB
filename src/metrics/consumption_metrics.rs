@@ -42,6 +42,25 @@ lazy_static! {
         "Total number of object store I/O operations (put, get, list, delete)",
         &["tenant_id", "operation"]
     );
+    /// TD-IOTRACE-2: per-tenant physical object-store ranged GETs — the accurate
+    /// per-query GET count from the io-trace snapshot (post-#1081 single-source
+    /// counting, e.g. 51/query @ SIFT1M not 102). The billing input for the
+    /// physical part of the two-part KRU rate (TD-IOTRACE-3). Neutral count only;
+    /// AnvaiOps (control plane) applies the $/rate-card.
+    pub static ref OBJECT_STORE_GETS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_object_store_gets_total",
+        "Per-tenant physical object-store ranged GETs (TD-IOTRACE-2, KRU physical)",
+        &["tenant_id"]
+    );
+    /// TD-IOTRACE-2: per-tenant physical object-store bytes read — the accurate
+    /// per-query read bytes from the io-trace snapshot (post-#1081). Companion to
+    /// [`OBJECT_STORE_GETS_TOTAL`]; the bytes side of the KRU physical rate input.
+    /// Neutral count only; AnvaiOps applies the $/rate-card.
+    pub static ref OBJECT_STORE_BYTES_READ_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_object_store_bytes_read_total",
+        "Per-tenant physical object-store bytes read (TD-IOTRACE-2, KRU physical)",
+        &["tenant_id"]
+    );
     pub static ref STORAGE_BYTES_SECONDS: GaugeVec = registered_gauge_vec(
         "proximadb_storage_bytes_seconds",
         "GB-seconds or raw bytes stored per tenant",
@@ -669,12 +688,27 @@ pub fn record_task_execution_time(tenant_id: Option<&str>, engine: &str, duratio
 /// route-cost observer. Idempotent / replaceable in tests.
 pub fn install_billing_observer() {
     crate::observability::io_trace::set_billing_observer(Some(Box::new(|snap, tenant_id| {
+        let t_id = tenant_id.unwrap_or("default");
         // KRU (read-compute): per-(tenant, engine), straight from the engine-keyed
         // compute_ms map — no extra attribution needed.
         for (engine, ms) in &snap.compute_ms {
             if *ms > 0 {
                 record_task_execution_time(tenant_id, engine, *ms as f64);
             }
+        }
+        // TD-IOTRACE-2: the physical object-store meters — the accurate per-query
+        // ranged-GET count + bytes (post-#1081 single-source io-trace). These are
+        // the billing input for the physical part of the two-part KRU rate
+        // (TD-IOTRACE-3). Neutral counts; AnvaiOps applies the $/rate-card.
+        if snap.range_gets > 0 {
+            OBJECT_STORE_GETS_TOTAL
+                .with_label_values(&[t_id])
+                .inc_by(snap.range_gets as f64);
+        }
+        if snap.bytes_read > 0 {
+            OBJECT_STORE_BYTES_READ_TOTAL
+                .with_label_values(&[t_id])
+                .inc_by(snap.bytes_read as f64);
         }
     })));
 }
@@ -1015,6 +1049,33 @@ mod tests {
             map.classify("192.168.9.9".parse().unwrap()),
             KouLocality::Unknown
         );
+    }
+
+    #[tokio::test]
+    async fn billing_observer_emits_physical_object_store_meters() {
+        // TD-IOTRACE-2: the always-on billing observer must emit the accurate
+        // per-query range_gets + bytes_read as per-tenant neutral counters (the
+        // physical part of the two-part KRU rate). A fresh tenant id keeps the
+        // CounterVec children at their 0 baseline so the assertion is exact.
+        install_billing_observer();
+        let tenant = "test-iotrace2-physical-meters";
+        io_trace::instrument(Some(tenant.to_string()), "test.iotrace2", async {
+            io_trace::record_range_gets(7);
+            io_trace::record_bytes_read(4096);
+        })
+        .await;
+        assert_eq!(
+            OBJECT_STORE_GETS_TOTAL.with_label_values(&[tenant]).get(),
+            7.0
+        );
+        assert_eq!(
+            OBJECT_STORE_BYTES_READ_TOTAL
+                .with_label_values(&[tenant])
+                .get(),
+            4096.0
+        );
+        // Restore global observer state for the rest of the suite.
+        io_trace::set_billing_observer(None);
     }
 
     #[test]

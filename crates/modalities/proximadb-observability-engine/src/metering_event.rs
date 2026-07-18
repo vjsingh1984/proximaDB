@@ -136,7 +136,12 @@ pub fn build_kru(inputs: &MeteringInputs<'_>) -> MeteringEvent {
     // the snapshot was passed in; older call sites that leave `io_trace`
     // `None` keep the pre-existing event shape.
     if let Some(snap) = inputs.io_trace {
-        metadata.insert("object_store_gets".into(), json!(snap.get_ops));
+        // object_store_gets uses `range_gets` (the accurate per-query physical
+        // ranged-read count, post-#1081 single-source io-trace), NOT `get_ops`
+        // (the broader op-verb counter). This keeps the MeteringEvent in lockstep
+        // with the live Prometheus `object_store_gets_total` counter (the KRU
+        // physical billing input, TD-IOTRACE-2/TD-IOTRACE-3).
+        metadata.insert("object_store_gets".into(), json!(snap.range_gets));
         metadata.insert("object_store_bytes_read".into(), json!(snap.bytes_read));
     }
     // Trace-spine block (LLD §10).
@@ -264,6 +269,8 @@ mod tests {
             tenant_id: "tenant-a".into(),
             collection_name: "kb".into(),
             plan_version: 1,
+            object_store_gets: 0,
+            object_store_bytes_read: 0,
             filter_strategy: FilterStrategy::HybridFilter,
             index_route: IndexRoute::FullPrecisionGraph,
             cache_result: CacheResult::Miss,
@@ -347,21 +354,22 @@ mod tests {
     fn io_trace_get_ops_surface_on_the_metering_event() {
         // TD-IOTRACE-2 / KOU dimension (co-design §2.1): the per-query
         // object-store GET count is the dominant cloud cost term. When the
-        // caller passes an IoTraceSnapshot with non-zero get_ops, the KRU
-        // event must surface object_store_gets + object_store_bytes_read so
-        // the per-tenant metering collection carries the measured GET count.
+        // caller passes an IoTraceSnapshot, the KRU event must surface
+        // object_store_gets (from `range_gets`, the accurate physical ranged-read
+        // count) + object_store_bytes_read so the per-tenant metering collection
+        // carries the measured physical GET count + bytes.
         use crate::io_trace::IoTraceSnapshot;
         let t = trace_template();
         let snap = IoTraceSnapshot {
-            get_ops: 42,
+            get_ops: 42,           // op-verb count — NOT used for object_store_gets
             bytes_read: 8_388_608, // 8 MiB
-            range_gets: 4,
+            range_gets: 4,         // accurate physical ranged reads → object_store_gets
             ..Default::default()
         };
         let mut i = inputs(&t);
         i.io_trace = Some(&snap);
         let ev = build_kru(&i);
-        assert_eq!(ev.metadata["object_store_gets"], 42);
+        assert_eq!(ev.metadata["object_store_gets"], 4); // range_gets, not get_ops
         assert_eq!(ev.metadata["object_store_bytes_read"], 8_388_608);
     }
 
