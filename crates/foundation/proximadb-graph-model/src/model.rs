@@ -352,3 +352,27 @@ pub enum MarkerKind {
     /// latest such marker whose `lsn` ≤ the recovered canonical checkpoint LSN.
     CanonicalEmission(u64),
 }
+
+/// A graph-relevant record projected from a unified WAL stream — the read-side
+/// counterpart to the graph operations / markers written through
+/// [`GraphWalPort`]. A reader port (e.g. `GraphWalReaderPort`) yields these so a
+/// graph engine can replay its WAL without naming the concrete unified WAL
+/// entry/operation types (the remaining decoupling needed to extract the engine
+/// into its own crate). Non-graph unified ops are filtered out by the reader.
+#[derive(Debug, Clone)]
+pub enum GraphWalRecord {
+    /// A graph data operation (CreateNode/CreateEdge/Update*/Delete*/Batch/…).
+    Op(GraphOperation),
+    /// A non-data canonical-sync marker.
+    Marker(MarkerKind),
+}
+
+/// One projected graph WAL frame: its sequence number (LSN) plus the graph
+/// record it carries.
+#[derive(Debug, Clone)]
+pub struct GraphWalEntry {
+    /// Monotonic WAL sequence number assigned at append.
+    pub sequence_number: u64,
+    /// The graph operation or marker.
+    pub record: GraphWalRecord,
+}

@@ -46,7 +46,9 @@ use crate::graph::engines::orion::OrionGraphEngine;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALWriter;
+use crate::storage::persistence::write_ahead_log::wal_operations::{
+    UnifiedWALReader, UnifiedWALWriter,
+};
 use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -160,6 +162,13 @@ pub struct OrionPersistence {
     /// its own crate without a cyclic dependency on the root storage layer.
     wal_writer: Option<Arc<tokio::sync::Mutex<dyn proximadb_storage_ports::GraphWalPort>>>,
 
+    /// WAL reader for recovery. The engine replays through the
+    /// [`GraphWalReaderPort`] dependency-inversion port (injected by the
+    /// composition root as the unified WAL reader), so it never names the
+    /// concrete reader or the unified entry/operation types — the read-side
+    /// counterpart to the writer port.
+    wal_reader: Option<Arc<dyn proximadb_storage_ports::GraphWalReaderPort>>,
+
     /// Compression configuration
     compression: CompressionAlgorithm,
     compression_level: i32,
@@ -176,6 +185,7 @@ impl std::fmt::Debug for OrionPersistence {
             .field("base_url", &self.base_url)
             .field("wal_path", &self.wal_path)
             .field("wal_writer", &"<dyn GraphWalPort>")
+            .field("wal_reader", &"<dyn GraphWalReaderPort>")
             .field("compression", &self.compression)
             .field("compression_level", &self.compression_level)
             .field("max_snapshots", &self.max_snapshots)
@@ -253,7 +263,7 @@ impl OrionPersistence {
             })?;
 
         // Store WAL path and initialize WAL writer
-        let (wal_path, wal_writer) = if enable_wal {
+        let (wal_path, wal_writer, wal_reader) = if enable_wal {
             // Build WAL URL (keep as URL for filesystem operations)
             let wal_url = format!("{}/wal", graph_path);
 
@@ -277,10 +287,11 @@ impl OrionPersistence {
                     ))
                 })?;
 
-            // Initialize WAL writer with path (not URL), then erase it to the
-            // GraphWalPort port the engine speaks. The unsizing coercion
+            // Initialize WAL writer + reader with path (not URL), then erase
+            // each to its dependency-inversion port. The unsizing coercions
             // `Arc<Mutex<UnifiedWALWriter>>` -> `Arc<Mutex<dyn GraphWalPort>>`
-            // is sound because the writer implements the port (PR #1085).
+            // and `Arc<UnifiedWALReader>` -> `Arc<dyn GraphWalReaderPort>` are
+            // sound because both implement their ports (PRs #1085 / #1093).
             tracing::debug!("Creating WAL writer with path: {}", wal_path_str);
             let wal_writer = UnifiedWALWriter::new(wal_path_str.clone())
                 .await
@@ -293,9 +304,23 @@ impl OrionPersistence {
             let wal_writer: Arc<tokio::sync::Mutex<dyn proximadb_storage_ports::GraphWalPort>> =
                 Arc::new(tokio::sync::Mutex::new(wal_writer));
 
-            (Some(wal_path), Some(wal_writer))
+            // The reader opens no files at construction (only the FS handle);
+            // segments are enumerated lazily on `read_all_graph`. Tolerant of an
+            // absent/empty WAL (e.g. before the first write) — recovery is a
+            // no-op then.
+            let wal_reader = UnifiedWALReader::new(wal_path_str.clone())
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
+                })?;
+            let wal_reader: Arc<dyn proximadb_storage_ports::GraphWalReaderPort> =
+                Arc::new(wal_reader);
+
+            (Some(wal_path), Some(wal_writer), Some(wal_reader))
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         Ok(Self {
@@ -306,6 +331,7 @@ impl OrionPersistence {
             wal_path,
             canonical_wal_path: None,
             wal_writer,
+            wal_reader,
             compression: CompressionAlgorithm::Zstd,
             compression_level: 3,
             max_snapshots: 10,
@@ -1145,20 +1171,12 @@ impl OrionPersistence {
         engine: &OrionGraphEngine,
         snapshot_lsn: Option<u64>,
     ) -> Result<()> {
-        if let Some(ref wal_path) = self.wal_path {
-            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALReader;
+        if let Some(ref wal_reader) = self.wal_reader {
+            use proximadb_graph_model::{GraphWalRecord, MarkerKind};
 
-            let wal_path_str = wal_path.to_string_lossy().to_string();
-            tracing::debug!("Attempting WAL recovery from path: {}", wal_path_str);
+            tracing::debug!("Attempting WAL recovery for graph {}", self.graph_id);
 
-            let reader = UnifiedWALReader::new(wal_path_str.clone())
-                .await
-                .map_err(|e| {
-                    ProximaDBError::Storage(
-                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
-                    )
-                })?;
-            let entries = reader.read_all().await.map_err(|e| {
+            let entries = wal_reader.read_all_graph().await.map_err(|e| {
                 ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
                     e.to_string(),
                 ))
@@ -1183,13 +1201,10 @@ impl OrionPersistence {
             if let Some(snapshot_lsn) = snapshot_lsn
                 && snapshot_lsn > 0
             {
-                use crate::storage::persistence::write_ahead_log::wal_operations::{
-                    MarkerKind, UnifiedWALOperation,
-                };
                 let mut marker_idx: Option<usize> = None;
                 for (i, entry) in entries.iter().enumerate() {
-                    if let UnifiedWALOperation::GraphMarker(MarkerKind::CanonicalEmission(lsn)) =
-                        &entry.operation
+                    if let GraphWalRecord::Marker(MarkerKind::CanonicalEmission(lsn)) =
+                        &entry.record
                         && *lsn == snapshot_lsn
                     {
                         marker_idx = Some(i);
@@ -1216,11 +1231,13 @@ impl OrionPersistence {
 
             let mut replayed: u64 = 0;
             for entry in entries.into_iter().skip(start_index) {
-                if entry.is_graph_operation()
-                    && let crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation::GraphOp(graph_op) = entry.operation {
-                        self.apply_graph_operation(engine, graph_op).await?;
-                        replayed += 1;
-                    }
+                // `entries` is already projected to graph records; apply the
+                // data ops and skip the canonical-sync markers (they carry no
+                // engine state to reapply).
+                if let GraphWalRecord::Op(graph_op) = entry.record {
+                    self.apply_graph_operation(engine, graph_op).await?;
+                    replayed += 1;
+                }
             }
             tracing::info!(
                 graph_id = %self.graph_id,
