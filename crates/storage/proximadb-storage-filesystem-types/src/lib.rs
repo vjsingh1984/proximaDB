@@ -463,6 +463,31 @@ pub trait FilesystemFile: Send + Sync + std::fmt::Debug {
     async fn sync_all(&mut self) -> FsResult<()>;
 }
 
+/// Bounded-concurrent, order-preserving, short-circuit-on-error ranged read.
+///
+/// Used by [`FileSystem::read_ranges`] when `PROXIMADB_READ_RANGES_PARALLEL > 1`
+/// (TD-RDSTRAT-8 rev-2.1). Extracted as a free fn so the concurrency contract is
+/// unit-testable without a full `FileSystem` implementation: `buffered` preserves
+/// result order; `try_collect` short-circuits on the first error (identical to a
+/// sequential `await?` loop). The futures share a `&self` borrow (read takes
+/// `&self`) — polled in-place on the current task, no spawn, no Send/'static.
+async fn read_ranges_buffered<F, Fut>(
+    ranges: Vec<std::ops::Range<u64>>,
+    parallel: usize,
+    read: F,
+) -> FsResult<Vec<Vec<u8>>>
+where
+    F: Fn(u64, u64) -> Fut,
+    Fut: std::future::Future<Output = FsResult<Vec<u8>>>,
+{
+    use futures::stream::{self, StreamExt as _, TryStreamExt as _};
+    stream::iter(ranges)
+        .map(|r| read(r.start, r.end - r.start))
+        .buffered(parallel)
+        .try_collect()
+        .await
+}
+
 /// Abstract filesystem trait for strategy pattern
 #[async_trait]
 pub trait FileSystem: Send + Sync + std::fmt::Debug {
@@ -502,20 +527,48 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
         Ok(data[start..end].to_vec())
     }
 
-    /// Read multiple byte ranges from file in a single operation
-    /// Optimizes for cloud storage by batching requests
+    /// Read multiple byte ranges from file in a single operation.
+    ///
+    /// Default implementation issues one `read_range` per range. By default these
+    /// are **sequential** (identical to a loop, one at a time); set
+    /// `PROXIMADB_READ_RANGES_PARALLEL=N` (N > 1) to issue up to N concurrently —
+    /// order-preserving and short-circuit-on-error, so results + error semantics
+    /// are identical to the sequential path. The coalesced read path issues many
+    /// ranged GETs per query (e.g. 51 @ SIFT1M); bounded concurrency turns cold
+    /// latency from `GETs × RTT` into `rounds × RTT` (TD-RDSTRAT-8 rev-2.1, the
+    /// waves-not-sums latency model). Default OFF (0) until the wave-latency
+    /// model is measured on real cloud.
     async fn read_ranges(
         &self,
         path: &str,
         ranges: Vec<std::ops::Range<u64>>,
     ) -> FsResult<Vec<Vec<u8>>> {
-        // Default implementation calls read_range for each range
-        let mut results = Vec::with_capacity(ranges.len());
-        for range in ranges {
-            let length = range.end - range.start;
-            results.push(self.read_range(path, range.start, length).await?);
+        // `PROXIMADB_READ_RANGES_PARALLEL`: bounded concurrent ranged reads.
+        // Parsed once + cached (fn-local `static` = persists across calls, read
+        // on the hot path without re-parsing env each call).
+        static PARALLEL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let parallel = *PARALLEL.get_or_init(|| {
+            std::env::var("PROXIMADB_READ_RANGES_PARALLEL")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0)
+        });
+        if parallel <= 1 {
+            // Sequential (the default): one range at a time.
+            let mut results = Vec::with_capacity(ranges.len());
+            for range in ranges {
+                let length = range.end - range.start;
+                results.push(self.read_range(path, range.start, length).await?);
+            }
+            return Ok(results);
         }
-        Ok(results)
+        // Bounded-concurrent (order-preserving, short-circuit-on-error) —
+        // TD-RDSTRAT-8 rev-2.1. Delegated to `read_ranges_buffered` so the
+        // concurrency contract is unit-testable without a full FileSystem impl.
+        read_ranges_buffered(ranges, parallel, |offset, length| {
+            self.read_range(path, offset, length)
+        })
+        .await
     }
 
     /// Write file contents
@@ -851,5 +904,87 @@ mod object_access_tier_tests {
         assert_eq!(o.access_tier(), Some(ObjectAccessTier::Cool));
         o.storage_class = Some("nonsense".to_string());
         assert_eq!(o.access_tier(), None); // typo ⇒ default, never an error
+    }
+}
+
+#[cfg(test)]
+mod read_ranges_buffered_tests {
+    //! TD-RDSTRAT-8 rev-2.1: the bounded-concurrent `read_ranges` contract —
+    //! order preservation, the concurrency bound, and error short-circuit.
+    use super::{FilesystemError, read_ranges_buffered};
+    use std::future::poll_fn;
+    use std::ops::Range;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::task::Poll;
+
+    /// 10 disjoint ranges, start = i·7, length 5 (deterministic).
+    fn sample_ranges() -> Vec<Range<u64>> {
+        (0..10_u64).map(|i| (i * 7)..(i * 7 + 5)).collect()
+    }
+
+    #[test]
+    fn parallel_matches_sequential_in_order() {
+        // Same per-range bytes (offset repeated length times); seq vs par must agree.
+        let seq = futures::executor::block_on(read_ranges_buffered(
+            sample_ranges(),
+            1,
+            |o, l| async move { Ok::<_, FilesystemError>(vec![o as u8; l as usize]) },
+        ));
+        let par = futures::executor::block_on(read_ranges_buffered(
+            sample_ranges(),
+            4,
+            |o, l| async move { Ok::<_, FilesystemError>(vec![o as u8; l as usize]) },
+        ));
+        assert_eq!(seq.unwrap(), par.unwrap());
+    }
+
+    #[test]
+    fn respects_bound_and_runs_concurrently() {
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let read = {
+            let (in_flight, peak) = (in_flight.clone(), peak.clone());
+            move |o: u64, l: u64| {
+                let (in_flight, peak) = (in_flight.clone(), peak.clone());
+                async move {
+                    let cur = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(cur, Ordering::SeqCst);
+                    // Yield once so `buffered` overlaps sibling futures (proves
+                    // concurrency); per-future AtomicBool state.
+                    let yielded = AtomicBool::new(false);
+                    poll_fn(|cx| {
+                        if !yielded.swap(true, Ordering::SeqCst) {
+                            cx.waker().wake_by_ref();
+                            Poll::Pending
+                        } else {
+                            Poll::Ready(())
+                        }
+                    })
+                    .await;
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                    Ok::<_, FilesystemError>(vec![o as u8; l as usize])
+                }
+            }
+        };
+        let out =
+            futures::executor::block_on(read_ranges_buffered(sample_ranges(), 4, read)).unwrap();
+        assert_eq!(out.len(), 10);
+        let peak = peak.load(Ordering::SeqCst);
+        assert!(peak <= 4, "exceeded the bound of 4: peak={peak}");
+        assert!(peak >= 2, "did not overlap futures: peak={peak}");
+    }
+
+    #[test]
+    fn short_circuits_on_first_error() {
+        // range i=2 → start=14 → error; try_collect must surface it, not mask it.
+        let read = |o: u64, _l: u64| async move {
+            if o == 14 {
+                return Err(FilesystemError::InvalidOperation("bad range".into()));
+            }
+            Ok(vec![o as u8])
+        };
+        let res = futures::executor::block_on(read_ranges_buffered(sample_ranges(), 4, read));
+        assert!(res.is_err(), "expected short-circuit error, got {res:?}");
     }
 }

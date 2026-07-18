@@ -8227,6 +8227,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures",
  "memmap2",
  "proximadb-kernel",
  "serde",
