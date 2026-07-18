@@ -100,6 +100,7 @@ impl super::GraphOperationsService {
                         storage_root_url,
                         true,
                         canonical_wal_path,
+                        crate::graph::unified_wal_factory(),
                     )
                     .await?;
                 crate::graph::engines::GraphEngineImpl::Orion(orion)

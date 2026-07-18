@@ -94,8 +94,13 @@
 //! // Create a new ORION engine (in-memory only)
 //! let engine = OrionGraphEngine::new();
 //!
-//! // Create with WAL persistence for durability
-//! let engine = OrionGraphEngine::with_persistence("/path/to/data", true).await?;
+//! // Create with WAL persistence for durability (inject a graph WAL factory)
+//! let engine = OrionGraphEngine::with_persistence(
+//!     "/path/to/data",
+//!     true,
+//!     proximadb::graph::unified_wal_factory(),
+//! )
+//! .await?;
 //!
 //! // Insert nodes and edges
 //! engine.insert_node(node).await?;
@@ -219,13 +224,18 @@ impl OrionGraphEngine {
     }
 
     /// Create ORION engine with persistence enabled
-    pub async fn with_persistence(base_path: impl AsRef<Path>, enable_wal: bool) -> Result<Self> {
+    pub async fn with_persistence(
+        base_path: impl AsRef<Path>,
+        enable_wal: bool,
+        wal_factory: Arc<dyn proximadb_storage_ports::GraphWalFactory>,
+    ) -> Result<Self> {
         // Use default base URL if path is provided
         let base_url = format!("file:///{}", base_path.as_ref().display());
         let graph_id = "default".to_string(); // Default graph for backward compatibility
 
-        let persistence =
-            Arc::new(persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?);
+        let persistence = Arc::new(
+            persistence::OrionPersistence::new(graph_id, base_url, enable_wal, wal_factory).await?,
+        );
 
         Ok(Self {
             memory_pool: Arc::new(GraphMemoryPool::new()),
@@ -244,9 +254,16 @@ impl OrionGraphEngine {
         graph_id: String,
         base_url: String,
         enable_wal: bool,
+        wal_factory: Arc<dyn proximadb_storage_ports::GraphWalFactory>,
     ) -> Result<Self> {
-        Self::with_persistence_for_graph_and_canonical_wal(graph_id, base_url, enable_wal, None)
-            .await
+        Self::with_persistence_for_graph_and_canonical_wal(
+            graph_id,
+            base_url,
+            enable_wal,
+            None,
+            wal_factory,
+        )
+        .await
     }
 
     /// Create ORION engine with persistence AND a shared canonical WAL
@@ -261,9 +278,10 @@ impl OrionGraphEngine {
         base_url: String,
         enable_wal: bool,
         canonical_wal_path: Option<std::path::PathBuf>,
+        wal_factory: Arc<dyn proximadb_storage_ports::GraphWalFactory>,
     ) -> Result<Self> {
         let mut persistence =
-            persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?;
+            persistence::OrionPersistence::new(graph_id, base_url, enable_wal, wal_factory).await?;
         if let Some(path) = canonical_wal_path {
             persistence = persistence.with_canonical_wal_path(path);
         }
@@ -286,8 +304,9 @@ impl OrionGraphEngine {
         snapshot_path: impl AsRef<Path>,
         base_path: impl AsRef<Path>,
         enable_wal: bool,
+        wal_factory: Arc<dyn proximadb_storage_ports::GraphWalFactory>,
     ) -> Result<Self> {
-        let engine = Self::with_persistence(base_path, enable_wal).await?;
+        let engine = Self::with_persistence(base_path, enable_wal, wal_factory).await?;
 
         if let Some(persistence) = &engine.persistence {
             persistence.load_snapshot(&engine, snapshot_path).await?;
@@ -309,8 +328,10 @@ impl OrionGraphEngine {
         graph_id: String,
         base_url: String,
         enable_wal: bool,
+        wal_factory: Arc<dyn proximadb_storage_ports::GraphWalFactory>,
     ) -> Result<Self> {
-        let engine = Self::with_persistence_for_graph(graph_id, base_url, enable_wal).await?;
+        let engine =
+            Self::with_persistence_for_graph(graph_id, base_url, enable_wal, wal_factory).await?;
 
         if let Some(persistence) = &engine.persistence {
             persistence.load_snapshot(&engine, snapshot_path).await?;
@@ -1510,6 +1531,7 @@ mod td066_replay_scope_tests {
                 base_url.clone(),
                 true,
                 Some(canonical_wal.clone()),
+                crate::graph::unified_wal_factory(),
             )
             .await
             .expect("engine");
@@ -1550,6 +1572,7 @@ mod td066_replay_scope_tests {
             base_url.clone(),
             true,
             Some(canonical_wal.clone()),
+            crate::graph::unified_wal_factory(),
         )
         .await
         .expect("recovery engine");
@@ -1617,6 +1640,7 @@ mod td066_replay_scope_tests {
                 base_url.clone(),
                 true,
                 Some(canonical_wal.clone()),
+                crate::graph::unified_wal_factory(),
             )
             .await
             .expect("engine");
@@ -1663,6 +1687,7 @@ mod td066_replay_scope_tests {
             base_url.clone(),
             true,
             Some(canonical_wal.clone()),
+            crate::graph::unified_wal_factory(),
         )
         .await
         .expect("recovery engine");

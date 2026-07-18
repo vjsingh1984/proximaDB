@@ -25,7 +25,7 @@ use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb_graph_model::{GraphWalEntry, GraphWalRecord};
 use proximadb_records::ProximaRecord;
-use proximadb_storage_ports::{GraphWalPort, GraphWalReaderPort};
+use proximadb_storage_ports::{GraphWalFactory, GraphWalPort, GraphWalReaderPort};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -811,6 +811,40 @@ impl GraphWalReaderPort for UnifiedWALReader {
         }
         Ok(out)
     }
+}
+
+/// Composition-root factory for a graph engine's WAL writer + reader: the single
+/// place the concrete `UnifiedWALWriter` / `UnifiedWALReader` are named, so the
+/// ORION engine can obtain its [`GraphWalPort`] / [`GraphWalReaderPort`] through
+/// the [`GraphWalFactory`] port without naming these types itself.
+#[derive(Default)]
+pub struct UnifiedWalFactory;
+
+#[async_trait::async_trait]
+impl GraphWalFactory for UnifiedWalFactory {
+    async fn make_writer(
+        &self,
+        wal_path: &str,
+    ) -> anyhow::Result<Arc<tokio::sync::Mutex<dyn GraphWalPort>>> {
+        let writer = UnifiedWALWriter::new(wal_path.to_string()).await?;
+        let writer: Arc<tokio::sync::Mutex<dyn GraphWalPort>> =
+            Arc::new(tokio::sync::Mutex::new(writer));
+        Ok(writer)
+    }
+
+    async fn make_reader(&self, wal_path: &str) -> anyhow::Result<Arc<dyn GraphWalReaderPort>> {
+        let reader = UnifiedWALReader::new(wal_path.to_string()).await?;
+        let reader: Arc<dyn GraphWalReaderPort> = Arc::new(reader);
+        Ok(reader)
+    }
+}
+
+/// Convenience constructor for the default (unified) graph WAL factory, erased
+/// to the [`GraphWalFactory`] port. Composition-root callers (and tests) inject
+/// this into the ORION engine constructors; it is the only symbol outside this
+/// module that needs to name a concrete graph WAL type.
+pub fn unified_wal_factory() -> Arc<dyn GraphWalFactory> {
+    Arc::new(UnifiedWalFactory)
 }
 
 /// WAL reader for recovery
