@@ -6761,6 +6761,7 @@ dependencies = [
  "proximadb-functions",
  "proximadb-graph",
  "proximadb-graph-arrow",
+ "proximadb-graph-engine-traits",
  "proximadb-graph-model",
  "proximadb-graph-query",
  "proximadb-graph-subset",
@@ -7339,6 +7340,16 @@ dependencies = [
  "proximadb-graph-query",
  "proximadb-kernel",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-graph-engine-traits"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "proximadb-compression-types",
+ "proximadb-graph-model",
+ "proximadb-kernel",
 ]
 
 [[package]]
@@ -8289,6 +8300,7 @@ dependencies = [
  "proximadb-storage-common",
  "proximadb-storage-filesystem-types",
  "serde",
+ "tokio",
 ]
 
 [[package]]

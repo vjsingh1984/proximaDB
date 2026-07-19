@@ -1275,7 +1275,7 @@ pub async fn astar_shortest_path(
 /// # Example
 ///
 /// ```rust,ignore
-/// use proximadb::compute::distance_computation::UnifiedDistanceCompute;
+/// use proximadb_distance_kernel::UnifiedDistanceCompute;
 /// use proximadb::proto::proximadb_v1::DistanceMetric;
 ///
 /// let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -1298,7 +1298,7 @@ pub async fn vector_guided_astar(
     target_node_id: &NodeId,
     guide_embedding: &[f32],
     alpha: f64,
-    distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    distance_compute: Arc<proximadb_distance_kernel::UnifiedDistanceCompute>,
     distance_metric: crate::proto::proximadb_v1::DistanceMetric,
     config: TraversalConfig,
 ) -> Result<Option<(Vec<NodeId>, f64)>> {
@@ -2611,10 +2611,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_pure_graph() {
-        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
         use crate::graph::EmbeddingVersion;
         use crate::graph::engines::GraphEngine;
         use crate::proto::proximadb_v1::DistanceMetric;
+        use proximadb_distance_kernel::UnifiedDistanceCompute;
 
         let engine = OrionGraphEngine::new();
 
@@ -2738,10 +2738,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_balanced_blend() {
-        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
         use crate::graph::EmbeddingVersion;
         use crate::graph::engines::GraphEngine;
         use crate::proto::proximadb_v1::DistanceMetric;
+        use proximadb_distance_kernel::UnifiedDistanceCompute;
 
         let engine = OrionGraphEngine::new();
 
@@ -2919,10 +2919,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_alpha_clamping() {
-        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
         use crate::graph::EmbeddingVersion;
         use crate::graph::engines::GraphEngine;
         use crate::proto::proximadb_v1::DistanceMetric;
+        use proximadb_distance_kernel::UnifiedDistanceCompute;
 
         let engine = OrionGraphEngine::new();
 
@@ -3027,10 +3027,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_no_path() {
-        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
         use crate::graph::EmbeddingVersion;
         use crate::graph::engines::GraphEngine;
         use crate::proto::proximadb_v1::DistanceMetric;
+        use proximadb_distance_kernel::UnifiedDistanceCompute;
 
         let engine = OrionGraphEngine::new();
 

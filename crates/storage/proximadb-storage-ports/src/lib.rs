@@ -16,7 +16,8 @@ use proximadb_distance_kernel::DistanceMetric;
 use proximadb_graph_model::{GraphOperation, GraphWalEntry, MarkerKind};
 use proximadb_proto::proximadb_v1::Collection;
 use proximadb_storage_common::StorageEngineType;
-use proximadb_storage_filesystem_types::{FileOptions, FileSystem, FsResult};
+use proximadb_storage_filesystem_types::{DirEntry, FileOptions, FileSystem, FsResult};
+use std::sync::Arc;
 
 pub mod capabilities;
 pub use capabilities::*;
@@ -199,6 +200,10 @@ pub trait FilesystemPort: Send + Sync {
     async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()>;
     /// Delete the file/dir at `url`.
     async fn delete(&self, url: &str) -> FsResult<()>;
+    /// Read the full contents of the file at `url` (scheme-routed).
+    async fn read(&self, url: &str) -> FsResult<Vec<u8>>;
+    /// List the directory entries at `url` (scheme-routed).
+    async fn list(&self, url: &str) -> FsResult<Vec<DirEntry>>;
 }
 
 /// Cache-kind for access-pattern tracking — the engine-facing subset of the root
@@ -307,4 +312,35 @@ pub trait GraphWalReaderPort: Send + Sync {
     /// Read every graph-relevant frame from the WAL, in append order. Returns an
     /// empty vector when the WAL is absent or empty (e.g. before the first write).
     async fn read_all_graph(&self) -> Result<Vec<GraphWalEntry>>;
+}
+
+/// Dependency-injection factory for a graph engine's WAL writer + reader (ORION
+/// extraction).
+///
+/// This is the seam that lets the engine obtain its [`GraphWalPort`] (writer)
+/// and [`GraphWalReaderPort`] (reader) WITHOUT naming the concrete unified WAL
+/// types: the engine calls `make_writer` / `make_reader` at construction, and
+/// the composition root injects a concrete factory (the unified WAL factory),
+/// which is the only place the concrete types are named. Without this, the
+/// engine would construct the writer/reader itself and could not be extracted
+/// to a crate. The factory is injected once at the composition root and threaded
+/// down through the engine constructors — the single object that crosses the
+/// engine↔root boundary.
+#[async_trait::async_trait]
+pub trait GraphWalFactory: Send + Sync {
+    /// Build a graph WAL writer backed by `wal_path`, wrapped in the async mutex
+    /// the writer is shared under (`append` & friends take `&mut self`).
+    async fn make_writer(
+        &self,
+        wal_path: &str,
+    ) -> Result<Arc<tokio::sync::Mutex<dyn GraphWalPort>>>;
+
+    /// Build a graph WAL reader backed by `wal_path`. Opens no files until a
+    /// read is issued; tolerant of an absent/empty WAL.
+    async fn make_reader(&self, wal_path: &str) -> Result<Arc<dyn GraphWalReaderPort>>;
+
+    /// Build the filesystem port the engine uses for snapshot I/O (read/list).
+    /// The engine never names the concrete filesystem factory; this is the
+    /// single composition-root seam that does (mirrors make_writer/make_reader).
+    async fn make_filesystem(&self) -> Result<Arc<dyn FilesystemPort>>;
 }
