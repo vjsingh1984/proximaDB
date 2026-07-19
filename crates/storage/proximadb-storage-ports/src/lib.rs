@@ -343,6 +343,10 @@ pub trait GraphWalFactory: Send + Sync {
     /// The engine never names the concrete filesystem factory; this is the
     /// single composition-root seam that does (mirrors make_writer/make_reader).
     async fn make_filesystem(&self) -> Result<Arc<dyn FilesystemPort>>;
+
+    /// Build the canonical-WAL reader the engine uses for TD-066 checkpoint-LSN
+    /// correlation on recovery. The engine never names the concrete appender.
+    async fn make_canonical_wal_reader(&self) -> Result<Arc<dyn CanonicalWalReaderPort>>;
 }
 
 /// Graph-engine cache-hint surface (ORION extraction). A graph engine (ORION)
@@ -382,4 +386,18 @@ pub fn register_graph_cache_hint(hint: Arc<dyn GraphCacheHintPort>) {
 /// and treat `None` as a no-op (e.g. before startup registration or in tests).
 pub fn graph_cache_hint() -> Option<&'static Arc<dyn GraphCacheHintPort>> {
     GLOBAL_GRAPH_CACHE_HINT.get()
+}
+
+/// Dependency-injection port for reading the shared canonical WAL (ORION
+/// extraction). The engine reads canonical-WAL entries through this port — to
+/// correlate the latest checkpoint LSN during recovery (TD-066 Part 2) — rather
+/// than naming the concrete framed-table appender. Entries are the leaf
+/// [`CanonicalWalEntry`] type.
+#[async_trait::async_trait]
+pub trait CanonicalWalReaderPort: Send + Sync {
+    /// Read every entry from the canonical WAL at `canonical_wal_path`.
+    async fn read_entries(
+        &self,
+        canonical_wal_path: &std::path::Path,
+    ) -> Result<Vec<proximadb_storage_common::wal_entry::CanonicalWalEntry>>;
 }
