@@ -271,6 +271,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      # 12G swap headroom: the dual-job (CARGO_BUILD_JOBS=2) compile of the root
+      # crate peaks ~12.8GB/rustc, two concurrent → OOM-kills a 16GB runner
+      # ("runner received a shutdown signal" / exit 143). Swap absorbs the peak
+      # so the compile completes. #941 added this for the unit-test job; the
+      # cloud-emulator job needs it too (it hit this exact OOM on #1096).
+      - name: Add swap headroom
+        run: |
+          sudo fallocate -l 12G /mnt/swapfile-ci
+          sudo chmod 600 /mnt/swapfile-ci
+          sudo mkswap /mnt/swapfile-ci
+          sudo swapon /mnt/swapfile-ci
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-qa-cloud-emulator"
