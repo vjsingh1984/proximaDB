@@ -258,6 +258,10 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Structured io_trace ETL sink — versioned envelope → JSONL+zstd landing → Iceberg-managed Parquet
 | Proposed; S1 #1084 + S2 #1087 shipped
 | Takes ADR-064's trace external without touching billing. The current sink serializes flat JSON on query completion into bounded memory, seals JSONL+zstd, then direct-PUTs to `_operator/io_trace/`; failures fall back to local files. It is **best-effort observability, not billing/audit authority**. Acceptance requires S2b pending-file/restart retry, writer UUID+sequence+digest idempotency, delivery metrics/health, honest config and structural isolation; S3 adds the versioned envelope; S4 compacts to Iceberg-managed star-schema Parquet with crash/retry dedup and source watermark. Billing remains separate/fail-closed. `segment_bytes` is uncompressed bytes; 4 MiB is not a multipart claim.
+| link:ADR-067-consume-ai-usage-gateway-egress-metering.adoc[ADR-067]
+| Consume the `sandhi` AI usage gateway for external-provider egress metering
+| Proposed
+| Thin **consumer** decision (authoritative: AnvaiOps ADR-0047). The Rust drainer's external egress (`AzureOpenAiClient::embed_batch`, BYO, OpenAI/Cohere) emits the shared neutral usage event; KEU stays authoritative + server-side (AnvaiOps ADR-0020 D6); OSS emits units, AnvaiOps prices. Wiring: TD-SANDHI-1.
 |===
 
 NOTE: ADR-010 through ADR-013 and ADR-048/ADR-049 exist in this directory but
