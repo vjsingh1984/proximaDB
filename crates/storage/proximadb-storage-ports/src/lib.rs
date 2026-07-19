@@ -344,3 +344,42 @@ pub trait GraphWalFactory: Send + Sync {
     /// single composition-root seam that does (mirrors make_writer/make_reader).
     async fn make_filesystem(&self) -> Result<Arc<dyn FilesystemPort>>;
 }
+
+/// Graph-engine cache-hint surface (ORION extraction). A graph engine (ORION)
+/// emits best-effort access-tracking + prefetch hints to the root-owned cache
+/// orchestrator through this port, registered once at startup, so the engine
+/// never names the concrete `CrossCacheOrchestrator` / `CacheType`. Mirrors the
+/// distance-kernel GPU-factory global-registration pattern (#162). The
+/// [`CacheKind`] enum (the storage-engine subset) intentionally omits graph
+/// kinds, so this enum carries the graph variants the engine tracks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphCacheKind {
+    GraphNode,
+    GraphEdge,
+    GraphAdjacency,
+}
+
+/// Global graph cache-hint port (write-once, set at server startup by the
+/// composition root; read by graph engines).
+#[async_trait::async_trait]
+pub trait GraphCacheHintPort: Send + Sync {
+    /// Record an access for the access-pattern tracker (best-effort, fire-and-forget).
+    fn track_access(&self, key: String, kind: GraphCacheKind);
+    /// Request a predictive prefetch (best-effort; queue-size-guarded internally).
+    async fn request_prefetch(&self, key: &str, kind: GraphCacheKind);
+}
+
+static GLOBAL_GRAPH_CACHE_HINT: std::sync::OnceLock<Arc<dyn GraphCacheHintPort>> =
+    std::sync::OnceLock::new();
+
+/// Register the global graph cache-hint port. Called once by the composition
+/// root at startup (alongside `CrossCacheOrchestrator::register_global`).
+pub fn register_graph_cache_hint(hint: Arc<dyn GraphCacheHintPort>) {
+    let _ = GLOBAL_GRAPH_CACHE_HINT.set(hint);
+}
+
+/// Access the registered graph cache-hint port, if any. Graph engines call this
+/// and treat `None` as a no-op (e.g. before startup registration or in tests).
+pub fn graph_cache_hint() -> Option<&'static Arc<dyn GraphCacheHintPort>> {
+    GLOBAL_GRAPH_CACHE_HINT.get()
+}

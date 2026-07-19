@@ -1695,6 +1695,42 @@ impl Default for CrossCacheOrchestrator {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Graph cache-hint bridge: lets graph engines (ORION) hint the cache through the
+// leaf `GraphCacheHintPort` without naming `CrossCacheOrchestrator`/`CacheType`.
+// Registered once at startup alongside `CrossCacheOrchestrator::register_global`.
+// ---------------------------------------------------------------------------
+
+fn graph_cache_kind_to_type(kind: proximadb_storage_ports::GraphCacheKind) -> CacheType {
+    use proximadb_storage_ports::GraphCacheKind;
+    match kind {
+        GraphCacheKind::GraphNode => CacheType::GraphNode,
+        GraphCacheKind::GraphEdge => CacheType::GraphEdge,
+        GraphCacheKind::GraphAdjacency => CacheType::GraphAdjacency,
+    }
+}
+
+/// Root bridge from [`proximadb_storage_ports::GraphCacheHintPort`] to the
+/// process-global [`CrossCacheOrchestrator`]. Best-effort: a no-op when no
+/// orchestrator is registered yet.
+pub(crate) struct GraphCacheHintBridge;
+
+#[async_trait::async_trait]
+impl proximadb_storage_ports::GraphCacheHintPort for GraphCacheHintBridge {
+    fn track_access(&self, key: String, kind: proximadb_storage_ports::GraphCacheKind) {
+        if let Some(orch) = CrossCacheOrchestrator::global() {
+            orch.track_access_async(key, graph_cache_kind_to_type(kind));
+        }
+    }
+
+    async fn request_prefetch(&self, key: &str, kind: proximadb_storage_ports::GraphCacheKind) {
+        if let Some(orch) = CrossCacheOrchestrator::global() {
+            orch.request_prefetch(key, graph_cache_kind_to_type(kind))
+                .await;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
