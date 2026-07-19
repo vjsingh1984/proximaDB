@@ -1647,4 +1647,12 @@ impl proximadb_storage_ports::FilesystemPort for FilesystemFactory {
     async fn delete(&self, url: &str) -> FsResult<()> {
         FilesystemFactory::delete(self, url).await
     }
+
+    async fn read(&self, url: &str) -> FsResult<Vec<u8>> {
+        FilesystemFactory::read(self, url).await
+    }
+
+    async fn list(&self, url: &str) -> FsResult<Vec<DirEntry>> {
+        FilesystemFactory::list(self, url).await
+    }
 }

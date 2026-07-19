@@ -44,8 +44,6 @@
 use crate::core::serialization::CompressionAlgorithm;
 use crate::graph::engines::orion::OrionGraphEngine;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
-use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
-use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -131,13 +129,10 @@ pub struct OrionPersistence {
     /// Base URL for storage (e.g., "file:///data", "s3://bucket", etc.)
     base_url: String,
 
-    /// Filesystem factory for creating appropriate filesystem
-    #[allow(dead_code)]
-    filesystem_factory: Arc<FilesystemFactory>,
-
-    /// Unified caching filesystem wrapper
-    #[allow(dead_code)]
-    filesystem: Arc<UnifiedCachingFilesystem>,
+    /// Filesystem port for snapshot I/O (read/list), injected via the
+    /// `GraphWalFactory` so the engine never names the concrete filesystem
+    /// factory.
+    filesystem_factory: Arc<dyn proximadb_storage_ports::FilesystemPort>,
 
     /// WAL path for future implementation
     wal_path: Option<PathBuf>,
@@ -222,30 +217,14 @@ impl OrionPersistence {
         enable_wal: bool,
         wal_factory: Arc<dyn proximadb_storage_ports::GraphWalFactory>,
     ) -> Result<Self> {
-        // Create filesystem factory with default configuration and initialize filesystems
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(FilesystemConfig::default())
-                .await
-                .map_err(|e| {
-                    ProximaDBError::Storage(
-                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
-                    )
-                })?,
-        );
-
-        // Get the underlying filesystem from the factory
-        let underlying_fs = filesystem_factory.get_filesystem(&base_url).map_err(|e| {
+        // Obtain the filesystem port (for snapshot I/O) through the injected
+        // GraphWalFactory — the engine never names the concrete filesystem
+        // factory.
+        let filesystem_factory = wal_factory.make_filesystem().await.map_err(|e| {
             ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
                 e.to_string(),
             ))
         })?;
-
-        // Wrap with UnifiedCachingFilesystem
-        let filesystem = Arc::new(UnifiedCachingFilesystem::new(
-            underlying_fs,
-            format!("graph_{}", graph_id),
-            "orion".to_string(),
-        ));
 
         // Build graph-specific path: {base_url}/graphs/{graph_id}/data
         let graph_path = format!(
@@ -316,7 +295,6 @@ impl OrionPersistence {
             graph_id,
             base_url,
             filesystem_factory,
-            filesystem,
             wal_path,
             canonical_wal_path: None,
             wal_writer,
