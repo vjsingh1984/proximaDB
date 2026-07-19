@@ -1259,6 +1259,11 @@ impl SharedServices {
         };
         // Always register globally — idempotent via OnceLock
         CrossCacheOrchestrator::register_global(orchestrator.clone());
+        // Register the graph cache-hint bridge so graph engines (ORION) can hint
+        // the cache through the leaf port without naming the concrete orchestrator.
+        proximadb_storage_ports::register_graph_cache_hint(std::sync::Arc::new(
+            crate::storage::cache::orchestrator::GraphCacheHintBridge,
+        ));
 
         // =========================================================================
         // Initialize EventLog service and start AXIS consumer for async index building
