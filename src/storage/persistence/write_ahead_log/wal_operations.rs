@@ -25,7 +25,7 @@ use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb_graph_model::{GraphWalEntry, GraphWalRecord};
 use proximadb_records::ProximaRecord;
-use proximadb_storage_ports::{GraphWalFactory, GraphWalPort, GraphWalReaderPort};
+use proximadb_storage_ports::{FilesystemPort, GraphWalFactory, GraphWalPort, GraphWalReaderPort};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -836,6 +836,14 @@ impl GraphWalFactory for UnifiedWalFactory {
         let reader = UnifiedWALReader::new(wal_path.to_string()).await?;
         let reader: Arc<dyn GraphWalReaderPort> = Arc::new(reader);
         Ok(reader)
+    }
+
+    async fn make_filesystem(&self) -> anyhow::Result<Arc<dyn FilesystemPort>> {
+        let fs = FilesystemFactory::create_default()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create default filesystem: {e}"))?;
+        let fs: Arc<dyn FilesystemPort> = Arc::new(fs);
+        Ok(fs)
     }
 }
 

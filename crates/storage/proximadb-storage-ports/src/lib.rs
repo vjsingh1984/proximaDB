@@ -16,7 +16,7 @@ use proximadb_distance_kernel::DistanceMetric;
 use proximadb_graph_model::{GraphOperation, GraphWalEntry, MarkerKind};
 use proximadb_proto::proximadb_v1::Collection;
 use proximadb_storage_common::StorageEngineType;
-use proximadb_storage_filesystem_types::{FileOptions, FileSystem, FsResult};
+use proximadb_storage_filesystem_types::{DirEntry, FileOptions, FileSystem, FsResult};
 use std::sync::Arc;
 
 pub mod capabilities;
@@ -200,6 +200,10 @@ pub trait FilesystemPort: Send + Sync {
     async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()>;
     /// Delete the file/dir at `url`.
     async fn delete(&self, url: &str) -> FsResult<()>;
+    /// Read the full contents of the file at `url` (scheme-routed).
+    async fn read(&self, url: &str) -> FsResult<Vec<u8>>;
+    /// List the directory entries at `url` (scheme-routed).
+    async fn list(&self, url: &str) -> FsResult<Vec<DirEntry>>;
 }
 
 /// Cache-kind for access-pattern tracking — the engine-facing subset of the root
@@ -334,4 +338,9 @@ pub trait GraphWalFactory: Send + Sync {
     /// Build a graph WAL reader backed by `wal_path`. Opens no files until a
     /// read is issued; tolerant of an absent/empty WAL.
     async fn make_reader(&self, wal_path: &str) -> Result<Arc<dyn GraphWalReaderPort>>;
+
+    /// Build the filesystem port the engine uses for snapshot I/O (read/list).
+    /// The engine never names the concrete filesystem factory; this is the
+    /// single composition-root seam that does (mirrors make_writer/make_reader).
+    async fn make_filesystem(&self) -> Result<Arc<dyn FilesystemPort>>;
 }
