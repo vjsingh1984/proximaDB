@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage = "https://github.com/vjsingh1984/proximadb"
+homepage = "https://github.com/anvai-labs/proximaDB"
 description = "Rank-profile DSL + validator + xCatalog-bindable registry for ProximaDB. See roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md (R-4)."
 
 [lib]

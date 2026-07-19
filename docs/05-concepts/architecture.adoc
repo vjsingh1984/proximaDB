@@ -312,7 +312,7 @@ flowchart TB
 
 == Current Implementation Notes
 
-* **Phase 1 Complete**: 4 supported storage engines (SST/VIPER/HELIX/NOVA; SWIFT/RAPTOR are experimental), WAL, APIs, quantization, AXIS indexes.
+* **Phase 1 Complete**: SST is Supported; VIPER/HELIX/NOVA are Beta; SWIFT/RAPTOR are Experimental. WAL, APIs, quantization, and AXIS indexes are present at the tiers listed in the support contract.
 * **Phase 2 Complete**: Cross-model queries, graph database (ORION), document store, observability.
 * **Phase 3 In Progress**: External catalogs, streaming/CDC, distributed operations.
 * **Phase 4 Foundations Beta**: Time-series (TST) and event-sourcing engines are complete; hybrid search (BM25) is wired. Product packaging, API parity, and at-scale validation are in progress -- these are Beta surfaces in v0.2.

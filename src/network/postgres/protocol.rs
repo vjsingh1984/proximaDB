@@ -110,6 +110,35 @@ pub struct PostgresProtocol {
     /// policies reject it at the assertion point (SQLSTATE 28000) through the
     /// same shared primitive REST/gRPC/Arrow Flight use. Default `Open`.
     tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// Request-tenant presence/defaulting contract for this deployment.
+    tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransactionControlPolicy {
+    Unsupported,
+}
+
+fn transaction_control_policy(query: &str) -> Option<TransactionControlPolicy> {
+    let normalized = query.trim().trim_end_matches(';').trim().to_uppercase();
+    let words: Vec<&str> = normalized.split_whitespace().collect();
+    let first = words.first().copied().unwrap_or_default();
+    let second = words.get(1).copied().unwrap_or_default();
+    let is_control = matches!(
+        first,
+        "BEGIN" | "COMMIT" | "END" | "ROLLBACK" | "ABORT" | "SAVEPOINT" | "RELEASE"
+    ) || (first == "START" && second == "TRANSACTION")
+        || (first == "PREPARE" && second == "TRANSACTION")
+        || (first == "SET" && matches!(second, "TRANSACTION" | "CONSTRAINTS"))
+        || (words.as_slice().starts_with(&[
+            "SET",
+            "SESSION",
+            "CHARACTERISTICS",
+            "AS",
+            "TRANSACTION",
+        ]));
+
+    is_control.then_some(TransactionControlPolicy::Unsupported)
 }
 
 /// Slice 6.3 gate-input bundle. Distinct type per surface for module
@@ -423,6 +452,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
 
@@ -479,6 +509,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
 
@@ -527,6 +558,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
 
@@ -553,6 +585,22 @@ impl PostgresProtocol {
     pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
         self.tenant_header_trust = policy;
         self
+    }
+
+    pub fn with_tenant_deployment_mode(
+        mut self,
+        mode: proximadb_tenant::TenantDeploymentMode,
+    ) -> Self {
+        self.tenant_deployment_mode = mode;
+        self
+    }
+
+    fn resolve_startup_tenant(
+        database: Option<&str>,
+        mode: &proximadb_tenant::TenantDeploymentMode,
+    ) -> std::result::Result<String, String> {
+        proximadb_tenant::resolve_request_tenant_for_mode(database, mode)
+            .map_err(|error| error.to_string())
     }
 
     /// TD-TENANT-1: gate a pgwire tenant assertion (startup `database` or the
@@ -799,6 +847,17 @@ impl PostgresProtocol {
         let params = self.read_bytes(param_len).await?;
         let params = self.parse_startup_params(&params)?;
 
+        let startup_tenant = match Self::resolve_startup_tenant(
+            params.get("database").map(String::as_str),
+            &self.tenant_deployment_mode,
+        ) {
+            Ok(tenant) => tenant,
+            Err(message) => {
+                self.send_error("FATAL", "28000", &message).await?;
+                return Err(anyhow!("pgwire tenant resolution rejected: {message}"));
+            }
+        };
+
         // TD-TENANT-1: the startup `database` doubles as the tenant/catalog
         // (TD-064) and pgwire runs trust auth — the assertion is bare by
         // definition. Under a strict policy, reject the connection at the
@@ -816,9 +875,7 @@ impl PostgresProtocol {
             if let Some(user) = params.get("user") {
                 session.user = user.clone();
             }
-            if let Some(database) = params.get("database") {
-                session.database = database.clone();
-            }
+            session.database = startup_tenant;
             // Open-core cache tier hook: a `proximadb_tier` startup parameter
             // (control-plane supplied) records the connection tenant's tier for
             // the cache policy. database == tenant/catalog (TD-064). Opaque id.
@@ -876,6 +933,17 @@ impl PostgresProtocol {
         let query = self.parse_cstring(body)?;
         debug!("Received query: {}", query);
 
+        if transaction_control_policy(&query).is_some() {
+            self.send_error(
+                "ERROR",
+                "0A000",
+                "transactions are not supported; pgwire executes individual statements in autocommit mode",
+            )
+            .await?;
+            self.send_ready_for_query('I').await?;
+            return Ok(());
+        }
+
         if Self::is_set_statement(&query) {
             match self.execute_set_parameter(&query).await {
                 Ok(()) => {}
@@ -902,6 +970,19 @@ impl PostgresProtocol {
         // disappeared. This was a data-loss bug, not a feature gap.
         let statements = Self::split_sql_statements(&query);
         if statements.is_empty() {
+            self.send_ready_for_query('I').await?;
+            return Ok(());
+        }
+        if statements
+            .iter()
+            .any(|statement| transaction_control_policy(statement).is_some())
+        {
+            self.send_error(
+                "ERROR",
+                "0A000",
+                "transactions are not supported; pgwire executes individual statements in autocommit mode",
+            )
+            .await?;
             self.send_ready_for_query('I').await?;
             return Ok(());
         }
@@ -1171,80 +1252,12 @@ impl PostgresProtocol {
     ) -> Result<()> {
         let upper = query.to_uppercase();
 
-        // Transaction control. ProximaDB does not yet implement real
-        // MVCC isolation, so BEGIN/COMMIT/ROLLBACK are autocommit
-        // no-ops at the engine level. We still emit the correct
-        // PostgreSQL command tag so clients (psql, ORM drivers,
-        // connection poolers) parse the response normally instead of
-        // silently mis-classifying it. The tracing warning records
-        // the autocommit truth so operator dashboards can surface it
-        // until real transactions land in Phase 3.
-        //
-        // Previously these statements fell through to
-        // `send_command_complete("OK")` at the bottom of this
-        // method — which caused multi-statement queries like
-        // `BEGIN; INSERT ...; COMMIT;` to look successful while
-        // silently dropping work. See ADR-018 for the autocommit
-        // contract and the Phase 3 plan for real transactions.
-        let trimmed_upper = upper.trim();
-        let trimmed_upper = trimmed_upper
-            .strip_suffix(';')
-            .map(str::trim)
-            .unwrap_or(trimmed_upper);
-        if trimmed_upper == "BEGIN"
-            || trimmed_upper == "BEGIN TRANSACTION"
-            || trimmed_upper == "BEGIN WORK"
-            || trimmed_upper == "START TRANSACTION"
-        {
-            warn!(
-                target: "proximadb::pgwire::transactions",
-                "BEGIN observed; ProximaDB pgwire is autocommit-only — \
-                 isolation/savepoints are not yet implemented"
-            );
-            return self.send_command_complete("BEGIN").await;
-        }
-        if trimmed_upper == "COMMIT"
-            || trimmed_upper == "COMMIT TRANSACTION"
-            || trimmed_upper == "COMMIT WORK"
-            || trimmed_upper == "END"
-            || trimmed_upper == "END TRANSACTION"
-            || trimmed_upper == "END WORK"
-        {
-            return self.send_command_complete("COMMIT").await;
-        }
-        if trimmed_upper == "ROLLBACK"
-            || trimmed_upper == "ROLLBACK TRANSACTION"
-            || trimmed_upper == "ROLLBACK WORK"
-            || trimmed_upper == "ABORT"
-            || trimmed_upper == "ABORT TRANSACTION"
-            || trimmed_upper == "ABORT WORK"
-        {
-            // Loud warning because ROLLBACK is the dangerous one:
-            // clients calling ROLLBACK expect uncommitted writes to
-            // disappear, but under autocommit each statement has
-            // already committed and there is nothing to roll back.
-            // Phase 3 will replace this with real rollback semantics.
-            warn!(
-                target: "proximadb::pgwire::transactions",
-                "ROLLBACK observed but pgwire is autocommit-only — \
-                 prior statements in this query have ALREADY been \
-                 applied; this ROLLBACK has no effect"
-            );
-            return self.send_command_complete("ROLLBACK").await;
-        }
-        if trimmed_upper.starts_with("SAVEPOINT ")
-            || trimmed_upper.starts_with("RELEASE SAVEPOINT ")
-            || trimmed_upper.starts_with("ROLLBACK TO ")
-        {
-            // Loud error: savepoints have no defensible autocommit
-            // emulation, and tools that issue them (e.g. SQLAlchemy
-            // nested-transaction emulation) MUST know they are not
-            // supported instead of silently misbehaving.
+        if transaction_control_policy(query).is_some() {
             return self
                 .send_error(
                     "ERROR",
                     "0A000",
-                    "savepoints are not supported (autocommit-only pgwire)",
+                    "transactions are not supported; pgwire executes individual statements in autocommit mode",
                 )
                 .await;
         }

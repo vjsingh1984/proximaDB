@@ -75,6 +75,9 @@ pub mod proto_convert;
 pub mod rag;
 // Generic, engine-agnostic traversal utilities
 pub use engines::generic_traversal;
+// Default graph WAL factory (unified) for composition-root injection into the
+// ORION engine constructors (ORION cascade PR 5).
+pub use crate::storage::persistence::write_ahead_log::wal_operations::unified_wal_factory;
 pub mod hybrid;
 pub mod monitoring;
 pub mod query;

@@ -253,6 +253,151 @@ async fn assert_recovered(base: &str, collection: &str, phase: &str) -> anyhow::
     Ok(())
 }
 
+/// TD-OBJSTORE-1 batch 3: seed a dim-1 "zero-vector" KV collection.
+///
+/// anvaiops uses `vector: [0.0]` rows as a durable KV store (API keys, tenant
+/// registry, billing). The engine skips embedding for zero-vector rows and
+/// serves them by id. `rec-zero` is the KV record under test; `rec-ctrl` is a
+/// non-zero dim-1 control that isolates the zero-vector-ness as the variable.
+async fn create_and_insert_kv(base: &str, collection: &str, engine: &str) -> anyhow::Result<()> {
+    let http = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let response = http
+        .post(format!("{base}/api/v2/collections"))
+        .json(&json!({
+            "name": collection,
+            "dimension": 1,
+            "engine": engine,
+            "distance_metric": "cosine",
+            "canonical_embedding_precision": "fp32",
+            "enable_proxima_record": false
+        }))
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    anyhow::ensure!(status.is_success(), "kv create failed: {status} {body}");
+
+    let response = http
+        .post(format!(
+            "{base}/api/v2/collections/{collection}/records/batch"
+        ))
+        .json(&json!({
+            "records": [
+                { "id": "rec-ctrl", "vector": [0.5], "props": { "kind": "control" } },
+                { "id": "rec-zero", "vector": [0.0], "props": { "kind": "api_key", "secret": "sk-anvaiops" } }
+            ]
+        }))
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    anyhow::ensure!(status.is_success(), "kv insert failed: {status} {body}");
+    // Both records must exist immediately after seed (matches the TD: the KV
+    // record is queryable at seed time; it only 404s after restart).
+    for id in ["rec-ctrl", "rec-zero"] {
+        let r = http
+            .get(format!(
+                "{base}/api/v2/collections/{collection}/records/{id}"
+            ))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            r.status().is_success(),
+            "kv seed: {id} not readable at seed time: {}",
+            r.status()
+        );
+    }
+    Ok(())
+}
+
+/// Assert the dim-1 zero-vector KV record survived restart. The TD symptom is a
+/// 404 on `GET .../records/rec-zero` (and `record_count=0`) after the VM restart.
+async fn assert_kv_recovered(base: &str, collection: &str, phase: &str) -> anyhow::Result<()> {
+    let http = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    // Collection must recover from the catalog.
+    let response = http
+        .get(format!("{base}/api/v2/collections/{collection}"))
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    anyhow::ensure!(
+        status.is_success(),
+        "{phase}: catalog did not recover kv collection: {status} {body}"
+    );
+
+    // Each record must be readable by id after restart (the actual TD symptom).
+    for id in ["rec-ctrl", "rec-zero"] {
+        let response = http
+            .get(format!(
+                "{base}/api/v2/collections/{collection}/records/{id}"
+            ))
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        anyhow::ensure!(
+            status.is_success(),
+            "{phase}: kv record {id} gone after restart ({status}): {body}"
+        );
+        let record: Value = serde_json::from_str(&body)?;
+        anyhow::ensure!(
+            record.get("id").and_then(Value::as_str) == Some(id),
+            "{phase}: kv point read returned the wrong record: {body}"
+        );
+    }
+    Ok(())
+}
+
+/// TD-OBJSTORE-1 batch 3 regression: a dim-1 zero-vector KV record written to an
+/// object-store backend, then lost after a crash+restart. Reproduces on
+/// `adls://`/`s3://`/`gs://` (whole-object-overwrite WAL); passes trivially on
+/// `file://`. Runs against Azurite/MinIO/fake-gcs via
+/// `scripts/run_cloud_emulator_tests.sh` or a real cloud
+/// `PROXIMADB_OBJECT_STORE_URL` (TD-OBJSTORE-5 tiers).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn zero_vector_kv_record_survives_restart() -> anyhow::Result<()> {
+    let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
+    anyhow::ensure!(
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
+    );
+    let root = format!(
+        "{}/td-objstore-1-kv/{}",
+        base.trim_end_matches('/'),
+        uuid::Uuid::new_v4().simple()
+    );
+    let tmp = tempfile::tempdir()?;
+    let collection = format!("kv_{}", uuid::Uuid::new_v4().simple());
+
+    let vm1 = tmp.path().join("vm1");
+    let vm2 = tmp.path().join("vm2");
+    for dir in [&vm1, &vm2] {
+        std::fs::create_dir_all(dir)?;
+    }
+
+    // Phase 1: seed the KV records, then SIGKILL before any flush (WAL-only).
+    let first = ServerProcess::start(&root, &vm1, &tmp.path().join("vm1.toml")).await?;
+    create_and_insert_kv(&first.base_url, &collection, "sst").await?;
+    first.crash()?;
+
+    // Phase 2: restart on a fresh local disk → WAL replay from object store.
+    let wal_replay = ServerProcess::start(&root, &vm2, &tmp.path().join("vm2.toml")).await?;
+    assert_kv_recovered(&wal_replay.base_url, &collection, "KV WAL replay").await?;
+    wal_replay.crash()?;
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires PROXIMADB_OBJECT_STORE_URL plus S3/ADLS credentials"]
 async fn catalog_wal_and_sst_survive_fresh_local_disks() -> anyhow::Result<()> {
@@ -291,5 +436,362 @@ async fn catalog_wal_and_sst_survive_fresh_local_disks() -> anyhow::Result<()> {
     assert_recovered(&cold_sst.base_url, &sst_collection, "cold SST").await?;
     assert_recovered(&cold_sst.base_url, &helix_collection, "cold HELIX").await?;
     cold_sst.crash()?;
+    Ok(())
+}
+
+/// Deterministic splitmix64 (no `rand` dev-dep) — reproducible seed vectors.
+fn splitmix64(seed: &mut u64) -> u64 {
+    *seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *seed;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+fn unit_vec(seed: &mut u64, dim: usize) -> Vec<f32> {
+    let raw: Vec<f64> = (0..dim)
+        .map(|_| (splitmix64(seed) as f64 / u64::MAX as f64) * 2.0 - 1.0)
+        .collect();
+    let norm = raw.iter().map(|x| x * x).sum::<f64>().sqrt().max(1e-12);
+    raw.iter().map(|x| (x / norm) as f32).collect()
+}
+
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+
+/// TD-OBJSTORE-5 S3 (ADR-063 D8 QA tier): cold-read recall ratchet on the object
+/// store. Seeds a deterministic corpus, flushes (graceful stop), restarts on a
+/// FRESH local disk, and asserts recall@5 vs local brute force. The storage
+/// backend must be recall-NEUTRAL: this proves the quantized cascade's ranged
+/// reads + footer parse are byte-correct over the real cloud wire API — any
+/// recall delta vs the file:// baseline is a read-path bug, not a tuning knob.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn cold_recall_ratchet_survives_restart() -> anyhow::Result<()> {
+    const DIM: usize = 8;
+    const N: usize = 64;
+    const K: usize = 5;
+    const PROBES: usize = 8;
+    const MIN_RECALL: f32 = 0.9;
+
+    let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
+    anyhow::ensure!(
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
+    );
+    let root = format!(
+        "{}/td-objstore-5-recall/{}",
+        base.trim_end_matches('/'),
+        uuid::Uuid::new_v4().simple()
+    );
+    let tmp = tempfile::tempdir()?;
+    let collection = format!("recall_{}", uuid::Uuid::new_v4().simple());
+    let vm1 = tmp.path().join("vm1");
+    let vm2 = tmp.path().join("vm2");
+    for dir in [&vm1, &vm2] {
+        std::fs::create_dir_all(dir)?;
+    }
+
+    let mut seed = 0x5EED_5EED_5EED_5EEDu64;
+    let corpus: Vec<Vec<f32>> = (0..N).map(|_| unit_vec(&mut seed, DIM)).collect();
+
+    // Phase 1: seed the corpus, then GRACEFUL stop (SIGINT flushes the segment) —
+    // this ratchet targets the COLD read path, not WAL replay.
+    let first = ServerProcess::start(&root, &vm1, &tmp.path().join("vm1.toml")).await?;
+    {
+        let http = Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(30))
+            .build()?;
+        let response = http
+            .post(format!("{}/api/v2/collections", first.base_url))
+            .json(&json!({
+                "name": collection,
+                "dimension": DIM,
+                "engine": "sst",
+                "distance_metric": "cosine",
+                "canonical_embedding_precision": "fp32",
+                "enable_proxima_record": false
+            }))
+            .send()
+            .await?;
+        anyhow::ensure!(response.status().is_success(), "recall create failed");
+        let records: Vec<Value> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| json!({ "id": format!("vec-{i}"), "vector": v }))
+            .collect();
+        let response = http
+            .post(format!(
+                "{}/api/v2/collections/{collection}/records/batch",
+                first.base_url
+            ))
+            .json(&json!({ "records": records }))
+            .send()
+            .await?;
+        anyhow::ensure!(response.status().is_success(), "recall insert failed");
+    }
+    first.graceful()?;
+
+    // Phase 2: fresh local disk → cold read from the object store only.
+    let cold = ServerProcess::start(&root, &vm2, &tmp.path().join("vm2.toml")).await?;
+    let http = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let mut total_hits = 0usize;
+    for p in 0..PROBES {
+        // Probe = perturbed copy of every 8th corpus vector (deterministic).
+        let base_vec = &corpus[p * (N / PROBES)];
+        let mut pseed = 0xABCD_EF01_2345_6789u64 ^ (p as u64);
+        let noise = unit_vec(&mut pseed, DIM);
+        let probe: Vec<f32> = base_vec
+            .iter()
+            .zip(&noise)
+            .map(|(a, n)| a + 0.05 * n)
+            .collect();
+
+        // Local brute-force top-K by cosine.
+        let mut scored: Vec<(usize, f32)> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i, cosine(&probe, v)))
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let truth: Vec<String> = scored[..K]
+            .iter()
+            .map(|(i, _)| format!("vec-{i}"))
+            .collect();
+
+        let response = http
+            .post(format!(
+                "{}/api/v2/collections/{collection}/search",
+                cold.base_url
+            ))
+            .json(&json!({ "vector": probe, "top_k": K }))
+            .send()
+            .await?;
+        anyhow::ensure!(response.status().is_success(), "recall search failed");
+        let body: Value = serde_json::from_str(&response.text().await?)?;
+        let got: Vec<&str> = body
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row.get("id").and_then(Value::as_str))
+            .collect();
+        total_hits += truth.iter().filter(|t| got.contains(&t.as_str())).count();
+    }
+    let recall = total_hits as f32 / (PROBES * K) as f32;
+    cold.crash()?;
+    anyhow::ensure!(
+        recall >= MIN_RECALL,
+        "cold recall@{K} on the object store = {recall:.3} < {MIN_RECALL} — \
+         backend must be recall-neutral; a delta vs file:// is a read-path bug"
+    );
+    Ok(())
+}
+
+/// TD-OBJSTORE-4 defect-6 redux (task: normal-flush string-strip): a GRACEFUL
+/// flush on a cloud base must persist the segment INTO the object store — and
+/// must NOT write it to a literal local `adls:...` directory (the
+/// URL-as-local-path artifact). #1061 fixed the RECOVERY staging path only;
+/// the normal flush retained the false-success class (masked by WAL replay).
+/// RED on that state: no segment blob in the store + artifact dir on disk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn graceful_flush_persists_segment_to_object_store() -> anyhow::Result<()> {
+    let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
+    anyhow::ensure!(
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
+    );
+    let root = format!(
+        "{}/td-objstore-flush-strip/{}",
+        base.trim_end_matches('/'),
+        uuid::Uuid::new_v4().simple()
+    );
+    let tmp = tempfile::tempdir()?;
+    let collection = format!("flushseg_{}", uuid::Uuid::new_v4().simple());
+    let vm1 = tmp.path().join("vm1");
+    std::fs::create_dir_all(&vm1)?;
+
+    // The URL-as-local-path artifact appears under the server process CWD.
+    let scheme_dir =
+        std::path::PathBuf::from(format!("{}:", base.split("://").next().unwrap_or("adls")));
+    let artifact_preexisted = scheme_dir.exists();
+
+    // Seed dim-8 records, then SIGINT: the graceful stop flushes the segment.
+    let first = ServerProcess::start(&root, &vm1, &tmp.path().join("vm1.toml")).await?;
+    create_and_insert(&first.base_url, &collection, "sst").await?;
+    first.graceful()?;
+
+    // 1) The flushed segment must exist IN the object store under the
+    //    collection data prefix (production FileSystem, same emulator env).
+    let factory = std::sync::Arc::new(
+        proximadb::storage::persistence::filesystem::FilesystemFactory::create(
+            proximadb::storage::persistence::filesystem::FilesystemConfig::default(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("filesystem factory: {e}"))?,
+    );
+    let collections_prefix = format!("{root}/collections");
+    let fs = factory
+        .get_filesystem(&collections_prefix)
+        .map_err(|e| anyhow::anyhow!("get_filesystem: {e}"))?;
+    // LIST the whole collections prefix (flat keyspace) and look for a
+    // flushed vector segment object under a .../data/ key.
+    let entries = fs
+        .list(&collections_prefix)
+        .await
+        .map_err(|e| anyhow::anyhow!("LIST {collections_prefix}: {e}"))?;
+    let segment_blobs: Vec<&str> = entries
+        .iter()
+        .map(|e| e.url.as_str())
+        .filter(|u| u.contains("/data/") && (u.ends_with(".pax") || u.ends_with(".sst")))
+        .collect();
+    anyhow::ensure!(
+        !segment_blobs.is_empty(),
+        "graceful flush must persist a segment INTO the object store under \
+         {collections_prefix}/**/data/ — found none (URLs: {:?}). The segment \
+         was written to a literal local path instead (defect-6 class).",
+        entries
+            .iter()
+            .map(|e| e.url.as_str())
+            .take(10)
+            .collect::<Vec<_>>()
+    );
+
+    // 2) No URL-as-local-path artifact directory may appear.
+    anyhow::ensure!(
+        artifact_preexisted || !scheme_dir.exists(),
+        "flush created a literal local '{}' directory — the staging URL was \
+         string-stripped into a local path (defect-6 class)",
+        scheme_dir.display()
+    );
+    Ok(())
+}
+
+/// Cloud-compaction e2e (TD-OBJSTORE-4 staged-I/O follow-up; QA tier): armed
+/// per-collection compaction (WLP-2 tags) on an object-store base must merge
+/// flushed segments through the staged write — a false-success compaction here
+/// is the data-loss shape that deletes the INPUT segments (the only copies).
+/// Three boots: seed+flush ×2 (the second flush trips l0_threshold:2 and runs
+/// compaction inline, #1012), then a fresh-disk boot proving every record from
+/// BOTH batches is still readable. Also asserts no URL-as-local-path artifact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn armed_compaction_on_object_store_preserves_all_records() -> anyhow::Result<()> {
+    let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
+    anyhow::ensure!(
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
+    );
+    let root = format!(
+        "{}/td-objstore-compaction/{}",
+        base.trim_end_matches('/'),
+        uuid::Uuid::new_v4().simple()
+    );
+    let tmp = tempfile::tempdir()?;
+    let collection = format!("compact_{}", uuid::Uuid::new_v4().simple());
+    let dirs: Vec<_> = (0..3).map(|i| tmp.path().join(format!("vm{i}"))).collect();
+    for d in &dirs {
+        std::fs::create_dir_all(d)?;
+    }
+    let scheme_dir =
+        std::path::PathBuf::from(format!("{}:", base.split("://").next().unwrap_or("adls")));
+    let artifact_preexisted = scheme_dir.exists();
+
+    let http = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    // Boot 1: create with ARMED compaction (per-collection WLP-2 override) and
+    // a low L0 threshold, seed batch A, graceful stop (flush #1).
+    let b1 = ServerProcess::start(&root, &dirs[0], &tmp.path().join("vm0.toml")).await?;
+    let response = http
+        .post(format!("{}/api/v2/collections", b1.base_url))
+        .json(&json!({
+            "name": collection,
+            "dimension": 8,
+            "engine": "sst",
+            "distance_metric": "cosine",
+            "canonical_embedding_precision": "fp32",
+            "enable_proxima_record": false,
+            "tags": ["compaction:on", "l0_threshold:2"]
+        }))
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "compaction create failed");
+    let batch_a: Vec<Value> = (0..8)
+        .map(|i| json!({ "id": format!("a-{i}"), "vector": vec![0.1_f32 * (i as f32 + 1.0); 8] }))
+        .collect();
+    let response = http
+        .post(format!(
+            "{}/api/v2/collections/{collection}/records/batch",
+            b1.base_url
+        ))
+        .json(&json!({ "records": batch_a }))
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "batch A insert failed");
+    b1.graceful()?;
+
+    // Boot 2: seed batch B, graceful stop (flush #2 → l0_threshold:2 trips →
+    // armed compaction runs inline on the flush path).
+    let b2 = ServerProcess::start(&root, &dirs[1], &tmp.path().join("vm1.toml")).await?;
+    let batch_b: Vec<Value> = (0..8)
+        .map(|i| json!({ "id": format!("b-{i}"), "vector": vec![0.05_f32 * (i as f32 + 1.0); 8] }))
+        .collect();
+    let response = http
+        .post(format!(
+            "{}/api/v2/collections/{collection}/records/batch",
+            b2.base_url
+        ))
+        .json(&json!({ "records": batch_b }))
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "batch B insert failed");
+    b2.graceful()?;
+
+    // Boot 3: fresh disk — every record from BOTH batches must be readable
+    // (compacted or not, correctness holds; a false-success compaction that
+    // deleted its inputs would lose batch A here).
+    let b3 = ServerProcess::start(&root, &dirs[2], &tmp.path().join("vm2.toml")).await?;
+    for id in (0..8)
+        .map(|i| format!("a-{i}"))
+        .chain((0..8).map(|i| format!("b-{i}")))
+    {
+        let response = http
+            .get(format!(
+                "{}/api/v2/collections/{collection}/records/{id}",
+                b3.base_url
+            ))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "record {id} unreadable after armed compaction + restart ({})",
+            response.status()
+        );
+    }
+    b3.crash()?;
+
+    anyhow::ensure!(
+        artifact_preexisted || !scheme_dir.exists(),
+        "compaction created a literal local '{}' directory (URL-as-local-path)",
+        scheme_dir.display()
+    );
     Ok(())
 }

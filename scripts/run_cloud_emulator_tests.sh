@@ -7,13 +7,19 @@
 # `make cloud-emulator-test` (local). Single source of truth so every CI path is
 # exactly the locally-runnable path.
 #
-# Usage: run_cloud_emulator_tests.sh [--fast|--all]
+# Usage: run_cloud_emulator_tests.sh [--fast|--all|--restart|--qa|--nightly]
 #   --fast : run ONLY the cheap object-store tier tests (~3-5 min — compiles just
 #            the small object-store crate, no main-crate compile, no OOM risk).
 #            Used by the develop early-detection job so a tier regression is caught
 #            on the introducing feat→develop PR.
 #   --all  : (default) also run cold_graph_record_store_round_trips_on_real_azure,
 #            which compiles the full main crate and runs under CARGO_BUILD_JOBS=2.
+#   --restart : ONLY the full-server object-store RESTARTABILITY recovery proof
+#            (TD-OBJSTORE-5 S1, ADR-063 D8 PR tier) — spawns the real
+#            `proximadb-server` binary against an Azurite (adls://) prefix, SIGKILLs
+#            it, and recovers catalog + WAL-replays collections on a fresh local
+#            disk. Compiles the server binary, so it gets its OWN scope/job (kept
+#            off --fast/--all's compile budget).
 #
 # Requires: docker, cargo, aws CLI (MinIO bucket), az CLI (Azurite container),
 # curl (fake-gcs bucket). On GitHub ubuntu-latest all are preinstalled.
@@ -33,7 +39,10 @@ for arg in "$@"; do
   case "$arg" in
     --fast) SCOPE="fast" ;;
     --all)  SCOPE="all" ;;
-    *) echo "::error::unknown argument: $arg"; echo "usage: $0 [--fast|--all]"; exit 2 ;;
+    --restart) SCOPE="restart" ;;
+    --qa) SCOPE="qa" ;;
+    --nightly) SCOPE="nightly" ;;
+    *) echo "::error::unknown argument: $arg"; echo "usage: $0 [--fast|--all|--restart|--qa|--nightly]"; exit 2 ;;
   esac
 done
 echo "==> Scope: $SCOPE"
@@ -86,6 +95,97 @@ export AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
 export AWS_ENDPOINT=http://127.0.0.1:9000 AWS_ALLOW_HTTP=true AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false
 export AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin AWS_REGION=us-east-1
 export PROXIMADB_GCS_TEST_ENDPOINT=http://127.0.0.1:4443
+# The production root FileSystem GCS backend (contract tests) reads these:
+export PROXIMADB_GCS_ENDPOINT=http://127.0.0.1:4443 PROXIMADB_GCS_ANONYMOUS=1 GCP_PROJECT=proximadb
+
+if [ "$SCOPE" = "restart" ]; then
+  # TD-OBJSTORE-5 S1 (ADR-063 D8 PR tier = Azurite-strict): prove full-server
+  # object-store RESTARTABILITY recovery in the runner. Spawns the real
+  # `proximadb-server` three times against ONE Azurite (adls://) prefix with a
+  # fresh local `server.data_dir` each time: CREATE+INSERT → SIGKILL → recover
+  # catalog from metadata_url + WAL-replay reattaches SST/HELIX collections →
+  # SIGINT (flush SST) → cold read on another empty disk. All durable state lives
+  # only in the object store (ADR-048 stateless catalog). Isolated scope: it
+  # compiles the proximadb-server binary (heavy, CARGO_BUILD_JOBS=1 for OOM
+  # safety), so it runs in its own path-gated CI job, not on --fast/--all's budget.
+  # The zero-vector-KV restart arm (the TD-OBJSTORE-1 batch-3 gate) is IN the
+  # gate: TD-OBJSTORE-4 S1 (#1061 + the reconciled S1 PR) greened it end-to-end.
+  echo "==> TD-OBJSTORE-5 S1: full-server restart recovery over Azurite (adls://)"
+  # Azurite = ADLS Blob emulator; the production adls:// from_url + emulator env.
+  export PROXIMADB_AZURE_EMULATOR=1 AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
+  export AZURE_STORAGE_ACCOUNT=devstoreaccount1 AZURE_STORAGE_ACCOUNT_NAME=devstoreaccount1
+  export PROXIMADB_OBJECT_STORE_URL="adls://$CONTAINER_BUCKET/objstore-restart-recovery"
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features azure \
+    --test object_store_restart_recovery \
+    -- --ignored --nocapture --test-threads=1
+  # TD-OBJSTORE-5 S2: per-primitive contract tests against the PRODUCTION root
+  # FileSystem backends (PUT->prefix-LIST, prefix-exists-false, multi-page LIST).
+  # Azure + S3 strict; GCS best-effort (skips if the backend does not register).
+  echo "==> TD-OBJSTORE-5 S2: backend contract tests (Azure/S3 strict, GCS best-effort)"
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features aws,azure,gcp \
+    --test objstore_backend_contract_test \
+    -- --ignored --nocapture --test-threads=1
+  echo "==> Restart-recovery + contract validation complete (cleanup trap tears emulators down)"
+  exit 0
+fi
+
+if [ "$SCOPE" = "qa" ]; then
+  # TD-OBJSTORE-5 S3 (ADR-063 D8 QA tier): one cloud-full server build, then the
+  # restart proofs per STRICT store — Azure (Azurite) first, then S3 (MinIO) with
+  # Azurite stopped so an S3 run that accidentally reaches Azure fails loudly
+  # (cross-store isolation is part of the proof). The recall ratchet runs on ONE
+  # strict backend (Azure): recall is a ranged-read/footer-fidelity check, not
+  # the restart-correctness gate. Build BEFORE exercising emulators; jobs=1 for
+  # the 16GB-runner OOM ceiling (same rationale as --all). The QA budget is a
+  # measured ratchet: record the cold-cache wall time in TD-OBJSTORE-5 on the
+  # first run.
+  echo "==> TD-OBJSTORE-5 QA tier: build server (cloud-full) before emulator runs"
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features cloud-full \
+    --test object_store_restart_recovery --no-run
+
+  echo "==> QA tier [1/2]: Azure (Azurite, adls://) — restart proofs + recall ratchet"
+  export PROXIMADB_AZURE_EMULATOR=1 AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
+  export AZURE_STORAGE_ACCOUNT=devstoreaccount1 AZURE_STORAGE_ACCOUNT_NAME=devstoreaccount1
+  PROXIMADB_OBJECT_STORE_URL="adls://$CONTAINER_BUCKET/qa-restart-azure" \
+    CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features cloud-full \
+    --test object_store_restart_recovery \
+    -- --ignored --nocapture --test-threads=1
+
+  echo "==> QA tier: stopping Azurite (S3 must not be able to reach Azure)"
+  docker rm -f azurite >/dev/null 2>&1 || true
+
+  echo "==> QA tier [2/2]: S3 (MinIO, s3://) — restart proofs"
+  export AWS_ENDPOINT=http://127.0.0.1:9000 AWS_ALLOW_HTTP=true AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false
+  export AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin AWS_REGION=us-east-1
+  # Both restart proofs; the recall ratchet runs on ONE strict backend (Azure),
+  # so skip it here (cargo test accepts a single positional filter — use --skip).
+  PROXIMADB_OBJECT_STORE_URL="s3://$CONTAINER_BUCKET/qa-restart-s3" \
+    CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features cloud-full \
+    --test object_store_restart_recovery \
+    -- --ignored --nocapture --test-threads=1 --skip cold_recall_ratchet
+
+  echo "==> QA tier complete (Azure strict + S3 strict; GCS lives in --nightly)"
+  exit 0
+fi
+
+if [ "$SCOPE" = "nightly" ]; then
+  # TD-OBJSTORE-5 S4 (ADR-063 D8 nightly tier): GCS (fake-gcs) restart + recall,
+  # BEST-EFFORT — fake-gcs/object_store incompatibilities are documented, so
+  # failures warn and never block promotion (GCS is explicitly NOT called a gate
+  # while warn-only). Runs on a schedule, off the promotion path.
+  echo "==> TD-OBJSTORE-5 nightly tier: GCS (fake-gcs, gs://) — best-effort"
+  export PROXIMADB_GCS_TEST_ENDPOINT=http://127.0.0.1:4443
+  export STORAGE_EMULATOR_HOST=http://127.0.0.1:4443
+  if PROXIMADB_OBJECT_STORE_URL="gs://$CONTAINER_BUCKET/nightly-restart-gcs" \
+    CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features cloud-full \
+    --test object_store_restart_recovery \
+    -- --ignored --nocapture --test-threads=1; then
+    echo "==> GCS nightly restart + recall: PASS"
+  else
+    echo "::warning::GCS nightly restart/recall failed (best-effort tier — file an issue, do not block)"
+  fi
+  exit 0
+fi
 
 cargo test -p proximadb-object-store --features aws,azure,gcp -- --ignored --nocapture \
   put_with_tier_accepted_by_azurite \

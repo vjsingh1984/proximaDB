@@ -515,8 +515,11 @@ impl MultiServer {
             } else {
                 tonic::transport::Server::builder()
             };
-            let mut server_builder =
-                server_builder.layer(tower::util::option_layer(if self.rest_auth_enabled {
+            let mut server_builder = server_builder
+                .layer(crate::network::grpc::auth::GrpcTenantModeLayer::new(
+                    self.tenant_deployment_mode.clone(),
+                ))
+                .layer(tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator.clone().map(|sc| {
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
@@ -697,6 +700,7 @@ impl MultiServer {
             let self_pod_id = services.self_pod_id.clone();
             let api_handlers = services.api_handlers.clone();
             let tenant_header_trust = self.tenant_header_trust;
+            let tenant_deployment_mode = self.tenant_deployment_mode.clone();
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
@@ -708,7 +712,8 @@ impl MultiServer {
                     arrow_collection,
                     arrow_graph,
                 )
-                .with_tenant_header_trust(tenant_header_trust);
+                .with_tenant_header_trust(tenant_header_trust)
+                .with_tenant_deployment_mode(tenant_deployment_mode);
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
@@ -882,6 +887,7 @@ impl MultiServer {
                 });
 
             let tenant_header_trust = self.tenant_header_trust;
+            let tenant_deployment_mode = self.tenant_deployment_mode.clone();
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
                 let mut server = PostgresServer::new(
@@ -902,6 +908,7 @@ impl MultiServer {
                 server = server.with_partition_lease_manager(partition_lease_manager);
                 server = server.with_warehouse_materialization(warehouse_root_url);
                 server = server.with_tenant_header_trust(tenant_header_trust);
+                server = server.with_tenant_deployment_mode(tenant_deployment_mode);
                 if let Some(limiter) = pgwire_rate_limiter {
                     server = server.with_rate_limiter(limiter);
                 }
@@ -1090,22 +1097,25 @@ impl MultiServer {
                     None
                 })
                 .with_tenant_header_trust(self.tenant_header_trust)
+                .with_tenant_deployment_mode(self.tenant_deployment_mode.clone())
                 .with_catalog_manager(Some(services.catalog_manager.clone()));
             let flight_server =
                 arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
                     .max_encoding_message_size(512 * 1024 * 1024)
                     .max_decoding_message_size(512 * 1024 * 1024);
 
-            let mut server_builder = tonic::transport::Server::builder().layer(
-                tower::util::option_layer(if self.rest_auth_enabled {
+            let mut server_builder = tonic::transport::Server::builder()
+                .layer(crate::network::grpc::auth::GrpcTenantModeLayer::new(
+                    self.tenant_deployment_mode.clone(),
+                ))
+                .layer(tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator.clone().map(|sc| {
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
                     })
                 } else {
                     None
-                }),
-            );
+                }));
 
             // Standard grpc.health.v1.Health service for k8s/LB probes.
             let (health_reporter, standard_health_server) = tonic_health::server::health_reporter();
@@ -1188,6 +1198,7 @@ impl MultiServer {
             let direct_write_services = self.build_direct_pgwire_write_services().await?;
             let warehouse_root_url = format!("file://{}/warehouse", self.config.data_dir.display());
             let tenant_header_trust = self.tenant_header_trust;
+            let tenant_deployment_mode = self.tenant_deployment_mode.clone();
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
 
@@ -1220,6 +1231,7 @@ impl MultiServer {
                     server.with_partition_lease_manager(services.partition_lease_manager.clone());
                 server = server.with_warehouse_materialization(warehouse_root_url);
                 server = server.with_tenant_header_trust(tenant_header_trust);
+                server = server.with_tenant_deployment_mode(tenant_deployment_mode);
 
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);
@@ -1435,8 +1447,11 @@ impl MultiServer {
             } else {
                 tonic::transport::Server::builder()
             };
-            let mut server_builder =
-                server_builder.layer(tower::util::option_layer(if self.rest_auth_enabled {
+            let mut server_builder = server_builder
+                .layer(crate::network::grpc::auth::GrpcTenantModeLayer::new(
+                    self.tenant_deployment_mode.clone(),
+                ))
+                .layer(tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator.clone().map(|sc| {
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
@@ -1554,6 +1569,7 @@ impl MultiServer {
             let self_pod_id = services.self_pod_id.clone();
             let api_handlers = services.api_handlers.clone();
             let tenant_header_trust = self.tenant_header_trust;
+            let tenant_deployment_mode = self.tenant_deployment_mode.clone();
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
@@ -1565,7 +1581,8 @@ impl MultiServer {
                     arrow_collection,
                     arrow_graph,
                 )
-                .with_tenant_header_trust(tenant_header_trust);
+                .with_tenant_header_trust(tenant_header_trust)
+                .with_tenant_deployment_mode(tenant_deployment_mode);
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))

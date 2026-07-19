@@ -506,3 +506,13 @@ benchmark_report_*.csv
 !clients/python/codegen/requirements.txt
 clients/python/src/proximadb_sdk/_generated/**/.ruff_cache/
 clients/python/src/proximadb_sdk/_generated/**/__pycache__/
+
+# URL-as-local-path artifacts: a cloud-URL flush that string-strips to a literal
+# local dir writes segments under scheme-named folders (TD-OBJSTORE-4 defect class).
+# Never commit them; their appearance is a bug signal.
+**/adls:/
+**/az:/
+**/azure:/
+**/s3:/
+**/gs:/
+**/gcs:/

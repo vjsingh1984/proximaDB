@@ -397,7 +397,7 @@ pip install aiofiles
 ## Contributing
 
 Found an issue with an example? Please report it:
-- GitHub Issues: https://github.com/vjsingh1984/proximaDB/issues
+- GitHub Issues: https://github.com/anvai-labs/proximaDB/issues
 - Include: Example name, error message, SDK version, server version
 
 ---

@@ -9,7 +9,7 @@
 | Status | **In progress — batch 3 is the active durability blocker.** Catalog and real-vector recovery now pass on the live object-store deployment, but dim-1 records written with `vector: [0.0]` are not recovered after restart. The deferred items below remain outside the single-VM MVP unless their triggering scale, multi-writer, or feature conditions are introduced.
 | Severity | Critical — with `storage.metadata_url = adls://…` (or `s3://`, `gcs://`) the server constructs invalid `file://adls://…` URLs and/or drives `std::fs`/`tokio::fs` at object-store URLs; metrics, document WAL, audit/event-log, and timeseries subsystems fail at startup or silently write to wrong local paths. Blocks the ADR-0028 anvaiops object-store deployment (issue #960).
 | Component | `src/network/shared_services.rs` (subsystem path wiring), `src/storage/persistence/write_ahead_log/wal_operations.rs` (unified WAL), `src/storage/engines/eventlog/*` (audit event log), `src/audit/*` (security audit storage), `crates/control/proximadb-catalog/src/delta.rs`, defensive: disk caches + tantivy log index.
-| Tracked-by | https://github.com/vjsingh1984/proximaDB/issues/960[#960]; deploy consumer: anvaiops ADR-0028.
+| Tracked-by | https://github.com/anvai-labs/proximaDB/issues/960[#960]; deploy consumer: anvaiops ADR-0028.
 | Pillar | REL, COST (durability on VM loss; object-store at-rest tiering per ADR-036)
 |===
 
@@ -181,6 +181,34 @@ anvaiops uses it for API keys, the tenant registry, and workspace/billing rows. 
 recovery/replay path appears to handle embedded-vector records but not zero-vector
 KV records: either the skip-embedding write path is not represented in the WAL or
 replay filters on vector presence.
+
+=== Measured root cause (2026-07-15) — NOT zero-vector-specific
+
+An Azurite process-boundary reproduction
+(`zero_vector_kv_record_survives_restart`,
+`apps/proximadb-server/tests/object_store_restart_recovery.rs`) falsifies both
+hypotheses above: a **non-zero** dim-1 control record (`[0.5]`) is lost identically
+to the zero-vector record. The variable is *unflushed (WAL-only) data on an
+object-store backend* — anvaiops' KV collections are simply the only collections
+small enough to never flush, so only they exposed it (the 47 "real" vectors
+recovered via flushed-segment discovery, masking the bug).
+
+Two stacked defects (full chain + evidence in TD-OBJSTORE-4):
+
+. The WAL batch data PUT is synchronous, but its global-manifest pointer goes
+  through `append_async` → a background worker batching at 100 ms
+  (`disk_manager.rs:273`, `manifest/service.rs:44`). SIGKILL after ack loses the
+  pointer with no error logged; post-crash blob listing shows the `.bcwal` durable
+  and zero manifest objects.
+. The catalog-driven recovery pass runs correctly (collection enumerated, engine
+  registered — TD-OBJSTORE-2 works) but its best-effort LIST fallback
+  (`disk_manager.rs:362`) gates on `filesystem.exists()` of a **directory prefix**,
+  which is HEAD-on-key = false on flat keyspaces (`azure_blob.rs:277`) → 0 files
+  found while the batch object exists.
+
+Fix spec: **TD-OBJSTORE-4** (LIST-authority recovery, per ADR-063 D3-D5). The
+design decision it implements: acked ⇒ data durable AND LISTable; manifests are
+caches, never the recovery gate.
 
 === Engine-only reproduction
 

@@ -23,7 +23,7 @@ use object_store::ObjectStore;
 use object_store::ObjectStoreExt;
 use object_store::aws::AmazonS3Builder;
 use object_store::path::Path as ObjPath;
-use object_store::{Attribute, Attributes, PutOptions, PutPayload};
+use object_store::{Attribute, Attributes, PutMode, PutOptions, PutPayload};
 use std::sync::Arc;
 
 use super::{
@@ -205,6 +205,39 @@ impl FileSystem for AwsS3FileSystem {
             }
         }
         Ok(())
+    }
+
+    async fn write_if_absent(
+        &self,
+        path: &str,
+        data: &[u8],
+        options: Option<FileOptions>,
+    ) -> FsResult<()> {
+        let (bucket, key) = Self::parse(path)?;
+        let store = self.store_for(&bucket)?;
+        let dst = ObjPath::from(key);
+        let mut attributes = Attributes::new();
+        if let Some(tier) = options.as_ref().and_then(FileOptions::access_tier) {
+            attributes.insert(Attribute::StorageClass, tier.as_s3_storage_class().into());
+        }
+        let result = store
+            .put_opts(
+                &dst,
+                PutPayload::from(data.to_vec()),
+                PutOptions {
+                    mode: PutMode::Create,
+                    attributes,
+                    ..Default::default()
+                },
+            )
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(object_store::Error::AlreadyExists { .. }) => {
+                Err(FilesystemError::AlreadyExists(path.to_string()))
+            }
+            Err(error) => Err(Self::net("S3 conditional put", error)),
+        }
     }
 
     async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {

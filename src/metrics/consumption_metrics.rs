@@ -42,6 +42,25 @@ lazy_static! {
         "Total number of object store I/O operations (put, get, list, delete)",
         &["tenant_id", "operation"]
     );
+    /// TD-IOTRACE-2: per-tenant physical object-store ranged GETs — the accurate
+    /// per-query GET count from the io-trace snapshot (post-#1081 single-source
+    /// counting, e.g. 51/query @ SIFT1M not 102). The billing input for the
+    /// physical part of the two-part KRU rate (TD-IOTRACE-3). Neutral count only;
+    /// AnvaiOps (control plane) applies the $/rate-card.
+    pub static ref OBJECT_STORE_GETS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_object_store_gets_total",
+        "Per-tenant physical object-store ranged GETs (TD-IOTRACE-2, KRU physical)",
+        &["tenant_id"]
+    );
+    /// TD-IOTRACE-2: per-tenant physical object-store bytes read — the accurate
+    /// per-query read bytes from the io-trace snapshot (post-#1081). Companion to
+    /// [`OBJECT_STORE_GETS_TOTAL`]; the bytes side of the KRU physical rate input.
+    /// Neutral count only; AnvaiOps applies the $/rate-card.
+    pub static ref OBJECT_STORE_BYTES_READ_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_object_store_bytes_read_total",
+        "Per-tenant physical object-store bytes read (TD-IOTRACE-2, KRU physical)",
+        &["tenant_id"]
+    );
     pub static ref STORAGE_BYTES_SECONDS: GaugeVec = registered_gauge_vec(
         "proximadb_storage_bytes_seconds",
         "GB-seconds or raw bytes stored per tenant",
@@ -96,6 +115,18 @@ lazy_static! {
         "proximadb_object_store_write_bytes_by_tier_total",
         "Bytes written to object storage per tenant by access tier (write-time; the cold-tier cost lever)",
         &["tenant_id", "tier"]
+    );
+    /// TD-WLP-8 (ADR-061 D4): resident in-memory **working-set** bytes of a
+    /// `Churn` collection — the unflushed WAL/memtable delta it keeps hot for
+    /// immediate-freshness reads. A level gauge (current resident bytes),
+    /// sampled at the `Churn` read seam; the companion soft ceiling
+    /// (`PROXIMADB_CHURN_WORKING_SET_MB`) makes an over-budget collection
+    /// observable so it degrades gracefully instead of silently OOMing.
+    /// Emitted only for `Churn` collections (`AppendBulk` never samples).
+    pub static ref CHURN_WORKING_SET_BYTES: GaugeVec = registered_gauge_vec(
+        "proximadb_churn_collection_working_set_bytes",
+        "Resident in-memory working-set bytes of a Churn collection (unflushed WAL/memtable delta)",
+        &["tenant_id", "collection_id"]
     );
 }
 
@@ -574,6 +605,17 @@ pub fn record_storage_bytes(tenant_id: Option<&str>, storage_type: &str, bytes: 
         .set(bytes);
 }
 
+/// TD-WLP-8: set the `Churn` collection working-set level gauge. Called from
+/// the `Churn` read seam with the collection's current unflushed byte count;
+/// pure gauge `.set()` (the soft-ceiling decision lives at the call site,
+/// which owns the env). An absent/empty tenant is attributed to `"default"`.
+pub fn record_churn_working_set_bytes(tenant_id: Option<&str>, collection_id: &str, bytes: u64) {
+    let t_id = tenant_id.unwrap_or("default");
+    CHURN_WORKING_SET_BYTES
+        .with_label_values(&[t_id, collection_id])
+        .set(bytes as f64);
+}
+
 /// ADR-030 **KSU**: snapshot per-tenant *resident* storage bytes from the live
 /// collection set and `.set()` the `STORAGE_BYTES_SECONDS` **level** gauge
 /// (Prometheus integrates the level to byte-seconds downstream — KSU is an
@@ -646,12 +688,27 @@ pub fn record_task_execution_time(tenant_id: Option<&str>, engine: &str, duratio
 /// route-cost observer. Idempotent / replaceable in tests.
 pub fn install_billing_observer() {
     crate::observability::io_trace::set_billing_observer(Some(Box::new(|snap, tenant_id| {
+        let t_id = tenant_id.unwrap_or("default");
         // KRU (read-compute): per-(tenant, engine), straight from the engine-keyed
         // compute_ms map — no extra attribution needed.
         for (engine, ms) in &snap.compute_ms {
             if *ms > 0 {
                 record_task_execution_time(tenant_id, engine, *ms as f64);
             }
+        }
+        // TD-IOTRACE-2: the physical object-store meters — the accurate per-query
+        // ranged-GET count + bytes (post-#1081 single-source io-trace). These are
+        // the billing input for the physical part of the two-part KRU rate
+        // (TD-IOTRACE-3). Neutral counts; AnvaiOps applies the $/rate-card.
+        if snap.range_gets > 0 {
+            OBJECT_STORE_GETS_TOTAL
+                .with_label_values(&[t_id])
+                .inc_by(snap.range_gets as f64);
+        }
+        if snap.bytes_read > 0 {
+            OBJECT_STORE_BYTES_READ_TOTAL
+                .with_label_values(&[t_id])
+                .inc_by(snap.bytes_read as f64);
         }
     })));
 }
@@ -812,6 +869,35 @@ mod tests {
         );
     }
 
+    /// TD-WLP-8: the Churn working-set gauge round-trips per (tenant, collection)
+    /// and attributes an absent tenant to "default" (fail-closed).
+    #[test]
+    fn churn_working_set_gauge_round_trips() {
+        record_churn_working_set_bytes(Some("ksu_wlp8"), "col_hot", 4096);
+        assert_eq!(
+            CHURN_WORKING_SET_BYTES
+                .with_label_values(&["ksu_wlp8", "col_hot"])
+                .get(),
+            4096.0
+        );
+        // A later sample overwrites the level (gauge, not counter).
+        record_churn_working_set_bytes(Some("ksu_wlp8"), "col_hot", 2048);
+        assert_eq!(
+            CHURN_WORKING_SET_BYTES
+                .with_label_values(&["ksu_wlp8", "col_hot"])
+                .get(),
+            2048.0
+        );
+        // Absent tenant → "default".
+        record_churn_working_set_bytes(None, "col_unowned", 512);
+        assert_eq!(
+            CHURN_WORKING_SET_BYTES
+                .with_label_values(&["default", "col_unowned"])
+                .get(),
+            512.0
+        );
+    }
+
     #[test]
     fn provider_inferred_from_url_scheme() {
         assert_eq!(CloudProvider::from_url_scheme("s3"), CloudProvider::Aws);
@@ -963,6 +1049,33 @@ mod tests {
             map.classify("192.168.9.9".parse().unwrap()),
             KouLocality::Unknown
         );
+    }
+
+    #[tokio::test]
+    async fn billing_observer_emits_physical_object_store_meters() {
+        // TD-IOTRACE-2: the always-on billing observer must emit the accurate
+        // per-query range_gets + bytes_read as per-tenant neutral counters (the
+        // physical part of the two-part KRU rate). A fresh tenant id keeps the
+        // CounterVec children at their 0 baseline so the assertion is exact.
+        install_billing_observer();
+        let tenant = "test-iotrace2-physical-meters";
+        io_trace::instrument(Some(tenant.to_string()), "test.iotrace2", async {
+            io_trace::record_range_gets(7);
+            io_trace::record_bytes_read(4096);
+        })
+        .await;
+        assert_eq!(
+            OBJECT_STORE_GETS_TOTAL.with_label_values(&[tenant]).get(),
+            7.0
+        );
+        assert_eq!(
+            OBJECT_STORE_BYTES_READ_TOTAL
+                .with_label_values(&[tenant])
+                .get(),
+            4096.0
+        );
+        // Restore global observer state for the rest of the suite.
+        io_trace::set_billing_observer(None);
     }
 
     #[test]

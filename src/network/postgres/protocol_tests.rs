@@ -10,6 +10,76 @@ fn test_frontend_message() {
 }
 
 #[test]
+fn transaction_control_is_rejected_until_atomic_semantics_exist() {
+    for statement in [
+        "BEGIN",
+        "BEGIN TRANSACTION;",
+        "BEGIN ISOLATION LEVEL SERIALIZABLE",
+        "START TRANSACTION",
+        "START TRANSACTION READ ONLY",
+        "COMMIT",
+        "COMMIT AND CHAIN",
+        "END WORK",
+        "ROLLBACK",
+        "ROLLBACK AND NO CHAIN",
+        "ABORT TRANSACTION",
+        "SAVEPOINT nested",
+        "RELEASE nested",
+        "RELEASE SAVEPOINT nested",
+        "ROLLBACK TO nested",
+        "PREPARE TRANSACTION 'tx-1'",
+        "COMMIT PREPARED 'tx-1'",
+        "ROLLBACK PREPARED 'tx-1'",
+        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+        "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+        "SET CONSTRAINTS ALL DEFERRED",
+    ] {
+        assert_eq!(
+            transaction_control_policy(statement),
+            Some(TransactionControlPolicy::Unsupported),
+            "{statement} must not report false transaction success"
+        );
+    }
+
+    assert_eq!(transaction_control_policy("SELECT 1"), None);
+}
+
+#[test]
+fn transaction_control_is_detected_before_a_multi_statement_batch_runs() {
+    let statements = PostgresProtocol::split_sql_statements(
+        "BEGIN; INSERT INTO orders (id) VALUES (1); COMMIT;",
+    );
+
+    assert!(
+        statements
+            .iter()
+            .any(|statement| transaction_control_policy(statement).is_some())
+    );
+}
+
+#[test]
+fn pgwire_startup_tenant_is_required_in_multi_tenant_mode() {
+    let error = PostgresProtocol::resolve_startup_tenant(
+        None,
+        &proximadb_tenant::TenantDeploymentMode::MultiTenant,
+    )
+    .unwrap_err();
+
+    assert_eq!(error, "tenant id is required in multi-tenant mode");
+}
+
+#[test]
+fn pgwire_startup_tenant_defaults_only_in_single_tenant_mode() {
+    let tenant = PostgresProtocol::resolve_startup_tenant(
+        None,
+        &proximadb_tenant::TenantDeploymentMode::single_tenant("embedded"),
+    )
+    .unwrap();
+
+    assert_eq!(tenant, "embedded");
+}
+
+#[test]
 fn substitute_placeholders_handles_two_digit_indices() {
     // The old ordered str::replace turned "$10" into "<val1>0"; verify each
     // placeholder is matched by its full digit run.

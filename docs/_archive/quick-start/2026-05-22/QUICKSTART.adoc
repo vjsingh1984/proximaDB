@@ -566,16 +566,16 @@ pip install --force-reinstall proximadb-python
 
 == Next Steps
 
-* **Documentation**: https://github.com/vjsingh1984/proximadb/blob/main/clients/python/README.adoc
-* **Examples**: https://github.com/vjsingh1984/proximadb/tree/main/clients/python/examples
-* **API Reference**: https://github.com/vjsingh1984/proximadb/blob/main/docs/03-api-reference/python.md
-* **Performance Guide**: https://github.com/vjsingh1984/proximadb/blob/main/docs/performance/optimization.adoc
-* **Contributing**: https://github.com/vjsingh1984/proximadb/blob/main/CONTRIBUTING.adoc
+* **Documentation**: https://github.com/anvai-labs/proximaDB/blob/main/clients/python/README.adoc
+* **Examples**: https://github.com/anvai-labs/proximaDB/tree/main/clients/python/examples
+* **API Reference**: https://github.com/anvai-labs/proximaDB/blob/main/docs/03-api-reference/python.md
+* **Performance Guide**: https://github.com/anvai-labs/proximaDB/blob/main/docs/performance/optimization.adoc
+* **Contributing**: https://github.com/anvai-labs/proximaDB/blob/main/CONTRIBUTING.adoc
 
 == Support
 
-* **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
-* **Discussions**: https://github.com/vjsingh1984/proximadb/discussions
+* **GitHub Issues**: https://github.com/anvai-labs/proximaDB/issues
+* **Discussions**: https://github.com/anvai-labs/proximaDB/discussions
 * **Email**: singhvjd@gmail.com
 
 == License

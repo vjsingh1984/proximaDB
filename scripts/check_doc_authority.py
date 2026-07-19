@@ -11,12 +11,15 @@ Rules are declarative (regex + allow-list), not asciidoc-table parsing (brittle)
 
   1. Retired graph engines PULSAR/QUASAR may appear ONLY in allow-listed
      retirement/migration docs. Anywhere else is a violation (use ORION).
-  2. "6/six storage engines" is always wrong — there are 4 supported (SST, VIPER,
-     HELIX, NOVA) plus 2 experimental (SWIFT, RAPTOR).
+  2. Claims of 4/6 supported storage engines are wrong — SST is Supported;
+     VIPER/HELIX/NOVA are Beta; SWIFT/RAPTOR are Experimental.
   3. SWIFT, RAPTOR, and Arrow Flight are experimental: any in-scope doc that
      mentions one of them must ALSO carry the word "experimental" (the
      off-by-default caveat). A doc listing them as supported without that caveat
      is a violation.
+  4. pgwire is autocommit-only. Customer-facing docs may not claim that it
+     supports multi-statement transactions or recommend it for transactional
+     batches until the protocol conformance gate proves atomic rollback.
 
 Exit 0 = clean, 1 = violation(s) found, 2 = usage error.
 """
@@ -28,6 +31,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SUPPORT_AUTHORITY = ROOT / "docs/SUPPORTED_SURFACE.adoc"
 
 # Customer-facing narrative docs in scope. Excludes the authority doc itself plus
 # internal/historical/design trees (_internal, _archive, 12-design, 06-internals).
@@ -55,12 +59,31 @@ RETIRED_ALLOW = {
 
 RETIRED_RE = re.compile(r"\b(?:PULSAR|QUASAR)\b")
 COUNT_RE = re.compile(r"\b(?:six|6)\s+storage[\s-]?engines?", re.IGNORECASE)
+SUPPORTED_COUNT_RE = re.compile(
+    r"\b(?:four|4|six|6)\s+supported\s+storage[\s-]?engines?", re.IGNORECASE
+)
 EXPERIMENTAL_TERMS = {
     "SWIFT": re.compile(r"\bSWIFT\b"),
     "RAPTOR": re.compile(r"\bRAPTOR\b"),
     "Arrow Flight": re.compile(r"\bArrow\s+Flight\b"),
 }
 EXPERIMENTAL_MARKER_RE = re.compile(r"\bexperimental\b", re.IGNORECASE)
+PGWIRE_TRANSACTION_CLAIMS = {
+    "multi-statement transaction support": re.compile(
+        r"supports\s+multi-statement\s+transactions", re.IGNORECASE
+    ),
+    "pgwire-only transaction support": re.compile(
+        r"multi-statement\s+transactions\s*\(BEGIN/COMMIT\)\s+remain\s+pgwire-only",
+        re.IGNORECASE,
+    ),
+    "transactional batch recommendation": re.compile(
+        r"use\s+pgwire\s+for\s+transactional\s+batches", re.IGNORECASE
+    ),
+    "README transaction capability": re.compile(
+        r"Postgres\s+wire\s+protocol\s*\|\s*Supported\s*\|[^\n]*\btransactions\b",
+        re.IGNORECASE,
+    ),
+}
 
 
 def scope_files() -> list[Path]:
@@ -101,10 +124,15 @@ def check_file(p: Path) -> list[str]:
 
     # Rule 2: engine-count claim is always wrong.
     for i, line in enumerate(lines, start=1):
-        if COUNT_RE.search(line):
+        if SUPPORTED_COUNT_RE.search(line):
             violations.append(
-                f"{rel_p}:{i}: claims '6/six storage engines' — there are 4 "
-                f"supported (SST/VIPER/HELIX/NOVA); SWIFT/RAPTOR are experimental"
+                f"{rel_p}:{i}: claims multiple supported storage engines — SST is the "
+                f"only Supported engine; VIPER/HELIX/NOVA are Beta"
+            )
+        elif COUNT_RE.search(line):
+            violations.append(
+                f"{rel_p}:{i}: claims '6/six storage engines' — SST is Supported; "
+                f"VIPER/HELIX/NOVA are Beta; SWIFT/RAPTOR are Experimental"
             )
 
     # Rule 3: experimental terms require the 'experimental' caveat in the same file.
@@ -117,6 +145,15 @@ def check_file(p: Path) -> list[str]:
                 f"'experimental' caveat — mark it off-by-default or drop the mention"
             )
 
+    for label, rx in PGWIRE_TRANSACTION_CLAIMS.items():
+        match = rx.search(text)
+        if match is not None:
+            line = text.count("\n", 0, match.start()) + 1
+            violations.append(
+                f"{rel_p}:{line}: {label} contradicts the autocommit-only pgwire "
+                f"contract — transaction control must return SQLSTATE 0A000"
+            )
+
     return violations
 
 
@@ -124,6 +161,16 @@ def main() -> int:
     violations: list[str] = []
     for p in scope_files():
         violations.extend(check_file(p))
+    authority_text = SUPPORT_AUTHORITY.read_text(encoding="utf-8", errors="replace")
+    for label, rx in PGWIRE_TRANSACTION_CLAIMS.items():
+        match = rx.search(authority_text)
+        if match is not None:
+            line = authority_text.count("\n", 0, match.start()) + 1
+            violations.append(
+                f"{rel(SUPPORT_AUTHORITY)}:{line}: {label} contradicts the "
+                f"autocommit-only pgwire contract — transaction control must return "
+                f"SQLSTATE 0A000"
+            )
 
     if violations:
         print(

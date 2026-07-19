@@ -69,31 +69,6 @@ pub fn choose_read_strategy(
     }
 }
 
-/// PAX cascade whole-vs-striped read decision (ADR-057 / TD-RDSTRAT-3 S2): `true` to
-/// take the selective **striped** read (only codes + candidate-rerank + OID stripes,
-/// many small GETs, few bytes), `false` for the **whole**-segment read (one GET, all
-/// bytes). Same tier-aware cost model as [`choose_read_strategy`]
-/// (`per_get · gets + per_mib · bytes`) — on cold object storage the per-GET fee is
-/// real, so striped wins only when the byte saving outweighs the extra GETs; on hot
-/// local/NVMe (`per_get ≈ 0`) it wins whenever it moves fewer bytes. Pure +
-/// deterministic; the crossover falls out of the cost model, not a hardcoded
-/// selectivity threshold.
-pub fn choose_whole_vs_striped(
-    is_cloud: bool,
-    whole_bytes: u64,
-    striped_gets: u64,
-    striped_bytes: u64,
-) -> bool {
-    let (per_get, per_mib) = if is_cloud {
-        (CLOUD_PER_GET, CLOUD_PER_MIB)
-    } else {
-        (LOCAL_PER_GET, LOCAL_PER_MIB)
-    };
-    let whole = score(per_get, per_mib, 1, whole_bytes);
-    let striped = score(per_get, per_mib, striped_gets, striped_bytes);
-    striped < whole
-}
-
 /// Whether `path` points at a cold object-store backend (vs hot local/NVMe/page-cache). Mirrors the
 /// `is_cloud_file` prefix check used in `sst_io_layer.rs`, as a free fn shared by the chooser.
 pub fn is_cloud_path(path: &str) -> bool {
@@ -153,55 +128,5 @@ mod tests {
         // syscalls).
         let s = choose_read_strategy(false, 4, 4 * 65536, 1, 4 * 65536);
         assert_eq!(s, CoalesceStrategy::Coalesced);
-    }
-
-    #[test]
-    fn whole_vs_striped_cloud_batched_selective_picks_striped() {
-        // Cloud, big segment, GET-EFFICIENT (batched) striped read: ~4 coalesced
-        // GETs move ~1 MiB vs the whole 100 MiB → striped wins (the byte saving
-        // outweighs the small per-GET fee).
-        assert!(choose_whole_vs_striped(
-            true,
-            100 * 1024 * 1024,
-            4,
-            1024 * 1024
-        ));
-    }
-
-    #[test]
-    fn whole_vs_striped_cloud_get_heavy_picks_whole() {
-        // Cloud, big segment, but an UNBATCHED striped read (many small per-stripe
-        // GETs) — the per-GET fee dominates and beats the byte saving → whole wins.
-        // This is the co-design guard against GET-amplification (ADR-052): on cold
-        // storage the striped read must BATCH (fs.read_ranges) its stripe reads to
-        // win. (The current fs-native cascade path is unbatched, so the chooser
-        // correctly declines it on cloud until batching lands — a follow-up.)
-        assert!(!choose_whole_vs_striped(
-            true,
-            100 * 1024 * 1024,
-            400,
-            1024 * 1024
-        ));
-    }
-
-    #[test]
-    fn whole_vs_striped_cloud_tiny_segment_picks_whole() {
-        // Cloud, tiny segment where the striped read's many GETs cost more than the
-        // whole's 1 GET + its small byte total → whole wins.
-        assert!(!choose_whole_vs_striped(true, 256 * 1024, 400, 200 * 1024));
-    }
-
-    #[test]
-    fn whole_vs_striped_local_fewer_bytes_picks_striped() {
-        // Local (per_get = 0): driven by bytes only → striped wins iff it moves
-        // strictly fewer bytes, regardless of GET count.
-        assert!(choose_whole_vs_striped(
-            false,
-            100 * 1024 * 1024,
-            9999,
-            1024 * 1024
-        ));
-        // Equal bytes ⇒ not strictly cheaper ⇒ whole.
-        assert!(!choose_whole_vs_striped(false, 1024 * 1024, 8, 1024 * 1024));
     }
 }

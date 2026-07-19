@@ -1653,6 +1653,8 @@ pub async fn search_with_typed_filters(
         turboquant_hints,
         vector_bounds_pruned_blocks,
         egress_bytes,
+        object_store_gets,
+        object_store_bytes_read,
     ) = crate::observability::io_trace::instrument(
         Some(tenant.tenant_id.clone()),
         "rest.v2.records.search",
@@ -1684,9 +1686,16 @@ pub async fn search_with_typed_filters(
             // ends when this future completes — same constraint as the takes
             // above). 0 on the free same-AZ path. Flowed into the response
             // SearchPlanTrace as actual_egress_gb (the KEU billing quantity).
-            let egress_bytes = crate::observability::io_trace::snapshot()
-                .map(|s| s.egress_bytes)
-                .unwrap_or(0);
+            // TD-IOTRACE-2: read the physical object-store meters alongside
+            // egress — range_gets (the accurate ranged-GET count) + bytes_read —
+            // BEFORE this scope closes (the task-local binding ends when this
+            // future completes). Flowed into the response SearchPlanTrace as
+            // object_store_gets / object_store_bytes_read (the physical KRU
+            // billing input, TD-IOTRACE-3). 0 when no I/O occurred.
+            let (egress_bytes, object_store_gets, object_store_bytes_read) =
+                crate::observability::io_trace::snapshot()
+                    .map(|s| (s.egress_bytes, s.range_gets, s.bytes_read))
+                    .unwrap_or((0, 0, 0));
             (
                 outcome,
                 downgraded,
@@ -1694,6 +1703,8 @@ pub async fn search_with_typed_filters(
                 tq_hints,
                 vb_pruned,
                 egress_bytes,
+                object_store_gets,
+                object_store_bytes_read,
             )
         }),
     )
@@ -1828,6 +1839,11 @@ pub async fn search_with_typed_filters(
                     // in-scope above → actual_egress_gb (the KEU billing quantity
                     // the control plane prices). 0 on the free same-AZ path.
                     egress_bytes,
+                    // TD-IOTRACE-2: physical object-store meters from the
+                    // io_trace snapshot (captured in-scope above). The physical
+                    // KRU billing input (TD-IOTRACE-3).
+                    object_store_gets,
+                    object_store_bytes_read,
                     // TD-064: shortfall is now a first-class field on the
                     // service response (`resp.predicate_shortfall`),
                     // recomputed authoritatively against the final merged

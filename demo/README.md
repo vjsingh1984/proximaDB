@@ -435,8 +435,8 @@ if len(vector) != dimension:
 - **Performance Guide**: `/docs/performance/README.adoc`
 
 ### Issues
-- Found a bug? [Report it](https://github.com/vjsingh1984/proximaDB/issues)
-- Need a feature? [Request it](https://github.com/vjsingh1984/proximaDB/issues/new)
+- Found a bug? [Report it](https://github.com/anvai-labs/proximaDB/issues)
+- Need a feature? [Request it](https://github.com/anvai-labs/proximaDB/issues/new)
 
 ### Contributing
 - See `CONTRIBUTING.md` for demo contribution guidelines

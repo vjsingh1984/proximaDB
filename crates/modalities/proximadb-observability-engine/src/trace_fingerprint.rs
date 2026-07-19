@@ -263,6 +263,8 @@ mod tests {
             tenant_id: "tenant-a".into(),
             collection_name: "kb".into(),
             plan_version: 1,
+            object_store_gets: 0,
+            object_store_bytes_read: 0,
             filter_strategy: FilterStrategy::HybridFilter,
             index_route: IndexRoute::FullPrecisionGraph,
             cache_result: CacheResult::Miss,

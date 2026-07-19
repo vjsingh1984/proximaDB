@@ -289,3 +289,26 @@ fn no_strip_and_reprepend_pattern_in_src() {
         offenders
     );
 }
+
+/// ADR-063 D5 / TD-OBJSTORE-4 S1: flat object stores answer prefix discovery
+/// through LIST. HEAD/exists on the literal directory key must never gate WAL
+/// enumeration again.
+#[test]
+fn wal_prefix_listing_has_no_exists_gate() {
+    let source = include_str!("../src/storage/persistence/write_ahead_log/disk_manager.rs");
+    let start = source
+        .find("pub async fn list_collection_files")
+        .expect("list_collection_files source");
+    let rest = &source[start..];
+    let end = rest.find("/// Delete a WAL file").expect("method boundary");
+    let implementation = &rest[..end];
+
+    assert!(
+        !implementation.contains(".exists("),
+        "WAL prefix enumeration must LIST directly; exists() is exact-key HEAD on object stores"
+    );
+    assert!(
+        !implementation.contains("if let Ok(entries)"),
+        "WAL prefix enumeration must propagate LIST errors instead of treating them as empty"
+    );
+}

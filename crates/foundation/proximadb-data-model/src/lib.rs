@@ -24,6 +24,13 @@ use arrow_schema::{
 };
 use std::sync::Arc;
 
+// Strongly-typed metadata value/container (moved from the root crate's
+// `core::metadata_types` during the root-crate decomposition — see
+// `src/core/metadata_types.rs` re-export shim). Foundation-tier home for the
+// `MetadataValue` / `TypedMetadata` types shared by metadata predicate pushdown
+// and column stats across storage, query, and network layers.
+pub mod metadata_types;
+
 // ---------------------------------------------------------------------------
 // Stats Trust (ADR-058 D5 / §9.A)
 // ---------------------------------------------------------------------------

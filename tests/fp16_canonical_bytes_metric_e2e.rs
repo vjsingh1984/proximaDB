@@ -31,7 +31,7 @@
 //! Together with those two, this test closes the loop: the production
 //! metric pipeline actually records fp16 byte accounting end-to-end.
 
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 use proximadb_records::{EmbeddingCell, EmbeddingScalarType, EmbeddingValues, ProximaRecord};
 
 fn make_fp16_record(oid: &str, dim: usize) -> ProximaRecord {

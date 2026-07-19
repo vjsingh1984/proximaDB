@@ -1,0 +1,64 @@
+[package]
+name = "proximadb-embedded"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Embedded mode for ProximaDB — in-process database with language bindings (Python/Java/Node.js/C-FFI). Separate artifact from the server binary."
+
+[lib]
+name = "proximadb_embedded"
+path = "src/lib.rs"
+
+[dependencies]
+# Depends on the root proximadb library (one-directional: embedded -> root, no cycle).
+proximadb = { path = "../../.." }
+proximadb-embedded-common = { path = "../../horizontal/proximadb-embedded-common" }
+anyhow.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
+arrow = { workspace = true }
+proximadb-records = { path = "../../foundation/proximadb-records" }
+serde_json = "1.0"
+thiserror = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+arrow-ipc = { version = "58", default-features = false, features = ["lz4", "zstd"] }
+libc = "0.2"
+hostname = "0.4"
+bincode = "1.3"
+crc32fast = "1.4"
+proximadb-runtime = { path = "../../platform/proximadb-runtime" }
+num_cpus = "1.16"
+proximadb-hardware = { path = "../../foundation/proximadb-hardware" }
+proximadb-tenant = { path = "../../foundation/proximadb-tenant" }
+
+# Language bindings (optional, feature-gated) — were in root, moved here so the
+# server binary no longer compiles embedded bindings.
+pyo3 = { workspace = true, optional = true }
+numpy = { workspace = true, optional = true }
+jni = { version = "0.21", optional = true }
+napi = { version = "2.14", features = ["napi9"], optional = true }
+napi-derive = { version = "2.14", optional = true }
+
+[features]
+default = []
+# Python bindings (PyO3 + zero-copy numpy).
+python = ["dep:pyo3", "dep:numpy"]
+# Java bindings (JNI).
+java = ["dep:jni"]
+# Node.js bindings (NAPI-RS).
+nodejs = ["dep:napi", "dep:napi-derive"]
+# C FFI bindings.
+c_ffi = []
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

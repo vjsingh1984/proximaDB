@@ -271,3 +271,111 @@ pub struct EdgeTypeStats {
     pub edge_type: String,
     pub count: u64,
 }
+
+// ---------------------------------------------------------------------------
+// Graph write operations (moved from src/storage/memtable/implementations/
+// graph_memtable.rs — root-crate decomposition). The unified WAL's `GraphOp`
+// variant and the ORION graph engine consume these; their payload types (Node,
+// Edge, PropertyValue, EmbeddingVersion) already live in this leaf.
+// ---------------------------------------------------------------------------
+
+/// Node / edge identifier aliases (transparent to `String`). Kept here so the
+/// graph-operation model below is self-contained.
+pub type NodeId = String;
+pub type EdgeId = String;
+
+/// Graph operation for WAL integration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GraphOperation {
+    CreateNode {
+        graph_id: String,
+        node: Node,
+    },
+    UpdateNode {
+        graph_id: String,
+        node_id: NodeId,
+        update: NodeUpdate,
+    },
+    DeleteNode {
+        graph_id: String,
+        node_id: NodeId,
+    },
+    CreateEdge {
+        graph_id: String,
+        edge: Edge,
+    },
+    UpdateEdge {
+        graph_id: String,
+        edge_id: EdgeId,
+        update: EdgeUpdate,
+    },
+    DeleteEdge {
+        graph_id: String,
+        edge_id: EdgeId,
+    },
+    BatchOperation {
+        operations: Vec<GraphOperation>,
+    },
+    CreateEdgeIndex {
+        graph_id: String,
+        index_config: String,
+    },
+    DropEdgeIndex {
+        graph_id: String,
+        index_name: String,
+    },
+}
+
+/// Node update structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeUpdate {
+    pub labels: Option<Vec<String>>,
+    pub properties: Option<HashMap<String, PropertyValue>>,
+    pub embedding: Option<EmbeddingVersion>,
+}
+
+/// Edge update structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgeUpdate {
+    pub properties: Option<HashMap<String, PropertyValue>>,
+    pub weight: Option<f64>,
+}
+
+/// Non-data marker kinds carried in a graph engine's WAL stream (the payload of
+/// a `GraphMarker` frame). Moved here from the root WAL module so the
+/// `GraphWalPort` contract (storage-ports) — and the ORION graph engine — can
+/// name it without a cyclic root dependency.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MarkerKind {
+    /// "Every engine-WAL frame after this marker was emitted after the canonical
+    /// layer durably checkpointed at `lsn`." Recovery skips frames at/before the
+    /// latest such marker whose `lsn` ≤ the recovered canonical checkpoint LSN.
+    CanonicalEmission(u64),
+}
+
+/// A graph-relevant record projected from a unified WAL stream — the read-side
+/// counterpart to the graph operations / markers written through
+/// [`GraphWalPort`]. A reader port (e.g. `GraphWalReaderPort`) yields these so a
+/// graph engine can replay its WAL without naming the concrete unified WAL
+/// entry/operation types (the remaining decoupling needed to extract the engine
+/// into its own crate). Non-graph unified ops are filtered out by the reader.
+#[derive(Debug, Clone)]
+pub enum GraphWalRecord {
+    /// A graph data operation (CreateNode/CreateEdge/Update*/Delete*/Batch/…).
+    /// Boxed because `GraphOperation` (itself an enum over Node/Edge/Batch) is
+    /// far larger than [`MarkerKind`]; boxing the heavy variant keeps the enum
+    /// pointer-sized and `Vec<GraphWalEntry>` compact during replay.
+    Op(Box<GraphOperation>),
+    /// A non-data canonical-sync marker.
+    Marker(MarkerKind),
+}
+
+/// One projected graph WAL frame: its sequence number (LSN) plus the graph
+/// record it carries.
+#[derive(Debug, Clone)]
+pub struct GraphWalEntry {
+    /// Monotonic WAL sequence number assigned at append.
+    pub sequence_number: u64,
+    /// The graph operation or marker.
+    pub record: GraphWalRecord,
+}

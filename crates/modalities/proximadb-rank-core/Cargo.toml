@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage = "https://github.com/vjsingh1984/proximadb"
+homepage = "https://github.com/anvai-labs/proximaDB"
 description = "ProximaDB multi-phase ranking framework — Blueprint/Executor/LazyValue pattern, phase budget, lazy memoization. See roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md (R-1)."
 
 [lib]

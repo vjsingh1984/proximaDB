@@ -24,6 +24,7 @@ pub mod glob;
 pub mod hierarchical_stats;
 pub mod hilbert_curve;
 pub mod id_index;
+pub mod iops_budget;
 pub mod metadata_collector;
 pub mod mmap_file;
 pub mod native_metadata;
@@ -45,6 +46,7 @@ pub mod proxima_parquet;
 pub mod proxima_schema;
 pub mod query_metrics;
 pub mod ranged_segment;
+pub mod segment_layout;
 pub mod smart_io_metrics;
 pub mod spatial_encoding;
 pub mod storage_error;
@@ -154,7 +156,8 @@ pub use spatial_encoding::{CodeType, SpatialCode, U512};
 pub use storage_error::{ErrorContext, StorageError, StorageErrorKind};
 pub use storage_path::StoragePath;
 pub use storage_profile::{
-    STORAGE_PROFILE_ENV, STORAGE_PROFILE_TAG_PREFIX, StorageProfile, resolve_storage_profile,
+    CHURN_WORKING_SET_MB_ENV, STORAGE_PROFILE_ENV, STORAGE_PROFILE_TAG_PREFIX, StorageProfile,
+    churn_working_set_ceiling_bytes, resolve_storage_profile,
 };
 pub use swift_id_index::{
     BPlusNode, BlockLocation, IdIndex, IndexStats as SwiftIndexStats, RecordLocation,

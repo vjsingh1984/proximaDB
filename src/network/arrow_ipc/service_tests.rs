@@ -230,6 +230,32 @@ fn test_tenant_id_from_flight_metadata_ignores_empty_header() {
 }
 
 #[test]
+fn test_flight_tenant_resolution_rejects_missing_multi_tenant_identity() {
+    let status = ProximaFlightService::resolve_tenant_for_mode(
+        None,
+        &proximadb_tenant::TenantDeploymentMode::MultiTenant,
+    )
+    .unwrap_err();
+
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+    assert_eq!(
+        status.message(),
+        "tenant id is required in multi-tenant mode"
+    );
+}
+
+#[test]
+fn test_flight_tenant_resolution_defaults_only_in_single_tenant_mode() {
+    let tenant = ProximaFlightService::resolve_tenant_for_mode(
+        None,
+        &proximadb_tenant::TenantDeploymentMode::single_tenant("embedded"),
+    )
+    .unwrap();
+
+    assert_eq!(tenant, "embedded");
+}
+
+#[test]
 fn test_auth_data_from_flight_metadata_accepts_api_key_scheme() {
     let mut metadata = tonic::metadata::MetadataMap::new();
     metadata.insert("authorization", "API-Key key-1".parse().unwrap());

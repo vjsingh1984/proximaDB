@@ -1,0 +1,228 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-065: Clustered tier regions (column families) within the single atomic segment — extend ADR-062's hoisted-region pattern to SQ8 / fp32 / row data
+
+:status: Accepted (2026-07-16; implementation reconciled 2026-07-17)
+:date: 2026-07-16
+:deciders: architecture
+:relates-to: link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (extends D2; upholds D1), ADR-052 (round-trips dominate), ADR-020 (WAL authority; manifest-level atomicity), ADR-036 (per-object access tier), ADR-055 (P-Shred user columns → the row-data family), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6] (measured baseline), link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7] (lossless bytes phase), link:../../10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8] (scale successor: persisted cell directory + selective Region-A/B probing)
+
+== Status
+
+**Accepted (2026-07-16).** Acceptance governs the one-object, tier-region
+architecture. It does not mean every region has shipped.
+
+**Implementation reconciliation (2026-07-17).** Region B and its byte-budgeted
+survivor/OID range cache shipped in #1069. Region C has not shipped. Region D is
+still the ordinary PAX block area (including optional exact-f32 stripes), not a
+pure result region. The current `PXH1` header has explicit offsets for Regions A
+and B plus the footer; it is not a generic four-region table.
+
+The accepted review's ordering conclusion is superseded by shipped code and
+must not be used as an implementation contract. New coalesced flushes use
+SQ8-Morton order (`cluster_order_sq8_morton`); compaction uses PCA+IVF/Hilbert
+order (`cluster_plan_pca_ivf`). Sign-bit order remains the non-coalesced/fallback
+bootstrap. Ordering is a locality/cost choice, not a correctness requirement:
+recall comes from rank-then-rerank, while order controls Region-B/D range
+coalescing. The historical no-IVF run remains valid evidence for recall and
+flush cost, but its predicted 25–43 MB Region-B result is not accepted measured
+evidence. #1069 reported a different result and no dated ledger entry currently
+promotes it to a durable performance claim.
+
+**Scale boundary.** TD-RDSTRAT-8 extends rather than replaces this ADR. Regions
+remain the physical substrate; the successor persists the compaction-time IVF
+cell directory so large segments can probe selected Region-A/B runs instead of
+choosing between many scattered ranges and a whole-region O(N)-byte fallback.
+
+== Context — the remaining cost term is block dead weight, not GETs
+
+Post-PR2 at N=1M: 36 GETs but **250 MB/query** (up from 139 MB — bigger
+encoding-aware blocks trade bytes for GETs). The read unit is the PAX
+*block*, which co-locates OID/timestamps/PROPS(text)/LABELS/SQ8/fp32 stripes:
+fetching survivors drags the full stripe set of every bystander row in each
+touched block. Measured shape: a 1000-row block fetched for 10 survivors
+reads ~1.28 KB of useful SQ8 against the full block payload — >99% dead
+weight on document (PROPS-heavy) corpora. Same-AZ bytes are free in $, but
+250 MB/query is ~2.5 Gbps of NIC + decode at 10 QPS/node — a latency and
+throughput ceiling, and it inflates every cache tier's working set.
+
+ADR-062 D2 already proved the fix pattern for one tier: the RaBitQ codes
+were hoisted out of blocks into a coalesced same-file region, collapsing the
+scan from ~370 GETs to 1. **Object storage bills per ranged GET, not per
+file** — so column-family separation does not require HBase-style multi-file
+layouts; it requires contiguous per-tier regions inside the one segment
+object.
+
+== Decision
+
+Extend the segment layout from one hoisted region toward four, all in one
+writer-selected locality order. Every present region uses the same row ordinal;
+the serialized header/footer, not an environment flag, declares which regions
+exist:
+
+----
+[header-prefix: magic | version | region offset/len table]
+[Region A: RaBitQ codes      — exists today (ADR-062 D2); rank scan tier]
+[Region B: SQ8 codes         — NEW; rerank tier]
+[Region C: fp32 vectors      — TARGET, optional; exact/materialization tier]
+[Region D: row blocks        — CURRENT; target is vector-free result data]
+[footer-index: schema | region table | block table | stats]
+[footer_len | SEGMENT_MAGIC]
+----
+
+D1 (ADR-062) is **upheld**: one self-contained object per segment. All
+atomicity properties are preserved by construction — flush is one PUT,
+compaction is one fresh-name `put_if_absent` + WAL manifest advance (the
+commit point was always manifest-level, not file-level), lifecycle/DR/CRR
+mechanisms remain one-object-per-segment.
+
+Region presence and row-ordinal identity are correctness invariants. Locality
+order is not: flush and compaction may choose different deterministic orders,
+and mixed segments must merge by score + OID without assuming common order.
+
+=== Read-path effects (per scenario, N=1M, 128d, k=10, M≈10K)
+
+|===
+| Scenario | Today (inline blocks) | Tier regions
+
+| Rank scan | 1 GET (region A) | identical
+| Rerank | block fetch includes bystander stripes | ranged GETs into pure Region B; scattered plans may deliberately fetch the whole region when that is cheaper
+| Result: top-k text | rode along in rerank block fetches | current #1069 fetches top-k row blocks; pure Region D remains a target
+| Result: `include_vectors` fp32 | inlined in blocks | unchanged until Region C ships; then on-demand Region-C reads
+| Cache | hot set polluted by text/fp32 | Regions A+B are pure; effectiveness is measured by tier hit/byte counters
+|===
+
+The former `2k` worst-case claim is not a budget. Object stores charge ranges,
+SDKs may split oversized ranges, a collection may have several live segments,
+and arbitrary top-k rows need not be adjacent. The implementation must report
+per-tier GETs, bytes, fetch rounds, and cache outcomes; the collection-level
+budget is the sum over live segments.
+
+=== Explicitly rejected / deferred
+
+* **Separate files per family** — needs a multi-object commit protocol
+  (grouped `put_if_absent` / completion object), N× lifecycle + replication
+  objects, per-file open overhead. Deferred behind named triggers where
+  files genuinely win: per-family storage-class tiering, per-family CRR
+  exclusion (e.g. don't replicate fp32 cross-region), independent
+  compaction cadence per family.
+* **Intra-block column projection** (sub-block ranged reads per stripe) —
+  strictly worse than regions: per-block stripe offsets multiply range count
+  (GETs) instead of consolidating them.
+
+=== Implementation state and remaining phases
+
+1. **Region B — shipped (#1069):** SQ8 is hoisted; blocks carry no
+   `EMBED_BASE`; the coalesced reader reranks Region B then fetches top-k row
+   blocks. The survivor/OID cache also shipped. A dated, ledgered cloud trace is
+   still required before promoting the PR-body byte/GET numbers as a baseline.
+2. **Large-segment selective probing — open (TD-RDSTRAT-8):** persist the
+   existing compaction IVF model/cell runs and probe Region-A/B subranges. This
+   is the next dominant cost lever before adding more families.
+3. **Region C — open and evidence-gated:** hoist exact f32 only when an actual
+   `include_vectors`/exact-query trace proves that saved bystander bytes exceed
+   the extra writer buffering, persisted bytes, cache pressure, and result GETs.
+4. **Pure Region D — open:** separate vector-free result data only with a
+   measured result-path and PAX/DataFusion scan plan. It is not “free” OLAP
+   layout synergy; different scan geometry may require different chunking.
+
+== Code-contact decisions and remaining gates
+
+=== Resolved in this review
+
+* **Q1 — publication/staging: implemented through the canonical staged-write
+  seam.** #1061 landed and #1082 replaced URL-string stripping with
+  `staged_write.rs`. Any new region is assembled in the staged local segment
+  and published once through `write_if_absent`; it must not add a second object
+  or commit point. Multipart is an implementation detail under that seam.
+* **Q3 — range cache: implemented at the engine read seam.** #1069 added the
+  byte-budgeted `SurvivorRangeCache` for Region-B SQ8 and result/OID byte ranges,
+  plus the per-segment invariants cache. It is not a generic `FileSystem`
+  wrapper. Cache keys include immutable segment path + exact byte range + kind;
+  cache admission/eviction and hits must remain visible in the query trace.
+
+* **io-trace visibility → implemented.** Per-query GET/bytes/cache/latency
+  counters exist and #1081 fixed the range-GET/bytes double-count. New layouts
+  add tier, fetch-round, and fallback fields before measurement. Billing remains
+  a separate authority; TD-IOTRACE-3 still owns logical `actual_scan_gb`.
+
+=== Still open
+
+* **Q2 — extensible region directory.** #1069 evolved the pre-release `PXH1`
+  prefix in place to explicit A/B offsets; it did not add a generic region
+  directory. Serialized files now exist. Region A0/C or a pure D therefore
+  requires a mixed-read-safe successor header/layout version (or a versioned
+  footer directory reachable without an extra serialized GET). Old readers
+  reject the new version cleanly; new readers keep the `PXH1` path.
+* **Q4 — Region C/D economics.** Region C duplicates/relocates the exact tier;
+  D changes block geometry. Before either format change, capture the actual mix
+  of exact queries, `include_vectors`, metadata-only top-k, dimensions, live
+  segment counts, and cold/warm cache states. Gate on collection-level GETs,
+  bytes, fetch rounds, p95, persisted bytes/row, compaction wall/memory, and
+  recovery parity—not a component codec ratio.
+* **Q5 — mixed segments.** The existing presence chooser distinguishes legacy
+  blocks from `PXH1`. A successor layout must dispatch on magic/version per
+  segment; normal compaction migrates opportunistically. Query merge cannot
+  infer one collection-wide layout, order, exactness, or region presence.
+
+=== Superseded conclusion — ordering
+
+* The link:../../_internal/status/SIFT1M_NOIVF_DECISIVE_2026_07_16.adoc[no-IVF
+  artifact] proves recall does not require IVF and that IVF-at-flush was too
+  expensive. It does not prove order is irrelevant to bytes/cache locality.
+  Shipped code consequently uses cheap SQ8-Morton ordering at coalesced flush
+  and reserves PCA+IVF/Hilbert for compaction. TD-RDSTRAT-8 may make compaction
+  cell runs query-visible; therefore discarding the model is no longer an
+  accepted end state for large segments.
+
+== First-principles co-design pressure test
+
+[cols="1,3",options="header"]
+|===
+| Dimension | Binding invariant / dominant term
+
+| Object store
+| One immutable segment object and one publication commit remain non-negotiable.
+  Optimize the minimum of request count and transferred bytes: the reader may
+  coalesce, selectively probe, or fetch a whole region, but must measure which
+  arm won per backend IOP geometry.
+
+| Network
+| Same-region bytes may be unbilled yet still consume NIC and latency. Count
+  dependent fetch rounds separately from parallel GET count; `N GETs × RTT` is
+  not a valid latency model.
+
+| Local disk/cache
+| Cache capacity is bytes, not entry count. Region A invariants, Region-B
+  survivor ranges, and result ranges have different reuse distributions and
+  eviction value; “hot query = zero GETs” is not assumed for arbitrary queries.
+
+| Compute
+| Flush uses a cheap deterministic locality order without a trained model. Expensive learned
+  clustering is amortized at compaction and must be bounded by measured
+  compaction CPU/memory. Region C is not justified by moving CPU if object-store
+  fetch rounds remain the bottleneck.
+
+| Governance/correctness
+| Canonical exact f32 authority, projection fidelity, tenant-attributed I/O,
+  checksums, and mixed-layout reads are preserved. Quantized Region A/B bytes
+  never become canonical reconstruction input.
+|===
+
+**Extreme co-design verdict.** The next lever is not another unconditional
+region. It is to reuse and persist the compaction work already paid for, then
+selectively address existing A/B runs (TD-RDSTRAT-8). Region C/D follow only if
+the resulting trace still identifies them as dominant.
+
+== Consequences
+
+* Region B is the accepted and shipped part of this ADR. Region C and pure D
+  remain unimplemented, evidence-gated targets.
+* TD-RDSTRAT-8 narrows the scale end-state: a global Region-A scan plus
+  whole-Region-B fallback is not acceptable indefinitely as N grows.
+* Downstream pricing dependency (TD-RDSTRAT-6 § downstream note): region
+  reads shrink the physical-bytes meter input and raise cache hit rates —
+  both move the blended per-query COGS down.
+* No performance number from a PR description becomes architectural evidence
+  until a dated artifact and `BENCHMARK_EVIDENCE.toml` claim record the exact
+  protocol.

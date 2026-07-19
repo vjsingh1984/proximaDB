@@ -23,7 +23,9 @@ use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample};
 use crate::storage::document::DocumentRecord;
 use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb_graph_model::{GraphWalEntry, GraphWalRecord};
 use proximadb_records::ProximaRecord;
+use proximadb_storage_ports::{FilesystemPort, GraphWalFactory, GraphWalPort, GraphWalReaderPort};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -84,13 +86,12 @@ pub enum UnifiedWALOperation {
 }
 
 /// Non-data marker kinds carried in [`UnifiedWALOperation::GraphMarker`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MarkerKind {
-    /// "Every engine-WAL frame after this marker was emitted after the canonical
-    /// layer durably checkpointed at `lsn`." Recovery skips frames at/before the
-    /// latest such marker whose `lsn` ≤ the recovered canonical checkpoint LSN.
-    CanonicalEmission(u64),
-}
+///
+/// Definition moved to the `proximadb-graph-model` foundation leaf (named by
+/// the `GraphWalPort` contract + the ORION graph engine); re-exported here so
+/// existing `crate::storage::persistence::write_ahead_log::...::MarkerKind`
+/// references resolve unchanged.
+pub use proximadb_graph_model::MarkerKind;
 
 /// TD-066 (c) Part 2 feature gate (default OFF per the storage-format-migration
 /// mandate). When enabled, `flush_wal` emits `CanonicalEmission` marker frames
@@ -757,6 +758,101 @@ impl UnifiedWALWriter {
     pub fn set_max_segment_size_for_test(&mut self, bytes: usize) {
         self.max_segment_size = bytes;
     }
+}
+
+/// The unified WAL writer is the composition-root-provided sink for the ORION
+/// graph engine: it implements [`GraphWalPort`] by wrapping graph operations /
+/// markers into the unified operation enum, so ORION can append through the
+/// port without naming the concrete writer or the unified operation type.
+#[async_trait::async_trait]
+impl GraphWalPort for UnifiedWALWriter {
+    async fn append_graph_op(&mut self, op: GraphOperation) -> anyhow::Result<u64> {
+        self.append(UnifiedWALOperation::GraphOp(op)).await
+    }
+
+    async fn append_graph_marker(&mut self, marker: MarkerKind) -> anyhow::Result<u64> {
+        self.append(UnifiedWALOperation::GraphMarker(marker)).await
+    }
+
+    async fn flush(&mut self) -> anyhow::Result<()> {
+        UnifiedWALWriter::flush(self).await
+    }
+
+    async fn truncate_through_canonical_marker(
+        &mut self,
+        checkpoint_lsn: u64,
+    ) -> anyhow::Result<u64> {
+        UnifiedWALWriter::truncate_through_canonical_marker(self, checkpoint_lsn).await
+    }
+}
+
+/// The unified WAL reader is the composition-root-provided recovery source for
+/// the ORION graph engine: it implements [`GraphWalReaderPort`] by projecting
+/// graph operations / markers out of the unified entry stream, so ORION can
+/// replay through the port without naming the concrete reader or the unified
+/// operation/entry types.
+#[async_trait::async_trait]
+impl GraphWalReaderPort for UnifiedWALReader {
+    async fn read_all_graph(&self) -> anyhow::Result<Vec<GraphWalEntry>> {
+        let entries = self.read_all().await?;
+        let mut out = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let record = match entry.operation {
+                UnifiedWALOperation::GraphOp(op) => GraphWalRecord::Op(Box::new(op)),
+                UnifiedWALOperation::GraphMarker(marker) => GraphWalRecord::Marker(marker),
+                // Non-graph unified ops (Document/Observability/Hybrid/…) are
+                // not part of a graph engine's stream — filtered out.
+                _ => continue,
+            };
+            out.push(GraphWalEntry {
+                sequence_number: entry.sequence_number,
+                record,
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// Composition-root factory for a graph engine's WAL writer + reader: the single
+/// place the concrete `UnifiedWALWriter` / `UnifiedWALReader` are named, so the
+/// ORION engine can obtain its [`GraphWalPort`] / [`GraphWalReaderPort`] through
+/// the [`GraphWalFactory`] port without naming these types itself.
+#[derive(Default)]
+pub struct UnifiedWalFactory;
+
+#[async_trait::async_trait]
+impl GraphWalFactory for UnifiedWalFactory {
+    async fn make_writer(
+        &self,
+        wal_path: &str,
+    ) -> anyhow::Result<Arc<tokio::sync::Mutex<dyn GraphWalPort>>> {
+        let writer = UnifiedWALWriter::new(wal_path.to_string()).await?;
+        let writer: Arc<tokio::sync::Mutex<dyn GraphWalPort>> =
+            Arc::new(tokio::sync::Mutex::new(writer));
+        Ok(writer)
+    }
+
+    async fn make_reader(&self, wal_path: &str) -> anyhow::Result<Arc<dyn GraphWalReaderPort>> {
+        let reader = UnifiedWALReader::new(wal_path.to_string()).await?;
+        let reader: Arc<dyn GraphWalReaderPort> = Arc::new(reader);
+        Ok(reader)
+    }
+
+    async fn make_filesystem(&self) -> anyhow::Result<Arc<dyn FilesystemPort>> {
+        let fs = FilesystemFactory::create_default()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create default filesystem: {e}"))?;
+        let fs: Arc<dyn FilesystemPort> = Arc::new(fs);
+        Ok(fs)
+    }
+}
+
+/// Convenience constructor for the default (unified) graph WAL factory, erased
+/// to the [`GraphWalFactory`] port. Composition-root callers (and tests) inject
+/// this into the ORION engine constructors; it is the only symbol outside this
+/// module that needs to name a concrete graph WAL type.
+pub fn unified_wal_factory() -> Arc<dyn GraphWalFactory> {
+    Arc::new(UnifiedWalFactory)
 }
 
 /// WAL reader for recovery

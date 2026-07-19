@@ -1,3 +1,13 @@
+//! `RagPipeline` **composition** unit test (deterministic).
+//!
+//! This exercises the graph-RAG pipeline wiring — retrieve → filter → budget →
+//! k-hop build — with a MOCK retriever (fixed seeds), so it isolates the
+//! composition/traversal/budget logic without the heavy real vector stack. The
+//! *real* match-then-traverse fusion over live vector search is covered by
+//! `graph_rag_fusion_e2e.rs` (which seeds from an actual `VectorNodeRetriever`).
+//! Keeping both is the tests-vs-evals split: deterministic composition here,
+//! real-stack integration there.
+
 use proximadb::core::error::ProximaDBError;
 use proximadb::graph::engines::GraphEngine;
 use proximadb::graph::engines::orion::OrionGraphEngine;

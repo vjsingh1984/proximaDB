@@ -47,6 +47,8 @@ fn trace_template() -> SearchPlanTrace {
         estimated_scan_gb: None,
         actual_scan_gb: 0.1,
         actual_egress_gb: 0.0,
+        object_store_gets: 0,
+        object_store_bytes_read: 0,
         index_stats: IndexStats::default(),
         candidate_count: 64,
         rerank_count: 10,

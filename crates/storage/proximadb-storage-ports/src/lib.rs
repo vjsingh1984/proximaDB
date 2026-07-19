@@ -13,9 +13,11 @@
 
 use anyhow::Result;
 use proximadb_distance_kernel::DistanceMetric;
+use proximadb_graph_model::{GraphOperation, GraphWalEntry, MarkerKind};
 use proximadb_proto::proximadb_v1::Collection;
 use proximadb_storage_common::StorageEngineType;
-use proximadb_storage_filesystem_types::{FileOptions, FileSystem, FsResult};
+use proximadb_storage_filesystem_types::{DirEntry, FileOptions, FileSystem, FsResult};
+use std::sync::Arc;
 
 pub mod capabilities;
 pub use capabilities::*;
@@ -198,6 +200,10 @@ pub trait FilesystemPort: Send + Sync {
     async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()>;
     /// Delete the file/dir at `url`.
     async fn delete(&self, url: &str) -> FsResult<()>;
+    /// Read the full contents of the file at `url` (scheme-routed).
+    async fn read(&self, url: &str) -> FsResult<Vec<u8>>;
+    /// List the directory entries at `url` (scheme-routed).
+    async fn list(&self, url: &str) -> FsResult<Vec<DirEntry>>;
 }
 
 /// Cache-kind for access-pattern tracking — the engine-facing subset of the root
@@ -263,4 +269,78 @@ pub trait AxisClusteringPort: Send + Sync {
         distance_metric: DistanceMetric,
         boosting_weights: &[f32],
     ) -> Result<Vec<(usize, f32)>>;
+}
+
+/// Dependency-inversion port for a graph engine's WAL sink (ORION extraction).
+///
+/// ORION (and future graph engines) append graph operations + canonical-sync
+/// markers through this port rather than naming the concrete unified WAL
+/// writer/operation types, so the engine can be extracted to a crate without a
+/// cyclic dependency on the root crate's storage layer. The composition root
+/// injects a concrete impl (e.g. the unified WAL writer, which wraps
+/// [`GraphOperation`] / [`MarkerKind`] into the unified operation enum).
+#[async_trait::async_trait]
+pub trait GraphWalPort: Send + Sync {
+    /// Append a graph operation; returns the assigned sequence number (LSN).
+    async fn append_graph_op(&mut self, op: GraphOperation) -> Result<u64>;
+
+    /// Append a non-data canonical-sync marker; returns the assigned sequence
+    /// number (LSN).
+    async fn append_graph_marker(&mut self, marker: MarkerKind) -> Result<u64>;
+
+    /// Flush any buffered WAL frames to durable storage.
+    async fn flush(&mut self) -> Result<()>;
+
+    /// Reclaim WAL segments fully covered by a durable snapshot whose canonical
+    /// checkpoint is at `checkpoint_lsn` (every segment whose frames all precede
+    /// the matching `CanonicalEmission(checkpoint_lsn)` marker). Returns the
+    /// number of segments reclaimed.
+    async fn truncate_through_canonical_marker(&mut self, checkpoint_lsn: u64) -> Result<u64>;
+}
+
+/// Dependency-inversion port for a graph engine's WAL *reader* (ORION
+/// extraction) — the read-side counterpart to [`GraphWalPort`].
+///
+/// A graph engine replays its WAL through this port rather than naming the
+/// concrete unified WAL reader/entry/operation types. The port yields only the
+/// graph-relevant frames ([`GraphWalEntry`]); non-graph unified operations are
+/// filtered out by the reader. As with [`GraphWalPort`], the composition root
+/// injects a concrete impl (e.g. the unified WAL reader), so the engine can be
+/// extracted to a crate without a cyclic dependency on the root storage layer.
+#[async_trait::async_trait]
+pub trait GraphWalReaderPort: Send + Sync {
+    /// Read every graph-relevant frame from the WAL, in append order. Returns an
+    /// empty vector when the WAL is absent or empty (e.g. before the first write).
+    async fn read_all_graph(&self) -> Result<Vec<GraphWalEntry>>;
+}
+
+/// Dependency-injection factory for a graph engine's WAL writer + reader (ORION
+/// extraction).
+///
+/// This is the seam that lets the engine obtain its [`GraphWalPort`] (writer)
+/// and [`GraphWalReaderPort`] (reader) WITHOUT naming the concrete unified WAL
+/// types: the engine calls `make_writer` / `make_reader` at construction, and
+/// the composition root injects a concrete factory (the unified WAL factory),
+/// which is the only place the concrete types are named. Without this, the
+/// engine would construct the writer/reader itself and could not be extracted
+/// to a crate. The factory is injected once at the composition root and threaded
+/// down through the engine constructors — the single object that crosses the
+/// engine↔root boundary.
+#[async_trait::async_trait]
+pub trait GraphWalFactory: Send + Sync {
+    /// Build a graph WAL writer backed by `wal_path`, wrapped in the async mutex
+    /// the writer is shared under (`append` & friends take `&mut self`).
+    async fn make_writer(
+        &self,
+        wal_path: &str,
+    ) -> Result<Arc<tokio::sync::Mutex<dyn GraphWalPort>>>;
+
+    /// Build a graph WAL reader backed by `wal_path`. Opens no files until a
+    /// read is issued; tolerant of an absent/empty WAL.
+    async fn make_reader(&self, wal_path: &str) -> Result<Arc<dyn GraphWalReaderPort>>;
+
+    /// Build the filesystem port the engine uses for snapshot I/O (read/list).
+    /// The engine never names the concrete filesystem factory; this is the
+    /// single composition-root seam that does (mirrors make_writer/make_reader).
+    async fn make_filesystem(&self) -> Result<Arc<dyn FilesystemPort>>;
 }

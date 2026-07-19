@@ -41,8 +41,12 @@ impl FilesystemScheme {
         match s {
             "file" => Ok(Self::File),
             "s3" => Ok(Self::S3),
-            "gs" => Ok(Self::GoogleCloudStorage),
-            "adls" => Ok(Self::AzureDataLakeStorage),
+            // Backends may return their canonical scheme from LIST even when
+            // the caller used an alias (Azure returns `az://` for an
+            // `adls://` request). Normalize every registered alias here so a
+            // listed URL can always be fed back into FilesystemFactory.
+            "gs" | "gcs" => Ok(Self::GoogleCloudStorage),
+            "adls" | "az" | "azure" => Ok(Self::AzureDataLakeStorage),
             "abfs" => Ok(Self::AzureBlobStorage),
             "hdfs" => Ok(Self::Hdfs),
             _ => Err(FilesystemError::UnsupportedScheme(s.to_string())),
@@ -51,7 +55,9 @@ impl FilesystemScheme {
 
     /// Get all supported schemes as strings
     pub fn all_schemes() -> &'static [&'static str] {
-        &["file", "s3", "gs", "adls", "abfs", "hdfs"]
+        &[
+            "file", "s3", "gs", "gcs", "adls", "az", "azure", "abfs", "hdfs",
+        ]
     }
 }
 
@@ -158,6 +164,16 @@ mod tests {
             FilesystemScheme::parse_scheme("gs").unwrap(),
             FilesystemScheme::GoogleCloudStorage
         );
+        assert_eq!(
+            FilesystemScheme::parse_scheme("gcs").unwrap(),
+            FilesystemScheme::GoogleCloudStorage
+        );
+        for alias in ["adls", "az", "azure"] {
+            assert_eq!(
+                FilesystemScheme::parse_scheme(alias).unwrap(),
+                FilesystemScheme::AzureDataLakeStorage
+            );
+        }
         assert!(FilesystemScheme::parse_scheme("invalid").is_err());
     }
 
@@ -178,6 +194,10 @@ mod tests {
         assert_eq!(
             extract_scheme("s3://bucket/path").unwrap(),
             FilesystemScheme::S3
+        );
+        assert_eq!(
+            extract_scheme("az://container/path").unwrap(),
+            FilesystemScheme::AzureDataLakeStorage
         );
     }
 
@@ -202,6 +222,9 @@ mod tests {
         assert!(is_supported_scheme("file"));
         assert!(is_supported_scheme("s3"));
         assert!(is_supported_scheme("gs"));
+        assert!(is_supported_scheme("gcs"));
+        assert!(is_supported_scheme("az"));
+        assert!(is_supported_scheme("azure"));
         assert!(!is_supported_scheme("invalid"));
     }
 }

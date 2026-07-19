@@ -109,6 +109,7 @@ jobs:
       network_changes: ${{ steps.filter.outputs.network_changes }}
       pgwire_accuracy_changes: ${{ steps.filter.outputs.pgwire_accuracy_changes }}
       object_store_cloud_changes: ${{ steps.filter.outputs.object_store_cloud_changes }}
+      object_store_restart_changes: ${{ steps.filter.outputs.object_store_restart_changes }}
       # SDK change detection
       go_sdk: ${{ steps.filter.outputs.go_sdk }}
       nodejs_sdk: ${{ steps.filter.outputs.nodejs_sdk }}
@@ -223,6 +224,19 @@ jobs:
               - 'src/graph/cold_payload_store.rs'
               - 'scripts/run_cloud_emulator_tests.sh'
               - '.github/workflows/ci.yml'
+            # Full-server object-store RESTARTABILITY recovery (TD-OBJSTORE-5 S1,
+            # ADR-063 D8 PR tier). Any change to the WAL recovery / durable-write /
+            # object-store filesystem / catalog-restart path must prove a real
+            # process-boundary restart recovers over Azurite before merge — the exact
+            # regression class TD-OBJSTORE-1 batch 3 was.
+            object_store_restart_changes:
+              - 'src/storage/persistence/write_ahead_log/**'
+              - 'src/storage/persistence/filesystem/**'
+              - 'crates/storage/proximadb-object-store/**'
+              - 'crates/control/proximadb-catalog/**'
+              - 'src/storage/engine.rs'
+              - 'apps/proximadb-server/tests/object_store_restart_recovery.rs'
+              - 'scripts/run_cloud_emulator_tests.sh'
             graph_changes:
               - 'src/graph/**'
               - 'tests/*graph*'
@@ -310,6 +324,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate deterministic guard wiring
         run: python3 scripts/check_deterministic_commit_contract.py
+
+  repository-identity:
+    name: Canonical Repository Identity
+    runs-on: ubuntu-latest
+    needs: changes
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject stale pre-organization URLs and publish gates
+        run: python3 scripts/check_repository_identity.py
 
   docs-authority:
     name: Docs Authority (no retired/engine drift)
@@ -742,6 +765,15 @@ jobs:
           # than relying on a PR being correctly labelled as mechanical.
           - { label: "no-default-features",  pkg: proximadb,        args: "--no-default-features" }
           - { label: "experimental-engines", pkg: proximadb,        args: "--features experimental-engines" }
+          # Embedded crate (default, no language bindings) — validates the extracted
+          # crate compiles against root at every tier. Python-feature + wheel build
+          # is a qa→main (FULL) concern (heavy pyo3/numpy deps).
+          - { label: "embedded",             pkg: proximadb-embedded, args: "" }
+          # Small extracted crates batched into one runner (each compiles in <1min;
+          # the per-runner overhead — checkout + toolchain + apt + cache — dominates).
+          # Space-separate additional small crates here as they are extracted; the
+          # step loops over every package in the list.
+          - { label: "small-crates",         pkg: "proximadb-mongodb-parser proximadb-catalog-introspection", args: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -757,7 +789,13 @@ jobs:
       - name: cargo check -p ${{ matrix.pkg }} ${{ matrix.args }}
         env:
           CARGO_PROFILE_DEV_DEBUG: 0
-        run: cargo check -p ${{ matrix.pkg }} ${{ matrix.args }}
+        run: |
+          # Batched small-crates entry: check each package sequentially on one runner.
+          for pkg in ${{ matrix.pkg }}; do
+            echo "::group::cargo check -p $pkg ${{ matrix.args }}"
+            cargo check -p "$pkg" ${{ matrix.args }}
+            echo "::endgroup::"
+          done
 
   rust-security:
     name: Security Audit
@@ -1185,8 +1223,6 @@ jobs:
             args: "--workspace --lib --bins"
           - shape: test
             args: "--workspace --lib --bins --tests"
-          - shape: benches
-            args: "--workspace --benches"
     steps:
       - uses: actions/checkout@v4
 
@@ -1217,6 +1253,39 @@ jobs:
       - name: sccache stats
         run: sccache --show-stats || true
 
+  # Benches compile — split from the rust-compile matrix to gate on medium_tier
+  # (develop→qa+). Benches aren't shipped or run on feat→develop; catching their
+  # compile rot at develop→qa is sufficient (TD-BENCH-1). Saves ~15min runner
+  # time per feat→develop PR.
+  rust-compile-benches:
+    name: Rust Compile (benches)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.compile == 'true' && needs.changes.outputs.medium_tier == 'true'
+    env:
+      CARGO_BUILD_JOBS: 1
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-compile-benches"
+          shared-key: "benches"
+      # Install sccache (RUSTC_WRAPPER=sccache is set in this job's env). Without
+      # it the first rustc invocation dies: "sccache: No such file or directory".
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - name: cargo check --workspace --benches
+        run: cargo check --workspace --benches
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
   # ============================================================================
   # BUILD - Compile Rust binaries
   # ============================================================================
@@ -1233,6 +1302,22 @@ jobs:
           - profile: release
             args: "--release"
     steps:
+      - name: Reclaim disk space
+        # ubuntu-latest ships ~25 GB of preinstalled toolchains this build never
+        # uses (Android SDK, .NET, GHC/Haskell, boost). Removing them frees the
+        # disk the large Rust target/ dir needs — otherwise the runner hits
+        # "No space left on device" and fails the job at random (infra, not code).
+        run: |
+          echo "Disk before reclaim:"; df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/boost || true
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          echo "Disk after reclaim:"; df -h /
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -1296,6 +1381,22 @@ jobs:
             args: "--doc"
             threads: 4
     steps:
+      - name: Reclaim disk space
+        # ubuntu-latest ships ~25 GB of preinstalled toolchains this build never
+        # uses (Android SDK, .NET, GHC/Haskell, boost). Removing them frees the
+        # disk the large Rust target/ dir needs — otherwise the runner hits
+        # "No space left on device" and fails the job at random (infra, not code).
+        run: |
+          echo "Disk before reclaim:"; df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/boost || true
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          echo "Disk after reclaim:"; df -h /
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -1378,6 +1479,59 @@ jobs:
       - name: Run object-store tier tests against emulators (--fast)
         # docker + aws/az CLIs are preinstalled on ubuntu-latest runners.
         run: bash scripts/run_cloud_emulator_tests.sh --fast
+
+  # TD-OBJSTORE-5 S1 (ADR-063 D8 PR tier): full-server object-store RESTARTABILITY
+  # recovery over Azurite (adls://). Spawns the real proximadb-server against one
+  # object-store prefix, SIGKILLs it, and recovers catalog + WAL-replays collections
+  # on a fresh local disk — the process-boundary proof for the TD-OBJSTORE-1 batch-3
+  # regression class. Path-gated on the WAL-recovery / durable-write / object-store
+  # filesystem / catalog code so it runs on the introducing PR (e.g. an in-flight
+  # recovery rework) — the exact churn a post-hoc gate would miss. Compiles the
+  # server binary (heavy), so it's a dedicated job: reclaim-disk + sccache +
+  # CARGO_BUILD_JOBS=1 (in the script) for the 16GB-runner OOM cliff. Path-gated
+  # (skipped otherwise) and in ci-success.needs so it gates when it runs.
+  object-store-restart-recovery:
+    name: Object-store restart recovery (Azurite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: [changes]
+    if: |
+      !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
+      needs.changes.outputs.object_store_restart_changes == 'true'
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
+    steps:
+      - name: Reclaim disk space
+        run: |
+          echo "Disk before reclaim:"; df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/boost || true
+          echo "Disk after reclaim:"; df -h /
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-objstore-restart"
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-restart-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-restart-${{ runner.os }}-
+      - name: Prove full-server restart recovery over Azurite (adls://)
+        # docker + aws/az CLIs preinstalled on ubuntu-latest; the script starts
+        # Azurite and runs catalog_wal_and_sst_survive_fresh_local_disks.
+        run: bash scripts/run_cloud_emulator_tests.sh --restart
 
   # Targeted integration tests based on changed components
   rust-integration-test-storage:
@@ -2070,6 +2224,7 @@ jobs:
       - v1-proto-usage-report
       - v1-proto-usage-no-regression
       - rust-compile
+      - rust-compile-benches
       - rust-clippy
       - feature-matrix
       - rust-security
@@ -2081,6 +2236,7 @@ jobs:
       - rust-integration-test-graph
       - rust-integration-test-cluster
       - object-store-emulator-tests
+      - object-store-restart-recovery
       - rust-coverage
       - python-lint
       - python-test

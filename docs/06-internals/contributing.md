@@ -37,7 +37,7 @@ git clone https://github.com/YOUR_USERNAME/proximadb.git
 cd proximadb
 
 # 2. Add upstream remote
-git remote add upstream https://github.com/vjsingh1984/proximadb.git
+git remote add upstream https://github.com/anvai-labs/proximaDB.git
 
 # 3. Install development tools
 cargo install cargo-watch cargo-nextest
@@ -55,7 +55,7 @@ cargo test
 
 ### 1. Find an Issue
 
-Check [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues) for:
+Check [GitHub Issues](https://github.com/anvai-labs/proximaDB/issues) for:
 - `good first issue` - Beginner-friendly
 - `help wanted` - Community contributions welcome
 - `enhancement` - New features
@@ -64,7 +64,7 @@ Check [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues) for:
 
 For significant changes:
 - Comment on the issue
-- Start a [Discussion](https://github.com/vjsingh1984/proximadb/discussions)
+- Start a [Discussion](https://github.com/anvai-labs/proximaDB/discussions)
 - Draft an RFC for major features
 
 ### 3. Create Branch
@@ -434,8 +434,8 @@ Contributors recognized in:
 
 ### Community
 
-- [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues)
-- [GitHub Discussions](https://github.com/vjsingh1984/proximadb/discussions)
+- [GitHub Issues](https://github.com/anvai-labs/proximaDB/issues)
+- [GitHub Discussions](https://github.com/anvai-labs/proximaDB/discussions)
 
 ---
 
@@ -447,6 +447,6 @@ Contributors recognized in:
 
 ---
 
-*Ready to contribute?* Start with [good first issue](https://github.com/vjsingh1984/proximadb/labels/good%20first%20issue)
+*Ready to contribute?* Start with [good first issue](https://github.com/anvai-labs/proximaDB/labels/good%20first%20issue)
 
 *Thanks for contributing!* 🎉

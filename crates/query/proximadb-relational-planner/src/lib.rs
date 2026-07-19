@@ -1079,6 +1079,23 @@ pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) 
                             implicit_join_bucket.push(conj);
                             continue;
                         }
+                        // Factor a cross-side equi-key shared by EVERY branch of a
+                        // top-level disjunction out of the OR, so a comma-join whose
+                        // join key only appears inside an `OR` of range predicates
+                        // (TPC-H Q19) still normalizes to an equi-join instead of a
+                        // raw cross product. `(A=B ∧ p1) ∨ (A=B ∧ p2)` ≡
+                        // `A=B ∧ (p1 ∨ p2)`: A=B becomes the join key, the reduced
+                        // disjunction the residual filter.
+                        if kind == JoinKind::Cross
+                            && let Some((commons, reduced)) =
+                                factor_common_cross_equalities(&conj, left_width)
+                        {
+                            implicit_join_bucket.extend(commons);
+                            if let Some(r) = reduced {
+                                residual.push(r);
+                            }
+                            continue;
+                        }
                         let mut ords = Vec::new();
                         collect_column_ordinals(&conj, &mut ords);
                         if ords.is_empty() {
@@ -1525,6 +1542,95 @@ fn is_cross_side_equality(expr: &Expr, left_width: usize) -> bool {
         return false;
     };
     (left.ordinal < left_width) != (right.ordinal < left_width)
+}
+
+/// Flatten a top-level disjunction into its OR-branches (descending only through
+/// `Or` nodes, mirroring [`flatten_and`]). A non-`Or` expression yields one branch.
+fn flatten_or(expr: &Expr) -> Vec<&Expr> {
+    let mut out = Vec::new();
+    flatten_or_into(expr, &mut out);
+    out
+}
+
+fn flatten_or_into<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
+    match expr {
+        Expr::BinaryOp {
+            op: BinaryOp::Or,
+            left,
+            right,
+        } => {
+            flatten_or_into(left, out);
+            flatten_or_into(right, out);
+        }
+        other => out.push(other),
+    }
+}
+
+/// Combine predicates with `OR` (the disjunctive mirror of [`combine_all`]).
+fn combine_any(preds: Vec<Expr>) -> Option<Expr> {
+    preds.into_iter().fold(None, |acc, p| match acc {
+        None => Some(p),
+        Some(l) => Some(Expr::BinaryOp {
+            op: BinaryOp::Or,
+            left: Box::new(l),
+            right: Box::new(p),
+        }),
+    })
+}
+
+/// Factor cross-side equi-join keys shared by EVERY branch of a top-level
+/// disjunction out of that disjunction. `(A=B ∧ p1) ∨ (A=B ∧ p2) ∨ …` is
+/// logically `A=B ∧ (p1 ∨ p2 ∨ …)` — A=B distributes over the OR because it
+/// appears in every branch — so a comma-join whose join key only lives inside an
+/// `OR` of range predicates (TPC-H Q19) still normalizes to an equi-join rather
+/// than a raw cross product.
+///
+/// Returns the extracted equi-terms plus the reduced disjunction (the residual to
+/// keep as a `Filter`), or `None` if `conj` is not a real (≥2-branch) disjunction
+/// or shares no cross-side equality across all branches. If stripping the common
+/// terms empties any branch — that branch was exactly `A=B`, so the disjunction
+/// collapses to `A=B` by absorption — the residual is `None`.
+fn factor_common_cross_equalities(
+    conj: &Expr,
+    left_width: usize,
+) -> Option<(Vec<Expr>, Option<Expr>)> {
+    let branches = flatten_or(conj);
+    if branches.len() < 2 {
+        return None;
+    }
+    let branch_terms: Vec<Vec<&Expr>> = branches.iter().map(|b| flatten_and(b)).collect();
+    // Common cross-side equalities = those in the first branch present (structurally)
+    // in every branch.
+    let mut commons: Vec<Expr> = Vec::new();
+    for t in &branch_terms[0] {
+        if is_cross_side_equality(t, left_width)
+            && !commons.contains(*t)
+            && branch_terms.iter().all(|terms| terms.contains(t))
+        {
+            commons.push((*t).clone());
+        }
+    }
+    if commons.is_empty() {
+        return None;
+    }
+    // Rebuild each branch without the common terms; an emptied branch means the
+    // whole disjunction reduces to the common terms (no residual filter).
+    let mut reduced_branches: Vec<Expr> = Vec::with_capacity(branch_terms.len());
+    for terms in &branch_terms {
+        let remaining: Vec<Expr> = terms
+            .iter()
+            .filter(|t| !commons.contains(**t))
+            .map(|t| (*t).clone())
+            .collect();
+        if remaining.is_empty() {
+            return Some((commons, None));
+        }
+        if let Some(b) = combine_all(remaining) {
+            reduced_branches.push(b);
+        }
+    }
+    let reduced = combine_any(reduced_branches);
+    Some((commons, reduced))
 }
 
 fn expression_references_columns(expr: &Expr) -> bool {
@@ -3397,6 +3503,78 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn comma_join_disjunction_factors_shared_equi_key() {
+        // TD-REL-LOWER-6 (Q19 shape): the join key `id = user_id` appears inside
+        // EVERY branch of a top-level OR of range predicates. It must be factored
+        // out to an equi-join, leaving the disjunction of residuals as a Filter
+        // above the join — not left as a raw cross product.
+        let join_key = || {
+            Expr::bin(
+                BinaryOp::Eq,
+                col_at(0, "id", ProximaType::Int64),
+                col_at(4, "user_id", ProximaType::Int64),
+            )
+        };
+        let hi = Expr::bin(
+            BinaryOp::Gt,
+            col_at(5, "total", ProximaType::Float64),
+            Expr::literal(ProximaValue::Float64(100.0)),
+        );
+        let lo = Expr::bin(
+            BinaryOp::Lt,
+            col_at(5, "total", ProximaType::Float64),
+            Expr::literal(ProximaValue::Float64(5.0)),
+        );
+        let predicate = Expr::bin(
+            BinaryOp::Or,
+            Expr::bin(BinaryOp::And, join_key(), hi),
+            Expr::bin(BinaryOp::And, join_key(), lo),
+        );
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(PhysicalPlan::Join {
+                left: Box::new(lower_to_physical(users_scan())),
+                right: Box::new(lower_to_physical(orders_scan())),
+                kind: JoinKind::Cross,
+                on: None,
+                strategy: JoinStrategy::NestedLoop,
+            }),
+            predicate,
+        };
+
+        let result = push_predicates(physical, &cap_full(Vec::new()));
+        // Residual disjunction sits as a Filter above the normalized equi-join.
+        let PhysicalPlan::Filter {
+            input,
+            predicate: resid,
+        } = result
+        else {
+            panic!("expected residual Filter over the normalized join");
+        };
+        assert!(
+            matches!(
+                resid,
+                Expr::BinaryOp {
+                    op: BinaryOp::Or,
+                    ..
+                }
+            ),
+            "residual is the reduced disjunction (total>100 OR total<5)"
+        );
+        let PhysicalPlan::Join {
+            kind, on, strategy, ..
+        } = *input
+        else {
+            panic!("expected a normalized equi-join under the residual filter");
+        };
+        assert_eq!(kind, JoinKind::Inner, "shared equi-key normalizes to Inner");
+        assert!(
+            on.is_some(),
+            "the shared cross-side equality becomes the ON key"
+        );
+        assert!(matches!(strategy, JoinStrategy::Hash { .. }));
     }
 
     #[test]

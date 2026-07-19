@@ -6,14 +6,18 @@
 //! TD-016: Integrated with WALEncryptionLayer for AES-256-GCM encryption at rest.
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::storage::encryption::WALEncryptionLayer;
 use crate::storage::encryption::wal_encryption::WalSegmentMetadata;
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::{
+    DirEntry, FileSystem, FilesystemError, FilesystemFactory,
+};
 use crate::storage::persistence::write_ahead_log::BatchId;
 use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
+use crate::storage::persistence::write_ahead_log::{RecoveryToken, RecoveryTokenProvider};
 use proximadb_kernel::checksum::Crc32;
 
 /// Centralized manager for all WAL disk operations
@@ -24,6 +28,9 @@ pub struct WriteAheadLogDiskManager {
     wal_base_url: String,
     /// Optional WAL encryption layer (TD-016)
     encryption_layer: Option<Arc<WALEncryptionLayer>>,
+    /// Injected ordering-token provider. The default constructors use the
+    /// process provider populated by the canonical partition-lease manager.
+    recovery_token_provider: Arc<RecoveryTokenProvider>,
     /// Statistics
     stats: Arc<tokio::sync::RwLock<WalDiskManagerStats>>,
 }
@@ -53,9 +60,33 @@ pub struct WalFileInfo {
     pub format: SerializationFormat,
     /// Encryption metadata (TD-016)
     pub encryption_metadata: Option<WalSegmentMetadata>,
+    /// Ordered token parsed from the object name. The tenant is populated from
+    /// the authenticated envelope when the object is read.
+    pub recovery_token: Option<RecoveryToken>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadWalBatch {
+    pub data: Vec<u8>,
+    pub recovery_token: Option<RecoveryToken>,
+    pub record_ordinals: Vec<u32>,
+    pub checksum_crc32: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WalObjectEnvelope {
+    version: u16,
+    recovery_token: RecoveryToken,
+    payload_checksum_crc32: u32,
+    vector_count: u64,
+    encryption_metadata: Option<WalSegmentMetadata>,
+    record_ordinals: Vec<u32>,
 }
 
 impl WriteAheadLogDiskManager {
+    const LIST_ATTEMPTS: usize = 3;
+    const ENVELOPE_MAGIC: &'static [u8; 8] = b"PXWAL02\0";
+
     /// Create a new disk manager
     pub fn new(filesystem_factory: Arc<FilesystemFactory>, wal_base_url: impl AsRef<str>) -> Self {
         Self::with_encryption(filesystem_factory, wal_base_url, None)
@@ -66,6 +97,20 @@ impl WriteAheadLogDiskManager {
         filesystem_factory: Arc<FilesystemFactory>,
         wal_base_url: impl AsRef<str>,
         encryption_layer: Option<Arc<WALEncryptionLayer>>,
+    ) -> Self {
+        Self::with_encryption_and_token_provider(
+            filesystem_factory,
+            wal_base_url,
+            encryption_layer,
+            RecoveryTokenProvider::global(),
+        )
+    }
+
+    pub fn with_encryption_and_token_provider(
+        filesystem_factory: Arc<FilesystemFactory>,
+        wal_base_url: impl AsRef<str>,
+        encryption_layer: Option<Arc<WALEncryptionLayer>>,
+        recovery_token_provider: Arc<RecoveryTokenProvider>,
     ) -> Self {
         let wal_base_url = wal_base_url.as_ref().to_string();
         let encryption_enabled = encryption_layer.as_ref().is_some_and(|e| e.is_enabled());
@@ -84,6 +129,7 @@ impl WriteAheadLogDiskManager {
             filesystem_factory,
             wal_base_url,
             encryption_layer,
+            recovery_token_provider,
             stats: Arc::new(tokio::sync::RwLock::new(WalDiskManagerStats::default())),
         }
     }
@@ -144,6 +190,28 @@ impl WriteAheadLogDiskManager {
         Self::join_url(&self.wal_base_url, &[collection_id, "wal", &fname], false)
     }
 
+    fn tokenized_batch_url(
+        &self,
+        collection_id: &str,
+        batch_id: &BatchId,
+        format: SerializationFormat,
+        token: &RecoveryToken,
+    ) -> String {
+        let ext = match format {
+            SerializationFormat::ProtocolBuffers => "pbwal",
+            SerializationFormat::Bincode => "bcwal",
+            SerializationFormat::Avro => "avwal",
+        };
+        let fname = format!(
+            "{:020}-{:020}-{}.{}",
+            token.epoch,
+            token.sequence,
+            batch_id.to_base62(),
+            ext
+        );
+        Self::join_url(&self.wal_base_url, &[collection_id, "wal", &fname], false)
+    }
+
     /// Build manifest URL: .../{collection_id}/wal/manifest.log
     pub fn manifest_url(&self, collection_id: &str) -> String {
         // Use collection_id directly - collection IDs are already short base62 UUIDs
@@ -181,7 +249,11 @@ impl WriteAheadLogDiskManager {
         vector_count: u64,
         sync_to_disk: bool,
     ) -> Result<WalFileInfo> {
-        let file_url = self.batch_url(collection_id, batch_id, format);
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let recovery_token = self
+            .recovery_token_provider
+            .allocate(collection_id, now_ms)?;
+        let file_url = self.tokenized_batch_url(collection_id, batch_id, format, &recovery_token);
 
         debug!(
             "📝 Writing WriteBuffer batch {} for collection {} to {} ({} bytes)",
@@ -200,30 +272,37 @@ impl WriteAheadLogDiskManager {
         // Always attempt directory creation for uniform semantics (no-op on object stores)
         let _ = filesystem.create_dir_all(&dir_url).await;
 
-        // TD-016: Encrypt data before writing if encryption is enabled
-        let (data_to_write, encryption_metadata) =
-            if let Some(ref encryption_layer) = self.encryption_layer {
-                debug!("🔒 Encrypting WAL segment before write");
-                let segment_name = format!("{}_{}", collection_id, batch_id.to_base62());
-                // Use batch_id components to create a unique u64 for key derivation
-                let segment_id = batch_id.timestamp_ms() ^ (batch_id.counter() as u64);
-                match encryption_layer.encrypt_segment(&segment_name, segment_id, data) {
-                    Ok((encrypted, metadata)) => {
-                        debug!(
-                            "✅ WAL segment encrypted ({} -> {} bytes)",
-                            data.len(),
-                            encrypted.len()
-                        );
-                        (encrypted, Some(metadata))
-                    }
-                    Err(e) => {
-                        warn!("⚠️  WAL encryption failed, writing unencrypted: {}", e);
-                        (data.to_vec(), None)
-                    }
-                }
-            } else {
-                (data.to_vec(), None)
-            };
+        let checksum = Crc32::checksum(data);
+        let encryption_metadata = self.encryption_layer.as_ref().map(|layer| {
+            layer.prepare_segment_metadata(
+                &format!("{}_{}", collection_id, batch_id.to_base62()),
+                batch_id.timestamp_ms() ^ u64::from(batch_id.counter()),
+                data.len(),
+            )
+        });
+        let envelope = WalObjectEnvelope {
+            version: 2,
+            recovery_token: recovery_token.clone(),
+            payload_checksum_crc32: checksum,
+            vector_count,
+            encryption_metadata: encryption_metadata.clone(),
+            record_ordinals: (0..vector_count)
+                .map(u32::try_from)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("WAL batch has more records than the recovery ordinal can represent")?,
+        };
+        let header = serde_json::to_vec(&envelope).context("serializing WAL object envelope")?;
+        let payload = match (&self.encryption_layer, &encryption_metadata) {
+            (Some(layer), Some(metadata)) => layer
+                .encrypt_segment_with_metadata_and_aad(metadata, data, &header)
+                .context("encrypting WAL payload with authenticated envelope")?,
+            _ => data.to_vec(),
+        };
+        let mut data_to_write = Vec::with_capacity(12 + header.len() + payload.len());
+        data_to_write.extend_from_slice(Self::ENVELOPE_MAGIC);
+        data_to_write.extend_from_slice(&(header.len() as u32).to_be_bytes());
+        data_to_write.extend_from_slice(&header);
+        data_to_write.extend_from_slice(&payload);
 
         // Write data atomically; for object stores this will write to a temp and
         // then rename to the final path.
@@ -232,7 +311,7 @@ impl WriteAheadLogDiskManager {
             ::create_metadata_strategy(&*filesystem, None)?;
         let file_options = strategy.create_file_options(&*filesystem, &file_url)?;
         filesystem
-            .write(&file_url, &data_to_write, Some(file_options))
+            .write_if_absent(&file_url, &data_to_write, Some(file_options))
             .await
             .context("Failed to write WriteBuffer batch to disk")?;
 
@@ -246,7 +325,6 @@ impl WriteAheadLogDiskManager {
         }
 
         // Register in global manifest
-        let checksum = Crc32::checksum(&data_to_write);
         let file_name = file_url.split('/').next_back().unwrap_or("").to_string();
 
         use crate::storage::persistence::write_ahead_log::manifest;
@@ -289,6 +367,7 @@ impl WriteAheadLogDiskManager {
             size_bytes: data_to_write.len() as u64,
             format,
             encryption_metadata,
+            recovery_token: Some(recovery_token),
         };
 
         debug!("✅ Successfully wrote WAL batch to disk: {:?}", file_info);
@@ -297,6 +376,10 @@ impl WriteAheadLogDiskManager {
 
     /// Read a serialized batch from disk
     pub async fn read_batch(&self, file_info: &WalFileInfo) -> Result<Vec<u8>> {
+        Ok(self.read_batch_with_envelope(file_info).await?.data)
+    }
+
+    pub async fn read_batch_with_envelope(&self, file_info: &WalFileInfo) -> Result<ReadWalBatch> {
         let file_url = file_info.file_url.clone();
 
         debug!(
@@ -312,8 +395,65 @@ impl WriteAheadLogDiskManager {
             .await
             .context("Failed to read WAL batch from disk")?;
 
-        // Track the encrypted data length before potential moves
+        // Track the object length before parsing/decrypting.
         let encrypted_len = encrypted_data.len();
+
+        if encrypted_data.starts_with(Self::ENVELOPE_MAGIC) {
+            if encrypted_data.len() < 12 {
+                anyhow::bail!("truncated WAL envelope at {file_url}");
+            }
+            let header_len = u32::from_be_bytes(encrypted_data[8..12].try_into()?) as usize;
+            let header_end = 12usize
+                .checked_add(header_len)
+                .context("WAL envelope header length overflow")?;
+            if header_end > encrypted_data.len() {
+                anyhow::bail!("truncated WAL envelope header at {file_url}");
+            }
+            let header = &encrypted_data[12..header_end];
+            let envelope: WalObjectEnvelope =
+                serde_json::from_slice(header).context("decoding WAL object envelope")?;
+            if envelope.version != 2 {
+                anyhow::bail!("unsupported WAL envelope version {}", envelope.version);
+            }
+            if let Some(name_token) = &file_info.recovery_token
+                && (name_token.epoch != envelope.recovery_token.epoch
+                    || name_token.sequence != envelope.recovery_token.sequence)
+            {
+                anyhow::bail!("WAL filename token does not match authenticated envelope");
+            }
+            if envelope.record_ordinals.len() != envelope.vector_count as usize
+                || envelope
+                    .record_ordinals
+                    .iter()
+                    .enumerate()
+                    .any(|(index, ordinal)| *ordinal as usize != index)
+            {
+                anyhow::bail!("invalid WAL record ordinal sequence");
+            }
+            let payload = &encrypted_data[header_end..];
+            let data = match (&self.encryption_layer, &envelope.encryption_metadata) {
+                (Some(layer), Some(metadata)) if metadata.encrypted => layer
+                    .decrypt_segment_with_aad(metadata, payload, header)
+                    .context("decrypting authenticated WAL envelope")?,
+                (None, Some(metadata)) if metadata.encrypted => {
+                    anyhow::bail!("encrypted WAL object has no configured encryption layer")
+                }
+                _ => payload.to_vec(),
+            };
+            if Crc32::checksum(&data) != envelope.payload_checksum_crc32 {
+                anyhow::bail!("WAL payload checksum mismatch at {file_url}");
+            }
+            let mut stats = self.stats.write().await;
+            stats.total_bytes_read += encrypted_len as u64;
+            stats.total_files_read += 1;
+            drop(stats);
+            return Ok(ReadWalBatch {
+                data,
+                recovery_token: Some(envelope.recovery_token),
+                record_ordinals: envelope.record_ordinals,
+                checksum_crc32: envelope.payload_checksum_crc32,
+            });
+        }
 
         // TD-016: Decrypt data after reading if it was encrypted
         let data = if let Some(ref metadata) = file_info.encryption_metadata {
@@ -355,7 +495,12 @@ impl WriteAheadLogDiskManager {
         }
 
         debug!("✅ Successfully read {} bytes from disk", data.len());
-        Ok(data)
+        Ok(ReadWalBatch {
+            checksum_crc32: Crc32::checksum(&data),
+            data,
+            recovery_token: None,
+            record_ordinals: Vec::new(),
+        })
     }
 
     /// List all WAL files for a collection
@@ -368,14 +513,7 @@ impl WriteAheadLogDiskManager {
         );
 
         let filesystem = self.filesystem_factory.get_filesystem(&dir_url)?;
-
-        // Check if directory exists
-        if !filesystem.exists(&dir_url).await? {
-            debug!("WriteBuffer directory does not exist: {}", dir_url);
-            return Ok(Vec::new());
-        }
-
-        let entries = filesystem.list(&dir_url).await?;
+        let entries = Self::list_prefix_entries(&*filesystem, &dir_url).await?;
         let mut wal_files = Vec::new();
 
         debug!("Raw entries from filesystem: {} entries", entries.len());
@@ -396,14 +534,10 @@ impl WriteAheadLogDiskManager {
             // Backward-compat path: {base}/{collection_id}/write_buffer/
             let legacy_url =
                 Self::join_url(&self.wal_base_url, &[collection_id, "write_buffer"], true);
-            if filesystem.exists(&legacy_url).await.unwrap_or(false)
-                && let Ok(legacy_fs) = self.filesystem_factory.get_filesystem(&legacy_url)
-                && let Ok(entries) = legacy_fs.list(&legacy_url).await
-            {
-                for entry in entries {
-                    if let Some(file_info) = self.parse_wal_filename(&entry.url, collection_id) {
-                        wal_files.push(file_info);
-                    }
+            let legacy_fs = self.filesystem_factory.get_filesystem(&legacy_url)?;
+            for entry in Self::list_prefix_entries(&*legacy_fs, &legacy_url).await? {
+                if let Some(file_info) = self.parse_wal_filename(&entry.url, collection_id) {
+                    wal_files.push(file_info);
                 }
             }
         }
@@ -414,6 +548,47 @@ impl WriteAheadLogDiskManager {
             collection_id
         );
         Ok(wal_files)
+    }
+
+    /// LIST is authoritative for a prefix. Object stores return an empty page for an
+    /// absent prefix; the local backend reports a missing directory as NotFound.
+    /// Normalize only those absent forms to empty. Every other failure is retried and
+    /// then returned so recovery cannot silently reinterpret an auth/network/throttle
+    /// failure as data absence (ADR-063 D3-D5 / TD-OBJSTORE-4 S1).
+    pub(crate) async fn list_prefix_entries(
+        filesystem: &dyn FileSystem,
+        prefix: &str,
+    ) -> Result<Vec<DirEntry>> {
+        for attempt in 1..=Self::LIST_ATTEMPTS {
+            match filesystem.list(prefix).await {
+                Ok(entries) => return Ok(entries),
+                Err(error) if Self::is_absent_list_error(&error) => return Ok(Vec::new()),
+                Err(error) if attempt < Self::LIST_ATTEMPTS => {
+                    warn!(
+                        "WAL prefix LIST failed for {} (attempt {}/{}): {}",
+                        prefix,
+                        attempt,
+                        Self::LIST_ATTEMPTS,
+                        error
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(50 * attempt as u64)).await;
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("Failed to LIST WAL prefix {prefix}"));
+                }
+            }
+        }
+
+        unreachable!("LIST retry loop always returns")
+    }
+
+    fn is_absent_list_error(error: &FilesystemError) -> bool {
+        match error {
+            FilesystemError::NotFound(_) => true,
+            FilesystemError::Io(error) => error.kind() == std::io::ErrorKind::NotFound,
+            _ => false,
+        }
     }
 
     /// Delete a WAL file
@@ -510,7 +685,21 @@ impl WriteAheadLogDiskManager {
             _ => return None,
         };
 
-        // Parse batch ID
+        // New names are epoch-first; legacy names contain only the batch id.
+        let (batch_id_str, recovery_token) = match batch_id_str.split_once('-') {
+            Some((epoch, rest)) => {
+                let (sequence, encoded_batch_id) = rest.split_once('-')?;
+                (
+                    encoded_batch_id,
+                    Some(RecoveryToken {
+                        tenant_id: String::new(),
+                        epoch: epoch.parse().ok()?,
+                        sequence: sequence.parse().ok()?,
+                    }),
+                )
+            }
+            None => (batch_id_str, None),
+        };
         let batch_id = BatchId::from_base62(batch_id_str)?;
 
         Some(WalFileInfo {
@@ -520,6 +709,7 @@ impl WriteAheadLogDiskManager {
             size_bytes: 0, // Will be filled by caller if needed
             format,
             encryption_metadata: None, // Path parsing doesn't have encryption metadata
+            recovery_token,
         })
     }
 }
@@ -563,7 +753,13 @@ mod tests {
             .await
             .expect("Failed to write batch");
         assert_eq!(file_info.collection_id, collection_id);
-        assert_eq!(file_info.size_bytes, data.len() as u64);
+        assert!(file_info.size_bytes > data.len() as u64);
+        let token = file_info
+            .recovery_token
+            .as_ref()
+            .expect("new WAL objects carry recovery tokens");
+        let file_name = file_info.file_url.split('/').next_back().unwrap();
+        assert!(file_name.starts_with(&format!("{:020}-{:020}-", token.epoch, token.sequence)));
 
         // Read batch
         let read_data = manager
@@ -574,8 +770,8 @@ mod tests {
 
         // Check stats
         let stats = manager.get_stats().await.expect("Failed to get stats");
-        assert_eq!(stats.total_bytes_written, data.len() as u64);
-        assert_eq!(stats.total_bytes_read, data.len() as u64);
+        assert_eq!(stats.total_bytes_written, file_info.size_bytes);
+        assert_eq!(stats.total_bytes_read, file_info.size_bytes);
         assert_eq!(stats.total_files_written, 1);
         assert_eq!(stats.total_files_read, 1);
     }
@@ -638,5 +834,54 @@ mod tests {
             .await
             .expect("Failed to list files");
         assert_eq!(final_list.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn list_missing_prefix_is_empty_and_legacy_prefix_is_discoverable() {
+        let (manager, temp_dir) = create_test_manager().await;
+        let collection_id = "legacy_collection";
+
+        assert!(
+            manager
+                .list_collection_files(collection_id)
+                .await
+                .expect("missing prefixes are empty")
+                .is_empty()
+        );
+
+        let batch_id = BatchId::new();
+        let legacy_dir = temp_dir.path().join(collection_id).join("write_buffer");
+        std::fs::create_dir_all(&legacy_dir).expect("legacy directory");
+        std::fs::write(
+            legacy_dir.join(format!("{}.bcwal", batch_id.to_base62())),
+            b"legacy WAL",
+        )
+        .expect("legacy WAL object");
+
+        let files = manager
+            .list_collection_files(collection_id)
+            .await
+            .expect("legacy LIST fallback");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].batch_id, batch_id);
+        assert!(files[0].file_url.contains("/write_buffer/"));
+    }
+
+    #[tokio::test]
+    async fn list_error_fails_closed_instead_of_looking_empty() {
+        let (manager, temp_dir) = create_test_manager().await;
+        let collection_id = "broken_collection";
+        let collection_dir = temp_dir.path().join(collection_id);
+        std::fs::create_dir_all(&collection_dir).expect("collection directory");
+        std::fs::write(collection_dir.join("wal"), b"not a directory").expect("blocking file");
+
+        let error = manager
+            .list_collection_files(collection_id)
+            .await
+            .expect_err("a LIST failure must not be treated as an empty prefix");
+        assert!(
+            error.to_string().contains("Failed to LIST WAL prefix"),
+            "unexpected error: {error:#}"
+        );
     }
 }

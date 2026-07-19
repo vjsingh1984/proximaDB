@@ -498,6 +498,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
                     size_bytes: 0,
                     format: SerializationFormat::Avro,
                     encryption_metadata: None, // Sync doesn't have encryption metadata
+                    recovery_token: None,
                 };
 
                 // Use filesystem sync_file to ensure durability

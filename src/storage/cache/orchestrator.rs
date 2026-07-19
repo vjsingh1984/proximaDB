@@ -21,11 +21,8 @@
 
 use anyhow::Result;
 use dashmap::DashMap;
-use proximadb_kernel::hash::XxHash64;
 use std::collections::{HashMap, VecDeque};
-use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
@@ -41,93 +38,11 @@ use crate::storage::cache::{
 /// String interner for metadata deduplication
 ///
 /// ## Purpose:
-/// Reduces memory usage by storing each unique string only once.
-/// Multiple metadata entries can reference the same string via Arc.
-///
-/// ## Performance:
-/// - Lookup: O(1) average with XxHash64
-/// - Insert: O(1) amortized
-/// - Memory savings: 50-80% for typical metadata
-#[derive(Clone)]
-pub struct StringInterner {
-    /// Map from string hash to Arc<str> for fast deduplication
-    /// Using XxHash64 for faster hashing than default hasher
-    strings: Arc<DashMap<u64, Arc<str>, BuildHasherDefault<XxHash64>>>,
-
-    /// Statistics for monitoring effectiveness
-    stats: Arc<InternerStats>,
-}
-
-#[derive(Default)]
-struct InternerStats {
-    total_lookups: AtomicU64,
-    cache_hits: AtomicU64,
-    unique_strings: AtomicU64,
-    bytes_saved: AtomicU64,
-}
-
-impl StringInterner {
-    pub fn new() -> Self {
-        Self {
-            strings: Arc::new(DashMap::with_hasher(
-                BuildHasherDefault::<XxHash64>::default(),
-            )),
-            stats: Arc::new(InternerStats::default()),
-        }
-    }
-
-    /// Intern a string, returning Arc<str> to the canonical version
-    pub async fn intern(&self, s: &str) -> Arc<str> {
-        // Compute hash using XxHash64
-        let mut hasher = XxHash64::default();
-        hasher.write(s.as_bytes());
-        let hash = hasher.finish();
-
-        // Check if already interned
-        if let Some(entry) = self.strings.get(&hash) {
-            self.stats.total_lookups.fetch_add(1, Ordering::Relaxed);
-            self.stats.cache_hits.fetch_add(1, Ordering::Relaxed);
-            self.stats
-                .bytes_saved
-                .fetch_add(s.len() as u64, Ordering::Relaxed);
-            return entry.clone();
-        }
-
-        // Add new string
-        let arc_str: Arc<str> = Arc::from(s);
-        self.strings.insert(hash, arc_str.clone());
-
-        self.stats.total_lookups.fetch_add(1, Ordering::Relaxed);
-        self.stats.unique_strings.fetch_add(1, Ordering::Relaxed);
-
-        arc_str
-    }
-
-    /// Get interning statistics
-    pub async fn stats(&self) -> (u64, u64, f64) {
-        let total_lookups = self.stats.total_lookups.load(Ordering::Relaxed);
-        let cache_hits = self.stats.cache_hits.load(Ordering::Relaxed);
-        let unique_strings = self.stats.unique_strings.load(Ordering::Relaxed);
-        let bytes_saved = self.stats.bytes_saved.load(Ordering::Relaxed);
-        let hit_rate = if total_lookups > 0 {
-            cache_hits as f64 / total_lookups as f64
-        } else {
-            0.0
-        };
-        (unique_strings, bytes_saved, hit_rate)
-    }
-
-    /// Clear the interner (useful for memory pressure)
-    pub fn clear(&self) {
-        self.strings.clear();
-    }
-}
-
-impl Default for StringInterner {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// String dedup interner — moved to the `proximadb-interner` foundation crate
+/// (root-crate decomposition). Re-exported here to preserve the
+/// `crate::storage::cache::orchestrator::StringInterner` path used by the
+/// metadata layer and `cache_coordinator`.
+pub use proximadb_interner::StringInterner;
 
 /// Event for async cache access tracking
 ///

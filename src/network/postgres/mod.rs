@@ -106,6 +106,8 @@ pub struct PostgresServer {
     /// TD-TENANT-1: the deployment's bare tenant-assertion trust policy,
     /// threaded into every per-connection `PostgresProtocol`. Default `Open`.
     tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// Whether startup may omit the tenant/catalog and use a default.
+    tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -149,6 +151,7 @@ impl PostgresServer {
             warehouse_root_url: None,
             rate_limiter: None,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -157,6 +160,14 @@ impl PostgresServer {
     /// the same `HeaderTrustPolicy` the REST/gRPC/Arrow Flight surfaces hold.
     pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
         self.tenant_header_trust = policy;
+        self
+    }
+
+    pub fn with_tenant_deployment_mode(
+        mut self,
+        mode: proximadb_tenant::TenantDeploymentMode,
+    ) -> Self {
+        self.tenant_deployment_mode = mode;
         self
     }
 
@@ -282,6 +293,7 @@ impl PostgresServer {
                     let warehouse_root_url = self.warehouse_root_url.clone();
                     let rate_limiter = self.rate_limiter.clone();
                     let tenant_header_trust = self.tenant_header_trust;
+                    let tenant_deployment_mode = self.tenant_deployment_mode.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
@@ -302,6 +314,7 @@ impl PostgresServer {
                             warehouse_root_url,
                             rate_limiter,
                             tenant_header_trust,
+                            tenant_deployment_mode,
                         )
                         .await
                         {
@@ -346,6 +359,7 @@ impl PostgresServer {
         warehouse_root_url: Option<String>,
         rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
         tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+        tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
@@ -397,6 +411,7 @@ impl PostgresServer {
         // TD-TENANT-1: same bare-assertion trust policy as REST/gRPC/Flight,
         // enforced at the startup handshake and the tenant session vars.
         protocol = protocol.with_tenant_header_trust(tenant_header_trust);
+        protocol = protocol.with_tenant_deployment_mode(tenant_deployment_mode);
 
         // Run protocol loop
         match protocol.run().await {

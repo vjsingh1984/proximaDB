@@ -228,6 +228,7 @@ pub mod error;
 pub mod extraction;
 pub mod filter_methods;
 pub mod flush_eventlog_integration;
+pub(crate) mod staged_write;
 // Quantization now handled by unified compute module
 pub mod compactor_impl;
 pub mod indexed_reader;
@@ -255,6 +256,7 @@ pub mod pca_manager; // PCA caching for Z-Order spatial encoding
 pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod search;
 pub mod segment_format; // P3 Phase A: mixed-format (ProximaBlocks/PAX) read primitives
+pub mod survivor_range_cache; // ADR-065 Q3: ranged RAM cache for survivor/OID byte ranges
 pub mod text_column_support; // TEXT column storage integration
 pub mod tiering_integration;
 pub mod trait_impl;

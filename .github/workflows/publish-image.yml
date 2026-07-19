@@ -57,7 +57,7 @@ jobs:
   build:
     name: Build ${{ matrix.platform }}
     # Only the canonical repo publishes — forks lack the credentials anyway.
-    if: ${{ github.repository == 'vjsingh1984/proximadb' }}
+    if: ${{ github.repository == 'anvai-labs/proximaDB' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     # Per (target,platform) cell: never cancel an in-flight push; a new run's
@@ -133,7 +133,7 @@ jobs:
   merge:
     name: Merge ${{ matrix.target }} manifest
     needs: build
-    if: ${{ github.repository == 'vjsingh1984/proximadb' }}
+    if: ${{ github.repository == 'anvai-labs/proximaDB' }}
     runs-on: ubuntu-latest
     # One merge per target → two manifest lists (runtime, runtime-full), each
     # carrying its own tag set (the -full suffix is applied in "Derive tags").
@@ -238,7 +238,7 @@ jobs:
   prune:
     name: Prune old sha- tags
     needs: merge
-    if: ${{ github.repository == 'vjsingh1984/proximadb' }}
+    if: ${{ github.repository == 'anvai-labs/proximaDB' }}
     runs-on: ubuntu-latest
     env:
       IMAGE_REPO: ${{ vars.DOCKERHUB_IMAGE || 'vjsingh1984/proximadb' }}

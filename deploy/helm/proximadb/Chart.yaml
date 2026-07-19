@@ -13,9 +13,9 @@ keywords:
   - embeddings
   - rag
 
-home: https://github.com/vjsingh1984/proximadb
+home: https://github.com/anvai-labs/proximaDB
 sources:
-  - https://github.com/vjsingh1984/proximadb
+  - https://github.com/anvai-labs/proximaDB
 
 maintainers:
   - name: Vijaykumar Singh

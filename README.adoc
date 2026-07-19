@@ -154,7 +154,7 @@ docker run -it --rm \
 
 [source,bash]
 ----
-git clone https://github.com/vjsingh1984/proximaDB
+git clone https://github.com/anvai-labs/proximaDB
 cd proximaDB
 cargo run --release --bin proximadb-server
 ----
@@ -320,13 +320,13 @@ link:docs/SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`]:
 |===
 | Capability | Status | Notes
 
-| Vector search + filters | Supported | 4 supported storage engines (SST/VIPER/HELIX/NOVA) + AXIS (HNSW/IVF) indexes, metadata filters
+| Vector search + filters | Supported | SST is the supported storage engine; VIPER/HELIX/NOVA are Beta. AXIS (HNSW/IVF) indexes and metadata filters
 | Document store | Beta | WAL‑backed, JSON path queries, full‑text search; canonical record storage is the convergence path
 | Graph traversal | Beta | ORION (in‑memory CSR), WAL persistence, algorithms; some v1-only RPCs deferred
 | Observability logs | Beta | WAL‑backed, partitioned storage, 6 SIEM adapters
 | Observability metrics | Beta | Time‑series aggregation, downsampling
 | Unified multi‑model query | Beta | Cross‑model joins, parallel execution; strongest on function-backed sources
-| Postgres wire protocol | Supported | ANSI SQL for SQL clients (psql/JDBC/ORM), transactions, pgvector-compatible operator; full Postgres/SQL parity remains Experimental
+| Postgres wire protocol | Supported | ANSI SQL for SQL clients (psql/JDBC/ORM), autocommit statements, pgvector-compatible operator; transaction control returns `0A000` and full Postgres/SQL parity remains Experimental
 | Unified port mode | Experimental | Arrow Flight / gRPC service multiplexing is an experimental customer-facing transport
 | Web UI dashboard | Beta | SQL editor, graph visualization, dark/light theme; fronts Beta surfaces
 | Python SDK | Beta | Graph analytics, AutoML, observability, security; wraps Beta surfaces

@@ -245,12 +245,68 @@ pub struct IoTrace {
     /// stamped; io_trace never depends on the `StorageProfile` type (neutral
     /// label string only).
     storage_profile: Mutex<Option<String>>,
+    /// Per-operator execution vector (TD-TRACE-1 Slice 2, observe-only): the
+    /// metered actuals of the served physical plan — one entry per operator in
+    /// pre-order — `{op, rows_in, rows_out, ms_self, bytes, spill}`. Populated ONLY
+    /// on the metered path (`EXPLAIN ANALYZE`), so a normal SELECT never allocates
+    /// here; the hot path stays lean by construction, not by feature gate. Recorded
+    /// as neutral primitives (io_trace never depends on a query-layer type, exactly
+    /// like the geometry vector). Feeds the structured EXPLAIN surface, and is
+    /// available on the snapshot for the cost model / billing (per-op detail; the
+    /// KRU meter itself still sums `compute_ms`, so this never double-charges).
+    exec_ops: Mutex<Vec<ExecOpTrace>>,
+    /// Stable per-query id (UUID v4), minted at `instrument()` entry (TD-TRACE-2 /
+    /// ADR-066). Identifies this query's record in the durable trace sink and is the
+    /// join key for the future warehouse header↔satellite tables. `None` until
+    /// stamped (e.g. a raw `IoTrace::new()` outside `instrument`).
+    query_id: Mutex<Option<String>>,
+}
+
+/// Neutral primitive tuple carrying one operator's metered actuals into
+/// [`record_exec_vector`] — `(op, rows_in, rows_out, ms_self, bytes, spill)`. A
+/// type alias so the recording API stays a neutral tuple (no cross-crate type)
+/// without tripping `clippy::type_complexity`.
+pub type ExecOpSample<'a> = (&'a str, u64, u64, u64, Option<u64>, bool);
+
+/// One physical-plan operator's metered execution actuals (TD-TRACE-1 Slice 2).
+/// A neutral, self-contained snapshot type owned by io_trace (NOT the executor's
+/// `NodeMetric`) so the modality layer never depends on the query layer. Integer /
+/// `Option` fields only, to preserve `IoTraceSnapshot`'s `Eq`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExecOpTrace {
+    /// Operator keyword (pre-order, aligned with `EXPLAIN`'s plan lines).
+    pub op: String,
+    /// Rows fed into this operator = sum of its direct children's `rows_out`.
+    pub rows_in: u64,
+    /// Rows this operator emitted.
+    pub rows_out: u64,
+    /// Exclusive (self) wall-clock milliseconds — inclusive minus children.
+    pub ms_self: u64,
+    /// Bytes processed, when the engine tracks it. `None` for the row-oriented
+    /// native Volcano executor; the DataFusion adapter (Slice 3) fills it.
+    pub bytes: Option<u64>,
+    /// Whether this operator spilled to disk. Always `false` for native (no
+    /// spilling); the DataFusion adapter (Slice 3) sets it.
+    pub spill: bool,
 }
 
 impl IoTrace {
     /// Create an empty trace.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Stamp the stable per-query id (TD-TRACE-2). Set once at `instrument()` entry.
+    pub fn set_query_id(&self, id: String) {
+        *self.query_id.lock().unwrap_or_else(|p| p.into_inner()) = Some(id);
+    }
+
+    /// The stamped per-query id, if any.
+    pub fn query_id(&self) -> Option<String> {
+        self.query_id
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// Stamp the route this query is served on (`shape_class`, `backend_label`).
@@ -428,6 +484,30 @@ impl IoTrace {
         }
     }
 
+    /// Record the metered per-operator execution vector (TD-TRACE-1 Slice 2,
+    /// observe-only, `EXPLAIN ANALYZE` path only). Neutral primitive tuples
+    /// `(op, rows_in, rows_out, ms_self, bytes, spill)` so io_trace never depends on
+    /// the executor's `NodeMetric` — exactly like [`Self::record_plan_geometry`].
+    /// Appended in pre-order; a normal (non-metered) query never calls this, so the
+    /// hot path allocates nothing here.
+    pub fn record_exec_vector(&self, ops: &[ExecOpSample<'_>]) {
+        if ops.is_empty() {
+            return;
+        }
+        let mut v = self.exec_ops.lock().unwrap_or_else(|p| p.into_inner());
+        v.reserve(ops.len());
+        for (op, rows_in, rows_out, ms_self, bytes, spill) in ops {
+            v.push(ExecOpTrace {
+                op: (*op).to_string(),
+                rows_in: *rows_in,
+                rows_out: *rows_out,
+                ms_self: *ms_self,
+                bytes: *bytes,
+                spill: *spill,
+            });
+        }
+    }
+
     /// Record a measured stack high-water mark (bytes) for one of the plan-tree
     /// recursions (TD-EXEC-2 Slice 1). Max semantics — the binding figure wins.
     pub fn record_stack_hwm(&self, bytes: u64) {
@@ -521,6 +601,12 @@ impl IoTrace {
             stack_hwm_bytes: self.stack_hwm_bytes.load(Ordering::Relaxed),
             route: self.route(),
             storage_profile: self.storage_profile(),
+            exec_ops: self
+                .exec_ops
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone(),
+            query_id: self.query_id(),
         }
     }
 }
@@ -588,6 +674,11 @@ pub struct IoTraceSnapshot {
     /// query read under (ADR-061 D6 / TD-WLP-6). `None` if unstamped.
     #[serde(default)]
     pub storage_profile: Option<String>,
+    /// Stable per-query id (UUID v4), minted at `instrument()` entry (TD-TRACE-2 /
+    /// ADR-066) — the durable trace sink's record id + future warehouse join key.
+    /// `None` for a raw snapshot taken outside `instrument`.
+    #[serde(default)]
+    pub query_id: Option<String>,
     /// pgwire relational-pipeline setup wall ms — pre-execution xCatalog schema
     /// resolution + route classification, DataFusion route only (TD-OLAP-4).
     #[serde(default)]
@@ -635,6 +726,10 @@ pub struct IoTraceSnapshot {
     /// figure that resolves `frame_bytes[op_kind]`; 0 = not measured.
     #[serde(default)]
     pub stack_hwm_bytes: u64,
+    /// Per-operator execution actuals in pre-order (TD-TRACE-1 Slice 2), populated
+    /// only on the metered `EXPLAIN ANALYZE` path — empty for a normal query.
+    #[serde(default)]
+    pub exec_ops: Vec<ExecOpTrace>,
 }
 
 impl IoTraceSnapshot {
@@ -859,6 +954,17 @@ pub fn record_plan_geometry(
         IO_TRACE.try_with(|t| t.record_plan_geometry(depth, nodes, leaves, fanout, blocking, ops));
 }
 
+/// Record the metered per-operator execution vector for the active query
+/// (TD-TRACE-1 Slice 2, observe-only). Core counter (always-on, never behind the
+/// `io-trace` feature — the cost model / billing read per-op detail from the
+/// ledger): only the metered `EXPLAIN ANALYZE` path calls this, so a normal query
+/// never allocates. Neutral primitive tuples `(op, rows_in, rows_out, ms_self,
+/// bytes, spill)` so io_trace never depends on the executor's `NodeMetric`.
+/// Silently no-ops outside an active scope.
+pub fn record_exec_vector(ops: &[ExecOpSample<'_>]) {
+    let _ = IO_TRACE.try_with(|t| t.record_exec_vector(ops));
+}
+
 /// Record a measured plan-recursion stack high-water mark (bytes) for the
 /// active query (TD-EXEC-2 Slice 1). Silently no-ops outside an active scope.
 pub fn record_stack_hwm(bytes: u64) {
@@ -1017,6 +1123,37 @@ fn notify_billing_observer(snap: &IoTraceSnapshot, tenant_id: Option<&str>) {
     }
 }
 
+/// Observer invoked at trace flush with `snapshot` + `tenant_id` for the durable
+/// **trace ETL sink** (TD-TRACE-2 / ADR-066). The sink layer registers a sink that
+/// enqueues the completed per-query snapshot to a bounded spool for background
+/// export. Dependency-inversion seam: io_trace feeds the sink *without depending on
+/// it*, exactly like the billing observer — but this is a SEPARATE, default-OFF
+/// observer, so billing stays always-on / never-gated (ADR-027) and the sink can be
+/// gated without touching it. The registered sink MUST only enqueue (no I/O on the
+/// query path).
+type TraceObserver = dyn Fn(&IoTraceSnapshot, Option<&str>) + Send + Sync;
+
+static TRACE_OBSERVER: Mutex<Option<Box<TraceObserver>>> = Mutex::new(None);
+
+/// Install (or clear with `None`) the trace-sink observer. Called once at startup by
+/// the sink layer when the sink is enabled; replaceable in tests. Default: none
+/// installed ⇒ zero cost.
+pub fn set_trace_observer(observer: Option<Box<TraceObserver>>) {
+    *TRACE_OBSERVER.lock().unwrap_or_else(|p| p.into_inner()) = observer;
+}
+
+/// Feed the registered trace-sink observer, if any, with a completed query's trace
+/// and the owning tenant. Called last in the `instrument()` fan-out.
+fn notify_trace_observer(snap: &IoTraceSnapshot, tenant_id: Option<&str>) {
+    if let Some(obs) = TRACE_OBSERVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
+        obs(snap, tenant_id);
+    }
+}
+
 /// Bind a fresh [`IoTrace`] to `future` and await it. Lower-level than
 /// [`instrument`]; use when the caller wants to read the snapshot itself before
 /// the scope ends.
@@ -1039,6 +1176,10 @@ where
     let route = route.into();
     IO_TRACE
         .scope(Arc::new(IoTrace::new()), async move {
+            // TD-TRACE-2: mint a stable per-query id at scope entry so the durable
+            // trace sink can identify (and later join) every query's record. One
+            // UUID + one lock set per query — negligible, and off any row loop.
+            let _ = IO_TRACE.try_with(|t| t.set_query_id(uuid::Uuid::new_v4().to_string()));
             let out = future.await;
             // Still inside the scope: read and emit before the binding drops.
             if let Ok((snap, stamped_route)) = IO_TRACE.try_with(|t| (t.snapshot(), t.route())) {
@@ -1060,6 +1201,12 @@ where
                 // per-engine compute_ms are both in hand here.
                 if !snap.is_empty() {
                     notify_billing_observer(&snap, tenant_id.as_deref());
+                }
+                // TD-TRACE-2 durable trace sink (separate, default-OFF observer —
+                // billing above stays always-on/never-gated). Fires last; only
+                // enqueues the completed snapshot for background export.
+                if !snap.is_empty() {
+                    notify_trace_observer(&snap, tenant_id.as_deref());
                 }
             }
             out
@@ -1103,6 +1250,45 @@ mod tests {
             got,
             Some((Some("acme".to_string()), 7, 100)),
             "billing observer must receive the tenant + summed compute_ms (4+3) + bytes_read from the same snapshot"
+        );
+    }
+
+    /// TD-TRACE-2: the durable trace-sink observer fires at scope close (like
+    /// billing), with the completed snapshot carrying a minted `query_id` and the
+    /// owning tenant. An EMPTY query never fires it (the `!is_empty()` guard).
+    #[tokio::test]
+    #[allow(clippy::type_complexity)]
+    async fn trace_observer_receives_snapshot_with_query_id_and_skips_empty() {
+        use std::sync::{Arc, Mutex};
+        let captured: Arc<Mutex<Vec<(Option<String>, Option<String>)>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        set_trace_observer(Some(Box::new(move |snap, tenant| {
+            sink.lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push((tenant.map(String::from), snap.query_id.clone()));
+        })));
+
+        // Non-empty query → observer fires with a minted query_id.
+        instrument(Some("acme".to_string()), "test-route", async {
+            record_bytes_read(42);
+        })
+        .await;
+        // Empty query → observer must NOT fire (no measurable I/O).
+        instrument(Some("acme".to_string()), "test-route", async {}).await;
+
+        set_trace_observer(None); // restore global state for other tests
+
+        let got = captured.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        assert_eq!(
+            got.len(),
+            1,
+            "trace observer fires only for the non-empty query"
+        );
+        assert_eq!(got[0].0.as_deref(), Some("acme"));
+        assert!(
+            got[0].1.as_deref().is_some_and(|id| !id.is_empty()),
+            "the snapshot carries a minted query_id: {got:?}"
         );
     }
 
@@ -1215,6 +1401,27 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn floor_fall_through_attributes_route_to_the_floor_not_the_primary() {
+        // ADR-064 / TD-TRACE-1: when a primary engine declines and the DataFusion
+        // FLOOR serves the query, the dispatch re-stamps the route
+        // (relational_pipeline.rs "last write wins") so the cost cell learns the
+        // engine that ACTUALLY served — never the primary that declined. This
+        // pins that attribution contract against the future TD-ROUTE-3 dispatch
+        // refactor (which must preserve it).
+        let snap = scope(async {
+            record_route("olap/parquet", "Native(Volcano)"); // primary attempt
+            record_route("olap/parquet", "DataFusionLocal"); // floor served → re-stamp
+            IO_TRACE.try_with(|t| t.snapshot()).unwrap()
+        })
+        .await;
+        assert_eq!(
+            snap.route,
+            Some(("olap/parquet".to_string(), "DataFusionLocal".to_string())),
+            "floor fall-through must attribute to the floor, not the declined primary"
+        );
+    }
+
     /// TD-WLP-6: the storage-profile stamp round-trips in scope (and into the
     /// snapshot), no-ops outside a scope.
     #[tokio::test]
@@ -1228,6 +1435,30 @@ mod tests {
         assert_eq!(snap.storage_profile.as_deref(), Some("churn"));
         // A fresh trace has no profile stamp.
         assert_eq!(IoTrace::new().snapshot().storage_profile, None);
+    }
+
+    #[tokio::test]
+    async fn record_exec_vector_round_trips_to_snapshot() {
+        // Outside a scope: silent no-op (no panic).
+        record_exec_vector(&[("Scan", 0, 10, 1, None, false)]);
+        let snap = scope(async {
+            record_exec_vector(&[
+                ("Aggregate", 10, 1, 3, None, false),
+                ("Scan", 0, 10, 1, Some(2048), false),
+            ]);
+            IO_TRACE.try_with(|t| t.snapshot()).unwrap()
+        })
+        .await;
+        assert_eq!(snap.exec_ops.len(), 2);
+        assert_eq!(snap.exec_ops[0].op, "Aggregate");
+        assert_eq!(snap.exec_ops[0].rows_in, 10);
+        assert_eq!(snap.exec_ops[0].rows_out, 1);
+        assert_eq!(snap.exec_ops[0].ms_self, 3);
+        assert_eq!(snap.exec_ops[1].op, "Scan");
+        assert_eq!(snap.exec_ops[1].bytes, Some(2048));
+        assert!(!snap.exec_ops[1].spill);
+        // A fresh trace records no exec ops (metered path only).
+        assert!(IoTrace::new().snapshot().exec_ops.is_empty());
     }
 
     // Both flush→observer cases live in ONE test: the route observer is a

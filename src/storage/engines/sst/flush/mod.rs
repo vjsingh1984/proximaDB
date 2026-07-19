@@ -169,7 +169,18 @@ impl SstEngine {
                     (BlockFormat::PaxBlock, "pax")
                 }
             };
-        let sst_filename = codec.generate(0, file_extension); // Level 0 for flush
+        let sst_filename = params
+            .hints
+            .get("recovery_materialization_id")
+            .and_then(|value| value.as_str())
+            .map(|id| {
+                let safe_id: String = id
+                    .chars()
+                    .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+                    .collect();
+                format!("L0_recovery_{safe_id}.{file_extension}")
+            })
+            .unwrap_or_else(|| codec.generate(0, file_extension)); // Level 0 for flush
         debug!(
             "🔧 SST: Creating {} file: {} for collection: {}",
             if block_format == BlockFormat::ArrowBlock {
@@ -283,6 +294,11 @@ impl SstEngine {
         params: &FlushParameters,
         block_format: BlockFormat,
     ) -> Result<FlushResult> {
+        let recovery_materialization = params
+            .hints
+            .get("recovery_materialization_id")
+            .and_then(|value| value.as_str());
+
         // Begin atomic operation
         let staging_config = StagingConfig {
             base_url: storage_url.to_string(),
@@ -296,17 +312,54 @@ impl SstEngine {
 
         tracing::debug!(storage_url = %storage_url, filename = %filename, "Starting flush operation");
 
-        let atomic_op = self
-            .atomic_coordinator()
-            .begin_atomic_operation(&staging_config)
-            .await
-            .context("Failed to begin atomic flush operation")?;
+        let atomic_op = if recovery_materialization.is_some() {
+            // Recovery publishes directly to the deterministic final object via
+            // write_if_absent. Track it as zero-copy managed so abort only removes
+            // coordinator metadata and never tries to delete an object-store
+            // staging prefix that was intentionally never created.
+            self.atomic_coordinator()
+                .begin_zero_copy_managed_operation(&staging_config)
+                .await
+                .context("Failed to begin recovery publication")?
+        } else {
+            self.atomic_coordinator()
+                .begin_atomic_operation(&staging_config)
+                .await
+                .context("Failed to begin atomic flush operation")?
+        };
 
         tracing::debug!(staging_url = %atomic_op.staging_url, final_url = %atomic_op.final_url, "Atomic operation initialized");
 
-        // Write to staging using appropriate writer based on block format
-        let staging_url = format!("{}/{}", atomic_op.staging_url, filename);
+        // PAX/Arrow writers materialize through a local path. During recovery the
+        // resulting bytes are published directly to the deterministic object name
+        // with write_if_absent, so using the object-store transaction staging URL
+        // here would create a local `adls:/...` path and then try to read an object
+        // that was never uploaded. Keep a scoped local directory alive until the
+        // conditional publication completes. Normal flushes retain their existing
+        // transaction-coordinator staging path.
+        let recovery_staging = if recovery_materialization.is_some() {
+            Some(tempfile::tempdir().context("creating local recovery staging directory")?)
+        } else {
+            None
+        };
+        let staging_url = if let Some(directory) = recovery_staging.as_ref() {
+            format!("file://{}", directory.path().join(filename).display())
+        } else {
+            format!("{}/{}", atomic_op.staging_url, filename)
+        };
         tracing::debug!(staging_path = %staging_url, "Full staging path constructed");
+
+        // TD-OBJSTORE-4 defect 6 (normal-flush arm): the segment writers below are
+        // LOCAL-file writers. Stage through `StagedSegmentWrite` so a CLOUD staging
+        // URL gets a real local scratch file + an upload on finalize — instead of a
+        // literal local `az:...` directory, a promote that stages nothing, and a
+        // false-success that lets WAL deletion destroy the only durable copy. The
+        // recovery path's `file://{tempdir}` and plain local bases take the direct
+        // zero-copy arm (finalize is a no-op).
+        let staged =
+            crate::storage::engines::sst::staged_write::StagedSegmentWrite::begin(&staging_url)
+                .await
+                .context("Failed to prepare staged segment write")?;
 
         // Count entries for writing
         let entries_written = sorted_vectors.len() as u64;
@@ -345,8 +398,9 @@ impl SstEngine {
 
                 tracing::debug!(entries_written, dimension, "Writing vectors to Arrow block");
 
-                // Convert staging URL to local path for ArrowBlockWriter
-                let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
+                // Local write path from the staged write (uploaded on finalize
+                // when the staging URL is remote).
+                let staging_path = staged.local_path();
 
                 // Ensure parent directory exists
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
@@ -383,7 +437,9 @@ impl SstEngine {
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
                 use crate::storage::engines::sst::segment_format::write_pax_segment_full;
-                let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
+                // Local write path from the staged write (uploaded on finalize
+                // when the staging URL is remote).
+                let staging_path = staged.local_path();
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
                     tokio::fs::create_dir_all(parent)
                         .await
@@ -447,6 +503,13 @@ impl SstEngine {
             }
         }
 
+        // Promote the locally staged bytes to the (possibly remote) staging URL
+        // so the atomic commit has a real file to move.
+        let _staged_bytes = staged
+            .finalize(self.filesystem())
+            .await
+            .context("Failed to upload staged segment to the staging URL")?;
+
         // Get actual bytes written from the filesystem
         let fs = self.filesystem().get_filesystem(&staging_url)?;
         let file_metadata = fs.metadata(&staging_url).await.unwrap_or_else(|_| {
@@ -463,12 +526,58 @@ impl SstEngine {
         });
         let bytes_written = file_metadata.size;
 
-        // Commit the atomic operation
-        tracing::debug!(operation_id = %atomic_op.operation_id, "Committing atomic operation");
-        self.atomic_coordinator()
-            .finalize_atomic_operation(&atomic_op.operation_id)
-            .await
-            .context("Failed to commit atomic flush operation")?;
+        let mut already_materialized = false;
+        if recovery_materialization.is_some() {
+            // The deterministic segment object is the recovery commit record.
+            // Create-only publication closes the crash window between flush and
+            // WAL retirement without a second marker object.
+            let staged_bytes = fs
+                .read(&staging_url)
+                .await
+                .context("reading staged recovery segment")?;
+            let final_url = format!("{}/{}", atomic_op.final_url, filename);
+            let final_fs = self.filesystem().get_filesystem(&final_url)?;
+            match final_fs
+                .write_if_absent(
+                    &final_url,
+                    &staged_bytes,
+                    Some(crate::storage::persistence::filesystem::FileOptions {
+                        create_dirs: true,
+                        overwrite: false,
+                        ..Default::default()
+                    }),
+                )
+                .await
+            {
+                Ok(()) => {}
+                Err(crate::storage::persistence::filesystem::FilesystemError::AlreadyExists(_)) => {
+                    let existing = final_fs
+                        .read(&final_url)
+                        .await
+                        .context("verifying existing recovery segment")?;
+                    if existing != staged_bytes {
+                        anyhow::bail!(
+                            "recovery segment collision at {final_url}: deterministic name exists with different bytes"
+                        );
+                    }
+                    already_materialized = true;
+                }
+                Err(error) => return Err(error).context("publishing recovery segment"),
+            }
+            if let Err(error) = self
+                .atomic_coordinator()
+                .finalize_atomic_operation(&atomic_op.operation_id)
+                .await
+            {
+                tracing::warn!(%error, "failed to finalize recovery publication tracking");
+            }
+        } else {
+            tracing::debug!(operation_id = %atomic_op.operation_id, "Committing atomic operation");
+            self.atomic_coordinator()
+                .finalize_atomic_operation(&atomic_op.operation_id)
+                .await
+                .context("Failed to commit atomic flush operation")?;
+        }
         tracing::debug!(
             final_url = %atomic_op.final_url,
             filename = %filename,
@@ -543,6 +652,32 @@ impl SstEngine {
 
         let final_file_path = format!("{}/{}", atomic_op.final_url, filename);
 
+        if already_materialized {
+            return Ok(FlushResult {
+                success: true,
+                collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+                entries_flushed: Some(entries_written),
+                bytes_written: Some(bytes_written),
+                files_created: Some(0),
+                file_paths: vec![final_file_path],
+                duration_ms: Some(0),
+                completed_at: Utc::now(),
+                engine_metrics: HashMap::from([
+                    (
+                        "engine".to_string(),
+                        serde_json::Value::String("SST".to_string()),
+                    ),
+                    (
+                        "already_materialized".to_string(),
+                        serde_json::Value::Bool(true),
+                    ),
+                ]),
+                compaction_triggered: false,
+                compaction_error: None,
+                flushed_batch_ids: params.batch_ids.clone(),
+            });
+        }
+
         // Check if compaction should be triggered (per-collection tag cascade,
         // TD-WLP-2 — the global env stays the master kill-switch).
         let collection_tags: &[String] = params
@@ -551,9 +686,17 @@ impl SstEngine {
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.tags.as_slice())
             .unwrap_or(&[]);
-        let should_trigger_compaction = self
-            .should_trigger_compaction(storage_url, collection_tags)
-            .await?;
+        let suppress_recovery_compaction = params
+            .hints
+            .get("suppress_compaction_until_wal_retired")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let should_trigger_compaction = if suppress_recovery_compaction {
+            false
+        } else {
+            self.should_trigger_compaction(storage_url, collection_tags)
+                .await?
+        };
 
         // TD-WLP-7 (ADR-061 D3): actually EXECUTE compaction when armed. Before
         // this, the flush only set `compaction_triggered` and nothing scheduled
@@ -1030,7 +1173,12 @@ fn pax_write_outcome(
 ) -> crate::storage::engines::sst::writer::SstableWriteOutcome {
     use crate::storage::engines::sst::{IndexEntry, VectorFormat};
     let mut entries = Vec::with_capacity(meta.block_stats.len());
-    let mut offset = 0u64;
+    // ADR-062/065: in the coalesced layout the Region D data blocks begin after
+    // the header-prefix + RaBitQ region (A) + SQ8 region (B)
+    // (`rabitq_off + rabitq_len + sq8_len`); for the legacy layout all are 0, so
+    // blocks start at offset 0 (unchanged). Block offsets recorded here are
+    // absolute file offsets (the VOE directory / read path).
+    let mut offset = meta.rabitq_off + meta.rabitq_len + meta.sq8_len;
     for (block_id, stats) in meta.block_stats.iter().enumerate() {
         let centroid = meta
             .block_centroids
@@ -1096,6 +1244,10 @@ mod pax_write_outcome_tests {
             block_stats: vec![stats(40), stats(60)],
             block_centroids: vec![vec![1.0, 1.0], vec![2.0, 2.0]],
             block_radii: vec![0.5, 1.5],
+            rabitq_off: 0,
+            rabitq_len: 0,
+            sq8_off: 0,
+            sq8_len: 0,
         };
         let out = pax_write_outcome(&meta);
         assert_eq!(out.index_entries.len(), 2);
@@ -1286,6 +1438,77 @@ mod tests {
             3,
             "the live flush path must index all flushed vectors into AXIS (TD-112)"
         );
+    }
+
+    #[tokio::test]
+    async fn recovery_materialization_is_idempotent() {
+        use crate::proto::proximadb_v1::{
+            Collection, CollectionConfig, StorageAssignment, StorageEngine,
+        };
+        use crate::storage::traits::UnifiedStorageFormat;
+
+        let engine = create_test_engine().await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let collection_id = "recovery_idempotence";
+        let collection = Collection {
+            id: collection_id.to_string(),
+            config: Some(CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 4,
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: temp_dir.path().to_string_lossy().into_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut hints = std::collections::HashMap::new();
+        hints.insert(
+            "recovery_materialization_id".to_string(),
+            serde_json::Value::String("00000000000000000001-00000000000000000007-digest".into()),
+        );
+        hints.insert(
+            "recovery_content_digest".to_string(),
+            serde_json::Value::String("digest".into()),
+        );
+        hints.insert(
+            "suppress_compaction_until_wal_retired".to_string(),
+            serde_json::Value::Bool(true),
+        );
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            vector_records: vec![
+                create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
+                create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
+            ],
+            force: true,
+            synchronous: true,
+            hints,
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config: Some(collection),
+            estimated_size: 0,
+        };
+
+        let first = engine
+            .do_flush(&params)
+            .await
+            .expect("first materialization");
+        assert_eq!(first.files_created, Some(1));
+
+        let replay = engine.do_flush(&params).await.expect("idempotent replay");
+        assert_eq!(replay.files_created, Some(0));
+        assert_eq!(
+            replay
+                .engine_metrics
+                .get("already_materialized")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(replay.file_paths, first.file_paths);
     }
 
     // ---- Phase C: per-collection PAX opt-out tag + global kill-switch ----

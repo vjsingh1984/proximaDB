@@ -40,6 +40,8 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use anyhow::{Result, bail};
+use proximadb_block_format::coalesced_rabitq::{RABITQ_SEED_BASE, encode_region};
+use proximadb_block_format::coalesced_sq8::encode_region as encode_sq8_region;
 use proximadb_block_format::{
     BlockCompression, BlockMode, BlockStats, BlockZoneSource, ColumnMeta, FlatRow, PaxBlockReader,
     PaxBlockWriter, RowGroupBlock, VectorQuant, col_id, header::fnv1a_hash,
@@ -47,7 +49,17 @@ use proximadb_block_format::{
 use proximadb_records::{EmbeddingValues, ProximaRecord};
 use serde::{Deserialize, Serialize};
 
-use crate::engine_constants::{DEFAULT_TARGET_BLOCK_SIZE_BYTES, MAX_TARGET_BLOCK_SIZE_BYTES};
+use crate::engine_constants::{
+    DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES, DEFAULT_TARGET_BLOCK_SIZE_BYTES,
+    MAX_TARGET_BLOCK_SIZE_BYTES,
+};
+use crate::segment_layout::{
+    BlockTierAssignment, EXTERNAL_CANONICAL_SOURCE_ID, FooterBlockEntry, LosslessCompressionTag,
+    LosslessTransformTag, ParameterScope, SEG_HEADER_PREFIX_LEN, SEG_LAYOUT_VERSION,
+    SegmentFooterIndex, SegmentHeaderPrefix, SourceFidelity, SourceRole, StatsKind,
+    StripeEncodingDescriptor, TierRole, VectorTransform, compression_flags, is_coalesced_segment,
+    segment_tail,
+};
 
 /// File extension for PAX segment files.
 pub const PAX_SEGMENT_EXT: &str = ".pax";
@@ -501,6 +513,11 @@ pub struct PaxSegmentWriter {
     f32_tier: bool,
     /// Tier-2 rerank quant (default Sq8) — re-applied to every block writer.
     rerank_quant: VectorQuant,
+    /// Exact clustered transform over SQ8 code bytes. Default OFF and selected
+    /// independently per stripe by realized byte size.
+    lossless_clustered: bool,
+    /// Exact scalar all-null elision and post-codec LZ4. Default OFF.
+    lossless_scalar: bool,
     /// P-Shred (ADR-055): `(prop_key, user_col_id)` to shred into typed user-columns —
     /// re-applied to every block writer so all blocks in the segment shred uniformly.
     shred_spec: Vec<(String, i32)>,
@@ -530,6 +547,25 @@ pub struct PaxSegmentWriter {
     /// Finalised per-block RMS radius (spread), 1:1 with `block_centroids`
     /// (`0.0` for a block with no Fp32 vector). Empty unless centroids opted in.
     block_radii: Vec<f32>,
+    /// Exact SQ8 transforms selected in each emitted block, by physical column
+    /// ID. Kept 1:1 with `index.blocks` for footer-v2 assignments.
+    block_transformed_sq8_columns: Vec<Vec<i32>>,
+
+    /// ADR-062 / TD-RDSTRAT-6: emit the coalesced-RaBitQ layout — a file-level
+    /// header region (cluster-ordered, single segment centroid) + self-describing
+    /// footer-index — so the read path scans ALL RaBitQ codes in one GET
+    /// (keep=100%, ~0.99 recall) and reranks survivors via coalesced block GETs.
+    /// Default OFF; the flush path opts in for RaBitQ-quantized collections. When
+    /// on, data blocks are written as `VectorQuant::Sq8` (the survivor-rerank
+    /// data) — the unchanged SQ8 decode path reconstructs + reranks them.
+    coalesced_rabitq: bool,
+    /// Embedding-0 f32 vectors in cluster (add) order, buffered for the
+    /// segment-level RaBitQ region. Populated only when `coalesced_rabitq` is on.
+    rabitq_vectors: Vec<Option<Vec<f32>>>,
+    /// Encoding-aware per-row byte estimate (computed from the first record's
+    /// dim + the quant/f32_tier/embedding_count config). Replaces the flat 1024
+    /// that overestimated SQ8 blocks by ~4.5×. 0 = not yet computed.
+    per_row_estimate: usize,
 }
 
 impl PaxSegmentWriter {
@@ -570,6 +606,8 @@ impl PaxSegmentWriter {
             quant: VectorQuant::Auto,
             f32_tier: false,
             rerank_quant: VectorQuant::Sq8,
+            lossless_clustered: false,
+            lossless_scalar: false,
             shred_spec: Vec::new(),
             current_writer: writer,
             index: SegmentIndex { blocks: Vec::new() },
@@ -582,6 +620,10 @@ impl PaxSegmentWriter {
             cur_centroid_sumsq: 0.0,
             block_centroids: Vec::new(),
             block_radii: Vec::new(),
+            block_transformed_sq8_columns: Vec::new(),
+            coalesced_rabitq: false,
+            rabitq_vectors: Vec::new(),
+            per_row_estimate: 0,
         }
     }
 
@@ -624,6 +666,25 @@ impl PaxSegmentWriter {
         self
     }
 
+    /// Enable the lossless clustered SQ8 transform for every block.
+    pub fn with_lossless_clustered(mut self, enabled: bool) -> Self {
+        self.lossless_clustered = enabled;
+        self.current_writer = self.fresh_block_writer();
+        self
+    }
+
+    /// Enable exact scalar all-null elision and post-codec LZ4 for every block.
+    pub fn with_lossless_scalar(mut self, enabled: bool) -> Self {
+        self.lossless_scalar = enabled;
+        self.current_writer = self.fresh_block_writer();
+        self
+    }
+
+    /// Mark the next appended record as the start of a producer-defined cluster.
+    pub fn start_cluster_run(&mut self) {
+        self.current_writer.start_cluster_run();
+    }
+
     /// P-Shred (ADR-055): shred the given props keys `(prop_key, user_col_id)` into
     /// typed user-columns for every block in this segment. Builder form mirroring
     /// [`with_quant`]; empty ⇒ no shredding (byte-for-byte today's output).
@@ -633,11 +694,30 @@ impl PaxSegmentWriter {
         self
     }
 
+    /// ADR-062 / TD-RDSTRAT-6: emit the coalesced-RaBitQ layout. When on, the
+    /// RaBitQ binary tier is hoisted into a coalesced file-level header region
+    /// (single segment centroid) and data blocks are written as SQ8 (the
+    /// survivor-rerank data); the read path scans the region in one GET and
+    /// reranks survivors via coalesced block GETs. Builder form mirroring
+    /// [`with_quant`]; rebuilds the (still-empty) current block writer so the SQ8
+    /// block encoding applies from the first record.
+    pub fn with_coalesced_rabitq(mut self, enabled: bool) -> Self {
+        self.coalesced_rabitq = enabled;
+        self.current_writer = self.fresh_block_writer();
+        self
+    }
+
     /// Build a fresh (empty) block writer carrying ALL of this segment's accumulated
     /// settings. Single source of truth so every builder AND every mid-segment block
     /// rotation re-applies the same config (quant, f32 tier, rerank quant, shred spec)
-    /// — no per-builder drift.
+    /// — no per-builder drift. In coalesced mode the block's tier-1 encoding is forced
+    /// to SQ8 (the RaBitQ binary tier lives in the header region, not the block).
     fn fresh_block_writer(&self) -> PaxBlockWriter {
+        let block_quant = if self.coalesced_rabitq {
+            VectorQuant::Sq8
+        } else {
+            self.quant
+        };
         PaxBlockWriter::new(
             self.mode,
             self.compression,
@@ -645,10 +725,37 @@ impl PaxSegmentWriter {
             self.schema_fingerprint,
             self.embedding_count,
         )
-        .with_quant(self.quant)
+        .with_quant(block_quant)
         .with_f32_tier(self.f32_tier)
         .with_rerank_quant(self.rerank_quant)
+        .with_clustered_sq8_lossless(self.lossless_clustered)
+        .with_lossless_scalar(self.lossless_scalar)
+        .with_hoist_vector_tier(self.coalesced_rabitq)
         .with_shred_spec(self.shred_spec.clone())
+    }
+
+    /// Encoding-aware per-row byte estimate (uncompressed). Controls the block
+    /// COUNT (how many blocks → how many survivor GETs). Compression is a
+    /// separate, orthogonal lever (reduces on-disk bytes/GET, not GET count).
+    /// `DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES` covers OID + timestamps + props.
+    fn estimate_per_row_bytes(&self, dim: usize) -> usize {
+        let vector_bytes = if self.coalesced_rabitq {
+            // RaBitQ (Region A) + SQ8 (Region B) are hoisted out of blocks; the
+            // block carries only row data + the optional f32 exact tier (Region D).
+            let f32 = if self.f32_tier { dim * 4 } else { 0 };
+            f32 * self.embedding_count.max(1)
+        } else {
+            // Non-coalesced: EMBED_BASE carries the tier-1 encoding directly.
+            let tier1 = match self.quant {
+                VectorQuant::RawF32 => dim * 4,
+                VectorQuant::Fp16 => dim * 2,
+                VectorQuant::RaBitQ => dim.div_ceil(8) + 8 + dim, // code + SQ8 rerank
+                _ => dim,                                         // SQ8 / Auto
+            };
+            let f32 = if self.f32_tier { dim * 4 } else { 0 };
+            (tier1 + f32) * self.embedding_count.max(1)
+        };
+        vector_bytes + DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES
     }
 
     /// Append a record to the current block.
@@ -660,11 +767,42 @@ impl PaxSegmentWriter {
         if self.compute_centroids {
             self.accumulate_centroid(record);
         }
+        // ADR-062: buffer the embedding-0 f32 vector (in cluster/add order) for
+        // the segment-level RaBitQ region. The caller has already reordered
+        // records by `cluster_order_pca_ivf`, so this preserves survivor locality.
+        if self.coalesced_rabitq {
+            let v = record.embeddings.first().and_then(|e| match &e.values {
+                EmbeddingValues::Fp32(v) => Some(v.clone()),
+                _ => None,
+            });
+            self.rabitq_vectors.push(v);
+        }
 
-        // Rough size estimate: each record contributes ~1 KB in the worst case.
-        // We flush based on row count as a proxy when threshold is not hit yet.
-        let approx_bytes = self.current_writer.row_count() * 1024;
-        if approx_bytes >= self.block_size_threshold {
+        // Encoding-aware size estimate: compute the per-row byte cost from the
+        // encoding config (quant, coalesced, f32_tier) + the vector dim once
+        // (from the first record). This replaces the flat 1024 B/row estimate
+        // that overestimated SQ8 blocks by ~4.5× (actual ~228 B/row for 128d).
+        if self.per_row_estimate == 0
+            && let Some(dim) = record.embeddings.first().and_then(|e| match &e.values {
+                EmbeddingValues::Fp32(v) => Some(v.len()),
+                _ => None,
+            })
+        {
+            self.per_row_estimate = self.estimate_per_row_bytes(dim);
+        }
+        // PR2: accurate block-flush threshold — actual metadata bytes (tracked from the
+        // records, includes real text/props) + predicted vector bytes (deterministic from
+        // the encoding config). Replaces the flat per-row estimate.
+        let per_row = if self.per_row_estimate > 0 {
+            self.per_row_estimate
+        } else {
+            1024 // safe fallback for non-vector records
+        };
+        let vector_bytes = self.current_writer.row_count() * per_row;
+        let metadata_bytes = self.current_writer.accumulated_metadata_bytes();
+        let block_overhead = 1024; // header(64B) + footer(32B) + column footer — amortized
+        let total = vector_bytes + metadata_bytes + block_overhead;
+        if total >= self.block_size_threshold {
             self.flush_current_block()?;
         }
         Ok(())
@@ -745,6 +883,14 @@ impl PaxSegmentWriter {
         let offset = self.file_buf.len() as u64;
 
         let reader = PaxBlockReader::open(&block_bytes)?;
+        self.block_transformed_sq8_columns.push(
+            reader
+                .vector_params()
+                .transforms
+                .iter()
+                .map(|transform| transform.column_id)
+                .collect(),
+        );
         let stats =
             BlockStats::from_metas(row_count, block_size, min_ts, max_ts, reader.column_metas());
 
@@ -775,8 +921,10 @@ impl PaxSegmentWriter {
         Ok(())
     }
 
-    /// Finalise the segment: flush remaining records, write index + magic, and
-    /// persist to `self.path`. Returns `SegmentMeta` for Iceberg manifest use.
+    /// Finalise the segment: flush remaining records, then either append the
+    /// legacy `[blocks][index][magic]` tail or — when coalesced-RaBitQ is on —
+    /// assemble the ADR-062 layout `[header][RaBitQ region][blocks][footer][tail]`.
+    /// Persists to `self.path`; returns `SegmentMeta` for Iceberg manifest use.
     pub fn finish(mut self) -> Result<SegmentMeta> {
         // Flush any remaining rows as the last block
         self.flush_current_block()?;
@@ -785,30 +933,314 @@ impl PaxSegmentWriter {
             bail!("segment is empty — nothing to write");
         }
 
+        // Coalesced-RaBitQ requires embedding-0 f32 vectors to build the region.
+        // If there are none (a non-vector or malformed batch), fall through to the
+        // legacy layout rather than failing the flush — mixed-read-safe.
+        let coalesced_dim = self
+            .rabitq_vectors
+            .iter()
+            .flatten()
+            .next()
+            .map(|v| v.len())
+            .unwrap_or(0) as u32;
+
+        if self.coalesced_rabitq && coalesced_dim > 0 {
+            self.finish_coalesced(coalesced_dim)
+        } else {
+            self.finish_legacy()
+        }
+    }
+
+    /// Legacy `[blocks][SegmentIndex][SEGMENT_MAGIC]` layout (readability-preserving
+    /// fallback for non-coalesced writes — the reader detects it via the `PBLK`
+    /// head + `PAXSEG01` tail).
+    fn finish_legacy(&mut self) -> Result<SegmentMeta> {
         // Append segment index
         let index_bytes = self.index.to_bytes();
         self.file_buf.extend_from_slice(&index_bytes);
         // Append magic
         self.file_buf.extend_from_slice(SEGMENT_MAGIC);
 
-        let total_bytes = self.file_buf.len() as u64;
+        let total_bytes = self.write_file(&self.file_buf)?;
+        Ok(SegmentMeta {
+            path: self.path.clone(),
+            size_bytes: total_bytes,
+            block_count: self.index.blocks.len() as u32,
+            row_count: self.row_count,
+            block_stats: std::mem::take(&mut self.block_stats),
+            block_centroids: std::mem::take(&mut self.block_centroids),
+            block_radii: std::mem::take(&mut self.block_radii),
+            rabitq_off: 0,
+            rabitq_len: 0,
+            sq8_off: 0,
+            sq8_len: 0,
+        })
+    }
 
-        // Persist to disk
+    fn footer_encoding_map(
+        &self,
+    ) -> Result<(Vec<StripeEncodingDescriptor>, Vec<BlockTierAssignment>)> {
+        if !self
+            .block_transformed_sq8_columns
+            .iter()
+            .any(|columns| !columns.is_empty())
+        {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
+        let mut descriptors = Vec::new();
+        let mut assignments = Vec::new();
+        let mut next_id = 1u16;
+        for embedding in 0..self.embedding_count {
+            let logical_field_id = col_id::EMBED_BASE + embedding as i32;
+            let physical_column_id = logical_field_id;
+            let canonical_id = if self.f32_tier {
+                let id = take_descriptor_id(&mut next_id)?;
+                let exact_column = col_id::F32_TIER_BASE + embedding as i32;
+                descriptors.push(StripeEncodingDescriptor {
+                    descriptor_id: id,
+                    logical_field_id,
+                    physical_column_id: exact_column,
+                    tier_role: TierRole::Exact,
+                    value_codec_tag: 0x01,
+                    value_codec_version: 1,
+                    transform_tag: LosslessTransformTag::None,
+                    transform_version: 0,
+                    compression_tag: LosslessCompressionTag::None,
+                    compression_version: 0,
+                    compression_flags: compression_flags::LOSSLESS,
+                    parameter_scope: ParameterScope::Block,
+                    vector_transform: VectorTransform::None,
+                    auxiliary_flags: 0,
+                    source_role: SourceRole::Canonical,
+                    source_fidelity: SourceFidelity::ExactBitwise,
+                    rebuild_source_id: 0,
+                    projection_generation: 0,
+                });
+                for block_ordinal in 0..self.index.blocks.len() {
+                    assignments.push(BlockTierAssignment {
+                        block_ordinal: u32::try_from(block_ordinal)
+                            .map_err(|_| anyhow::anyhow!("block ordinal exceeds u32"))?,
+                        physical_column_id: exact_column,
+                        tier_role: TierRole::Exact,
+                        descriptor_id: id,
+                    });
+                }
+                id
+            } else {
+                EXTERNAL_CANONICAL_SOURCE_ID
+            };
+
+            if embedding == 0 {
+                descriptors.push(StripeEncodingDescriptor {
+                    descriptor_id: take_descriptor_id(&mut next_id)?,
+                    logical_field_id,
+                    physical_column_id,
+                    tier_role: TierRole::Index,
+                    value_codec_tag: 0x71,
+                    value_codec_version: 1,
+                    transform_tag: LosslessTransformTag::None,
+                    transform_version: 0,
+                    compression_tag: LosslessCompressionTag::None,
+                    compression_version: 0,
+                    compression_flags: compression_flags::LOSSLESS,
+                    parameter_scope: ParameterScope::Segment,
+                    vector_transform: VectorTransform::CenteredRotated,
+                    auxiliary_flags: 0,
+                    source_role: SourceRole::IndexProjection,
+                    source_fidelity: SourceFidelity::Lossy,
+                    rebuild_source_id: canonical_id,
+                    projection_generation: 1,
+                });
+            }
+
+            let flat_id = take_descriptor_id(&mut next_id)?;
+            descriptors.push(StripeEncodingDescriptor {
+                descriptor_id: flat_id,
+                logical_field_id,
+                physical_column_id,
+                tier_role: TierRole::Rerank,
+                value_codec_tag: 0x05,
+                value_codec_version: 1,
+                transform_tag: LosslessTransformTag::None,
+                transform_version: 0,
+                compression_tag: LosslessCompressionTag::None,
+                compression_version: 0,
+                compression_flags: compression_flags::LOSSLESS,
+                parameter_scope: ParameterScope::Block,
+                vector_transform: VectorTransform::None,
+                auxiliary_flags: 0,
+                source_role: SourceRole::RerankProjection,
+                source_fidelity: SourceFidelity::Lossy,
+                rebuild_source_id: canonical_id,
+                projection_generation: 1,
+            });
+
+            let has_transformed = self
+                .block_transformed_sq8_columns
+                .iter()
+                .any(|columns| columns.contains(&physical_column_id));
+            let transformed_id = if has_transformed {
+                let id = take_descriptor_id(&mut next_id)?;
+                descriptors.push(StripeEncodingDescriptor {
+                    descriptor_id: id,
+                    logical_field_id,
+                    physical_column_id,
+                    tier_role: TierRole::Rerank,
+                    value_codec_tag: 0x05,
+                    value_codec_version: 1,
+                    transform_tag: LosslessTransformTag::ClusteredForBitpackU8,
+                    transform_version: 1,
+                    compression_tag: LosslessCompressionTag::None,
+                    compression_version: 0,
+                    compression_flags: compression_flags::LOSSLESS,
+                    parameter_scope: ParameterScope::MicroChunk,
+                    vector_transform: VectorTransform::None,
+                    auxiliary_flags: 0,
+                    source_role: SourceRole::RerankProjection,
+                    source_fidelity: SourceFidelity::Lossy,
+                    rebuild_source_id: canonical_id,
+                    projection_generation: 1,
+                });
+                Some(id)
+            } else {
+                None
+            };
+
+            for (block_ordinal, transformed_columns) in
+                self.block_transformed_sq8_columns.iter().enumerate()
+            {
+                let descriptor_id = if transformed_columns.contains(&physical_column_id) {
+                    transformed_id.ok_or_else(|| {
+                        anyhow::anyhow!("transformed block has no encoding descriptor")
+                    })?
+                } else {
+                    flat_id
+                };
+                assignments.push(BlockTierAssignment {
+                    block_ordinal: u32::try_from(block_ordinal)
+                        .map_err(|_| anyhow::anyhow!("block ordinal exceeds u32"))?,
+                    physical_column_id,
+                    tier_role: TierRole::Rerank,
+                    descriptor_id,
+                });
+            }
+        }
+        Ok((descriptors, assignments))
+    }
+
+    /// ADR-062 / TD-RDSTRAT-6 coalesced layout: `[HEADER-PREFIX][RaBitQ region]
+    /// [blocks][FOOTER-INDEX][footer_len][SEGMENT_MAGIC]`. The RaBitQ region is
+    /// one ranged GET (keep=100% scan); the footer-index block table carries
+    /// absolute offsets so the read path maps survivors → blocks → coalesced GETs.
+    fn finish_coalesced(&mut self, dim: u32) -> Result<SegmentMeta> {
+        // 1. Build the coalesced RaBitQ region (single segment centroid) over the
+        //    cluster-ordered embedding-0 vectors. `self.file_buf` already holds the
+        //    blocks at 0-based offsets (relative to the blocks region).
+        let refs: Vec<Option<&[f32]>> = self.rabitq_vectors.iter().map(|o| o.as_deref()).collect();
+        let seed = RABITQ_SEED_BASE ^ (col_id::EMBED_BASE as u64);
+        let (region_bytes, _centroid) = encode_region(&refs, dim, seed)?;
+        // ADR-065 Region B: the SQ8 rerank tier, hoisted out of blocks so survivor
+        // rerank fetches read pure dense SQ8 (one segment-level Sq8Params fit).
+        let (sq8_region_bytes, sq8_params) = encode_sq8_region(&refs, dim)?;
+
+        let header_len = SEG_HEADER_PREFIX_LEN as u64;
+        let rabitq_off = header_len;
+        let rabitq_len = region_bytes.len() as u64;
+        let sq8_off = header_len + rabitq_len;
+        let sq8_len = sq8_region_bytes.len() as u64;
+        // Blocks (Region D) begin after header + Region A + Region B.
+        let data_offset = header_len + rabitq_len + sq8_len;
+
+        // 2. Footer block table: absolute offsets = data_offset + block's 0-based
+        //    offset; row_count from the block's zone summary (1:1 with the index).
+        let blocks: Vec<FooterBlockEntry> = self
+            .index
+            .blocks
+            .iter()
+            .map(|b| FooterBlockEntry {
+                offset: data_offset + b.offset,
+                size: b.size,
+                row_count: b.zone.as_ref().map(|z| z.row_count).unwrap_or(0),
+                stats_kind: StatsKind::None,
+            })
+            .collect();
+
+        // 3. Footer-index body + header-prefix offsets. The footer sits after the
+        //    blocks; its length is known once serialized.
+        let (encoding_map, block_tier_assignments) = self.footer_encoding_map()?;
+        let footer = SegmentFooterIndex {
+            row_count: self.row_count,
+            rabitq_off,
+            rabitq_len,
+            sq8_off,
+            sq8_len,
+            // Cache-co-design: mirror the SQ8 dequant key (min + scale) into the
+            // footer so the read path decodes survivors without a separate 24 B
+            // Region-B-header GET. (offset == vmin == min; vmax recoverable.)
+            sq8_min: sq8_params.offset,
+            sq8_scale: sq8_params.scale,
+            embed_dim: dim,
+            embed_count: self.embedding_count as u32,
+            embed_quant_tag: 1, // SQ8 rerank tier — now Region B (hoisted out of blocks)
+            has_f32_tier: self.f32_tier,
+            blocks,
+            encoding_map,
+            block_tier_assignments,
+        };
+        let footer_body = footer.to_bytes()?;
+        let footer_off = data_offset + self.file_buf.len() as u64;
+        let footer_len = footer_body.len() as u64;
+
+        let header = SegmentHeaderPrefix {
+            layout_version: SEG_LAYOUT_VERSION,
+            rabitq_off,
+            rabitq_len,
+            sq8_off,
+            sq8_len,
+            footer_off,
+            footer_len,
+        };
+
+        // 4. Assemble: header + Region A + Region B + blocks + [footer][footer_len][magic].
+        let mut out = Vec::with_capacity(
+            SEG_HEADER_PREFIX_LEN
+                + region_bytes.len()
+                + sq8_region_bytes.len()
+                + self.file_buf.len()
+                + footer_body.len()
+                + 16,
+        );
+        out.extend_from_slice(&header.to_bytes());
+        out.extend_from_slice(&region_bytes);
+        out.extend_from_slice(&sq8_region_bytes);
+        out.extend_from_slice(&self.file_buf);
+        out.extend(segment_tail(&footer_body));
+
+        let total_bytes = self.write_file(&out)?;
+        Ok(SegmentMeta {
+            path: self.path.clone(),
+            size_bytes: total_bytes,
+            block_count: self.index.blocks.len() as u32,
+            row_count: self.row_count,
+            block_stats: std::mem::take(&mut self.block_stats),
+            block_centroids: std::mem::take(&mut self.block_centroids),
+            block_radii: std::mem::take(&mut self.block_radii),
+            rabitq_off,
+            rabitq_len,
+            sq8_off,
+            sq8_len,
+        })
+    }
+
+    /// Create the parent dir + write `buf` to `self.path`; returns bytes written.
+    fn write_file(&self, buf: &[u8]) -> Result<u64> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let mut f = std::fs::File::create(&self.path)?;
-        f.write_all(&self.file_buf)?;
-
-        Ok(SegmentMeta {
-            path: self.path,
-            size_bytes: total_bytes,
-            block_count: self.index.blocks.len() as u32,
-            row_count: self.row_count,
-            block_stats: self.block_stats,
-            block_centroids: self.block_centroids,
-            block_radii: self.block_radii,
-        })
+        f.write_all(buf)?;
+        Ok(buf.len() as u64)
     }
 
     /// Test-only: finish writing a **legacy v1** segment (segment index without
@@ -838,8 +1270,23 @@ impl PaxSegmentWriter {
             block_stats: self.block_stats,
             block_centroids: self.block_centroids,
             block_radii: self.block_radii,
+            rabitq_off: 0,
+            rabitq_len: 0,
+            sq8_off: 0,
+            sq8_len: 0,
         })
     }
+}
+
+fn take_descriptor_id(next_id: &mut u16) -> Result<u16> {
+    if *next_id == EXTERNAL_CANONICAL_SOURCE_ID {
+        bail!("footer encoding descriptor id space exhausted");
+    }
+    let id = *next_id;
+    *next_id = next_id
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("footer encoding descriptor id overflow"))?;
+    Ok(id)
 }
 
 // ── Scanner ───────────────────────────────────────────────────────────────────
@@ -899,21 +1346,23 @@ impl PaxSegmentScanner {
     }
 
     /// Parse from an in-memory byte slice (useful for WAL replay / testing).
+    ///
+    /// Mixed-read-safe (ADR-061 amendment): a coalesced-RaBitQ segment
+    /// (`SEG_HEADER_MAGIC` head) is parsed from its self-describing footer-index
+    /// (the block table there carries absolute offsets); a legacy segment
+    /// (`PBLK` head) keeps using `SegmentIndex::locate`. Both feed `next_block`
+    /// the same `SegmentIndex` shape.
     pub fn from_bytes(data: Vec<u8>, predicate: ScanPredicate) -> Result<Self> {
-        // Validate magic
+        // Validate magic (both layouts tail with SEGMENT_MAGIC).
         if data.len() < 8 || &data[data.len() - 8..] != SEGMENT_MAGIC {
             bail!("not a valid PAX segment file (bad magic)");
         }
-        // The index sits between the blocks and the magic.
-        // We don't know the index size without reading block_count first.
-        // Strategy: read block_count from (len - 8 - 4 - ...). We need to
-        // scan backwards. The index format is: [n u32][entries: n×12][crc32 u32].
-        // Minimum index size = 4 + 0 + 4 = 8 bytes.
-        // We try increasing index sizes until CRC matches.
-        let magic_start = data.len() - 8;
-        // Try to find the index by reading block_count at various positions
-        // (binary search would be ideal, but CRC validation is cheap enough).
-        let index = Self::parse_index(&data[..magic_start])?;
+        let index = if is_coalesced_segment(&data) {
+            Self::parse_coalesced_index(&data)?
+        } else {
+            let magic_start = data.len() - 8;
+            Self::parse_index(&data[..magic_start])?
+        };
 
         Ok(Self {
             data,
@@ -925,6 +1374,25 @@ impl PaxSegmentScanner {
 
     fn parse_index(before_magic: &[u8]) -> Result<SegmentIndex> {
         SegmentIndex::locate(before_magic)
+    }
+
+    /// Build the block list for a coalesced-RaBitQ segment from its footer-index.
+    /// The footer block table carries absolute offsets + row counts; we mirror
+    /// them into a `SegmentIndex` (with a row-count-only zone summary) so the
+    /// shared `next_block` / `read_records` paths work unchanged.
+    fn parse_coalesced_index(data: &[u8]) -> Result<SegmentIndex> {
+        let footer = SegmentFooterIndex::locate_in_segment(data)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced segment missing footer-index"))?;
+        let blocks = footer
+            .blocks
+            .iter()
+            .map(|b| BlockIndexEntry {
+                offset: b.offset,
+                size: b.size,
+                zone: Some(BlockZoneSummary::empty(b.row_count)),
+            })
+            .collect();
+        Ok(SegmentIndex { blocks })
     }
 
     /// Yield the next block that passes predicate pruning.
@@ -1049,6 +1517,20 @@ pub fn compact_pax_segments(
     tenant_ctx: Option<&str>,
     now_ns: i64,
 ) -> Result<CompactionStats> {
+    let preserve_exact = !inputs.is_empty()
+        && inputs.iter().all(|input| {
+            let Ok(mut scanner) = PaxSegmentScanner::open(input, ScanPredicate::default()) else {
+                return false;
+            };
+            let mut saw_block = false;
+            while let Some(block) = scanner.next_block() {
+                saw_block = true;
+                if !block.has_exact_vector_authority() {
+                    return false;
+                }
+            }
+            saw_block
+        });
     let mut writer = PaxSegmentWriter::new(
         output,
         mode,
@@ -1057,7 +1539,8 @@ pub fn compact_pax_segments(
         schema_fingerprint,
         embedding_count,
         None,
-    );
+    )
+    .with_f32_tier(preserve_exact);
     let mut records_in = 0u64;
     let mut records_out = 0u64;
     let mut tombstones_dropped = 0u64;
@@ -1099,6 +1582,63 @@ mod tests {
             updated_at_ns: ts,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn coalesced_footer_assigns_actual_clustered_sq8_encoding() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        const ROWS_PER_CLUSTER: usize = 256;
+        const DIM: usize = 32;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("clustered-footer.pax");
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(ROWS_PER_CLUSTER * 2 * 1024),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_lossless_clustered(true);
+
+        for row in 0..(ROWS_PER_CLUSTER * 2) {
+            if row == ROWS_PER_CLUSTER {
+                writer.start_cluster_run();
+            }
+            let center = if row < ROWS_PER_CLUSTER { -10.0 } else { 10.0 };
+            let values: Vec<f32> = (0..DIM)
+                .map(|lane| center + ((row + lane) % 3) as f32 * 0.01)
+                .collect();
+            let mut record = make_record(&format!("r{row}"), "t", 1_000 + row as i64);
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(values),
+                ..Default::default()
+            });
+            writer.add_record(&record)?;
+        }
+        writer.finish()?;
+
+        let segment = std::fs::read(&path)?;
+        let footer = SegmentFooterIndex::locate_in_segment(&segment)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        let transformed = footer.encoding_map.iter().find(|descriptor| {
+            descriptor.physical_column_id == col_id::EMBED_BASE
+                && descriptor.transform_tag == LosslessTransformTag::ClusteredForBitpackU8
+        });
+        let transformed =
+            transformed.ok_or_else(|| anyhow::anyhow!("clustered SQ8 descriptor missing"))?;
+        assert!(footer.block_tier_assignments.iter().any(|assignment| {
+            assignment.physical_column_id == col_id::EMBED_BASE
+                && assignment.descriptor_id == transformed.descriptor_id
+        }));
+        assert_eq!(transformed.rebuild_source_id, EXTERNAL_CANONICAL_SOURCE_ID);
+        Ok(())
     }
 
     /// TD-RDSTRAT-5 S1: with `with_block_centroids(true)`, the segment writer
@@ -1498,6 +2038,122 @@ mod tests {
                 .iter()
                 .all(|r| r.origin.as_deref() != Some("delete")),
             "the delete tombstone must not survive compaction"
+        );
+    }
+
+    #[test]
+    fn compaction_preserves_exact_only_when_every_input_has_authority() {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        let vector_record = |oid: &str, values: Vec<f32>| {
+            let mut record = make_record(oid, "t", 1);
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: values.len() as u32,
+                values: EmbeddingValues::Fp32(values),
+                ..Default::default()
+            });
+            record
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let exact_input = dir.path().join("exact.pax");
+        let lossy_input = dir.path().join("lossy.pax");
+        let exact_output = dir.path().join("exact-output.pax");
+        let mixed_output = dir.path().join("mixed-output.pax");
+        let exact_records = vec![
+            vector_record("exact-a", vec![-3.25, 0.123_456_7, 8.75]),
+            vector_record("exact-b", vec![2.5, 4.765_432, -1.125]),
+        ];
+        let lossy_records = vec![
+            vector_record("lossy-a", vec![11.0, -7.123_456, 0.375]),
+            vector_record("lossy-b", vec![6.25, 9.765_432, -4.5]),
+        ];
+
+        let mut exact_writer = PaxSegmentWriter::new(
+            &exact_input,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_f32_tier(true);
+        for record in &exact_records {
+            exact_writer.add_record(record).unwrap();
+        }
+        exact_writer.finish().unwrap();
+
+        let mut lossy_writer = PaxSegmentWriter::new(
+            &lossy_input,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RaBitQ);
+        for record in &lossy_records {
+            lossy_writer.add_record(record).unwrap();
+        }
+        lossy_writer.finish().unwrap();
+
+        compact_pax_segments(
+            std::slice::from_ref(&exact_input),
+            &exact_output,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            &[],
+            &[],
+            None,
+            i64::MAX,
+        )
+        .unwrap();
+        {
+            let mut exact_scanner =
+                PaxSegmentScanner::open(&exact_output, ScanPredicate::default()).unwrap();
+            let exact_block = exact_scanner.next_block().expect("exact compacted block");
+            assert!(exact_block.has_exact_vector_authority());
+        }
+        let mut exact_scanner =
+            PaxSegmentScanner::open(&exact_output, ScanPredicate::default()).unwrap();
+        let exact_back = exact_scanner.read_records(&[], &[], None).unwrap();
+        for got in &exact_back {
+            let want = exact_records
+                .iter()
+                .find(|record| record.oid == got.oid)
+                .unwrap();
+            assert_eq!(
+                got.embeddings[0].as_fp32_slice(),
+                want.embeddings[0].as_fp32_slice()
+            );
+        }
+
+        compact_pax_segments(
+            &[exact_input, lossy_input],
+            &mixed_output,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            &[],
+            &[],
+            None,
+            i64::MAX,
+        )
+        .unwrap();
+        let mut mixed_scanner =
+            PaxSegmentScanner::open(&mixed_output, ScanPredicate::default()).unwrap();
+        let mixed_block = mixed_scanner.next_block().expect("mixed compacted block");
+        assert!(
+            !mixed_block.has_exact_vector_authority(),
+            "a lossy sibling must prevent exact output authority"
         );
     }
 

@@ -425,7 +425,7 @@ kubectl top nodes
 
 1. Check CloudWatch Logs
 2. Review EKS control plane logs
-3. Check GitHub issues: https://github.com/vjsingh1984/proximadb/issues
+3. Check GitHub issues: https://github.com/anvai-labs/proximaDB/issues
 4. Join Discord: https://discord.gg/proximadb
 
 ## Cleanup

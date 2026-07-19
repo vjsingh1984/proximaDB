@@ -12,7 +12,7 @@
 //! PROXIMADB_BENCH_VECTOR_COUNT=50000 cargo test --test all_engines_50k_benchmark -- --nocapture --test-threads=1 --ignored
 //! ```
 
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;

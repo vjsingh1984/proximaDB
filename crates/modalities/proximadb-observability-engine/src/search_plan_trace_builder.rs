@@ -56,6 +56,14 @@ pub struct TraceBuilderInputs {
     /// egress billing quantity (Dimension 2). `0` on the free same-AZ path, so
     /// the trace's `actual_egress_gb` stays 0 there.
     pub egress_bytes: u64,
+    /// TD-IOTRACE-2: per-query physical object-store ranged GETs — the accurate
+    /// count from the io_trace snapshot (post-#1081). The physical GET billing
+    /// input for the two-part KRU rate (TD-IOTRACE-3). `0` when no io_trace
+    /// scope was active (the trace fields stay 0).
+    pub object_store_gets: u64,
+    /// TD-IOTRACE-2: per-query physical object-store bytes read — companion to
+    /// `object_store_gets`; the bytes side of the KRU physical rate input.
+    pub object_store_bytes_read: u64,
     /// TD-064: Predicate-aware recall shortfall recorded by the executor when
     /// a post-filter / oversample path returned fewer matches than the
     /// requested `top_k`. `None` on the happy path. When `Some`, the builder
@@ -93,6 +101,8 @@ pub fn build(inputs: TraceBuilderInputs) -> SearchPlanTrace {
         estimated_scan_gb: None,
         actual_scan_gb,
         actual_egress_gb,
+        object_store_gets: inputs.object_store_gets,
+        object_store_bytes_read: inputs.object_store_bytes_read,
         index_stats: inputs.index_stats,
         candidate_count: inputs.candidate_count,
         rerank_count: inputs.rerank_count,
@@ -150,6 +160,8 @@ mod tests {
             failure_class: None,
             bytes_per_vector: 0.0,
             egress_bytes: 0,
+            object_store_gets: 0,
+            object_store_bytes_read: 0,
             predicate_shortfall: None,
             turboquant_explain: None,
         }

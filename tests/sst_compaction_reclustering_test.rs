@@ -69,6 +69,13 @@ async fn test_append_compaction_reclusters_and_improves_coherence() {
         // Clustering is default-ON (TD-WLP-4); pin the kill-switch off in case
         // the ambient env set it.
         std::env::remove_var("PROXIMADB_PAX_BLOCK_CLUSTER");
+        // This gate measures *intra-block* vector coherence (block_radii).
+        // Coalesced-RaBitQ (ADR-065, default-ON) hoists the vectors out of the
+        // blocks into Region B, so block-level radii no longer reflect vector
+        // clustering. Disable coalescing here so vectors stay in the blocks —
+        // the layout this metric is defined on (and the one develop ran under).
+        // Coalesced coherence is covered by the SIFT recall gate instead.
+        std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "0");
     }
     let records = interleaved_records();
     let dir = tempfile::tempdir().expect("tempdir");

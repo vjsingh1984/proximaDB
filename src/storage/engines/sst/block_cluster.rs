@@ -18,6 +18,23 @@
 
 use proximadb_records::{EmbeddingValues, ProximaRecord};
 
+/// One contiguous cluster in the reordered output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrderedClusterRun {
+    pub start_row: usize,
+    pub row_count: usize,
+}
+
+/// Physical ordering plus the cluster boundaries that produced it.
+///
+/// Keeping both avoids reverse-engineering clusters from reordered vectors and
+/// lets the PAX writer apply cluster-local, exact storage transforms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterPlan {
+    pub order: Vec<usize>,
+    pub runs: Vec<OrderedClusterRun>,
+}
+
 /// Sort-by-code block clustering at PAX write (TD-RDSTRAT-5 S1, default ON
 /// since TD-WLP-4 / ADR-061 D3 — pre-GA "arm defaults" directive). Records are
 /// reordered by locality key at flush so blocks are spatially coherent and
@@ -41,58 +58,26 @@ fn env_flag_off(var: &str) -> bool {
     }
 }
 
-/// TD-RDSTRAT-5 S3 (read side): opt-in for the VOE-directory centroid probe-prune
-/// at the PAX cascade. Default OFF — the cascade scans every block; set
-/// `PROXIMADB_PAX_CENTROID_PRUNE=1` to load the Vector Object Economy directory
-/// (cache-first) and scan only the blocks whose centroid survives the prune.
-/// Recall-affecting, so it stays default-OFF behind this flag until the SIFT1M
-/// recall ratchet (CI gate) clears the flip. Falls back to the unfiltered scan
-/// whenever the directory is absent/stale or the segment wasn't clustered.
-pub fn centroid_prune_enabled() -> bool {
-    env_flag_on("PROXIMADB_PAX_CENTROID_PRUNE")
-}
-
-/// Shared truthy-env parser for the block-clustering flags.
-fn env_flag_on(var: &str) -> bool {
-    match std::env::var(var).ok().as_deref().map(str::trim) {
-        Some(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"),
-        None => false,
-    }
-}
-
-/// TD-RDSTRAT-5 S3: the centroid probe-prune config, tunable via env so operators
-/// (and the recall gate) can set the `nprobe` aggressiveness and force pruning on
-/// small segments. Defaults to [`BlockPruneConfig::default`] (Sqrt mode, the
-/// production `MIN_BLOCKS_FOR_PRUNING`=100 threshold). Env overrides:
-///   * `PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS` — bypass the 100-block threshold
-///     (e.g. `2` to prune small segments; the recall gate uses this).
-///   * `PROXIMADB_PAX_CENTROID_PRUNE_RATIO` — switch to Ratio mode keeping this
-///     fraction of blocks (0.0–1.0) instead of Sqrt.
-///   * `PROXIMADB_PAX_CENTROID_RADIUS_K` — lever-3 radius weight `k` in the prune
-///     score `d(q,centroid) − k·radius` (default `0.0` = raw centroid distance).
-pub fn centroid_prune_config() -> crate::core::search::BlockPruneConfig {
-    use crate::core::search::{BlockPruneConfig, BlockPruneMode};
-    let mut cfg = BlockPruneConfig::default();
-    if let Some(mb) = std::env::var("PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-    {
-        cfg.min_blocks_override = Some(mb);
-    }
-    if let Some(r) = std::env::var("PROXIMADB_PAX_CENTROID_PRUNE_RATIO")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
-    {
-        cfg.mode = BlockPruneMode::Ratio;
-        cfg.ratio = r.clamp(0.0, 1.0);
-    }
-    if let Some(k) = std::env::var("PROXIMADB_PAX_CENTROID_RADIUS_K")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
-    {
-        cfg.radius_k = k.max(0.0);
-    }
-    cfg
+/// TD-WLP-4/WLP-9 eval opt-in: upgrade the **flush** (L0) ordering from the
+/// model-free sign-bit bootstrap ([`cluster_order`]) to the full PCA+IVF
+/// re-cluster ([`cluster_order_pca_ivf`]) — the ordering compaction normally
+/// applies, but reached at flush so it is measurable without the (unwired)
+/// flush→compaction scheduler. Default OFF: production L0 flush keeps the
+/// bootstrap (cold-start-safe, streaming), and the production re-cluster event
+/// remains compaction. Set `PROXIMADB_PAX_FLUSH_CLUSTER=ivf` to exercise PCA/IVF
+/// at flush (the SIFT recall eval uses this to validate clustering quality). The
+/// ordering is result-preserving (the reader ranks/dedups by distance + OID),
+/// so this is mixed-read-safe.
+pub fn flush_cluster_ivf() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_FLUSH_CLUSTER")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(|v| v.to_ascii_lowercase())
+            .as_deref(),
+        Some("ivf") | Some("pca_ivf") | Some("1") | Some("true") | Some("on") | Some("yes")
+    )
 }
 
 /// The f32 vector of `record`'s embedding `idx`, if present and Fp32-typed (the
@@ -117,6 +102,11 @@ fn embedding_f32(record: &ProximaRecord, idx: usize) -> Option<&[f32]> {
 /// Pure + deterministic (unit-tested). The key is a *proxy* for angular order,
 /// not an exact clustering — S4 replaces it with IVF/k-means.
 pub fn cluster_order(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>> {
+    cluster_plan(records, idx).map(|plan| plan.order)
+}
+
+/// Bootstrap cluster plan: Gray-key order plus exact runs of equal keys.
+pub fn cluster_plan(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan> {
     if records.len() < 2 {
         return None;
     }
@@ -155,7 +145,85 @@ pub fn cluster_order(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>
     // Precompute keys once (avoid recomputing in the comparator).
     let keys: Vec<Vec<u8>> = records.iter().map(key_of).collect();
     order.sort_by(|&a, &b| keys[a].cmp(&keys[b]).then(a.cmp(&b)));
+    let ordered_keys: Vec<&[u8]> = order.iter().map(|&row| keys[row].as_slice()).collect();
+    let runs = contiguous_runs(&ordered_keys);
+    Some(ClusterPlan { order, runs })
+}
+
+/// ADR-065 Region B locality order: **Morton/Z-order over the segment-level SQ8
+/// codes**. The RaBitQ-top-M survivors are a spatial neighbourhood; ordering
+/// Region B by an SQ8-Morton key co-locates them (and the top-k result rows) so
+/// the survivor + OID fetches collapse to a few contiguous ranges.
+///
+/// Why SQ8 (not fp32): scalar quantization denoises (drops fp32's noisy low
+/// bits), collapses near-duplicates to the same/adjacent cell, is compact
+/// (8 bits/dim — exactly the precision a Morton key uses), and is Region B's own
+/// representation (no separate PCA/projection — flush-safe, unlike IVF).
+///
+/// One segment-level `Sq8Params` fit (same fit Region B will store), quantize,
+/// Morton-key, sort. Records with no/short embedding sort last. Returns `None`
+/// when fewer than 2 usable rows.
+pub fn cluster_order_sq8_morton(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>> {
+    use proximadb_codec::functions::sq8::{fit_params, quantize_one};
+    let usable: Vec<(usize, &[f32])> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| embedding_f32(r, idx).map(|v| (i, v)))
+        .collect();
+    if usable.len() < 2 {
+        return None;
+    }
+    let dim = usable[0].1.len();
+    // One segment-level fit over all usable vectors (flattened) — identical to the
+    // fit Region B's encode_region performs, so the order matches its stored codes.
+    let mut flat: Vec<f32> = Vec::with_capacity(usable.len() * dim);
+    for (_, v) in &usable {
+        if v.len() == dim {
+            flat.extend_from_slice(v);
+        }
+    }
+    let params = fit_params(&flat);
+
+    let key_of = |v: &[f32]| -> Vec<u8> {
+        let mut codes = vec![0u8; dim];
+        for d in 0..dim {
+            codes[d] = quantize_one(v[d], &params);
+        }
+        sq8_morton_key(&codes, dim)
+    };
+    // Records with no/short embedding sort last (all-ones key).
+    let tail_key = vec![0xFFu8; dim];
+    let mut order: Vec<usize> = (0..records.len()).collect();
+    let keys: Vec<Vec<u8>> = records
+        .iter()
+        .map(|r| match embedding_f32(r, idx) {
+            Some(v) if v.len() == dim => key_of(v),
+            _ => tail_key.clone(),
+        })
+        .collect();
+    order.sort_by(|&a, &b| keys[a].cmp(&keys[b]).then(a.cmp(&b)));
     Some(order)
+}
+
+/// Morton/Z-order key over `dim` SQ8 bytes: interleave the 8 bits of each
+/// dimension, **MSB-first across dims then bit-7→0**, packed MSB-first into
+/// bytes → hierarchical locality (the top `dim` key bits = bit-7 of every dim =
+/// the coarse sign-level; successive levels refine). Output is `dim` bytes
+/// (`8·dim` bits). Lexicographic byte compare = Morton order.
+fn sq8_morton_key(codes: &[u8], dim: usize) -> Vec<u8> {
+    let mut key = vec![0u8; dim]; // 8·dim bits == dim bytes
+    for d in 0..dim {
+        let c = codes[d];
+        for b in 0..8u32 {
+            if (c >> (7 - b)) & 1 == 1 {
+                // sort-key bit position (0 = MSB): level `b` (bit 7-b of each dim),
+                // dim index `d` within the level.
+                let pos = b * dim as u32 + d as u32;
+                key[(pos / 8) as usize] |= 1u8 << (7 - (pos % 8));
+            }
+        }
+    }
+    key
 }
 
 /// TD-WLP-4 (ADR-061 D3): the compaction re-cluster order — **PCA + IVF
@@ -174,15 +242,15 @@ pub fn cluster_order(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>
 /// batch-local model is discarded after ordering — persisted-model reuse
 /// (`pca_model_ref`) is the TD-WLP-4b follow-up.
 pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>> {
+    cluster_plan_pca_ivf(records, idx).map(|plan| plan.order)
+}
+
+/// Compaction-grade PCA+IVF plan, including the contiguous IVF-cell runs.
+pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan> {
     /// Below this many usable rows a trained model can't beat the bootstrap.
     const MIN_ROWS_FOR_IVF: usize = 64;
-    /// Target rows per IVF cell — approximates rows-per-PAX-block so one cell
-    /// maps to roughly one block worth of rows.
-    const ROWS_PER_CELL: usize = 128;
 
-    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::{
-        AdaptivePcaConfig, IncrementalPCA,
-    };
+    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
 
     let usable: Vec<(usize, &[f32])> = records
         .iter()
@@ -190,29 +258,105 @@ pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Ve
         .filter_map(|(i, r)| embedding_f32(r, idx).map(|v| (i, v)))
         .collect();
     if usable.len() < MIN_ROWS_FOR_IVF {
-        return cluster_order(records, idx);
+        return cluster_plan(records, idx);
     }
     let dim = usable[0].1.len();
     if usable.iter().any(|(_, v)| v.len() != dim) {
-        return cluster_order(records, idx);
+        return cluster_plan(records, idx);
     }
 
-    // Batch-local PCA (one projection serves the IVF assignment, the cell
-    // Hilbert order, and the within-cell order).
-    let cfg = AdaptivePcaConfig::for_vector_dim(dim);
-    let mut pca = IncrementalPCA::new(dim, cfg.n_components);
-    for (_, v) in &usable {
+    let trace_ivf = std::env::var_os("PROXIMADB_TRACE_IVF_FLUSH").is_some();
+    let t_start = std::time::Instant::now();
+
+    // IVF cells ≈ blockcount (ADR-065 co-design): one cell ≈ one IOP-sized
+    // block, so survivors span fewer cells → fewer GETs and each cell-fetch is
+    // one efficient IOP. k scales with N (more data ⇒ more cells, members/cell
+    // ~constant). Computed UP FRONT so n_components can couple to it.
+    let iop_target =
+        proximadb_storage_common::iops_budget::IopsBudget::CLOUD.target_block_bytes() as usize;
+    // `PROXIMADB_IVF_K` overrides k to map the GETs-vs-recall curve (validate
+    // the cells=blockcount formula). Default = N·dim/IOP (one cell ≈ one IOP of
+    // SQ8 survivor data). Eval knob, not a production setting.
+    let k = std::env::var("PROXIMADB_IVF_K")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| ((usable.len() * dim) / iop_target.max(1)).clamp(2, 4096));
+
+    // TD-WLP-4b: PCA projection dimensionality = max of two logarithmic terms,
+    // so n_comp stays small as embeddings/corpora grow:
+    //   (a) a·log2(dim) — the embedding's intrinsic-dim term (SIFT-128 → ~10).
+    //   (b) b·log2(k)   — partition-granularity INSURANCE: finer partitioning
+    //        (high k, i.e. large merged collections) needs more discriminative
+    //        dims to separate the cells. Bites only at high k; at SIFT's k=30
+    //        the (a) term wins (matching the Phase-0 sweep: recall@10 flat 0.989
+    //        for n_comp ∈ [4,128]). The (b) term is a conservative hedge for the
+    //        high-k regime we cannot yet measure. a, b are env-tunable
+    //        (dataset-dependent floors); `PROXIMADB_IVF_NCOMP` force-sets n_comp
+    //        for the eval sweep. Clustering-only — search-time PCA keeps its
+    //        own conservative cap (for_vector_dim).
+    let ivf_a = std::env::var("PROXIMADB_IVF_NCOMP_A")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|x| *x > 0.0)
+        .unwrap_or(1.5);
+    let ivf_b = std::env::var("PROXIMADB_IVF_NCOMP_B")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|x| *x > 0.0)
+        .unwrap_or(1.5);
+    let n_components = std::env::var("PROXIMADB_IVF_NCOMP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| {
+            let dim_term = ivf_a * (dim as f64).log2();
+            let k_term = ivf_b * (k.max(2) as f64).log2();
+            dim_term.max(k_term).floor() as usize
+        })
+        .clamp(1, dim);
+    // TD-WLP-4b sample-train: fit PCA + train k-means on a deterministic
+    // ~SAMPLE subset (the covariance / centroids converge far before N=1M),
+    // then project + assign ALL rows. Cuts pca_fit + kmeans ~N/sample (~20x at
+    // SIFT1M) with negligible recall impact; project/assign still cover all N.
+    // Deterministic stride (a physical layout must not depend on RNG).
+    let train_sample = std::env::var("PROXIMADB_IVF_TRAIN_SAMPLE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(50_000)
+        .min(usable.len());
+    let sample_step = if usable.len() > train_sample {
+        (usable.len() / train_sample).max(1)
+    } else {
+        1
+    };
+    let mut pca = IncrementalPCA::new(dim, n_components);
+    for (_, v) in usable.iter().step_by(sample_step) {
         pca.add_sample(v);
     }
     pca.finalize();
+    let t_pca = std::time::Instant::now();
     let coords: Vec<Vec<f32>> = usable.iter().map(|(_, v)| pca.transform(v)).collect();
-
-    // IVF: k-means over the projections.
-    let k = (usable.len() / ROWS_PER_CELL).clamp(2, 1024);
-    let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering(&coords, k, 15, 1e-3) else {
-        return cluster_order(records, idx);
+    let t_proj = std::time::Instant::now();
+    // A physical layout must not depend on thread-local RNG state: identical
+    // input should produce identical IVF cells, byte counts, and eval results.
+    const PAX_IVF_KMEANS_SEED: u64 = 0x5041_585F_4956_4631;
+    // Train k-means on the sampled projections (same stride as the PCA fit);
+    // assign ALL rows to the resulting centroids.
+    let train_coords: Vec<Vec<f32>> = coords.iter().step_by(sample_step).cloned().collect();
+    let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering_seeded(
+        &train_coords,
+        k,
+        15,
+        1e-3,
+        PAX_IVF_KMEANS_SEED,
+    ) else {
+        return cluster_plan(records, idx);
     };
+    let t_kmeans = std::time::Instant::now();
     let assignments = proximadb_clustering_kernel::kmeans_assign(&coords, &centroids);
+    let t_assign = std::time::Instant::now();
 
     // Order cells by the Hilbert code of their centroid. Normalization is over
     // the CENTROID SET per dimension (per-vector min/max would destroy
@@ -267,7 +411,52 @@ pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Ve
     order.extend(usable_sorted.iter().map(|&u| usable[u].0));
     let in_usable: std::collections::HashSet<usize> = usable.iter().map(|(i, _)| *i).collect();
     order.extend((0..records.len()).filter(|i| !in_usable.contains(i)));
-    Some(order)
+    let mut ordered_cells: Vec<usize> = usable_sorted
+        .iter()
+        .map(|&usable_row| assignments[usable_row])
+        .collect();
+    ordered_cells.extend(std::iter::repeat_n(
+        usize::MAX,
+        records.len() - usable.len(),
+    ));
+    let runs = contiguous_runs(&ordered_cells);
+    let t_end = std::time::Instant::now();
+    if trace_ivf {
+        eprintln!(
+            "[IVF flush] N={n} dim={dim} k={k} n_comp={nc} | pca_fit {pca:.0} ms  project {proj:.0} ms  kmeans {km:.0} ms  assign {asg:.0} ms  order {ord:.0} ms  | total {tot:.0} ms",
+            n = usable.len(),
+            nc = n_components,
+            pca = (t_pca - t_start).as_secs_f64() * 1e3,
+            proj = (t_proj - t_pca).as_secs_f64() * 1e3,
+            km = (t_kmeans - t_proj).as_secs_f64() * 1e3,
+            asg = (t_assign - t_kmeans).as_secs_f64() * 1e3,
+            ord = (t_end - t_assign).as_secs_f64() * 1e3,
+            tot = (t_end - t_start).as_secs_f64() * 1e3,
+        );
+    }
+    Some(ClusterPlan { order, runs })
+}
+
+fn contiguous_runs<T: PartialEq>(ordered_labels: &[T]) -> Vec<OrderedClusterRun> {
+    if ordered_labels.is_empty() {
+        return Vec::new();
+    }
+    let mut runs = Vec::new();
+    let mut start = 0usize;
+    for row in 1..ordered_labels.len() {
+        if ordered_labels[row] != ordered_labels[row - 1] {
+            runs.push(OrderedClusterRun {
+                start_row: start,
+                row_count: row - start,
+            });
+            start = row;
+        }
+    }
+    runs.push(OrderedClusterRun {
+        start_row: start,
+        row_count: ordered_labels.len() - start,
+    });
+    runs
 }
 
 /// Binary-reflected Gray code over the sign bits of `v - mean`, packed MSB-first
@@ -353,6 +542,28 @@ mod tests {
             1,
             "negative cluster members adjacent: {oids:?}"
         );
+    }
+
+    #[test]
+    fn cluster_plan_runs_cover_reordered_rows_exactly() -> anyhow::Result<()> {
+        let recs = vec![
+            rec("p1", vec![2.0, 2.0, 2.0, 2.0]),
+            rec("n1", vec![-2.0, -2.0, -2.0, -2.0]),
+            rec("p2", vec![3.0, 1.0, 2.0, 4.0]),
+            rec("n2", vec![-3.0, -1.0, -2.0, -4.0]),
+        ];
+        let plan = cluster_plan(&recs, 0)
+            .ok_or_else(|| anyhow::anyhow!("expected a bootstrap cluster plan"))?;
+        assert_eq!(plan.order.len(), recs.len());
+        assert!(plan.runs.len() >= 2);
+        let mut expected_start = 0usize;
+        for run in &plan.runs {
+            assert_eq!(run.start_row, expected_start);
+            assert!(run.row_count > 0);
+            expected_start += run.row_count;
+        }
+        assert_eq!(expected_start, recs.len());
+        Ok(())
     }
 
     #[test]
@@ -510,6 +721,11 @@ mod tests {
         assert_eq!(
             transitions, 1,
             "two clusters must form two contiguous runs, got {labels:?}"
+        );
+        assert_eq!(
+            cluster_order_pca_ivf(&recs, 0),
+            Some(order),
+            "identical input must produce an identical persisted order"
         );
         // Small batch → bootstrap fallback, still a permutation.
         let small: Vec<ProximaRecord> = recs.iter().take(4).cloned().collect();

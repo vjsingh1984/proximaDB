@@ -77,6 +77,73 @@ pub enum FrontendError {
     Type(String),
 }
 
+/// Machine-readable reason a query shape could not be lowered to a native
+/// `LogicalNode`. `node` is the declining construct class (a coarse label used
+/// to group declines in the ADR-064 query trace); `why` is the specific,
+/// human-readable limitation (the error's `Display`).
+///
+/// Produced by [`FrontendError::decline`]. Structuring the existing error
+/// message (rather than surfacing a flat string, or dropping it entirely) lets
+/// `EXPLAIN` disclose the *real* reason a query declined instead of the pgwire
+/// path re-guessing it from the raw SQL text (ADR-064 Decision 3 / TD-TRACE-1).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct LoweringDecline {
+    /// Coarse construct class of the decline (`subquery`, `having`, `join`,
+    /// `cte`, `group_by`, `distinct`, `window`, `table`, `column`, `literal`,
+    /// `type`, `statement`, `parse`, or `unsupported`).
+    pub node: String,
+    /// The specific limitation — the error's `Display` string.
+    pub why: String,
+}
+
+impl FrontendError {
+    /// Structured `{node, why}` view of this error for the ADR-064 query trace /
+    /// `EXPLAIN` surface. `why` is the `Display` string this error already
+    /// carries; `node` is a coarse construct class (see
+    /// [`classify_unsupported`] for the `Unsupported` case). Cheap: one small
+    /// static label plus the already-owned message.
+    pub fn decline(&self) -> LoweringDecline {
+        let node = match self {
+            FrontendError::Parse(_) => "parse",
+            FrontendError::TableNotFound(_) => "table",
+            FrontendError::ColumnNotFound(_) | FrontendError::AmbiguousColumn(_) => "column",
+            FrontendError::Unsupported(msg) => classify_unsupported(msg),
+            FrontendError::InvalidLiteral(_) => "literal",
+            FrontendError::StatementCount(_) => "statement",
+            FrontendError::Type(_) => "type",
+        };
+        LoweringDecline {
+            node: node.to_string(),
+            why: self.to_string(),
+        }
+    }
+}
+
+/// Classify an `Unsupported` feature message into a coarse construct class for
+/// the query trace. Substring match over the stable message literals this crate
+/// emits (e.g. `"correlated scalar subquery"`, `"HAVING with aggregate calls"`,
+/// `"EXISTS / IN subquery in expression position"`). Best-effort labelling —
+/// the authoritative reason is always the full `why` string, never the label.
+fn classify_unsupported(msg: &str) -> &'static str {
+    if msg.contains("subquery") || msg.contains("EXISTS") || msg.contains("IN subquery") {
+        "subquery"
+    } else if msg.contains("HAVING") {
+        "having"
+    } else if msg.contains("JOIN") || msg.contains("join") {
+        "join"
+    } else if msg.contains("CTE") || msg.contains("WITH") {
+        "cte"
+    } else if msg.contains("GROUP BY") {
+        "group_by"
+    } else if msg.contains("DISTINCT") {
+        "distinct"
+    } else if msg.contains("window") || msg.contains("WINDOW") {
+        "window"
+    } else {
+        "unsupported"
+    }
+}
+
 // =========================================================================
 // Catalog lookup trait
 // =========================================================================
@@ -255,22 +322,7 @@ fn lower_select(
     if select.from.is_empty() {
         return Err(FrontendError::Unsupported("SELECT without FROM".into()));
     }
-    // Comma-separated FROM is an implicit cross join: `FROM a, b, c` becomes
-    // a left-deep chain of CROSS joins, with the equality predicates in WHERE
-    // acting as the join conditions (the optimizer rewrites Cross+Filter into
-    // hash joins). This is the classic ANSI/TPC-H join spelling.
-    let (mut plan, mut scope) = lower_table_with_joins(&select.from[0], catalog)?;
-    for twj in &select.from[1..] {
-        let (right, right_scope) = lower_table_with_joins(twj, catalog)?;
-        scope = scope.concat(&right_scope);
-        plan = LogicalNode::Join {
-            left: Box::new(plan),
-            right: Box::new(right),
-            kind: JoinKind::Cross,
-            on: None,
-            strategy: JoinStrategy::Auto,
-        };
-    }
+    let (mut plan, mut scope) = lower_from(&select.from, select.selection.as_ref(), catalog)?;
 
     // 2) WHERE — lift uncorrelated IN / EXISTS / NOT EXISTS subqueries that appear
     //    as top-level AND-conjuncts into Semi/Anti joins; the remaining conjuncts
@@ -358,31 +410,72 @@ fn lower_select(
             })
             .collect::<Result<_, _>>()?;
         // 4b) Project + aggregate extraction.
-        let (post_agg_outputs, aggregates) =
+        let (post_agg_outputs, mut aggregates) =
             lower_projection_with_aggregates(&select.projection, &scope, &group_by)?;
-        // 4c) HAVING — for MVP we only support HAVING
-        //     expressions that reference group_by columns. Bare
-        //     aggregates inside HAVING are Phase 3 (would need a
-        //     unified aggregate-extraction pass over both
-        //     projection AND HAVING).
-        let having = match &select.having {
-            Some(expr) if expr_contains_aggregate(expr) => {
-                return Err(FrontendError::Unsupported(
-                    "HAVING with aggregate calls (use a sub-select for now)".into(),
-                ));
+        // 4c) HAVING.
+        //   - Plain HAVING over group keys keeps the cheap `Aggregate.having` path.
+        //   - A HAVING that references an AGGREGATE and/or a scalar SUBQUERY
+        //     (TPC-H Q11: `having sum(x) > (select sum(x)*k from …)`) is lowered as
+        //     a POST-AGGREGATE Filter: its aggregates are extracted INTO the
+        //     Aggregate (`lower_having`), any scalar subquery is hoisted as a
+        //     `LEFT JOIN ON TRUE` above it, and the predicate — over the combined
+        //     [group keys | aggregates | hoisted] schema — becomes a Filter. The
+        //     Project outputs are unaffected (they index the group-key + projection
+        //     aggregate slots, which keep their ordinals).
+        match &select.having {
+            Some(expr) if expr_contains_aggregate(expr) || expr_contains_subquery(expr) => {
+                let group_count = group_by.len();
+                // Reserve the HAVING aggregate slots ahead of any hoisted scalar
+                // column so their ordinals never collide.
+                let base_width = group_count + aggregates.len() + count_aggregates(expr);
+                let mut ctx = LoweringCtx::new(catalog, base_width);
+                let having_expr = lower_having(
+                    expr,
+                    &scope,
+                    &group_by,
+                    group_count,
+                    &mut aggregates,
+                    &mut ctx,
+                )?;
+                plan = LogicalNode::Aggregate {
+                    input: Box::new(plan),
+                    group_by,
+                    aggregates,
+                    having: None,
+                };
+                for hoisted in ctx.hoisted.drain(..) {
+                    plan = LogicalNode::Join {
+                        left: Box::new(plan),
+                        right: Box::new(hoisted.plan),
+                        kind: JoinKind::Left,
+                        on: hoisted.on,
+                        strategy: JoinStrategy::Auto,
+                    };
+                }
+                plan = LogicalNode::Filter {
+                    input: Box::new(plan),
+                    predicate: having_expr,
+                };
             }
             Some(expr) => {
                 let post_agg_scope = post_aggregate_scope(&group_by, &aggregates);
-                Some(lower_expr_sealed(expr, &post_agg_scope)?)
+                let having = Some(lower_expr_sealed(expr, &post_agg_scope)?);
+                plan = LogicalNode::Aggregate {
+                    input: Box::new(plan),
+                    group_by,
+                    aggregates,
+                    having,
+                };
             }
-            None => None,
-        };
-        plan = LogicalNode::Aggregate {
-            input: Box::new(plan),
-            group_by,
-            aggregates,
-            having,
-        };
+            None => {
+                plan = LogicalNode::Aggregate {
+                    input: Box::new(plan),
+                    group_by,
+                    aggregates,
+                    having: None,
+                };
+            }
+        }
         plan = LogicalNode::Project {
             input: Box::new(plan),
             outputs: post_agg_outputs,
@@ -459,6 +552,109 @@ fn flatten_sql_and(expr: &SqlExpr) -> Vec<&SqlExpr> {
     let mut out = Vec::new();
     rec(expr, &mut out);
     out
+}
+
+/// A column reference split into an optional table/alias qualifier and the bare
+/// column name (`n1.n_nationkey` → `(Some("n1"), "n_nationkey")`).
+type ColIdent = (Option<String>, String);
+
+/// Order comma-separated FROM entries so the left-deep CROSS chain has an
+/// equi-join key at every level. Greedy connectivity walk over the equi-graph
+/// derived from the WHERE clause: start from the first entry and always append
+/// the lowest-index remaining entry that shares an equi-key with an
+/// already-placed entry — so a FROM order that is already fully connected is
+/// reproduced unchanged. Returns the identity order when there are fewer than
+/// three entries, no WHERE clause, or a disconnected component remains (a
+/// genuine cross product). Reordering only ever helps: inner joins commute and
+/// column refs resolve by name, so a correct result never changes.
+fn comma_join_order(scopes: &[&Scope], where_clause: Option<&SqlExpr>) -> Vec<usize> {
+    let n = scopes.len();
+    if n < 3 {
+        return (0..n).collect();
+    }
+    let Some(where_expr) = where_clause else {
+        return (0..n).collect();
+    };
+    let mut adj = vec![vec![false; n]; n];
+    for conj in flatten_sql_and(where_expr) {
+        if let Some((a, b)) = equi_column_pair(conj)
+            && let (Some(i), Some(j)) = (entry_of_column(&a, scopes), entry_of_column(&b, scopes))
+            && i != j
+        {
+            adj[i][j] = true;
+            adj[j][i] = true;
+        }
+    }
+    let mut placed = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    placed[0] = true;
+    order.push(0);
+    while order.len() < n {
+        // Lowest-index unplaced entry connected to any placed entry; if the
+        // graph is disconnected, fall back to the lowest-index unplaced entry
+        // (that component genuinely cross-joins — same as before).
+        let next = (0..n)
+            .find(|&j| !placed[j] && (0..n).any(|i| placed[i] && adj[i][j]))
+            .or_else(|| (0..n).find(|&j| !placed[j]));
+        let pick = next.expect("order.len() < n implies an unplaced entry");
+        placed[pick] = true;
+        order.push(pick);
+    }
+    order
+}
+
+/// If `expr` is `col = col` between two column identifiers, return both parts.
+fn equi_column_pair(expr: &SqlExpr) -> Option<(ColIdent, ColIdent)> {
+    let SqlExpr::BinaryOp {
+        left,
+        op: BinaryOperator::Eq,
+        right,
+    } = expr
+    else {
+        return None;
+    };
+    Some((column_ident(left)?, column_ident(right)?))
+}
+
+/// A bare or qualified column identifier as `(table?, column)`; `None` for any
+/// non-identifier expression (literals, arithmetic, function calls).
+fn column_ident(expr: &SqlExpr) -> Option<ColIdent> {
+    match expr {
+        SqlExpr::Identifier(id) => Some((None, id.value.clone())),
+        SqlExpr::CompoundIdentifier(parts) if parts.len() >= 2 => Some((
+            Some(parts[parts.len() - 2].value.clone()),
+            parts[parts.len() - 1].value.clone(),
+        )),
+        SqlExpr::Nested(inner) => column_ident(inner),
+        _ => None,
+    }
+}
+
+/// Which FROM entry (index into `scopes`) owns a column identifier — qualified
+/// by table/alias match, unqualified by *unique* column-name ownership. `None`
+/// when the column resolves to no entry or is ambiguous across entries (the
+/// connectivity edge is simply dropped — conservative, never incorrect).
+fn entry_of_column(ident: &ColIdent, scopes: &[&Scope]) -> Option<usize> {
+    let (table, col) = ident;
+    match table {
+        Some(t) => scopes.iter().position(|s| {
+            s.columns
+                .iter()
+                .any(|c| &c.table == t && &c.column.name == col)
+        }),
+        None => {
+            let mut found = None;
+            for (i, s) in scopes.iter().enumerate() {
+                if s.columns.iter().any(|c| &c.column.name == col) {
+                    if found.is_some() {
+                        return None; // ambiguous across entries — drop the edge
+                    }
+                    found = Some(i);
+                }
+            }
+            found
+        }
+    }
 }
 
 /// If `conj` is a liftable subquery predicate, lower it to the parts of a Semi/Anti
@@ -763,6 +959,57 @@ fn projection_alias_for_expr(e: &SqlExpr) -> Option<String> {
 // =========================================================================
 // FROM clause + joins
 // =========================================================================
+
+/// Lower a FROM clause (one entry, explicit joins, or comma-separated) into a
+/// plan + combined scope. Comma-separated FROM is an implicit cross join:
+/// `FROM a, b, c` becomes a left-deep chain of CROSS joins, with the equality
+/// predicates in WHERE acting as the join conditions (the optimizer rewrites
+/// Cross+Filter into hash joins). This is the classic ANSI/TPC-H join spelling.
+///
+/// Lower every top-level entry once, then ORDER the comma entries by equi-join
+/// connectivity (`comma_join_order`, using `where_clause`) before building the
+/// chain: a FROM-order accident (a pair with no direct equi-key placed adjacent —
+/// e.g. `part, supplier`, joined only transitively through `lineitem` in TPC-H
+/// Q9) would otherwise leave a raw cross product that the native route declines.
+/// Comma/inner joins commute and column refs resolve by name against the
+/// reordered scope, so this preserves semantics; it is a no-op when the FROM
+/// order is already fully connected or when connectivity can't be resolved.
+///
+/// Shared by `lower_select` and the correlated-scalar-subquery decorrelator
+/// (TD-REL-LOWER-5), so a correlated subquery may have a multi-table body.
+/// `from` must be non-empty (callers check).
+fn lower_from(
+    from: &[sqlparser::ast::TableWithJoins],
+    where_clause: Option<&SqlExpr>,
+    catalog: &dyn CatalogLookup,
+) -> Result<(LogicalNode, Scope), FrontendError> {
+    let lowered = from
+        .iter()
+        .map(|twj| lower_table_with_joins(twj, catalog))
+        .collect::<Result<Vec<_>, _>>()?;
+    let order = comma_join_order(
+        &lowered.iter().map(|(_, s)| s).collect::<Vec<_>>(),
+        where_clause,
+    );
+    let mut lowered: Vec<Option<(LogicalNode, Scope)>> = lowered.into_iter().map(Some).collect();
+    let mut order_iter = order.into_iter();
+    let first = order_iter
+        .next()
+        .expect("FROM is non-empty (callers check)");
+    let (mut plan, mut scope) = lowered[first].take().expect("each index taken once");
+    for idx in order_iter {
+        let (right, right_scope) = lowered[idx].take().expect("each index taken once");
+        scope = scope.concat(&right_scope);
+        plan = LogicalNode::Join {
+            left: Box::new(plan),
+            right: Box::new(right),
+            kind: JoinKind::Cross,
+            on: None,
+            strategy: JoinStrategy::Auto,
+        };
+    }
+    Ok((plan, scope))
+}
 
 fn lower_table_with_joins(
     twj: &sqlparser::ast::TableWithJoins,
@@ -1075,9 +1322,14 @@ fn lower_correlated_scalar_aggregate(
     let SetExpr::Select(select) = q.body.as_ref() else {
         return Err(unsupported());
     };
-    if select.from.len() != 1 || !select.from[0].joins.is_empty() {
+    if select.from.is_empty() {
         return Err(unsupported());
     }
+    // The subquery body may be MULTI-TABLE (TPC-H Q2: `min(ps_supplycost) from
+    // partsupp, supplier, nation, region where …`). It lowers exactly like the
+    // main FROM — a connectivity-ordered cross chain the planner equi-fies — via
+    // the shared `lower_from`. The single correlation equi is still split out
+    // below; inner join conditions and inner-local filters fold into the Filter.
     let has_group_by = match &select.group_by {
         GroupByExpr::All(_) => true,
         GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
@@ -1092,28 +1344,29 @@ fn lower_correlated_scalar_aggregate(
     let [item] = select.projection.as_slice() else {
         return Err(unsupported());
     };
-    let (agg_sql, alias) = match item {
+    let (proj_sql, alias) = match item {
         SelectItem::UnnamedExpr(e) => (e, None),
         SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.clone())),
         _ => return Err(unsupported()),
     };
-    let SqlExpr::Function(f) = agg_sql else {
-        return Err(unsupported());
-    };
-    if !is_aggregate_function_name(&f.name) {
-        return Err(unsupported());
-    }
-    let (inner_plan, inner_scope) = lower_table_factor(&select.from[0].relation, catalog)?;
+    // The projection is a single aggregate, optionally wrapped in scalar
+    // arithmetic over constants / outer columns (e.g. `0.2 * avg(x)` in TPC-H
+    // Q17, `sum(x)/7.0`). Decorrelate the one aggregate as usual; the wrapper is
+    // re-applied to its post-join value column at the end (`build_scalar_over_agg`).
+    let f = single_aggregate_call(proj_sql).ok_or_else(unsupported)?;
+    let (inner_plan, inner_scope) = lower_from(&select.from, Some(where_expr), catalog)?;
     let agg = lower_aggregate_call(f, &inner_scope)?;
     // The count-bug: COUNT over an empty correlated group must be 0, but the
     // LEFT JOIN + GROUP BY rewrite yields NULL. Decline COUNT.
     if matches!(agg, AggregateExpr::Count { .. }) {
         return Err(unsupported());
     }
-    // Split WHERE: inner-local predicates → Filter; exactly one correlation equi
-    // `inner_col = outer_col` → the GROUP BY key / join key.
+    // Split WHERE: inner-local predicates → Filter; correlation equis
+    // `inner_col = outer_col` → the GROUP BY keys / join keys. N keys are supported
+    // (TPC-H Q20's inner scalar correlates on TWO keys: `l_partkey = ps_partkey AND
+    // l_suppkey = ps_suppkey`).
     let mut inner_local: Option<Expr> = None;
-    let mut group_key: Option<(ColumnRef, ColumnRef)> = None; // (inner_key, outer_key)
+    let mut group_keys: Vec<(ColumnRef, ColumnRef)> = Vec::new(); // (inner_key, outer_key)
     for conj in flatten_sql_and(where_expr) {
         if let Ok(local) = lower_expr_sealed(conj, &inner_scope) {
             inner_local = Some(match inner_local {
@@ -1132,15 +1385,16 @@ fn lower_correlated_scalar_aggregate(
         else {
             return Err(unsupported());
         };
-        let pair = resolve_correlation_pair(left, right, &inner_scope, outer_scope)?;
-        if group_key.is_some() {
-            return Err(unsupported()); // single correlation key only (MVP)
-        }
-        group_key = Some(pair);
+        group_keys.push(resolve_correlation_pair(
+            left,
+            right,
+            &inner_scope,
+            outer_scope,
+        )?);
     }
-    let Some((inner_key, outer_key)) = group_key else {
-        return Err(unsupported());
-    };
+    if group_keys.is_empty() {
+        return Err(unsupported()); // not correlated → not this path
+    }
     let inner = match inner_local {
         Some(predicate) => LogicalNode::Filter {
             input: Box::new(inner_plan),
@@ -1148,42 +1402,114 @@ fn lower_correlated_scalar_aggregate(
         },
         None => inner_plan,
     };
-    // GROUP BY the inner correlation key; the aggregate is the scalar value. The
-    // aggregate output schema is [group_key, agg_value].
+    // GROUP BY every inner correlation key; the aggregate is the scalar value. The
+    // aggregate output schema is [group_key_0 .. group_key_{n-1}, agg_value].
     let agg_name = alias.unwrap_or_else(|| f.name.to_string().to_lowercase());
     let plan = LogicalNode::Aggregate {
         input: Box::new(inner),
-        group_by: vec![NamedExpr {
-            name: inner_key.name.clone(),
-            expr: Expr::column(inner_key.clone()),
-        }],
+        group_by: group_keys
+            .iter()
+            .map(|(inner_key, _)| NamedExpr {
+                name: inner_key.name.clone(),
+                expr: Expr::column(inner_key.clone()),
+            })
+            .collect(),
         aggregates: vec![NamedAggregate {
             name: agg_name.clone(),
             agg: agg.clone(),
         }],
         having: None,
     };
-    // In the combined row after the LEFT JOIN, the group key sits at `base` and the
-    // aggregate value at `base + 1` (group keys precede aggregate slots).
+    // In the combined row after the LEFT JOIN, the N group keys sit at `base .. base+n`
+    // and the aggregate value at `base + n` (group keys precede the aggregate slot).
+    // The join ON is the conjunction of every `outer_key_i = inner_key_i` pair.
     let base = ctx.next_ordinal();
-    let on = Expr::bin(
-        BinaryOp::Eq,
-        Expr::column(outer_key),
-        Expr::column(ColumnRef {
-            name: inner_key.name.clone(),
-            ordinal: base,
-            ty: inner_key.ty.clone(),
-            nullable: true,
-        }),
-    );
+    let on = group_keys
+        .iter()
+        .enumerate()
+        .map(|(i, (inner_key, outer_key))| {
+            Expr::bin(
+                BinaryOp::Eq,
+                Expr::column(outer_key.clone()),
+                Expr::column(ColumnRef {
+                    name: inner_key.name.clone(),
+                    ordinal: base + i,
+                    ty: inner_key.ty.clone(),
+                    nullable: true,
+                }),
+            )
+        })
+        .reduce(|acc, e| Expr::bin(BinaryOp::And, acc, e))
+        .expect("group_keys is non-empty (checked above)");
     let value_ty = agg.result_type();
     ctx.hoisted.push(HoistedSub { plan, on: Some(on) });
-    Ok(Expr::column(ColumnRef {
+    let agg_col = Expr::column(ColumnRef {
         name: agg_name,
-        ordinal: base + 1,
+        ordinal: base + group_keys.len(),
         ty: value_ty,
         nullable: true,
-    }))
+    });
+    // Re-apply the scalar arithmetic that wrapped the aggregate (a no-op when the
+    // projection was a bare aggregate), with the aggregate replaced by its
+    // post-join value column. Non-aggregate leaves (literals, outer columns)
+    // resolve against the outer scope — valid because the LEFT JOIN places the
+    // outer columns first, so their ordinals are unchanged in the combined row.
+    build_scalar_over_agg(proj_sql, &agg_col, outer_scope)
+}
+
+/// The single aggregate call inside a scalar-subquery projection, which may be
+/// wrapped in scalar arithmetic (`0.2 * avg(x)`, `sum(x) / 7.0`). Returns `None`
+/// when the projection has zero or more than one aggregate (the correlated
+/// scalar-aggregate decorrelation handles exactly one).
+fn single_aggregate_call(sql: &SqlExpr) -> Option<&sqlparser::ast::Function> {
+    fn collect<'a>(sql: &'a SqlExpr, out: &mut Vec<&'a sqlparser::ast::Function>) {
+        match sql {
+            SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => out.push(f),
+            SqlExpr::BinaryOp { left, right, .. } => {
+                collect(left, out);
+                collect(right, out);
+            }
+            SqlExpr::UnaryOp { expr, .. } => collect(expr, out),
+            SqlExpr::Nested(e) => collect(e, out),
+            _ => {}
+        }
+    }
+    let mut v = Vec::new();
+    collect(sql, &mut v);
+    (v.len() == 1).then(|| v[0])
+}
+
+/// Rebuild the scalar arithmetic that wrapped a correlated scalar aggregate,
+/// substituting the (single) aggregate call with `agg_col` — the decorrelated
+/// aggregate's post-join value column. Arithmetic-spine nodes recurse; any other
+/// leaf (a literal or an outer column) lowers against `outer_scope`. There is
+/// exactly one aggregate (guaranteed by [`single_aggregate_call`]), so matching
+/// any aggregate function here yields `agg_col`.
+fn build_scalar_over_agg(
+    sql: &SqlExpr,
+    agg_col: &Expr,
+    outer_scope: &Scope,
+) -> Result<Expr, FrontendError> {
+    match sql {
+        SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => Ok(agg_col.clone()),
+        SqlExpr::BinaryOp { left, op, right } => Ok(Expr::bin(
+            lower_binary_op(op)?,
+            build_scalar_over_agg(left, agg_col, outer_scope)?,
+            build_scalar_over_agg(right, agg_col, outer_scope)?,
+        )),
+        SqlExpr::UnaryOp { op, expr } => {
+            let inner = build_scalar_over_agg(expr, agg_col, outer_scope)?;
+            match lower_unary_op(op)? {
+                Some(u) => Ok(Expr::UnaryOp {
+                    op: u,
+                    expr: Box::new(inner),
+                }),
+                None => Ok(inner),
+            }
+        }
+        SqlExpr::Nested(e) => build_scalar_over_agg(e, agg_col, outer_scope),
+        other => lower_expr_sealed(other, outer_scope),
+    }
 }
 
 /// Resolve a correlation equality's two operands into `(inner_key, outer_key)`
@@ -1609,6 +1935,28 @@ fn lower_projection_with_aggregates(
                     }),
                 });
             }
+            // Aggregate(s) nested inside an arithmetic projection expression
+            // (`sum(x)/sum(y)`, `100.0*sum(case…)/sum(y)` — the ratio /
+            // market-share shapes, TPC-H Q8/Q14). Hoist each nested aggregate to
+            // its own Aggregate slot and rebuild the surrounding expression as a
+            // post-aggregate Project expression. (A *bare* top-level aggregate is
+            // handled by the arm above; this is the "Phase 3" nested case.)
+            _ if expr_contains_aggregate(&sql_expr) => {
+                let name = alias
+                    .or_else(|| projection_alias_for_expr(&sql_expr))
+                    .unwrap_or_else(|| auto_column_name(outputs.len()));
+                let output_expr = lower_agg_projection_expr(
+                    &sql_expr,
+                    scope,
+                    group_by,
+                    group_count,
+                    &mut aggregates,
+                )?;
+                outputs.push(NamedExpr {
+                    name,
+                    expr: output_expr,
+                });
+            }
             _ => {
                 // Aggregate-path projection: scalar subqueries here would need to
                 // hoist a join under the Aggregate, which is out of scope for MVP
@@ -1626,8 +1974,18 @@ fn lower_projection_with_aggregates(
                 // isn't the table's first column.
                 let ty = expr.result_type();
                 let output_expr = match group_by.iter().position(|g| g.expr == expr) {
+                    // Reference the group-key slot by the AGGREGATE OUTPUT's
+                    // declared name (the group-by key's name), NOT the projection
+                    // ALIAS. The alias belongs only on the enclosing `NamedExpr`
+                    // (the Project renames the column); the inner `ColumnRef` must
+                    // name the slot it indexes so name-based rebind in
+                    // `push_projections` resolves it. With the alias on the inner
+                    // ref, `SELECT g AS a … ORDER BY a` produced a `ColumnRef`
+                    // named `a` over an Aggregate output named `g`, and the
+                    // planner rebind failed (`column 'a' not in narrowed schema`,
+                    // TD-REL-LOWER-3 q3/q52).
                     Some(slot) => Expr::column(ColumnRef {
-                        name: name.clone(),
+                        name: group_by[slot].name.clone(),
                         ordinal: slot,
                         ty,
                         nullable: true,
@@ -1644,8 +2002,287 @@ fn lower_projection_with_aggregates(
     Ok((outputs, aggregates))
 }
 
+/// Lower a projection expression that CONTAINS one or more aggregate calls nested
+/// inside arithmetic (the "aggregate ratio / market-share" shapes — TPC-H Q8
+/// `sum(case…)/sum(vol)`, Q14 `100.0*sum(case…)/sum(…)`). Each nested aggregate is
+/// extracted into its own Aggregate slot (appended to `aggregates`) and replaced
+/// by a `ColumnRef` to that slot; a sub-expression with no aggregate is lowered
+/// directly (a scalar over group keys / literals) with its group-key column refs
+/// remapped to the post-aggregate group slots. The result is an expression over
+/// the post-aggregate schema, suitable as a `Project` output above the `Aggregate`.
+///
+/// Handles the arithmetic spine (`BinaryOp` / `UnaryOp` / parentheses) that carries
+/// the aggregates. An aggregate nested inside a shape not covered here (CASE/CAST/
+/// scalar-function at the projection top level) still declines to legacy, exactly
+/// as before — no regression, just not yet newly supported.
+fn lower_agg_projection_expr(
+    sql: &SqlExpr,
+    scope: &Scope,
+    group_by: &[NamedExpr],
+    group_count: usize,
+    aggregates: &mut Vec<NamedAggregate>,
+) -> Result<Expr, FrontendError> {
+    // A subtree with no aggregate is a scalar over group keys / literals: lower it
+    // as-is, then point any group-key column at its post-aggregate slot (group keys
+    // occupy ordinals 0..group_count ahead of the aggregate slots).
+    if !expr_contains_aggregate(sql) {
+        let lowered = lower_expr_sealed(sql, scope)?;
+        return Ok(remap_group_key_refs(lowered, group_by));
+    }
+    match sql {
+        SqlExpr::Nested(inner) => {
+            lower_agg_projection_expr(inner, scope, group_by, group_count, aggregates)
+        }
+        SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => {
+            let agg = lower_aggregate_call(f, scope)?;
+            let slot = group_count + aggregates.len();
+            let ty = agg.result_type();
+            // Internal, unique slot name so the post-aggregate scope and the
+            // planner's name-based projection-pushdown rebind stay consistent
+            // (`ColumnRef.name` must equal the Aggregate output slot's name).
+            let name = format!("__agg_{slot}");
+            aggregates.push(NamedAggregate {
+                name: name.clone(),
+                agg,
+            });
+            Ok(Expr::column(ColumnRef {
+                name,
+                ordinal: slot,
+                ty,
+                nullable: true,
+            }))
+        }
+        SqlExpr::BinaryOp { left, op, right } => {
+            let l = lower_agg_projection_expr(left, scope, group_by, group_count, aggregates)?;
+            let r = lower_agg_projection_expr(right, scope, group_by, group_count, aggregates)?;
+            Ok(Expr::BinaryOp {
+                op: lower_binary_op(op)?,
+                left: Box::new(l),
+                right: Box::new(r),
+            })
+        }
+        SqlExpr::UnaryOp { op, expr } => {
+            let inner = lower_agg_projection_expr(expr, scope, group_by, group_count, aggregates)?;
+            match lower_unary_op(op)? {
+                Some(u) => Ok(Expr::UnaryOp {
+                    op: u,
+                    expr: Box::new(inner),
+                }),
+                None => Ok(inner), // unary plus is identity
+            }
+        }
+        _ => Err(FrontendError::Unsupported(
+            "aggregate nested inside an unsupported projection expression".into(),
+        )),
+    }
+}
+
+/// Count the aggregate function calls in an expression, over the SAME shapes
+/// [`lower_having`] extracts (arithmetic spine + bare aggregate; NOT descending
+/// into subqueries — their inner aggregates are separate). Used to RESERVE the
+/// HAVING aggregate slot space ahead of any hoisted scalar-subquery column, so a
+/// subquery hoisted before a later-extracted aggregate never collides with it.
+fn count_aggregates(sql: &SqlExpr) -> usize {
+    match sql {
+        SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => 1,
+        SqlExpr::Nested(inner) | SqlExpr::UnaryOp { expr: inner, .. } => count_aggregates(inner),
+        SqlExpr::BinaryOp { left, right, .. } => count_aggregates(left) + count_aggregates(right),
+        _ => 0,
+    }
+}
+
+/// True if an expression carries a subquery (scalar `(SELECT …)`, `EXISTS`, or
+/// `IN (SELECT …)`) in its arithmetic/boolean spine — gates the HAVING lowering
+/// onto the post-aggregate `Filter` path.
+fn expr_contains_subquery(sql: &SqlExpr) -> bool {
+    match sql {
+        SqlExpr::Subquery(_) | SqlExpr::Exists { .. } | SqlExpr::InSubquery { .. } => true,
+        SqlExpr::Nested(e) | SqlExpr::UnaryOp { expr: e, .. } => expr_contains_subquery(e),
+        SqlExpr::BinaryOp { left, right, .. } => {
+            expr_contains_subquery(left) || expr_contains_subquery(right)
+        }
+        _ => false,
+    }
+}
+
+/// Lower a HAVING predicate that may reference aggregate calls and/or an
+/// (uncorrelated) scalar subquery — TPC-H Q11:
+/// `HAVING sum(x) > (SELECT sum(x)*k FROM …)`. Mirrors [`lower_agg_projection_expr`]'s
+/// extraction over the arithmetic/boolean spine, but ALSO hoists scalar subqueries:
+/// - an aggregate call is extracted into `aggregates` (post-aggregate slot,
+///   `__agg_<slot>`) and replaced by a `ColumnRef` to that slot;
+/// - a scalar subquery is lowered + hoisted onto `ctx` (a `LEFT JOIN ON TRUE`
+///   above the Aggregate, via the shared [`lower_scalar_subquery`]) and replaced by
+///   a `ColumnRef` to the hoisted column;
+/// - an aggregate-free / subquery-free leaf is a scalar over group keys / literals
+///   (`lower_expr_sealed` + [`remap_group_key_refs`]).
+///
+/// The result is a boolean expression over the combined
+/// `[group keys | aggregates | hoisted scalars]` schema, applied as a
+/// post-aggregate `Filter`. The caller RESERVES the aggregate slot space
+/// (`ctx.base_width = group_count + aggregates.len() + count_aggregates(having)`)
+/// so hoisted-scalar ordinals never overlap a later-extracted aggregate slot.
+fn lower_having(
+    sql: &SqlExpr,
+    scope: &Scope,
+    group_by: &[NamedExpr],
+    group_count: usize,
+    aggregates: &mut Vec<NamedAggregate>,
+    ctx: &mut LoweringCtx,
+) -> Result<Expr, FrontendError> {
+    match sql {
+        SqlExpr::Nested(inner) => {
+            lower_having(inner, scope, group_by, group_count, aggregates, ctx)
+        }
+        // Uncorrelated → hoisted `LEFT JOIN ON TRUE` over `AssertMaxOneRow`;
+        // correlated → decorrelated. Reuses the shared scalar-subquery helper.
+        SqlExpr::Subquery(q) => lower_scalar_subquery(q, scope, ctx),
+        SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => {
+            let agg = lower_aggregate_call(f, scope)?;
+            let slot = group_count + aggregates.len();
+            let ty = agg.result_type();
+            let name = format!("__agg_{slot}");
+            aggregates.push(NamedAggregate {
+                name: name.clone(),
+                agg,
+            });
+            Ok(Expr::column(ColumnRef {
+                name,
+                ordinal: slot,
+                ty,
+                nullable: true,
+            }))
+        }
+        SqlExpr::BinaryOp { left, op, right } => {
+            let l = lower_having(left, scope, group_by, group_count, aggregates, ctx)?;
+            let r = lower_having(right, scope, group_by, group_count, aggregates, ctx)?;
+            Ok(Expr::BinaryOp {
+                op: lower_binary_op(op)?,
+                left: Box::new(l),
+                right: Box::new(r),
+            })
+        }
+        SqlExpr::UnaryOp { op, expr } => {
+            let inner = lower_having(expr, scope, group_by, group_count, aggregates, ctx)?;
+            match lower_unary_op(op)? {
+                Some(u) => Ok(Expr::UnaryOp {
+                    op: u,
+                    expr: Box::new(inner),
+                }),
+                None => Ok(inner),
+            }
+        }
+        // A subtree with neither aggregate nor subquery: a scalar over group keys /
+        // literals — lower directly, remapping group-key refs to their post-agg slot.
+        _ => {
+            let lowered = lower_expr_sealed(sql, scope)?;
+            Ok(remap_group_key_refs(lowered, group_by))
+        }
+    }
+}
+
+/// Remap every `Expr::Column` in `expr` that references a GROUP BY key to that
+/// key's post-aggregate slot (`ordinal` = its position in `group_by`, `name` =
+/// the group-key's declared name). Non-group columns and literals pass through
+/// unchanged. Used for the aggregate-free sub-expressions of a nested-aggregate
+/// projection (e.g. the `yr` in `sum(vol) + yr`), so they index the Aggregate
+/// output rather than a stale pre-aggregate ordinal.
+fn remap_group_key_refs(expr: Expr, group_by: &[NamedExpr]) -> Expr {
+    match &expr {
+        Expr::Column(c) => {
+            if let Some(slot) = group_by.iter().position(|g| g.expr == expr) {
+                return Expr::column(ColumnRef {
+                    name: group_by[slot].name.clone(),
+                    ordinal: slot,
+                    ty: c.ty.clone(),
+                    nullable: c.nullable,
+                });
+            }
+            expr
+        }
+        _ => map_expr_children(expr, &mut |child| remap_group_key_refs(child, group_by)),
+    }
+}
+
+/// Structural map over an expression's immediate child expressions, rebuilding
+/// the node with each child passed through `f`. Leaves (Column/Literal) are
+/// returned unchanged. Keeps recursive rewrites (e.g. [`remap_group_key_refs`])
+/// from having to enumerate every operator variant at each call site.
+fn map_expr_children(expr: Expr, f: &mut dyn FnMut(Expr) -> Expr) -> Expr {
+    match expr {
+        Expr::Column(_) | Expr::Literal { .. } => expr,
+        Expr::Cast { expr, ty } => Expr::Cast {
+            expr: Box::new(f(*expr)),
+            ty,
+        },
+        Expr::BinaryOp { op, left, right } => Expr::BinaryOp {
+            op,
+            left: Box::new(f(*left)),
+            right: Box::new(f(*right)),
+        },
+        Expr::UnaryOp { op, expr } => Expr::UnaryOp {
+            op,
+            expr: Box::new(f(*expr)),
+        },
+        Expr::IsNull { expr, not } => Expr::IsNull {
+            expr: Box::new(f(*expr)),
+            not,
+        },
+        Expr::Between {
+            expr,
+            low,
+            high,
+            not,
+        } => Expr::Between {
+            expr: Box::new(f(*expr)),
+            low: Box::new(f(*low)),
+            high: Box::new(f(*high)),
+            not,
+        },
+        Expr::In { expr, list, not } => Expr::In {
+            expr: Box::new(f(*expr)),
+            list: list.into_iter().map(&mut *f).collect(),
+            not,
+        },
+        Expr::Like {
+            expr,
+            pattern,
+            not,
+            case_insensitive,
+        } => Expr::Like {
+            expr: Box::new(f(*expr)),
+            pattern: Box::new(f(*pattern)),
+            not,
+            case_insensitive,
+        },
+        Expr::Case {
+            branches,
+            otherwise,
+        } => Expr::Case {
+            branches: branches.into_iter().map(|(w, t)| (f(w), f(t))).collect(),
+            otherwise: otherwise.map(|e| Box::new(f(*e))),
+        },
+        Expr::Coalesce(items) => Expr::Coalesce(items.into_iter().map(&mut *f).collect()),
+        Expr::NullIf { left, right } => Expr::NullIf {
+            left: Box::new(f(*left)),
+            right: Box::new(f(*right)),
+        },
+        Expr::FuncCall {
+            name,
+            args,
+            return_ty,
+        } => Expr::FuncCall {
+            name,
+            args: args.into_iter().map(&mut *f).collect(),
+            return_ty,
+        },
+    }
+}
+
 /// Build a [`Scope`] representing the columns visible AFTER an
 /// Aggregate node: group_by columns first (in declared order),
+/// followed by aggregate-result slots. Used to lower HAVING
+/// expressions over the post-aggregate schema.
 /// followed by aggregate-result slots. Used to lower HAVING
 /// expressions over the post-aggregate schema.
 fn post_aggregate_scope(group_by: &[NamedExpr], aggregates: &[NamedAggregate]) -> Scope {
@@ -2192,6 +2829,99 @@ mod tests {
         lower_sql(sql, &catalog()).unwrap_or_else(|e| panic!("lower failed: {e:?}"))
     }
 
+    #[test]
+    fn correlated_scalar_aggregate_allows_arithmetic_wrapper() {
+        // TD-REL-LOWER-8 (TPC-H Q17): a correlated scalar aggregate wrapped in
+        // scalar arithmetic (`0.5 * avg(total)`) must decorrelate — previously
+        // only a BARE aggregate lowered; the `k *` wrapper declined.
+        let wrapped = lower_sql(
+            "SELECT id FROM users WHERE age < \
+             (SELECT 0.5 * avg(total) FROM orders WHERE orders.uid = users.id)",
+            &catalog(),
+        );
+        assert!(
+            wrapped.is_ok(),
+            "wrapped correlated scalar agg must lower: {wrapped:?}"
+        );
+
+        // No regression: the bare form still lowers.
+        assert!(
+            lower_sql(
+                "SELECT id FROM users WHERE age < \
+                 (SELECT avg(total) FROM orders WHERE orders.uid = users.id)",
+                &catalog()
+            )
+            .is_ok()
+        );
+
+        // A non-aggregate scalar subquery projection is still not this path
+        // (declines or takes the uncorrelated path) — the wrapper must contain
+        // exactly one aggregate. `count` over an empty correlated group is still
+        // declined (NULL-vs-0 bug).
+        assert!(
+            lower_sql(
+                "SELECT id FROM users WHERE age < \
+                 (SELECT count(total) FROM orders WHERE orders.uid = users.id)",
+                &catalog()
+            )
+            .is_err(),
+            "correlated COUNT still declines (empty-group NULL-vs-0)"
+        );
+    }
+
+    fn parse_where(sql: &str) -> Option<SqlExpr> {
+        let stmts = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+        match &stmts[0] {
+            Statement::Query(q) => match &*q.body {
+                SetExpr::Select(s) => s.selection.clone(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn comma_join_order_places_hub_between_disconnected_tables() {
+        // TD-REL-LOWER-7 (Q9 shape): `a` and `b` share no direct equi-key; both
+        // join only to the hub. FROM order [a, b, hub] would cross-join a×b, so
+        // the reorder must move the hub between them → [a, hub, b], every
+        // adjacency sharing an equi-key.
+        let schema = |cols: &[&str]| {
+            RelationalSchema::new(
+                cols.iter()
+                    .map(|c| ColumnInfo::new(*c, ProximaType::Int64, true))
+                    .collect(),
+            )
+        };
+        let a = Scope::from_table("a", &schema(&["a_id", "a_href"]));
+        let b = Scope::from_table("b", &schema(&["b_id", "b_href"]));
+        let hub = Scope::from_table("hub", &schema(&["h_id", "h_val"]));
+
+        let scopes = [&a, &b, &hub];
+        let w = parse_where(
+            "SELECT 1 FROM a, b, hub WHERE a.a_href = hub.h_id AND b.b_href = hub.h_id",
+        );
+        assert_eq!(
+            comma_join_order(&scopes, w.as_ref()),
+            vec![0, 2, 1],
+            "hub moves between the two otherwise-disconnected tables"
+        );
+
+        // An already fully-connected FROM order is reproduced unchanged.
+        let scopes2 = [&a, &hub, &b];
+        let w2 = parse_where(
+            "SELECT 1 FROM a, hub, b WHERE a.a_href = hub.h_id AND b.b_href = hub.h_id",
+        );
+        assert_eq!(
+            comma_join_order(&scopes2, w2.as_ref()),
+            vec![0, 1, 2],
+            "already-connected order is a no-op"
+        );
+
+        // No WHERE ⇒ identity (nothing to connect on).
+        assert_eq!(comma_join_order(&scopes, None), vec![0, 1, 2]);
+    }
+
     /// A `DATE 'YYYY-MM-DD'` typed literal lowers to the canonical
     /// `ProximaValue::Date` (days since the Unix epoch) — the same encoding the
     /// write path stores — so `col < DATE '…'` compares correctly against a
@@ -2558,6 +3288,135 @@ mod tests {
     }
 
     #[test]
+    fn two_key_correlated_scalar_aggregate_groups_and_joins_on_both_keys() {
+        // TD-REL-LOWER-5 slice 3 (TPC-H Q20): a correlated scalar aggregate with TWO
+        // correlation keys (`orders.uid = users.id AND orders.oid = users.age`) →
+        // LEFT JOIN over `orders GROUP BY uid, oid` with the join ON = both key
+        // equalities ANDed. Previously declined at the single-key MVP guard. This is
+        // the root cause of Q20 (masked upstream as "IN in expression position").
+        let plan = lower(
+            "SELECT id FROM users WHERE age > \
+             (SELECT avg(total) FROM orders WHERE orders.uid = users.id AND orders.oid = users.age)",
+        );
+        let LogicalNode::Project { input, .. } = plan else {
+            panic!("expected Project");
+        };
+        let LogicalNode::Filter { input, .. } = *input else {
+            panic!("expected Filter over the LEFT JOIN, got {input:?}");
+        };
+        let LogicalNode::Join {
+            kind: JoinKind::Left,
+            on: Some(on),
+            right,
+            ..
+        } = *input
+        else {
+            panic!("expected LEFT JOIN over the decorrelated aggregate");
+        };
+        // The join ON conjoins BOTH key equalities.
+        assert!(
+            matches!(
+                on,
+                Expr::BinaryOp {
+                    op: BinaryOp::And,
+                    ..
+                }
+            ),
+            "2-key correlation joins on both keys ANDed, got {on:?}"
+        );
+        let LogicalNode::Aggregate { group_by, .. } = *right else {
+            panic!("join right must be the GROUP BY aggregate");
+        };
+        assert_eq!(group_by.len(), 2, "GROUP BY both inner correlation keys");
+    }
+
+    #[test]
+    fn multi_table_correlated_scalar_aggregate_lowers_to_left_join_over_grouped_inner_join() {
+        // TD-REL-LOWER-5 slice 1 (TPC-H Q2): a correlated scalar aggregate whose
+        // body is MULTI-TABLE — `min(cost) FROM ps, s WHERE ps_sk = sk AND
+        // ps_pk = p.pk` — decorrelates. The inner join conditions + inner-local
+        // filters fold into the inner Filter (the ONE correlation equi `ps_pk =
+        // pk` becomes the group/join key), so the aggregate groups the joined
+        // inner body. Previously declined at the single-table guard.
+        let mut c = InMemoryCatalog::new();
+        c.register(
+            "p",
+            RelationalSchema::new(vec![
+                ColumnInfo::new("pk", ProximaType::Int64, false),
+                ColumnInfo::new("budget", ProximaType::Float64, true),
+            ]),
+        );
+        c.register(
+            "ps",
+            RelationalSchema::new(vec![
+                ColumnInfo::new("ps_pk", ProximaType::Int64, false),
+                ColumnInfo::new("ps_sk", ProximaType::Int64, false),
+                ColumnInfo::new("cost", ProximaType::Float64, false),
+            ]),
+        );
+        c.register(
+            "s",
+            RelationalSchema::new(vec![ColumnInfo::new("sk", ProximaType::Int64, false)]),
+        );
+
+        let plan = lower_sql(
+            "SELECT pk FROM p WHERE budget = \
+             (SELECT min(cost) FROM ps, s WHERE ps_sk = sk AND ps_pk = pk)",
+            &c,
+        )
+        .expect("multi-table correlated scalar aggregate must lower");
+
+        // Project over Filter over `p LEFT JOIN Aggregate(...) ON p.pk = grp_key`.
+        let filter = under_project(plan);
+        let LogicalNode::Filter { input, .. } = filter else {
+            panic!("expected Filter, got {filter:?}");
+        };
+        let LogicalNode::Join {
+            kind: JoinKind::Left,
+            on: Some(Expr::BinaryOp {
+                op: BinaryOp::Eq, ..
+            }),
+            right,
+            ..
+        } = *input
+        else {
+            panic!("expected LEFT JOIN with equi ON over the decorrelated aggregate");
+        };
+        // The aggregate's input is the MULTI-TABLE inner body (a Join under the
+        // inner Filter) — the crux of this slice.
+        let LogicalNode::Aggregate {
+            input: agg_input,
+            group_by,
+            ..
+        } = *right
+        else {
+            panic!("right side must be the GROUP BY aggregate");
+        };
+        assert_eq!(group_by.len(), 1, "single correlation group key");
+        let inner_has_join = |mut node: &LogicalNode| loop {
+            match node {
+                LogicalNode::Filter { input, .. } => node = input,
+                LogicalNode::Join { .. } => break true,
+                _ => break false,
+            }
+        };
+        assert!(
+            inner_has_join(&agg_input),
+            "the decorrelated aggregate must group a multi-table (joined) inner body, got {agg_input:?}"
+        );
+
+        // No regression: the single-table body still lowers.
+        assert!(
+            lower_sql(
+                "SELECT id FROM users WHERE age < \
+                 (SELECT avg(total) FROM orders WHERE orders.uid = users.id)",
+                &catalog()
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
     fn correlated_scalar_count_declines_count_bug() {
         // COUNT over an empty correlated group must be 0, but the LEFT JOIN + GROUP
         // BY rewrite yields NULL — so correlated COUNT declines to legacy.
@@ -2885,6 +3744,100 @@ mod tests {
     }
 
     #[test]
+    fn having_with_aggregate_lowers_to_filter_over_aggregate() {
+        // TD-REL-LOWER-5 slice 3 (Q11): `HAVING sum(total) > 100` — an aggregate
+        // in HAVING — is extracted into the Aggregate and applied as a
+        // POST-AGGREGATE Filter (was declined: "HAVING with aggregate calls").
+        let plan = lower("SELECT uid, sum(total) FROM orders GROUP BY uid HAVING sum(total) > 100");
+        let LogicalNode::Project { input, .. } = plan else {
+            panic!("expected Project");
+        };
+        let LogicalNode::Filter { input, predicate } = *input else {
+            panic!("expected HAVING as a post-aggregate Filter, got {input:?}");
+        };
+        // Filter compares the extracted HAVING aggregate slot to the literal.
+        assert!(
+            matches!(
+                predicate,
+                Expr::BinaryOp {
+                    op: BinaryOp::Gt,
+                    ..
+                }
+            ),
+            "HAVING predicate is `agg > lit`, got {predicate:?}"
+        );
+        let LogicalNode::Aggregate {
+            aggregates, having, ..
+        } = *input
+        else {
+            panic!("Filter input must be the Aggregate");
+        };
+        assert!(
+            having.is_none(),
+            "HAVING moved to the Filter, not the field"
+        );
+        assert_eq!(
+            aggregates.len(),
+            2,
+            "projection sum + extracted HAVING sum (dedup is a later optimization)"
+        );
+    }
+
+    #[test]
+    fn having_with_scalar_subquery_hoists_left_join_over_aggregate() {
+        // Q11 shape: `HAVING sum(total) > (SELECT sum(total)*k FROM orders)` — an
+        // aggregate compared to an uncorrelated scalar subquery. The subquery is
+        // hoisted as a LEFT JOIN ON TRUE above the Aggregate; the predicate refs
+        // the extracted agg slot and the hoisted scalar column.
+        let plan = lower(
+            "SELECT uid, sum(total) FROM orders GROUP BY uid \
+             HAVING sum(total) > (SELECT sum(total) * 2 FROM orders)",
+        );
+        let LogicalNode::Project { input, .. } = plan else {
+            panic!("expected Project");
+        };
+        let LogicalNode::Filter { input, .. } = *input else {
+            panic!("expected post-aggregate Filter");
+        };
+        let LogicalNode::Join {
+            kind: JoinKind::Left,
+            on: None,
+            left,
+            right,
+            ..
+        } = *input
+        else {
+            panic!("expected LEFT JOIN ON TRUE for the hoisted scalar subquery, got {input:?}");
+        };
+        assert!(
+            matches!(*left, LogicalNode::Aggregate { .. }),
+            "join left is the Aggregate"
+        );
+        assert!(
+            matches!(*right, LogicalNode::AssertMaxOneRow { .. }),
+            "join right is the AssertMaxOneRow-guarded uncorrelated scalar"
+        );
+    }
+
+    #[test]
+    fn plain_having_over_group_key_keeps_aggregate_having_field() {
+        // No-regression: a HAVING with neither aggregate nor subquery
+        // (`HAVING age > 30`, over the group key) keeps the cheap
+        // `Aggregate.having` path — no Filter, no restructure.
+        let plan = lower("SELECT age, count(*) FROM users GROUP BY age HAVING age > 30");
+        let LogicalNode::Project { input, .. } = plan else {
+            panic!("expected Project");
+        };
+        let LogicalNode::Aggregate { having, .. } = *input else {
+            panic!("expected Aggregate directly under Project (no Filter)");
+        };
+        assert!(
+            having.is_some(),
+            "plain HAVING stays on the Aggregate.having field"
+        );
+    }
+
+    #[test]
     fn select_group_by() {
         let plan = lower("SELECT age FROM users GROUP BY age");
         match plan {
@@ -2921,6 +3874,56 @@ mod tests {
         match &outputs[1].expr {
             Expr::Column(c) => assert_eq!(c.ordinal, 1, "COUNT slot follows the group keys"),
             other => panic!("expected aggregate column ref, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn select_aggregate_arithmetic_hoists_nested_aggregates() {
+        // TD-REL-LOWER-4: an aggregate nested inside projection arithmetic
+        // (`sum(id) / sum(age)`, the ratio / market-share shape) must lower to
+        // a `Project(BinaryOp(Div, __agg_0, __agg_1))` over an `Aggregate` with
+        // TWO extracted aggregate slots — not decline with "aggregate function
+        // in non-aggregate position". Each hoisted ColumnRef names its slot
+        // (`__agg_<slot>`) at the post-aggregate ordinal so the planner's
+        // name-based projection-pushdown rebind resolves it.
+        let plan = lower("SELECT sum(id) / sum(age) FROM users");
+        let LogicalNode::Project { outputs, input } = plan else {
+            panic!("expected Project");
+        };
+        assert_eq!(outputs.len(), 1);
+        match &outputs[0].expr {
+            Expr::BinaryOp {
+                op: BinaryOp::Div,
+                left,
+                right,
+            } => {
+                match (&**left, &**right) {
+                    (Expr::Column(l), Expr::Column(r)) => {
+                        // Global aggregate (no GROUP BY): slots are ordinals 0,1.
+                        assert_eq!(l.ordinal, 0);
+                        assert_eq!(r.ordinal, 1);
+                        assert_eq!(l.name, "__agg_0");
+                        assert_eq!(r.name, "__agg_1");
+                    }
+                    other => panic!("expected two aggregate column refs, got {other:?}"),
+                }
+            }
+            other => panic!("expected BinaryOp(Div) over aggregates, got {other:?}"),
+        }
+        match *input {
+            LogicalNode::Aggregate {
+                group_by,
+                aggregates,
+                ..
+            } => {
+                assert_eq!(group_by.len(), 0, "no GROUP BY");
+                assert_eq!(aggregates.len(), 2, "both sums extracted to slots");
+                assert!(matches!(aggregates[0].agg, AggregateExpr::Sum { .. }));
+                assert!(matches!(aggregates[1].agg, AggregateExpr::Sum { .. }));
+                assert_eq!(aggregates[0].name, "__agg_0");
+                assert_eq!(aggregates[1].name, "__agg_1");
+            }
+            other => panic!("expected Aggregate, got {other:?}"),
         }
     }
 
@@ -3120,6 +4123,45 @@ mod tests {
     }
 
     #[test]
+    fn decline_structures_unsupported_reason_for_trace() {
+        // ADR-064 / TD-TRACE-1: a decline must carry a structured {node, why}
+        // (the real reason), not be dropped so the pgwire path re-guesses it.
+        // Subquery-in-expression-position (the Q18/Q20 shape) → node="subquery".
+        let err = lower_sql(
+            "SELECT id FROM users WHERE age > 1 OR id IN (SELECT uid FROM orders)",
+            &catalog(),
+        )
+        .unwrap_err();
+        let d = err.decline();
+        assert_eq!(d.node, "subquery", "unexpected node for {err:?}");
+        assert_eq!(d.why, err.to_string(), "why must be the Display reason");
+        assert!(
+            !d.why.contains("comma-separated"),
+            "must not be a masked guess"
+        );
+
+        // Node classification covers the other declining families the arc hit.
+        assert_eq!(
+            FrontendError::Unsupported(
+                "HAVING with aggregate calls (use a sub-select for now)".into()
+            )
+            .decline()
+            .node,
+            "having"
+        );
+        assert_eq!(
+            FrontendError::Unsupported("correlated scalar subquery".into())
+                .decline()
+                .node,
+            "subquery"
+        );
+        assert_eq!(
+            FrontendError::TableNotFound("orders".into()).decline().node,
+            "table"
+        );
+    }
+
+    #[test]
     fn is_null_lowers_correctly() {
         let plan = lower("SELECT id FROM users WHERE name IS NULL");
         match plan {
@@ -3182,9 +4224,21 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_in_scalar_position_is_rejected() {
-        // A bare aggregate name in scalar (non-GROUP-BY) position is still a misuse.
-        let err = lower_sql("SELECT sum(age) + 1 FROM users", &catalog()).unwrap_err();
+    fn aggregate_in_projection_arithmetic_lowers_but_unsupported_nesting_declines() {
+        // TD-REL-LOWER-4: an aggregate nested in projection ARITHMETIC is valid
+        // SQL (a global aggregate expression) and now lowers — previously it was
+        // rejected as "aggregate function in non-aggregate position".
+        let plan = lower_sql("SELECT sum(age) + 1 FROM users", &catalog());
+        assert!(plan.is_ok(), "sum(age) + 1 must lower: {plan:?}");
+
+        // But an aggregate nested inside a CASE / scalar function at the
+        // projection top level is not yet supported and must still decline
+        // (graceful fall-through to legacy), not silently mislower.
+        let err = lower_sql(
+            "SELECT case when sum(age) > 0 then 1 else 0 end FROM users",
+            &catalog(),
+        )
+        .unwrap_err();
         assert!(matches!(err, FrontendError::Unsupported(_)));
     }
 

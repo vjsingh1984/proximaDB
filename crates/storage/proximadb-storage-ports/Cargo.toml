@@ -17,6 +17,10 @@ path = "src/lib.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 serde.workspace = true
+# tokio: GraphWalFactory returns Arc<tokio::sync::Mutex<dyn GraphWalPort>> (the
+# async-mutex the writer is shared under). Precedent: distance-kernel/records/
+# tenant/storage-common/storage-traits all depend on tokio.
+tokio = { workspace = true, features = ["sync"] }
 proximadb-proto.workspace = true
 proximadb-storage-common.workspace = true
 # Foundation-tier: FilterExpression (ScanStrategy::FilteredScan predicates) +
@@ -38,6 +42,9 @@ proximadb-quantization-model.workspace = true
 # Storage-tier: the FilesystemPort names FileSystem / FileOptions / FsResult from
 # this crate (the existing filesystem abstraction). Same-tier dep (storage→storage).
 proximadb-storage-filesystem-types.workspace = true
+# Foundation-tier: the GraphWalPort names GraphOperation + MarkerKind (graph
+# write-op model) — pure-data leaf types (downward dep, facade-free).
+proximadb-graph-model.workspace = true
 
 [lints]
 workspace = true

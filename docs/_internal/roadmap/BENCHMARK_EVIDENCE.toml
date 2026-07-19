@@ -43,6 +43,89 @@ date = "2026-05-28"
 version = "v0.2"
 notes = "Non-regression baseline only — explicitly NOT a cost/recall SLA (route is Beta). Cosine, Criterion release profile."
 
+[[claims]]
+id = "coalesced_rabitq_scan_rerank_sift"
+claim = "At N=100k, ADR-062 coalesced-RaBitQ scan-then-rerank reaches the ~0.99 recall regime at ~20 ranged GETs/query — vs the legacy block-centroid-prune ceiling of ~0.87 @ ~370 GETs (an 18.5x GET reduction, moving the dominant per_get cost term)"
+metric = "recall@10 + range_gets_per_query"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc",
+  "docs/10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture"
+artifact = "docs/_internal/status/SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-07-15"
+version = "develop @ 3a703d0d0 (+ ADR-062/TD-RDSTRAT-6 PR1: coalesced_rabitq feature)"
+notes = "Single-file collection (one flush batch) with the IVF flush opt-in ON (PROXIMADB_PAX_FLUSH_CLUSTER=ivf) — isolates the per-file ~1 RaBitQ GET win from the PR2 GET-budget compaction. N=100000 subset, 100 queries, top-10, Euclidean, brute-force ground truth. Measured recall@10 = 0.984, range_gets/query = 20. Indicative dev-machine run, not an SLA; bytes_read/query (31.7 MB) is the deferred post-PR1 lever (clustered SQ8/fp32 compression)."
+
+[[claims]]
+id = "coalesced_rabitq_adaptive_m_sift1m"
+claim = "ADR-062 PR2 FULL STACK (adaptive survivor pool M + per-segment invariants cache + encoding-aware block threshold + per-provider IopsBudget + zstd): recall@10 = 0.990 and GETs/query = 36 at full SIFT1M (N=1,000,000) — BOTH gates cleared (recall >=0.98, GETs <=50) WITHOUT per-cell RaBitQ. Adaptive-M alone lifts recall 0.968 -> 0.989 (pool-starvation was the sole cause, not centroid distortion); the cache + block-geometry + zstd stack then drives GETs 70 -> 36 (<<370 legacy, 10.3x reduction; within budget). The single segment-level RaBitQ centroid is NOT the wall."
+metric = "recall@10 + range_gets_per_query"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc",
+  "docs/10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_QUERIES=100 PROXIMADB_PAX_FLUSH_CLUSTER=ivf cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture"
+artifact = "docs/_internal/status/SIFT1M_ADAPTIVE_M_RECALL_2026_07_16.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-07-16"
+version = "develop @ a310a4e87 (+ perf/coalesced-pr2-cost-scale: full PR2 stack — adaptive-M + per-segment invariants cache + encoding-aware block threshold + per-provider IopsBudget + zstd)"
+notes = "Full SIFT1M (1,000,000 vectors, 128d, Euclidean), single-file collection with IVF flush opt-in ON. Provided ground truth (10k queries x 100 neighbors, ANN-benchmarks). Adaptive-M: M = max(k*100, ceil(N*0.01), 1000) = 10,000 at 1M (vs the fixed 1000 = 0.1% that gave 0.968). The single segment-level RaBitQ centroid is NOT the wall — pool-starvation was the sole cause of the 1M recall drop. Full PR2 stack: the per-segment invariants cache elides the header+region+footer read_range on hot queries; the encoding-aware block threshold (actual metadata + SQ8 prediction, replacing the flat row*1024 over-estimate) + per-provider IopsBudget (Azure 4MB / S3 8MB targets) + zstd compression cut the block count so the 10k survivors span fewer coalesced ranges — driving GETs/query 70 -> 36 (within the <=50 budget). Total wall time ~47 min is the IVF flush opt-in (PROXIMADB_PAX_FLUSH_CLUSTER=ivf, eval-only) PCA+IVF re-cluster at flush — NOT a production write-path cost (production flush = cheap sign-bit bootstrap; PCA+IVF is a compaction-time event). Indicative dev-machine run, not an SLA."
+
+[[claims]]
+id = "rdstrat6_bytes_codec_bakeoff_sift"
+claim = "The first deferred-bytes bake-off has no eligible codec: at N=100k SQ6 saves 7.0% query bytes but is 3.4x slower; TQ4/RaBitQ4 fail recall, and at N=1M flat SQ8 and SQ6 both fail the recall/GET gates"
+metric = "recall@10 + range_gets_per_query + bytes_read_per_query + latency + persisted_bytes_per_row"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc",
+  "docs/10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "N=100k: set PROXIMADB_SIFT_N=100000; N=1M: omit PROXIMADB_SIFT_N; both: PROXIMADB_SIFT_DATASET_DIR=<verified-sift> PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture"
+artifact = "docs/_internal/status/RDSTRAT6_BYTES_BAKEOFF_SIFT_2026_07_16.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), serialized release runs, no competing benchmark"
+date = "2026-07-16"
+version = "flat eae1cdf4e; SQ6 base 4f0cccf30 + diff sha256 9bddadab; TQ4 3a091c254; RaBitQ4 b4abf4cbc"
+notes = "N=100k flat/SQ6/TQ4/RaBitQ4 recall = 0.991/0.981/0.921/0.917; bytes/query = 32020233/29775220/25124981/25124830; GETs/query = 19. Verified TEXMEX N=1M: flat recall 0.968, 61 GETs, 138851704 bytes/query; SQ6 recall 0.950, 61 GETs, 128722140 bytes/query. Prototype code intentionally discarded after rejection; artifact records source states and dataset hashes. Indicative dev-machine evidence, not an SLA."
+
+[[claims]]
+id = "rdstrat7_lossless_scalar_bytes_sift"
+claim = "TD-RDSTRAT-7 lossless scalar-stripe compression (all-null page elision + post-codec LZ4 over the i64/f64/str/bytes PAX stripes, gated PROXIMADB_PAX_LOSSLESS_SCALAR=1) is bit-exact lossless and moves the deferred bytes term: on SIFT N=100k (100 queries, top-10, single-file IVF-ON, Euclidean, brute-force ground truth) recall@10 is unchanged at 0.991 and range GETs/query unchanged at 19, while bytes_read/query drops 30.5 MB to 23.9 MB (32020233 to 25067186 bytes, -21.7%) and persisted_bytes/row drops 260.7 to 200.4 (26068428 to 20035485, -23.1%) with no p95 latency regression — clearing the TD-RDSTRAT-7 bytes gate (< 31.7 MB) that the flat-SQ8 control sits above. Vector stripes are untouched (their bytes lever is the clustered transform, not LZ4)."
+metric = "recall@10 + range_gets_per_query + bytes_read_per_query + persisted_bytes_per_row"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "OFF (control): PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture; ON (scalar LZ4): prepend PROXIMADB_PAX_LOSSLESS_SCALAR=1 PROXIMADB_SIFT_COALESCED_BYTE_BUDGET=26000000"
+artifact = "docs/_internal/status/RDSTRAT7_LOSSLESS_SCALAR_BYTES_SIFT_2026_07_16.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), serialized release runs, no competing workload"
+date = "2026-07-16"
+version = "feat/rdstrat7-lossless-pax @ 1f4a0af05 (PR #1064): lossless scalar stripe compression (LZ4 + all-null elision), default OFF"
+notes = "Same protocol as the rdstrat6_bytes_codec_bakeoff_sift flat arm (which this reproduces exactly: recall 0.991, 32020233 bytes/query, 19 GETs), differing only in PROXIMADB_PAX_LOSSLESS_SCALAR=1. Recall byte-identical ON vs OFF proves the layer is lossless (decode reconstructs exact scalar values before the value codec runs). N=100k uses the first 100k rows of sift_base.fvecs (sha256 21f66e29...) with in-test brute-force ground truth; sift_groundtruth.ivecs is not used at this scale. Default OFF, mixed-read-safe (ColumnMeta.is_lz4_compressed bit3 = 0 on legacy files). Indicative dev-machine run, not an SLA."
+
+[[claims]]
+id = "coalesced_rabitq_noivf_decisive_sift1m"
+claim = "ADR-065 gated question RESOLVED: the coalesced scan-then-rerank layout does NOT need cluster_order_pca_ivf ordering. The production flush path (sign-bit bootstrap, no IVF opt-in) measures recall@10 = 0.985 and GETs/query = 40 at full SIFT1M — both gates cleared (>=0.98 recall, <=50 GETs) — with flush wall time 35 s (~80x faster than the 47 min IVF-at-flush path). IVF's only benefit is the bytes term (250 MB with vs 430 MB without), which is precisely the block dead weight ADR-065 Region B (SQ8 hoist) removes via density, not ordering. Decision: drop IVF; regions in sign-bit row order; PR3 = Region B."
+metric = "recall@10 + range_gets_per_query + bytes_read_per_query + flush_wall_time"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_QUERIES=100 PROXIMADB_SIFT_IVF_FLUSH=0 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture"
+artifact = "docs/_internal/status/SIFT1M_NOIVF_DECISIVE_2026_07_16.adoc"
+hardware = "Local macOS arm64 (Apple Silicon)"
+date = "2026-07-16"
+version = "develop @ 549b77fa6 (+ perf/coalesced-pr2-cache-geometry PR2 stack)"
+notes = "Full SIFT1M, single-file collection, 100 queries, top-10, Euclidean, provided GT. IVF OFF = sign-bit bootstrap = the production L0 flush path. Baseline IVF ON (PR2): recall 0.990, 36 GETs, 250 MB, ~47 min flush. The 0.985 recall / 40 GETs here are the production-representative numbers (no eval-only IVF opt-in). The bytes rise (250->430 MB) is the block dead weight Region B will remove via SQ8 density. NOTE: the PROXIMADB_SIFT_IVF_FLUSH=0 knob was added transiently to the eval (gates the set_var at line 486) for this measurement; landing it as a committed eval feature is a pending harness follow-up so the bench_command is reproducible as-is. Indicative dev-machine run, not an SLA."
+
 # ---------------------------------------------------------------------------
 # UNVERIFIED — a bench exists, but no dated artifact backs the claimed number.
 # ---------------------------------------------------------------------------
@@ -88,6 +171,24 @@ hardware = "Local macOS arm64 (Apple Silicon), no other workload"
 date = "2026-06-28"
 version = "v0.2"
 notes = "TD-096 S1 (2026-06-28): ran bench_24_recall_at_k_engine in Approximate mode (dim 128, 20 queries, deterministic seeded LCG) at 10K and 100K vectors for BOTH sst and helix — Recall@{1,10,100} = 100.00% across the board, including the SST 100K case (>=100 blocks, the condition that historically tripped a ~5% collapse on the flat Exact block-scan path, now bypassed via force_exact). 100% >= the ~97% claim, so the claim is substantiated. DATA CAVEAT: this is random normalized dim-128 data (easy for HNSW — neighbors well-separated); the 97% figure in README is not an SLA and real high-dim embedding corpora may differ. See the reconciliation doc for the full table + the block-skip unit proof (block_pruning.rs::td096_block_skip_tests)."
+
+[[claims]]
+id = "voe_compacted_pca_ivf_prune_recall_at_10"
+claim = "VOE centroid-prune recall@10 under compaction-grade PCA/IVF clustering vs sign-bit bootstrap (real SIFT1M) — partial confirmation of the TD-WLP-4 article of faith"
+metric = "recall_at_10_pct"
+status = "measured"
+asserted_in = [
+    "docs/_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc",
+    "docs/10-quality/td/TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc",
+    "docs/10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_voe_centroid_prune_compacted_recall_at_10_eval -- --ignored --nocapture"
+artifact = "docs/_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-07-15"
+version = "v0.2"
+notes = "TD-WLP-4/WLP-9 eval (2026-07-15): real SIFT1M N=100000, 100 queries, top-10, Euclidean, brute-force subset GT, --release, rebased on develop incl. #620. Test fn: sift_voe_centroid_prune_compacted_recall_at_10_eval. PCA/IVF reached via the PROXIMADB_PAX_FLUSH_CLUSTER=ivf flush opt-in (the production flush->compaction scheduler is unwired, TD-WLP-7). recall@10 (radius_k=0): sign-bit [keep 1.0/0.7/0.5/0.3/0.15] = 0.987/0.835/0.758/0.696/0.557; pca/ivf = 0.989/0.929/0.867/0.789/0.694. PCA/IVF lifts pruned recall ~+0.11 at fixed keep and tightens block RMS radii (128/block 322->263, -18%). Block-size sweep: block-prune is GET-capped — tight blocks (8-64 vec) recover recall to ~0.99 but explode GETs (10/kept-block vs default 0.13); no sweet spot. VERDICT: clustering validated, but block-centroid pruning is GET-capped at ~0.87 for any tight-block win; the redesign is coalesced binary-tier rerank (TD-RDSTRAT-6). radius_k moved recall <=0.02 (TD-WLP-3 confirmed). WS8 flip stays BLOCKED at keep=0.5 (0.867); defensible at keep=0.7 (0.929, -27% GETs). Indicative local run, not an SLA. RETIRED 2026-07-15 (#1024): the `sift_voe_centroid_prune_compacted_recall_at_10_eval` fn was retired when coalesced scan-then-rerank became the canonical PAX RaBitQ path (ADR-062) — block-centroid-prune is superseded. This entry stays `measured`: it is the HISTORICAL run that grounded ADR-062's GET-capped finding (the data is recorded in the artifact; `bench_command` is the original-run provenance, no longer re-runnable). The canonical coalesced recall/GET measurement is the `coalesced_rabitq_scan_rerank_sift` claim."
 
 [[claims]]
 id = "hybrid_search_latency"

@@ -38,7 +38,7 @@ use proximadb_relational_engine::{
     EngineReaderFactory, InMemoryRelationalEngine, RelationalWriter,
 };
 use proximadb_relational_executor::{ExecError, NodeMetric, ReaderFactory};
-use proximadb_relational_frontend::{CatalogLookup, lower_sql};
+use proximadb_relational_frontend::{CatalogLookup, LoweringDecline, lower_sql};
 use proximadb_relational_planner::{
     CapabilityResolver, PhysicalPlan, Planner, StaticCapabilities, explain_physical,
     measure_geometry, stack_probe,
@@ -461,11 +461,25 @@ pub async fn try_run_select(
         geometry,
         join_bearing: query_join_bearing(query),
     };
+    // TD-ROUTE-3: read the env master switches ONCE here (both are OnceLock-cached)
+    // and thread them into the decision so `route_select_advised` — not the
+    // dispatch — decides whether a native/duckdb primary is engaged. The decision
+    // core stays env-free / unit-testable.
+    let route_flags = crate::query::compute_scheduler::RouteFlags {
+        native_route: crate::query::execution::native_engine::native_route_enabled(),
+        // `duckdb_engine` compiles only under the `duckdb` feature; without it the
+        // switch is inert (false), matching the absent DuckDB dispatch arm.
+        #[cfg(feature = "duckdb")]
+        duckdb_route: crate::query::execution::duckdb_engine::duckdb_route_enabled(),
+        #[cfg(not(feature = "duckdb"))]
+        duckdb_route: false,
+    };
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         shape,
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
+        route_flags,
     );
     tracing::debug!(
         target: "proximadb::compute_route",
@@ -477,17 +491,17 @@ pub async fn try_run_select(
         decision.explain_line()
     );
 
-    // P1 dispatch driven by the scheduler decision. The DataFusion arm exists only
-    // under the feature (and `parquet_backed` — hence a `DataFusionLocal` decision —
-    // is only reachable there), so a default build never enters it and stays Volcano.
+    // P1 dispatch driven by the AUTHORITATIVE scheduler decision (TD-ROUTE-3).
+    // `route_select_advised` has already folded eligibility (ADR-058) + the env
+    // master switches + any cost-model override into `decision.backend`, so this
+    // block does NOT re-decide — it is a thin `match decision.backend` over the
+    // parquet-OLAP engines, each PRIMARY owning its own fall-through to the shared
+    // DataFusion floor. The DataFusion arm exists only under the feature (and
+    // `parquet_backed`), so a default build never enters it and stays Volcano.
     //
-    // The block is entered for the OLAP-over-parquet route: a static `DataFusionLocal`
-    // decision, OR a cost-model override/exploration flip to `Native` on the
-    // `olap/parquet` class (the only class with two freshness-safe engines,
-    // `freshness_safe_backends_from_class`). Routing the override-`Native` case here
-    // rather than to the Volcano keeps a warmed override on the native-over-parquet
-    // path (which reads the external parquet) with DataFusion as the floor — never on
-    // the Volcano, which has no external-parquet scan wired.
+    // The outer guard restricts entry to the three parquet-OLAP backends; any
+    // other `decision.backend` (never produced for a parquet-OLAP shape) falls
+    // through to the Volcano path below — exactly as before.
     #[cfg(feature = "datafusion-integration")]
     if parquet_backed
         && matches!(
@@ -497,78 +511,15 @@ pub async fn try_run_select(
                 | crate::query::table_write_plan::ComputeBackend::DuckDbCompat
         )
     {
-        // TD-OLAP-4 "favor native by operation": for the operation classes native
-        // measurably wins — footer-elidable `COUNT(*)`/`MIN`/`MAX` (MetadataElidable)
-        // and narrow unfiltered scalar aggregates (ScalarAggregate) — run the native
-        // vectorized engine over the SAME external parquet as the PRIMARY backend and
-        // return ITS result. DataFusion stays the correctness floor: any decline
-        // (ineligible shape, wide/filtered/grouped scan, native error) falls through
-        // to the DataFusion execution below, so correctness never depends on native.
-        //
-        // Trigger (default-OFF): the explicit `PROXIMADB_NATIVE_ROUTE` master switch,
-        // OR a warmed cost-model override/exploration that advised `Native` for this
-        // operation-keyed `olap/parquet` cell (`PROXIMADB_ROUTE_COST_OVERRIDE`, with
-        // its freshness/RTT/min-advantage gating). Either way the shape gate is the
-        // same measured win-set, and DataFusion is the fallback.
-        let native_advised = matches!(
-            decision.backend,
-            crate::query::table_write_plan::ComputeBackend::Native
-        ) && matches!(
-            decision.source,
-            crate::query::compute_scheduler::RouteSource::OverrideExploit
-                | crate::query::compute_scheduler::RouteSource::OverrideExplore
-        );
-        let native_eligible_op = matches!(
-            operation_class,
-            crate::query::compute_scheduler::OperationClass::MetadataElidable
-                | crate::query::compute_scheduler::OperationClass::ScalarAggregate
-        );
-        if native_eligible_op
-            && (crate::query::execution::native_engine::native_route_enabled() || native_advised)
-        {
-            let native_snapshot = SnapshotCatalog {
-                dml: dml.clone(),
-                tables: tables.clone(),
-                tenant: tenant_ctx.clone(),
-            };
-            // Setup (planning/route) time is attributed here; the native engine records
-            // its own `native-vectorized` compute sample inside the run.
-            crate::observability::io_trace::record_setup_ms(
-                setup_start.elapsed().as_millis() as u64
-            );
-            if let Some(result) = try_native_over_parquet(
-                sql,
-                &native_snapshot,
-                &parquet_loc_by_key,
-                &parquet_trust_by_key,
-            )
-            .await
-            {
-                tracing::debug!(
-                    target: "proximadb::compute_route",
-                    "native-over-parquet served as PRIMARY (op={:?}); DataFusion floor bypassed",
-                    operation_class
-                );
-                if let Some((skey, lsn)) = &cache_ctx {
-                    populate_olap_result_cache(
-                        result_cache,
-                        skey,
-                        *lsn,
-                        result.clone(),
-                        &native_snapshot.tables,
-                    );
-                }
-                return Some(Ok(result));
-            }
-            // Native declined → fall through to the DataFusion floor below.
-        }
+        // Shared prep for the DuckDB primary + the DataFusion floor: per-table
+        // Parquet locations and (ADR-058 D5 / §9.A) per-table footer-stats trust,
+        // keyed by table_name (matching `parquet_tables`) and derived from
+        // `parquet_trust_by_key` (keyed by the canonical table key). Drives adapter
+        // elision gating.
         let parquet_tables: Vec<(String, String)> = tables
             .iter()
             .map(|(k, t)| (t.table_name.clone(), parquet_loc_by_key[k].clone()))
             .collect();
-        // ADR-058 D5/§9.A: per-table footer-stats trust, keyed by table_name
-        // (matching `parquet_tables`), derived from `parquet_trust_by_key`
-        // (keyed by the canonical table key). Drives adapter elision gating.
         let parquet_table_trust: HashMap<String, StatsTrust> = tables
             .iter()
             .filter_map(|(k, t)| {
@@ -577,42 +528,69 @@ pub async fn try_run_select(
                     .map(|tr| (t.table_name.clone(), *tr))
             })
             .collect();
-        // ADR-059 rollout step 2: DuckDB-Local as PRIMARY for the join/agg-shaped
-        // parquet OLAP route — the shapes with the measured 100–700× DataFusion
-        // join-plan gap (TD-OLAP-15/TD-OLAP-2). DataFusion remains the correctness
-        // floor: any DuckDB error falls through to the DataFusion execution below.
-        // Trigger (default-OFF): the PROXIMADB_DUCKDB_ROUTE master switch, OR a
-        // warmed cost-model override/exploration that advised DuckDbCompat (the
-        // #946 per-class staged enable). Eligibility (ADR-058: precedes selection):
-        // join-bearing or grouped shape, AND every referenced table's ADR-025
-        // post-snapshot WAL delta is EMPTY — DuckDB reads bare parquet and cannot
-        // reconcile a delta, so it serves only when base parquet == current state
-        // (the delta-merging DataFusion floor serves everything else; errors from
-        // the delta probe fail closed to the floor). The probe is the TD-OLAP-17
-        // per-collection high-water check DataFusion itself pays at table open, so
-        // the common no-writes case costs no scan. The io_trace route is
-        // re-stamped to the engine that actually served ("last write wins" by
-        // design), so cost cells never mis-attribute.
-        #[cfg(feature = "duckdb")]
-        {
-            let duckdb_advised = matches!(
-                decision.backend,
-                crate::query::table_write_plan::ComputeBackend::DuckDbCompat
-            ) && matches!(
-                decision.source,
-                crate::query::compute_scheduler::RouteSource::OverrideExploit
-                    | crate::query::compute_scheduler::RouteSource::OverrideExplore
-            );
-            let duckdb_eligible_shape = shape.join_bearing
-                || matches!(
-                    operation_class,
-                    crate::query::compute_scheduler::OperationClass::Grouped
+
+        // PRIMARY dispatch — a thin match over the authoritative backend. Each arm
+        // attempts its engine and RETURNS on success; on decline it falls through
+        // to the shared DataFusion floor below (which re-stamps the io_trace route
+        // so cost cells attribute to the engine that actually served). Eligibility
+        // + enablement were decided upstream, so reaching an arm IS the
+        // authorization to attempt it — no re-decision here (the TD-ROUTE-3 fix).
+        match decision.backend {
+            // TD-OLAP-4 "favor native by operation": the native vectorized engine
+            // over the SAME external parquet, for the footer-elidable `COUNT(*)` /
+            // `MIN` / `MAX` (MetadataElidable) and narrow unfiltered scalar
+            // aggregates (ScalarAggregate) it measurably wins on. Its own fine
+            // plan-shape gates (single-scan / width / trust) live inside
+            // `try_native_over_parquet`; any decline falls to the floor.
+            crate::query::table_write_plan::ComputeBackend::Native => {
+                let native_snapshot = SnapshotCatalog {
+                    dml: dml.clone(),
+                    tables: tables.clone(),
+                    tenant: tenant_ctx.clone(),
+                };
+                // Setup (planning/route) time is attributed here; the native engine
+                // records its own `native-vectorized` compute sample inside the run.
+                crate::observability::io_trace::record_setup_ms(
+                    setup_start.elapsed().as_millis() as u64
                 );
-            let duckdb_delta_clean =
-                if (crate::query::execution::duckdb_engine::duckdb_route_enabled()
-                    || duckdb_advised)
-                    && duckdb_eligible_shape
+                if let Some(result) = try_native_over_parquet(
+                    sql,
+                    &native_snapshot,
+                    &parquet_loc_by_key,
+                    &parquet_trust_by_key,
+                )
+                .await
                 {
+                    tracing::debug!(
+                        target: "proximadb::compute_route",
+                        "native-over-parquet served as PRIMARY (op={:?}); DataFusion floor bypassed",
+                        operation_class
+                    );
+                    if let Some((skey, lsn)) = &cache_ctx {
+                        populate_olap_result_cache(
+                            result_cache,
+                            skey,
+                            *lsn,
+                            result.clone(),
+                            &native_snapshot.tables,
+                        );
+                    }
+                    return Some(Ok(result));
+                }
+                // Native declined → fall through to the DataFusion floor below.
+            }
+            // ADR-059: DuckDB-Local as PRIMARY for the join/agg-shaped parquet route
+            // (the measured 100–700× DataFusion join-plan gap, TD-OLAP-15/TD-OLAP-2).
+            // The remaining gate is the ADR-025 TRUST probe: DuckDB reads bare
+            // parquet and cannot reconcile a post-snapshot WAL delta, so it serves
+            // only when every referenced table's delta is EMPTY (the delta-merging
+            // DataFusion floor serves everything else; a probe error fails closed to
+            // the floor). The probe is the TD-OLAP-17 per-collection high-water
+            // check DataFusion itself pays at table open, so the common no-writes
+            // case costs no scan.
+            #[cfg(feature = "duckdb")]
+            crate::query::table_write_plan::ComputeBackend::DuckDbCompat => {
+                let duckdb_delta_clean = {
                     use crate::query::execution::olap_delta_merge::OlapDeltaSource;
                     let mut clean = true;
                     for (tkey, params) in &olap_delta_tables {
@@ -628,57 +606,65 @@ pub async fn try_run_select(
                         }
                     }
                     clean
-                } else {
-                    false
                 };
-            if duckdb_delta_clean {
-                let duck_context = QueryExecutionContext {
-                    parquet_tables: parquet_tables.clone(),
-                    parquet_table_trust: parquet_table_trust.clone(),
-                    tenant_id: tenant.map(str::to_string),
-                    controls: controls.clone(),
-                    ..Default::default()
-                };
-                crate::observability::io_trace::record_setup_ms(
-                    setup_start.elapsed().as_millis() as u64
-                );
-                match execute_sql_with_backend(
-                    crate::query::table_write_plan::ComputeBackend::DuckDbCompat,
-                    sql,
-                    duck_context,
-                )
-                .await
-                {
-                    Ok(result) => {
-                        crate::observability::io_trace::record_route(
-                            &crate::query::route_cost_model::shape_class(&shape),
-                            "DuckDbCompat",
-                        );
-                        tracing::debug!(
-                            target: "proximadb::compute_route",
-                            "duckdb-local served as PRIMARY (join/agg parquet shape); \
-                             DataFusion floor bypassed"
-                        );
-                        if let Some((skey, lsn)) = &cache_ctx {
-                            populate_olap_result_cache(
-                                result_cache,
-                                skey,
-                                *lsn,
-                                result.clone(),
-                                &tables,
+                if duckdb_delta_clean {
+                    let duck_context = QueryExecutionContext {
+                        parquet_tables: parquet_tables.clone(),
+                        parquet_table_trust: parquet_table_trust.clone(),
+                        tenant_id: tenant.map(str::to_string),
+                        controls: controls.clone(),
+                        ..Default::default()
+                    };
+                    crate::observability::io_trace::record_setup_ms(
+                        setup_start.elapsed().as_millis() as u64,
+                    );
+                    match execute_sql_with_backend(
+                        crate::query::table_write_plan::ComputeBackend::DuckDbCompat,
+                        sql,
+                        duck_context,
+                    )
+                    .await
+                    {
+                        Ok(result) => {
+                            crate::observability::io_trace::record_route(
+                                &crate::query::route_cost_model::shape_class(&shape),
+                                "DuckDbCompat",
+                            );
+                            tracing::debug!(
+                                target: "proximadb::compute_route",
+                                "duckdb-local served as PRIMARY (join/agg parquet shape); \
+                                 DataFusion floor bypassed"
+                            );
+                            if let Some((skey, lsn)) = &cache_ctx {
+                                populate_olap_result_cache(
+                                    result_cache,
+                                    skey,
+                                    *lsn,
+                                    result.clone(),
+                                    &tables,
+                                );
+                            }
+                            return Some(Ok(result));
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                target: "proximadb::compute_route",
+                                "duckdb-local PRIMARY declined ({e}); DataFusion floor serves"
                             );
                         }
-                        return Some(Ok(result));
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            target: "proximadb::compute_route",
-                            "duckdb-local PRIMARY declined ({e}); DataFusion floor serves"
-                        );
                     }
                 }
+                // Not delta-clean or DuckDB declined → fall through to the floor.
             }
+            // DataFusionLocal (or a DuckDbCompat decision in a non-`duckdb` build) →
+            // the floor serves directly, no primary attempt.
+            _ => {}
         }
+
+        // === DataFusion floor (shared) ===
+        // Reached directly for a DataFusionLocal decision, or by fall-through when a
+        // Native/DuckDB PRIMARY declined. This IS the correctness floor for the
+        // OLAP-over-parquet route.
         let context = QueryExecutionContext {
             parquet_tables,
             parquet_table_trust,
@@ -705,23 +691,18 @@ pub async fn try_run_select(
             allow_engine_sql_fallback: true,
             controls: controls.clone(),
         };
-        // ADR-030 / TD-158: time the DataFusion (engine-SQL fallback) execution so
-        // the always-on billing observer can attribute KRU to this engine at scope
-        // close. `record_compute_ms` no-ops outside an `io_trace` scope.
+        // ADR-030 / TD-158: time the DataFusion execution so the always-on billing
+        // observer can attribute KRU to this engine at scope close. `record_compute_ms`
+        // no-ops outside an `io_trace` scope.
         crate::observability::io_trace::record_setup_ms(setup_start.elapsed().as_millis() as u64);
         let started = std::time::Instant::now();
-        // This block IS the DataFusion floor for the OLAP-over-parquet route, so
-        // execute on DataFusion regardless of the scheduler's advised label — a
-        // cost-model override may have set `decision.backend = Native` (routed here
-        // for the native-primary attempt above), but `execute_sql_with_backend` only
-        // serves `DataFusionLocal`; anything else errors `UnsupportedBackend`.
         let floor_backend = crate::query::table_write_plan::ComputeBackend::DataFusionLocal;
-        // Fold-attribution correctness: the decision stamp may carry an advised
-        // Native/DuckDbCompat backend whose PRIMARY attempt declined above — the
-        // floor is about to serve, so re-stamp the route to DataFusion ("last
-        // write wins"). Without this, a gap-missed flip poisons the advised
-        // engine's cost cells with DataFusion's measured quantities (the
-        // TD-ROUTE-1 §review failure mode).
+        // Fold-attribution correctness (TD-ROUTE-3): if a Native/DuckDB PRIMARY was
+        // decided but declined above, the floor is about to serve — re-stamp the
+        // route to DataFusion ("last write wins") so the declined engine's cost
+        // cells are not poisoned with DataFusion's measured quantities. A direct
+        // DataFusionLocal decision was already stamped by `finalize_route`, so the
+        // guard skips the redundant re-stamp.
         if !matches!(
             decision.backend,
             crate::query::table_write_plan::ComputeBackend::DataFusionLocal
@@ -2062,6 +2043,9 @@ pub fn classify_select_route(
                 ..Default::default()
             },
             Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
+            // `parquet_backed: false` here — the env master switches gate only the
+            // parquet-OLAP primary arm, so flags are inert; default is exact.
+            crate::query::compute_scheduler::RouteFlags::default(),
         ),
     )
 }
@@ -2070,6 +2054,51 @@ pub fn classify_select_route(
 ///
 /// Field vocabulary mirrors `table_write_plan::RouteDecisionMetadata` so read and
 /// write EXPLAIN share one contract (ADR-004 unified EXPLAIN).
+/// Native-lowering disclosure for the `EXPLAIN` trace (ADR-064 / TD-TRACE-1).
+/// Layered onto [`SelectRouteExplanation`] so a query that declines native
+/// lowering surfaces the real reason rather than silence (or a text-guessed
+/// mask). Default/empty for queries that lowered or routed elsewhere.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct LoweringTrace {
+    /// Named lowering rules that fired. Populated once the ADR-064 lowering
+    /// rule-seam lands (Phase 2 / TD-REL-LOWER-5); empty today.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rules_fired: Vec<String>,
+    /// Structured `{node, why}` decline reasons when native lowering could not
+    /// serve the shape. Empty when the query lowered (or was not routed native).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub declines: Vec<LoweringDecline>,
+}
+
+impl LoweringTrace {
+    /// True when there is nothing to disclose (skips the field in EXPLAIN JSON).
+    fn is_empty(&self) -> bool {
+        self.rules_fired.is_empty() && self.declines.is_empty()
+    }
+}
+
+/// One physical-plan operator's metered execution actuals for the structured
+/// `EXPLAIN ANALYZE` surface (TD-TRACE-1 Slice 2). Pre-order, index-aligned with
+/// `physical_plan`. Mirrors the io_trace `ExecOpTrace` snapshot shape but is the
+/// EXPLAIN JSON view. `bytes`/`spill` are `None`/`false` for the row-oriented
+/// native Volcano executor (the DataFusion adapter, Slice 3, fills them).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExecOp {
+    /// Operator keyword (matches the `physical_plan` line at the same index).
+    pub op: String,
+    /// Rows fed into this operator = sum of its direct children's `rows_out`.
+    pub rows_in: u64,
+    /// Rows this operator emitted.
+    pub rows_out: u64,
+    /// Exclusive (self) milliseconds — inclusive minus children.
+    pub ms_self: u64,
+    /// Bytes processed when the engine tracks it; `None` for native.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// Whether this operator spilled to disk; always `false` for native.
+    pub spill: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SelectRouteExplanation {
     /// Selected physical engine label (e.g. `Native(Volcano)`, `DataFusionLocal`).
@@ -2084,6 +2113,18 @@ pub struct SelectRouteExplanation {
     pub freshness_sla: String,
     /// Human-readable reason for the choice.
     pub reason: String,
+    /// Structured, axis-tagged routing reasons (ADR-058
+    /// eligibility→selection→trust) behind the chosen route (ADR-064 /
+    /// TD-TRACE-1). Always non-empty for a real route; the machine-readable
+    /// record the cost model and tooling read instead of parsing `reason`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub routing_reasons: Vec<crate::query::compute_scheduler::RouteReason>,
+    /// Native-lowering trace: which rules fired and, on a decline, the REAL
+    /// structured `{node, why}` reason — so a declining query discloses *why* in
+    /// EXPLAIN instead of the pgwire path re-guessing it from SQL text
+    /// (ADR-064 Decision 3 / TD-TRACE-1). Omitted when empty.
+    #[serde(skip_serializing_if = "LoweringTrace::is_empty")]
+    pub lowering: LoweringTrace,
     /// Typed read-route contract that future split-aware DataFusion/Ballista
     /// execution will consume. Kept nested so existing top-level fields remain
     /// stable while ADR-004 diagnostics converge on `RoutedReadPlan`.
@@ -2117,6 +2158,13 @@ pub struct SelectRouteExplanation {
     /// (omitted) otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_rows: Option<u64>,
+    /// EXPLAIN ANALYZE only: per-operator execution actuals in pre-order
+    /// (TD-TRACE-1 Slice 2) — `{op, rows_in, rows_out, ms_self, bytes, spill}`,
+    /// index-aligned with `physical_plan`. Empty (and omitted) for plain EXPLAIN
+    /// and non-native routes; the structured counterpart of the per-op text
+    /// annotations on `physical_plan`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub exec: Vec<ExecOp>,
 }
 
 /// Build the `EXPLAIN SELECT` payload. `Err` if `sql` is not a routable single
@@ -2134,6 +2182,8 @@ fn decision_to_explanation(
         policy_boundary: read_route.policy_boundary.clone(),
         freshness_sla: read_route.freshness_sla.clone(),
         reason: decision.reason.clone(),
+        routing_reasons: decision.reasons.clone(),
+        lowering: LoweringTrace::default(),
         read_route,
         // Populated by the catalog-aware EXPLAIN once the plan is built; the
         // catalog-free route disclosure has no plan to render. ANALYZE metrics are
@@ -2143,6 +2193,7 @@ fn decision_to_explanation(
         execution_elapsed_us: None,
         estimated_selectivity: None,
         estimated_rows: None,
+        exec: Vec::new(),
     }
 }
 
@@ -2239,6 +2290,23 @@ async fn prepare_select_plan(
     dml: &Arc<DmlService>,
     tenant: Option<&str>,
 ) -> Option<(SnapshotCatalog, PhysicalPlan)> {
+    let snapshot = build_snapshot(query, dml, tenant).await?;
+    match plan_over_snapshot(sql, &snapshot)? {
+        Ok(physical) => Some((snapshot, physical)),
+        Err(_) => None,
+    }
+}
+
+/// Resolve every table a SELECT references into a [`SnapshotCatalog`] under the
+/// connection tenant. `None` if any referenced schema can't be resolved. Split
+/// out of [`prepare_select_plan`] so the EXPLAIN path can build the snapshot once
+/// and, on a lowering decline, re-lower to disclose the REAL structured reason
+/// (ADR-064 / TD-TRACE-1) instead of leaving EXPLAIN silent.
+async fn build_snapshot(
+    query: &SqlQuery,
+    dml: &Arc<DmlService>,
+    tenant: Option<&str>,
+) -> Option<SnapshotCatalog> {
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
     let mut tables: HashMap<String, PreparedTable> = HashMap::new();
@@ -2252,17 +2320,13 @@ async fn prepare_select_plan(
         let schema = dml.resolve_relational_schema(raw, tenant).await.ok()?;
         tables.insert(key, PreparedTable::from_catalog(raw, &schema));
     }
-    let snapshot = SnapshotCatalog {
+    Some(SnapshotCatalog {
         dml: dml.clone(),
         tables,
         tenant: tenant
             .filter(|t| !t.is_empty())
             .map(TenantContext::for_tenant_id),
-    };
-    match plan_over_snapshot(sql, &snapshot)? {
-        Ok(physical) => Some((snapshot, physical)),
-        Err(_) => None,
-    }
+    })
 }
 
 /// Catalog-free `EXPLAIN SELECT` route (shape only). Reports the Volcano/Native route;
@@ -2359,6 +2423,15 @@ async fn route_and_plan_select(
             ..Default::default()
         },
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
+        // EXPLAIN must disclose the SAME backend the real path picks, so thread the
+        // real env master switches (TD-ROUTE-3), not a default.
+        crate::query::compute_scheduler::RouteFlags {
+            native_route: crate::query::execution::native_engine::native_route_enabled(),
+            #[cfg(feature = "duckdb")]
+            duckdb_route: crate::query::execution::duckdb_engine::duckdb_route_enabled(),
+            #[cfg(not(feature = "duckdb"))]
+            duckdb_route: false,
+        },
     );
     let mut explanation = decision_to_explanation(&decision);
 
@@ -2411,20 +2484,57 @@ async fn route_and_plan_select(
             decision.backend,
             crate::query::table_write_plan::ComputeBackend::Native
         )
-        && let Some((snapshot, physical)) = prepare_select_plan(sql, query, dml, tenant).await
     {
-        let base_lines = explain_physical(&physical);
-        if analyze {
-            // EXPLAIN ANALYZE: run the query (read-only) and record actuals —
-            // whole-query totals plus per-operator rows/time annotated onto the
-            // plan lines (metrics are pre-order aligned with `base_lines`).
-            let started = std::time::Instant::now();
-            let (result, node_metrics) = execute_physical_metered(physical, &snapshot).await?;
-            explanation.execution_rows = Some(result.rows.len() as u64);
-            explanation.execution_elapsed_us = Some(started.elapsed().as_micros() as u64);
-            explanation.physical_plan = Some(annotate_plan_lines(base_lines, &node_metrics));
-        } else {
-            explanation.physical_plan = Some(base_lines);
+        match prepare_select_plan(sql, query, dml, tenant).await {
+            Some((snapshot, physical)) => {
+                let base_lines = explain_physical(&physical);
+                if analyze {
+                    // EXPLAIN ANALYZE: run the query (read-only) and record actuals —
+                    // whole-query totals plus per-operator rows/time annotated onto the
+                    // plan lines (metrics are pre-order aligned with `base_lines`).
+                    let started = std::time::Instant::now();
+                    let (result, node_metrics) =
+                        execute_physical_metered(physical, &snapshot).await?;
+                    explanation.execution_rows = Some(result.rows.len() as u64);
+                    explanation.execution_elapsed_us = Some(started.elapsed().as_micros() as u64);
+                    // TD-TRACE-1 Slice 2: the structured per-operator vector, plus
+                    // the same data pushed into the active io_trace scope (neutral
+                    // primitive tuples, like `record_plan_geometry`) so the cost
+                    // model / billing see per-op detail. No-ops if no scope active.
+                    let exec = build_exec_ops(&node_metrics);
+                    let exec_tuples: Vec<crate::observability::io_trace::ExecOpSample> = exec
+                        .iter()
+                        .map(|e| {
+                            (
+                                e.op.as_str(),
+                                e.rows_in,
+                                e.rows_out,
+                                e.ms_self,
+                                e.bytes,
+                                e.spill,
+                            )
+                        })
+                        .collect();
+                    crate::observability::io_trace::record_exec_vector(&exec_tuples);
+                    explanation.exec = exec;
+                    explanation.physical_plan =
+                        Some(annotate_plan_lines(base_lines, &node_metrics));
+                } else {
+                    explanation.physical_plan = Some(base_lines);
+                }
+            }
+            None => {
+                // No native plan was produced. If the tables resolve but native
+                // LOWERING declined, disclose the REAL structured `{node, why}`
+                // reason (ADR-064 / TD-TRACE-1) — the same decline the legacy path
+                // otherwise re-guesses from SQL text. A re-lower here is cheap and
+                // EXPLAIN is a cold, diagnostic path (never the hot query path).
+                if let Some(snapshot) = build_snapshot(query, dml, tenant).await
+                    && let Err(e) = lower_sql(sql, &snapshot)
+                {
+                    explanation.lowering.declines.push(e.decline());
+                }
+            }
         }
     }
     Ok(explanation)
@@ -2477,6 +2587,30 @@ async fn parquet_split_summary(
 /// reported) rather than mislabel. `time` is inclusive of children (Postgres "actual
 /// time"); `self` subtracts the direct children's inclusive time — the operator's own
 /// cost (the headline "which node is actually slow").
+/// Build the structured per-operator `exec[]` vector (TD-TRACE-1 Slice 2) from the
+/// metered `NodeMetric`s. Pre-order, index-aligned with the plan lines: `rows_out`
+/// is the operator's emitted rows, `rows_in` the sum of its direct children's
+/// `rows_out` (via `child_input_rows`), `ms_self` the exclusive time in
+/// milliseconds (via `self_times`, matching the `compute_ms` billing unit).
+/// `bytes`/`spill` are `None`/`false` for the row-oriented native executor (the
+/// DataFusion adapter fills them in a later slice).
+fn build_exec_ops(metrics: &[NodeMetric]) -> Vec<ExecOp> {
+    let self_ns = proximadb_relational_executor::self_times(metrics);
+    let rows_in = proximadb_relational_executor::child_input_rows(metrics);
+    metrics
+        .iter()
+        .enumerate()
+        .map(|(i, m)| ExecOp {
+            op: m.label.clone(),
+            rows_in: rows_in[i],
+            rows_out: m.rows,
+            ms_self: (self_ns[i] / 1_000_000) as u64,
+            bytes: None,
+            spill: false,
+        })
+        .collect()
+}
+
 fn annotate_plan_lines(lines: Vec<String>, metrics: &[NodeMetric]) -> Vec<String> {
     if lines.len() != metrics.len() {
         return lines;
@@ -2567,6 +2701,40 @@ mod route_explain_tests {
     }
 
     #[test]
+    fn explain_carries_structured_routing_reasons() {
+        // ADR-064 / TD-TRACE-1: EXPLAIN discloses the structured, axis-tagged
+        // routing reasons (not just the flat `reason` string) so tooling/cost
+        // model read them without parsing prose.
+        use crate::query::compute_scheduler::RouteAxis;
+        let expl =
+            explain_select_route("SELECT id, name FROM users WHERE id = 1").expect("routable");
+        assert!(
+            !expl.routing_reasons.is_empty(),
+            "routing_reasons must be populated"
+        );
+        assert!(
+            expl.routing_reasons
+                .iter()
+                .any(|r| matches!(r.axis, RouteAxis::Selection)),
+            "a Selection reason is always present: {:?}",
+            expl.routing_reasons
+        );
+        // The structured reasons serialize into the EXPLAIN JSON.
+        let json = serde_json::to_string(&expl).unwrap();
+        assert!(
+            json.contains("routing_reasons") && json.contains("Selection"),
+            "routing_reasons surface in EXPLAIN JSON: {json}"
+        );
+        // No native lowering was attempted (catalog-free), so no declines and the
+        // empty `lowering` trace is omitted from the JSON.
+        assert!(expl.lowering.is_empty());
+        assert!(
+            !json.contains("lowering"),
+            "empty lowering trace is skipped: {json}"
+        );
+    }
+
+    #[test]
     fn route_only_explanation_omits_analyze_metrics() {
         // Plain (non-ANALYZE) route disclosure never executes, so the ANALYZE metric
         // fields stay None and are omitted from the JSON. They are populated only by
@@ -2574,11 +2742,48 @@ mod route_explain_tests {
         let expl = explain_select_route("SELECT service, count(*) FROM events GROUP BY service")
             .expect("routable");
         assert!(expl.execution_rows.is_none() && expl.execution_elapsed_us.is_none());
+        // TD-TRACE-1 Slice 2: the per-op exec[] vector is ANALYZE-only too.
+        assert!(expl.exec.is_empty());
         let json = serde_json::to_string(&expl).unwrap();
         assert!(
-            !json.contains("execution_rows") && !json.contains("execution_elapsed_us"),
-            "None ANALYZE metrics are skipped in JSON: {json}"
+            !json.contains("execution_rows")
+                && !json.contains("execution_elapsed_us")
+                && !json.contains("\"exec\""),
+            "None ANALYZE metrics (incl. exec[]) are skipped in JSON: {json}"
         );
+    }
+
+    #[test]
+    fn build_exec_ops_maps_metered_metrics_pre_order() {
+        // Aggregate(1 child, 1 row, 5ms incl) over Scan(0 children, 10 rows, 2ms):
+        //   Aggregate: rows_in=10 (Scan's rows_out), rows_out=1, ms_self=5-2=3
+        //   Scan:      rows_in=0 (leaf),               rows_out=10, ms_self=2
+        let metrics = vec![
+            NodeMetric {
+                label: "Aggregate".into(),
+                arity: 1,
+                rows: 1,
+                elapsed_ns: 5_000_000,
+            },
+            NodeMetric {
+                label: "Scan".into(),
+                arity: 0,
+                rows: 10,
+                elapsed_ns: 2_000_000,
+            },
+        ];
+        let exec = build_exec_ops(&metrics);
+        assert_eq!(exec.len(), 2);
+        assert_eq!(exec[0].op, "Aggregate");
+        assert_eq!(exec[0].rows_in, 10);
+        assert_eq!(exec[0].rows_out, 1);
+        assert_eq!(exec[0].ms_self, 3);
+        assert_eq!(exec[1].op, "Scan");
+        assert_eq!(exec[1].rows_in, 0);
+        assert_eq!(exec[1].rows_out, 10);
+        assert_eq!(exec[1].ms_self, 2);
+        // Native never tracks per-op bytes and never spills.
+        assert!(exec.iter().all(|e| e.bytes.is_none() && !e.spill));
     }
 
     #[test]
