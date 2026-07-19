@@ -65,8 +65,13 @@ fn checkpoint_op(sequence_number: u64, collection_ids: Vec<&str>) -> CanonicalOp
 async fn canonical_checkpoint_lsn_returns_none_when_no_wal_path() -> Result<()> {
     let (_tmp, base, _wal) = fresh_layout()?;
     let base_url = format!("file://{}", base.display());
-    let engine =
-        OrionGraphEngine::with_persistence_for_graph("graph-a".to_string(), base_url, true).await?;
+    let engine = OrionGraphEngine::with_persistence_for_graph(
+        "graph-a".to_string(),
+        base_url,
+        true,
+        proximadb::graph::unified_wal_factory(),
+    )
+    .await?;
 
     let lsn = engine
         .persistence()
@@ -110,6 +115,7 @@ async fn canonical_checkpoint_lsn_returns_max_for_graph() -> Result<()> {
         base_url,
         true,
         Some(wal_path.clone()),
+        proximadb::graph::unified_wal_factory(),
     )
     .await?;
 
@@ -156,6 +162,7 @@ async fn canonical_checkpoint_lsn_filters_by_graph_id() -> Result<()> {
         base_url.clone(),
         true,
         Some(wal_path.clone()),
+        proximadb::graph::unified_wal_factory(),
     )
     .await?;
     let lsn_a = engine_a
@@ -175,6 +182,7 @@ async fn canonical_checkpoint_lsn_filters_by_graph_id() -> Result<()> {
         base_url.clone(),
         true,
         Some(wal_path.clone()),
+        proximadb::graph::unified_wal_factory(),
     )
     .await?;
     let lsn_b = engine_b
@@ -194,6 +202,7 @@ async fn canonical_checkpoint_lsn_filters_by_graph_id() -> Result<()> {
         base_url,
         true,
         Some(wal_path.clone()),
+        proximadb::graph::unified_wal_factory(),
     )
     .await?;
     let lsn_c = engine_c

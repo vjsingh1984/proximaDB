@@ -146,6 +146,7 @@ async fn test_graph_persistence_with_wal_recovery() {
                 TEST_GRAPH_ID.to_string(),
                 test_dir.to_string(),
                 true, // enable WAL
+                proximadb::graph::unified_wal_factory(),
             )
             .await?;
             info!("✅ New engine instance created");

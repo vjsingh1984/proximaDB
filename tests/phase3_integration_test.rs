@@ -374,6 +374,7 @@ mod graph_wal_recovery_tests {
             "insert_test".to_string(),
             base_url.clone(),
             true,
+            proximadb::graph::unified_wal_factory(),
         )
         .await
         .expect("Failed to create engine");
@@ -397,6 +398,7 @@ mod graph_wal_recovery_tests {
             "edge_test".to_string(),
             base_url.clone(),
             true,
+            proximadb::graph::unified_wal_factory(),
         )
         .await
         .expect("Failed to create engine");
@@ -431,6 +433,7 @@ mod graph_wal_recovery_tests {
             "update_test".to_string(),
             base_url.clone(),
             true,
+            proximadb::graph::unified_wal_factory(),
         )
         .await
         .expect("Failed to create engine");
@@ -462,6 +465,7 @@ mod graph_wal_recovery_tests {
             "delete_test".to_string(),
             base_url.clone(),
             true,
+            proximadb::graph::unified_wal_factory(),
         )
         .await
         .expect("Failed to create engine");
@@ -505,6 +509,7 @@ mod graph_wal_recovery_tests {
                 "recovery_test".to_string(),
                 base_url.clone(),
                 true,
+                proximadb::graph::unified_wal_factory(),
             )
             .await
             .expect("Failed to create engine");
@@ -523,6 +528,7 @@ mod graph_wal_recovery_tests {
                 "recovery_test".to_string(),
                 base_url.clone(),
                 true,
+                proximadb::graph::unified_wal_factory(),
             )
             .await
             .expect("Failed to create engine for recovery");
@@ -553,6 +559,7 @@ mod graph_wal_recovery_tests {
                 "update_recovery".to_string(),
                 base_url.clone(),
                 true,
+                proximadb::graph::unified_wal_factory(),
             )
             .await
             .expect("Failed to create engine");
@@ -577,6 +584,7 @@ mod graph_wal_recovery_tests {
                 "update_recovery".to_string(),
                 base_url.clone(),
                 true,
+                proximadb::graph::unified_wal_factory(),
             )
             .await
             .expect("Failed to create engine for recovery");
@@ -607,6 +615,7 @@ mod graph_wal_recovery_tests {
                 "delete_recovery".to_string(),
                 base_url.clone(),
                 true,
+                proximadb::graph::unified_wal_factory(),
             )
             .await
             .expect("Failed to create engine");
@@ -630,6 +639,7 @@ mod graph_wal_recovery_tests {
                 "delete_recovery".to_string(),
                 base_url.clone(),
                 true,
+                proximadb::graph::unified_wal_factory(),
             )
             .await
             .expect("Failed to create engine for recovery");
@@ -662,6 +672,7 @@ mod graph_wal_recovery_tests {
                 "edge_recovery".to_string(),
                 base_url.clone(),
                 true,
+                proximadb::graph::unified_wal_factory(),
             )
             .await
             .expect("Failed to create engine");
@@ -692,6 +703,7 @@ mod graph_wal_recovery_tests {
                 "edge_recovery".to_string(),
                 base_url.clone(),
                 true,
+                proximadb::graph::unified_wal_factory(),
             )
             .await
             .expect("Failed to create engine for recovery");
@@ -722,6 +734,7 @@ mod graph_wal_recovery_tests {
                 "traversal_recovery".to_string(),
                 base_url.clone(),
                 true,
+                proximadb::graph::unified_wal_factory(),
             )
             .await
             .expect("Failed to create engine");
@@ -752,6 +765,7 @@ mod graph_wal_recovery_tests {
                 "traversal_recovery".to_string(),
                 base_url.clone(),
                 true,
+                proximadb::graph::unified_wal_factory(),
             )
             .await
             .expect("Failed to create engine for recovery");

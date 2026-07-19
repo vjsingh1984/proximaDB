@@ -46,9 +46,6 @@ use crate::graph::engines::orion::OrionGraphEngine;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use crate::storage::persistence::write_ahead_log::wal_operations::{
-    UnifiedWALReader, UnifiedWALWriter,
-};
 use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -219,7 +216,12 @@ impl OrionPersistence {
     /// wiring (`src/graph/service_engine_factory.rs` →
     /// `OrionGraphEngine::with_persistence_for_graph`) reaches into
     /// the underlying persistence and sets the path via the builder.
-    pub async fn new(graph_id: String, base_url: String, enable_wal: bool) -> Result<Self> {
+    pub async fn new(
+        graph_id: String,
+        base_url: String,
+        enable_wal: bool,
+        wal_factory: Arc<dyn proximadb_storage_ports::GraphWalFactory>,
+    ) -> Result<Self> {
         // Create filesystem factory with default configuration and initialize filesystems
         let filesystem_factory = Arc::new(
             FilesystemFactory::create(FilesystemConfig::default())
@@ -287,36 +289,23 @@ impl OrionPersistence {
                     ))
                 })?;
 
-            // Initialize WAL writer + reader with path (not URL), then erase
-            // each to its dependency-inversion port. The unsizing coercions
-            // `Arc<Mutex<UnifiedWALWriter>>` -> `Arc<Mutex<dyn GraphWalPort>>`
-            // and `Arc<UnifiedWALReader>` -> `Arc<dyn GraphWalReaderPort>` are
-            // sound because both implement their ports (PRs #1085 / #1093).
+            // Obtain the WAL writer + reader through the injected GraphWalFactory
+            // port — the engine never names the concrete UnifiedWAL* types (the
+            // factory is the single composition-root seam that does). Both are
+            // tolerant of an absent/empty WAL (the reader opens no files until a
+            // read; recovery is a no-op before the first write).
             tracing::debug!("Creating WAL writer with path: {}", wal_path_str);
-            let wal_writer = UnifiedWALWriter::new(wal_path_str.clone())
-                .await
-                .map_err(|e| {
-                    ProximaDBError::Storage(
-                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
-                    )
-                })?;
-            tracing::debug!("WAL writer created successfully");
-            let wal_writer: Arc<tokio::sync::Mutex<dyn proximadb_storage_ports::GraphWalPort>> =
-                Arc::new(tokio::sync::Mutex::new(wal_writer));
-
-            // The reader opens no files at construction (only the FS handle);
-            // segments are enumerated lazily on `read_all_graph`. Tolerant of an
-            // absent/empty WAL (e.g. before the first write) — recovery is a
-            // no-op then.
-            let wal_reader = UnifiedWALReader::new(wal_path_str.clone())
-                .await
-                .map_err(|e| {
-                    ProximaDBError::Storage(
-                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
-                    )
-                })?;
-            let wal_reader: Arc<dyn proximadb_storage_ports::GraphWalReaderPort> =
-                Arc::new(wal_reader);
+            let wal_writer = wal_factory.make_writer(&wal_path_str).await.map_err(|e| {
+                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
+                    e.to_string(),
+                ))
+            })?;
+            let wal_reader = wal_factory.make_reader(&wal_path_str).await.map_err(|e| {
+                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
+                    e.to_string(),
+                ))
+            })?;
+            tracing::debug!("WAL writer + reader created successfully");
 
             (Some(wal_path), Some(wal_writer), Some(wal_reader))
         } else {
@@ -1623,9 +1612,14 @@ mod topology_only_snapshot_tests {
 
     async fn engine(graph_id: &str, base: &std::path::Path) -> OrionGraphEngine {
         let base_url = format!("file://{}", base.display());
-        OrionGraphEngine::with_persistence_for_graph(graph_id.to_string(), base_url, false)
-            .await
-            .expect("engine with persistence")
+        OrionGraphEngine::with_persistence_for_graph(
+            graph_id.to_string(),
+            base_url,
+            false,
+            crate::graph::unified_wal_factory(),
+        )
+        .await
+        .expect("engine with persistence")
     }
 
     fn node(id: &str) -> Node {

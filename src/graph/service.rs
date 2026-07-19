@@ -1056,6 +1056,7 @@ impl GraphOperationsService {
                     graph_id.to_string(),
                     self.base_storage_url.clone(),
                     true, // Enable WAL
+                    crate::graph::unified_wal_factory(),
                 )
                 .await?;
                 engine.recover().await?;
