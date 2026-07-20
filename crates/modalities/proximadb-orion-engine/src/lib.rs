@@ -154,10 +154,10 @@ pub struct OrionGraphEngine {
     pub csr_incoming: Arc<RwLock<storage::CsrStorage>>,
 
     /// Edge metadata storage (edge_id -> edge_data)
-    edge_metadata: Arc<DashMap<EdgeId, Arc<Edge>>>,
+    pub edge_metadata: Arc<DashMap<EdgeId, Arc<Edge>>>,
 
     /// Node ID to CSR index mapping (for fast CSR access)
-    node_to_index: Arc<DashMap<NodeId, usize>>,
+    pub node_to_index: Arc<DashMap<NodeId, usize>>,
     /// Index to node ID mapping for reverse lookups
     /// Public for algorithm access (centrality, community detection, etc.)
     pub index_to_node: Arc<RwLock<Vec<NodeId>>>,

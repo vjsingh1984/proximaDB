@@ -59,7 +59,7 @@ pub struct CsrStorage {
     pub(super) offsets: Vec<usize>,
 
     /// Target node indices for each edge
-    pub(super) targets: Vec<usize>,
+    pub targets: Vec<usize>,
 
     /// Edge IDs corresponding to each target (for metadata lookup)
     pub(super) edge_ids: Vec<EdgeId>,
