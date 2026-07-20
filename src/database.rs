@@ -190,13 +190,15 @@ impl ProximaDB {
         // observer (the billing observer above stays always-on/never-gated, ADR-027).
         // Installed only when `[observability.io_trace_sink]` resolves enabled (env
         // `PROXIMADB_IO_TRACE_SINK` or TOML); `resolve` returns None otherwise.
-        if let Some(sink_cfg) = crate::core::config::IoTraceSinkConfig::resolve(
+        if let Some(sink_cfg) = crate::core::config::IoTraceSinkConfig::try_resolve(
             config
                 .observability
                 .as_ref()
                 .and_then(|o| o.io_trace_sink.as_ref()),
-        ) {
-            crate::observability::io_trace_sink::install(sink_cfg);
+        )
+        .map_err(anyhow::Error::msg)?
+        {
+            crate::observability::io_trace_sink::install(sink_cfg).map_err(anyhow::Error::msg)?;
         }
         // Co-design C5 (integration): register the tenant→tier Port to read the
         // header-fed tier registry (`X-Tenant-Tier` → `record_store::TENANT_TIERS`),

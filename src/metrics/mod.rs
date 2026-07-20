@@ -24,6 +24,7 @@ pub mod cache;
 pub mod collection_pin_metrics;
 pub mod collectors;
 pub mod consumption_metrics;
+pub mod io_trace_sink_metrics;
 pub mod metering_writer;
 pub mod query_service;
 pub mod store;
