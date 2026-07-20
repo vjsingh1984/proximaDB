@@ -168,6 +168,14 @@ impl LLMClient for VLLMClient {
             _ => FinishReason::Stop,
         };
 
+        // TD-SANDHI-2 / ADR-0047 D10a: neutral usage event (self_hosted) via sandhi-core's OpenAI parser.
+        crate::metrics::usage_event::emit_generation_usage(
+            "vllm",
+            &vllm_response.model,
+            _context.tenant_id.as_deref(),
+            &response_body,
+            "query",
+        );
         Ok(LLMResponse {
             content,
             provider: LLMProvider::VLLM,

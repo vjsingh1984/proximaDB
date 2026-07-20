@@ -267,6 +267,17 @@ impl LLMClient for AnthropicClient {
             llm_response.confidence_score
         );
 
+        // TD-SANDHI-2 / ADR-0047 D10a: emit the neutral usage event, adopting sandhi-core's
+        // fixture-proven Anthropic parser (incl. the cache split this provider's DTO drops).
+        // Best-effort, default-inert (PROXIMADB_EMIT_USAGE_EVENTS).
+        crate::metrics::usage_event::emit_generation_usage(
+            "anthropic",
+            &llm_response.model_used,
+            context.tenant_id.as_deref(),
+            &response_body,
+            "query",
+        );
+
         Ok(llm_response)
     }
 
