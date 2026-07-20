@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Open — gated.** Waits on the `anvai-labs/sandhi` OSS repo (AnvaiOps ADR-0047) publishing a stable neutral usage-event schema ProximaDB can pin. No blocking work today; the KEU meter already functions (on a heuristic).
+| Status | **Resolved (2026-07-20).** Sandhi v0.1.0 published its `usage-event.v1` schema (gate cleared). Both fixes shipped: KEU is metered from the provider's **real** usage and the neutral event is emitted at the external-egress boundary (default-inert behind `PROXIMADB_EMIT_USAGE_EVENTS`) — Azure via PR #1105, OpenAI/Cohere via **direct blocking clients** (`models/{openai,cohere}.rs`, mirroring `azure_openai.rs`) in PR #1106. ProximaDB emits the neutral schema via a **local struct** (`src/metrics/usage_event.rs`), not the sandhi crate. **Transport consolidation onto `sandhi-providers` was attempted and reverted** after a first-principles design review (a single-consumer OSS abstraction ADR-067 itself deprioritized; the embed path would sit outside sandhi's resilience/metering decorators; a git dep to replace ~40 lines that already had an in-repo template) — deferred to the ≥2-consumer trigger (see Gate).
 | Priority | **P2** — correctness/quality improvement (meter from real usage) + cross-repo billing alignment; not a live defect.
 | Component | `src/services/embedding_drainer.rs` (`record_embedding_consumption`, ~L483), `crates/modalities/proximadb-embedding/src/models/{azure_openai.rs,byo.rs,openai.rs,cohere.rs}`, `src/metrics/consumption_metrics.rs` (`record_keu_units`).
 | Governs | link:../../12-design/adr/ADR-067-consume-ai-usage-gateway-egress-metering.adoc[ADR-067], link:../../12-design/adr/ADR-060-commercial-rust-crate-extension-seam-open-core.adoc[ADR-060], link:../../12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc[OSS_ENTERPRISE_BOUNDARY].
@@ -41,11 +41,24 @@
 * **No engine-mechanism change** — additive to the drainer's egress clients only; `io_trace` /
   `DurableMeteringWriter` contracts untouched.
 
-== Gate
+== Gate (cleared)
 
-* `anvai-labs/sandhi` exists with a tagged neutral usage-event schema to pin.
-* Prefer the in-process emit first (no new network hop on the drainer hot path); adopt proxy
-  routing only if an operator needs the language-agnostic shared-key path.
+* `anvai-labs/sandhi` exists with a tagged neutral usage-event schema to pin. **Cleared** —
+  sandhi v0.1.0 shipped `usage-event.v1`; ProximaDB pins the *schema* as a local struct.
+* Prefer the in-process emit first (no new network hop on the drainer hot path). **Done** —
+  in-process `tracing` emit, default-inert.
+
+== Deferred follow-up (transport consolidation)
+
+The ADR-067 *optional* consolidation — routing external embedding egress through
+`sandhi-providers` in-process instead of ProximaDB's own clients — was prototyped and
+**declined** after a first-principles review. Reopen trigger (all three):
+
+* sandhi (`sandhi-core` / `sandhi-providers`) published to crates.io (no git dep in the engine);
+* a genuine **second** consumer of the shared embedding transport exists (e.g. the deprioritized
+  chat `LLMClient` consolidation actually lands) — satisfying the ≥2-consumer doctrine;
+* the embedding path enters sandhi's resilience/metering decorator stack (not raw transport), via
+  its own sandhi-side ADR. The prototype is preserved on sandhi branch `feat/embedding-modality`.
 
 == Notes
 
