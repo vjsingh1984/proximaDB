@@ -427,6 +427,367 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         "200": { description: Matching logs., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  # ──────────────────────────────────────────────────────────────────────────
+  # CDC change-feed (TD-CDC). Row-level changes since an LSN cursor, unified
+  # across REST/gRPC/pgwire. Served from the canonical WAL — SDK-useful for
+  # incremental sync / change notifications.
+  # ──────────────────────────────────────────────────────────────────────────
+  /api/v2/collections/{collection_id}/changes:
+    get:
+      tags: [Records]
+      operationId: getCollectionChanges
+      summary: CDC change-feed (row-level changes since an LSN cursor).
+      description: >
+        Returns row-level changes (op + lsn + after-image) for the collection,
+        ordered by lsn, from the unified canonical store — so it reflects writes
+        made over ANY surface (REST/gRPC/pgwire). Poll incrementally by passing
+        the highest seen lsn back as since_lsn.
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: since_lsn
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+          description: Return changes with WAL sequence strictly greater than this.
+      responses:
+        "200":
+          description: Change-feed page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collection: { type: string }
+                  since_lsn: { type: integer, format: int64 }
+                  count: { type: integer }
+                  next_lsn: { type: integer, format: int64, nullable: true }
+                  changes:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { description: Internal error. }
+  # ──────────────────────────────────────────────────────────────────────────
+  # Time-series surface (TD-TS-1). Native TST engine, per-tenant structural
+  # isolation. Stable product surface — published for SDK consumption.
+  # ──────────────────────────────────────────────────────────────────────────
+  /api/v2/timeseries/collections:
+    post:
+      tags: [TimeSeries]
+      operationId: createTimeseriesCollection
+      summary: Create a time-series collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                timestamp_column: { type: string }
+                value_columns:
+                  type: array
+                  items: { type: object, additionalProperties: true }
+                tag_columns: { type: array, items: { type: string } }
+                retention_ms: { type: integer, format: int64, nullable: true }
+      responses:
+        "200":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { name: { type: string } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    get:
+      tags: [TimeSeries]
+      operationId: listTimeseriesCollections
+      summary: List time-series collections.
+      responses:
+        "200":
+          description: Collections.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collections:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+  /api/v2/timeseries/collections/{collection_id}:
+    delete:
+      tags: [TimeSeries]
+      operationId: deleteTimeseriesCollection
+      summary: Delete a time-series collection.
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { success: { type: boolean } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v2/timeseries/collections/{collection_id}/ingest:
+    post:
+      tags: [TimeSeries]
+      operationId: ingestTimeseries
+      summary: Ingest time-series points.
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [points]
+              properties:
+                points:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      timestamp: { type: integer, format: int64 }
+                      values: { type: object, additionalProperties: { type: number } }
+                      tags: { type: object, additionalProperties: { type: string } }
+      responses:
+        "200":
+          description: Ingested.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { ingested: { type: integer } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v2/timeseries/collections/{collection_id}/query:
+    post:
+      tags: [TimeSeries]
+      operationId: queryTimeseries
+      summary: Query raw points in a time window.
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [start_time, end_time]
+              properties:
+                start_time: { type: integer, format: int64 }
+                end_time: { type: integer, format: int64 }
+                limit: { type: integer }
+      responses:
+        "200":
+          description: Points.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  points:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v2/timeseries/collections/{collection_id}/aggregate:
+    post:
+      tags: [TimeSeries]
+      operationId: aggregateTimeseries
+      summary: Aggregate (downsample) points into time buckets.
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [start_time, end_time]
+              properties:
+                start_time: { type: integer, format: int64 }
+                end_time: { type: integer, format: int64 }
+                aggregation: { type: string, default: avg }
+                bucket_ms: { type: integer, format: int64, default: 60000 }
+      responses:
+        "200":
+          description: Aggregation buckets.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  buckets:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  # ──────────────────────────────────────────────────────────────────────────
+  # External Collections (Phase 8 F5). Index external lake data un-copied —
+  # the record stays in the source; ProximaDB builds a vector index over it.
+  # Stable product surface — published for SDK consumption.
+  # ──────────────────────────────────────────────────────────────────────────
+  /api/v2/external-collections:
+    post:
+      tags: [ExternalCollections]
+      operationId: registerExternalCollection
+      summary: Register an external collection (index lake data un-copied).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, location, id_column, vector_column, dimension]
+              properties:
+                name: { type: string }
+                location: { type: string, description: "URI of the external source (s3://, abfs://, file://, …)." }
+                format: { type: string, description: "parquet | csv | json (defaults to inferred)." }
+                id_column: { type: string }
+                vector_column: { type: string }
+                dimension: { type: integer }
+                distance_metric: { type: string, default: cosine }
+                text_column: { type: string, nullable: true, description: "Utf8 column to build a BM25 index over (enables hybrid)." }
+      responses:
+        "200":
+          description: Registered.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    get:
+      tags: [ExternalCollections]
+      operationId: listExternalCollections
+      summary: List registered external collections.
+      responses:
+        "200":
+          description: Collections.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collections:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+  /api/v2/external-collections/{id}:
+    get:
+      tags: [ExternalCollections]
+      operationId: getExternalCollection
+      summary: Get an external collection.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Collection.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v2/external-collections/{id}/build:
+    post:
+      tags: [ExternalCollections]
+      operationId: buildExternalCollection
+      summary: Build (index) a registered external collection.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Built.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collection: { type: object, additionalProperties: true }
+                  indexed_record_count: { type: integer }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v2/external-collections/{id}/search:
+    post:
+      tags: [ExternalCollections]
+      operationId: searchExternalCollection
+      summary: Vector (or hybrid) search over an external collection.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vector]
+              properties:
+                vector: { type: array, items: { type: number } }
+                k: { type: integer, default: 10 }
+                text: { type: string, nullable: true, description: "Enables hybrid (vector + BM25) when a text_column is configured." }
+                fusion: { type: string, description: "rrf | weighted" }
+                alpha: { type: number, description: "BM25 weight for the weighted strategy (0..1)." }
+      responses:
+        "200":
+          description: Hits.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  hits:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        score: { type: number }
+                        props: { type: object, additionalProperties: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v2/external-collections/{id}/refresh:
+    post:
+      tags: [ExternalCollections]
+      operationId: refreshExternalCollection
+      summary: Check staleness and optionally rebuild the external index.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Refresh result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collection: { type: object, additionalProperties: true }
+                  stale_detected: { type: boolean }
+                  rebuilt: { type: boolean }
+        "404": { $ref: "#/components/responses/NotFound" }
 components:
   parameters:
     GraphId:

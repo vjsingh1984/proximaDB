@@ -1115,7 +1115,13 @@ impl RestServer {
 /// 404 fallback handler for unmatched paths. Returns the canonical error envelope
 /// and, for paths under the removed `/api/v1/*` surfaces, a migration hint
 /// pointing at the v2 replacement.
-async fn not_found_fallback(uri: axum::http::Uri) -> axum::response::Response {
+///
+/// `pub(crate)` so the router-level spec-path drift smoke test
+/// (`canonical::handlers::all_openapi_spec_paths_resolve_to_a_route`) can mount
+/// the SAME fallback the production routers use, and distinguish a genuine
+/// routing-404 (`"No route for ..."`) from a handler-level 404 (e.g. collection
+/// not found) — the distinction the drift gate hinges on.
+pub(crate) async fn not_found_fallback(uri: axum::http::Uri) -> axum::response::Response {
     use axum::response::IntoResponse;
     let path = uri.path();
 
