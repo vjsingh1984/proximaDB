@@ -6845,6 +6845,7 @@ dependencies = [
  "rocksdb",
  "rustls 0.23.41",
  "rustls-pemfile 2.2.0",
+ "sandhi-core",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -9470,6 +9471,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "sandhi-core"
+version = "0.1.0"
+source = "git+https://github.com/anvai-labs/sandhi?rev=deee223221d18df6449ccebf169f64e81aab39e7#deee223221d18df6449ccebf169f64e81aab39e7"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

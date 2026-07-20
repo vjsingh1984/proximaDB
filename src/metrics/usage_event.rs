@@ -1,7 +1,7 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-//! Neutral usage-event emission (ADR-067 / TD-SANDHI-1).
+//! Neutral usage-event emission (ADR-067 / TD-SANDHI-1 embeddings; TD-SANDHI-2 generation LLM).
 //!
 //! Serializes to the AnvaiOps/`sandhi` `usage-event.v1` schema — the neutral, cross-repo
 //! boundary object emitted once per external model call. **Measured units only: NO dollars,
@@ -13,8 +13,10 @@
 //! nothing is emitted unless `PROXIMADB_EMIT_USAGE_EVENTS` is set truthy. Local BGE ONNX has no
 //! external egress and does not emit (it keeps its compute-based KEU accrual).
 //!
-//! Dependency direction is one-way: ProximaDB pins the `sandhi` wire *schema* (this struct), never
-//! the `sandhi` crate (ADR-060).
+//! Dependency direction is one-way (ProximaDB → `sandhi`, ADR-060): the event *struct* mirrors the
+//! wire schema locally (embedding path, TD-SANDHI-1), and the generation path additionally adopts
+//! `sandhi-core`'s single-sourced, fixture-proven usage *parsers* (TD-SANDHI-2 / ADR-0047 D10a) —
+//! rather than hand-rolling a per-provider extractor.
 
 use serde::Serialize;
 use std::sync::OnceLock;
@@ -28,6 +30,9 @@ const EMIT_FLAG_ENV: &str = "PROXIMADB_EMIT_USAGE_EVENTS";
 
 /// Backend classification (schema `backend` enum).
 pub const BACKEND_EXTERNAL: &str = "external";
+/// Self-hosted backend (local inference — Ollama / vLLM). Tokens are display-only there; the
+/// cost basis is GPU-hours (AnvaiOps ADR-0020 D4), which ProximaDB does not measure here.
+pub const BACKEND_SELF_HOSTED: &str = "self_hosted";
 
 fn emission_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -43,11 +48,11 @@ fn emission_enabled() -> bool {
     })
 }
 
-fn next_request_id() -> String {
+fn next_request_id(kind: &str) -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let millis = chrono::Utc::now().timestamp_millis();
-    format!("keu-emb-{millis}-{n}")
+    format!("keu-{kind}-{millis}-{n}")
 }
 
 /// The neutral usage event — `sandhi` `usage-event.v1`. `additionalProperties:false`, so this
@@ -102,7 +107,7 @@ impl UsageEvent {
     ) -> Self {
         Self {
             schema_version: "1",
-            request_id: next_request_id(),
+            request_id: next_request_id("emb"),
             occurred_at: chrono::Utc::now().to_rfc3339(),
             provider: provider.into(),
             model: model.into(),
@@ -120,6 +125,41 @@ impl UsageEvent {
         }
     }
 
+    /// Build the event for one **generation-LLM** call, with the full token breakdown incl. the
+    /// prompt-cache split (TD-SANDHI-2 / ADR-0047 D10a). `backend` is `BACKEND_EXTERNAL` for
+    /// provider APIs or `BACKEND_SELF_HOSTED` for local inference; `route` is the operation label.
+    #[allow(clippy::too_many_arguments)]
+    pub fn generation_llm(
+        provider: impl Into<String>,
+        model: impl Into<String>,
+        tenant_id: Option<&str>,
+        tokens_in: u64,
+        tokens_out: u64,
+        cache_creation_tokens: u64,
+        cache_read_tokens: u64,
+        route: impl Into<String>,
+        backend: &'static str,
+    ) -> Self {
+        Self {
+            schema_version: "1",
+            request_id: next_request_id("gen"),
+            occurred_at: chrono::Utc::now().to_rfc3339(),
+            provider: provider.into(),
+            model: model.into(),
+            backend,
+            virtual_key_id: None,
+            subject_id: None,
+            group_id: tenant_id.map(str::to_string),
+            route: Some(route.into()),
+            session_id: None,
+            tokens_in,
+            tokens_out,
+            cache_creation_tokens,
+            cache_read_tokens,
+            gpu_seconds: None,
+        }
+    }
+
     /// Emit the event through `tracing` — **best-effort, off the hot path, default-inert**. No-op
     /// unless `PROXIMADB_EMIT_USAGE_EVENTS` is truthy. Never fails the caller.
     pub fn emit(&self) {
@@ -130,6 +170,67 @@ impl UsageEvent {
             Ok(json) => tracing::info!(target: USAGE_EVENT_TARGET, usage_event = %json),
             Err(e) => tracing::debug!("usage-event serialize failed (ignored): {e}"),
         }
+    }
+}
+
+/// Build (without emitting) the neutral usage event for one generation-LLM call, **adopting the
+/// fixture-proven `sandhi-core` usage parser** for `provider` (single-sourced metering trust —
+/// AnvaiOps ADR-0047 D10a / Sandhi ADR-0003). Returns `None` if the body doesn't parse or carries
+/// no usage. Split out from [`emit_generation_usage`] so the parser-dispatch + backend mapping is
+/// unit-testable without the env-gated emit.
+fn build_generation_event(
+    provider: &str,
+    model: &str,
+    tenant_id: Option<&str>,
+    raw_response_body: &str,
+    route: &str,
+) -> Option<UsageEvent> {
+    let value: serde_json::Value = serde_json::from_str(raw_response_body).ok()?;
+    use sandhi_core::usage::{
+        parse_anthropic_usage, parse_cohere_usage, parse_ollama_usage, parse_openai_usage,
+    };
+    // OpenAI-compatible providers (OpenAI / Azure / vLLM / HuggingFace TGI) share the usage shape;
+    // Anthropic / Cohere / Ollama have their own. All extractors are single-sourced in sandhi-core
+    // and W1-fixture-proven (Sandhi TD-0001).
+    let usage = match provider {
+        "anthropic" => parse_anthropic_usage(&value),
+        "cohere" => parse_cohere_usage(&value),
+        "ollama" => parse_ollama_usage(&value),
+        _ => parse_openai_usage(&value),
+    }?;
+    let backend = match provider {
+        "ollama" | "vllm" => BACKEND_SELF_HOSTED,
+        _ => BACKEND_EXTERNAL,
+    };
+    Some(UsageEvent::generation_llm(
+        provider,
+        model,
+        tenant_id,
+        usage.tokens_in,
+        usage.tokens_out,
+        usage.cache_creation_tokens,
+        usage.cache_read_tokens,
+        route,
+        backend,
+    ))
+}
+
+/// Emit the neutral usage event for one **generation-LLM** call. `provider` is the neutral slug
+/// (`anthropic` / `openai` / `azure_openai` / `cohere` / `ollama` / `vllm` / `huggingface`).
+/// **Best-effort + default-inert**: no parse work and no emit unless `PROXIMADB_EMIT_USAGE_EVENTS`
+/// is set; never raises into the caller (the provider hot path).
+pub fn emit_generation_usage(
+    provider: &str,
+    model: &str,
+    tenant_id: Option<&str>,
+    raw_response_body: &str,
+    route: &str,
+) {
+    if !emission_enabled() {
+        return;
+    }
+    if let Some(ev) = build_generation_event(provider, model, tenant_id, raw_response_body, route) {
+        ev.emit();
     }
 }
 
@@ -159,6 +260,60 @@ mod tests {
         // Omitted optional attribution is absent (a valid nullable encoding).
         assert!(v.get("subject_id").is_none());
         assert!(v["request_id"].as_str().unwrap().starts_with("keu-emb-"));
+    }
+
+    #[test]
+    fn generation_event_anthropic_carries_cache_split() {
+        // Adopts sandhi-core::parse_anthropic_usage — the cache split the provider DTO dropped.
+        let body = serde_json::json!({
+            "model": "claude-3-5-sonnet",
+            "content": [{ "type": "text", "text": "hi" }],
+            "usage": {
+                "input_tokens": 100, "output_tokens": 20,
+                "cache_creation_input_tokens": 30, "cache_read_input_tokens": 40
+            }
+        })
+        .to_string();
+        let ev = build_generation_event(
+            "anthropic",
+            "claude-3-5-sonnet",
+            Some("tenant-x"),
+            &body,
+            "query",
+        )
+        .unwrap();
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["provider"], "anthropic");
+        assert_eq!(v["backend"], "external");
+        assert_eq!(v["tokens_in"], 100);
+        assert_eq!(v["tokens_out"], 20);
+        assert_eq!(v["cache_creation_tokens"], 30);
+        assert_eq!(v["cache_read_tokens"], 40);
+        assert_eq!(v["group_id"], "tenant-x");
+        assert!(v["request_id"].as_str().unwrap().starts_with("keu-gen-"));
+    }
+
+    #[test]
+    fn generation_event_openai_family_and_selfhosted_backend() {
+        let body = serde_json::json!({ "usage": { "prompt_tokens": 50, "completion_tokens": 10 } })
+            .to_string();
+        // OpenAI-compat family (default arm) → external.
+        let ext = build_generation_event("azure_openai", "gpt-4o", None, &body, "query").unwrap();
+        assert_eq!(serde_json::to_value(&ext).unwrap()["backend"], "external");
+        // vLLM parses via the same OpenAI shape but classifies as self_hosted.
+        let sh = build_generation_event("vllm", "llama", None, &body, "query").unwrap();
+        let v = serde_json::to_value(&sh).unwrap();
+        assert_eq!(v["backend"], "self_hosted");
+        assert_eq!(v["tokens_in"], 50);
+        assert_eq!(v["cache_creation_tokens"], 0);
+    }
+
+    #[test]
+    fn generation_event_none_on_missing_usage_or_bad_json() {
+        assert!(
+            build_generation_event("openai", "m", None, r#"{"choices":[]}"#, "query").is_none()
+        );
+        assert!(build_generation_event("openai", "m", None, "not json", "query").is_none());
     }
 
     #[test]

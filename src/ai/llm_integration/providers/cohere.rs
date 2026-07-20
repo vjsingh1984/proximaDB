@@ -129,12 +129,22 @@ impl LLMClient for CohereClient {
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
+        let cohere_model = cohere_request
+            .model
+            .clone()
+            .unwrap_or_else(|| "command".to_string());
+        // TD-SANDHI-2 / ADR-0047 D10a: neutral usage event via sandhi-core's Cohere parser.
+        crate::metrics::usage_event::emit_generation_usage(
+            "cohere",
+            &cohere_model,
+            _context.tenant_id.as_deref(),
+            &response_body,
+            "query",
+        );
         Ok(LLMResponse {
             content: cohere_response.text,
             provider: LLMProvider::Cohere,
-            model_used: cohere_request
-                .model
-                .unwrap_or_else(|| "command".to_string()),
+            model_used: cohere_model,
             tokens_used: TokenUsage {
                 prompt_tokens: cohere_response
                     .meta
