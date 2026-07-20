@@ -165,6 +165,15 @@ impl OpenAiModel {
             Self::Ada002 => 1536,
         }
     }
+
+    /// The model id as sent to the OpenAI `/embeddings` API.
+    pub fn api_name(&self) -> &'static str {
+        match self {
+            Self::TextEmbed3Large => "text-embedding-3-large",
+            Self::TextEmbed3Small => "text-embedding-3-small",
+            Self::Ada002 => "text-embedding-ada-002",
+        }
+    }
 }
 
 /// Cohere embedding model selection.
@@ -184,6 +193,15 @@ impl CohereModel {
         match self {
             Self::EmbedEnglishV3 | Self::EmbedMultilingualV3 => 1024,
             Self::EmbedEnglishLightV3 => 384,
+        }
+    }
+
+    /// The model id as sent to the Cohere `/v2/embed` API.
+    pub fn api_name(&self) -> &'static str {
+        match self {
+            Self::EmbedEnglishV3 => "embed-english-v3.0",
+            Self::EmbedMultilingualV3 => "embed-multilingual-v3.0",
+            Self::EmbedEnglishLightV3 => "embed-english-light-v3.0",
         }
     }
 }
