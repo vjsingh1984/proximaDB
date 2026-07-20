@@ -48,7 +48,7 @@
 
 use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
-use crate::graph::EdgeId;
+use proximadb_graph_model::EdgeId;
 use std::collections::{HashMap, HashSet};
 
 /// CSR storage for efficient edge representation

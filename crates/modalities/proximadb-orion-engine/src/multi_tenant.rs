@@ -6,8 +6,8 @@ use std::sync::Arc;
 use tracing::{info, debug};
 use chrono::{DateTime, Utc};
 
-use crate::storage::tenant::{TenantContext, DomainContext, UserContext};
-use crate::graph::engines::orion::{OrionEngine, CSRStorage, GraphTraversalQuery, TraversalResult};
+use proximadb_storage_tenant::{TenantContext, DomainContext, UserContext};
+use crate::{OrionEngine, CSRStorage, GraphTraversalQuery, TraversalResult};
 
 /// Enhanced ORION engine with tenant and domain awareness
 pub struct EnhancedOrionEngine {
@@ -42,7 +42,7 @@ pub struct DomainCSRStorage {
     domain_id: String,
     tenant_id: String,
     csr_data: Arc<CSRStorage>,
-    business_context: crate::storage::tenant::BusinessContext,
+    business_context: proximadb_storage_tenant::BusinessContext,
     domain_statistics: DomainGraphStatistics,
 }
 
@@ -185,7 +185,7 @@ impl EnhancedOrionEngine {
     fn optimize_query_for_domain_context(
         &self,
         query: &TenantGraphTraversalQuery,
-        business_context: &crate::storage::tenant::BusinessContext,
+        business_context: &proximadb_storage_tenant::BusinessContext,
     ) -> Result<OptimizedTenantGraphQuery> {
         // Apply business context optimization
         let optimization_hints = match business_context.primary_function.as_str() {
@@ -219,7 +219,7 @@ impl EnhancedOrionEngine {
         core_result: TraversalResult,
         tenant_id: &str,
         domain_id: &str,
-        business_context: &crate::storage::tenant::BusinessContext,
+        business_context: &proximadb_storage_tenant::BusinessContext,
     ) -> Result<TenantTraversalResult> {
         // Apply tenant and domain context to core results
         Ok(TenantTraversalResult {
@@ -271,7 +271,7 @@ impl DomainCSRStorage {
             domain_id,
             tenant_id,
             csr_data: Arc::new(CSRStorage::new()), // Use existing CSRStorage
-            business_context: crate::storage::tenant::BusinessContext::default(),
+            business_context: proximadb_storage_tenant::BusinessContext::default(),
             domain_statistics: DomainGraphStatistics {
                 node_count: 0,
                 edge_count: 0,
@@ -463,7 +463,7 @@ pub struct TenantGraphTraversalQuery {
 pub struct OptimizedTenantGraphQuery {
     pub original_query: TenantGraphTraversalQuery,
     pub optimization_hints: Vec<String>,
-    pub business_context: crate::storage::tenant::BusinessContext,
+    pub business_context: proximadb_storage_tenant::BusinessContext,
     pub execution_time: u64,
 }
 
@@ -488,7 +488,7 @@ pub struct TenantTraversalResult {
 pub struct TenantGraphContext {
     pub tenant_id: String,
     pub domain_id: String,
-    pub business_context: crate::storage::tenant::BusinessContext,
+    pub business_context: proximadb_storage_tenant::BusinessContext,
 }
 
 // Additional type definitions for foundation

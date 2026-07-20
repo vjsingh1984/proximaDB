@@ -25,7 +25,7 @@
 use super::traits::{
     AlgorithmComplexity, AllPairsShortestPaths, GraphAlgorithm, NoInput, ParallelAlgorithm,
 };
-use crate::graph::engines::orion::OrionGraphEngine;
+use crate::OrionGraphEngine;
 use proximadb_kernel::error::ProximaDBError;
 use std::sync::Arc;
 
@@ -467,9 +467,9 @@ impl ParallelAlgorithm for FloydWarshallAPSP {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::engines::GraphEngine;
-    use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::graph::{Edge, Node};
+    use crate::OrionGraphEngine;
+    use proximadb_graph_engine_traits::GraphEngine;
+    use proximadb_graph_model::{Edge, Node};
 
     #[test]
     fn test_floyd_warshall_empty_graph() {

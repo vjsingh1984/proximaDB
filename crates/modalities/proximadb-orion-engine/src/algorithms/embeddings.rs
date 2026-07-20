@@ -24,7 +24,7 @@
 //! and the vector engine for embedding storage and similarity search.
 
 use super::traits::{AlgorithmComplexity, GraphAlgorithm, NoInput, ParallelAlgorithm};
-use crate::graph::engines::orion::OrionGraphEngine;
+use crate::OrionGraphEngine;
 use proximadb_kernel::error::ProximaDBError;
 use rand::Rng;
 use std::collections::HashMap;
@@ -431,9 +431,9 @@ impl ParallelAlgorithm for Node2VecEmbeddings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::engines::GraphEngine;
-    use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::graph::{Edge, Node};
+    use crate::OrionGraphEngine;
+    use proximadb_graph_engine_traits::GraphEngine;
+    use proximadb_graph_model::{Edge, Node};
 
     #[test]
     fn test_node2vec_empty_graph() {

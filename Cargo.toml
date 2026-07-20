@@ -76,6 +76,7 @@ members = [
     "crates/modalities/proximadb-vector",
     "crates/modalities/proximadb-quantization-kernel",
     "crates/modalities/proximadb-document",
+    "crates/modalities/proximadb-orion-engine",
     "crates/modalities/proximadb-observability",
     "crates/modalities/proximadb-observability-engine",
     "crates/modalities/proximadb-embedding",
@@ -240,6 +241,7 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
 proximadb-quantization-kernel = { path = "crates/modalities/proximadb-quantization-kernel" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
+proximadb-orion-engine = { path = "crates/modalities/proximadb-orion-engine" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-observability-engine = { path = "crates/modalities/proximadb-observability-engine" }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
@@ -380,6 +382,7 @@ proximadb-telemetry = { path = "crates/horizontal/proximadb-telemetry" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-cache = { path = "crates/foundation/proximadb-cache" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
+proximadb-orion-engine = { workspace = true }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-observability-engine = { path = "crates/modalities/proximadb-observability-engine" }

@@ -41,9 +41,9 @@
 //! Neither is consolidation in the reuse-first sense. Leave kernel
 //! `StorageError` here until a broader VectorDBError shape decision is made.
 
-use crate::core::serialization::CompressionAlgorithm;
-use crate::graph::engines::orion::OrionGraphEngine;
-use crate::graph::{Edge, EdgeId, Node, NodeId};
+use crate::OrionGraphEngine;
+use proximadb_compression_types::CompressionAlgorithm;
+use proximadb_graph_model::{Edge, EdgeId, Node, NodeId};
 use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -116,7 +116,7 @@ struct OrionSnapshotLegacy {
 }
 
 // Use the unified GraphOperation from graph_memtable
-use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
+use proximadb_graph_model::GraphOperation;
 
 /// Persistence manager for ORION engine
 pub struct OrionPersistence {
@@ -1603,8 +1603,8 @@ impl OrionPersistence {
 #[cfg(test)]
 mod topology_only_snapshot_tests {
     use super::*;
-    use crate::graph::engines::GraphEngine;
-    use crate::graph::engines::orion::OrionGraphEngine;
+    use crate::OrionGraphEngine;
+    use proximadb_graph_engine_traits::GraphEngine;
 
     async fn engine(graph_id: &str, base: &std::path::Path) -> OrionGraphEngine {
         let base_url = format!("file://{}", base.display());
