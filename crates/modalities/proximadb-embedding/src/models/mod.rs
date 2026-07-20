@@ -18,6 +18,8 @@
 pub mod azure_openai;
 pub mod bge;
 pub mod byo;
+pub mod cohere;
+pub mod openai;
 
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -42,6 +44,10 @@ pub struct ModelRegistry {
     bge_large: OnceLock<Arc<bge::BgeModel>>,
     bge_m3: OnceLock<Arc<bge::BgeModel>>,
     azure_openai: Option<azure_openai::AzureOpenAiClient>,
+    // Direct OpenAI / Cohere embedding clients (blocking reqwest, like azure_openai). `None`
+    // when the provider key is not configured — the route then returns ModelUnavailable.
+    openai: Option<openai::OpenAiClient>,
+    cohere: Option<cohere::CohereClient>,
     // BYO endpoints are stored per-tenant in EmbeddingService::tenant_cache;
     // the route variant carries the endpoint URL + auth.
 }
@@ -53,6 +59,8 @@ impl ModelRegistry {
             bge_large: OnceLock::new(),
             bge_m3: OnceLock::new(),
             azure_openai: azure_openai::AzureOpenAiClient::from_env(),
+            openai: openai::OpenAiClient::from_env(),
+            cohere: cohere::CohereClient::from_env(),
         })
     }
 
@@ -115,14 +123,26 @@ impl ModelRegistry {
                     )
                 })?
                 .embed_batch_with_usage(model, texts),
-            EmbedRoute::OpenAi { model } => Err(EmbeddingError::ModelUnavailable(format!(
-                "Direct OpenAI route (model={model:?}) is declared but the HTTP client is not yet \
-                 implemented; configure as Azure OpenAI or BYO endpoint in the meantime."
-            ))),
-            EmbedRoute::Cohere { model } => Err(EmbeddingError::ModelUnavailable(format!(
-                "Cohere route (model={model:?}) is declared but the HTTP client is not yet \
-                 implemented; use BYO endpoint pointing at the Cohere proxy in the meantime."
-            ))),
+            EmbedRoute::OpenAi { model } => {
+                let client = self.openai.as_ref().ok_or_else(|| {
+                    EmbeddingError::ModelUnavailable(
+                        "OpenAI embeddings not configured — set OPENAI_API_KEY \
+                         (optionally OPENAI_BASE_URL)"
+                            .into(),
+                    )
+                })?;
+                client.embed_batch(model, texts)
+            }
+            EmbedRoute::Cohere { model } => {
+                let client = self.cohere.as_ref().ok_or_else(|| {
+                    EmbeddingError::ModelUnavailable(
+                        "Cohere embeddings not configured — set COHERE_API_KEY \
+                         (optionally COHERE_BASE_URL)"
+                            .into(),
+                    )
+                })?;
+                client.embed_batch(model, texts)
+            }
             EmbedRoute::Byo {
                 url,
                 auth,
