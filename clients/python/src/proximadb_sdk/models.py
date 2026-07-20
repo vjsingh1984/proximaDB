@@ -890,8 +890,12 @@ class CollectionConfig(BaseModel):
 
     # CORE CONFIGURATION (Required)
     name: str = Field(
-        min_length=8
-    )  # Minimum 8 characters to prevent collision with 7-char base62 IDs
+        min_length=1
+    )  # Non-empty only — the server resolves collections by name OR id and accepts
+    # short names (relational-DDL tables: part/orders/region). The former 8-char
+    # minimum (to avoid colliding with 7-char base62 IDs) was a vector-collection-
+    # era constraint the server relaxed; the SDK must not be stricter than the
+    # server. See ADR-068 / TD-SDK-1 S2a.
     dimension: int = Field(
         ge=1, le=65536
     )  # Server default maximum is 65536 (configurable)
@@ -955,15 +959,17 @@ class CollectionConfig(BaseModel):
 
     @field_validator("name")
     def validate_name_length(cls, v):
-        """Validate collection name is at least 8 characters to prevent collision with 7-char base62 IDs"""
+        """Collection name must be non-empty.
+
+        The former >=8-char floor (to avoid colliding with 7-char base62 IDs)
+        was a vector-collection-era constraint the server relaxed for relational
+        DDL (tables like `part`/`orders`/`region`). The server resolves
+        collections by name OR id, so the SDK must not be stricter than the
+        server. See ADR-068 / TD-SDK-1 S2a.
+        """
         if not v or not v.strip():
             raise ValueError("Collection name cannot be empty")
-        v = v.strip()
-        if len(v) < 8:
-            raise ValueError(
-                "Collection name must be at least 8 characters long to prevent collision with 7-character base62 collection IDs"
-            )
-        return v
+        return v.strip()
 
     def model_post_init(self, __context):
         """Post-initialization validation to align compression config with storage engine"""
