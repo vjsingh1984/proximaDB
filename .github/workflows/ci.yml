@@ -1718,6 +1718,51 @@ jobs:
             fi
           done
 
+  # Functional regression for the REST API surfaces documented in the OpenAPI
+  # spec (time-series TD-TS-1, external collections Phase 8 F5). These exercise
+  # the REAL store (full round-trips) — the router-level drift gate only checks
+  # route existence, and `build_test_app_state`'s embedded profile cannot do
+  # write→read round-trips. tdd.yml runs the broader REST suite only at qa→main
+  # (its trigger is `feature/**` + PRs to main), so without this job these
+  # surfaces had NO functional coverage at feat→develop. Runs on network/core
+  # changes; skipped⇒pass in ci-success, so it gates only when it runs.
+  # (CDC REST `/changes` is route-covered by the drift gate; its functional
+  # round-trip needs the full server + is exercised by the cdc-kafka-gated
+  # `cdc_*` tests — a deliberate, narrower scope.)
+  rust-integration-test-api:
+    name: Rust Integration Tests (api surface)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [changes, rust-build]
+    if: |
+      !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
+      needs.changes.outputs.rust == 'true' &&
+      (needs.changes.outputs.network_changes == 'true' ||
+       needs.changes.outputs.core_changes == 'true')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-nightly-dev"
+          shared-key: "build"
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - name: Run API Surface Integration Tests
+        run: |
+          # Explicitly named only — verify each passes before adding (these were
+          # not previously in any CI glob). Add the cdc_* / external_collection_bm25
+          # tests as follow-ups once verified (cdc_* require the cdc-kafka feature).
+          for test_name in tst_integration_test external_collection_index_in_place_test; do
+            if [ -f "tests/${test_name}.rs" ]; then
+              echo "Running $test_name..."
+              cargo test --test "$test_name" -- --test-threads=1
+            fi
+          done
+
   rust-coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
@@ -2232,6 +2277,7 @@ jobs:
       - rust-integration-test-pgwire-accuracy
       - rust-integration-test-graph
       - rust-integration-test-cluster
+      - rust-integration-test-api
       - object-store-emulator-tests
       - object-store-restart-recovery
       - rust-coverage
