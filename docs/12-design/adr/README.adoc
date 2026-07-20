@@ -262,6 +262,10 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Consume the `sandhi` AI usage gateway for external-provider egress metering
 | Proposed
 | Thin **consumer** decision (authoritative: AnvaiOps ADR-0047). The Rust drainer's external egress (`AzureOpenAiClient::embed_batch`, BYO, OpenAI/Cohere) emits the shared neutral usage event; KEU stays authoritative + server-side (AnvaiOps ADR-0020 D6); OSS emits units, AnvaiOps prices. Wiring: TD-SANDHI-1.
+| link:ADR-068-sdk-codegen-doctrine-hand-facade-generated-oracle.adoc[ADR-068]
+| SDK codegen doctrine — hand-maintained facade over narrow generated types; generated client as a CI oracle, not the shipped artifact
+| Proposed
+| Refines mandate #15 (spec-driven SDK transport) without repealing it: the first-party `utoipa` spec stays the contract, but the **shipped** SDK becomes a hand-maintained facade over narrow generated types, the full generated client is demoted to a **CI test oracle** (a `progenitor` panic stops being a merge blocker), and the **blocking** SDK gate becomes a behavioral **round-trip** (create → insert → search) instead of codegen-diff. Motivated by two facade bugs that escaped the codegen gate to the qa VM (8-char name validation; `search()` silent local-fallback) and the progenitor-0.14 panic that blocked #1103. Inspired by Sandhi ADR-0003. Migration tracked in link:../../10-quality/td/TD-SDK-1-sdk-codegen-doctrine-migration.adoc[TD-SDK-1].
 |===
 
 NOTE: ADR-010 through ADR-013 and ADR-048/ADR-049 exist in this directory but
