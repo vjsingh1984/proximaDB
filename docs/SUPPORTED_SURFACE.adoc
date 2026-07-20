@@ -354,7 +354,7 @@ in the Current Matrix stay authoritative for API-level claims. `StorageEngineStr
 
 | ORION
 | Beta
-| Graph modality engine (`src/graph/engines/orion`), default and recommended for graph workloads; rebuildable CSR projection over canonical records.
+| Graph modality engine (`crates/modalities/proximadb-orion-engine`), default and recommended for graph workloads; rebuildable CSR projection over canonical records.
 | Tier and scope per the "ORION graph operations" row above; not part of `StorageEngineStrategy`.
 |===
 

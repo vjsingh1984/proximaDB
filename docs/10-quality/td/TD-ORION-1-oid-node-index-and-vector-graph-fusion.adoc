@@ -25,7 +25,7 @@ halves are false:
   (ADR-044, `graph/{repo}/node/{key}`) and uses it for BOTH the vector record id AND the graph node
   id (`clients/python/.../code_knowledge.py`: vector `id` at `:527`, `node_id` at `:561`, with the
   explicit comment "node_id below uses the same value"). ORION's `node_to_index`
-  (`src/graph/engines/orion/mod.rs`) is therefore already keyed by the `oid`; `get_outgoing_edges`/
+  (`crates/modalities/proximadb-orion-engine/src/lib.rs`) is therefore already keyed by the `oid`; `get_outgoing_edges`/
   `get_neighbors` resolve an `oid` directly.
 * **The fusion already exists and is wired.** `src/graph/rag/` implements the full pipeline
   (TD-045): `VectorNodeRetriever::retrieve` does a vector search and returns record `oid`s as seeds
