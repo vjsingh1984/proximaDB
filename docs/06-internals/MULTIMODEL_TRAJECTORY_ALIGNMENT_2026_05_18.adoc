@@ -187,7 +187,7 @@ Touchpoints:
 * `src/graph/service.rs`
 * `src/graph/service_edge_ops.rs`
 * `src/graph/adjacency_projection.rs`
-* `src/graph/engines/orion/`
+* `crates/modalities/proximadb-orion-engine/src/`
 * `src/query/graph_lowering.rs`
 * `crates/modalities/proximadb-graph/src/graphwalk.rs`
 

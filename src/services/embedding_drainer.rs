@@ -406,15 +406,21 @@ impl EmbeddingDrainer {
             )
             .await
             .map_err(|e| anyhow::anyhow!("drainer embed failed: {e}"))?;
-        if result.vectors.len() != batch_record_count(&payload_ranges) {
+        let batch_records_total = batch_record_count(&payload_ranges);
+        if result.vectors.len() != batch_records_total {
             anyhow::bail!(
                 "drainer: provider returned {} vectors for {} records",
                 result.vectors.len(),
-                batch_record_count(&payload_ranges)
+                batch_records_total
             );
         }
         let dimension = u32::try_from(route.dimension())
             .map_err(|_| anyhow::anyhow!("drainer: route dimension exceeds u32"))?;
+        // TD-SANDHI-1: the provider's real token usage is batch-level (all payloads in this
+        // route group). Split it across payloads proportionally by record count so each tenant
+        // is metered its share of the measured tokens.
+        let batch_usage = result.usage;
+        let total_records = batch_records_total as u64;
 
         for (payload, range) in payloads.iter().zip(payload_ranges) {
             let vectors = result
@@ -432,7 +438,11 @@ impl EmbeddingDrainer {
                 );
             }
 
-            record_embedding_consumption(payload, &route);
+            let payload_records = payload.records.len() as u64;
+            let real_input_tokens = batch_usage.map(|usage| {
+                split_input_tokens(usage.input_tokens, payload_records, total_records)
+            });
+            record_embedding_consumption(payload, &route, real_input_tokens);
             let target_precision = self.resolve_target_precision(payload).await;
             let embedded = payload
                 .records
@@ -480,27 +490,63 @@ fn batch_record_count(ranges: &[std::ops::Range<usize>]) -> usize {
     ranges.last().map_or(0, |range| range.end)
 }
 
-fn record_embedding_consumption(payload: &EmbedIngestPayload, route: &EmbedRoute) {
+/// Split a batch's total input-token count across one payload, proportionally by its record
+/// share (TD-SANDHI-1). A route group can batch several tenants' payloads into one provider
+/// call, whose usage is reported batch-wide; this attributes each tenant its slice. Returns 0
+/// for an empty batch (guards div-by-zero).
+fn split_input_tokens(batch_input_tokens: u64, payload_records: u64, total_records: u64) -> u64 {
+    if total_records == 0 {
+        return 0;
+    }
+    ((u128::from(batch_input_tokens) * u128::from(payload_records)) / u128::from(total_records))
+        as u64
+}
+
+/// Meter one payload's embedding consumption (TD-SANDHI-1 / ADR-067).
+///
+/// `real_input_tokens` carries the provider's **measured** input-token count for this payload
+/// (external providers that report `usage`); when `None` the count*512 heuristic is used (local
+/// BGE, or BYO whose contract has no usage). For external routes, also emits the neutral
+/// usage event at the egress boundary (default-inert unless `PROXIMADB_EMIT_USAGE_EVENTS`).
+fn record_embedding_consumption(
+    payload: &EmbedIngestPayload,
+    route: &EmbedRoute,
+    real_input_tokens: Option<u64>,
+) {
     let embedding_count = payload.records.len() as u64;
-    let estimated_input_tokens = embedding_count.saturating_mul(512);
-    let estimated_output_tokens = embedding_count.saturating_mul(route.dimension() as u64);
-    let (provider, model): (&'static str, String) = match route {
-        EmbedRoute::BgeSmall => ("victor", "bge-small-en-v1.5".to_string()),
-        EmbedRoute::BgeLarge => ("victor", "bge-large-en-v1.5".to_string()),
-        EmbedRoute::BgeM3 => ("victor", "bge-m3".to_string()),
-        EmbedRoute::AzureOpenAi { model } => ("azure_openai", format!("azure_{model:?}")),
-        EmbedRoute::OpenAi { model } => ("openai", format!("openai_{model:?}")),
-        EmbedRoute::Cohere { model } => ("cohere", format!("cohere_{model:?}")),
-        EmbedRoute::Byo { url, .. } => ("byo", url.clone()),
+    let input_tokens = real_input_tokens.unwrap_or_else(|| embedding_count.saturating_mul(512));
+    // Output tokens stay a compute proxy (count × dimension) — embeddings emit no completion
+    // tokens, so no provider reports them; this is ProximaDB's own KEU storage unit.
+    let output_tokens = embedding_count.saturating_mul(route.dimension() as u64);
+    let (provider, model, external): (&'static str, String, bool) = match route {
+        EmbedRoute::BgeSmall => ("victor", "bge-small-en-v1.5".to_string(), false),
+        EmbedRoute::BgeLarge => ("victor", "bge-large-en-v1.5".to_string(), false),
+        EmbedRoute::BgeM3 => ("victor", "bge-m3".to_string(), false),
+        EmbedRoute::AzureOpenAi { model } => ("azure_openai", format!("azure_{model:?}"), true),
+        EmbedRoute::OpenAi { model } => ("openai", format!("openai_{model:?}"), true),
+        EmbedRoute::Cohere { model } => ("cohere", format!("cohere_{model:?}"), true),
+        EmbedRoute::Byo { url, .. } => ("byo", url.clone(), true),
     };
     crate::metrics::consumption_metrics::record_keu_units(
         Some(&payload.tenant_id),
         provider,
         &model,
         "embed_batch",
-        estimated_input_tokens,
-        estimated_output_tokens,
+        input_tokens,
+        output_tokens,
     );
+    // ADR-067 Fix 2: emit the shared neutral usage event at the external-provider boundary.
+    // Local BGE is self-hosted (no external egress) → no event.
+    if external {
+        crate::metrics::usage_event::UsageEvent::external_embedding(
+            provider,
+            model.as_str(),
+            Some(payload.tenant_id.as_str()),
+            input_tokens,
+            "embed_batch",
+        )
+        .emit();
+    }
 }
 
 // ── tests ───────────────────────────────────────────────────────────
@@ -750,6 +796,20 @@ mod tests {
             "malformed payload must NOT invoke sink",
         );
         queue.shutdown().await.expect("shutdown");
+    }
+
+    #[test]
+    fn split_input_tokens_attributes_by_record_share() {
+        // 300 real batch tokens across 30 records → a 10-record payload gets 100.
+        assert_eq!(split_input_tokens(300, 10, 30), 100);
+        // Single-tenant batch keeps the whole count.
+        assert_eq!(split_input_tokens(1234, 5, 5), 1234);
+        // Integer division floors (no panic, no over-attribution).
+        assert_eq!(split_input_tokens(100, 1, 3), 33);
+        // Empty batch → 0, never a div-by-zero.
+        assert_eq!(split_input_tokens(100, 0, 0), 0);
+        // Large counts do not overflow (u128 intermediate).
+        assert_eq!(split_input_tokens(u64::MAX, 1, 1), u64::MAX);
     }
 
     #[test]

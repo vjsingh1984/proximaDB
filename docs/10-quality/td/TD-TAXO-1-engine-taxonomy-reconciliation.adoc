@@ -25,7 +25,7 @@ The engine taxonomy is told four different ways:
 2. **Engine module tree** (`src/storage/engines/`): `sst`, `viper`, `helix`, `nova`,
    `swift`, `raptor`, `cedar`, `chrono`, `tst`, plus `sequoia`, `titan`, `universal` —
    the last three have **no enum variant**; graph's ORION lives separately under
-   `src/graph/engines/orion`.
+   `crates/modalities/proximadb-orion-engine`.
 3. **`SUPPORTED_SURFACE.adoc`** support tiers: names a subset (GA/Beta/Experimental)
    that predates several of the above.
 4. **Design docs / external analyses**: SYSTEM_MAP and ADRs enumerate

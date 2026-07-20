@@ -199,13 +199,13 @@ Primary objective:
 | 2026-03-03
 | WS-2 targeted burn-down (storage/query/core/graph pass)
 | Reduced baseline from 1,125 to 808 by tightening production scanner scope (exclude test/benchmark/example files and parser-internal `self.expect(...)` false positives), replacing lock-poison `expect` calls in ORION engine/persistence with fallible lock handling, removing panic-prone sort comparisons in RAPTOR reader (`partial_cmp().expect(...)` -> `total_cmp`), and removing single-condition `unwrap()` sites in core search filter conversions.
-| `scripts/count_panic_patterns.sh`, `src/graph/engines/orion/mod.rs`, `src/graph/engines/orion/persistence.rs`, `src/storage/engines/impls/raptor/consolidated_reader.rs`, `src/storage/encryption/key_manager.rs`, `src/core/search/mod.rs`, `docs/_internal/roadmap/PANIC_POLICY_BASELINE.json`, `cargo check --lib`
+| `scripts/count_panic_patterns.sh`, `crates/modalities/proximadb-orion-engine/src/lib.rs`, `crates/modalities/proximadb-orion-engine/src/persistence.rs`, `src/storage/engines/impls/raptor/consolidated_reader.rs`, `src/storage/encryption/key_manager.rs`, `src/core/search/mod.rs`, `docs/_internal/roadmap/PANIC_POLICY_BASELINE.json`, `cargo check --lib`
 | Continue high-volume burn-down in storage/core while keeping `network_rest`/`api_handlers` pinned at zero under stage-3 CI guardrails.
 
 | 2026-03-03
 | WS-2 burn-down milestone (storage/query/core/graph target pass)
 | Reduced baseline from 791 to 752 (−39) while keeping `network_rest`/`api_handlers` pinned at zero: converted HELIX metric registration from panic-on-init to optional/logged registration; removed panic paths in unified query decomposition (regex compile + clock handling); removed core validation unwraps via fallible regex initialization; drove `graph` module to zero by removing production `expect` defaults and doc-example unwrap patterns.
-| `src/storage/engines/impls/helix/metrics.rs`, `src/query/unified/decomposition.rs`, `src/core/utils/validation.rs`, `src/graph/engines/pulsar/mod.rs`, `src/graph/query/pattern.rs`, `src/graph/engines/orion/algorithms/{pathfinding.rs,embeddings.rs,traits.rs}`, `docs/_internal/roadmap/PANIC_POLICY_BASELINE.json`, `docs/_internal/td007-panic-fixes-plan.md`, `make panic-policy-module-guard`, `cargo check --lib`
+| `src/storage/engines/impls/helix/metrics.rs`, `src/query/unified/decomposition.rs`, `src/core/utils/validation.rs`, `src/graph/engines/pulsar/mod.rs`, `src/graph/query/pattern.rs`, `crates/modalities/proximadb-orion-engine/src/algorithms/{pathfinding.rs,embeddings.rs,traits.rs}`, `docs/_internal/roadmap/PANIC_POLICY_BASELINE.json`, `docs/_internal/td007-panic-fixes-plan.md`, `make panic-policy-module-guard`, `cargo check --lib`
 | Continue WS-2 on highest remaining production totals (`storage` 206, `core` 31), then close residual `query` tail to zero.
 
 | 2026-03-03

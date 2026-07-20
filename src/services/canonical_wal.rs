@@ -110,6 +110,19 @@ impl FramedTableWalAppender {
     }
 }
 
+/// Root bridge from [`proximadb_storage_ports::CanonicalWalReaderPort`] to
+/// [`FramedTableWalAppender::read_entries_from_path`], so graph engines can read
+/// the canonical WAL for TD-066 checkpoint-LSN correlation without naming the
+/// concrete appender.
+pub(crate) struct CanonicalWalReaderBridge;
+
+#[async_trait]
+impl proximadb_storage_ports::CanonicalWalReaderPort for CanonicalWalReaderBridge {
+    async fn read_entries(&self, canonical_wal_path: &Path) -> Result<Vec<CanonicalWalEntry>> {
+        FramedTableWalAppender::read_entries_from_path(canonical_wal_path).await
+    }
+}
+
 #[async_trait]
 impl TableWalAppender for FramedTableWalAppender {
     async fn read_all_entries(&self) -> Result<Vec<CanonicalWalEntry>> {

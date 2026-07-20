@@ -176,7 +176,7 @@ Working features: hierarchical statistics, advanced zone maps, streaming archite
 
 === 2.1 ORION Engine -- PRODUCTION-READY
 
-* **Location**: `src/graph/engines/orion/` (1,228 lines mod.rs)
+* **Location**: `crates/modalities/proximadb-orion-engine/src/` (lib.rs, ~    1500 lines — extracted to crate)
 * **Architecture**: In-memory CSR format with Arc-based zero-copy memory sharing
 
 Data structures:
@@ -637,7 +637,7 @@ Experimental. Recommends Debezium -> Kafka -> ProximaDB webhook sink pattern.
 | `src/storage/engines/impls/raptor/engine.rs` | RAPTOR engine (2,951 lines, DANGEROUS)
 | `src/storage/engines/impls/swift/unified_reader.rs` | SWIFT reader (9 unimplemented!())
 | `src/compute/quantization/unified.rs` | Unified quantization (64KB)
-| `src/graph/engines/orion/mod.rs` | ORION graph engine (1,228 lines)
+| `crates/modalities/proximadb-orion-engine/src/lib.rs` | ORION graph engine (1,228 lines)
 | `src/graph/hybrid/mod.rs` | Vector-graph hybrid engine
 | `src/query/federated/mod.rs` | Federated query context
 | `src/query/unified/mod.rs` | Unified query engine

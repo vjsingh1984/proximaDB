@@ -41,6 +41,10 @@ pub struct EmbedBatch {
 pub struct EmbedResult {
     pub vectors: Vec<Vec<f32>>,
     pub route: EmbedRoute,
+    /// The external provider's **real** token usage for this batch, when reported
+    /// (TD-SANDHI-1 / ADR-067). `None` for local BGE and BYO — callers keep the
+    /// compute-based estimate for those.
+    pub usage: Option<crate::models::EmbedUsage>,
 }
 
 /// INT-2.5c result for the precision-aware embed path
@@ -192,10 +196,14 @@ impl EmbeddingService {
         let route_inner = route.clone();
         let rx = self
             .scheduler
-            .submit_sync(move || service.models.embed_batch(&route_inner, &texts))?;
+            .submit_sync(move || service.models.embed_batch_with_usage(&route_inner, &texts))?;
         rx.await
             .map_err(|_| EmbeddingError::Other(anyhow::anyhow!("scheduler dropped")))?
-            .map(|vectors| EmbedResult { vectors, route })
+            .map(|(vectors, usage)| EmbedResult {
+                vectors,
+                route,
+                usage,
+            })
     }
 
     /// INT-2.5c: synchronous embed at a caller-declared canonical
@@ -259,8 +267,12 @@ impl EmbeddingService {
             let texts: Vec<String> = batch.records.iter().map(|r| r.text.clone()).collect();
             let outcome = service
                 .models
-                .embed_batch(&route_inner, &texts)
-                .map(|vectors| EmbedResult { vectors, route });
+                .embed_batch_with_usage(&route_inner, &texts)
+                .map(|(vectors, usage)| EmbedResult {
+                    vectors,
+                    route,
+                    usage,
+                });
             on_complete(outcome);
             Ok(())
         })

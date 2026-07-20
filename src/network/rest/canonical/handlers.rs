@@ -1340,39 +1340,24 @@ pub type FullTextIndexMap = Arc<
 // backed by Bm25IndexPortImpl and RestHybridPortImpl.
 
 /// Create router with all REST endpoints
-pub fn create_router(state: AppState) -> axum::Router {
+/// Operator / control-plane `/api/v2/...` routes.
+///
+/// These are intentionally separate from `create_v2_router` (the SDK data-plane:
+/// collections / records / search / query, which feeds the published OpenAPI
+/// spec via `ApiDoc`). They are NOT utoipa-annotated and are excluded from the
+/// spec by convention — they are operator / experimental surfaces (ranking
+/// pipeline, collection pinning/affinity, primary-pod placement, catalog
+/// routing explain, progressive search, graph-branch merge).
+///
+/// Returned as `Router<AppState>` and merged into the base router inside
+/// `create_router`, so they inherit the same default-tenant +
+/// deprecation-header layers as every other route (no behaviour change vs. the
+/// prior inline registration). Keeping them in one named builder is the
+/// "single source of truth" for which `/api/v2` routes are non-SDK.
+fn operator_and_control_v2_routes() -> axum::Router<AppState> {
     use axum::routing::{get, post};
 
-    info!("🔵 REST API: Creating router with collection endpoints...");
-
-    // Initialize SKS in-memory store (v1) using the same storage engine as vector operations
-    let entities_router = {
-        use crate::network::rest::canonical::entities::{self, EntityApiState};
-        use crate::storage::entity_store::{
-            CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
-        };
-
-        let engine = state.vector_operations_service.unified_engine();
-        let legacy_store = ProximaEntityStore::with_vector_service(
-            engine,
-            Arc::new(CsrRelationsStore::new()),
-            Arc::new(InMemoryProvenanceRegistry::new()),
-            state.vector_operations_service.clone(),
-        );
-
-        // Register legacy store globally for compatibility (entity API currently uses legacy store).
-        let legacy_arc = Arc::new(legacy_store);
-        ProximaEntityStore::register_global(legacy_arc.clone());
-
-        // Use the same Arc - no need to clone the inner value
-        let store = legacy_arc.clone();
-        // Register store globally for hybrid executor access (embedding catalog)
-        crate::storage::entity_store::ProximaEntityStore::register_global(store.clone());
-        let entity_state = EntityApiState { store };
-        entities::configure_routes().with_state(entity_state)
-    };
-
-    let mut router = axum::Router::new()
+    axum::Router::new()
         .route(
             "/api/v2/progressive/search/{collection_id}",
             post(crate::network::rest::progressive_search_handler::progressive_search_handler),
@@ -1450,6 +1435,48 @@ pub fn create_router(state: AppState) -> axum::Router {
             "/api/v2/primary-pod",
             get(crate::network::rest::canonical::primary_pod::list_primary_pods),
         )
+}
+
+pub fn create_router(state: AppState) -> axum::Router {
+    use axum::routing::get;
+
+    info!("🔵 REST API: Creating router with collection endpoints...");
+
+    // Initialize SKS in-memory store (v1) using the same storage engine as vector operations
+    let entities_router = {
+        use crate::network::rest::canonical::entities::{self, EntityApiState};
+        use crate::storage::entity_store::{
+            CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
+        };
+
+        let engine = state.vector_operations_service.unified_engine();
+        let legacy_store = ProximaEntityStore::with_vector_service(
+            engine,
+            Arc::new(CsrRelationsStore::new()),
+            Arc::new(InMemoryProvenanceRegistry::new()),
+            state.vector_operations_service.clone(),
+        );
+
+        // Register legacy store globally for compatibility (entity API currently uses legacy store).
+        let legacy_arc = Arc::new(legacy_store);
+        ProximaEntityStore::register_global(legacy_arc.clone());
+
+        // Use the same Arc - no need to clone the inner value
+        let store = legacy_arc.clone();
+        // Register store globally for hybrid executor access (embedding catalog)
+        crate::storage::entity_store::ProximaEntityStore::register_global(store.clone());
+        let entity_state = EntityApiState { store };
+        entities::configure_routes().with_state(entity_state)
+    };
+
+    let mut router = axum::Router::new()
+        // Operator / control-plane `/api/v2/...` routes — NOT part of the
+        // published SDK surface (deliberately excluded from `ApiDoc` / the
+        // OpenAPI spec by convention; see `openapi.rs`). Extracted into
+        // `operator_and_control_v2_routes` for readability and merged here so
+        // they share `create_router`'s default-tenant + deprecation-header
+        // layers unchanged (zero behaviour change vs. the prior inline list).
+        .merge(operator_and_control_v2_routes())
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))
@@ -3466,5 +3493,251 @@ mod tests {
         let empty_req: HybridIndexRequest = serde_json::from_value(empty_docs)
             .expect("empty documents HybridIndexRequest should deserialize");
         assert_eq!(empty_req.documents.len(), 0);
+    }
+
+    /// Spec↔router drift smoke gate.
+    ///
+    /// Every (method, path) in the published OpenAPI spec
+    /// (`docs/openapi/proximadb-openapi.yaml`) MUST resolve to a registered
+    /// route on the production public router. This catches the failure mode the
+    /// SDK-from-spec contract exists to prevent: the generated client targets a
+    /// path the server never serves → silent 404. The assertion keys on the
+    /// canonical `not_found_fallback` body (`"No route for …"`), which cleanly
+    /// separates a genuine routing-404 from a handler-level 404 (e.g. a missing
+    /// collection) — only the former is drift.
+    ///
+    /// The case list mirrors the spec; `verify-openapi-spec` keeps the
+    /// handler↔utoipa annotations aligned, this test keeps the
+    /// router↔runtime aligned. (The 2026-07-19 qa-image 404 was a
+    /// collection-resolution/tenant matter, NOT a route gap — but a real gap
+    /// would fail here.)
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn all_openapi_spec_paths_resolve_to_a_route() {
+        use axum::body::to_bytes;
+
+        let (state, _temp_dir) = build_test_app_state().await;
+
+        // Mirror the production public-router assembly (see
+        // `build_router_for_unified` in server.rs): `create_router` (direct
+        // `/api/v2` routes + feature sub-nests: graph / document / hybrid /
+        // observability / analytics / …) with the canonical v2 router nested
+        // at `/api/v2` (collections / records / search / query / …), the
+        // production 404 fallback, and the default-tenant extension layers so
+        // the v2 handlers' `Extension<TenantContext>` resolves.
+        let default_tenant = crate::network::middleware::tenant::TenantContext::new(
+            "default",
+            crate::network::middleware::tenant::TenantIdSource::Default,
+        );
+        let default_api_tenant = proximadb_api::rest::TenantContext {
+            tenant_id: "default".to_string(),
+        };
+        let v2_router = crate::network::rest::v2::create_v2_router().with_state(state.clone());
+        let router = create_router(state)
+            .nest("/api/v2", v2_router)
+            .fallback(crate::network::rest::server::not_found_fallback)
+            .layer(axum::Extension(default_tenant))
+            .layer(axum::Extension(default_api_tenant));
+
+        // (method, path, is_write). Path params are substituted with
+        // placeholders — the route still matches by shape. Write methods carry
+        // a deliberately truncated body so the `Json` extractor rejects before
+        // any business logic runs: this test only needs the route to RESOLVE,
+        // not the request to succeed. Mirrors docs/openapi/proximadb-openapi.yaml.
+        const SPEC_PATHS: &[(axum::http::Method, &str, bool)] = &[
+            (axum::http::Method::GET, "/api/v2/_meta/capabilities", false),
+            (axum::http::Method::GET, "/api/v2/collections", false),
+            (axum::http::Method::POST, "/api/v2/collections", true),
+            (
+                axum::http::Method::DELETE,
+                "/api/v2/collections/tcol",
+                false,
+            ),
+            (axum::http::Method::GET, "/api/v2/collections/tcol", false),
+            (
+                axum::http::Method::POST,
+                "/api/v2/collections/tcol/documents",
+                true,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/collections/tcol/entities",
+                true,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/collections/tcol/entities/search",
+                true,
+            ),
+            (
+                axum::http::Method::DELETE,
+                "/api/v2/collections/tcol/entities/tent",
+                false,
+            ),
+            (
+                axum::http::Method::GET,
+                "/api/v2/collections/tcol/entities/tent",
+                false,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/collections/tcol/records/batch",
+                true,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/collections/tcol/records/scan",
+                true,
+            ),
+            (
+                axum::http::Method::DELETE,
+                "/api/v2/collections/tcol/records/trec",
+                false,
+            ),
+            (
+                axum::http::Method::GET,
+                "/api/v2/collections/tcol/records/trec",
+                false,
+            ),
+            (
+                axum::http::Method::GET,
+                "/api/v2/collections/tcol/schema",
+                false,
+            ),
+            (
+                axum::http::Method::PUT,
+                "/api/v2/collections/tcol/schema",
+                true,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/collections/tcol/search",
+                true,
+            ),
+            (
+                axum::http::Method::GET,
+                "/api/v2/document-collections",
+                false,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/document-collections",
+                true,
+            ),
+            (
+                axum::http::Method::GET,
+                "/api/v2/document-collections/tcol/documents",
+                false,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/document-collections/tcol/documents",
+                true,
+            ),
+            (axum::http::Method::GET, "/api/v2/graphs", false),
+            (axum::http::Method::POST, "/api/v2/graphs", true),
+            (axum::http::Method::DELETE, "/api/v2/graphs/tgraph", false),
+            (axum::http::Method::GET, "/api/v2/graphs/tgraph", false),
+            (
+                axum::http::Method::POST,
+                "/api/v2/graphs/tgraph/edges",
+                true,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/graphs/tgraph/edges/batch",
+                true,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/graphs/tgraph/fusion-search",
+                true,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/graphs/tgraph/impact-analysis",
+                true,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/graphs/tgraph/nodes",
+                true,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/graphs/tgraph/nodes/batch",
+                true,
+            ),
+            (
+                axum::http::Method::DELETE,
+                "/api/v2/graphs/tgraph/nodes/tnode",
+                false,
+            ),
+            (
+                axum::http::Method::GET,
+                "/api/v2/graphs/tgraph/nodes/tnode",
+                false,
+            ),
+            (
+                axum::http::Method::GET,
+                "/api/v2/graphs/tgraph/stats",
+                false,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/graphs/tgraph/traverse",
+                true,
+            ),
+            (axum::http::Method::POST, "/api/v2/hybrid/index", true),
+            (axum::http::Method::POST, "/api/v2/hybrid/search", true),
+            (
+                axum::http::Method::POST,
+                "/api/v2/observability/namespaces/tns/logs",
+                true,
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/v2/observability/namespaces/tns/logs/search",
+                true,
+            ),
+            (axum::http::Method::POST, "/api/v2/query", true),
+            (axum::http::Method::POST, "/api/v2/query/explain", true),
+            (axum::http::Method::GET, "/health", false),
+            (axum::http::Method::GET, "/health/live", false),
+            (axum::http::Method::GET, "/health/ready", false),
+        ];
+
+        for (method, path, is_write) in SPEC_PATHS {
+            let request = Request::builder()
+                .method(method.clone())
+                .uri(*path)
+                .header("content-type", "application/json")
+                .body(if *is_write {
+                    Body::from("{")
+                } else {
+                    Body::empty()
+                })
+                .expect("failed to build spec-path request");
+            let response = router
+                .clone()
+                .oneshot(request)
+                .await
+                .expect("router failed handling spec-path request");
+            let status = response.status();
+            let body = to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("failed to read spec-path response body");
+            let body_str = std::str::from_utf8(&body).unwrap_or("");
+            assert!(
+                !body_str.contains("No route for"),
+                "spec {} {} did NOT resolve to a registered route (status {}): \
+                 the SDK (generated from the spec) would 404. This is a \
+                 spec↔router drift — add the route or drop the spec path.\n\
+                 body: {}",
+                method,
+                path,
+                status,
+                body_str,
+            );
+        }
     }
 }

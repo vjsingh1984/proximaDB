@@ -343,4 +343,61 @@ pub trait GraphWalFactory: Send + Sync {
     /// The engine never names the concrete filesystem factory; this is the
     /// single composition-root seam that does (mirrors make_writer/make_reader).
     async fn make_filesystem(&self) -> Result<Arc<dyn FilesystemPort>>;
+
+    /// Build the canonical-WAL reader the engine uses for TD-066 checkpoint-LSN
+    /// correlation on recovery. The engine never names the concrete appender.
+    async fn make_canonical_wal_reader(&self) -> Result<Arc<dyn CanonicalWalReaderPort>>;
+}
+
+/// Graph-engine cache-hint surface (ORION extraction). A graph engine (ORION)
+/// emits best-effort access-tracking + prefetch hints to the root-owned cache
+/// orchestrator through this port, registered once at startup, so the engine
+/// never names the concrete `CrossCacheOrchestrator` / `CacheType`. Mirrors the
+/// distance-kernel GPU-factory global-registration pattern (#162). The
+/// [`CacheKind`] enum (the storage-engine subset) intentionally omits graph
+/// kinds, so this enum carries the graph variants the engine tracks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphCacheKind {
+    GraphNode,
+    GraphEdge,
+    GraphAdjacency,
+}
+
+/// Global graph cache-hint port (write-once, set at server startup by the
+/// composition root; read by graph engines).
+#[async_trait::async_trait]
+pub trait GraphCacheHintPort: Send + Sync {
+    /// Record an access for the access-pattern tracker (best-effort, fire-and-forget).
+    fn track_access(&self, key: String, kind: GraphCacheKind);
+    /// Request a predictive prefetch (best-effort; queue-size-guarded internally).
+    async fn request_prefetch(&self, key: &str, kind: GraphCacheKind);
+}
+
+static GLOBAL_GRAPH_CACHE_HINT: std::sync::OnceLock<Arc<dyn GraphCacheHintPort>> =
+    std::sync::OnceLock::new();
+
+/// Register the global graph cache-hint port. Called once by the composition
+/// root at startup (alongside `CrossCacheOrchestrator::register_global`).
+pub fn register_graph_cache_hint(hint: Arc<dyn GraphCacheHintPort>) {
+    let _ = GLOBAL_GRAPH_CACHE_HINT.set(hint);
+}
+
+/// Access the registered graph cache-hint port, if any. Graph engines call this
+/// and treat `None` as a no-op (e.g. before startup registration or in tests).
+pub fn graph_cache_hint() -> Option<&'static Arc<dyn GraphCacheHintPort>> {
+    GLOBAL_GRAPH_CACHE_HINT.get()
+}
+
+/// Dependency-injection port for reading the shared canonical WAL (ORION
+/// extraction). The engine reads canonical-WAL entries through this port — to
+/// correlate the latest checkpoint LSN during recovery (TD-066 Part 2) — rather
+/// than naming the concrete framed-table appender. Entries are the leaf
+/// [`CanonicalWalEntry`] type.
+#[async_trait::async_trait]
+pub trait CanonicalWalReaderPort: Send + Sync {
+    /// Read every entry from the canonical WAL at `canonical_wal_path`.
+    async fn read_entries(
+        &self,
+        canonical_wal_path: &std::path::Path,
+    ) -> Result<Vec<proximadb_storage_common::wal_entry::CanonicalWalEntry>>;
 }

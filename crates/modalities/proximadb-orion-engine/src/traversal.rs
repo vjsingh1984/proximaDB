@@ -27,14 +27,15 @@
 
 use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
-use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
-use crate::graph::{Edge, Node, NodeId};
+use crate::OrionGraphEngine;
+use proximadb_graph_engine_traits::GraphEngine;
+use proximadb_graph_model::{Edge, Node, NodeId};
 use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 // Using HashSet instead of BitVec for visited tracking
 // This provides better performance for sparse graphs
-use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
+use proximadb_storage_ports::GraphCacheKind;
 
 /// Traversal results containing nodes, paths, and statistics
 #[derive(Debug, Clone)]
@@ -285,16 +286,13 @@ pub async fn breadth_first_search(
             };
             for edge in outgoing_edges {
                 // Non-blocking cache access tracking for orchestrator learning
-                if let Some(orch) = CrossCacheOrchestrator::global() {
+                if let Some(orch) = proximadb_storage_ports::graph_cache_hint() {
                     let adj_key = format!("adj::{}", current_node_id);
-                    orch.pattern_tracker()
-                        .track_access_async(adj_key, CacheType::GraphAdjacency);
+                    orch.track_access(adj_key, GraphCacheKind::GraphAdjacency);
                     let node_key = format!("node::{}", edge.to_node_id);
-                    orch.pattern_tracker()
-                        .track_access_async(node_key, CacheType::GraphNode);
+                    orch.track_access(node_key, GraphCacheKind::GraphNode);
                     let edge_key = format!("edge::{}->{}", current_node_id, edge.to_node_id);
-                    orch.pattern_tracker()
-                        .track_access_async(edge_key, CacheType::GraphEdge);
+                    orch.track_access(edge_key, GraphCacheKind::GraphEdge);
                 }
                 // Filter by edge type if specified
                 if config
@@ -333,10 +331,11 @@ pub async fn breadth_first_search(
                     // Hint orchestrator to prefetch adjacency for next frontier (bounded)
                     if prefetch_budget > 0
                         && config.enable_prefetch
-                        && let Some(orch) = CrossCacheOrchestrator::global()
+                        && let Some(orch) = proximadb_storage_ports::graph_cache_hint()
                     {
                         let key = format!("adj::{}", neighbor_id);
-                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                        orch.request_prefetch(&key, GraphCacheKind::GraphAdjacency)
+                            .await;
                         prefetch_budget -= 1;
                     }
                 }
@@ -480,16 +479,13 @@ pub async fn depth_first_search(
         };
         for edge in outgoing_edges.iter().rev() {
             // Non-blocking cache access tracking for orchestrator learning
-            if let Some(orch) = CrossCacheOrchestrator::global() {
+            if let Some(orch) = proximadb_storage_ports::graph_cache_hint() {
                 let adj_key = format!("adj::{}", current_node_id);
-                orch.pattern_tracker()
-                    .track_access_async(adj_key, CacheType::GraphAdjacency);
+                orch.track_access(adj_key, GraphCacheKind::GraphAdjacency);
                 let node_key = format!("node::{}", edge.to_node_id);
-                orch.pattern_tracker()
-                    .track_access_async(node_key, CacheType::GraphNode);
+                orch.track_access(node_key, GraphCacheKind::GraphNode);
                 let edge_key = format!("edge::{}->{}", current_node_id, edge.to_node_id);
-                orch.pattern_tracker()
-                    .track_access_async(edge_key, CacheType::GraphEdge);
+                orch.track_access(edge_key, GraphCacheKind::GraphEdge);
             }
             // Filter by edge type if specified
             if config
@@ -522,10 +518,11 @@ pub async fn depth_first_search(
                 // Hint orchestrator to prefetch adjacency for next frontier (bounded)
                 if prefetch_budget > 0
                     && config.enable_prefetch
-                    && let Some(orch) = CrossCacheOrchestrator::global()
+                    && let Some(orch) = proximadb_storage_ports::graph_cache_hint()
                 {
                     let key = format!("adj::{}", neighbor_id);
-                    orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                    orch.request_prefetch(&key, GraphCacheKind::GraphAdjacency)
+                        .await;
                     prefetch_budget -= 1;
                 }
             }
@@ -971,16 +968,13 @@ pub async fn dijkstra_shortest_path(
         };
         for edge in outgoing_edges {
             // Non-blocking cache access tracking for orchestrator learning (Dijkstra)
-            if let Some(orch) = CrossCacheOrchestrator::global() {
+            if let Some(orch) = proximadb_storage_ports::graph_cache_hint() {
                 let adj_key = format!("adj::{}", current.node_id);
-                orch.pattern_tracker()
-                    .track_access_async(adj_key, CacheType::GraphAdjacency);
+                orch.track_access(adj_key, GraphCacheKind::GraphAdjacency);
                 let node_key = format!("node::{}", edge.to_node_id);
-                orch.pattern_tracker()
-                    .track_access_async(node_key, CacheType::GraphNode);
+                orch.track_access(node_key, GraphCacheKind::GraphNode);
                 let edge_key = format!("edge::{}->{}", current.node_id, edge.to_node_id);
-                orch.pattern_tracker()
-                    .track_access_async(edge_key, CacheType::GraphEdge);
+                orch.track_access(edge_key, GraphCacheKind::GraphEdge);
             }
             // Filter by edge type if specified
             if let Some(ref allowed_types) = config.edge_types
@@ -1007,10 +1001,11 @@ pub async fn dijkstra_shortest_path(
                 // Hint orchestrator to prefetch adjacency for likely next node (bounded)
                 if prefetch_budget > 0
                     && config.enable_prefetch
-                    && let Some(orch) = CrossCacheOrchestrator::global()
+                    && let Some(orch) = proximadb_storage_ports::graph_cache_hint()
                 {
                     let key = format!("adj::{}", neighbor_id);
-                    orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                    orch.request_prefetch(&key, GraphCacheKind::GraphAdjacency)
+                        .await;
                     prefetch_budget -= 1;
                 }
             }
@@ -1192,16 +1187,13 @@ pub async fn astar_shortest_path(
         };
         for e in neighbors {
             // Non-blocking cache access tracking for orchestrator learning (A*)
-            if let Some(orch) = CrossCacheOrchestrator::global() {
+            if let Some(orch) = proximadb_storage_ports::graph_cache_hint() {
                 let adj_key = format!("adj::{}", current.node_id);
-                orch.pattern_tracker()
-                    .track_access_async(adj_key, CacheType::GraphAdjacency);
+                orch.track_access(adj_key, GraphCacheKind::GraphAdjacency);
                 let node_key = format!("node::{}", e.to_node_id);
-                orch.pattern_tracker()
-                    .track_access_async(node_key, CacheType::GraphNode);
+                orch.track_access(node_key, GraphCacheKind::GraphNode);
                 let edge_key = format!("edge::{}->{}", current.node_id, e.to_node_id);
-                orch.pattern_tracker()
-                    .track_access_async(edge_key, CacheType::GraphEdge);
+                orch.track_access(edge_key, GraphCacheKind::GraphEdge);
             }
             let neighbor = &e.to_node_id;
             if closed.contains(neighbor) {
@@ -1220,10 +1212,11 @@ pub async fn astar_shortest_path(
                 // Hint orchestrator to prefetch adjacency for likely next node (bounded)
                 if prefetch_budget > 0
                     && config.enable_prefetch
-                    && let Some(orch) = CrossCacheOrchestrator::global()
+                    && let Some(orch) = proximadb_storage_ports::graph_cache_hint()
                 {
                     let key = format!("adj::{}", neighbor);
-                    orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                    orch.request_prefetch(&key, GraphCacheKind::GraphAdjacency)
+                        .await;
                     prefetch_budget -= 1;
                 }
             }
@@ -1299,7 +1292,7 @@ pub async fn vector_guided_astar(
     guide_embedding: &[f32],
     alpha: f64,
     distance_compute: Arc<proximadb_distance_kernel::UnifiedDistanceCompute>,
-    distance_metric: crate::proto::proximadb_v1::DistanceMetric,
+    distance_metric: proximadb_proto::proximadb_v1::DistanceMetric,
     config: TraversalConfig,
 ) -> Result<Option<(Vec<NodeId>, f64)>> {
     use std::cmp::Ordering;
@@ -1559,16 +1552,13 @@ pub async fn k_shortest_paths(
             };
             for e in outgoing {
                 // Non-blocking cache access tracking for orchestrator learning (Yen's/dijkstra_with_exclusions)
-                if let Some(orch) = CrossCacheOrchestrator::global() {
+                if let Some(orch) = proximadb_storage_ports::graph_cache_hint() {
                     let adj_key = format!("adj::{}", q.node_id);
-                    orch.pattern_tracker()
-                        .track_access_async(adj_key, CacheType::GraphAdjacency);
+                    orch.track_access(adj_key, GraphCacheKind::GraphAdjacency);
                     let node_key = format!("node::{}", e.to_node_id);
-                    orch.pattern_tracker()
-                        .track_access_async(node_key, CacheType::GraphNode);
+                    orch.track_access(node_key, GraphCacheKind::GraphNode);
                     let edge_key = format!("edge::{}->{}", q.node_id, e.to_node_id);
-                    orch.pattern_tracker()
-                        .track_access_async(edge_key, CacheType::GraphEdge);
+                    orch.track_access(edge_key, GraphCacheKind::GraphEdge);
                 }
                 if exclude_edges.contains(&(e.from_node_id.clone(), e.to_node_id.clone())) {
                     continue;
@@ -1589,10 +1579,11 @@ pub async fn k_shortest_paths(
                     // Hint orchestrator to prefetch adjacency for likely next node (bounded)
                     if prefetch_budget > 0
                         && config.enable_prefetch
-                        && let Some(orch) = CrossCacheOrchestrator::global()
+                        && let Some(orch) = proximadb_storage_ports::graph_cache_hint()
                     {
                         let key = format!("adj::{}", e.to_node_id);
-                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                        orch.request_prefetch(&key, GraphCacheKind::GraphAdjacency)
+                            .await;
                         prefetch_budget -= 1;
                     }
                 }
@@ -1880,8 +1871,8 @@ pub async fn page_rank(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::graph::{Edge, Node};
+    use crate::OrionGraphEngine;
+    use proximadb_graph_model::{Edge, Node};
     // PropertyValue is now a struct, not enum - use direct field access;
 
     #[tokio::test]
@@ -2495,7 +2486,7 @@ mod tests {
             id: "A".to_string(),
             labels: vec!["Node".to_string()],
             properties: std::collections::HashMap::new(),
-            embedding: Some(crate::graph::EmbeddingVersion {
+            embedding: Some(proximadb_graph_model::EmbeddingVersion {
                 model_id: "test".to_string(),
                 model_version: "1".to_string(),
                 vector: vec![0.0, 0.0, 0.0],
@@ -2512,7 +2503,7 @@ mod tests {
             id: "B".to_string(),
             labels: vec!["Node".to_string()],
             properties: std::collections::HashMap::new(),
-            embedding: Some(crate::graph::EmbeddingVersion {
+            embedding: Some(proximadb_graph_model::EmbeddingVersion {
                 model_id: "test".to_string(),
                 model_version: "1".to_string(),
                 vector: vec![1.0, 0.0, 0.0],
@@ -2529,7 +2520,7 @@ mod tests {
             id: "C".to_string(),
             labels: vec!["Node".to_string()],
             properties: std::collections::HashMap::new(),
-            embedding: Some(crate::graph::EmbeddingVersion {
+            embedding: Some(proximadb_graph_model::EmbeddingVersion {
                 model_id: "test".to_string(),
                 model_version: "1".to_string(),
                 vector: vec![2.0, 0.0, 0.0],
@@ -2611,10 +2602,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_pure_graph() {
-        use crate::graph::EmbeddingVersion;
-        use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::DistanceMetric;
         use proximadb_distance_kernel::UnifiedDistanceCompute;
+        use proximadb_graph_engine_traits::GraphEngine;
+        use proximadb_graph_model::EmbeddingVersion;
+        use proximadb_proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 
@@ -2738,10 +2729,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_balanced_blend() {
-        use crate::graph::EmbeddingVersion;
-        use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::DistanceMetric;
         use proximadb_distance_kernel::UnifiedDistanceCompute;
+        use proximadb_graph_engine_traits::GraphEngine;
+        use proximadb_graph_model::EmbeddingVersion;
+        use proximadb_proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 
@@ -2919,10 +2910,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_alpha_clamping() {
-        use crate::graph::EmbeddingVersion;
-        use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::DistanceMetric;
         use proximadb_distance_kernel::UnifiedDistanceCompute;
+        use proximadb_graph_engine_traits::GraphEngine;
+        use proximadb_graph_model::EmbeddingVersion;
+        use proximadb_proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 
@@ -3027,10 +3018,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_no_path() {
-        use crate::graph::EmbeddingVersion;
-        use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::DistanceMetric;
         use proximadb_distance_kernel::UnifiedDistanceCompute;
+        use proximadb_graph_engine_traits::GraphEngine;
+        use proximadb_graph_model::EmbeddingVersion;
+        use proximadb_proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 

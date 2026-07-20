@@ -256,7 +256,7 @@ link:../../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc]. The
 | 034 | SIMD Distance Compute | Performance | ✅ | AVX2/AVX512/NEON in `src/compute/distance_computation/` + benches
 | 035 | Bloom Filters | Performance | ✅ | Found in SSTable
 
-| 036 | ORION Graph Engine | Graph | ✅ | In-memory CSR; `src/graph/engines/orion/`
+| 036 | ORION Graph Engine | Graph | ✅ | In-memory CSR; `crates/modalities/proximadb-orion-engine/src/`
 | 037 | PULSAR Graph Engine | Graph | ❌ Retired | *Retired (TD-001/017)* — modules/flags/routes/tests removed; `GraphEngineFactory` rejects the name. Distributed graph belongs to the relational substrate. ORION is the only graph runtime.
 | 038 | QUASAR Graph Engine | Graph | ❌ Retired | *Retired (TD-001/017/068)* — removed; tiered-graph behavior is now an xCatalog/storage projection-policy concern, not a graph engine.
 | 039 | GraphMemoryPool | Graph | ✅ | Zero-copy sharing
