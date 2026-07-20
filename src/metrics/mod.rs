@@ -31,6 +31,7 @@ pub mod store;
 mod tests;
 pub mod tier_migration_metrics;
 pub mod updater;
+pub mod usage_event;
 
 // Top-level type re-exports (preserve `crate::metrics::X` paths).
 pub use cache::{CacheMetricsCollector, CacheMetricsSnapshot, CacheOptimizationHints};

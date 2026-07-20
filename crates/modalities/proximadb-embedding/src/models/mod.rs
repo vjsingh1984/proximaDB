@@ -26,6 +26,17 @@ use crate::config::EmbedRoute;
 use crate::{EmbeddingError, Result};
 use proximadb_records::EmbeddingScalarType;
 
+/// Real token usage reported by an **external** provider's embedding response (TD-SANDHI-1 /
+/// ADR-067). `None` when the backend is local (BGE ONNX has no provider usage) or the provider's
+/// contract carries no usage (BYO). Measured units only — pricing is downstream (ADR-060).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EmbedUsage {
+    /// Provider `prompt_tokens` — the real input-token count for the whole batch.
+    pub input_tokens: u64,
+    /// Provider `total_tokens` (for embeddings, typically equal to `input_tokens`).
+    pub total_tokens: u64,
+}
+
 pub struct ModelRegistry {
     bge_small: OnceLock<Arc<bge::BgeModel>>,
     bge_large: OnceLock<Arc<bge::BgeModel>>,
@@ -67,10 +78,32 @@ impl ModelRegistry {
     /// responsible for ensuring all texts share the same route (the
     /// `EmbeddingService::resolve_route` cache makes this trivial in practice).
     pub fn embed_batch(&self, route: &EmbedRoute, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch_with_usage(route, texts)
+            .map(|(vectors, _)| vectors)
+    }
+
+    /// Like [`Self::embed_batch`] but also returns the provider's real token usage when the
+    /// backend reports it (TD-SANDHI-1 / ADR-067). External providers that expose usage (Azure
+    /// OpenAI) return `Some`; local BGE and BYO (no usage in its contract) return `None`, so
+    /// callers keep the compute-based estimate for those.
+    pub fn embed_batch_with_usage(
+        &self,
+        route: &EmbedRoute,
+        texts: &[String],
+    ) -> Result<(Vec<Vec<f32>>, Option<EmbedUsage>)> {
         match route {
-            EmbedRoute::BgeSmall => self.bge(bge::Variant::Small)?.embed_batch(texts),
-            EmbedRoute::BgeLarge => self.bge(bge::Variant::Large)?.embed_batch(texts),
-            EmbedRoute::BgeM3 => self.bge(bge::Variant::M3)?.embed_batch(texts),
+            EmbedRoute::BgeSmall => self
+                .bge(bge::Variant::Small)?
+                .embed_batch(texts)
+                .map(|v| (v, None)),
+            EmbedRoute::BgeLarge => self
+                .bge(bge::Variant::Large)?
+                .embed_batch(texts)
+                .map(|v| (v, None)),
+            EmbedRoute::BgeM3 => self
+                .bge(bge::Variant::M3)?
+                .embed_batch(texts)
+                .map(|v| (v, None)),
             EmbedRoute::AzureOpenAi { model } => self
                 .azure_openai
                 .as_ref()
@@ -81,7 +114,7 @@ impl ModelRegistry {
                             .into(),
                     )
                 })?
-                .embed_batch(model, texts),
+                .embed_batch_with_usage(model, texts),
             EmbedRoute::OpenAi { model } => Err(EmbeddingError::ModelUnavailable(format!(
                 "Direct OpenAI route (model={model:?}) is declared but the HTTP client is not yet \
                  implemented; configure as Azure OpenAI or BYO endpoint in the meantime."
@@ -103,7 +136,8 @@ impl ModelRegistry {
                 // EmbedRoute for catalog audit but doesn't change the call.
                 declared_precision: _,
             } => byo::ByoClient::new(url.clone(), auth.clone(), *batch_size, *timeout_ms)
-                .embed_batch(texts, *declared_dim),
+                .embed_batch(texts, *declared_dim)
+                .map(|v| (v, None)),
         }
     }
 
