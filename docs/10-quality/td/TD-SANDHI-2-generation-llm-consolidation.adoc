@@ -1,0 +1,70 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-SANDHI-2: Generation LLMClient → sandhi-providers + neutral usage event (ADR-0047 D10a step 1)
+
+[cols="1,3",options="header"]
+|===
+| Field | Value
+| Status | **Open — ready.** This is ADR-0047 **D10a step 1** (the *same-language* consolidation): a Rust→Rust crate link, no FFI. Sequenced, not urgent — the generation path is config-gated off by default (`[llm]` block absent ⇒ dormant). Two independently-shippable parts; part (a) is the higher-value, un-gated one.
+| Priority | **P2** — correctness (metering gap) + de-duplication + capability parity; not a live defect.
+| Component | `src/ai/llm_integration/providers/{anthropic,openai,azure_openai,bedrock,cohere,ollama,vllm,huggingface}.rs` (8 hand-rolled clients), `engine.rs` (`LLMIntegrationEngine`), `metrics.rs` (`LLMMetrics`); a new neutral-event emit (mirror `src/metrics/usage_event.rs` from TD-SANDHI-1).
+| Governs | link:../../12-design/adr/ADR-067-consume-ai-usage-gateway-egress-metering.adoc[ADR-067] (sibling: embedding egress), link:../../12-design/adr/ADR-060-commercial-rust-crate-extension-seam-open-core.adoc[ADR-060].
+| Relates to | AnvaiOps **ADR-0047 D10 / D10a** (authoritative — the phased transport-consolidation roadmap), link:TD-SANDHI-1-gateway-egress-metering-wiring.adoc[TD-SANDHI-1] (the embedding sibling), `anvai-labs/sandhi` `sandhi-providers`.
+|===
+
+== Context
+
+The four-repo provider-layer deep-dive (2026-07-20, recorded in AnvaiOps ADR-0047 D10a) found
+ProximaDB is the **one clean same-language case** for transport consolidation: `sandhi-providers`
+is Rust, so it links in-process with no FFI — unlike victor/anvaiops (Python), which need an
+async-streaming binding built first. ProximaDB's generation stack
+(`src/ai/llm_integration/`) is 8 hand-rolled `LLMClient` clients (~2.1k LOC) that:
+
+* emit **no** neutral usage event — only private in-process counters (`LLMMetrics` atomics). This
+  is a **metering gap**: inconsistent with the *embedding* egress (TD-SANDHI-1, which now emits
+  `usage-event.v1`) and with victor/anvaiops (which emit the neutral event);
+* lack **streaming**, **circuit-breaking**, **Gemini**, and **cache-split usage** — all present in
+  `sandhi-providers`.
+
+The single live driver is the AV-SQL NL→SQL path (`natural_language/translator.rs`); BI holds the
+engine as an unused `_llm_engine`. So this is de-duplication + gap-closing, not a hot path.
+
+== The two parts (independently shippable)
+
+. **(a) Emit the neutral usage event — do this first, un-gated.** Mirror TD-SANDHI-1's
+  `src/metrics/usage_event.rs`: emit `usage-event.v1` from the generation path (from
+  `LLMIntegrationEngine` where usage is finalized), default-inert behind
+  `PROXIMADB_EMIT_USAGE_EVENTS`, `backend=external`. This is the higher-value half — it closes the
+  metering gap **without** any dependency change, using the exact pattern already shipped for
+  embeddings. It also requires deserializing the provider cache-split usage (the Anthropic DTO
+  currently drops it).
+. **(b) Link `sandhi-providers`, retire the hand-rolled clients — D10a step 1.** Replace the 8
+  `providers/*.rs` transport clients with `sandhi-providers` (`OpenAiCompat` covers
+  OpenAI/Azure/vLLM/Ollama; plus `Anthropic`, `Cohere`, `Gemini`) wrapped in a thin adapter that
+  maps Sandhi's `Provider` I/O onto ProximaDB's `LLMRequest`/`LLMResponse` domain types. Gains
+  streaming + `ResilientProvider` (circuit-breaker) + Gemini + cache-split usage.
+
+== Invariants / retained ProximaDB-specific logic
+
+`sandhi-providers` owns **transport + usage-parsing + resilience** only. These stay in ProximaDB
+as a shim over Sandhi's `Provider` (they are not Sandhi's job):
+
+* `validate_request_safety` (prompt-injection / bounds guard, `providers/mod.rs`);
+* the synthetic `confidence_score` heuristic consumed downstream;
+* `LLMIntegrationEngine`'s config-keyed provider construction + priority/fallback policy +
+  `LLMMetrics` cost-in-cents accounting;
+* the `LLMRequest`/`LLMResponse`/`FinishReason` domain types the NL/BI code binds to.
+
+Boundary (unchanged from ADR-067 / ADR-060): **neutral units only** (no dollars/SKU in the event);
+one-way dependency (ProximaDB → Sandhi); KEU/consumption meters stay authoritative.
+
+== Sequencing
+
+* Ship **(a)** independently and soon — it is cheap, un-gated, and closes a real cross-repo
+  inconsistency. It does **not** require the `sandhi` crate (emit via a local struct, like
+  TD-SANDHI-1).
+* Ship **(b)** when convenient — it is a clean Rust link (only a `reqwest` `0.11 → 0.12` bump +
+  pulling `sandhi-core`). Because the generation path is default-off and single-consumer, there is
+  no urgency; but it is the endorsed D10a direction, so new generation-provider work should prefer
+  extending Sandhi over adding a ninth hand-rolled client.
+* When `sandhi` publishes to crates.io, move the dep from git/path to a versioned crates.io dep.
