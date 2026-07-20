@@ -27,8 +27,9 @@
 
 use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
-use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
-use crate::graph::{Edge, Node, NodeId};
+use crate::OrionGraphEngine;
+use proximadb_graph_engine_traits::GraphEngine;
+use proximadb_graph_model::{Edge, Node, NodeId};
 use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -1291,7 +1292,7 @@ pub async fn vector_guided_astar(
     guide_embedding: &[f32],
     alpha: f64,
     distance_compute: Arc<proximadb_distance_kernel::UnifiedDistanceCompute>,
-    distance_metric: crate::proto::proximadb_v1::DistanceMetric,
+    distance_metric: proximadb_proto::proximadb_v1::DistanceMetric,
     config: TraversalConfig,
 ) -> Result<Option<(Vec<NodeId>, f64)>> {
     use std::cmp::Ordering;
@@ -1870,8 +1871,8 @@ pub async fn page_rank(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::graph::{Edge, Node};
+    use crate::OrionGraphEngine;
+    use proximadb_graph_model::{Edge, Node};
     // PropertyValue is now a struct, not enum - use direct field access;
 
     #[tokio::test]
@@ -2485,7 +2486,7 @@ mod tests {
             id: "A".to_string(),
             labels: vec!["Node".to_string()],
             properties: std::collections::HashMap::new(),
-            embedding: Some(crate::graph::EmbeddingVersion {
+            embedding: Some(proximadb_graph_model::EmbeddingVersion {
                 model_id: "test".to_string(),
                 model_version: "1".to_string(),
                 vector: vec![0.0, 0.0, 0.0],
@@ -2502,7 +2503,7 @@ mod tests {
             id: "B".to_string(),
             labels: vec!["Node".to_string()],
             properties: std::collections::HashMap::new(),
-            embedding: Some(crate::graph::EmbeddingVersion {
+            embedding: Some(proximadb_graph_model::EmbeddingVersion {
                 model_id: "test".to_string(),
                 model_version: "1".to_string(),
                 vector: vec![1.0, 0.0, 0.0],
@@ -2519,7 +2520,7 @@ mod tests {
             id: "C".to_string(),
             labels: vec!["Node".to_string()],
             properties: std::collections::HashMap::new(),
-            embedding: Some(crate::graph::EmbeddingVersion {
+            embedding: Some(proximadb_graph_model::EmbeddingVersion {
                 model_id: "test".to_string(),
                 model_version: "1".to_string(),
                 vector: vec![2.0, 0.0, 0.0],
@@ -2601,10 +2602,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_pure_graph() {
-        use crate::graph::EmbeddingVersion;
-        use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::DistanceMetric;
         use proximadb_distance_kernel::UnifiedDistanceCompute;
+        use proximadb_graph_engine_traits::GraphEngine;
+        use proximadb_graph_model::EmbeddingVersion;
+        use proximadb_proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 
@@ -2728,10 +2729,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_balanced_blend() {
-        use crate::graph::EmbeddingVersion;
-        use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::DistanceMetric;
         use proximadb_distance_kernel::UnifiedDistanceCompute;
+        use proximadb_graph_engine_traits::GraphEngine;
+        use proximadb_graph_model::EmbeddingVersion;
+        use proximadb_proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 
@@ -2909,10 +2910,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_alpha_clamping() {
-        use crate::graph::EmbeddingVersion;
-        use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::DistanceMetric;
         use proximadb_distance_kernel::UnifiedDistanceCompute;
+        use proximadb_graph_engine_traits::GraphEngine;
+        use proximadb_graph_model::EmbeddingVersion;
+        use proximadb_proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 
@@ -3017,10 +3018,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_guided_astar_no_path() {
-        use crate::graph::EmbeddingVersion;
-        use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::DistanceMetric;
         use proximadb_distance_kernel::UnifiedDistanceCompute;
+        use proximadb_graph_engine_traits::GraphEngine;
+        use proximadb_graph_model::EmbeddingVersion;
+        use proximadb_proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 

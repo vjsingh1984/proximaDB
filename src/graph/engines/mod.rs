@@ -39,6 +39,8 @@
 pub mod generic_traversal;
 /// ORION in-memory CSR projection engine for real-time traversal at 1M+ edges/sec.
 pub mod orion;
+#[cfg(test)]
+mod orion_recovery_tests;
 
 use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;

@@ -48,7 +48,7 @@
 
 use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
-use crate::graph::EdgeId;
+use proximadb_graph_model::EdgeId;
 use std::collections::{HashMap, HashSet};
 
 /// CSR storage for efficient edge representation
@@ -59,7 +59,7 @@ pub struct CsrStorage {
     pub(super) offsets: Vec<usize>,
 
     /// Target node indices for each edge
-    pub(super) targets: Vec<usize>,
+    pub targets: Vec<usize>,
 
     /// Edge IDs corresponding to each target (for metadata lookup)
     pub(super) edge_ids: Vec<EdgeId>,

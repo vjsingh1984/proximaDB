@@ -28,7 +28,7 @@
 
 use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
-use crate::graph::{Edge, EdgeId, Node, NodeId, PropertyValue};
+use proximadb_graph_model::{Edge, EdgeId, Node, NodeId, PropertyValue};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Property index for efficient property-based queries
@@ -523,16 +523,16 @@ impl Default for IndexManager {
 /// Convert PropertyValue to string for indexing
 fn property_value_to_string(value: &PropertyValue) -> String {
     match &value.value {
-        Some(crate::graph::model::property_value::Value::StringValue(s)) => s.clone(),
-        Some(crate::graph::model::property_value::Value::IntValue(i)) => i.to_string(),
-        Some(crate::graph::model::property_value::Value::DoubleValue(d)) => d.to_string(),
-        Some(crate::graph::model::property_value::Value::BoolValue(b)) => b.to_string(),
-        Some(crate::graph::model::property_value::Value::BytesValue(b)) => {
+        Some(proximadb_graph_model::property_value::Value::StringValue(s)) => s.clone(),
+        Some(proximadb_graph_model::property_value::Value::IntValue(i)) => i.to_string(),
+        Some(proximadb_graph_model::property_value::Value::DoubleValue(d)) => d.to_string(),
+        Some(proximadb_graph_model::property_value::Value::BoolValue(b)) => b.to_string(),
+        Some(proximadb_graph_model::property_value::Value::BytesValue(b)) => {
             format!("bytes:{}", b.len())
         }
-        Some(crate::graph::model::property_value::Value::ArrayValue(_)) => "array".to_string(),
-        Some(crate::graph::model::property_value::Value::ObjectValue(_)) => "object".to_string(),
-        Some(crate::graph::model::property_value::Value::VectorValue(_)) => "vector".to_string(),
+        Some(proximadb_graph_model::property_value::Value::ArrayValue(_)) => "array".to_string(),
+        Some(proximadb_graph_model::property_value::Value::ObjectValue(_)) => "object".to_string(),
+        Some(proximadb_graph_model::property_value::Value::VectorValue(_)) => "vector".to_string(),
         None => "null".to_string(),
     }
 }
@@ -547,7 +547,7 @@ mod tests {
         let mut index = PropertyIndex::new("name".to_string());
 
         let value = PropertyValue {
-            value: Some(crate::graph::model::property_value::Value::StringValue(
+            value: Some(proximadb_graph_model::property_value::Value::StringValue(
                 "Alice".to_string(),
             )),
         };

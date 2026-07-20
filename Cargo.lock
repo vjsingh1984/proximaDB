@@ -6782,6 +6782,7 @@ dependencies = [
  "proximadb-observability",
  "proximadb-observability-engine",
  "proximadb-observability-query",
+ "proximadb-orion-engine",
  "proximadb-pipeline-operator",
  "proximadb-proto",
  "proximadb-quantization-kernel",
@@ -7645,6 +7646,40 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "proximadb-kernel",
+]
+
+[[package]]
+name = "proximadb-orion-engine"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "dashmap",
+ "lru 0.18.0",
+ "lz4_flex 0.11.6",
+ "memmap2",
+ "parking_lot",
+ "proximadb-compression-types",
+ "proximadb-distance-kernel",
+ "proximadb-graph",
+ "proximadb-graph-engine-traits",
+ "proximadb-graph-model",
+ "proximadb-kernel",
+ "proximadb-metrics",
+ "proximadb-proto",
+ "proximadb-storage-common",
+ "proximadb-storage-ports",
+ "proximadb-storage-tenant",
+ "rand 0.8.6",
+ "rayon",
+ "serde",
+ "serde_json",
+ "snap",
+ "tokio",
+ "tracing",
+ "zstd",
 ]
 
 [[package]]

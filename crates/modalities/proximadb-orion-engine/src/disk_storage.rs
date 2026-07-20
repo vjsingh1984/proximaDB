@@ -56,9 +56,8 @@
 //! - Recommendation graphs (billions of relationships)
 //! - Biological networks (protein interactions)
 
-use crate::graph::EdgeId;
-use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALWriter;
 use memmap2::MmapMut;
+use proximadb_graph_model::EdgeId;
 use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -206,7 +205,7 @@ pub struct DiskCsrStorage {
     dirty: bool,
 
     /// WAL writer for crash recovery (optional)
-    wal_writer: Option<Arc<Mutex<UnifiedWALWriter>>>,
+    wal_writer: Option<Arc<Mutex<dyn proximadb_storage_ports::GraphWalPort>>>,
 
     /// WAL enabled flag
     wal_enabled: bool,
@@ -252,7 +251,10 @@ impl DiskCsrStorage {
     }
 
     /// Enable WAL integration for crash recovery
-    pub async fn enable_wal(&mut self, wal_writer: Arc<Mutex<UnifiedWALWriter>>) -> Result<()> {
+    pub async fn enable_wal(
+        &mut self,
+        wal_writer: Arc<Mutex<dyn proximadb_storage_ports::GraphWalPort>>,
+    ) -> Result<()> {
         self.wal_writer = Some(wal_writer);
         self.wal_enabled = true;
         Ok(())
@@ -816,8 +818,7 @@ mod tests {
             .await
             .expect("Failed to initialize graph");
 
-        let compaction_config =
-            crate::graph::engines::orion::compaction::CompactionConfig::default();
+        let compaction_config = crate::compaction::CompactionConfig::default();
         storage
             .enable_compaction(compaction_config)
             .await
@@ -856,8 +857,7 @@ mod tests {
             .await
             .expect("Failed to create DiskCsrStorage");
 
-        let compaction_config =
-            crate::graph::engines::orion::compaction::CompactionConfig::default();
+        let compaction_config = crate::compaction::CompactionConfig::default();
         storage
             .enable_compaction(compaction_config)
             .await

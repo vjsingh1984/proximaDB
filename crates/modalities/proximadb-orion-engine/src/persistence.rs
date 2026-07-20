@@ -41,9 +41,9 @@
 //! Neither is consolidation in the reuse-first sense. Leave kernel
 //! `StorageError` here until a broader VectorDBError shape decision is made.
 
-use crate::core::serialization::CompressionAlgorithm;
-use crate::graph::engines::orion::OrionGraphEngine;
-use crate::graph::{Edge, EdgeId, Node, NodeId};
+use crate::OrionGraphEngine;
+use proximadb_compression_types::CompressionAlgorithm;
+use proximadb_graph_model::{Edge, EdgeId, Node, NodeId};
 use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -116,7 +116,7 @@ struct OrionSnapshotLegacy {
 }
 
 // Use the unified GraphOperation from graph_memtable
-use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
+use proximadb_graph_model::GraphOperation;
 
 /// Persistence manager for ORION engine
 pub struct OrionPersistence {
@@ -1597,124 +1597,5 @@ impl OrionPersistence {
 
         info!("Graph imported from {:?}", path.as_ref());
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod topology_only_snapshot_tests {
-    use super::*;
-    use crate::graph::engines::GraphEngine;
-    use crate::graph::engines::orion::OrionGraphEngine;
-
-    async fn engine(graph_id: &str, base: &std::path::Path) -> OrionGraphEngine {
-        let base_url = format!("file://{}", base.display());
-        OrionGraphEngine::with_persistence_for_graph(
-            graph_id.to_string(),
-            base_url,
-            false,
-            crate::graph::unified_wal_factory(),
-        )
-        .await
-        .expect("engine with persistence")
-    }
-
-    fn node(id: &str) -> Node {
-        Node {
-            id: id.to_string(),
-            labels: vec!["N".to_string()],
-            ..Default::default()
-        }
-    }
-
-    /// TD-168 Phase 1b: a topology-only snapshot (gate ON) carries CSR + node_to_index
-    /// but NO payloads; it round-trips the topology, leaves payloads cold, and is
-    /// fail-closed when loaded with the gate OFF. The full (gate OFF) snapshot is
-    /// unchanged. Process-isolated under nextest, so the env gate doesn't leak.
-    #[tokio::test]
-    async fn topology_only_snapshot_round_trips_payloads_cold_and_fails_closed() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let base = tmp.path().join("orion");
-        std::fs::create_dir_all(&base).expect("mkdir");
-
-        // Build a 2-node, 1-edge graph in the source engine (full, in-RAM).
-        let src = engine("g1", &base).await;
-        src.insert_node(node("a")).await.expect("node a");
-        src.insert_node(node("b")).await.expect("node b");
-        src.insert_edge(Edge {
-            id: "e".to_string(),
-            from_node_id: "a".to_string(),
-            to_node_id: "b".to_string(),
-            edge_type: "R".to_string(),
-            ..Default::default()
-        })
-        .await
-        .expect("edge");
-        assert_eq!(src.node_to_index.len(), 2);
-
-        // (1) Gate ON → topology-only snapshot; load into a fresh engine.
-        unsafe { std::env::set_var("PROXIMADB_GRAPH_COLD_PAYLOADS", "1") };
-        let topo_path = src
-            .persistence()
-            .expect("persistence")
-            .save_snapshot(&src, 0)
-            .await
-            .expect("save topology-only");
-
-        let warm = engine("g1", &base).await;
-        warm.persistence()
-            .expect("persistence")
-            .load_snapshot(&warm, &topo_path)
-            .await
-            .expect("load topology-only");
-        // Topology restored, payloads NOT resident (served cold via the service path).
-        assert_eq!(warm.node_to_index.len(), 2, "topology (nodes) restored");
-        assert!(
-            warm.memory_pool.nodes.is_empty(),
-            "node payloads stay cold after topology-only load"
-        );
-        assert!(
-            warm.edge_metadata.is_empty(),
-            "edge payloads stay cold after topology-only load"
-        );
-        // Edge TOPOLOGY survives in the CSR (one directed out-edge), even though no edge
-        // payload is resident.
-        let out_edges = OrionPersistence::read_lock(&warm.csr_outgoing, "csr")
-            .expect("csr read")
-            .targets
-            .len();
-        assert_eq!(out_edges, 1, "edge topology restored in CSR");
-
-        // (2) Fail-closed: same topology-only snapshot, gate OFF → error (no silent
-        // data-invisibility).
-        unsafe { std::env::remove_var("PROXIMADB_GRAPH_COLD_PAYLOADS") };
-        let blocked = engine("g1", &base).await;
-        let result = blocked
-            .persistence()
-            .expect("persistence")
-            .load_snapshot(&blocked, &topo_path)
-            .await;
-        assert!(
-            result.is_err(),
-            "topology-only snapshot must fail-closed when the cold-payload gate is OFF"
-        );
-
-        // (3) Gate OFF → full snapshot round-trips with payloads resident (today's path).
-        let full_path = src
-            .persistence()
-            .expect("persistence")
-            .save_snapshot(&src, 0)
-            .await
-            .expect("save full");
-        let full = engine("g1", &base).await;
-        full.persistence()
-            .expect("persistence")
-            .load_snapshot(&full, &full_path)
-            .await
-            .expect("load full");
-        assert_eq!(
-            full.memory_pool.nodes.len(),
-            2,
-            "full snapshot loads payloads"
-        );
     }
 }
