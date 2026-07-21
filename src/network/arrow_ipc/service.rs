@@ -818,13 +818,17 @@ impl ProximaFlightService {
     ) -> Result<Vec<arrow_array::RecordBatch>> {
         info!(
             collection_id = %file_ticket.collection_id,
-            file_path = %file_ticket.file_path,
             "Arrow Flight file export"
         );
 
-        // Read the Arrow file
+        let collection = self
+            .collection_service
+            .collection(&file_ticket.collection_id)
+            .await?
+            .with_context(|| format!("Collection not found: {}", file_ticket.collection_id))?;
+
         self.file_export_handler
-            .read_arrow_file(&file_ticket.file_path)
+            .read_collection_file(&collection, &file_ticket.file_path)
     }
 
     async fn trigger_collection_compaction(&self, collection_id: &str) -> Result<()> {
@@ -1415,16 +1419,19 @@ impl FlightService for ProximaFlightService {
 
             debug!(
                 collection_id = %file_ticket.collection_id,
-                file_path = %file_ticket.file_path,
                 compression = ?compression,
                 "Arrow file export via do_get"
             );
 
             // Stream Arrow file contents
+            let collection_id = file_ticket.collection_id.clone();
             let batches = self
                 .handle_arrow_file_export(file_ticket)
                 .await
-                .map_err(|e| TonicStatus::internal(format!("File export failed: {}", e)))?;
+                .map_err(|error| {
+                    warn!(%collection_id, %error, "Arrow file export rejected");
+                    TonicStatus::not_found("Export file is unavailable")
+                })?;
 
             // Convert batches to FlightData stream with compression
             // Use the new compression-aware encoder for all batches
