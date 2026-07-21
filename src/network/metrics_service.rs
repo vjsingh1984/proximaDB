@@ -200,6 +200,17 @@ async fn prometheus_metrics_endpoint(
         }
         text.push_str(&wal_scan_text);
     }
+    // ADR-069 / TD-WAL-1: append the WAL flush-optimizer family
+    // (proximadb_wal_flush_*, proximadb_wal_size_bytes, watermark + backpressure
+    // gauges). Empty until the first flush/size emit, so the response stays valid
+    // for binaries that never flush.
+    let wal_flush_text = crate::metrics::wal_flush_metrics::scrape_text();
+    if !wal_flush_text.is_empty() {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&wal_flush_text);
+    }
     // Append the DEFAULT prometheus registry. The per-tenant CONSUMPTION families
     // (`proximadb_object_store_ops_total`, `proximadb_kou_bytes_total`,
     // `proximadb_storage_bytes_seconds`, `proximadb_object_store_write_bytes_by_tier_total`, …)
