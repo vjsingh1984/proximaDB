@@ -257,6 +257,7 @@ pub fn write_pax_segment_full(
         target_block,
         cluster,
         plan,
+        None, // two-level is compaction-only (TD-RDSTRAT-8)
     )
 }
 
@@ -281,9 +282,29 @@ pub fn write_pax_segment_compacted(
     f32_tier: bool,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
-    let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
+    use crate::storage::engines::sst::block_cluster;
+    let cluster = block_cluster::block_cluster_enabled();
+    // TD-RDSTRAT-8 rev 3 (default OFF, `PROXIMADB_IVF2=1`): compaction is the ONLY
+    // write path that emits the persisted-IVF-probe (v3) layout — production flush
+    // stays sign-bit L0 (IVF-at-flush measured ~80× flush cost, dropped), and large
+    // corpora reach v3 on their normal compaction cadence with no migration event.
+    // The probe plan persists the SAME IOP-derived PCA/IVF plan the single-level
+    // path computes (no second quantizer); it falls back to the plain single-level
+    // plan whenever the model can't be trained (fail-safe, never a worse segment).
+    let coalesced = quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled();
+    let mut probe_model = None;
     let plan = if cluster {
-        crate::storage::engines::sst::block_cluster::cluster_plan_pca_ivf(records, 0)
+        if coalesced && block_cluster::ivf_probe_enabled() {
+            match block_cluster::cluster_plan_ivf_probe(records, 0) {
+                Some(tl) => {
+                    probe_model = Some(tl.model);
+                    Some(tl.plan)
+                }
+                None => block_cluster::cluster_plan_pca_ivf(records, 0),
+            }
+        } else {
+            block_cluster::cluster_plan_pca_ivf(records, 0)
+        }
     } else {
         None
     };
@@ -298,6 +319,7 @@ pub fn write_pax_segment_compacted(
         target_block,
         cluster,
         plan,
+        probe_model,
     )
 }
 
@@ -315,6 +337,7 @@ fn write_pax_segment_ordered(
     target_block: Option<usize>,
     cluster: bool,
     plan: Option<crate::storage::engines::sst::block_cluster::ClusterPlan>,
+    two_level: Option<proximadb_storage_common::coarse_directory::CoarseModel>,
 ) -> Result<SegmentMeta> {
     let lossless_clustered = lossless_clustered_enabled() && plan.is_some();
     let lossless_scalar = lossless_scalar_enabled();
@@ -338,6 +361,12 @@ fn write_pax_segment_ordered(
     // ADR-061 pre-GA in-place amendment; `PROXIMADB_PAX_COALESCED_RABITQ=0` opts
     // out to the legacy in-block RaBitQ layout for mixed-read / measurement).
     .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled());
+    // TD-RDSTRAT-8 rev 3: the persisted IVF probe directory (v3 layout) — the
+    // plan's runs are its IOP-derived cells, so the writer pads blocks at the
+    // same boundaries the model's cell_rows describe (a cell = whole D-blocks).
+    if let Some(model) = two_level {
+        writer = writer.with_two_level(model);
+    }
     match &plan {
         Some(plan) => {
             let mut next_run = 1usize;
@@ -909,7 +938,7 @@ pub async fn rabitq_search_segment_coalesced(
 ) -> Result<Option<Vec<CascadeHit>>> {
     use proximadb_block_format::{PaxBlockReader, RaBitQRegion, coalesced_sq8, col_id};
     use proximadb_storage_common::segment_layout::{
-        SEG_HEADER_PREFIX_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
+        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
     };
 
     // ADR-065 co-design diagnostic: per-GET size trace. When PROXIMADB_TRACE_GETS
@@ -934,10 +963,18 @@ pub async fn rabitq_search_segment_coalesced(
         if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
             return Ok(None);
         }
-        fs.read_range(path, 0, SEG_HEADER_PREFIX_LEN as u64)
+        // TD-RDSTRAT-8: fetch the v3 prefix length unconditionally (clamped to
+        // file size) — the 16 extra bytes ride the same GET and cover both the
+        // v1 (56 B) and v3 (72 B) forms; `parse` branches on the version byte.
+        fs.read_range(path, 0, (SEG_HEADER_PREFIX_V3_LEN as u64).min(size))
             .await
             .map_err(|e| anyhow::anyhow!("coalesced scan header {path}: {e}"))?
     };
+    // A v3 (two-level) segment parses here too and falls through to the same
+    // single-level whole-region scan: Regions A/B are byte-identical in format
+    // (`rabitq_off/sq8_off` skip past A0), and a full scan over coarse-ordered
+    // rows is order-agnostic — correct results, v2 GET budget. The A0
+    // coarse-probe branch (nprobe-scoped sub-reads) is PR-B of TD-RDSTRAT-8.
     let header = match SegmentHeaderPrefix::parse(&header_bytes) {
         Ok(h) => h,
         Err(_) => return Ok(None), // not coalesced → don't cache
@@ -1956,5 +1993,141 @@ mod tests {
             ids(&hits2),
             "the survivor cache must not change search results"
         );
+    }
+
+    /// TD-RDSTRAT-8 PR-A (rev 3): `write_pax_segment_compacted` emits the
+    /// persisted-IVF-probe (v3) layout ONLY under `PROXIMADB_IVF2=1` (default-OFF,
+    /// compaction-only), and the current binary reads a v3 segment through the
+    /// SAME single-level scan path with full parity (correctness before the PR-B
+    /// probe reader lands): search recall holds, and `read_segment_records`
+    /// reconstructs every row WITH its Region-B vectors (the compaction/recovery
+    /// inverse — a v3 segment must never silently drop vectors when re-compacted).
+    #[tokio::test]
+    async fn ivf_probe_compaction_gate_and_v3_read_compat() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_storage_common::coarse_directory::CoarseDirectory;
+        use proximadb_storage_common::segment_layout::{
+            SEG_LAYOUT_VERSION, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentHeaderPrefix,
+        };
+
+        const DIM: usize = 64;
+        const N: usize = 400;
+        const K: usize = 10;
+        // Small k (the shared IOP-derived override) so the tiny fixture still
+        // forms multiple cells — the natural N·dim/IOP count would be ~2 here.
+        unsafe {
+            std::env::set_var("PROXIMADB_IVF2", "1");
+            std::env::set_var("PROXIMADB_IVF_K", "4");
+        }
+
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+
+        // Flag ON ⇒ compaction writes v3 (header + A0 + footer mirror agree).
+        let v3_path = dir.path().join("v3.pax");
+        write_pax_segment_compacted(
+            &v3_path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let v3_bytes = std::fs::read(&v3_path).unwrap();
+        let h = SegmentHeaderPrefix::parse(&v3_bytes).unwrap();
+        assert_eq!(
+            h.layout_version, SEG_LAYOUT_VERSION_TWO_LEVEL,
+            "PROXIMADB_IVF2=1 compaction must emit the v3 layout"
+        );
+        let a0 =
+            CoarseDirectory::parse(&v3_bytes[h.a0_off as usize..(h.a0_off + h.a0_len) as usize])
+                .expect("Region A0 parses from the compacted segment");
+        assert_eq!(a0.model.rows_covered(), N as u64);
+        assert_eq!(a0.model.dim as usize, DIM);
+
+        // Flag OFF ⇒ same records compact to the v1 (single-level) layout.
+        unsafe {
+            std::env::remove_var("PROXIMADB_IVF2");
+        }
+        let v1_path = dir.path().join("v1.pax");
+        write_pax_segment_compacted(
+            &v1_path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let h1 = SegmentHeaderPrefix::parse(&std::fs::read(&v1_path).unwrap()).unwrap();
+        assert_eq!(
+            h1.layout_version, SEG_LAYOUT_VERSION,
+            "without PROXIMADB_IVF2 the compaction layout is unchanged (v1)"
+        );
+
+        // v3 read-compat: the coalesced cascade searches the v3 segment with
+        // brute-force-level recall (single-level full scan until PR-B).
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let query = corpus[137].clone();
+        let hits = rabitq_search_segment_coalesced(
+            &fs,
+            v3_path.to_str().unwrap(),
+            &query,
+            K,
+            RankMetric::L2,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("v3 segment must be searchable by the current binary");
+        assert_eq!(hits[0].oid, "r137", "nearest neighbour on the v3 layout");
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+        let mut idx: Vec<usize> = (0..N).collect();
+        idx.sort_by(|&a, &b| {
+            l2(&corpus[a], &query)
+                .partial_cmp(&l2(&corpus[b], &query))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let truth: std::collections::HashSet<String> =
+            idx.iter().take(K).map(|i| format!("r{i}")).collect();
+        let got: std::collections::HashSet<String> = hits.iter().map(|h| h.oid.clone()).collect();
+        let recall = truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32;
+        assert!(recall >= 0.90, "v3 read-compat recall@{K} = {recall:.2}");
+
+        // Compaction/recovery inverse: every row reads back WITH its vector
+        // (Region-B overlay must work through the v3 prefix).
+        let recs = read_segment_records(&v3_bytes, &[], &[], None).unwrap();
+        assert_eq!(recs.len(), N);
+        assert!(
+            recs.iter().all(|r| r
+                .embeddings
+                .first()
+                .is_some_and(|e| !e.as_fp32_slice().is_empty())),
+            "v3 read_segment_records must reconstruct vectors (never drop Region B)"
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_IVF_K");
+        }
     }
 }

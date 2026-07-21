@@ -36,14 +36,28 @@ use crate::pax_block::SEGMENT_MAGIC;
 /// coalesced segment starts with `PXH1`.
 pub const SEG_HEADER_MAGIC: &[u8; 4] = b"PXH1";
 
-/// Header layout version (independent of the block/segment format family — bump
-/// only when the header-prefix byte layout changes). Pre-release in-place
-/// evolution (no serialized files on disk → no versioned readers to be
-/// compatible with); versioning re-engages at GA. Constant 1 for now.
+/// Header layout version for the **single-level** coalesced layout (regions
+/// A/B/D, whole-region RaBitQ scan). The version byte is the layout selector
+/// for the per-segment read chooser (TD-RDSTRAT-8 mixed-read pattern).
 pub const SEG_LAYOUT_VERSION: u8 = 1;
 
-/// `[magic 4][version 1][pad 3][rabitq_off 8][rabitq_len 8][sq8_off 8][sq8_len 8][footer_off 8][footer_len 8]`.
+/// Header layout version for the **two-level IVF** layout (TD-RDSTRAT-8):
+/// `[prefix][Region A0 coarse directory][A][B][D][footer]`, rows ordered by
+/// coarse cell, regions cell-contiguous. The byte value 3 matches the TD/ADR
+/// "v3 layout" name (2 is intentionally skipped/reserved so code, docs, and
+/// on-disk bytes all say the same number). Written only by compaction under
+/// `PROXIMADB_IVF2=1`; version-1 readers reject it cleanly (fail-closed
+/// version check), v3-aware readers handle version-1 segments unchanged.
+pub const SEG_LAYOUT_VERSION_TWO_LEVEL: u8 = 3;
+
+/// v1: `[magic 4][version 1][pad 3][rabitq_off 8][rabitq_len 8][sq8_off 8][sq8_len 8][footer_off 8][footer_len 8]`.
 pub const SEG_HEADER_PREFIX_LEN: usize = 56;
+
+/// v3 appends `[a0_off 8][a0_len 8]` (the Region A0 coarse-directory extent) to
+/// the v1 prefix. Readers fetch `SEG_HEADER_PREFIX_V3_LEN` (clamped to file
+/// size) unconditionally — the 16 extra bytes are free within the same GET and
+/// cover both versions.
+pub const SEG_HEADER_PREFIX_V3_LEN: usize = 72;
 
 /// True iff `bytes` carries the coalesced-RaBitQ header-prefix at offset 0 — the
 /// presence-field that selects the scan-then-rerank read path (mixed-read).
@@ -51,12 +65,14 @@ pub fn is_coalesced_segment(bytes: &[u8]) -> bool {
     bytes.len() >= SEG_HEADER_MAGIC.len() && &bytes[..SEG_HEADER_MAGIC.len()] == SEG_HEADER_MAGIC
 }
 
-/// The fixed 56 B header-prefix at offset 0. The RaBitQ scan GET reads
-/// `[0, rabitq_off + rabitq_len]`, so the prefix coalesces into that one GET.
+/// The fixed header-prefix at offset 0 (56 B for v1, 72 B for v3). The RaBitQ
+/// scan GET reads `[0, rabitq_off + rabitq_len]`, so the prefix coalesces into
+/// that one GET (v3: `[0, a0_off + a0_len]` fetches prefix + coarse directory).
 #[derive(Debug, Clone)]
 pub struct SegmentHeaderPrefix {
     pub layout_version: u8,
-    /// Byte offset of the coalesced RaBitQ region (Region A == SEG_HEADER_PREFIX_LEN).
+    /// Byte offset of the coalesced RaBitQ region (Region A; v1: right after
+    /// the prefix, v3: after Region A0).
     pub rabitq_off: u64,
     /// Byte length of the coalesced RaBitQ region (Region A).
     pub rabitq_len: u64,
@@ -69,12 +85,22 @@ pub struct SegmentHeaderPrefix {
     pub footer_off: u64,
     /// Byte length of the footer-index.
     pub footer_len: u64,
+    /// Byte offset of Region A0 (the TD-RDSTRAT-8 coarse directory). `0` on
+    /// v1 segments (no coarse level).
+    pub a0_off: u64,
+    /// Byte length of Region A0. `0` on v1 segments.
+    pub a0_len: u64,
 }
 
 impl SegmentHeaderPrefix {
-    /// Serialize to a fixed 56 B buffer.
-    pub fn to_bytes(&self) -> [u8; SEG_HEADER_PREFIX_LEN] {
-        let mut buf = [0u8; SEG_HEADER_PREFIX_LEN];
+    /// Serialize (56 B for v1, 72 B for v3 — the version byte selects the form).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let len = if self.layout_version == SEG_LAYOUT_VERSION_TWO_LEVEL {
+            SEG_HEADER_PREFIX_V3_LEN
+        } else {
+            SEG_HEADER_PREFIX_LEN
+        };
+        let mut buf = vec![0u8; len];
         buf[..4].copy_from_slice(SEG_HEADER_MAGIC);
         buf[4] = self.layout_version;
         // buf[5..8] reserved (zero).
@@ -84,11 +110,17 @@ impl SegmentHeaderPrefix {
         buf[32..40].copy_from_slice(&self.sq8_len.to_le_bytes());
         buf[40..48].copy_from_slice(&self.footer_off.to_le_bytes());
         buf[48..56].copy_from_slice(&self.footer_len.to_le_bytes());
+        if len == SEG_HEADER_PREFIX_V3_LEN {
+            buf[56..64].copy_from_slice(&self.a0_off.to_le_bytes());
+            buf[64..72].copy_from_slice(&self.a0_len.to_le_bytes());
+        }
         buf
     }
 
-    /// Parse + validate (magic + version). Fail-closed on a wrong magic or
-    /// truncation — never mis-reads a legacy segment as coalesced.
+    /// Parse + validate (magic + version). Fail-closed on a wrong magic, an
+    /// unknown version, or truncation — never mis-reads a legacy segment as
+    /// coalesced, and a version-1-only binary rejects a v3 segment here (the
+    /// TD-RDSTRAT-8 mixed-read contract) rather than mis-probing it.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < SEG_HEADER_PREFIX_LEN {
             bail!("coalesced segment header too short: {}", bytes.len());
@@ -97,11 +129,27 @@ impl SegmentHeaderPrefix {
             bail!("not a coalesced-RaBitQ segment (bad header magic)");
         }
         let layout_version = bytes[4];
-        if layout_version != SEG_LAYOUT_VERSION {
+        let (required, has_a0) = match layout_version {
+            SEG_LAYOUT_VERSION => (SEG_HEADER_PREFIX_LEN, false),
+            SEG_LAYOUT_VERSION_TWO_LEVEL => (SEG_HEADER_PREFIX_V3_LEN, true),
+            v => bail!(
+                "unsupported coalesced segment layout version {v} (expected {SEG_LAYOUT_VERSION} or {SEG_LAYOUT_VERSION_TWO_LEVEL})"
+            ),
+        };
+        if bytes.len() < required {
             bail!(
-                "unsupported coalesced segment layout version {layout_version} (expected {SEG_LAYOUT_VERSION})"
+                "coalesced segment header too short for layout version {layout_version}: {}",
+                bytes.len()
             );
         }
+        let (a0_off, a0_len) = if has_a0 {
+            (
+                u64::from_le_bytes(bytes[56..64].try_into()?),
+                u64::from_le_bytes(bytes[64..72].try_into()?),
+            )
+        } else {
+            (0, 0)
+        };
         Ok(Self {
             layout_version,
             rabitq_off: u64::from_le_bytes(bytes[8..16].try_into()?),
@@ -110,6 +158,8 @@ impl SegmentHeaderPrefix {
             sq8_len: u64::from_le_bytes(bytes[32..40].try_into()?),
             footer_off: u64::from_le_bytes(bytes[40..48].try_into()?),
             footer_len: u64::from_le_bytes(bytes[48..56].try_into()?),
+            a0_off,
+            a0_len,
         })
     }
 }
@@ -272,8 +322,15 @@ pub struct BlockTierAssignment {
 const DESCRIPTOR_SIZE: usize = 28;
 const ASSIGNMENT_SIZE: usize = 11;
 const SECTION_STRIPE_ENCODING_MAP: u8 = 2;
+/// Optional footer section mirroring the Region A0 (coarse directory) extent
+/// (TD-RDSTRAT-8). Additive: parsers that predate it skip unknown section tags
+/// (pinned by `footer_v2_unknown_optional_section_is_skipped`), so the footer
+/// stays single-version — layout versioning lives in the header-prefix.
+const SECTION_COARSE_DIRECTORY: u8 = 3;
 const SECTION_VERSION_V1: u8 = 1;
 const FOOTER_V1: u8 = 1;
+/// `[a0_off u64][a0_len u64]`.
+const COARSE_DIRECTORY_SECTION_LEN: usize = 16;
 
 /// The self-describing footer-index (Parquet-style metadata hub): block table +
 /// schema snapshot + per-stripe encoding map + RaBitQ mirror + row count. Located
@@ -319,6 +376,11 @@ pub struct SegmentFooterIndex {
     pub encoding_map: Vec<StripeEncodingDescriptor>,
     /// Per-block descriptor selections for footer v2.
     pub block_tier_assignments: Vec<BlockTierAssignment>,
+    /// Region A0 (coarse directory) extent mirror (TD-RDSTRAT-8; also in the
+    /// v3 header-prefix). `0/0` = no coarse level (v1 segments). Serialized as
+    /// an optional trailing section, so v1 footers are byte-unchanged.
+    pub a0_off: u64,
+    pub a0_len: u64,
 }
 
 /// `[footer_len u64][SEGMENT_MAGIC 8B]` — the 16 B tail that locates the footer.
@@ -646,21 +708,36 @@ impl SegmentFooterIndex {
         for b in &self.blocks {
             write_block_entry(&mut buf, b);
         }
-        // Optional stripe encoding-map section: the footer carries per-stripe
-        // lossless-transform metadata only when recorded (clustered-SQ8 / scalar
-        // LZ4, TD-RDSTRAT-7). Absent ⇒ no trailing section, smallest footer.
-        // Single version-1 layout (pre-release: no versioned files on disk;
-        // versioning re-engages at GA) — ADR-065 Region B.
+        // Optional trailing sections (single version-1 footer layout —
+        // pre-release: no versioned files on disk; versioning re-engages at
+        // GA). Emitted only when at least one section has content, so a
+        // sectionless footer is byte-identical to the historical form:
+        //  - stripe encoding map: per-stripe lossless-transform metadata
+        //    (clustered-SQ8 / scalar LZ4, TD-RDSTRAT-7 / ADR-065 Region B);
+        //  - coarse directory extent: Region A0 mirror (TD-RDSTRAT-8).
+        let mut sections: Vec<(u8, Vec<u8>)> = Vec::new();
         if !self.encoding_map.is_empty() {
             self.validate_encoding_map()?;
-            let encoding_payload = self.encoding_map_payload()?;
-            buf.extend_from_slice(&1u16.to_le_bytes());
-            buf.push(SECTION_STRIPE_ENCODING_MAP);
-            buf.push(SECTION_VERSION_V1);
-            let section_len = u32::try_from(encoding_payload.len())
-                .map_err(|_| anyhow::anyhow!("footer encoding-map section exceeds u32"))?;
-            buf.extend_from_slice(&section_len.to_le_bytes());
-            buf.extend_from_slice(&encoding_payload);
+            sections.push((SECTION_STRIPE_ENCODING_MAP, self.encoding_map_payload()?));
+        }
+        if self.a0_len > 0 {
+            let mut payload = Vec::with_capacity(COARSE_DIRECTORY_SECTION_LEN);
+            payload.extend_from_slice(&self.a0_off.to_le_bytes());
+            payload.extend_from_slice(&self.a0_len.to_le_bytes());
+            sections.push((SECTION_COARSE_DIRECTORY, payload));
+        }
+        if !sections.is_empty() {
+            let section_count = u16::try_from(sections.len())
+                .map_err(|_| anyhow::anyhow!("footer section count exceeds u16"))?;
+            buf.extend_from_slice(&section_count.to_le_bytes());
+            for (tag, payload) in sections {
+                buf.push(tag);
+                buf.push(SECTION_VERSION_V1);
+                let section_len = u32::try_from(payload.len())
+                    .map_err(|_| anyhow::anyhow!("footer section exceeds u32"))?;
+                buf.extend_from_slice(&section_len.to_le_bytes());
+                buf.extend_from_slice(&payload);
+            }
         }
         Ok(buf)
     }
@@ -782,10 +859,12 @@ impl SegmentFooterIndex {
         let has_f32_tier = body[p + 1] != 0;
         p += 2;
         let blocks = read_blocks(body, &mut p)?;
-        // Optional trailing stripe encoding-map section (present only when the
-        // footer carries lossless-transform metadata). Absent ⇒ empty map.
+        // Optional trailing sections (encoding map, coarse-directory extent).
+        // Absent ⇒ defaults. Unknown tags are skipped (forward-compatible).
         let mut encoding_map = Vec::new();
         let mut block_tier_assignments = Vec::new();
+        let mut a0_off = 0u64;
+        let mut a0_len = 0u64;
         if p != body.len() {
             let section_count = read_u16(body, &mut p)? as usize;
             if section_count > body.len().saturating_sub(p) / 6 {
@@ -805,6 +884,15 @@ impl SegmentFooterIndex {
                     let (descriptors, assignments) = parse_encoding_map_payload(section)?;
                     encoding_map = descriptors;
                     block_tier_assignments = assignments;
+                } else if tag == SECTION_COARSE_DIRECTORY {
+                    if version != SECTION_VERSION_V1 {
+                        bail!("unsupported coarse-directory section version {version}");
+                    }
+                    if section.len() != COARSE_DIRECTORY_SECTION_LEN {
+                        bail!("coarse-directory section has wrong length");
+                    }
+                    a0_off = u64::from_le_bytes(section[..8].try_into()?);
+                    a0_len = u64::from_le_bytes(section[8..16].try_into()?);
                 }
             }
             if p != body.len() {
@@ -826,6 +914,8 @@ impl SegmentFooterIndex {
             blocks,
             encoding_map,
             block_tier_assignments,
+            a0_off,
+            a0_len,
         })
     }
 
@@ -879,6 +969,8 @@ mod tests {
             has_f32_tier: false,
             encoding_map: Vec::new(),
             block_tier_assignments: Vec::new(),
+            a0_off: 0,
+            a0_len: 0,
             blocks: vec![
                 FooterBlockEntry {
                     offset: 152_056,
@@ -979,6 +1071,8 @@ mod tests {
             sq8_len: 128_000,
             footer_off: 200_000,
             footer_len: 512,
+            a0_off: 0,
+            a0_len: 0,
         };
         let bytes = h.to_bytes();
         assert_eq!(bytes.len(), SEG_HEADER_PREFIX_LEN);
@@ -1002,6 +1096,8 @@ mod tests {
             sq8_len: 0,
             footer_off: 0,
             footer_len: 0,
+            a0_off: 0,
+            a0_len: 0,
         }
         .to_bytes();
         bad[0..4].copy_from_slice(b"PBLK");
@@ -1015,6 +1111,8 @@ mod tests {
             sq8_len: 0,
             footer_off: 0,
             footer_len: 0,
+            a0_off: 0,
+            a0_len: 0,
         }
         .to_bytes();
         v[4] = 99;
@@ -1031,12 +1129,123 @@ mod tests {
             sq8_len: 1,
             footer_off: 58,
             footer_len: 1,
+            a0_off: 0,
+            a0_len: 0,
         }
         .to_bytes();
         assert!(is_coalesced_segment(&h));
         // A legacy block magic prefix is NOT coalesced.
         assert!(!is_coalesced_segment(b"PBLK\x00\x00"));
         assert!(!is_coalesced_segment(&[]));
+    }
+
+    #[test]
+    fn header_prefix_v3_round_trips_with_a0() {
+        let h = SegmentHeaderPrefix {
+            layout_version: SEG_LAYOUT_VERSION_TWO_LEVEL,
+            rabitq_off: 72 + 120_000,
+            rabitq_len: 24_000,
+            sq8_off: 72 + 120_000 + 24_000,
+            sq8_len: 128_000,
+            footer_off: 400_000,
+            footer_len: 512,
+            a0_off: 72,
+            a0_len: 120_000,
+        };
+        let bytes = h.to_bytes();
+        assert_eq!(bytes.len(), SEG_HEADER_PREFIX_V3_LEN);
+        let parsed = SegmentHeaderPrefix::parse(&bytes).unwrap();
+        assert_eq!(parsed.layout_version, SEG_LAYOUT_VERSION_TWO_LEVEL);
+        assert_eq!(parsed.a0_off, 72);
+        assert_eq!(parsed.a0_len, 120_000);
+        assert_eq!(parsed.rabitq_off, 72 + 120_000);
+        assert_eq!(parsed.footer_len, 512);
+        // A v3 prefix truncated to the v1 length must fail closed, never
+        // parse with garbage a0 fields.
+        assert!(SegmentHeaderPrefix::parse(&bytes[..SEG_HEADER_PREFIX_LEN]).is_err());
+    }
+
+    /// TD-RDSTRAT-8 mixed-read contract: a **version-1-only reader** (any binary
+    /// that predates the two-level layout) must reject a v3 segment cleanly.
+    /// Old binaries are frozen, so this pins the two facts their rejection
+    /// depends on: the on-disk version byte is 3 (not 1), and a strict
+    /// `version == 1` check therefore fails.
+    #[test]
+    fn v1_only_reader_rejects_v3_prefix() {
+        let bytes = SegmentHeaderPrefix {
+            layout_version: SEG_LAYOUT_VERSION_TWO_LEVEL,
+            rabitq_off: 0,
+            rabitq_len: 0,
+            sq8_off: 0,
+            sq8_len: 0,
+            footer_off: 0,
+            footer_len: 0,
+            a0_off: 72,
+            a0_len: 1,
+        }
+        .to_bytes();
+        // The exact check the pre-TD-RDSTRAT-8 parse performed (frozen copy).
+        let legacy_v1_only_parse = |b: &[u8]| -> Result<()> {
+            if b.len() < SEG_HEADER_PREFIX_LEN {
+                bail!("too short");
+            }
+            if &b[..4] != SEG_HEADER_MAGIC {
+                bail!("bad magic");
+            }
+            if b[4] != SEG_LAYOUT_VERSION {
+                bail!("unsupported layout version {}", b[4]);
+            }
+            Ok(())
+        };
+        assert_eq!(bytes[4], SEG_LAYOUT_VERSION_TWO_LEVEL);
+        assert!(legacy_v1_only_parse(&bytes).is_err());
+        // And the current parse still accepts v1 prefixes (mixed-read).
+        let v1 = SegmentHeaderPrefix {
+            layout_version: SEG_LAYOUT_VERSION,
+            rabitq_off: 56,
+            rabitq_len: 1,
+            sq8_off: 57,
+            sq8_len: 1,
+            footer_off: 58,
+            footer_len: 1,
+            a0_off: 0,
+            a0_len: 0,
+        }
+        .to_bytes();
+        assert_eq!(v1.len(), SEG_HEADER_PREFIX_LEN);
+        assert!(SegmentHeaderPrefix::parse(&v1).is_ok());
+    }
+
+    #[test]
+    fn footer_coarse_directory_section_round_trips() {
+        let mut footer = sample_footer();
+        footer.a0_off = 72;
+        footer.a0_len = 123_456;
+        let bytes = footer.to_bytes().unwrap();
+        let parsed = SegmentFooterIndex::parse(&bytes).unwrap();
+        assert_eq!(parsed.a0_off, 72);
+        assert_eq!(parsed.a0_len, 123_456);
+        assert_eq!(parsed.blocks.len(), 2);
+        // Coexists with the encoding-map section (two sections).
+        let mut v2 = sample_v2_footer();
+        v2.a0_off = 72;
+        v2.a0_len = 99;
+        let bytes2 = v2.to_bytes().unwrap();
+        let parsed2 = SegmentFooterIndex::parse(&bytes2).unwrap();
+        assert_eq!(parsed2.encoding_map, v2.encoding_map);
+        assert_eq!(parsed2.a0_len, 99);
+        // Absent A0 (a0_len == 0) ⇒ byte-identical to the sectionless footer
+        // (v1 segments unchanged on disk by this feature).
+        let plain = sample_footer();
+        assert_eq!(plain.to_bytes().unwrap(), {
+            let mut same = sample_footer();
+            same.a0_off = 999; // off without len must NOT emit a section
+            same.a0_len = 0;
+            same.to_bytes().unwrap()
+        });
+        let reparsed = SegmentFooterIndex::parse(&plain.to_bytes().unwrap()).unwrap();
+        assert_eq!(reparsed.a0_off, 0);
+        assert_eq!(reparsed.a0_len, 0);
     }
 
     #[test]
