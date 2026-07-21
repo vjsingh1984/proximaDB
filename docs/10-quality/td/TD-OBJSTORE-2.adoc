@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Implemented; live ADLS/S3 proof rerun required before closure.** The 2026-07-15 live run proved catalog + HELIX WAL recovery, then exposed a recovered-record point-read escape fixed by the follow-up below. `scripts/prove_object_store_durability.sh` remains the closure gate.
+| Status | **Implemented; live ADLS/S3/GCS proof rerun required before closure.** The 2026-07-15 live run proved catalog + HELIX WAL recovery, then exposed a recovered-record point-read escape fixed by the follow-up below. `scripts/prove_object_store_durability.sh` remains the closure gate.
 | Severity | Critical — WAL objects survive, but a replacement VM recovers zero collections when the collection catalog is only in the lost local `data_dir`; the durable WAL cannot be attached or replayed.
 | Component | `SystemCatalog`, collection/WAL recovery, SST/VIPER storage assignment, graph/discovery catalog sidecars, cloud deployment configuration.
 | Follows | PR #966 / `TD-OBJSTORE-1` (scheme-safe WAL and metadata path construction).
@@ -160,7 +160,8 @@ implementation returns no record and fails this test.
 === Real process / real backend integration
 
 `apps/proximadb-server/tests/object_store_restart_recovery.rs` launches the production
-server binary three times against one unique `s3://` or `adls://` prefix and creates
+server binary three times against one unique `s3://`, `adls://`, `gs://`, or `gcs://`
+prefix and creates
 both SST and HELIX collections:
 
 . VM 1: create both collections + insert records; SIGKILL.
@@ -176,9 +177,10 @@ PROXIMADB_OBJECT_STORE_URL=adls://container/proximadb-proof \
   scripts/prove_object_store_durability.sh
 ----
 
-The harness requires the server's `azure` or `aws` feature and ambient managed
-identity/IAM credentials. It is ignored in credential-free CI and is the anvaiops
-deployment proof.
+The harness requires the server's matching `aws`, `azure`, or `gcp` feature and ambient
+IAM, managed-identity, or application-default credentials. It is ignored in
+credential-free CI. OSS owns this backend-neutral proof mechanism; anvaiops owns
+executing it against the deployed immutable image and retaining the evidence.
 
 == Closure evidence
 

@@ -105,6 +105,7 @@ pub mod config;
 pub mod disk_manager; // New centralized disk operations
 pub mod enhanced_flush_result;
 pub mod flush_coordinator;
+pub mod flush_policy; // ADR-069/TD-WAL-1: the single flush-decision boundary
 pub mod flush_result_optimization;
 pub mod manifest; // Global WAL manifest system (unified)
 pub mod memtable_manager; // New centralized memtable operations
@@ -1971,11 +1972,21 @@ impl WriteAheadLogManager {
         // Create native WALVectorBatch with Arc (zero-copy)
         let batch_id = crate::storage::persistence::write_ahead_log::BatchId::new();
 
+        // ADR-069: estimate the batch's resident size UP FRONT via the canonical
+        // estimator on WALVectorBatch. The old `0 // calculated by strategy` was
+        // never calculated on this live path — which silently zeroed both the
+        // memtable backpressure sum (wal_behavior.rs) and the auto-flush driver's
+        // capacity/size evaluation.
+        let total_size_bytes =
+            crate::storage::memtable::specialized::wal_behavior::WALVectorBatch::estimate_records_size(
+                &native_vectors,
+            );
+
         let native_batch = crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
             batch_id,
             vector_records: native_vectors,
             timestamp: std::time::SystemTime::now(),
-            total_size_bytes: 0, // Will be calculated by strategy
+            total_size_bytes,
             is_flushed: false,
             metadata_bloom_filter: None,
         };

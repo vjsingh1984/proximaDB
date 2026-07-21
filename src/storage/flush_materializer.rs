@@ -248,6 +248,32 @@ pub async fn materialize_collection(
             .iter()
             .map(|batch| batch.batch_id.to_base62())
             .collect();
+        // ADR-069: ALSO retire the batches in the BATCH COORDINATOR — the store
+        // `get_unflushed_batches` / `list_collections_with_unflushed_data` read
+        // from. `clear_flushed` above only clears the inner memtable, so without
+        // this the just-flushed batches are re-served as "unflushed" forever —
+        // harmless on the terminal shutdown flush, but an infinite re-flush loop
+        // for any periodic caller (the auto-flush driver exposed this).
+        for batch_id in &batch_id_strings {
+            if let Err(e) = write_buffer
+                .mark_batch_flushed(&plan.wal_key, batch_id)
+                .await
+            {
+                tracing::warn!(
+                    "flush: failed to mark batch {} flushed for '{}': {}",
+                    batch_id,
+                    plan.wal_key,
+                    e
+                );
+            }
+        }
+        if let Err(e) = write_buffer.clear_flushed_batches(&plan.wal_key).await {
+            tracing::warn!(
+                "flush: failed to clear coordinator batches for '{}': {}",
+                plan.wal_key,
+                e
+            );
+        }
         if !batch_id_strings.is_empty()
             && let Err(e) = crate::storage::persistence::write_ahead_log::manifest::mark_flushed_and_delete_files(
                 &batch_id_strings,

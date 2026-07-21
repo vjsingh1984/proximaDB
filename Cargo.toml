@@ -311,6 +311,12 @@ tokio-stream = { version = "0.1", features = ["net"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Sandhi neutral usage parsers (TD-SANDHI-2 / ADR-0047 D10a): single-sourced, fixture-proven
+# (Sandhi TD-0001 W1) usage/cache-split extraction adopted by the generation LLM path — not a
+# hand-rolled 4th extractor. `sandhi-core` is serde-only (no reqwest/tokio); dependency direction
+# one-way (ProximaDB → Sandhi, ADR-060). Registry release since sandhi v0.1.1.
+sandhi-core = "0.1"
+
 # OpenAPI spec-from-code (TD-126 Phase 1). The `ToSchema`/`IntoParams`/`path`
 # derives annotate the v2 REST DTOs + handlers so `docs/openapi/proximadb-openapi.yaml`
 # is generated from the handler code (see src/network/rest/openapi.rs) with a CI

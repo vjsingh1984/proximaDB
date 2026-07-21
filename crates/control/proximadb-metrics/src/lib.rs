@@ -24,6 +24,7 @@ pub mod schema;
 pub mod td064_metrics;
 pub mod td066_metrics;
 pub mod turboquant_metrics;
+pub mod wal_flush_metrics;
 pub mod wal_scan_metrics;
 
 // Re-exports so cross-module references that resolved via the root

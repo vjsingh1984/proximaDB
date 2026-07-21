@@ -303,6 +303,16 @@ impl LLMClient for OpenAIClient {
             llm_response.confidence_score
         );
 
+        // TD-SANDHI-2 / ADR-0047 D10a: emit the neutral usage event, adopting sandhi-core's
+        // fixture-proven OpenAI usage parser. Best-effort, default-inert.
+        crate::metrics::usage_event::emit_generation_usage(
+            "openai",
+            &llm_response.model_used,
+            context.tenant_id.as_deref(),
+            &response_body,
+            "query",
+        );
+
         Ok(llm_response)
     }
 

@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check tenant-ingress-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check status-asof-check release-smoke cloud-emulator-test
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check tenant-ingress-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check query-conformance-check docs-claim-check status-asof-check release-smoke cloud-emulator-test
 
 # Default target
 all: build test
@@ -249,8 +249,16 @@ release: clean build-server test benchmark
 
 # Release-cut gate: one command that must be green before the v0.2 release tag.
 # Sequence is fail-fast — early steps (fmt, doc-claim, proto) are cheap.
-release-check: work-commit-check proto-check release-smoke build-server
+release-check: work-commit-check proto-check release-smoke query-conformance-check build-server
 	@echo "✅ release-check: all gates passed"
+
+# Supported pgwire SQL must pass through the real wire protocol and router at
+# release cut. QA runs the same ratchets on protected-branch promotion.
+query-conformance-check:
+	@echo "🔎 Running pgwire SQL conformance ratchets..."
+	cargo test --test tpch_pgwire_e2e -- --nocapture --test-threads=1
+	cargo test --test tpcds_pgwire_e2e -- --nocapture --test-threads=1
+	@echo "✅ query-conformance-check green"
 
 fmt-check:
 	@echo "🎨 Checking formatting (cargo fmt --check)..."

@@ -256,6 +256,28 @@ impl ProximaObjectStore {
             .map_err(|e| os_err("put_if_absent", e))
     }
 
+    /// Atomically create `path` at the requested access tier. This combines the
+    /// collision safety of [`Self::put_if_absent`] with the provider-native
+    /// storage-class mapping of [`Self::put_with_tier`]. Untiered stores simply
+    /// use create-only mode.
+    pub async fn put_if_absent_with_tier(
+        &self,
+        path: &Path,
+        bytes: Bytes,
+        tier: ObjectAccessTier,
+    ) -> Result<(), StorageError> {
+        let mut opts = PutOptions::from(PutMode::Create);
+        if let Some(native) = self.backend.native_tier(tier) {
+            opts.attributes
+                .insert(Attribute::StorageClass, native.into());
+        }
+        self.store
+            .put_opts(&self.full_path(path), bytes.into(), opts)
+            .await
+            .map(|_| ())
+            .map_err(|e| os_err("put_if_absent_with_tier", e))
+    }
+
     /// Read the whole object at `path`.
     pub async fn get(&self, path: &Path) -> Result<Bytes, StorageError> {
         let result = self
@@ -493,6 +515,21 @@ mod tests {
             b"first",
             "rejected create must not overwrite"
         );
+    }
+
+    #[tokio::test]
+    async fn put_if_absent_with_tier_is_create_only_on_untiered_store() {
+        let os = ProximaObjectStore::new(Arc::new(object_store::memory::InMemory::new()));
+        let p = Path::from("trace/segment.jsonl.zst");
+
+        os.put_if_absent_with_tier(&p, Bytes::from_static(b"first"), ObjectAccessTier::Cold)
+            .await
+            .unwrap();
+        let err = os
+            .put_if_absent_with_tier(&p, Bytes::from_static(b"second"), ObjectAccessTier::Cold)
+            .await;
+        assert!(matches!(err, Err(StorageError::AlreadyExists(_))));
+        assert_eq!(&os.get(&p).await.unwrap()[..], b"first");
     }
 
     /// The canonical tier maps to each cloud's native storage-class spelling; an

@@ -193,6 +193,14 @@ impl LLMClient for AzureOpenAIClient {
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
+        // TD-SANDHI-2 / ADR-0047 D10a: neutral usage event via sandhi-core's OpenAI parser.
+        crate::metrics::usage_event::emit_generation_usage(
+            "azure_openai",
+            &azure_response.model,
+            _context.tenant_id.as_deref(),
+            &response_body,
+            "query",
+        );
         Ok(LLMResponse {
             content: choice.message.content,
             provider: LLMProvider::AzureOpenAI,

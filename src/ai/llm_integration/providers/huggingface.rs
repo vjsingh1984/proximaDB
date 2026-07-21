@@ -186,6 +186,14 @@ impl LLMClient for HuggingFaceClient {
         let estimated_prompt_tokens = (request.prompt.len() / 4) as u32;
         let estimated_completion_tokens = (response_content.generated_text.len() / 4) as u32;
 
+        // TD-SANDHI-2 / ADR-0047 D10a: neutral usage event via sandhi-core's OpenAI parser.
+        crate::metrics::usage_event::emit_generation_usage(
+            "huggingface",
+            &self.config.model_name,
+            _context.tenant_id.as_deref(),
+            &response_body,
+            "query",
+        );
         Ok(LLMResponse {
             content: response_content.generated_text,
             provider: LLMProvider::HuggingFace,

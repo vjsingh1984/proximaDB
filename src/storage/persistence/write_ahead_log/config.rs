@@ -122,6 +122,20 @@ pub struct WalPerformanceConfig {
 
     /// Batch size for optimized WAL writer
     pub write_buffer_batch_size: Option<usize>,
+
+    /// ADR-069 D2 — time-based memtable→SST flush interval (seconds); 0 = disabled.
+    /// The RPO floor: bounds worst-case loss on volume loss to this interval.
+    pub flush_interval_secs: u64,
+
+    /// ADR-069 D6 — per-collection WAL size budget (bytes) for the capacity flush +
+    /// backpressure watermarks; 0 = disabled.
+    pub wal_max_bytes: usize,
+
+    /// ADR-069 D3 — fraction of `wal_max_bytes` at which to force a flush + truncation.
+    pub high_watermark_pct: f64,
+
+    /// ADR-069 D3 — fraction of `wal_max_bytes` at which to apply write backpressure.
+    pub critical_watermark_pct: f64,
 }
 
 impl Default for WalPerformanceConfig {
@@ -143,6 +157,12 @@ impl Default for WalPerformanceConfig {
             enable_optimized_write_buffer_writer: Some(false), // Disabled by default for gradual rollout
             background_writer_threads: None, // Will use 2 by default in optimized writer
             write_buffer_batch_size: None,   // Will use 100 by default in optimized writer
+            // ADR-069 / TD-WAL-1 S1: config surface; triggers default DISABLED (0) — S2 (time)
+            // and S3 (capacity) activate them and set their live defaults. No behavior change here.
+            flush_interval_secs: 0,
+            wal_max_bytes: 0,
+            high_watermark_pct: 0.80,
+            critical_watermark_pct: 0.95,
         }
     }
 }
@@ -461,6 +481,20 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
 
         if let Some(global_shrink_factor) = core_config.global_shrink_factor {
             wal_config.performance.global_shrink_factor = global_shrink_factor;
+        }
+
+        // ADR-069 / TD-WAL-1 S1: WAL flush-control overrides (inert until S2/S3).
+        wal_config.performance.flush_interval_secs = core_config
+            .flush_interval_secs
+            .unwrap_or(wal_config.performance.flush_interval_secs);
+        wal_config.performance.wal_max_bytes = core_config
+            .wal_max_bytes
+            .unwrap_or(wal_config.performance.wal_max_bytes);
+        if let Some(pct) = core_config.high_watermark_pct {
+            wal_config.performance.high_watermark_pct = pct;
+        }
+        if let Some(pct) = core_config.critical_watermark_pct {
+            wal_config.performance.critical_watermark_pct = pct;
         }
 
         // Set global manifest URL from TOML config
@@ -878,6 +912,41 @@ mod tests {
         assert!(&config.compression.compress_disk);
     }
 
+    #[test]
+    fn wal_performance_defaults_disable_flush_triggers() {
+        // ADR-069 / TD-WAL-1 S1: new flush triggers ship DISABLED so S1 is behavior-neutral.
+        let p = WalPerformanceConfig::default();
+        assert_eq!(p.flush_interval_secs, 0, "time-based flush off by default");
+        assert_eq!(p.wal_max_bytes, 0, "capacity budget off by default");
+        assert_eq!(p.high_watermark_pct, 0.80);
+        assert_eq!(p.critical_watermark_pct, 0.95);
+    }
+
+    #[test]
+    fn wal_storage_config_overrides_flush_triggers() {
+        use crate::core::config::WalStorageConfig;
+        // Absent overrides (None) leave the runtime performance defaults intact.
+        let base = WALConfig::from(&WalStorageConfig::default());
+        assert_eq!(base.performance.flush_interval_secs, 0);
+        assert_eq!(base.performance.wal_max_bytes, 0);
+        assert_eq!(base.performance.high_watermark_pct, 0.80);
+        assert_eq!(base.performance.critical_watermark_pct, 0.95);
+
+        // Present overrides (ADR-069 D2/D3/D6) flow through to WalPerformanceConfig.
+        let core = WalStorageConfig {
+            flush_interval_secs: Some(300),
+            wal_max_bytes: Some(25 * 1024 * 1024 * 1024),
+            high_watermark_pct: Some(0.75),
+            critical_watermark_pct: Some(0.9),
+            ..WalStorageConfig::default()
+        };
+        let cfg = WALConfig::from(&core);
+        assert_eq!(cfg.performance.flush_interval_secs, 300);
+        assert_eq!(cfg.performance.wal_max_bytes, 25 * 1024 * 1024 * 1024);
+        assert_eq!(cfg.performance.high_watermark_pct, 0.75);
+        assert_eq!(cfg.performance.critical_watermark_pct, 0.9);
+    }
+
     #[tokio::test]
     async fn test_wal_config_custom() {
         let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
@@ -919,6 +988,10 @@ mod tests {
                 enable_optimized_write_buffer_writer: None,
                 background_writer_threads: None,
                 write_buffer_batch_size: None,
+                flush_interval_secs: 0,
+                wal_max_bytes: 0,
+                high_watermark_pct: 0.80,
+                critical_watermark_pct: 0.95,
             },
             enable_mvcc: true,
             enable_ttl: true,
@@ -1415,6 +1488,10 @@ mod tests {
             enable_optimized_write_buffer_writer: None, // corrected field name
             background_writer_threads: None,
             write_buffer_batch_size: None, // corrected field name
+            flush_interval_secs: 0,
+            wal_max_bytes: 0,
+            high_watermark_pct: 0.80,
+            critical_watermark_pct: 0.95,
         };
 
         let json = serde_json::to_string(&custom_config).unwrap();

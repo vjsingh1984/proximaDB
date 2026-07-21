@@ -52,6 +52,42 @@ pub struct WALVectorBatch {
 }
 
 impl WALVectorBatch {
+    /// Estimate the resident size of a record slice — the CANONICAL
+    /// `total_size_bytes` source for WAL batches (ADR-069/TD-WAL-1).
+    ///
+    /// Embedding payload bytes are exact and precision-aware
+    /// (`EmbeddingCell::values_byte_size`: 4B/elem fp32, 2B fp16/bf16, …);
+    /// props/identity use the same overhead model as
+    /// `BulkWriteRouter::estimate_record_batch_size` (96B/prop + 256B/record +
+    /// oid + 64B). An estimate is sufficient: the consumers are watermark
+    /// fractions, backpressure sums, and gauges — not exact accounting.
+    ///
+    /// Two consumers depend on a non-zero value: the wal_behavior
+    /// per-collection backpressure check and the auto-flush driver's
+    /// size/capacity triggers — a batch constructed with `total_size_bytes: 0`
+    /// silently disables BOTH. (Dedup follow-up: point the BulkWriteRouter
+    /// copy of this math here.)
+    pub fn estimate_records_size(records: &[ProximaRecord]) -> usize {
+        const PROPERTY_OVERHEAD_PER_RECORD: usize = 256;
+        const ID_OVERHEAD_PER_RECORD: usize = 64;
+        const PROP_BYTES: usize = 96;
+        records
+            .iter()
+            .map(|record| {
+                let embedding_bytes: usize =
+                    record.embeddings.iter().map(|e| e.values_byte_size()).sum();
+                let props_bytes = record.props.len() * PROP_BYTES + PROPERTY_OVERHEAD_PER_RECORD;
+                let id_bytes = record.oid.len() + ID_OVERHEAD_PER_RECORD;
+                embedding_bytes + props_bytes + id_bytes
+            })
+            .sum()
+    }
+
+    /// [`Self::estimate_records_size`] over this batch's records.
+    pub fn estimated_size_bytes(&self) -> usize {
+        Self::estimate_records_size(&self.vector_records)
+    }
+
     /// Create bloom filter for batch metadata
     pub fn create_bloom_filter(&mut self) -> Result<()> {
         // Create bloom filter with optimal false positive rate

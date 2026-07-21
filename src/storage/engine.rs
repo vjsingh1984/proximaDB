@@ -208,6 +208,21 @@ impl StorageEngine {
         temp_manager.start_workers(2).await?; // Start 2 worker threads
         self.compaction_manager = Arc::new(temp_manager);
 
+        // ADR-069/TD-WAL-1: spawn the live auto-flush driver. No-op unless a time or
+        // capacity trigger is armed in wal_config, so default (size-only) config is
+        // behavior-neutral. The driver mirrors flush_memtable_to_storage's recipe,
+        // policy-gated + metered. (Fence is injected post-construction, so it may be
+        // None here — acceptable at MVP: the A6 fence is default-OFF.)
+        let flush_policy =
+            crate::storage::persistence::write_ahead_log::flush_policy::FlushPolicy::from_performance(
+                &self.config.wal_config.to_engine_config().performance,
+            );
+        crate::storage::auto_flush_driver::AutoFlushDriver::spawn(
+            flush_policy,
+            self.axis_index_manager.clone(),
+            self.storage_write_fence.clone(),
+        );
+
         tracing::info!("✅ STORAGE_ENGINE: Storage engine started successfully");
         Ok(())
     }

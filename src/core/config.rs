@@ -117,6 +117,7 @@ pub struct ObservabilityConfig {
 /// compression = "zstd"
 /// format = "jsonl"
 /// spool_max_bytes = 268435456
+/// pending_max_bytes = 1073741824
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IoTraceSinkConfig {
@@ -139,6 +140,9 @@ pub struct IoTraceSinkConfig {
     /// Bounded in-memory spool cap (bytes-equivalent record budget); on overflow the
     /// oldest queued record is dropped (best-effort). Default 256 MiB.
     pub spool_max_bytes: Option<u64>,
+    /// Hard durable pending-file cap. A segment that would cross it is returned
+    /// to ingress; sealed files are never evicted. Default 1 GiB.
+    pub pending_max_bytes: Option<u64>,
     /// Object-store destination URI (consumed in S2 — parsed now, unused in S1).
     pub object_store_uri: Option<String>,
     /// Per-object access tier for the object-store dispatch (S2). e.g. `cool`.
@@ -154,6 +158,15 @@ impl IoTraceSinkConfig {
     /// `None` when the sink is disabled (no observer installed, no worker spawned).
     /// Mirrors [`QueueRuntimeConfig::resolve`].
     pub fn resolve(toml_section: Option<&IoTraceSinkConfig>) -> Option<ResolvedIoTraceSinkConfig> {
+        Self::try_resolve(toml_section).unwrap_or(None)
+    }
+
+    /// Strict runtime resolution. Unlike [`Self::resolve`], this reports invalid
+    /// active settings so database startup cannot silently run a different
+    /// delivery contract than the operator requested.
+    pub fn try_resolve(
+        toml_section: Option<&IoTraceSinkConfig>,
+    ) -> Result<Option<ResolvedIoTraceSinkConfig>, String> {
         let from_toml = toml_section.cloned().unwrap_or_default();
 
         let enabled = std::env::var("PROXIMADB_IO_TRACE_SINK")
@@ -161,7 +174,7 @@ impl IoTraceSinkConfig {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(from_toml.enabled);
         if !enabled {
-            return None;
+            return Ok(None);
         }
 
         let env_u64 = |key: &str| std::env::var(key).ok().and_then(|v| v.parse::<u64>().ok());
@@ -180,14 +193,36 @@ impl IoTraceSinkConfig {
         let spool_max_bytes = env_u64("PROXIMADB_IO_TRACE_SINK_SPOOL_MAX_BYTES")
             .or(from_toml.spool_max_bytes)
             .unwrap_or(256 * 1024 * 1024);
+        let pending_max_bytes = env_u64("PROXIMADB_IO_TRACE_SINK_PENDING_MAX_BYTES")
+            .or(from_toml.pending_max_bytes)
+            .unwrap_or(1024 * 1024 * 1024);
         let compression = std::env::var("PROXIMADB_IO_TRACE_SINK_COMPRESSION")
             .ok()
             .or(from_toml.compression.clone())
-            .unwrap_or_else(|| "zstd".to_string());
+            .unwrap_or_else(|| "zstd".to_string())
+            .to_ascii_lowercase();
         let format = std::env::var("PROXIMADB_IO_TRACE_SINK_FORMAT")
             .ok()
             .or(from_toml.format.clone())
-            .unwrap_or_else(|| "jsonl".to_string());
+            .unwrap_or_else(|| "jsonl".to_string())
+            .to_ascii_lowercase();
+
+        if compression != "zstd" {
+            return Err(format!(
+                "unsupported io_trace sink compression `{compression}`; only `zstd` is implemented"
+            ));
+        }
+        if format != "jsonl" {
+            return Err(format!(
+                "unsupported io_trace sink format `{format}`; only `jsonl` is implemented"
+            ));
+        }
+        if segment_bytes == 0 || spool_max_bytes == 0 || pending_max_bytes == 0 {
+            return Err(
+                "io_trace sink segment_bytes, spool_max_bytes, and pending_max_bytes must be non-zero"
+                    .to_string(),
+            );
+        }
 
         // S2 (ADR-066 D4): optional object-store dispatch. When set, sealed segments
         // are PUT to this store; when unset, the sink stays local-only (S1). The
@@ -196,22 +231,26 @@ impl IoTraceSinkConfig {
         let object_store_uri = std::env::var("PROXIMADB_IO_TRACE_SINK_OBJECT_STORE_URI")
             .ok()
             .or(from_toml.object_store_uri.clone());
-        let access_tier = std::env::var("PROXIMADB_IO_TRACE_SINK_ACCESS_TIER")
+        let access_tier_text = std::env::var("PROXIMADB_IO_TRACE_SINK_ACCESS_TIER")
             .ok()
-            .or(from_toml.access_tier.clone())
-            .and_then(|s| ObjectAccessTier::parse(&s))
-            .unwrap_or(ObjectAccessTier::Cold);
+            .or(from_toml.access_tier.clone());
+        let access_tier = match access_tier_text {
+            Some(value) => ObjectAccessTier::parse(&value)
+                .ok_or_else(|| format!("unsupported io_trace sink access_tier `{value}`"))?,
+            None => ObjectAccessTier::Cold,
+        };
 
-        Some(ResolvedIoTraceSinkConfig {
+        Ok(Some(ResolvedIoTraceSinkConfig {
             local_dir,
             segment_bytes,
             flush_interval_s,
             spool_max_bytes,
+            pending_max_bytes,
             compression,
             format,
             object_store_uri,
             access_tier,
-        })
+        }))
     }
 }
 
@@ -224,6 +263,7 @@ pub struct ResolvedIoTraceSinkConfig {
     pub segment_bytes: u64,
     pub flush_interval_s: u64,
     pub spool_max_bytes: u64,
+    pub pending_max_bytes: u64,
     pub compression: String,
     pub format: String,
     /// Object-store dispatch target (S2). `None` ⇒ segments stay local-only.
@@ -388,6 +428,7 @@ mod queue_config_tests {
         let _g3 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_FLUSH_INTERVAL_S", None);
         let _g4 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_OBJECT_STORE_URI", None);
         let _g5 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_ACCESS_TIER", None);
+        let _g6 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_PENDING_MAX_BYTES", None);
         let toml = IoTraceSinkConfig {
             enabled: true,
             local_dir: Some("/tmp/tr".to_string()),
@@ -398,11 +439,40 @@ mod queue_config_tests {
         assert_eq!(r.segment_bytes, 4 * 1024 * 1024);
         assert_eq!(r.flush_interval_s, 60);
         assert_eq!(r.spool_max_bytes, 256 * 1024 * 1024);
+        assert_eq!(r.pending_max_bytes, 1024 * 1024 * 1024);
         assert_eq!(r.compression, "zstd");
         assert_eq!(r.format, "jsonl");
         // S2 defaults: no object store (local-only), Cold tier.
         assert_eq!(r.object_store_uri, None);
         assert_eq!(r.access_tier, ObjectAccessTier::Cold);
+    }
+
+    #[test]
+    fn io_trace_sink_strict_resolution_rejects_unsupported_active_settings() {
+        let _g0 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK", None);
+        let _g1 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_COMPRESSION", None);
+        let _g2 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_FORMAT", None);
+        let _g3 = EnvGuard::set("PROXIMADB_IO_TRACE_SINK_ACCESS_TIER", None);
+
+        for config in [
+            IoTraceSinkConfig {
+                enabled: true,
+                compression: Some("gzip".to_string()),
+                ..Default::default()
+            },
+            IoTraceSinkConfig {
+                enabled: true,
+                format: Some("parquet".to_string()),
+                ..Default::default()
+            },
+            IoTraceSinkConfig {
+                enabled: true,
+                access_tier: Some("cheapish".to_string()),
+                ..Default::default()
+            },
+        ] {
+            assert!(IoTraceSinkConfig::try_resolve(Some(&config)).is_err());
+        }
     }
 
     /// TOML-only flow: a TOML `[queue]` section with `root` set
@@ -938,6 +1008,32 @@ pub struct WriteBufferUserConfig {
     pub enable_wal: bool,
     /// Global manifest location (optional)
     pub global_manifest_url: Option<String>,
+
+    /// ADR-069 D2 — time-based WAL flush interval (seconds); 0 = disabled. The RPO
+    /// floor: bounds worst-case loss on volume loss to this interval for low-traffic
+    /// collections that never reach `memory_flush_size_bytes`.
+    #[serde(default)]
+    pub flush_interval_secs: u64,
+    /// ADR-069 D6 — per-collection WAL size budget (bytes) for the capacity flush +
+    /// backpressure watermarks; 0 = disabled.
+    #[serde(default)]
+    pub wal_max_bytes: usize,
+    /// ADR-069 D3 — fraction of `wal_max_bytes` at which to force a flush.
+    #[serde(default = "default_high_watermark_pct")]
+    pub high_watermark_pct: f64,
+    /// ADR-069 D3 — fraction of `wal_max_bytes` at which to apply write backpressure.
+    #[serde(default = "default_critical_watermark_pct")]
+    pub critical_watermark_pct: f64,
+}
+
+/// Serde default for [`WriteBufferUserConfig::high_watermark_pct`] (ADR-069 D3).
+fn default_high_watermark_pct() -> f64 {
+    0.80
+}
+
+/// Serde default for [`WriteBufferUserConfig::critical_watermark_pct`] (ADR-069 D3).
+fn default_critical_watermark_pct() -> f64 {
+    0.95
 }
 
 impl Default for WriteBufferUserConfig {
@@ -951,6 +1047,11 @@ impl Default for WriteBufferUserConfig {
             write_buffer_directory: "./data/write_buffer".to_string(),
             enable_wal: true,
             global_manifest_url: None,
+            // ADR-069 tiered-flush knobs — disabled by default (behavior-neutral).
+            flush_interval_secs: 0,
+            wal_max_bytes: 0,
+            high_watermark_pct: default_high_watermark_pct(),
+            critical_watermark_pct: default_critical_watermark_pct(),
         }
     }
 }
@@ -969,7 +1070,17 @@ impl WriteBufferUserConfig {
             multi_disk: MultiDiskConfig::default(),
             compression: CompressionConfig::default(),
             encryption: Default::default(), // TD-016: Encryption disabled by default
-            performance: PerformanceConfig::default(),
+            // ADR-069/TD-WAL-1: honor the user's flush-policy inputs (size + the
+            // tiered time/capacity knobs) on this path too, so the optimizer is
+            // configurable identically to the shared-services conversion.
+            performance: PerformanceConfig {
+                memory_flush_size_bytes: self.memory_flush_size_bytes,
+                flush_interval_secs: self.flush_interval_secs,
+                wal_max_bytes: self.wal_max_bytes,
+                high_watermark_pct: self.high_watermark_pct,
+                critical_watermark_pct: self.critical_watermark_pct,
+                ..PerformanceConfig::default()
+            },
             enable_mvcc: true,
             enable_ttl: true,
             enable_background_compaction: true,

@@ -16,7 +16,7 @@
 pub use proximadb_metrics::{
     Alert, SystemMetrics, advisor_observations_metrics, aggregator, compression, dml_lock_metrics,
     dr_metrics, exporters, fusion, primary_pod_metrics, recall_drift_metrics, route_metrics,
-    schema, td064_metrics, td066_metrics, turboquant_metrics, wal_scan_metrics,
+    schema, td064_metrics, td066_metrics, turboquant_metrics, wal_flush_metrics, wal_scan_metrics,
 };
 
 // Deferred (storage-coupled / orchestration) modules stay root.
@@ -24,6 +24,7 @@ pub mod cache;
 pub mod collection_pin_metrics;
 pub mod collectors;
 pub mod consumption_metrics;
+pub mod io_trace_sink_metrics;
 pub mod metering_writer;
 pub mod query_service;
 pub mod store;

@@ -1,51 +1,51 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-//! Durable io_trace ETL sink — TD-TRACE-2 S1 (local JSONL+zstd spool).
+//! Crash-aware `io_trace` delivery sink (ADR-066 / TD-TRACE-2 S1–S2b).
 //!
-//! ADR-066: takes the in-process per-query [`IoTraceSnapshot`] durable + queryable.
-//! S1 is the local-spool foundation (no object-store dispatch — that is S2):
-//!
-//! ```text
-//!  instrument() exit ──set_trace_observer──▶ [serialize + enqueue]  (query path: CPU only, no I/O)
-//!                                                    │  bounded spool, drop-oldest
-//!                                                    ▼
-//!                            background worker ──interval/size seal──▶ {local_dir}/trace-{run}-{seq}.jsonl.zst
-//! ```
-//!
-//! Guarantees:
-//! * **Separate, default-OFF observer** — billing stays always-on / never-gated
-//!   (ADR-027); the sink is installed only when `[observability.io_trace_sink]`
-//!   resolves enabled.
-//! * **Never blocks the query path** — the observer only serializes one small JSON
-//!   line and pushes it to a bounded in-memory spool (O(1)); the compress + file
-//!   write happen on the background worker (via `spawn_blocking`).
-//! * **Bounded + best-effort** — the spool has a byte cap; on overflow the oldest
-//!   queued record is dropped (never blocks / OOMs the DB).
-//! * **Graceful shutdown** — a final drain + seal on the shutdown signal.
+//! The query path only serializes and enqueues into bounded memory. A background
+//! worker compresses each segment, durably seals an immutable `.pending` file,
+//! conditionally creates the object, verifies collisions, and only then retires
+//! the pending file. Startup retries every pending file.
 
 use std::collections::VecDeque;
-use std::sync::{Mutex, OnceLock};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use bytes::Bytes;
+use chrono::Utc;
 use object_store::path::Path as ObjectPath;
+use proximadb_kernel::error::StorageError;
 use proximadb_object_store::ProximaObjectStore;
 use proximadb_storage_filesystem_types::ObjectAccessTier;
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::core::config::ResolvedIoTraceSinkConfig;
+use crate::metrics::io_trace_sink_metrics as delivery_metrics;
 use crate::observability::io_trace::{self, IoTraceSnapshot};
 use crate::storage::trait_components::path_resolver::DrPathBuilder;
 
-/// One serialized trace record awaiting export (a `\n`-terminated JSON line).
-type SpoolLine = Vec<u8>;
+#[derive(Debug, PartialEq, Eq)]
+struct SpoolLine {
+    bytes: Vec<u8>,
+    sequence: u64,
+}
 
-/// Bounded in-memory spool. Push is O(1) and drops the oldest record(s) when the
-/// byte cap is exceeded — observability is best-effort and must never block/OOM.
+impl SpoolLine {
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+}
+
+/// Bounded, non-blocking ingress. Overflow always drops oldest and accounts the
+/// exact records and uncompressed bytes lost.
 struct Spool {
     deque: VecDeque<SpoolLine>,
     bytes: usize,
     cap: usize,
-    dropped: u64,
 }
 
 impl Spool {
@@ -54,7 +54,6 @@ impl Spool {
             deque: VecDeque::new(),
             bytes: 0,
             cap: cap.max(1),
-            dropped: 0,
         }
     }
 
@@ -62,149 +61,241 @@ impl Spool {
         self.bytes = self.bytes.saturating_add(line.len());
         self.deque.push_back(line);
         while self.bytes > self.cap {
-            match self.deque.pop_front() {
-                Some(old) => {
-                    self.bytes = self.bytes.saturating_sub(old.len());
-                    self.dropped = self.dropped.saturating_add(1);
-                }
-                None => break,
-            }
+            let Some(old) = self.deque.pop_front() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(old.len());
+            delivery_metrics::record_drop(1, old.len() as u64);
         }
     }
 
-    /// Take everything queued, resetting the buffer.
-    fn drain(&mut self) -> VecDeque<SpoolLine> {
+    /// Drain at most one target-sized segment, leaving later records queued. A
+    /// single large record is returned whole rather than split.
+    fn drain_segment(&mut self, target_bytes: usize) -> Vec<SpoolLine> {
+        let mut out = Vec::new();
+        let mut bytes = 0usize;
+        while bytes < target_bytes.max(1) {
+            let Some(line) = self.deque.pop_front() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(line.len());
+            bytes = bytes.saturating_add(line.len());
+            out.push(line);
+        }
+        out
+    }
+
+    fn prepend(&mut self, lines: Vec<SpoolLine>) {
+        for line in lines.into_iter().rev() {
+            self.bytes = self.bytes.saturating_add(line.len());
+            self.deque.push_front(line);
+        }
+        while self.bytes > self.cap {
+            let Some(oldest) = self.deque.pop_front() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(oldest.len());
+            delivery_metrics::record_drop(1, oldest.len() as u64);
+        }
+    }
+
+    fn drop_all(&mut self) {
+        let records = self.deque.len() as u64;
+        let bytes = self.bytes as u64;
+        self.deque.clear();
         self.bytes = 0;
-        std::mem::take(&mut self.deque)
+        if records > 0 {
+            delivery_metrics::record_drop(records, bytes);
+        }
     }
 }
 
-/// The serialized record shape: the completed snapshot plus the owning tenant.
-/// `#[serde(flatten)]` keeps the snapshot's fields at the top level so the JSONL is
-/// a flat object per line (S3 will replace this with the envelope model).
 #[derive(serde::Serialize)]
 struct SinkRecord<'a> {
+    schema_version: u16,
+    writer_incarnation_uuid: &'a str,
+    sequence: u64,
+    event_time_unix_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     tenant: Option<&'a str>,
     #[serde(flatten)]
     snap: &'a IoTraceSnapshot,
 }
 
-/// Live sink handle: the worker's shutdown sender + join handle (for graceful stop).
 struct SinkHandle {
     shutdown: tokio::sync::watch::Sender<bool>,
     join: tokio::task::JoinHandle<()>,
 }
 
 static SINK: OnceLock<Mutex<Option<SinkHandle>>> = OnceLock::new();
+static SINK_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 fn sink_slot() -> &'static Mutex<Option<SinkHandle>> {
     SINK.get_or_init(|| Mutex::new(None))
 }
 
-/// Shared spool handle used by both the observer closure and the worker.
-type SharedSpool = std::sync::Arc<Mutex<Spool>>;
+type SharedSpool = Arc<Mutex<Spool>>;
 
-/// Install the trace-sink observer + spawn its background worker. Idempotent-ish:
-/// a second install replaces the observer and spawns a fresh worker (the previous
-/// handle, if any, is aborted). Call only when the resolved config is `Some`
-/// (enabled). Must run inside a tokio runtime (it is — `ProximaDB::new`).
-pub fn install(cfg: ResolvedIoTraceSinkConfig) {
-    // Best-effort: create the local spool directory up front.
-    if let Err(e) = std::fs::create_dir_all(&cfg.local_dir) {
-        tracing::warn!(
-            "io_trace sink: cannot create local_dir {}: {e}; sink not installed",
-            cfg.local_dir
-        );
-        return;
+/// Install exactly one sink worker. Duplicate installation is rejected without
+/// replacing the observer or aborting the live worker.
+pub fn install(cfg: ResolvedIoTraceSinkConfig) -> Result<(), String> {
+    let mut slot = sink_slot().lock().unwrap_or_else(|p| p.into_inner());
+    if SINK_ACTIVE
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        delivery_metrics::DUPLICATE_INSTALLS_TOTAL.inc();
+        return Err("io_trace sink is already installed".to_string());
     }
 
-    let spool: SharedSpool =
-        std::sync::Arc::new(Mutex::new(Spool::new(cfg.spool_max_bytes as usize)));
+    if let Err(e) = std::fs::create_dir_all(&cfg.local_dir) {
+        SINK_ACTIVE.store(false, Ordering::Release);
+        return Err(format!(
+            "io_trace sink cannot create local_dir {}: {e}",
+            cfg.local_dir
+        ));
+    }
 
-    // S2 (ADR-066 D4): build the object store ONCE (sync `from_url`) when a URI is
-    // configured; on failure, fall back to local-only rather than dropping the sink.
-    let object_store =
-        cfg.object_store_uri
-            .as_deref()
-            .and_then(|uri| match ProximaObjectStore::from_url(uri) {
-                Ok(store) => {
-                    tracing::info!("io_trace sink: dispatching sealed segments to {uri}");
-                    Some(store)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "io_trace sink: object_store_uri {uri} unusable: {e}; local-only"
-                    );
-                    None
-                }
-            });
+    let object_store = match cfg.object_store_uri.as_deref() {
+        Some(uri) => match ProximaObjectStore::from_url(uri) {
+            Ok(store) => Some(store),
+            Err(e) => {
+                SINK_ACTIVE.store(false, Ordering::Release);
+                return Err(format!(
+                    "io_trace sink object_store_uri {uri} is invalid: {e}"
+                ));
+            }
+        },
+        None => None,
+    };
+    let writer_uuid = Uuid::new_v4().to_string();
+    let next_sequence = Arc::new(AtomicU64::new(0));
+    let spool: SharedSpool = Arc::new(Mutex::new(Spool::new(cfg.spool_max_bytes as usize)));
 
-    // Observer: serialize one JSON line (cheap, per-query) and enqueue. No I/O here.
-    let spool_obs = spool.clone();
+    let spool_obs = Arc::clone(&spool);
+    let sequence_obs = Arc::clone(&next_sequence);
+    let writer_obs = writer_uuid.clone();
     io_trace::set_trace_observer(Some(Box::new(move |snap, tenant| {
-        if let Ok(mut line) = serde_json::to_vec(&SinkRecord { tenant, snap }) {
-            line.push(b'\n');
-            spool_obs
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .push(line);
+        let sequence = sequence_obs.fetch_add(1, Ordering::Relaxed);
+        let event_time_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
+            .unwrap_or(0);
+        match serde_json::to_vec(&SinkRecord {
+            schema_version: 1,
+            writer_incarnation_uuid: &writer_obs,
+            sequence,
+            event_time_unix_ms,
+            tenant,
+            snap,
+        }) {
+            Ok(mut bytes) => {
+                bytes.push(b'\n');
+                spool_obs
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(SpoolLine { bytes, sequence });
+            }
+            Err(e) => {
+                delivery_metrics::record_drop(1, 0);
+                tracing::warn!("io_trace sink: record serialization failed: {e}");
+            }
         }
     })));
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let worker = Worker::new(cfg, spool, object_store);
+    let worker = Worker::new(cfg, spool, object_store, writer_uuid);
     let join = tokio::spawn(worker.run(shutdown_rx));
-
-    let mut slot = sink_slot().lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(prev) = slot.take() {
-        prev.join.abort();
-    }
     *slot = Some(SinkHandle {
         shutdown: shutdown_tx,
         join,
     });
-    tracing::info!("io_trace sink installed (durable per-query trace spool)");
+    tracing::info!("io_trace sink installed (best-effort ingress, crash-aware delivery)");
+    Ok(())
 }
 
-/// Signal the worker to flush + stop, awaiting it with a short timeout. Called from
-/// `ProximaDB::shutdown()` for a graceful final seal. No-op if not installed.
+/// Stop accepting records and request a final delivery cycle. Timing out is
+/// observable and detaches (rather than aborts) the worker so sealed work can
+/// still finish.
 pub async fn shutdown() {
-    let handle = {
-        let mut slot = sink_slot().lock().unwrap_or_else(|p| p.into_inner());
-        slot.take()
-    };
+    let handle = sink_slot().lock().unwrap_or_else(|p| p.into_inner()).take();
     if let Some(handle) = handle {
-        // Clear the observer so no further records are enqueued during drain.
         io_trace::set_trace_observer(None);
         let _ = handle.shutdown.send(true);
         match tokio::time::timeout(Duration::from_secs(5), handle.join).await {
-            Ok(Ok(())) => tracing::info!("io_trace sink flushed and stopped"),
-            Ok(Err(e)) => tracing::warn!("io_trace sink worker join error: {e}"),
-            Err(_) => tracing::warn!("io_trace sink flush timed out (5s)"),
+            Ok(Ok(())) => {
+                SINK_ACTIVE.store(false, Ordering::Release);
+                tracing::info!("io_trace sink flushed and stopped");
+            }
+            Ok(Err(e)) => {
+                SINK_ACTIVE.store(false, Ordering::Release);
+                tracing::warn!("io_trace sink worker join error: {e}");
+            }
+            Err(_) => {
+                delivery_metrics::SHUTDOWN_TIMEOUTS_TOTAL.inc();
+                tracing::warn!("io_trace sink flush timed out (5s); worker left running");
+            }
         }
     }
 }
 
-/// The background worker: drains the spool on an interval, buffering lines into the
-/// current segment, and seals a JSONL+zstd file when the segment reaches
-/// `segment_bytes` OR at each interval tick (whichever first) — bounding both
-/// segment size and latency-to-disk.
+#[derive(Debug, Clone)]
+struct PendingSegment {
+    path: PathBuf,
+    object_filename: String,
+    date: String,
+    digest: String,
+}
+
+impl PendingSegment {
+    fn parse(path: PathBuf) -> Result<Self, String> {
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| "pending filename is not UTF-8".to_string())?;
+        let object_filename = filename
+            .strip_suffix(".pending")
+            .ok_or_else(|| format!("not a pending trace file: {filename}"))?
+            .to_string();
+        let stem = object_filename
+            .strip_suffix(".jsonl.zst")
+            .ok_or_else(|| format!("invalid pending trace suffix: {filename}"))?;
+        let mut parts = stem.rsplitn(4, '-');
+        let digest = parts.next().unwrap_or_default().to_string();
+        let last = parts.next().unwrap_or_default();
+        let first = parts.next().unwrap_or_default();
+        let prefix = parts.next().unwrap_or_default();
+        if digest.len() != 64
+            || !digest.bytes().all(|b| b.is_ascii_hexdigit())
+            || first.parse::<u64>().is_err()
+            || last.parse::<u64>().is_err()
+            || !prefix.starts_with("trace-")
+        {
+            return Err(format!("invalid pending trace identity: {filename}"));
+        }
+        let identity = &prefix["trace-".len()..];
+        let date = identity
+            .get(..10)
+            .filter(|d| d.as_bytes().get(4) == Some(&b'-') && d.as_bytes().get(7) == Some(&b'-'))
+            .ok_or_else(|| format!("invalid pending trace date: {filename}"))?
+            .to_string();
+        Ok(Self {
+            path,
+            object_filename,
+            date,
+            digest,
+        })
+    }
+}
+
 struct Worker {
     cfg: ResolvedIoTraceSinkConfig,
     spool: SharedSpool,
-    current: Vec<u8>,
-    seq: u64,
-    run_nonce: u128,
-    /// Object-store destination for sealed segments (S2). `None` ⇒ local-only.
+    writer_uuid: String,
     object_store: Option<ProximaObjectStore>,
-    /// Access tier for the object-store PUT (S2).
     tier: ObjectAccessTier,
-    /// Object-key prefix for the trace stream — the non-tenant operator root
-    /// (`_operator/io_trace/`), built once via `DrPathBuilder` (keys are never raw).
-    /// A trace segment is intentionally cross-tenant, so it lives under the
-    /// operator control-plane root, not a per-tenant `data/{tenant}/` prefix.
     trace_prefix: String,
+    pending_bytes: u64,
 }
 
 impl Worker {
@@ -212,40 +303,39 @@ impl Worker {
         cfg: ResolvedIoTraceSinkConfig,
         spool: SharedSpool,
         object_store: Option<ProximaObjectStore>,
+        writer_uuid: String,
     ) -> Self {
-        // A per-run nonce so segment filenames never collide across restarts.
-        // Wall-clock is fine in production code (only workflow scripts forbid it).
-        let run_nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
         let tier = cfg.access_tier;
         let trace_prefix = DrPathBuilder::operator_subprefix("io_trace")
             .unwrap_or_else(|_| "_operator/io_trace/".to_string());
         Self {
             cfg,
             spool,
-            current: Vec::new(),
-            seq: 0,
-            run_nonce,
+            writer_uuid,
             object_store,
             tier,
             trace_prefix,
+            pending_bytes: 0,
         }
     }
 
     async fn run(mut self, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) {
+        self.delivery_cycle().await;
         let mut interval = tokio::time::interval(Duration::from_secs(self.cfg.flush_interval_s));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Consume the immediate first tick; startup delivery above already did the work.
+        interval.tick().await;
         loop {
             tokio::select! {
-                _ = interval.tick() => {
-                    self.drain_and_seal().await;
-                }
+                _ = interval.tick() => self.delivery_cycle().await,
                 changed = shutdown_rx.changed() => {
                     if changed.is_err() || *shutdown_rx.borrow() {
-                        // Final drain + seal any remainder, then stop.
-                        self.drain_and_seal().await;
+                        self.delivery_cycle().await;
+                        if self.object_store.is_some()
+                            && self.pending_bytes >= self.cfg.pending_max_bytes
+                        {
+                            self.spool.lock().unwrap_or_else(|p| p.into_inner()).drop_all();
+                        }
                         return;
                     }
                 }
@@ -253,91 +343,309 @@ impl Worker {
         }
     }
 
-    /// Drain the spool into the current segment buffer; seal a full segment whenever
-    /// it crosses `segment_bytes`, then seal the leftover so records never sit longer
-    /// than one interval (called on each interval tick and on final shutdown flush).
-    async fn drain_and_seal(&mut self) {
-        let lines = { self.spool.lock().unwrap_or_else(|p| p.into_inner()).drain() };
-        for line in lines {
-            self.current.extend_from_slice(&line);
-            if self.current.len() as u64 >= self.cfg.segment_bytes {
-                self.seal().await;
-            }
+    async fn delivery_cycle(&mut self) {
+        if self.object_store.is_some() {
+            self.retry_pending().await;
+        } else {
+            self.refresh_pending_metrics().await;
         }
-        // Interval / shutdown seal of the remainder (bounds latency-to-disk).
-        if !self.current.is_empty() {
-            self.seal().await;
+
+        loop {
+            if self.object_store.is_some() && self.pending_bytes >= self.cfg.pending_max_bytes {
+                break;
+            }
+            let lines = self
+                .spool
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .drain_segment(self.cfg.segment_bytes as usize);
+            if lines.is_empty() {
+                break;
+            }
+            if !self.seal(lines).await {
+                break;
+            }
         }
     }
 
-    /// Seal the current buffer into one zstd-compressed segment. Compress off the
-    /// worker thread (`spawn_blocking`), then dispatch: to the object store when
-    /// configured (S2), else to a local file (S1). On an object PUT failure, fall
-    /// back to the local write so a sealed segment is never lost — this is
-    /// best-effort observability that must never block/panic the worker.
-    async fn seal(&mut self) {
-        if self.current.is_empty() {
-            return;
+    /// Returns false when the exact compressed segment would cross the durable
+    /// pending cap. In that case the original lines are returned to ingress.
+    async fn seal(&mut self, lines: Vec<SpoolLine>) -> bool {
+        let records = lines.len() as u64;
+        let first_sequence = lines.first().map(|l| l.sequence).unwrap_or(0);
+        let last_sequence = lines.last().map(|l| l.sequence).unwrap_or(first_sequence);
+        let uncompressed_bytes = lines.iter().map(SpoolLine::len).sum::<usize>() as u64;
+        let mut raw = Vec::with_capacity(uncompressed_bytes as usize);
+        for line in &lines {
+            raw.extend_from_slice(&line.bytes);
         }
-        let buf = std::mem::take(&mut self.current);
-        let seq = self.seq;
-        self.seq += 1;
-
-        // Compress off the worker's async thread.
         let compressed =
-            match tokio::task::spawn_blocking(move || zstd::encode_all(&buf[..], 3)).await {
-                Ok(Ok(c)) => c,
+            match tokio::task::spawn_blocking(move || zstd::encode_all(&raw[..], 3)).await {
+                Ok(Ok(data)) => data,
                 Ok(Err(e)) => {
-                    tracing::warn!("io_trace sink: compress failed: {e}");
-                    return;
+                    delivery_metrics::SEAL_FAILURES_TOTAL.inc();
+                    delivery_metrics::record_drop(records, uncompressed_bytes);
+                    tracing::warn!("io_trace sink: compression failed: {e}");
+                    return true;
                 }
                 Err(e) => {
-                    tracing::warn!("io_trace sink: compress task panicked: {e}");
-                    return;
+                    delivery_metrics::SEAL_FAILURES_TOTAL.inc();
+                    delivery_metrics::record_drop(records, uncompressed_bytes);
+                    tracing::warn!("io_trace sink: compression task failed: {e}");
+                    return true;
                 }
             };
-        let filename = format!("trace-{}-{:08}.jsonl.zst", self.run_nonce, seq);
+        let digest = digest_hex(&compressed);
+        let date = Utc::now().format("%Y-%m-%d").to_string();
+        let filename = format!(
+            "trace-{date}-{}-{first_sequence:020}-{last_sequence:020}-{digest}.jsonl.zst",
+            self.writer_uuid
+        );
 
-        // S2: PUT to the object store at the access tier; local fallback on failure.
-        if let Some(store) = &self.object_store {
-            let key = format!("{}{}", self.trace_prefix, filename);
-            // `Bytes::clone` is an O(1) refcount bump (shared buffer), so keeping a
-            // copy for the fallback costs no data copy on the happy path.
-            let bytes = Bytes::from(compressed);
-            match store
-                .put_with_tier(&ObjectPath::from(key.clone()), bytes.clone(), self.tier)
-                .await
+        if self.object_store.is_some() {
+            if self.pending_bytes.saturating_add(compressed.len() as u64)
+                > self.cfg.pending_max_bytes
             {
-                Ok(()) => return,
+                self.spool
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .prepend(lines);
+                return false;
+            }
+            let pending = match self.persist_pending(&filename, compressed).await {
+                Ok(pending) => pending,
                 Err(e) => {
-                    tracing::warn!(
-                        "io_trace sink: object PUT {key} failed: {e}; writing local fallback"
-                    );
-                    self.write_local(&filename, bytes.to_vec()).await;
-                    return;
+                    delivery_metrics::SEAL_FAILURES_TOTAL.inc();
+                    delivery_metrics::record_drop(records, uncompressed_bytes);
+                    tracing::warn!("io_trace sink: durable pending seal failed: {e}");
+                    return true;
                 }
+            };
+            self.refresh_pending_metrics().await;
+            self.upload_pending(pending, false).await;
+        } else if let Err(e) = self.write_local_final(&filename, compressed).await {
+            delivery_metrics::SEAL_FAILURES_TOTAL.inc();
+            delivery_metrics::record_drop(records, uncompressed_bytes);
+            tracing::warn!("io_trace sink: immutable local seal failed: {e}");
+        }
+        true
+    }
+
+    async fn persist_pending(
+        &self,
+        filename: &str,
+        data: Vec<u8>,
+    ) -> Result<PendingSegment, String> {
+        let path = Path::new(&self.cfg.local_dir).join(format!("{filename}.pending"));
+        let path_for_write = path.clone();
+        tokio::task::spawn_blocking(move || write_immutable(&path_for_write, &data))
+            .await
+            .map_err(|e| e.to_string())??;
+        PendingSegment::parse(path)
+    }
+
+    async fn write_local_final(&self, filename: &str, data: Vec<u8>) -> Result<(), String> {
+        let path = Path::new(&self.cfg.local_dir).join(filename);
+        tokio::task::spawn_blocking(move || write_immutable(&path, &data))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+
+    async fn retry_pending(&mut self) {
+        let mut pending = self.inventory_pending().await;
+        pending.sort_by(|a, b| a.object_filename.cmp(&b.object_filename));
+        for segment in pending {
+            self.upload_pending(segment, true).await;
+        }
+        self.refresh_pending_metrics().await;
+    }
+
+    async fn upload_pending(&mut self, pending: PendingSegment, retry: bool) {
+        let Some(store) = self.object_store.clone() else {
+            return;
+        };
+        if retry {
+            delivery_metrics::UPLOAD_RETRIES_TOTAL.inc();
+        }
+        let path = pending.path.clone();
+        let data = match tokio::task::spawn_blocking(move || std::fs::read(path)).await {
+            Ok(Ok(data)) => data,
+            Ok(Err(e)) => {
+                delivery_metrics::UPLOAD_FAILURES_TOTAL.inc();
+                tracing::warn!("io_trace sink: pending read failed: {e}");
+                return;
+            }
+            Err(e) => {
+                delivery_metrics::UPLOAD_FAILURES_TOTAL.inc();
+                tracing::warn!("io_trace sink: pending read task failed: {e}");
+                return;
+            }
+        };
+        if digest_hex(&data) != pending.digest {
+            delivery_metrics::UPLOAD_FAILURES_TOTAL.inc();
+            tracing::error!(
+                "io_trace sink: pending digest mismatch; refusing upload: {}",
+                pending.path.display()
+            );
+            return;
+        }
+
+        let key = format!(
+            "{}{}/{}",
+            self.trace_prefix, pending.date, pending.object_filename
+        );
+        let object_path = ObjectPath::from(key.clone());
+        let verified = match store
+            .put_if_absent_with_tier(&object_path, Bytes::from(data), self.tier)
+            .await
+        {
+            Ok(()) => true,
+            Err(StorageError::AlreadyExists(_)) => match store.get(&object_path).await {
+                Ok(existing) if digest_hex(&existing) == pending.digest => true,
+                Ok(_) => {
+                    tracing::error!("io_trace sink: object collision has different content: {key}");
+                    false
+                }
+                Err(e) => {
+                    tracing::warn!("io_trace sink: cannot verify existing object {key}: {e}");
+                    false
+                }
+            },
+            Err(e) => {
+                tracing::warn!("io_trace sink: conditional object PUT {key} failed: {e}");
+                false
+            }
+        };
+        if !verified {
+            delivery_metrics::UPLOAD_FAILURES_TOTAL.inc();
+            return;
+        }
+
+        delivery_metrics::record_delivery_success();
+        let retire = pending.path.clone();
+        match tokio::task::spawn_blocking(move || std::fs::remove_file(retire)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::warn!(
+                "io_trace sink: verified object but pending retirement failed (safe to retry): {e}"
+            ),
+            Err(e) => tracing::warn!("io_trace sink: pending retirement task failed: {e}"),
+        }
+        self.refresh_pending_metrics().await;
+    }
+
+    async fn inventory_pending(&self) -> Vec<PendingSegment> {
+        let dir = self.cfg.local_dir.clone();
+        match tokio::task::spawn_blocking(move || inventory_pending_sync(Path::new(&dir))).await {
+            Ok(items) => items,
+            Err(e) => {
+                tracing::warn!("io_trace sink: pending inventory task failed: {e}");
+                Vec::new()
             }
         }
-
-        // S1 path (no object store configured): local file only.
-        self.write_local(&filename, compressed).await;
     }
 
-    /// Write one sealed segment to the local spool dir (S1 destination + the S2
-    /// object-store fallback). Runs the blocking `fs::write` off the worker thread.
-    async fn write_local(&self, filename: &str, data: Vec<u8>) {
-        let path = format!("{}/{}", self.cfg.local_dir.trim_end_matches('/'), filename);
-        match tokio::task::spawn_blocking(move || std::fs::write(&path, data)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::warn!("io_trace sink: segment write failed: {e}"),
-            Err(e) => tracing::warn!("io_trace sink: seal task panicked: {e}"),
+    async fn refresh_pending_metrics(&mut self) {
+        let dir = self.cfg.local_dir.clone();
+        let (files, bytes) = tokio::task::spawn_blocking(move || pending_usage(Path::new(&dir)))
+            .await
+            .unwrap_or((0, 0));
+        self.pending_bytes = bytes;
+        delivery_metrics::set_pending(files, bytes);
+    }
+}
+
+fn digest_hex(data: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(data))
+}
+
+/// Commit immutable bytes with create-only semantics. A fully synced hidden temp
+/// file is atomically linked into the visible name; an existing identical file is
+/// an idempotent success, while different bytes fail closed.
+fn write_immutable(path: &Path, data: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "immutable filename is not UTF-8".to_string())?;
+    let temp = parent.join(format!(".{file_name}.{}.tmp", Uuid::new_v4()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|e| e.to_string())?;
+    if let Err(e) = file.write_all(data).and_then(|_| file.sync_all()) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e.to_string());
+    }
+    drop(file);
+    match std::fs::hard_link(&temp, path) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&temp);
+            if let Ok(dir) = std::fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing = std::fs::read(path).map_err(|read| read.to_string());
+            let _ = std::fs::remove_file(&temp);
+            match existing {
+                Ok(existing) if existing == data => Ok(()),
+                Ok(_) => Err(format!(
+                    "immutable path already exists with different content: {}",
+                    path.display()
+                )),
+                Err(read) => Err(read),
+            }
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp);
+            Err(e.to_string())
         }
     }
+}
+
+fn inventory_pending_sync(dir: &Path) -> Vec<PendingSegment> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.to_string_lossy().ends_with(".jsonl.zst.pending"))
+        .filter_map(|path| match PendingSegment::parse(path) {
+            Ok(segment) => Some(segment),
+            Err(e) => {
+                delivery_metrics::UPLOAD_FAILURES_TOTAL.inc();
+                tracing::error!("io_trace sink: invalid pending file left in place: {e}");
+                None
+            }
+        })
+        .collect()
+}
+
+fn pending_usage(dir: &Path) -> (u64, u64) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return (0, 0);
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.to_string_lossy().ends_with(".pending"))
+        .fold((0u64, 0u64), |(files, bytes), path| {
+            let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+            (files.saturating_add(1), bytes.saturating_add(len))
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static INSTALL_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
     fn cfg(dir: &str, seg: u64, spool: u64) -> ResolvedIoTraceSinkConfig {
         ResolvedIoTraceSinkConfig {
@@ -345,6 +653,7 @@ mod tests {
             segment_bytes: seg,
             flush_interval_s: 1,
             spool_max_bytes: spool,
+            pending_max_bytes: 1 << 20,
             compression: "zstd".to_string(),
             format: "jsonl".to_string(),
             object_store_uri: None,
@@ -352,182 +661,221 @@ mod tests {
         }
     }
 
+    fn line(sequence: u64, bytes: &[u8]) -> SpoolLine {
+        SpoolLine {
+            bytes: bytes.to_vec(),
+            sequence,
+        }
+    }
+
+    fn tempdir(label: &str) -> tempfile::TempDir {
+        tempfile::Builder::new().prefix(label).tempdir().unwrap()
+    }
+
+    fn trace_files_recursive(root: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let mut dirs = vec![root.to_path_buf()];
+        while let Some(dir) = dirs.pop() {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.to_string_lossy().ends_with(".jsonl.zst") {
+                    out.push(path);
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
     #[test]
     fn spool_drops_oldest_on_overflow() {
-        let mut s = Spool::new(10); // 10-byte cap
-        s.push(b"aaaa".to_vec()); // 4
-        s.push(b"bbbb".to_vec()); // 8
-        s.push(b"cccc".to_vec()); // 12 > 10 → drop oldest "aaaa"
-        assert_eq!(s.dropped, 1);
-        assert!(s.bytes <= 10);
-        let drained: Vec<_> = s.drain().into_iter().collect();
-        assert_eq!(drained, vec![b"bbbb".to_vec(), b"cccc".to_vec()]);
-        assert_eq!(s.bytes, 0);
-    }
-
-    #[tokio::test]
-    async fn worker_seals_jsonl_zstd_and_round_trips() {
-        let dir = std::env::temp_dir().join(format!(
-            "iotrace_sink_test_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let dir_s = dir.to_string_lossy().to_string();
-
-        let spool: SharedSpool = std::sync::Arc::new(Mutex::new(Spool::new(1 << 20)));
-        // Enqueue two JSON records directly (bypassing the observer for determinism).
-        {
-            let mut g = spool.lock().unwrap();
-            g.push(b"{\"query_id\":\"q1\",\"range_gets\":3}\n".to_vec());
-            g.push(b"{\"query_id\":\"q2\",\"range_gets\":5}\n".to_vec());
-        }
-        let mut worker = Worker::new(cfg(&dir_s, 4 * 1024 * 1024, 1 << 20), spool, None);
-        worker.drain_and_seal().await;
-
-        // Exactly one sealed segment; decompress → two JSONL lines round-trip.
-        let mut segs: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.to_string_lossy().ends_with(".jsonl.zst"))
-            .collect();
-        segs.sort();
-        assert_eq!(segs.len(), 1, "one segment sealed");
-        let compressed = std::fs::read(&segs[0]).unwrap();
-        let decoded = zstd::decode_all(&compressed[..]).unwrap();
-        let text = String::from_utf8(decoded).unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("\"query_id\":\"q1\""));
-        assert!(lines[1].contains("\"query_id\":\"q2\""));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// End-to-end (no server): install the sink → run instrumented queries →
-    /// graceful shutdown → a JSONL+zstd segment lands on disk carrying the minted
-    /// `query_id`. Exercises the full observer → spool → worker → seal wiring.
-    #[tokio::test]
-    async fn install_instrument_shutdown_writes_segment_with_query_id() {
-        use crate::observability::io_trace;
-        let dir = std::env::temp_dir().join(format!("iotrace_sink_e2e_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let dir_s = dir.to_string_lossy().to_string();
-
-        install(cfg(&dir_s, 4 * 1024 * 1024, 1 << 20));
-        // Two non-empty instrumented queries → two enqueued records.
-        for _ in 0..2 {
-            io_trace::instrument(Some("acme".to_string()), "test", async {
-                io_trace::record_bytes_read(128);
-            })
-            .await;
-        }
-        // Graceful shutdown drains + seals the buffered records.
-        shutdown().await;
-
-        let segs: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.to_string_lossy().ends_with(".jsonl.zst"))
-            .collect();
-        assert_eq!(segs.len(), 1, "one segment sealed on shutdown: {segs:?}");
-        let text =
-            String::from_utf8(zstd::decode_all(&std::fs::read(&segs[0]).unwrap()[..]).unwrap())
-                .unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 2, "both queries recorded");
-        assert!(
-            lines
-                .iter()
-                .all(|l| l.contains("\"query_id\"") && l.contains("\"tenant\":\"acme\"")),
-            "each record carries query_id + tenant: {text}"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// S2: with `object_store_uri` set (a `file://` store), the sealed segment is
-    /// PUT to the object store under the `DrPathBuilder` operator key
-    /// (`_operator/io_trace/…`) — NOT the local dir. Exercises the S2 dispatch path
-    /// on every PR without an emulator (`put_with_tier` degrades to a plain put on
-    /// `file://`, so the Cold tier is a no-op locally).
-    #[tokio::test]
-    async fn install_instrument_shutdown_uploads_segment_to_object_store() {
-        use crate::observability::io_trace;
-        let base = std::env::temp_dir().join(format!(
-            "iotrace_sink_obj_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        let store_dir = base.join("objstore");
-        let local_dir = base.join("local");
-        std::fs::create_dir_all(&store_dir).unwrap();
-        let uri = format!("file://{}", store_dir.display());
-
-        let mut c = cfg(&local_dir.to_string_lossy(), 4 * 1024 * 1024, 1 << 20);
-        c.object_store_uri = Some(uri);
-        install(c);
-        for _ in 0..2 {
-            io_trace::instrument(Some("acme".to_string()), "test", async {
-                io_trace::record_bytes_read(128);
-            })
-            .await;
-        }
-        shutdown().await;
-
-        // The object landed under {store_dir}/_operator/io_trace/, decoding to the
-        // two records — not the local dir.
-        let obj_dir = store_dir.join("_operator").join("io_trace");
-        let segs: Vec<_> = std::fs::read_dir(&obj_dir)
-            .unwrap_or_else(|e| panic!("no _operator/io_trace under the store ({e}): {obj_dir:?}"))
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.to_string_lossy().ends_with(".jsonl.zst"))
-            .collect();
+        let before = delivery_metrics::RECORDS_DROPPED_TOTAL.get();
+        let mut spool = Spool::new(10);
+        spool.push(line(0, b"aaaa"));
+        spool.push(line(1, b"bbbb"));
+        spool.push(line(2, b"cccc"));
+        assert_eq!(spool.bytes, 8);
+        assert_eq!(delivery_metrics::RECORDS_DROPPED_TOTAL.get(), before + 1);
         assert_eq!(
-            segs.len(),
-            1,
-            "one segment PUT to the object store: {segs:?}"
+            spool.drain_segment(100),
+            vec![line(1, b"bbbb"), line(2, b"cccc")]
         );
-        let text =
-            String::from_utf8(zstd::decode_all(&std::fs::read(&segs[0]).unwrap()[..]).unwrap())
-                .unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 2, "both queries recorded");
-        assert!(
-            lines
-                .iter()
-                .all(|l| l.contains("\"query_id\"") && l.contains("\"tenant\":\"acme\"")),
-            "each record carries query_id + tenant: {text}"
-        );
-        // Local dir received nothing (the object store was the destination).
-        let local_segs = std::fs::read_dir(&local_dir)
-            .map(|rd| {
-                rd.filter_map(|e| e.ok())
-                    .filter(|e| e.path().to_string_lossy().ends_with(".jsonl.zst"))
-                    .count()
-            })
-            .unwrap_or(0);
-        assert_eq!(local_segs, 0, "object store was the destination, not local");
-        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[tokio::test]
-    async fn empty_drain_writes_no_segment() {
-        let dir = std::env::temp_dir().join(format!("iotrace_sink_empty_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let dir_s = dir.to_string_lossy().to_string();
-        let spool: SharedSpool = std::sync::Arc::new(Mutex::new(Spool::new(1 << 20)));
-        let mut worker = Worker::new(cfg(&dir_s, 4 * 1024 * 1024, 1 << 20), spool, None);
-        worker.drain_and_seal().await;
-        let n = std::fs::read_dir(&dir).unwrap().count();
-        assert_eq!(n, 0, "no segment written for an empty drain");
-        let _ = std::fs::remove_dir_all(&dir);
+    async fn local_segment_round_trips_with_digest_identity() {
+        let dir = tempdir("iotrace-local-");
+        let spool = Arc::new(Mutex::new(Spool::new(1 << 20)));
+        {
+            let mut guard = spool.lock().unwrap();
+            guard.push(line(7, b"{\"query_id\":\"q1\"}\n"));
+            guard.push(line(8, b"{\"query_id\":\"q2\"}\n"));
+        }
+        let mut worker = Worker::new(
+            cfg(&dir.path().to_string_lossy(), 1 << 20, 1 << 20),
+            spool,
+            None,
+            Uuid::new_v4().to_string(),
+        );
+        worker.delivery_cycle().await;
+        let files = trace_files_recursive(dir.path());
+        assert_eq!(files.len(), 1);
+        let text =
+            String::from_utf8(zstd::decode_all(&std::fs::read(&files[0]).unwrap()[..]).unwrap())
+                .unwrap();
+        assert_eq!(text.lines().count(), 2);
+        assert!(files[0].to_string_lossy().contains("00000000000000000007"));
+        assert!(files[0].to_string_lossy().contains("00000000000000000008"));
+    }
+
+    #[tokio::test]
+    async fn startup_retry_delivers_once_and_retires_pending() {
+        let base = tempdir("iotrace-retry-");
+        let local = base.path().join("local");
+        let objects = base.path().join("objects");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(&objects).unwrap();
+        let store = ProximaObjectStore::from_url(&format!("file://{}", objects.display())).unwrap();
+        let spool = Arc::new(Mutex::new(Spool::new(1024)));
+        let mut worker = Worker::new(
+            cfg(&local.to_string_lossy(), 1024, 1024),
+            spool,
+            Some(store),
+            Uuid::new_v4().to_string(),
+        );
+        let compressed = zstd::encode_all(&b"{\"query_id\":\"q\"}\n"[..], 3).unwrap();
+        let digest = digest_hex(&compressed);
+        let name = format!(
+            "trace-2026-07-18-{}-{:020}-{:020}-{digest}.jsonl.zst",
+            worker.writer_uuid, 0, 0
+        );
+        let pending = worker.persist_pending(&name, compressed).await.unwrap();
+        assert!(pending.path.exists());
+
+        worker.retry_pending().await;
+        assert!(!pending.path.exists());
+        assert_eq!(trace_files_recursive(&objects).len(), 1);
+        worker.retry_pending().await;
+        assert_eq!(trace_files_recursive(&objects).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn already_exists_with_different_content_fails_closed() {
+        let base = tempdir("iotrace-collision-");
+        let local = base.path().join("local");
+        let objects = base.path().join("objects");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(&objects).unwrap();
+        let store = ProximaObjectStore::from_url(&format!("file://{}", objects.display())).unwrap();
+        let mut worker = Worker::new(
+            cfg(&local.to_string_lossy(), 1024, 1024),
+            Arc::new(Mutex::new(Spool::new(1024))),
+            Some(store.clone()),
+            Uuid::new_v4().to_string(),
+        );
+        let compressed = zstd::encode_all(&b"correct\n"[..], 3).unwrap();
+        let digest = digest_hex(&compressed);
+        let name = format!(
+            "trace-2026-07-18-{}-{:020}-{:020}-{digest}.jsonl.zst",
+            worker.writer_uuid, 4, 4
+        );
+        let pending = worker.persist_pending(&name, compressed).await.unwrap();
+        let key = ObjectPath::from(format!("_operator/io_trace/2026-07-18/{name}"));
+        store
+            .put_if_absent(&key, Bytes::from_static(b"different"))
+            .await
+            .unwrap();
+
+        worker.upload_pending(pending.clone(), true).await;
+        assert!(
+            pending.path.exists(),
+            "unverified pending must be preserved"
+        );
+        assert_eq!(&store.get(&key).await.unwrap()[..], b"different");
+    }
+
+    #[tokio::test]
+    async fn pending_cap_preserves_sealed_file_and_stops_ingress_drain() {
+        let base = tempdir("iotrace-cap-");
+        let local = base.path().join("local");
+        let objects = base.path().join("objects");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(&objects).unwrap();
+        let store = ProximaObjectStore::from_url(&format!("file://{}", objects.display())).unwrap();
+        let spool = Arc::new(Mutex::new(Spool::new(1024)));
+        spool.lock().unwrap().push(line(9, b"queued\n"));
+        let mut config = cfg(&local.to_string_lossy(), 1024, 1024);
+        config.pending_max_bytes = 1;
+        let mut worker = Worker::new(
+            config,
+            Arc::clone(&spool),
+            Some(store.clone()),
+            Uuid::new_v4().to_string(),
+        );
+        let compressed = zstd::encode_all(&b"sealed\n"[..], 3).unwrap();
+        let digest = digest_hex(&compressed);
+        let name = format!(
+            "trace-2026-07-18-{}-{:020}-{:020}-{digest}.jsonl.zst",
+            worker.writer_uuid, 1, 1
+        );
+        let pending = worker.persist_pending(&name, compressed).await.unwrap();
+        let key = ObjectPath::from(format!("_operator/io_trace/2026-07-18/{name}"));
+        store
+            .put_if_absent(&key, Bytes::from_static(b"collision"))
+            .await
+            .unwrap();
+
+        worker.delivery_cycle().await;
+        assert!(
+            pending.path.exists(),
+            "sealed pending data is never evicted"
+        );
+        assert_eq!(spool.lock().unwrap().bytes, b"queued\n".len());
+    }
+
+    #[tokio::test]
+    async fn install_shutdown_emits_record_identity() {
+        let _guard = INSTALL_TEST_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let dir = tempdir("iotrace-e2e-");
+        install(cfg(&dir.path().to_string_lossy(), 1 << 20, 1 << 20)).unwrap();
+        io_trace::instrument(Some("acme".to_string()), "test", async {
+            io_trace::record_bytes_read(128);
+        })
+        .await;
+        shutdown().await;
+        let files = trace_files_recursive(dir.path());
+        assert_eq!(files.len(), 1);
+        let text =
+            String::from_utf8(zstd::decode_all(&std::fs::read(&files[0]).unwrap()[..]).unwrap())
+                .unwrap();
+        assert!(text.contains("\"schema_version\":1"));
+        assert!(text.contains("\"writer_incarnation_uuid\""));
+        assert!(text.contains("\"sequence\":0"));
+        assert!(text.contains("\"tenant\":\"acme\""));
+        assert!(!text.contains("vector"));
+    }
+
+    #[tokio::test]
+    async fn duplicate_install_is_rejected_without_aborting_live_worker() {
+        let _guard = INSTALL_TEST_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let first = tempdir("iotrace-first-");
+        let second = tempdir("iotrace-second-");
+        install(cfg(&first.path().to_string_lossy(), 1024, 1024)).unwrap();
+        assert!(install(cfg(&second.path().to_string_lossy(), 1024, 1024)).is_err());
+        io_trace::instrument(None, "test", async { io_trace::record_bytes_read(1) }).await;
+        shutdown().await;
+        assert_eq!(trace_files_recursive(first.path()).len(), 1);
+        assert!(trace_files_recursive(second.path()).is_empty());
     }
 }

@@ -141,6 +141,14 @@ impl LLMClient for OllamaClient {
 
         let total_tokens = estimated_tokens.prompt_tokens + estimated_tokens.completion_tokens;
 
+        // TD-SANDHI-2 / ADR-0047 D10a: neutral usage event (self_hosted) via sandhi-core's Ollama parser.
+        crate::metrics::usage_event::emit_generation_usage(
+            "ollama",
+            &ollama_response.model,
+            _context.tenant_id.as_deref(),
+            &response_body,
+            "query",
+        );
         Ok(LLMResponse {
             content: ollama_response.response,
             provider: LLMProvider::Ollama,

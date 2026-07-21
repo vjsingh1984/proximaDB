@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Proposed; partially implemented** (reconciled 2026-07-17). S1 local sealing shipped in #1084 and S2 direct object-store dispatch in #1087. The current path is best-effort observability, not a durable/billing-grade ledger; acceptance is gated on the delivery, identity, governance, and warehouse-commit amendments below. Implemented under link:../../10-quality/td/TD-TRACE-2-structured-io-trace-etl-sink.adoc[TD-TRACE-2].
+| Status | **Proposed; partially implemented** (reconciled 2026-07-18). S1 local sealing shipped in #1084, S2 dispatch in #1087, and S2b crash-aware delivery is implemented. Ingress remains best-effort and is not a billing/audit ledger; acceptance is still gated on hot-path evidence, governance/tenant-root integration, the S3 envelope, and S4 warehouse commit. Implemented under link:../../10-quality/td/TD-TRACE-2-structured-io-trace-etl-sink.adoc[TD-TRACE-2].
 | Decider | Vijaykumar Singh (2026-07-17)
 | Date | 2026-07-17
 | Relates to | link:ADR-064-query-engine-pipeline-decision-dispatch-lowering-trace.adoc[ADR-064] (the per-query TRACE this makes durable), link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (co-design spine — meter every dimension, measured-not-asserted), link:ADR-036-azure-objectstore-orientation.adoc[ADR-036] (per-object access tier = the at-rest GB-month cost lever this ADR pulls), link:ADR-027-unified-storage-and-metering-substrate.adoc[ADR-027] (metering substrate — billing never gated; this sink is a *separate* observer). Deliberately stays OFF the sampled `predicate_diagnostics` **quality/eval** bus (a distinct concern — see D2).
@@ -183,16 +183,16 @@ access_tier      = "cool"         # Cool/Cold — GB-month lever (ADR-036)
 partition_by     = "date"         # date | tenant | host
 retention_days   = 30
 spool_max_bytes  = 268435456      # bounded spool; drop-oldest on overflow
-pending_max_bytes = 1073741824    # S2b target; never evict already-sealed pending files
+pending_max_bytes = 1073741824    # hard cap; never evict already-sealed pending files
 ----
 
 **Current code contact.** `enabled`, `local_dir`, `segment_bytes`, `flush_interval_s`,
-`spool_max_bytes`, `compression`, `format`, `object_store_uri`, and `access_tier` resolve today.
-Only JSONL+zstd is implemented; unsupported `format`/`compression` values must fail configuration
-instead of being accepted and ignored. `partition_by` and `retention_days` deserialize but are not
+`spool_max_bytes`, `pending_max_bytes`, `compression`, `format`, `object_store_uri`, and
+`access_tier` resolve today. Only JSONL+zstd is implemented; strict runtime resolution rejects
+unsupported `format`, `compression`, and access-tier values. `partition_by` and `retention_days` deserialize but are not
 carried into `ResolvedIoTraceSinkConfig` and have no runtime effect. They are reserved until their
 implementation and tests land; documentation must not advertise them as active controls.
-`pending_max_bytes` is an S2b target: once full, the worker preserves existing pending files and
+Once `pending_max_bytes` is full, the worker preserves existing pending files and
 stops draining memory ingress, causing measured ingress drops; it never deletes sealed pending data
 to make room.
 
