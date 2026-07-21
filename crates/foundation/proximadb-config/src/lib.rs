@@ -1050,6 +1050,18 @@ pub struct WalStorageConfig {
 
     /// Global manifest location (optional - explicit configuration).
     pub global_manifest_url: Option<String>,
+
+    /// ADR-069 D2 — time-based WAL flush interval (seconds); absent = engine default.
+    pub flush_interval_secs: Option<u64>,
+
+    /// ADR-069 D6 — per-collection WAL size budget (bytes) for capacity watermarks; absent = disabled.
+    pub wal_max_bytes: Option<usize>,
+
+    /// ADR-069 D3 — fraction of `wal_max_bytes` to force a flush at; absent = engine default.
+    pub high_watermark_pct: Option<f64>,
+
+    /// ADR-069 D3 — fraction of `wal_max_bytes` to apply write backpressure at; absent = engine default.
+    pub critical_watermark_pct: Option<f64>,
 }
 
 /// Strategy for distributing WAL segments across multiple storage directories.
@@ -1079,6 +1091,10 @@ impl Default for WalStorageConfig {
             write_buffer_size_mb: None,
             concurrent_flushes: None,
             global_shrink_factor: Some(0.4),
+            flush_interval_secs: None,
+            wal_max_bytes: None,
+            high_watermark_pct: None,
+            critical_watermark_pct: None,
         }
     }
 }
@@ -1186,6 +1202,11 @@ mod tests {
         assert_eq!(config.memory_flush_size_bytes, 10 * 1024 * 1024);
         assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024);
         assert_eq!(config.global_shrink_factor, Some(0.4));
+        // ADR-069 / TD-WAL-1 S1: new flush-control fields default to None (engine defaults apply).
+        assert_eq!(config.flush_interval_secs, None);
+        assert_eq!(config.wal_max_bytes, None);
+        assert_eq!(config.high_watermark_pct, None);
+        assert_eq!(config.critical_watermark_pct, None);
     }
 
     #[test]
