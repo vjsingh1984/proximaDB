@@ -25,7 +25,8 @@ use uuid::Uuid;
 
 use crate::core::config::ResolvedIoTraceSinkConfig;
 use crate::metrics::io_trace_sink_metrics as delivery_metrics;
-use crate::observability::io_trace::{self, IoTraceSnapshot};
+use crate::observability::io_trace;
+use crate::observability::trace_envelope::TraceEnvelope;
 use crate::storage::trait_components::path_resolver::DrPathBuilder;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -110,18 +111,6 @@ impl Spool {
     }
 }
 
-#[derive(serde::Serialize)]
-struct SinkRecord<'a> {
-    schema_version: u16,
-    writer_incarnation_uuid: &'a str,
-    sequence: u64,
-    event_time_unix_ms: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tenant: Option<&'a str>,
-    #[serde(flatten)]
-    snap: &'a IoTraceSnapshot,
-}
-
 struct SinkHandle {
     shutdown: tokio::sync::watch::Sender<bool>,
     join: tokio::task::JoinHandle<()>,
@@ -181,14 +170,13 @@ pub fn install(cfg: ResolvedIoTraceSinkConfig) -> Result<(), String> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
             .unwrap_or(0);
-        match serde_json::to_vec(&SinkRecord {
-            schema_version: 1,
-            writer_incarnation_uuid: &writer_obs,
-            sequence,
-            event_time_unix_ms,
-            tenant,
-            snap,
-        }) {
+        // S3 (ADR-066 D1): serialize the header + modality-tagged envelope, NOT a
+        // flat snapshot. Billing is untouched — it reads the in-memory snapshot
+        // directly, so meters stay byte-identical; the envelope is only this sink's
+        // durable serialization view.
+        let envelope =
+            TraceEnvelope::from_snapshot(snap, tenant, &writer_obs, sequence, event_time_unix_ms);
+        match serde_json::to_vec(&envelope) {
             Ok(mut bytes) => {
                 bytes.push(b'\n');
                 spool_obs
@@ -856,11 +844,26 @@ mod tests {
         let text =
             String::from_utf8(zstd::decode_all(&std::fs::read(&files[0]).unwrap()[..]).unwrap())
                 .unwrap();
-        assert!(text.contains("\"schema_version\":1"));
-        assert!(text.contains("\"writer_incarnation_uuid\""));
+        // S3 envelope shape: ingestion identity at top level, homogeneous header +
+        // modality-tagged payload (ADR-066 D1).
+        assert!(text.contains("\"schema_version\":2"), "envelope v2: {text}");
+        assert!(text.contains("\"writer_uuid\""), "writer identity: {text}");
         assert!(text.contains("\"sequence\":0"));
-        assert!(text.contains("\"tenant\":\"acme\""));
-        assert!(!text.contains("vector"));
+        assert!(text.contains("\"header\":{"), "header object: {text}");
+        assert!(
+            text.contains("\"tenant\":\"acme\""),
+            "tenant in header: {text}"
+        );
+        // Billing-class input re-exposed in the header, byte-identical.
+        assert!(
+            text.contains("\"bytes_read\":128"),
+            "billing input in header: {text}"
+        );
+        // A bytes-only snapshot has no distinguishing modality → generic payload.
+        assert!(
+            text.contains("\"payload\":{\"modality\":\"generic\"}"),
+            "generic modality payload: {text}"
+        );
     }
 
     #[tokio::test]
