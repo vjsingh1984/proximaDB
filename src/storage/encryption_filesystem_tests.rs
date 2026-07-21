@@ -50,6 +50,43 @@ async fn test_encrypted_filesystem_round_trip() {
     assert_eq!(fs.read_range(&logical_path, 1, 6).await.unwrap(), b"ecret-");
 }
 
+/// TD-OBJSTORE-4 S2/S3: the encryption decorator MUST delegate `write_if_absent`
+/// to the backend's atomic conditional-create — not emulate it with an overwriting
+/// `write`. The recovery commit primitive rests on this: a wrapper that clobbered
+/// would let a crash-window re-replay silently overwrite a committed segment.
+#[tokio::test]
+async fn write_if_absent_delegates_through_encryption_wrapper() {
+    let temp_dir = TempDir::new().unwrap();
+    let config = LocalConfig {
+        root_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    let underlying: Arc<dyn FileSystem> = Arc::new(LocalFileSystem::new(config).await.unwrap());
+    let fs = EncryptedFilesystem::new(underlying, test_key_manager(13), true);
+
+    let logical_path = temp_dir.path().join("commit.pax");
+    let logical_path = logical_path.to_string_lossy().to_string();
+
+    fs.write_if_absent(&logical_path, b"first", None)
+        .await
+        .expect("first conditional create succeeds");
+
+    let err = fs
+        .write_if_absent(&logical_path, b"second", None)
+        .await
+        .expect_err("second conditional create on the same key must fail");
+    assert!(
+        matches!(err, FilesystemError::AlreadyExists(_)),
+        "encryption wrapper must surface the backend's AlreadyExists; got {err:?}"
+    );
+
+    assert_eq!(
+        fs.read(&logical_path).await.expect("read back decrypts"),
+        b"first",
+        "first value must survive the rejected second create through encryption"
+    );
+}
+
 #[tokio::test]
 async fn test_encrypted_filesystem_reads_plaintext_files() {
     let temp_dir = TempDir::new().unwrap();
