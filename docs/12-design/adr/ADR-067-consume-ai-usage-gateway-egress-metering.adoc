@@ -1,19 +1,20 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= ADR-067: Consume the `sandhi` AI usage gateway for external-provider egress metering
+= ADR-067: Consume the `sandhi` neutral usage contract for external-provider egress metering
 
-:status: Proposed
+:status: Accepted as amended (2026-07-21)
 :date: 2026-07-18
 :deciders: architecture
 :relates-to: ADR-060 (commercial-Rust-crate open-core seam), ADR-027/030 (unified trace+meter seam), `OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc`; AnvaiOps ADR-0047 (authoritative), Victor ADR-018 / FEP-0020
 
 == Status
 
-**Proposed** — a thin **consumer** decision. The authoritative open-core split for the
-cross-repo AI usage gateway is **AnvaiOps ADR-0047**; this ADR records only ProximaDB's
-local consequence (how the Rust drainer's external egress emits the shared neutral usage
-event). No engine mechanism changes here; the wiring is tracked in
-link:../../10-quality/td/TD-SANDHI-1-gateway-egress-metering-wiring.adoc[TD-SANDHI-1].
+**Accepted as amended (2026-07-21).** The accepted seam is the versioned, neutral
+`usage-event.v1` contract and Sandhi's shared usage parsers—not a mandatory proxy or provider-client
+dependency. Embedding egress shipped in #1105/#1106 with real provider usage and a default-inert
+local event struct; generation egress shipped in #1114 using `sandhi-core` parsers, with the crates.io
+pin in #1122. Transport consolidation is evidence-gated and remains deferred. The embedding wiring is
+closed in link:../../10-quality/td/TD-SANDHI-1-gateway-egress-metering-wiring.adoc[TD-SANDHI-1].
 
 == Context
 
@@ -46,10 +47,11 @@ the Python callers. ProximaDB is named as a consumer.
 
 == Decision
 
-**ProximaDB consumes `sandhi` as the egress-metering seam for its external LLM/embedding
-providers, and its KEU meter stays authoritative.** Concretely:
+**ProximaDB consumes the Sandhi-defined neutral usage contract and shared usage parsers as the
+egress-metering seam for its external LLM/embedding providers, and its KEU meter stays
+authoritative.** Concretely:
 
-. **KEU meter stays authoritative + unchanged in ownership.** The gateway *complements* the
+. **KEU meter stays authoritative + unchanged in ownership.** The shared neutral event *complements* the
   KEU meter; it does **not** replace it (AnvaiOps ADR-0020 D6 — embedding metering stays
   server-side in ProximaDB). `consumption_metrics::record_keu_units` remains the OSS meter of
   record for embedding compute.
@@ -57,32 +59,30 @@ providers, and its KEU meter stays authoritative.** Concretely:
   egress clients (`AzureOpenAiClient::embed_batch`, `ByoClient`, the OpenAI/Cohere paths) so
   each external call emits the AnvaiOps ADR-0047 D3 usage event — keyed on the existing
   `provider`/`model` labels plus the tenant — **from the provider's actual usage response**,
-  not the `count*512` heuristic. Two viable transports, operator's choice: emit the event
-  in-process (as a new neutral field on the existing metering path) **or** route the egress
-  through the `sandhi` proxy over HTTP. Local BGE ONNX inference (`bge.rs`) has no egress and is
-  unaffected.
+  not the `count*512` heuristic. Emit the event in-process on the existing metering path; do not add
+  a proxy hop solely for metering. Routing through a Sandhi proxy or replacing provider clients is a
+  separate transport decision that needs an independent multi-consumer/resilience benefit. Local BGE
+  ONNX inference (`bge.rs`) has no egress and is unaffected.
 . **Neutral units only (open-core boundary holds).** The event carries tokens/cache-split,
   never dollars or tier/SKU names (neutral-naming rule). ProximaDB + `sandhi` emit units;
   **AnvaiOps prices them** (per-`(cloud, kou_locality)` KEU/KOU $ rate). This is the same
   mechanism-vs-policy cut ADR-060 and the boundary spec already enforce.
-. **Consumer direction, one-way.** ProximaDB (or `sandhi`) is not a dependency of AnvaiOps's
-  commercial layer in reverse; the dependency is commercial → OSS, exactly as ADR-060 fixes
-  it for the commercial Rust crate.
+. **Dependency direction preserves the open-core boundary.** ProximaDB → Sandhi is OSS → OSS.
+  AnvaiOps commercial policy may depend on those OSS contracts, but neither ProximaDB nor Sandhi
+  depends on AnvaiOps commercial code. The product boundary therefore remains commercial → OSS,
+  exactly as ADR-060 requires.
 
-== Note: ProximaDB is the native-Rust consumer
+== Note: ProximaDB is the native-Rust contract consumer
 
 `sandhi` is a Rust core (`sandhi-core`) with language bindings (AnvaiOps ADR-0047 D2). ProximaDB
-is the **best case**: it links `sandhi-core` **directly as a crate, no FFI** — the same
-in-process advantage the PyO3/napi bindings give Victor and the TS UIs, but without a binding
-layer. The drainer's egress path emits the neutral event through a direct crate call.
+links `sandhi-core` directly for the fixture-tested usage parsers, with no FFI. The event envelope is
+kept as a small local neutral struct so its observability emission stays default-inert and does not
+couple the embedding transport to Sandhi runtime machinery.
 
-Because Sandhi's transport (`sandhi-providers`, AnvaiOps ADR-0047 D10) is itself Rust,
-ProximaDB's existing 8-provider `src/ai/llm_integration/providers/mod.rs::LLMClient` is a
-**natural consolidation target** — it could delegate to `sandhi-providers` (Anthropic /
-OpenAI-compat / Gemini / Bedrock / Cohere / vLLM / Ollama already overlap) instead of keeping
-a parallel Rust adapter set. This is **optional and lower-priority** than the drainer KEU
-wiring (the embedding drainer, not `LLMClient`, is the live external-egress path today) —
-a follow-up, not required by this ADR.
+Sandhi's transport (`sandhi-providers`, AnvaiOps ADR-0047 D10) is also Rust, but language
+compatibility alone does not justify consolidation. The existing provider clients stay until at
+least a second live consumer or a concrete resilience/capability gain amortizes the dependency and
+migration cost. This is a follow-up, not required by this ADR.
 
 The embedding drainer batches are largely **session-insensitive** (stateless embed calls, no
 conversational prefix), so the ADR-0047 D9 prompt-cache/KV-affinity concern is minimal here
@@ -105,8 +105,9 @@ the KEU estimation gap), and its usage joins the same cross-repo billing signal 
 AnvaiOps through one neutral event — no repo-local meter drift. The open-core boundary is
 unchanged: OSS emits units, AnvaiOps prices.
 
-*Negative:* a new (optional) dependency edge on the `sandhi` wire schema; the drainer's egress
-clients gain a thin emit call. Both are behind the existing seams and default-inert.
+*Negative:* ProximaDB must track the versioned Sandhi wire contract and parser crate; external-egress
+clients gain a thin emit call. The emit is behind the existing seam and default-inert. There is no
+mandatory proxy or `sandhi-providers` dependency edge.
 
 *Neutral:* additive — no existing OSS meter, trace, or contract changes; local BGE inference
 is untouched.

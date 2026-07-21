@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Accepted** (filed 2026-07-09; **decider sign-off 2026-07-09**; trace-first — see §6)
+| Status | **Accepted historically; operational path superseded by ADR-062 (#1024).** The measured striped-read work produced reusable rerank primitives, but the chooser/striped route is dormant/retired. The canonical path is now a coalesced Region-A scan plus survivor-range rerank (ADR-062/065); TD-RDSTRAT-8 adds persisted coarse probing for large segments. Do not revive ADR-057's default-flip plan without new evidence that beats that stack.
 | Decider | Vijaykumar Singh (2026-07-09)
 | Date | 2026-07-09
 | Relates to | link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (scan-avoidance / bytes-scanned is the dominant cloud cost term — the spine), link:ADR-050-statistics-fed-datafusion-route-selection.adoc[ADR-050] (the cost router the chooser plugs into), link:ADR-034-objectstore-access-path-codesign.adoc[ADR-034] (object-store access-path co-design + the io_trace GET-count measurement mandate), link:ADR-055-document-canonical-format-declaration-and-legacy-retirement.adoc[ADR-055] (the SAME whole-segment-read problem for the *document* PAX profile — trace-first + reuse-the-split-reader precedent).

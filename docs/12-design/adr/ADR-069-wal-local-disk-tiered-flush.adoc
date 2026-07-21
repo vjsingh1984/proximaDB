@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Proposed** (2026-07-20). Grounds a measured cost regression (a Spot testbed generated ~9M flat-Blob write operations in a single day — ~$58 that day — because the WAL, the per-write hot path, was pointed at object storage). Decision + acceptance below; implementation tracked in link:../../10-quality/td/TD-WAL-1-wal-local-disk-tiered-flush.adoc[TD-WAL-1].
+| Status | **Proposed; S1–S4 core shipped and live-verified** (reconciled 2026-07-21). S1–S3 and the S6 core landed in #1117/#1118, including the live auto-flush driver and two latent live-path fixes; S4 critical-watermark admission control landed in #1132, default-OFF. Acceptance remains open on primary REST batch 429 propagation, the fsync/SIGKILL contract, residual canaries, the `file://` guardrail, and sustained soak; implementation progress does not waive those safety conditions. See link:../../10-quality/td/TD-WAL-1-wal-local-disk-tiered-flush.adoc[TD-WAL-1].
 | Decider | Vijaykumar Singh (2026-07-20)
 | Date | 2026-07-20
 | Relates to | link:ADR-036-azure-objectstore-orientation.adoc[ADR-036] (object-store orientation — flat Blob endpoint, HNS-off, *access-tier* as the at-rest cost lever; this ADR adds the *per-tier* placement lever the WAL needs), link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (co-design spine — meter every dimension, the dominant cost term is the one to design against), link:ADR-027-unified-storage-and-metering-substrate.adoc[ADR-027] (storage/metering substrate — the WAL→SST→object-store spine this refines).
@@ -48,7 +48,8 @@ way, the local disk wins the hot path decisively; the object store's advantage (
 read, no reattach wait) matters only for the *bulk-at-rest* data and for RTO — exactly the tiers that are
 *not* per-write.
 
-**Current engine reality** (mapped to file:line; TD-WAL-1 §Evidence carries the full index):
+**Filing-time engine reality (2026-07-20).** This evidence motivated the decision; it is not a
+current implementation inventory. The reconciled shipped/residual inventory is in §7 and TD-WAL-1.
 
 * **Per-tier backend selection already works.** Every tier resolves its root through one
   `FilesystemFactory` keyed by URL scheme (`file://`/`s3://`/`gs://`/`adls://`/`az://`/`abfs://`/`hdfs://`;
@@ -231,18 +232,25 @@ Per ADR-052, design against the **dominant cost term** and *measure* every dimen
 . **Tier split verified** — the engine runs with WAL `file://` and SST/VIPER/metadata `adls://` in the same
   process (mixed-scheme config), confirming per-tier backend selection.
 
-== 7. Status of related work
+== 7. Status of related work (reconciled 2026-07-21)
 
 * **Exists today** (grounds this ADR; TD-WAL-1 §Evidence pins file:line): per-tier backend selection via
   `FilesystemFactory` (WAL `file://` + SST `adls://` in one process — *already works*); per-collection WAL
   layout; size-based + manual (`force_flush_collection`) flush; **truncation** via
   `truncate_through_canonical_marker` (marker-gated); `PerBatch` **fsync** via the batch-sync coordinator;
   `wal_size_bytes` + `last_flush_duration_ms` metrics.
-* **NEW engine work** (this ADR): **time-based flush** (D2) and **capacity-budget watermark flush** (D2/D6) —
-  neither exists; **two-watermark write backpressure / graceful ENOSPC** (D3) — none exists; **guaranteed
-  truncation cadence** so the existing marker-gated truncation keeps pace under flush lag + a soak test (D4);
-  the **fsync durability contract made explicit + crash test** (D5); and **WAL-util / trigger-attribution /
-  truncation / object-store-write-op metrics** (D7).
+* **Shipped core (#1117/#1118):** **time-based flush** (D2) and **capacity-budget watermark flush** (D2/D6) —
+  implemented by the live auto-flush driver; durable flush retirement reclaims the WAL by construction.
+  Trigger attribution, WAL budget/watermark gauges, backpressure observation, and the existing
+  object-store flush-write meter are live. Verification also fixed zero live batch-size accounting and
+  an infinite periodic re-flush caused by stale coordinator batches.
+* **S4 core (#1132):** critical-watermark admission control rejects the client WAL-append path with
+  retryable `WalBackpressure`, default-OFF when no WAL byte budget is configured; recovery replay is
+  excluded. gRPC, Flight, bulk, and propagating-error paths map it to resource exhaustion/HTTP 429.
+* **Residual acceptance work:** thread the S4 discriminant through the primary REST batch result path,
+  provide the explicit fsync + SIGKILL/remount proof (D5), add reclaimed-segment and boot-replay metrics
+  (D7), ship the `file://` startup guardrail, and run the sustained bounded-util/flat-object-op soak.
+  TD-WAL-1 is the detailed status authority.
 * **Downstream (consumer) work**: point `write_buffer_directory` at a `file://` PVC root + set thresholds;
   add the "WAL root must be `file://`" cost ratchet. (AnvaiOps: the `/var/lib/proximadb` persistent tree +
   object-store-shape ratchets already landed; the WAL flip is the remaining few lines once these engine

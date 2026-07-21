@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open (measured; a re-wire onto the PAX cascade is the real fix — scoped as a follow-up below)
+| Status | **Resolved finding; implementation direction superseded by ADR-062 (#1024).** The measurement correctly proved the chooser served a retired reader. ADR-057/TD-RDSTRAT-3 briefly re-homed a striped path, but ADR-062's canonical coalesced Region-A scan plus survivor-range rerank replaced that direction. Large-segment selective probing is TD-RDSTRAT-8; this TD has no open implementation arm.
 | Severity | Medium (no correctness/perf regression today — the levers are simply inert; but the entire TD-151/TD-RDSTRAT-1 read-strategy investment cannot help real workloads until re-wired)
 | Component | SST vector-search read path: `search/mod.rs` (PAX cascade `try_pax_cascade`), `segment_format.rs` (RaBitQ segment reader); the (inert) coalescing/chooser in `sst_query_engine.rs` + `sst_io_layer.rs`.
 | Governs | link:TD-RDSTRAT-1-read-strategy-chooser.adoc[TD-RDSTRAT-1] (the chooser this TD finds unreachable) + link:../../12-design/adr/ADR-034-objectstore-access-path-codesign.adoc[ADR-034] (GET-count measurement mandate) + link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (bytes-scanned/GET-cost thesis).
@@ -77,7 +77,7 @@ byte-identical top-k.** No read-strategy lever moves the trace. A backtrace prob
 funnel confirmed the reads originate at `segment_format.rs:424` (PAX cascade), not the
 `ModularBlockReader` path. The test asserts this inertness so a future re-wire flips it red.
 
-== The real fix (follow-up — not this TD)
+== Historical fix direction (superseded)
 
 A read-strategy chooser that helps real workloads must live in the **PAX cascade**, deciding between:
 

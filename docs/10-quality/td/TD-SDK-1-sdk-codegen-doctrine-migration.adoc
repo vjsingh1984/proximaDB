@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open.** S0 (this ADR + TD) in progress on `feat/sdk-codegen-doctrine`. S1–S5 below sequence the migration incrementally — no flag day; the legacy `<lang>-sdk-codegen-drift` gates keep enforcing the old contract until S4 lands.
+| Status | **Open; S0 shipped #1112 and S2a/S2b shipped #1113.** The known short-name rejection and remote-search silent local fallback are fixed with regression tests. S1's live behavioral round-trip harness and S3–S5's oracle/gate migration remain open; the legacy `<lang>-sdk-codegen-drift` gates keep enforcing the old contract until S4 lands.
 | Priority | P1 — the SDK is the customer-facing seam; two facade bugs (8-char name, broken `search()`) already escape the current gate to the VM. Unblocks spec-evolution PRs (the progenitor-panic class) and moves SDK correctness to a gate that actually catches customer-visible failures.
 | Component | `clients/{python,go,rust,nodejs-embedded}` (facades + generated dirs), `src/network/rest/openapi.rs` (spec gen), `.github/workflows/*sdk-codegen-drift*` (the gates), a new in-process/Azurite round-trip test harness.
 | Evidence | 2026-07-20 local Azurite round-trip: server endpoints clean (create/insert/search + 7 blobs persisted); Python SDK facade buggy — `CollectionConfig` rejects <8-char names (`models.py:893 min_length=8` + `:958` validator) while the server accepts `aztest` (6); `unified_client.search()` (`:3015 search_single`) routes to `_search_local_vectors` (`:665`) whenever the REST adapter raises, returning `[]` though the server logs "2 results". Also: #1103 progenitor 0.14 panic (`response_types.len() <= 1`) on inline-structured responses blocked the Rust SDK. ADR-068 §1.
@@ -30,7 +30,7 @@ regeneration demoted to advisory.
 
 === S0 — ADR + TD (this PR)
 File ADR-068 + this TD; add the ADR row to `adr/README.adoc`; `scripts/check_td_adr_unique.py` green.
-_Status: in progress._
+_Status: shipped #1112._
 
 === S1 — SDK round-trip correctness harness (the new gate)
 A per-language round-trip test that, against the in-process server (`build_router_for_unified`
@@ -43,17 +43,17 @@ script. _Status: not started._
 === S2 — Fix the two facade bugs under the doctrine (round-trip first, then fix)
 Write the S1 round-trip test that **reproduces** each bug (red), then fix:
 
-* **S2a — collection-name length.** Drop the stale `min_length=8` + the `:958` "7-char base62 ID
+* **S2a — collection-name length (shipped #1113).** Drop the stale `min_length=8` + the `:958` "7-char base62 ID
   collision" validator (`clients/python/.../models.py`) and the `unified_client_async.py:77`
   guard; the server relaxed this for relational DDL (TPC-H `part`/`orders`/`region`). The round-trip
   test creates a 4-char collection and asserts success.
-* **S2b — REST `search()` local-fallback.** `search_single` (`unified_client.py:3015`) falls to
+* **S2b — REST `search()` local-fallback (shipped #1113).** `search_single` (`unified_client.py:3015`) falls to
   `_search_local_vectors` (`:665`) when the REST adapter raises, silently returning `[]`. Root-cause
   why `self._adapter.search()` raises/mis-parses (the server returns correct results), fix the
   adapter, and stop letting a remote failure degrade to a local-only read without a loud error. The
   round-trip test asserts `search()` hits the server and returns the inserted records.
 
-_Status: not started._
+_Status: both known facade defects fixed with targeted regression tests; the S1 live round-trip gate remains open._
 
 === S3 — Demote the generated client to a CI oracle
 Move the full generated client in each language to a dev/CI-only path (not linked into the shipped
