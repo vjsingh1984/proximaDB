@@ -198,6 +198,9 @@ pub mod write_fence;
 // Shared per-collection flush materialization (server shutdown + embedded)
 pub mod flush_materializer;
 
+// ADR-069/TD-WAL-1: live auto-flush driver (policy-gated materialization).
+pub mod auto_flush_driver;
+
 // Engine capabilities and supportability checks
 pub mod engine_capabilities;
 
