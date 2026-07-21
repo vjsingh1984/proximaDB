@@ -5,7 +5,7 @@
 :status: Accepted (2026-07-16; implementation reconciled 2026-07-17)
 :date: 2026-07-16
 :deciders: architecture
-:relates-to: link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (extends D2; upholds D1), ADR-052 (round-trips dominate), ADR-020 (WAL authority; manifest-level atomicity), ADR-036 (per-object access tier), ADR-055 (P-Shred user columns → the row-data family), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6] (measured baseline), link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7] (lossless bytes phase), link:../../10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8] (scale successor: persisted cell directory + selective Region-A/B probing)
+:relates-to: link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (extends D2; upholds D1), ADR-052 (round-trips dominate), ADR-020 (WAL authority; manifest-level atomicity), ADR-036 (per-object access tier), ADR-055 (P-Shred user columns → the row-data family), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6] (measured baseline), link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7] (lossless bytes phase), link:../../10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8] (per-segment scale successor), link:../../10-quality/td/TD-RDSTRAT-9-collection-read-cost-envelope.adoc[TD-RDSTRAT-9] (collection file/cache/compaction controller)
 
 == Status
 
@@ -33,6 +33,12 @@ promotes it to a durable performance claim.
 remain the physical substrate; the successor persists the compaction-time IVF
 cell directory so large segments can probe selected Region-A/B runs instead of
 choosing between many scattered ranges and a whole-region O(N)-byte fallback.
+
+**Collection boundary.** Regions and TD-RDSTRAT-8 solve addressing inside one
+segment; they do not choose the number of live segments. TD-RDSTRAT-9 owns the
+feasible band between per-file Region-A cache admission and the collection GET
+budget, including compaction write-amplification payback. A per-segment win cannot
+authorize a collection compaction policy.
 
 == Context — the remaining cost term is block dead weight, not GETs
 
@@ -116,9 +122,12 @@ budget is the sum over live segments.
    `EMBED_BASE`; the coalesced reader reranks Region B then fetches top-k row
    blocks. The survivor/OID cache also shipped. A dated, ledgered cloud trace is
    still required before promoting the PR-body byte/GET numbers as a baseline.
-2. **Large-segment selective probing — open (TD-RDSTRAT-8):** persist the
-   existing compaction IVF model/cell runs and probe Region-A/B subranges. This
-   is the next dominant cost lever before adding more families.
+2. **Large-segment selective probing — active (TD-RDSTRAT-8):** persist the
+   existing compaction IVF model/cell runs and probe Region-A/B subranges. PR-A
+   shipped in #1128 (layout v3, Region A0 serde, compaction-only writer, default
+   OFF). PR-B's selective probe reader and end-to-end recall/GET/byte evidence
+   remain open; no default promotion is authorized. This precedes adding more
+   families.
 3. **Region C — open and evidence-gated:** hoist exact f32 only when an actual
    `include_vectors`/exact-query trace proves that saved bystander bytes exceed
    the extra writer buffering, persisted bytes, cache pressure, and result GETs.

@@ -5,22 +5,26 @@
 :status: Accepted (2026-07-15, review-approved)
 :date: 2026-07-15
 :deciders: architecture
-:relates-to: ADR-061 (pre-GA mixed-read/default policy), ADR-052 (round-trips dominate the cost term), ADR-047/046/045 (schema authority / PAX durable-core / mixed-read), ADR-036 (per-object access tier / storage profile), ADR-020 (WAL is the durable authority; the segment/footer is advisory), ADR-026 (PAX canonical vector path), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6 (GET phase)], link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7 (bytes/footer phase)], link:../../10-quality/td/TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (the rerank substrate), link:../../10-quality/td/TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4]/link:../../10-quality/td/TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[5] (block-prune, superseded as the end-state), link:../../10-quality/td/TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (the gate), link:../../_internal/status/SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc[the PR1 measured eval]
+:relates-to: ADR-061 (profile/authority core; D3/D5/D7 superseded), ADR-052 (round-trips dominate the cost term), ADR-047/046/045 (schema authority / PAX durable-core / mixed-read), ADR-036 (per-object access tier / storage profile), ADR-020 (WAL is the durable authority; the segment/footer is advisory), ADR-026 (PAX canonical vector path), link:ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065 (Region-B extension)], link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6 (core implementation)], link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7 (lossless bytes)], link:../../10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8 (large-segment probing)], link:../../10-quality/td/TD-RDSTRAT-9-collection-read-cost-envelope.adoc[TD-RDSTRAT-9 (collection control)], link:../../10-quality/td/TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (rerank substrate), link:../../10-quality/td/TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4]/link:../../10-quality/td/TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[5] (historical block-prune), link:../../_internal/status/SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc[the PR1 measured eval]
 :supersedes: the *block-centroid-prune* path (TD-RDSTRAT-4 Lever B / TD-RDSTRAT-5) as the **end-state for the dominant object-storage cost term** (GET round-trips). Block-prune is retained only as an optional coarse pre-filter for monster collections (§Decision D6).
 
 == Status
 
-**Accepted** (2026-07-15, review-approved). A comprehensive review (against current `develop`,
+**Accepted and current base contract** (2026-07-15, implementation reconciled through
+2026-07-21). ADR-065 extends this ADR with Region B; TD-RDSTRAT-8 extends it with a default-OFF
+large-segment probe directory; neither replaces the one-object/header-first/self-describing-footer
+decisions. TD-RDSTRAT-9 owns collection file/cache/compaction policy outside the segment.
+
+The original comprehensive review (against then-current `develop`,
 commits `f1075d46f` spec + `df8c0e591` spec-accuracy fixes) returned **✅ Accept — code PR1 may
 proceed**, after a Request-changes round whose 4 spec-accuracy fixes (#3 `read_ranges`
 attribution, #4 `IopsBudget` ≠ `StorageProfile`, #5 `PaxSegmentScanner` path, #6 compaction CAS
 via `put_if_absent`+Iceberg) were applied and verified; 2 stale-checkout false alarms
 (`cluster_order_pca_ivf`, `PROXIMADB_PAX_FLUSH_CLUSTER`) were retracted (both shipped #995/#1015).
-All 7 initial open questions were answered (header-first write + readability confirmed safe;
-compaction atomicity sound). Implementation is a phased program: PR1 (#1019) shipped the
-layout+read-path behind an opt-in and measured the GET win; PR2 is cost-control; PR3 is
-point-lookup. New on-disk encodings remain default-OFF until their mixed-read + recall/cost
-ratchets pass. Reviewer's two PR1-ratchet notes are folded into TD-RDSTRAT-6 §Verification.
+All 7 initial open questions were answered. Core layout/read path #1019, adaptive-M/cache/IOP
+cost control #1060, default-on canonical route #1024, lossless scalar bytes #1064, Region B/range
+cache #1069, and bounded-parallel reads #1094 have shipped. Point-lookup Bloom remains open.
+Successor layouts/encodings retain independent mixed-read, recall, and cost gates.
 
 == Context
 
@@ -445,8 +449,10 @@ leaving RaBitQ at the header.
 . **Schema-footer vs catalog authority — resolved.** Catalog is logical/write authority;
   footer is the immutable physical snapshot keyed by `CatalogColumn.id`; block metadata owns
   local decode parameters. TD-TBL-4 owns evolution reconciliation.
-. **GET-budget compaction trigger — open for PR2.** File-count threshold versus projected GETs
-  versus a hybrid still requires workload/write-amplification evidence.
+. **GET-budget compaction — mechanism shipped, adaptive policy open.** #1012 wired execution and
+  `l0_threshold:N` supplies the fixed-count trigger. It is not a measured collection cost
+  controller. TD-RDSTRAT-9 owns the file/cache/GET band, write-amplification payback, observe-only
+  decision trace, and independently gated actuation.
 . **Compaction atomicity — resolved in design.** Use Iceberg fresh-name + manifest advance via
   create-only `put_if_absent` (ADR-020); native `if-match` remains an optimization.
 . **Bloom sizing — initial policy resolved, activation evidence remains.** Per-block,
