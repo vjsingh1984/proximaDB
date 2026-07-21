@@ -1257,16 +1257,12 @@ pub async fn list_collections_v2(
                 .iter()
                 .map(|c| {
                     let cfg = c.config.as_ref();
-                    // Map storage engine enum to string
-                    let engine_str = match cfg.and_then(|c| c.storage_engine).unwrap_or(0) {
-                        1 => "sst",
-                        2 => "helix",
-                        3 => "viper",
-                        4 => "swift",
-                        5 => "nova",
-                        6 => "raptor",
-                        _ => "auto",
-                    };
+                    // Issue #1125: use the canonical proto-enum label (the same
+                    // helper GET-single/create use). The old hardcoded int map
+                    // disagreed with the proto values (Sst=2, Helix=4), so an
+                    // sst collection listed as "helix" after restart.
+                    let engine_str =
+                        collection_storage_engine_label(cfg.and_then(|c| c.storage_engine));
                     CollectionV2Summary {
                         collection_id: c.id.clone(),
                         name: cfg
@@ -1275,7 +1271,10 @@ pub async fn list_collections_v2(
                             .unwrap_or_else(|| c.id.clone()),
                         dimension: cfg.map_or(0, |cfg| cfg.dimension),
                         engine: engine_str.to_string(),
-                        proxima_record_enabled: false,
+                        // Issue #1125: was hardcoded `false`; read the persisted flag.
+                        proxima_record_enabled: cfg
+                            .and_then(|c| c.enable_proxima_record)
+                            .unwrap_or(false),
                         record_count: if include_stats {
                             Some(c.stats.as_ref().map_or(0, |s| s.vector_count as u64))
                         } else {

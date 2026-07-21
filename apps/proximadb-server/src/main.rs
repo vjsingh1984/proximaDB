@@ -314,9 +314,26 @@ async fn run() -> anyhow::Result<()> {
 
     info!("ProximaDB server started successfully");
 
-    // Wait for shutdown signal
-    tokio::signal::ctrl_c().await?;
-    info!("Received shutdown signal, stopping server...");
+    // Wait for a shutdown signal — SIGINT (ctrl-c) *or* SIGTERM. `docker stop`,
+    // Kubernetes pod termination, and Spot-eviction drains all deliver SIGTERM;
+    // waiting only on `ctrl_c()` left SIGTERM at its default disposition
+    // (immediate process kill), so containerized stops bypassed `db.shutdown()`
+    // entirely — no shutdown flush, no clean close, and any unflushed memtable
+    // rode solely on WAL replay (issue #1125, finding A).
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => info!("Received SIGINT, stopping server..."),
+            _ = sigterm.recv() => info!("Received SIGTERM, stopping server..."),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
+        info!("Received shutdown signal, stopping server...");
+    }
 
     // Graceful shutdown
     if let Err(e) = db.shutdown().await {
