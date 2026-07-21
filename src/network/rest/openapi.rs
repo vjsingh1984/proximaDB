@@ -95,7 +95,7 @@ pub struct QueryResponse(pub Value);
 #[openapi(
     info(
         title = "ProximaDB REST API",
-        version = "0.2.0",
+        version = "0.3.0",
         description = "SDK-facing ProximaDB REST contract. This specification is v2-first and \
 centers on ProximaRecord, typed schemas, record search, and collection \
 lifecycle operations. Legacy v1 compatibility routes are intentionally not \

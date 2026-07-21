@@ -668,7 +668,7 @@ mod tests {
             status: HealthStatus::Healthy,
             timestamp: 1700000000,
             uptime_seconds: 3600,
-            version: "0.2.0".to_string(),
+            version: "0.3.0".to_string(),
             components: None,
             metrics: HashMap::new(),
         };
@@ -700,7 +700,7 @@ mod tests {
             status: HealthStatus::Healthy,
             timestamp: 1700000000,
             uptime_seconds: 7200,
-            version: "0.2.0".to_string(),
+            version: "0.3.0".to_string(),
             components: Some(components),
             metrics,
         };

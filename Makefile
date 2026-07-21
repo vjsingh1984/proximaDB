@@ -247,7 +247,7 @@ release: clean build-server test benchmark
 	@ls -la target/release-server/proximadb-server 2>/dev/null || echo "Server binary not found"
 	@ls -la target/release/proximadb-server 2>/dev/null || echo "Fallback to release binary"
 
-# Release-cut gate: one command that must be green before the v0.2 release tag.
+# Release-cut gate: one command that must be green before the v0.3 release tag.
 # Sequence is fail-fast — early steps (fmt, doc-claim, proto) are cheap.
 release-check: work-commit-check proto-check release-smoke query-conformance-check build-server
 	@echo "✅ release-check: all gates passed"

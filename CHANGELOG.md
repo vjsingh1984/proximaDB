@@ -2,6 +2,29 @@
 
 All notable changes to ProximaDB will be documented in this file.
 
+## [0.3.0] - 2026-07-21
+
+### Security
+- Arrow Flight export path-binding: export file paths are canonicalized + confined to the selected collection's data directory, closing a path-traversal / cross-collection-read gap (#1121).
+
+### API & Observability
+- Spec↔router drift smoke gate: every OpenAPI spec path is asserted to resolve on the production router (#1103).
+- Cache metrics exposed in `/metrics/prometheus` + OTLP: `proximadb_cache_hits_total{tier}`, misses, evictions, entries, bytes (#1115).
+- `query-conformance-check` release gate: release-cut now runs the TPC-H/TPC-DS pgwire ratchets (#1121).
+
+### SDK
+- Python SDK facade fixes: short collection names accepted (S2a); `search()` delegates to the REST transport instead of silently falling back to a client-side local store (S2b) (#1113).
+- ADR-068 SDK codegen doctrine: hand-maintained facade over narrow generated types; generated client as a CI oracle; correctness gate is a behavioral round-trip (#1112).
+
+### Storage & Architecture
+- ADR-069 / TD-WAL-1: detachable local-disk WAL + tiered flush design (reapable to spot instances for IOPS-latency reduction + cost control).
+- TD-RDSTRAT-9: collection read-cost envelope — closes the loop between file geometry, region cache, and compaction (#1120).
+- ORION engine decoupling (moves 6a–6f): graph-engine trait, WAL/cache/fs/distance deps extracted to leaf crates.
+
+### Infrastructure
+- sandhi-core integrated from crates.io (0.1.1) — registry release replaces the git-rev pin (#1122).
+- io-trace delivery hardening across crashes (#1093).
+
 ## [0.2.2] - 2026-07-04
 
 ### Storage
