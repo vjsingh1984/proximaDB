@@ -6,7 +6,7 @@
 |===
 | Field | Value
 | Status | **Open — architecture/control-plane prerequisite.** The current `l0_threshold:N` mechanism is a fixed segment-count trigger, not ADR-062's query-GET-budget controller. Implement observe/recommend mode before permitting automatic compaction decisions.
-| Priority | P1 for scale promotion. TD-RDSTRAT-8 may prototype its per-segment layout in parallel, but neither automatic successor-layout promotion nor adaptive compaction becomes default until this collection-level envelope is measured.
+| Priority | P1 for scale promotion. TD-RDSTRAT-8 PR-A shipped in #1128; PR-B's selective reader and evidence remain open. Neither automatic successor-layout promotion nor adaptive compaction becomes default until this collection-level envelope is measured.
 | Severity | High — the wrong file geometry either multiplies cold GETs or creates Region-A entries too large to admit usefully into cache; over-compaction merely converts read cost into write amplification.
 | Component | Collection/catalog policy, SST compaction scheduling, `SegmentInvariantsCache` / `SurvivorRangeCache`, `IopsBudget`, query-scoped I/O trace, and EXPLAIN/decision trace. No new storage encoding or query metric.
 | Governs | The collection-level decision to leave segments alone, compact a subset, change successor-layout eligibility, or report that the configured GET/cache envelope is infeasible.
@@ -139,7 +139,7 @@ for the measured trace.
 | Lever | Owner | What it can move
 | Region-B block/range size | `IopsBudget` | Transfer efficiency and GET splitting for survivor fetches; not Region-A cacheability
 | Survivor pool `M` | ADR-062 reader/eval | Recall and Region-B survivor bytes; not file count or Region-A bytes
-| Bounded parallel `read_ranges` | TD-RDSTRAT-8/#1094 experiment | Wall/tail latency by overlapping GETs; not GET billing or bytes
+| Bounded parallel `read_ranges` | #1094 shipped, default-OFF pending cloud evidence | Wall/tail latency by overlapping GETs; not GET billing or bytes
 | Successor Region A0 | TD-RDSTRAT-8 | Per-segment Region-A/B bytes at large `N`; not collection live-file count
 | Lossless encoding | TD-RDSTRAT-7/shared codec | Stored/transferred bytes when end-to-end wins; not recall, GET count, or fetch rounds
 | Compaction selection | **this TD** | Live-file geometry and locality, paid for with write amplification

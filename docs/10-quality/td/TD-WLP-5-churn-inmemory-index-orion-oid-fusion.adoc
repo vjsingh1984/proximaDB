@@ -1,14 +1,14 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= TD-WLP-5: Churn read path — in-memory mutable index + ORION graph + oid fusion
+= TD-WLP-5: Churn Strong-read freshness core — mutable-index proposal retired
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Implemented (freshness core; descoped per this TD's own note) 2026-07-14 — `StorageProfile::forces_strong_reads()` (Churn ⇒ always delta-merge the unflushed WAL) + `churn_effective_freshness` wired at the VOE-directory read chokepoint (`unified_search_with_tenant_context`, reused at the cache gate + execute path): a `Churn` collection overrides a `StaleOk`/`BoundedStale` request to Strong so a re-embedded symbol is never served stale; `AppendBulk`/untagged honor the request (no-op — Strong is the unset default). The native two-stage path already always-merges WAL Stage 1 (fresh by construction). TDD gates: `test_forces_strong_reads_only_for_churn` (storage-common) + `wlp5_freshness_tests` (root). **Descoped to TD-WLP-8** (per this TD's descope note — reuse the existing WAL freshness path, defer ORION fusion): the dedicated in-memory mutable AXIS index, ORION `oid`-keyed match-then-traverse fusion, the per-collection bounded-working-set memory guard/metric, and a full-server pre-flush freshness e2e.
-| Priority | P1b — the code-RAG payoff; the churn-profile projection.
-| Severity | High — freshness + authority invariant under high update churn; adds a bounded memory surface.
-| Component | `src/index/axis/` (mutable ANN index selection); `crates/modalities/proximadb-orion-engine/src/` (epoch-fresh CSR fusion hook); read-path profile branch in `src/storage/engines/sst/search/`
+| Status | **Resolved 2026-07-14; retired scope reconciled 2026-07-21.** `Churn` forces Strong reads that merge the backpressure-bounded WAL/memtable delta, so re-embeds are visible before flush. The proposed dedicated mutable AXIS index is retired by ADR-061 D4 / TD-WLP-8; do not implement it from the historical scope below. ORION `oid` match-then-traverse already ships through TD-045 `/rag`; its residual is relevance evaluation, not this TD.
+| Priority | Resolved — Strong-read freshness is the shipped code-RAG payoff; no mutable-index follow-up remains.
+| Severity | Resolved — freshness and WAL authority hold by merging the already bounded delta.
+| Component | `StorageProfile::forces_strong_reads`, `churn_effective_freshness`, WAL/memtable Stage-1 merge, and profile-aware search observability
 | Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D4)
 | Relates to | ADR-044 (stable symbol OID / oid fusion), ORION (Beta in-memory CSR projection), TD-133 (opt-in cross-modal txn), the read-side dead-filter invariants (is_dead/valid_to_ns)
 | Pillar | PERF (immediate freshness on a bounded set), REL (WAL authority preserved), OE (memory guard)
@@ -18,20 +18,22 @@ toc::[]
 
 == Why
 
-Agent-driven code-RAG is update-heavy point mutation on a bounded, hot, freshness-critical working
-set — a poor fit for LSM tombstone/compaction. ADR-061 D4 keeps canonical records + WAL as
-authority but serves reads from an in-memory mutable projection so a re-embedded symbol is
-immediately visible, with ORION providing match-then-traverse.
+Agent-driven code-RAG is update-heavy and freshness-critical. The code review found the unflushed
+delta is already hard-bounded (about 2 MiB by default), so a Strong brute-force delta merge is the
+smallest correct mechanism. A second mutable index would add insert/evict/flush/replay coherence for
+a large-delta condition the bound excludes.
 
-== Scope
+== Shipped scope
 
-* For `Churn` collections, route search to the in-memory mutable ANN index (the AXIS mutable path)
-  sized to the bounded working set, fused with ORION's epoch-fresh CSR via `oid`-keyed correlation
-  (ADR-044), so a re-embedded symbol is visible pre-flush.
-* Durability stays WAL; the index is rebuilt on recovery. Compaction-clustering pinned OFF.
-* Enforce the bounded-working-set assumption with a per-collection memory guard + metric.
-* Correctness under churn already holds via the read-side dead-filter (`is_dead`/`valid_to_ns`);
-  this slice adds *freshness of the mutable projection*, not new durability.
+* `Churn` resolves requests to Strong freshness and merges the bounded unflushed delta.
+* Canonical durability stays WAL/`ProximaRecord`; compaction clustering stays off for `Churn`.
+* TD-WLP-8a supplies the working-set gauge/soft ceiling.
+
+== Retired proposal — do not implement
+
+The original dedicated mutable AXIS index, its flush-coherence machinery, and a new ORION fusion
+branch are superseded. Revisit an index only under a new evidence-backed TD if the bounded delta is
+measured to dominate latency. Use the existing TD-045 fusion seam for graph expansion.
 
 == TDD gate
 
@@ -43,9 +45,7 @@ Integration test `tests/storage_wlp_churn_freshness.rs` (storage-integration CI 
 * `test_append_collection_unaffected_by_churn_path`: an `AppendBulk` collection in the same process
   still uses the durable path (mixed-read safety).
 
-== Gating / descope
+== Gating
 
-Branch keyed on the resolved profile; `AppendBulk` default untouched (asserted). Gated by
-`workload_profile:churn`. **Descope:** reuse the existing unflushed-WAL freshness path (already
-partially present) and defer ORION fusion to a follow-up if scope balloons; do not introduce a new
-in-memory memtable structure.
+Keyed on `workload_profile:churn`; `AppendBulk` remains unchanged. No new in-memory index or
+durability authority is authorized by this resolved TD.
