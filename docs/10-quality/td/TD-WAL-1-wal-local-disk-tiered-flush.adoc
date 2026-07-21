@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open; specced.** Implements link:../../12-design/adr/ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069]. The per-tier backend split, size/manual flush, marker-gated truncation, and `PerBatch` fsync already exist; this TD adds the adaptive-flush control (time + capacity), the backpressure safety, the guaranteed truncation cadence, the explicit fsync contract + crash test, and the metrics. No code shipped yet.
+| Status | **Core shipped + live-verified (2026-07-21): S1–S3 and the S6 core landed via PR #1117 (flush policy + metrics + live config) and PR #1118 (live auto-flush driver).** Implements link:../../12-design/adr/ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069]. Residual tail tracked in § Shipped vs residual: S4 write-path critical-watermark reject, S5 fsync contract + crash test, S6 residual canaries, S7 soak, the S1 `file://` guardrail nudge. Multi-modal convergence follow-ups split to link:TD-WAL-2-multimodal-wal-convergence.adoc[TD-WAL-2].
 | Priority | **P1** — removes an unbounded, workload-driven object-store write-op cost on the hot path (a Spot testbed measured ~9M flat-Blob writes / ~$58 in one day) and cuts write-commit latency ~10–50×. Gated the AnvaiOps dogfood go-live cost story.
 | Component | `src/storage/persistence/write_ahead_log/` — `config.rs` (WALConfig / WalPerformanceConfig), `bincode_serialization_strategy.rs` (post-write flush check), `memtable_manager.rs` (`should_flush_collection`), `wal_operations.rs` (`truncate_through_canonical_marker`), `batch_sync_coordinator.rs` (fsync), `disk_manager.rs` (per-collection WAL layout); `src/storage/persistence/filesystem/` (FilesystemFactory, scheme_validation); `src/core/config.rs` + `crates/foundation/proximadb-config` (TOML parse); `src/metrics/` (updater.rs, eventlog_metrics.rs).
 | Evidence | **What exists** (mapped 2026-07-20): per-tier factory selection `filesystem/mod.rs:538` + `scheme_validation.rs:11` (WAL `file://` + SST `adls://` in one process works); per-collection WAL `disk_manager.rs:170`; size flush `bincode_serialization_strategy.rs:279` + `memtable_manager.rs:177`; `WalPerformanceConfig` `write_ahead_log/config.rs:78` (`memory_flush_size_bytes`≈2 MB, `global_flush_threshold`≈4 GB, `sync_interval_seconds`=60 — fsync cadence, **not** flush); TOML→WAL map `write_ahead_log/config.rs:388`; truncation `wal_operations.rs:692` (`truncate_through_canonical_marker`, **marker-gated**); `SyncMode` `config.rs:151` + fsync `batch_sync_coordinator.rs:272`; metrics `wal_size_bytes`/`last_flush_duration_ms` `metrics/updater.rs:128,306`. **What's absent**: time-based flush, disk-capacity/watermark flush, write backpressure/ENOSPC handling, guaranteed truncation cadence, disk-util/trigger-attribution/truncation metrics.
@@ -62,6 +62,64 @@ S7 — **Soak + acceptance.** Multi-hour sustained-write soak: WAL-util stays bo
 backpressure engages past critical without crash; object-store write-op rate stays flat (only coalesced
 SST/checkpoint ops) — the ADR-069 §6 pressure test.
 
+== Shipped vs residual (2026-07-21, PR #1117 + PR #1118 — live-verified)
+
+**Shipped.**
+
+* **S1 config surface** — the four knobs end-to-end on the LIVE server path:
+  `WriteBufferUserConfig` (`src/core/config.rs`, serde back-compat defaults) wired at BOTH
+  conversion sites (`shared_services.rs::convert_toml_to_wal_config` + `config.rs::to_engine_config`)
+  → `WalPerformanceConfig`; plus the foundation-crate `WalStorageConfig` mirror. Caught en route:
+  the `From<&WalStorageConfig>` path is test-only — `WriteBufferUserConfig` is the live surface.
+* **S2 + S3 decision core** — `write_ahead_log/flush_policy.rs`: pure
+  `FlushPolicy::evaluate(mem_bytes, age) → {reason, backpressure}`; envelope
+  `time ≤ size ≤ high < critical`, precedence `capacity-critical > capacity-high > size > time`,
+  envelope-reconciliation warnings. 7 unit tests.
+* **S2 + S3 execution** — `src/storage/auto_flush_driver.rs`: policy-gated scheduler
+  (spawned from `StorageEngine::start()` only when a time/capacity trigger is armed;
+  default config = no task). Calls the proven `materialize_collection(free_wal=true)` recipe
+  per due collection. WAL reclamation on the live path is **manifest-deletion inside
+  `materialize_collection`** (`mark_flushed_and_delete_files`), not the marker-gated
+  `truncate_through_canonical_marker` (that path stays feature-gated for canonical replay scope);
+  the S3 goal (reclamation keeps pace with every flush) is met by construction.
+* **S6 core** — `proximadb-metrics::wal_flush_metrics` (private registry appended to
+  `/metrics/prometheus`): `proximadb_wal_flush_total{collection,reason,result}`,
+  `_bytes_total`, `_vectors_total`, `_duration_seconds{reason}`; gauges `wal_size_bytes`,
+  `budget_bytes`, `high/critical_watermark_bytes`, `last_flush_timestamp_seconds`,
+  `backpressure_active/total`. Trigger attribution ships; object-store flush writes were already
+  metered (`record_object_store_op("flush_write")` in the materializer).
+* **Two latent live-path bugs found by the live verification** (would have silently defeated
+  the whole mechanism):
+  1. `WALVectorBatch.total_size_bytes` was constructed as `0` on the live ingest path
+     ("calculated by strategy" — the strategy never runs live), blinding the pre-existing
+     memtable backpressure AND all size/capacity evaluation. Fixed with the canonical,
+     precision-aware `WALVectorBatch::estimate_records_size` (dedup of the `BulkWriteRouter`
+     copy tracked in TD-WAL-2).
+  2. `materialize_collection(free_wal=true)` cleared the inner memtable but never retired
+     batches in the **batch coordinator** (the store `get_unflushed_batches` reads) — harmless
+     on the terminal shutdown flush, an infinite re-flush loop for any periodic caller
+     (pre-fix evidence: 94 × 810-vector duplicate flushes, one per tick). Fixed with
+     `mark_batch_flushed` + `clear_flushed_batches` in the `free_wal` block.
+
+**Live acceptance evidence** (local server, 3 s time floor / 100 KB budget):
+time flush fired once on an idle small burst (10 vectors), capacity flush once on a large burst
+(800 vectors), backpressure counted, flush counters froze after ingest stopped (loop terminates),
+and recall passed BOTH post-flush (WAL freed → served from SST) and post-restart
+(`No collections found in WAL to restore` → search + record GET still return all records).
+
+**Residual (open).**
+
+* *S1 guardrail nudge* — startup warn/error when `write_buffer_directory` resolves to an
+  object-store scheme in a durability-sensitive deployment. Not shipped.
+* *S4* — write-path retryable reject at `critical_watermark_pct`. The policy computes the
+  backpressure decision and the driver meters it, but the scheduler cannot throttle a writer;
+  the pre-existing memtable hard-reject (`wal_behavior.rs`, `flush_threshold_bytes`) is now
+  functional thanks to fix (1) but keys off a different knob. Unifying the write-path reject
+  onto `critical_watermark_pct` remains.
+* *S5* — fsync contract doc + SIGKILL crash-consistency test.
+* *S6 residual* — truncation-segments-reclaimed and WAL-replay-time-on-boot metrics.
+* *S7* — multi-hour soak (bounded WAL util, flat object-store write-op rate).
+
 == Resolved decisions / current caveats
 
 * **Placement needs no engine change** — the FilesystemFactory already selects WAL and SST backends
@@ -76,9 +134,10 @@ SST/checkpoint ops) — the ADR-069 §6 pressure test.
 == Gate
 
 Ship S1–S3 before any deployment flips its WAL to `file://` (without S2's time flush, a local WAL has
-unbounded RPO on volume loss; without S3, it can fill). S4–S7 harden and prove it. AnvaiOps holds its
-`write_buffer_directory`→`file:///var/lib/proximadb/wal` flip + "WAL must be `file://`" ratchet until S1–S3
-land and expose the thresholds.
+unbounded RPO on volume loss; without S3, it can fill). S4–S7 harden and prove it.
+**Gate CLEARED 2026-07-21** — S1–S3 landed + live-verified (PR #1117/#1118); the AnvaiOps
+`write_buffer_directory`→`file:///var/lib/proximadb/wal` flip + "WAL must be `file://`" ratchet is
+now unblocked (applies at its next ephemeral drill / go-live per its cost posture).
 
 == Non-goals
 
