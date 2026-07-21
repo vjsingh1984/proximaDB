@@ -184,6 +184,7 @@ mod tests {
             write_buffer_directory: "./test_wal".to_string(),
             enable_wal: true,
             global_manifest_url: None,
+            ..Default::default()
         };
 
         // Verify the values are set correctly

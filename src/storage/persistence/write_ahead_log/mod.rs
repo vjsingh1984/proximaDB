@@ -105,6 +105,7 @@ pub mod config;
 pub mod disk_manager; // New centralized disk operations
 pub mod enhanced_flush_result;
 pub mod flush_coordinator;
+pub mod flush_policy; // ADR-069/TD-WAL-1: the single flush-decision boundary
 pub mod flush_result_optimization;
 pub mod manifest; // Global WAL manifest system (unified)
 pub mod memtable_manager; // New centralized memtable operations

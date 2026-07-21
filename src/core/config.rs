@@ -1008,6 +1008,32 @@ pub struct WriteBufferUserConfig {
     pub enable_wal: bool,
     /// Global manifest location (optional)
     pub global_manifest_url: Option<String>,
+
+    /// ADR-069 D2 — time-based WAL flush interval (seconds); 0 = disabled. The RPO
+    /// floor: bounds worst-case loss on volume loss to this interval for low-traffic
+    /// collections that never reach `memory_flush_size_bytes`.
+    #[serde(default)]
+    pub flush_interval_secs: u64,
+    /// ADR-069 D6 — per-collection WAL size budget (bytes) for the capacity flush +
+    /// backpressure watermarks; 0 = disabled.
+    #[serde(default)]
+    pub wal_max_bytes: usize,
+    /// ADR-069 D3 — fraction of `wal_max_bytes` at which to force a flush.
+    #[serde(default = "default_high_watermark_pct")]
+    pub high_watermark_pct: f64,
+    /// ADR-069 D3 — fraction of `wal_max_bytes` at which to apply write backpressure.
+    #[serde(default = "default_critical_watermark_pct")]
+    pub critical_watermark_pct: f64,
+}
+
+/// Serde default for [`WriteBufferUserConfig::high_watermark_pct`] (ADR-069 D3).
+fn default_high_watermark_pct() -> f64 {
+    0.80
+}
+
+/// Serde default for [`WriteBufferUserConfig::critical_watermark_pct`] (ADR-069 D3).
+fn default_critical_watermark_pct() -> f64 {
+    0.95
 }
 
 impl Default for WriteBufferUserConfig {
@@ -1021,6 +1047,11 @@ impl Default for WriteBufferUserConfig {
             write_buffer_directory: "./data/write_buffer".to_string(),
             enable_wal: true,
             global_manifest_url: None,
+            // ADR-069 tiered-flush knobs — disabled by default (behavior-neutral).
+            flush_interval_secs: 0,
+            wal_max_bytes: 0,
+            high_watermark_pct: default_high_watermark_pct(),
+            critical_watermark_pct: default_critical_watermark_pct(),
         }
     }
 }
@@ -1039,7 +1070,17 @@ impl WriteBufferUserConfig {
             multi_disk: MultiDiskConfig::default(),
             compression: CompressionConfig::default(),
             encryption: Default::default(), // TD-016: Encryption disabled by default
-            performance: PerformanceConfig::default(),
+            // ADR-069/TD-WAL-1: honor the user's flush-policy inputs (size + the
+            // tiered time/capacity knobs) on this path too, so the optimizer is
+            // configurable identically to the shared-services conversion.
+            performance: PerformanceConfig {
+                memory_flush_size_bytes: self.memory_flush_size_bytes,
+                flush_interval_secs: self.flush_interval_secs,
+                wal_max_bytes: self.wal_max_bytes,
+                high_watermark_pct: self.high_watermark_pct,
+                critical_watermark_pct: self.critical_watermark_pct,
+                ..PerformanceConfig::default()
+            },
             enable_mvcc: true,
             enable_ttl: true,
             enable_background_compaction: true,

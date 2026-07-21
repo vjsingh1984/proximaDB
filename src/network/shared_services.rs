@@ -2771,6 +2771,12 @@ impl SharedServices {
                 "none" => SyncMode::Never,
                 _ => SyncMode::PerBatch,
             },
+            // ADR-069/TD-WAL-1: the tiered-flush knobs (time RPO floor + capacity
+            // watermarks) — the live server path where they actually reach the engine.
+            flush_interval_secs: toml_config.flush_interval_secs,
+            wal_max_bytes: toml_config.wal_max_bytes,
+            high_watermark_pct: toml_config.high_watermark_pct,
+            critical_watermark_pct: toml_config.critical_watermark_pct,
             ..Default::default()
         };
 

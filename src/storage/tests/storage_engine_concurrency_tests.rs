@@ -76,6 +76,7 @@ mod tests {
             write_buffer_directory: base_path.display().to_string(),
             enable_wal: true,
             global_manifest_url: None,
+            ..Default::default()
         };
 
         // For testing, we'll create the engine without collection service
