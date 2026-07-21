@@ -163,6 +163,30 @@ impl FlushPolicy {
         FlushDecision::NONE
     }
 
+    /// Write-admission control (ADR-069 S4 / D6). The inline write path calls this
+    /// BEFORE appending a batch: `Some(fill_pct)` ⇒ **shed this write** (the
+    /// memtable is at or over the critical watermark and must drain before more
+    /// ingest is accepted), `None` ⇒ admit. Returning the fill percentage lets the
+    /// caller populate a `retry_after`/diagnostic hint.
+    ///
+    /// Pure, and deliberately independent of the flush clock: admission depends
+    /// only on the memory ceiling, not on time/size (those decide *flushing*, this
+    /// decides *accepting*). It shares the exact `>= critical` line
+    /// [`FlushDecision::backpressure`] uses, so the throttle engages at the same
+    /// point the driver force-flushes. Capacity disabled (`budget == 0`, the
+    /// default) always admits — the gate is inert until an operator sets
+    /// `wal_max_bytes`, so S4 is default-OFF and behavior-neutral.
+    pub fn write_admission_reject_pct(&self, mem_bytes: u64) -> Option<f64> {
+        if self.capacity_budget_bytes > 0
+            && self.critical_watermark_bytes > 0
+            && mem_bytes >= self.critical_watermark_bytes
+        {
+            Some((mem_bytes as f64 / self.capacity_budget_bytes as f64) * 100.0)
+        } else {
+            None
+        }
+    }
+
     /// Recommended scheduler tick in seconds: fine enough to honor the time floor
     /// without busy-looping, and a modest fixed cadence when only capacity is armed.
     /// Clamped to `[1, 30]`.
@@ -200,6 +224,33 @@ impl FlushPolicy {
         w
     }
 }
+
+/// Retryable write-backpressure signal (ADR-069 S4 / D6). The WAL write path
+/// returns this — instead of appending — when a collection's memtable is at the
+/// critical watermark. It is a distinct, downcast-able error type so the ingest
+/// boundary can map it to a **retryable** status (gRPC `RESOURCE_EXHAUSTED` /
+/// HTTP 429) rather than an opaque 500: the client should back off and retry,
+/// and the writer never crashes into an ENOSPC on the bounded local WAL disk.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WalBackpressure {
+    /// Collection whose memtable is over the critical watermark.
+    pub collection_id: String,
+    /// Current memtable fill as a percentage of `wal_max_bytes` (retry hint).
+    pub fill_pct: f64,
+}
+
+impl std::fmt::Display for WalBackpressure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "WAL memtable for collection '{}' at {:.0}% of the capacity budget; \
+             shedding write — retry after a flush drains it",
+            self.collection_id, self.fill_pct
+        )
+    }
+}
+
+impl std::error::Error for WalBackpressure {}
 
 #[cfg(test)]
 mod tests {
@@ -255,6 +306,38 @@ mod tests {
         assert!(
             !d2.backpressure,
             "high but not critical ⇒ flush, no throttle"
+        );
+    }
+
+    #[test]
+    fn write_admission_sheds_only_at_or_over_critical() {
+        // Armed budget 1000, critical watermark = 950.
+        let p = FlushPolicy::from_performance(&cfg(1, 0, 1000, 0.80, 0.95));
+        // Below critical (even above the high watermark) ⇒ admit: high forces a
+        // flush but does not shed the writer.
+        assert_eq!(
+            p.write_admission_reject_pct(949),
+            None,
+            "below critical must admit the write"
+        );
+        // At and over critical ⇒ shed, reporting the fill percentage.
+        assert!(
+            p.write_admission_reject_pct(950).is_some(),
+            "at critical must shed"
+        );
+        let pct = p
+            .write_admission_reject_pct(1000)
+            .expect("over critical sheds");
+        assert!((pct - 100.0).abs() < 1e-9, "fill pct feeds the retry hint");
+        // Admission engages at the SAME line as the flush-decision backpressure.
+        assert!(p.evaluate(950, 0).backpressure);
+        assert!(!p.evaluate(949, 0).backpressure);
+        // Default-OFF: capacity disabled (budget 0) always admits, even absurd sizes.
+        let off = FlushPolicy::from_performance(&WalPerformanceConfig::default());
+        assert_eq!(
+            off.write_admission_reject_pct(u64::MAX),
+            None,
+            "capacity disabled ⇒ gate inert (S4 default-OFF)"
         );
     }
 

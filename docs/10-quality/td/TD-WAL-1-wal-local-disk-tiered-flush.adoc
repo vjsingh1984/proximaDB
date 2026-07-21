@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Core shipped + live-verified (2026-07-21): S1–S3 and the S6 core landed via PR #1117 (flush policy + metrics + live config) and PR #1118 (live auto-flush driver).** Implements link:../../12-design/adr/ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069]. Residual tail tracked in § Shipped vs residual: S4 write-path critical-watermark reject, S5 fsync contract + crash test, S6 residual canaries, S7 soak, the S1 `file://` guardrail nudge. Multi-modal convergence follow-ups split to link:TD-WAL-2-multimodal-wal-convergence.adoc[TD-WAL-2].
+| Status | **Core shipped + live-verified (2026-07-21): S1–S3 and the S6 core landed via PR #1117 (flush policy + metrics + live config) and PR #1118 (live auto-flush driver).** Implements link:../../12-design/adr/ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069]. S4 write-path critical-watermark reject core shipped (retryable `WalBackpressure` on the client WAL-append path; default-OFF). Residual tail tracked in § Shipped vs residual: S5 fsync contract + crash test, S6 residual canaries, S7 soak, the S1 `file://` guardrail nudge, and the S4 primary-REST-batch-path end-to-end 429 threading. Multi-modal convergence follow-ups split to link:TD-WAL-2-multimodal-wal-convergence.adoc[TD-WAL-2].
 | Priority | **P1** — removes an unbounded, workload-driven object-store write-op cost on the hot path (a Spot testbed measured ~9M flat-Blob writes / ~$58 in one day) and cuts write-commit latency ~10–50×. Gated the AnvaiOps dogfood go-live cost story.
 | Component | `src/storage/persistence/write_ahead_log/` — `config.rs` (WALConfig / WalPerformanceConfig), `bincode_serialization_strategy.rs` (post-write flush check), `memtable_manager.rs` (`should_flush_collection`), `wal_operations.rs` (`truncate_through_canonical_marker`), `batch_sync_coordinator.rs` (fsync), `disk_manager.rs` (per-collection WAL layout); `src/storage/persistence/filesystem/` (FilesystemFactory, scheme_validation); `src/core/config.rs` + `crates/foundation/proximadb-config` (TOML parse); `src/metrics/` (updater.rs, eventlog_metrics.rs).
 | Evidence | **What exists** (mapped 2026-07-20): per-tier factory selection `filesystem/mod.rs:538` + `scheme_validation.rs:11` (WAL `file://` + SST `adls://` in one process works); per-collection WAL `disk_manager.rs:170`; size flush `bincode_serialization_strategy.rs:279` + `memtable_manager.rs:177`; `WalPerformanceConfig` `write_ahead_log/config.rs:78` (`memory_flush_size_bytes`≈2 MB, `global_flush_threshold`≈4 GB, `sync_interval_seconds`=60 — fsync cadence, **not** flush); TOML→WAL map `write_ahead_log/config.rs:388`; truncation `wal_operations.rs:692` (`truncate_through_canonical_marker`, **marker-gated**); `SyncMode` `config.rs:151` + fsync `batch_sync_coordinator.rs:272`; metrics `wal_size_bytes`/`last_flush_duration_ms` `metrics/updater.rs:128,306`. **What's absent**: time-based flush, disk-capacity/watermark flush, write backpressure/ENOSPC handling, guaranteed truncation cadence, disk-util/trigger-attribution/truncation metrics.
@@ -111,11 +111,23 @@ and recall passed BOTH post-flush (WAL freed → served from SST) and post-resta
 
 * *S1 guardrail nudge* — startup warn/error when `write_buffer_directory` resolves to an
   object-store scheme in a durability-sensitive deployment. Not shipped.
-* *S4* — write-path retryable reject at `critical_watermark_pct`. The policy computes the
-  backpressure decision and the driver meters it, but the scheduler cannot throttle a writer;
-  the pre-existing memtable hard-reject (`wal_behavior.rs`, `flush_threshold_bytes`) is now
-  functional thanks to fix (1) but keys off a different knob. Unifying the write-path reject
-  onto `critical_watermark_pct` remains.
+* *S4* — **core shipped.** Write-path admission control unified onto `critical_watermark_pct`:
+  `FlushPolicy::write_admission_reject_pct(mem_bytes)` computes the reject decision at the same
+  `>= critical` line `FlushDecision::backpressure` uses; the client WAL-append path
+  (`WriteAheadLogManager::admit_write`, called from `insert_record`/`insert_vectors`) returns a
+  retryable `WalBackpressure` and meters `inc_backpressure` instead of driving the bounded local
+  WAL disk into an ENOSPC crash. **Default-OFF** (inert when `wal_max_bytes == 0`); **recovery
+  replay is never gated** (it materializes SST directly, not via the insert methods). The ingest
+  boundary (`ApiError::from_write_error`) chain-walks the error and promotes a `WalBackpressure`
+  to a retryable status (HTTP 429 / gRPC `RESOURCE_EXHAUSTED`). *Residual:* the **primary REST
+  batch path** reports WAL-lane rejections as `Ok(success=false)` (per #951), so end-to-end 429
+  there needs the backpressure discriminant threaded through `BatchOperationResult` →
+  `batch_failure_to_api_error`; the `Err`-propagating paths (gRPC / Arrow Flight / bulk / any
+  `?`-propagation) already surface 429. *Second follow-up:* `update_record`/`delete_record` route
+  through `insert_record`, so tombstone/DELETE writes are gated like any write. Acceptable under
+  default-OFF + the high-watermark force-flush (which drains regardless of op type), but a
+  theoretical wedge if flush stalls — consider exempting DELETE/tombstone from admission so ingest
+  backpressure can never block the operation that relieves it.
 * *S5* — fsync contract doc + SIGKILL crash-consistency test.
 * *S6 residual* — truncation-segments-reclaimed and WAL-replay-time-on-boot metrics.
 * *S7* — multi-hour soak (bounded WAL util, flat object-store write-op rate).

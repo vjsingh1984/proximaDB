@@ -1670,12 +1670,49 @@ impl WriteAheadLogManager {
     }
 
     /// Insert a single canonical record (converted to batch of 1 via WALVectorBatch).
+    /// ADR-069 S4 write-admission gate. Inert unless capacity backpressure is
+    /// armed (`wal_max_bytes > 0`); when armed it rejects the write with a
+    /// retryable [`WalBackpressure`] once the collection's unflushed memtable
+    /// reaches the critical watermark, so ingest sheds load instead of driving the
+    /// bounded local WAL disk into an ENOSPC crash. The high-watermark force-flush
+    /// (auto-flush driver) drains the memtable back under the line so writes resume.
+    ///
+    /// **Client ingest only.** Recovery replay materializes SST directly and never
+    /// routes through the insert methods, so replay is never backpressured.
+    async fn admit_write(&self, collection_id: &str) -> Result<()> {
+        use crate::storage::persistence::write_ahead_log::flush_policy::{
+            FlushPolicy, WalBackpressure,
+        };
+        let policy = FlushPolicy::from_performance(&self.config.performance);
+        // Default-OFF: no capacity budget ⇒ gate inert, zero cost on the hot path.
+        if policy.capacity_budget_bytes == 0 {
+            return Ok(());
+        }
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let mem_bytes: u64 = wal_behavior
+            .get_unflushed_batches(collection_id)
+            .await
+            .map(|batches| batches.iter().map(|b| b.total_size_bytes as u64).sum())
+            .unwrap_or(0);
+        if let Some(fill_pct) = policy.write_admission_reject_pct(mem_bytes) {
+            crate::metrics::wal_flush_metrics::inc_backpressure(collection_id);
+            return Err(anyhow::Error::new(WalBackpressure {
+                collection_id: collection_id.to_string(),
+                fill_pct,
+            }));
+        }
+        Ok(())
+    }
+
     pub async fn insert_record(
         &self,
         collection_id: String,
         record_id: VectorId,
         record: ProximaRecord,
     ) -> Result<u64> {
+        // ADR-069 S4: shed load at the critical watermark before appending.
+        self.admit_write(&collection_id).await?;
         let start_time = std::time::Instant::now();
 
         debug!(
@@ -2217,6 +2254,9 @@ impl WriteAheadLogManager {
         if records.is_empty() {
             return Ok(Vec::new());
         }
+
+        // ADR-069 S4: shed load at the critical watermark before appending.
+        self.admit_write(&collection_id).await?;
 
         // Create batch
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
