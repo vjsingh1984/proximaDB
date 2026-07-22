@@ -708,6 +708,36 @@ mod tests {
         )
     }
 
+    /// TD-OBJSTORE-4 S2/S3: the caching decorator MUST delegate `write_if_absent`
+    /// to the underlying backend's atomic conditional-create, not emulate it with an
+    /// overwriting `write` — the crash-window recovery commit primitive rests on it.
+    #[tokio::test]
+    async fn write_if_absent_delegates_through_caching_wrapper() {
+        let (fs, _temp_dir) = test_caching_fs().await;
+
+        fs.write_if_absent("commit.pax", b"first", None)
+            .await
+            .expect("first conditional create succeeds");
+
+        let err = fs
+            .write_if_absent("commit.pax", b"second", None)
+            .await
+            .expect_err("second conditional create on the same key must fail");
+        assert!(
+            matches!(
+                err,
+                crate::storage::persistence::filesystem::FilesystemError::AlreadyExists(_)
+            ),
+            "caching wrapper must surface the backend's AlreadyExists; got {err:?}"
+        );
+
+        assert_eq!(
+            fs.read("commit.pax").await.expect("read back"),
+            b"first",
+            "first value must be preserved (no clobber) through the caching wrapper"
+        );
+    }
+
     #[tokio::test]
     async fn read_range_records_access_for_pattern_learning() {
         let (fs, _temp_dir) = test_caching_fs().await;
