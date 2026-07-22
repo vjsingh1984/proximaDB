@@ -429,15 +429,21 @@ impl SstEngine {
         }
 
         // Determine search strategy based on context
-        // Use orchestration if:
-        // 1. AXIS indexes are explicitly configured, OR
-        // 2. Quantization is enabled, OR
-        // 3. AXIS manager is available (for collections built after AXIS became available)
+        // Co-design search routing: the collection's index_configs is authoritative.
+        // - Empty index_configs → use_axis_indexes=false → co-designed PAX scan
+        //   (RaBitQ + SQ8 + A0 coarse-probe from object storage). The segment IS
+        //   the index; no in-memory HNSW/IVF is built or queried.
+        // - HNSW/IVF in index_configs → use_axis_indexes=true → AXIS in-memory
+        //   search (hot/streaming, low-latency path).
+        //
+        // The global AXIS manager being registered (has_axis_manager=true) does NOT
+        // force AXIS on collections that didn't ask for it — that was the pre-fix
+        // bug (OR logic → AXIS intercepted every collection → 8.6GB RSS + 1.76%
+        // recall for co-design collections whose PAX scan was never exercised).
         let has_axis_manager = self.axis_manager().is_some();
-        let use_orchestration =
-            ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization || has_axis_manager;
+        let use_orchestration = ctx.metadata.use_axis_indexes && has_axis_manager;
 
-        if has_axis_manager {
+        if use_orchestration {
             debug!("🔍 SST: AXIS manager is available for HNSW/IVF search");
             // TD-112: if the in-memory AXIS index is absent (e.g. after a
             // restart), rebuild it from the durable SST segments before
