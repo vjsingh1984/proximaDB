@@ -60,12 +60,29 @@ impl SstEngine {
     /// the live write path does not populate AXIS, so flush is the first
     /// indexing point.
     async fn index_flushed_into_axis(&self, params: &FlushParameters, files_created: Vec<String>) {
-        // Co-design: skip the expensive AXIS index build (HNSW/IVF training, RAM)
-        // for collections that don't use AXIS. The search route (search/mod.rs) already
-        // gates AXIS on use_axis_indexes; this avoids the 8.6GB RSS + minutes of IVF
-        // training for co-design collections. Global env gate for now; per-collection
-        // threading via FlushParameters is a follow-up.
-        if std::env::var("PROXIMADB_SKIP_AXIS_INDEXING").as_deref() == Ok("1") {
+        // Co-design: skip the expensive AXIS index build (HNSW/IVF training, RAM) for
+        // collections that don't use AXIS. The search route (search/mod.rs) gates AXIS
+        // on use_axis_indexes (index_configs / pax_vector_format:off); this mirrors it
+        // on the flush path via FlushParameters.collection_config so co-design
+        // collections don't pay the build for an index that's never queried (this was
+        // the flush-latency bottleneck: ~101s/21k vecs of pure HNSW build). The
+        // PROXIMADB_SKIP_AXIS_INDEXING=1 env remains as a global override; when
+        // collection_config is absent we conservatively build (old behavior).
+        let axis_needed = match params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+        {
+            Some(c) => {
+                let pax_off = c
+                    .tags
+                    .iter()
+                    .any(|t| t.trim().eq_ignore_ascii_case("pax_vector_format:off"));
+                pax_off || !c.index_configs.is_empty()
+            }
+            None => true,
+        };
+        if !axis_needed || std::env::var("PROXIMADB_SKIP_AXIS_INDEXING").as_deref() == Ok("1") {
             return;
         }
         let Some(axis_manager) = self.axis_manager() else {
@@ -1407,6 +1424,10 @@ mod tests {
                 dimension: 4,
                 distance_metric: Some(DistanceMetric::Cosine as i32),
                 storage_engine: Some(StorageEngine::Sst as i32),
+                // This test asserts flush indexes into AXIS, so opt into the legacy
+                // .sst + AXIS path: index_flushed_into_axis builds AXIS only when
+                // index_configs is set OR pax_vector_format:off (the per-collection gate).
+                tags: vec!["pax_vector_format:off".to_string()],
                 ..Default::default()
             }),
             storage_assignment: Some(StorageAssignment {
