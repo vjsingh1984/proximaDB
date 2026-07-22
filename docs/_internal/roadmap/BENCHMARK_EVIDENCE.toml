@@ -63,6 +63,23 @@ version = "feat/rdstrat8-sift-ivf2-gate off develop @ 1a8404b62"
 notes = "v3 segment built via the production compaction trigger (workload_profile:append + l0_threshold:2 -> inline compaction on 2nd flush under PROXIMADB_IVF2=1), not a direct write_pax_segment_compacted call. Co-design finding: the coarse probe is recall-neutral + bytes-positive (-39%) but GET-negative at 100k single-file because GETs grow ~proportional to N (~9 at 100k, ~51 at 1M per coalesced_rabitq_noivf_decisive_sift1m) and the coalesced whole-region baseline is already GET-optimal here. The 1M-scale GET-cut evidence is the gated follow-up before default-on. Indicative dev-machine run, not an SLA."
 
 [[claims]]
+id = "adr069_s7_wal_backpressure_soak"
+claim = "ADR-069 S7 / TD-WAL-1 S7: under sustained write load the write-path critical-watermark backpressure ENGAGES without crashing, the WAL footprint stays BOUNDED (steady-state, not unbounded growth), and the insert rate stays flat. 10-min bounded soak (scripts/soak_wal_backpressure.py, wal_max_bytes=512KB, high/critical 0.80/0.95, flush_interval 2s, ~5000 vec/s target, dim=64 cosine): 2,611,000 inserts accepted (~4,350/s sustained flat), backpressure_total +5 engagements, wal_size_bytes plateaued at 46.6MB (flush+compaction reclaim at ingestion rate), 0 non-429 failures, server up the full 600s. Backpressure is default-OFF in production; armed here via the small budget."
+metric = "sustained inserts/s + backpressure engagements + WAL on-disk footprint + crash-free uptime"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-069-wal-local-disk-tiered-flush.adoc",
+  "docs/10-quality/td/TD-WAL-1-wal-local-disk-tiered-flush.adoc",
+]
+bench_source = "scripts/soak_wal_backpressure.py"
+bench_command = "PYTHONPATH=clients/python/src scripts/soak_wal_backpressure.py --server-binary ./target/release/proximadb-server --base-config config/config.toml --duration-s 600 --rate-per-s 5000 --batch 500"
+artifact = "docs/_internal/status/ADR069_S7_WAL_BACKPRESSURE_SOAK_2026_07_22.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), serialized run"
+date = "2026-07-22"
+version = "feat/adr069-s7-soak off develop @ 7d5a9e2cb"
+notes = "10-min bounded run (harness parameterized for multi-hour/nightly via --duration-s). wal_size_bytes is the cumulative on-disk WAL (plateaued = steady-state); the bounding input the gate guards is the unflushed memtable, which the backpressure engagements prove stayed within the critical line. Engagements concentrated in the warmup burst (steady-state flushes then kept up). Server exit was a clean flush-on-stop (slow shutdown, non-fatal). Indicative dev-machine evidence, not an SLA."
+
+[[claims]]
 id = "object_economy_cpu_cost"
 claim = "Object-economy vector route building-block CPU costs (100/1K/10K/100K records) non-regression baseline"
 metric = "cpu_cost_ms"
