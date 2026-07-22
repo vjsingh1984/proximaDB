@@ -751,6 +751,9 @@ impl UnifiedWALWriter {
             tracing::debug!(segment = seg, lsn, "TD-066 (d): reclaimed WAL segment");
         }
 
+        // TD-WAL-1 S6: observe segments reclaimed (operator aggregate; per-tenant
+        // durable attribution lives in the io_trace warehouse, ADR-066).
+        crate::metrics::wal_flush_metrics::inc_truncation_segments_reclaimed(reclaimed);
         Ok(reclaimed)
     }
 

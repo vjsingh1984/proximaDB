@@ -609,9 +609,13 @@ impl RecordOpsService {
             }
             Err(error) => {
                 tracing::error!("Failed to process rich record batch: {:?}", error);
+                // ADR-069 S4: preserve the `WalBackpressure` discriminant so the
+                // boundary surfaces 429 / RESOURCE_EXHAUSTED (retryable) instead
+                // of a generic RECORD_INSERT_FAILED (non-retryable).
+                let error_code = crate::storage::persistence::write_ahead_log::flush_policy::write_batch_error_code(&error, "RECORD_INSERT_FAILED");
                 Ok(BatchOperationResult::failure(
                     format!("Record insert failed: {}", error),
-                    "RECORD_INSERT_FAILED".to_string(),
+                    error_code,
                 ))
             }
         }
@@ -695,9 +699,11 @@ impl RecordOpsService {
                     "Failed to process insert-only rich record batch: {:?}",
                     error
                 );
+                // ADR-069 S4: preserve the `WalBackpressure` discriminant (→ 429).
+                let error_code = crate::storage::persistence::write_ahead_log::flush_policy::write_batch_error_code(&error, "RECORD_INSERT_FAILED");
                 Ok(BatchOperationResult::failure(
                     format!("Record insert failed: {}", error),
-                    "RECORD_INSERT_FAILED".to_string(),
+                    error_code,
                 ))
             }
         }

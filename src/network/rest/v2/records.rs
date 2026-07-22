@@ -1299,13 +1299,32 @@ pub async fn insert_records(
             // HTTP 404 here so SDK consumers and curl users see the same
             // signal. Other failure codes still flow through the body, which
             // matches the batched per-record contract.
-            if !resp.success && resp.error_code.as_deref() == Some("NOT_FOUND") {
-                return Err(ApiError::NotFound(
-                    resp.errors
-                        .into_iter()
-                        .next()
-                        .unwrap_or_else(|| format!("Collection '{}' not found", collection)),
-                ));
+            if !resp.success {
+                if resp.error_code.as_deref() == Some("NOT_FOUND") {
+                    return Err(ApiError::NotFound(
+                        resp.errors
+                            .into_iter()
+                            .next()
+                            .unwrap_or_else(|| format!("Collection '{}' not found", collection)),
+                    ));
+                }
+                // ADR-069 S4: the whole batch was shed by write-admission
+                // backpressure — surface 429 / RESOURCE_EXHAUSTED so the client
+                // retries with backoff. (`WAL_BACKPRESSURE` is raised inside the
+                // write path; `WAL_LANE_REJECTED` is the #951 pre-write lane
+                // rejection. No partial results to represent — unlike a partial
+                // success, the batch was wholly rejected.)
+                if matches!(
+                    resp.error_code.as_deref(),
+                    Some("WAL_BACKPRESSURE") | Some("WAL_LANE_REJECTED")
+                ) {
+                    return Err(ApiError::ResourceExhausted(
+                        resp.errors.into_iter().next().unwrap_or_else(|| {
+                            "WAL write-admission backpressure; retry after a flush drains"
+                                .to_string()
+                        }),
+                    ));
+                }
             }
             // Check for success - if successful, all records were inserted
             let validation_error_count = errors.len();

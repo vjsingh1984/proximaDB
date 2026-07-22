@@ -252,6 +252,30 @@ impl std::fmt::Display for WalBackpressure {
 
 impl std::error::Error for WalBackpressure {}
 
+/// Classify a write-path `anyhow::Error` into a `BatchOperationResult::error_code`,
+/// promoting an ADR-069 S4 `WalBackpressure` found *anywhere* in the error chain
+/// to `"WAL_BACKPRESSURE"` so the REST/gRPC boundary can map it to a retryable
+/// 429 / `RESOURCE_EXHAUSTED` instead of a non-retryable 400/500.
+///
+/// The batch write path (`#951`) folds inner write errors into
+/// `Ok(BatchOperationResult { success: false, .. })`, and the fold sites
+/// historically stamped a generic `"RECORD_INSERT_FAILED"` / `"WAL_WRITE_ERROR"`
+/// code — losing the backpressure discriminant so the shed write looked like a
+/// hard failure. Walking the chain (rather than string-matching the message)
+/// keeps the classification robust to `.context(..)` wrapping by intermediate
+/// layers, mirroring `ApiError::from_write_error`. Any non-backpressure error
+/// keeps the caller's `default_code` (behavior unchanged).
+pub fn write_batch_error_code(err: &anyhow::Error, default_code: &str) -> String {
+    if err
+        .chain()
+        .any(|cause| cause.downcast_ref::<WalBackpressure>().is_some())
+    {
+        "WAL_BACKPRESSURE".to_string()
+    } else {
+        default_code.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,5 +418,29 @@ mod tests {
         // healthy envelope: no warnings
         let p3 = FlushPolicy::from_performance(&cfg(500, 300, 1000, 0.80, 0.95));
         assert!(p3.warnings().is_empty());
+    }
+
+    #[test]
+    fn write_batch_error_code_promotes_backpressure_through_context_layers() {
+        // A WalBackpressure wrapped in two .context() layers (how the write path
+        // actually propagates it) must still classify as WAL_BACKPRESSURE so the
+        // boundary can map it to a retryable 429, not a generic failure.
+        let bp = anyhow::Error::new(WalBackpressure {
+            collection_id: "c1".into(),
+            fill_pct: 97.0,
+        })
+        .context("insert batch")
+        .context("tenant write lane");
+        assert_eq!(
+            write_batch_error_code(&bp, "RECORD_INSERT_FAILED"),
+            "WAL_BACKPRESSURE"
+        );
+
+        // A plain (non-backpressure) write error keeps the caller's default code.
+        let other = anyhow::anyhow!("schema mismatch");
+        assert_eq!(
+            write_batch_error_code(&other, "WAL_WRITE_ERROR"),
+            "WAL_WRITE_ERROR"
+        );
     }
 }

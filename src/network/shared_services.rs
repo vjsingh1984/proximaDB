@@ -2780,6 +2780,38 @@ impl SharedServices {
             ..Default::default()
         };
 
+        // ADR-069 S1 guardrail: the WAL belongs on a local reattachable disk
+        // (object-store WAL was the pre-pivot architecture and pays an I/O
+        // round-trip per append). Warn — at `error` level when a durability-
+        // sensitive `sync_mode` is also set, because an object store does not
+        // honour `fsync` the way a local block device does, so a remote WAL +
+        // PerBatch/Always makes a durability claim that does not hold. A bare
+        // path (no `scheme://`) is local (resolved to `file://`).
+        {
+            let dir = toml_config.write_buffer_directory.trim();
+            let is_remote = dir.contains("://") && !dir.starts_with("file:");
+            if is_remote {
+                let sync = toml_config.sync_mode.to_lowercase();
+                if matches!(sync.as_str(), "perbatch" | "always") {
+                    tracing::error!(
+                        wal_dir = %dir,
+                        sync_mode = %toml_config.sync_mode,
+                        "ADR-069 S1: WAL write_buffer_directory is on a remote (object-store) \
+                         scheme with a durability-sensitive sync_mode — object stores do not \
+                         honour fsync like a local disk, so the durability claim is not trustworthy. \
+                         Move the WAL to a local file:// path."
+                    );
+                } else {
+                    tracing::warn!(
+                        wal_dir = %dir,
+                        "ADR-069 S1: WAL write_buffer_directory is on a remote (object-store) \
+                         scheme; ADR-069 places the WAL on local disk. Remote WAL pays an I/O \
+                         round-trip per append."
+                    );
+                }
+            }
+        }
+
         // Create memtable config
         let memtable = MemTableConfig {
             global_memory_limit: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
