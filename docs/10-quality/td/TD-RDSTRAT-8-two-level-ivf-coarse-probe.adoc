@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — **rev 3 (2026-07-17): first-principles/code reconciliation.** Reuse and persist SST's existing compaction-time, IOP-derived PCA/IVF plan; do not train a second `sqrt(N)` quantizer. Host remains SST. Layout prototype + representative evidence are required before this architectural change is promoted to an ADR. **rev 3.1 (2026-07-20): PR-A landed, write path reconciled to rev 3** — A0 serde + header-prefix `layout_version=3` + additive footer section + compaction-only write path (`cluster_plan_ivf_probe` **persists the existing IOP-derived plan**; NO second `sqrt(N)` quantizer) + production-trigger route proof; default-OFF `PROXIMADB_IVF2=0` (see §As-built delta). Reads serve v3 through the order-agnostic single-level scan until the PR-B probe reader ranks the persisted centroids.
+| Status | Open — **rev 3 (2026-07-17): first-principles/code reconciliation.** Reuse and persist SST's existing compaction-time, IOP-derived PCA/IVF plan; do not train a second `sqrt(N)` quantizer. Host remains SST. Layout prototype + representative evidence are required before this architectural change is promoted to an ADR. **rev 3.1 (2026-07-20): PR-A landed, write path reconciled to rev 3** — A0 serde + header-prefix `layout_version=3` + additive footer section + compaction-only write path (`cluster_plan_ivf_probe` **persists the existing IOP-derived plan**; NO second `sqrt(N)` quantizer) + production-trigger route proof; default-OFF `PROXIMADB_IVF2=0` (see §As-built delta). Reads serve v3 through the order-agnostic single-level scan until the PR-B probe reader ranks the persisted centroids. **rev 3.2 (2026-07-21): PR-B landed — the A0 coarse-probe reader** (`rabitq_search_segment_coalesced` ranks the `k_c` centroids in RAM, then ranged-reads only the `nprobe` nearest cells' Region-A extents; the whole Region A is never fetched → cold GETs/bytes drop from O(N) toward O(nprobe)). Default-OFF `PROXIMADB_IVF2_PROBE=0`; a per-PR synthetic recall/GET gate proves probe recall ≈ full-scan while reading materially fewer bytes. The SIFT-scale absolute-recall gate (qa-gate MEDIUM tier) and the durable Prometheus `ivf_*` io_trace fields are tracked follow-ups.
 | Priority | P2 → **P1 once any collection approaches ~2M vectors** — downstream, AnvaiOps ADR-0044 forbids >~5M-vector pooled onboarding until this re-measures (revenue + latency gate, successor to TD-RDSTRAT-6's role).
 | Severity | n/a (new capability, no regression). Default-OFF until gates pass.
 | Component | `src/storage/engines/sst/` — `segment_format.rs` (writer/reader), `block_cluster.rs` (clustering), `compaction.rs`/`compactor_impl.rs` (the only write path that clusters), `crates/storage/proximadb-storage-common/src/pax_block.rs` + `segment_layout.rs` (regions/footer), coalesce policy + `IopsBudget`. **NOVA is explicitly NOT the host** (rev 2).
@@ -299,6 +299,45 @@ reconciliation). Determinism, cell-extent exactness, cell-boundary block
 padding, mixed-read, and the flag gates are unit/e2e tested (`pax_block.rs`,
 `segment_layout.rs`, `coarse_directory.rs`, `block_cluster.rs`,
 `segment_format.rs`, route-proof test).
+
+== PR-B delta (the A0 coarse-probe reader, rev 3.2)
+
+*The probe reader.* `rabitq_search_segment_coalesced` gains a v3 branch (gated,
+default-OFF): parse Region A0, project the query with the persisted f32 model,
+**rank the `k_c` centroids in RAM**, select the `nprobe` nearest non-empty cells,
+ranged-read ONLY those cells' Region-A code extents (`a_off/a_len`), and rank
+that subset. The whole Region A is never fetched, so cold GETs/bytes drop from
+O(N) toward O(nprobe). Survivors (global rows) then feed the **unchanged** SQ8
+rerank + OID-fetch tail — because those steps are already survivor-driven and
+ranged, fewer/cluster-local survivors shrink the Region-B/D reads for free.
+
+* *Subset rank without the whole region.* New `coalesced_rabitq::rank_probed_rows`
+  ranks a set of probed row-runs given the region header (one small ranged GET of
+  `[rabitq_off, rabitq_off + region_header_len(dim))`). Probed rows are **always
+  present** (A0 cells cover only usable rows), so a synthesized all-ones bitmap
+  lets the canonical `parse_rabitq_codes` + `rank_candidates` decode/score each
+  run unchanged — no hand-rolled decoder, no bitmap GET. Unit-gated
+  (`rank_probed_rows_matches_region_rank`: one run over all rows reproduces
+  `RaBitQRegion::rank` exactly; sub-runs restrict + map global indices).
+* *Coalescing.* Probed cells are read in `a_off` order and merged ONLY on strict
+  physical adjacency (gap 0) — never over-reading unprobed cells; Hilbert
+  emission order already clusters near cells, so the nprobe nearest usually
+  collapse to a few contiguous runs.
+* *Cache.* The probe bypasses the whole-region invariants cache (its whole point
+  is not reading the whole region); recall is therefore consistent regardless of
+  cache residency. Caching A0/header is a follow-up.
+* *Env (default-OFF):* `PROXIMADB_IVF2_PROBE` (gate), `PROXIMADB_IVF2_NPROBE`
+  (eval-profile cell count; default ~25% of cells, min 8, `>= k_c` = exact).
+* *Gate.* `coarse_probe_holds_recall_and_cuts_bytes` (per-PR lib test, so it runs
+  in the LIGHT tier) writes a v3 segment via the compaction writer, then asserts
+  the probe **engaged** (`0 < cells_probed <= nprobe`), read **materially fewer
+  bytes** than the whole-region baseline, and **held recall vs the full scan**
+  (probe recall ≥ baseline − 0.1 on clustered data). Diagnostic counters ride
+  `PROXIMADB_TRACE_GETS` (`drain_get_trace` / `drain_probe_trace`).
+* *Follow-ups (tracked):* the SIFT-scale **absolute** recall/GET ratchet in the
+  qa-gate MEDIUM tier; promoting the probe counters into the durable Prometheus
+  `ivf_cells_total/probed`, `probed_rows`, `fetch_rounds`, `whole_region_fallback`
+  io_trace fields; A0/header caching; flip-to-default-ON after the SIFT gate bakes.
 
 == Eval gates (ADR-062 pattern; eval doc in `docs/_internal/status/`)
 

@@ -927,6 +927,197 @@ pub fn drain_get_trace() -> Vec<(CacheTier, u64)> {
         .map(|mut v| std::mem::take(&mut *v))
         .unwrap_or_default()
 }
+
+/// TD-RDSTRAT-8 PR-B diagnostic: per-query coarse-probe counters
+/// `(cells_total, cells_probed, probed_rows, fetch_rounds)`. The probe path
+/// pushes them when `PROXIMADB_TRACE_GETS` is set; the eval/recall harness drains
+/// them to prove `cells_probed << cells_total` and the GET/byte reduction. Zero
+/// cost off. (Promoting these into the durable Prometheus io_trace surface —
+/// `ivf_cells_total/probed`, `probed_rows`, `fetch_rounds`,
+/// `whole_region_fallback` — is a tracked follow-up.)
+static PROBE_TRACE: std::sync::Mutex<Vec<(u64, u64, u64, u64)>> = std::sync::Mutex::new(Vec::new());
+
+fn record_probe_trace(cells_total: u64, cells_probed: u64, probed_rows: u64, fetch_rounds: u64) {
+    if let Ok(mut v) = PROBE_TRACE.lock() {
+        v.push((cells_total, cells_probed, probed_rows, fetch_rounds));
+    }
+}
+
+/// Drain the recorded coarse-probe counters (empty when trace off / no probe).
+pub fn drain_probe_trace() -> Vec<(u64, u64, u64, u64)> {
+    PROBE_TRACE
+        .lock()
+        .map(|mut v| std::mem::take(&mut *v))
+        .unwrap_or_default()
+}
+
+/// TD-RDSTRAT-8 PR-B gate: engage the Region-A0 coarse probe on v3 segments.
+/// Default **OFF** (`PROXIMADB_IVF2_PROBE=1` to enable) — v3 segments read via
+/// the single-level whole-region scan until this flips (recall/GET-ratchet
+/// gated, mirroring the PR-A writer gate). v1 segments never probe.
+pub fn coarse_probe_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_IVF2_PROBE")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(|v| v.to_ascii_lowercase())
+            .as_deref(),
+        Some("1") | Some("true") | Some("on") | Some("yes")
+    )
+}
+
+/// Number of coarse cells to probe. `PROXIMADB_IVF2_NPROBE` overrides (the
+/// eval-profile knob, per rev 3 — `nprobe` is fixed by metric/dim/distribution,
+/// not an adaptive radius). Default probes ~25% of cells (min 8), capped at
+/// `k_c`; `>= k_c` is exact mode (every cell).
+fn coarse_probe_nprobe(k_c: usize) -> usize {
+    std::env::var("PROXIMADB_IVF2_NPROBE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| k_c.div_ceil(4).clamp(8, k_c.max(1)))
+        .min(k_c)
+}
+
+/// Outcome of a coarse probe: the global survivor rows plus the io_trace
+/// counters (`ivf_cells_total/probed`, `probed_rows`, `fetch_rounds`).
+struct CoarseProbeResult {
+    survivors: Vec<usize>,
+    cells_total: u64,
+    cells_probed: u64,
+    probed_rows: u64,
+    fetch_rounds: u64,
+}
+
+/// TD-RDSTRAT-8 PR-B: compute survivors from ONLY the `nprobe` nearest coarse
+/// cells — rank the persisted `k_c` centroids in RAM, then ranged-read just those
+/// cells' Region-A code extents (`a_off/a_len`). The whole Region A is never
+/// fetched, so cold-query GETs/bytes drop from O(N) to O(nprobe). Returns `None`
+/// to fall back to the single-level whole-region scan (fail-safe: A0
+/// missing/corrupt, dim mismatch, or degenerate directory).
+async fn coarse_probe_survivors(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+    header: &proximadb_storage_common::segment_layout::SegmentHeaderPrefix,
+    query: &[f32],
+    metric: RankMetric,
+    k: usize,
+    trace_on: bool,
+) -> Result<Option<CoarseProbeResult>> {
+    use proximadb_storage_common::coarse_directory::{CoarseDirectory, project_with_model};
+
+    let dim = query.len();
+    if dim == 0 || header.a0_len == 0 {
+        return Ok(None);
+    }
+
+    // 1. Region A0 (small, immediately after the header) — one ranged GET.
+    let a0_bytes = fs
+        .read_range(path, header.a0_off, header.a0_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("coarse-probe A0 {path}: {e}"))?;
+    if trace_on {
+        record_get(CacheTier::InvariantMeta, header.a0_len);
+    }
+    let Ok(dir) = CoarseDirectory::parse(&a0_bytes) else {
+        return Ok(None);
+    };
+    let k_c = dir.model.k_c();
+    let n_comp = dir.model.n_comp as usize;
+    if k_c == 0 || dir.cells.len() != k_c || n_comp == 0 || dir.model.dim as usize != dim {
+        return Ok(None);
+    }
+
+    // 2. Rank the k_c centroids in RAM; select the nprobe nearest NON-EMPTY cells
+    //    (project the query with the SAME persisted f32 model the writer used).
+    let q_proj = project_with_model(
+        &dir.model.pca_mean,
+        &dir.model.pca_components,
+        n_comp,
+        query,
+    );
+    if q_proj.len() != n_comp {
+        return Ok(None);
+    }
+    let mut cell_dist: Vec<(usize, f32)> = (0..k_c)
+        .map(|c| {
+            let cen = &dir.model.centroids[c * n_comp..(c + 1) * n_comp];
+            let d: f32 = q_proj.iter().zip(cen).map(|(a, b)| (a - b) * (a - b)).sum();
+            (c, d)
+        })
+        .collect();
+    cell_dist.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let nprobe = coarse_probe_nprobe(k_c);
+    let mut probed: Vec<usize> = cell_dist
+        .iter()
+        .filter(|(c, _)| dir.cells[*c].row_end > dir.cells[*c].row_begin)
+        .take(nprobe)
+        .map(|(c, _)| *c)
+        .collect();
+    if probed.is_empty() {
+        return Ok(None);
+    }
+    // File (a_off) order so physically-adjacent probed cells coalesce.
+    probed.sort_by_key(|&c| dir.cells[c].a_off);
+
+    // 3. Region-A header (params + centroid) — one small ranged GET.
+    let hdr_len = proximadb_block_format::region_header_len(dim as u32) as u64;
+    let hdr_bytes = fs
+        .read_range(path, header.rabitq_off, hdr_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("coarse-probe region header {path}: {e}"))?;
+    if trace_on {
+        record_get(CacheTier::InvariantMeta, hdr_len);
+    }
+    let Ok(rq_header) = proximadb_block_format::CoalescedRaBitQHeader::parse(&hdr_bytes) else {
+        return Ok(None);
+    };
+
+    // 4. Ranged-read the probed cells' Region-A code extents. Coalesce ONLY
+    //    physically-adjacent cells (gap 0) so we never over-read unprobed cells;
+    //    Hilbert emission order clusters near cells, so the nprobe nearest usually
+    //    collapse to a few contiguous runs.
+    let stride = proximadb_block_format::code_stride(dim as u32) as u64;
+    let mut merged: Vec<(u64, u64, usize)> = Vec::new(); // (start, end, global row_start)
+    for &c in &probed {
+        let cell = &dir.cells[c];
+        let (s, e, rs) = (cell.a_off, cell.a_off + cell.a_len, cell.row_begin as usize);
+        match merged.last_mut() {
+            Some(last) if last.1 == s => last.1 = e, // contiguous → extend the run
+            _ => merged.push((s, e, rs)),
+        }
+    }
+    let mut run_bufs: Vec<(usize, Vec<u8>)> = Vec::with_capacity(merged.len());
+    let mut probed_rows: u64 = 0;
+    for (s, e, rs) in &merged {
+        let len = e - s;
+        let bytes = fs
+            .read_range(path, *s, len)
+            .await
+            .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?;
+        if trace_on {
+            record_get(CacheTier::SurvivorPayload, len);
+        }
+        // `stride = code_stride(dim) >= 9` (dim >= 1, guarded above) so the
+        // division is always well-defined.
+        probed_rows += len / stride;
+        run_bufs.push((*rs, bytes));
+    }
+    let runs: Vec<(usize, &[u8])> = run_bufs.iter().map(|(rs, b)| (*rs, b.as_slice())).collect();
+    let pool = pax_rabitq_pool_for_top_k(k, probed_rows as usize);
+    let survivors =
+        proximadb_block_format::rank_probed_rows(&rq_header, &runs, query, metric, pool.max(k))?;
+
+    Ok(Some(CoarseProbeResult {
+        survivors,
+        cells_total: k_c as u64,
+        cells_probed: probed.len() as u64,
+        probed_rows,
+        fetch_rounds: merged.len() as u64,
+    }))
+}
+
 pub async fn rabitq_search_segment_coalesced(
     fs: &dyn proximadb_storage_filesystem_types::FileSystem,
     path: &str,
@@ -938,7 +1129,8 @@ pub async fn rabitq_search_segment_coalesced(
 ) -> Result<Option<Vec<CascadeHit>>> {
     use proximadb_block_format::{PaxBlockReader, RaBitQRegion, coalesced_sq8, col_id};
     use proximadb_storage_common::segment_layout::{
-        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
+        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL,
+        SegmentFooterIndex, SegmentHeaderPrefix,
     };
 
     // ADR-065 co-design diagnostic: per-GET size trace. When PROXIMADB_TRACE_GETS
@@ -980,20 +1172,47 @@ pub async fn rabitq_search_segment_coalesced(
         Err(_) => return Ok(None), // not coalesced → don't cache
     };
 
-    // 2. Scan the RaBitQ region (cold: 1 GET; hot: 0 — Arc clone, no data copy).
-    let region_bytes: Arc<[u8]> = if let Some(inv) = cached.as_ref() {
-        inv.region_bytes.clone()
+    // 2. Survivors. TD-RDSTRAT-8 PR-B: on a v3 segment with the coarse probe
+    //    armed, rank the persisted centroids in RAM and ranged-read only the
+    //    nprobe nearest cells (whole Region A never fetched); else the
+    //    single-level whole-region scan (cold: 1 GET; hot: 0 — Arc clone). Any
+    //    probe miss falls through, fail-safe, to the whole-region path.
+    let probe = if header.layout_version == SEG_LAYOUT_VERSION_TWO_LEVEL
+        && header.a0_len > 0
+        && coarse_probe_enabled()
+    {
+        coarse_probe_survivors(fs, path, &header, query, metric, k, trace_on)
+            .await
+            .ok()
+            .flatten()
     } else {
-        Arc::from(
-            fs.read_range(path, header.rabitq_off, header.rabitq_len)
-                .await
-                .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?,
-        )
+        None
     };
-    let region = RaBitQRegion::from_bytes(&region_bytes)?;
-    // ADR-062 PR2: adaptive survivor pool — scale M with the segment's row count.
-    let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
-    let survivors = region.rank(query, metric, pool.max(k));
+    let (survivors, region_bytes): (Vec<usize>, Option<Arc<[u8]>>) = if let Some(r) = &probe {
+        if trace_on {
+            record_probe_trace(r.cells_total, r.cells_probed, r.probed_rows, r.fetch_rounds);
+        }
+        (r.survivors.clone(), None)
+    } else {
+        let region_bytes: Arc<[u8]> = if let Some(inv) = cached.as_ref() {
+            inv.region_bytes.clone()
+        } else {
+            let bytes = fs
+                .read_range(path, header.rabitq_off, header.rabitq_len)
+                .await
+                .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?;
+            // Trace the whole-region cost so the coarse probe's Region-A saving is
+            // observable (co-design: trace before you tune). Diagnostic-only.
+            if trace_on {
+                record_get(CacheTier::InvariantIndex, header.rabitq_len);
+            }
+            Arc::from(bytes)
+        };
+        let region = RaBitQRegion::from_bytes(&region_bytes)?;
+        // ADR-062 PR2: adaptive survivor pool — scale M with the segment's rows.
+        let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
+        (region.rank(query, metric, pool.max(k)), Some(region_bytes))
+    };
     if survivors.is_empty() {
         return Ok(Some(Vec::new()));
     }
@@ -1009,8 +1228,11 @@ pub async fn rabitq_search_segment_coalesced(
     let footer = SegmentFooterIndex::parse(&footer_bytes)?;
 
     // PR2: populate the cache on miss (the invariants parsed successfully →
-    // worth caching for hot repeat queries).
+    // worth caching for hot repeat queries). Only on the whole-region path — the
+    // coarse probe never read the whole Region A, so there is nothing to cache
+    // here (its small A0/header/cell reads ride the survivor cache instead).
     if cached.is_none()
+        && let Some(region_bytes) = region_bytes
         && let Some(c) = cache
     {
         c.put(
@@ -2127,6 +2349,169 @@ mod tests {
             "v3 read_segment_records must reconstruct vectors (never drop Region B)"
         );
         unsafe {
+            std::env::remove_var("PROXIMADB_IVF_K");
+        }
+    }
+
+    /// TD-RDSTRAT-8 PR-B (the deferred PR-A recall/GET gate): the coarse probe
+    /// (`PROXIMADB_IVF2_PROBE=1`) ranks the persisted centroids in RAM and reads
+    /// only the nprobe nearest cells — holding recall on clustered data while
+    /// reading materially fewer bytes than the whole-region single-level scan.
+    #[tokio::test]
+    async fn coarse_probe_holds_recall_and_cuts_bytes() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 32;
+        const G: usize = 8; // clusters (each centred on its own axis)
+        const PER: usize = 64; // members per cluster
+        const N: usize = G * PER;
+        const K: usize = 10;
+
+        // Deterministic pseudo-random component in [-1, 1].
+        let pseudo = |i: usize, d: usize| -> f32 {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add((d as u64).wrapping_mul(0x632B_E59B_D9B4_E019));
+            s ^= s >> 29;
+            s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            s ^= s >> 27;
+            ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+        // Widely-separated clusters (each centred at 50 on its own axis) with
+        // members at a monotonically increasing radius — so the true top-K are
+        // DISTINGUISHABLE (non-degenerate full-scan recall) AND concentrated in
+        // one cluster → a few probed cells capture them.
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                let (g, j) = (i / PER, i % PER);
+                let radius = 0.1 + j as f32 * 0.03;
+                (0..DIM)
+                    .map(|d| (if d == g { 50.0 } else { 0.0 }) + radius * pseudo(i, d))
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("probe.pax");
+        unsafe {
+            std::env::set_var("PROXIMADB_IVF2", "1");
+            std::env::set_var("PROXIMADB_IVF_K", "16");
+        }
+        write_pax_segment_compacted(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        unsafe {
+            std::env::remove_var("PROXIMADB_IVF2");
+        }
+
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+        // The exact centre of cluster 0 — its nearest members are the smallest
+        // radii (r0, r1, …), a distinguishable top-K all inside one cluster.
+        let query: Vec<f32> = (0..DIM).map(|d| if d == 0 { 50.0 } else { 0.0 }).collect();
+
+        // Brute-force truth (top-K by L2).
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+        let mut idx: Vec<usize> = (0..N).collect();
+        idx.sort_by(|&a, &b| {
+            l2(&corpus[a], &query)
+                .partial_cmp(&l2(&corpus[b], &query))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let truth: std::collections::HashSet<String> =
+            idx.iter().take(K).map(|i| format!("r{i}")).collect();
+        let recall = |hits: &[CascadeHit]| {
+            let got: std::collections::HashSet<String> =
+                hits.iter().map(|h| h.oid.clone()).collect();
+            truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32
+        };
+
+        unsafe {
+            std::env::set_var("PROXIMADB_TRACE_GETS", "1");
+        }
+
+        // Baseline: probe OFF → whole-region single-level scan over the v3 segment.
+        unsafe {
+            std::env::remove_var("PROXIMADB_IVF2_PROBE");
+        }
+        let _ = drain_get_trace();
+        let _ = drain_probe_trace();
+        let base = rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let base_bytes: u64 = drain_get_trace().iter().map(|(_, b)| b).sum();
+        assert!(drain_probe_trace().is_empty(), "probe OFF must not probe");
+        let base_recall = recall(&base);
+        assert!(
+            base_recall >= 0.5,
+            "baseline full-scan recall@{K} = {base_recall:.2} (sanity floor)"
+        );
+
+        // Probe ON: nprobe=6 of 16 cells.
+        unsafe {
+            std::env::set_var("PROXIMADB_IVF2_PROBE", "1");
+            std::env::set_var("PROXIMADB_IVF2_NPROBE", "6");
+        }
+        let _ = drain_get_trace();
+        let _ = drain_probe_trace();
+        let probe = rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let probe_bytes: u64 = drain_get_trace().iter().map(|(_, b)| b).sum();
+        let ptrace = drain_probe_trace();
+
+        // 1. The probe engaged: cells_probed strictly inside (0, cells_total).
+        assert_eq!(ptrace.len(), 1, "exactly one probe recorded");
+        let (cells_total, cells_probed, probed_rows, fetch_rounds) = ptrace[0];
+        assert_eq!(cells_total, 16, "16 coarse cells");
+        assert!(
+            cells_probed > 0 && cells_probed <= 6,
+            "probed {cells_probed} cells (0 < c <= nprobe=6)"
+        );
+        assert!(
+            probed_rows > 0 && probed_rows < N as u64,
+            "probed {probed_rows} of {N} rows (a strict subset)"
+        );
+        assert!(fetch_rounds >= 1, "at least one Region-A ranged GET");
+
+        // 2. Materially fewer bytes than the whole-region baseline.
+        assert!(
+            probe_bytes < base_bytes,
+            "probe {probe_bytes} B must read fewer than baseline {base_bytes} B"
+        );
+
+        // 3. Recall held vs the full scan: probing the query's cluster loses
+        //    essentially nothing (the meaningful PR-B claim — robust to the
+        //    absolute RaBitQ recall level, which the corpus/quantizer set).
+        let probe_recall = recall(&probe);
+        assert!(
+            probe_recall >= base_recall - 0.1,
+            "probe recall@{K} = {probe_recall:.2} must hold vs baseline {base_recall:.2} (nprobe=6/16)"
+        );
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_IVF2_PROBE");
+            std::env::remove_var("PROXIMADB_IVF2_NPROBE");
+            std::env::remove_var("PROXIMADB_TRACE_GETS");
             std::env::remove_var("PROXIMADB_IVF_K");
         }
     }
