@@ -184,7 +184,10 @@ jobs:
           ls -lh "$HOME/sift1m"
       - name: Build ratchet binary
         env:
-          CARGO_BUILD_JOBS: "4"
+          # jobs=1 — the root-crate rustc is ~12.8GB; jobs≥2 OOMs the 16GB runner
+          # (same rationale as the Rust Tests (unit) job). Until root extraction
+          # drops the single compile <~8GB, this must stay at 1.
+          CARGO_BUILD_JOBS: "1"
         run: cargo test --release --test sift_pax_recall_ratchet_test --no-run
       - name: Run SIFT PAX recall ratchet (N=${{ inputs.sift_n || '100000' }})
         env:
@@ -257,8 +260,10 @@ jobs:
     # covers the COLD compile that rust-cache misses when Cargo.lock churns (e.g. a
     # promotion merge) — that cold ~35-40m compile + emulator round-trips pushed this
     # job past the old 60m cap on #980. 90m leaves headroom for the first (cold) run
-    # while sccache warms; subsequent runs compile far less.
-    timeout-minutes: 90
+    # while sccache warms; subsequent runs compile far less. Bumped 90→120: a
+    # promotion merge's cold compile (Cargo.lock churn → sccache cold miss) +
+    # emulator round-trips pushed the cold run to ~95m, past the 90m cap (#1096).
+    timeout-minutes: 120
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: /home/runner/.cache/sccache
@@ -269,6 +274,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      # 12G swap headroom: the dual-job (CARGO_BUILD_JOBS=2) compile of the root
+      # crate peaks ~12.8GB/rustc, two concurrent → OOM-kills a 16GB runner
+      # ("runner received a shutdown signal" / exit 143). Swap absorbs the peak
+      # so the compile completes. #941 added this for the unit-test job; the
+      # cloud-emulator job needs it too (it hit this exact OOM on #1096).
+      - name: Add swap headroom
+        run: |
+          sudo fallocate -l 12G /mnt/swapfile-ci
+          sudo chmod 600 /mnt/swapfile-ci
+          sudo mkswap /mnt/swapfile-ci
+          sudo swapon /mnt/swapfile-ci
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-qa-cloud-emulator"
