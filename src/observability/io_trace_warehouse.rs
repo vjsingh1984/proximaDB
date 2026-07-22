@@ -584,6 +584,13 @@ fn vector_schema() -> SchemaRef {
         req("centroid_pruned_blocks", DataType::Int64),
         req("logical_striped_bytes", DataType::Int64),
         req("logical_striped_gets", DataType::Int64),
+        req("ivf_cells_total", DataType::Int64),
+        req("ivf_cells_probed", DataType::Int64),
+        req("ivf_probed_rows", DataType::Int64),
+        req("ivf_region_a_bytes", DataType::Int64),
+        req("ivf_region_b_bytes", DataType::Int64),
+        req("ivf_fetch_rounds", DataType::Int64),
+        req("ivf_whole_region_fallback", DataType::Int64),
     ]))
 }
 
@@ -825,6 +832,13 @@ fn build_vector_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, Sto
     let mut centroid_pruned = Vec::new();
     let mut striped_bytes = Vec::new();
     let mut striped_gets = Vec::new();
+    let mut ivf_cells_total = Vec::new();
+    let mut ivf_cells_probed = Vec::new();
+    let mut ivf_probed_rows = Vec::new();
+    let mut ivf_region_a_bytes = Vec::new();
+    let mut ivf_region_b_bytes = Vec::new();
+    let mut ivf_fetch_rounds = Vec::new();
+    let mut ivf_whole_region_fallback = Vec::new();
     for e in envs {
         if let TracePayload::VectorAnn(p) = &e.payload {
             writer_uuid.push(e.writer_uuid.clone());
@@ -834,6 +848,13 @@ fn build_vector_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, Sto
             centroid_pruned.push(p.centroid_pruned_blocks as i64);
             striped_bytes.push(p.logical_striped_bytes as i64);
             striped_gets.push(p.logical_striped_gets as i64);
+            ivf_cells_total.push(p.ivf_cells_total as i64);
+            ivf_cells_probed.push(p.ivf_cells_probed as i64);
+            ivf_probed_rows.push(p.ivf_probed_rows as i64);
+            ivf_region_a_bytes.push(p.ivf_region_a_bytes as i64);
+            ivf_region_b_bytes.push(p.ivf_region_b_bytes as i64);
+            ivf_fetch_rounds.push(p.ivf_fetch_rounds as i64);
+            ivf_whole_region_fallback.push(p.ivf_whole_region_fallback as i64);
         }
     }
     if writer_uuid.is_empty() {
@@ -847,6 +868,13 @@ fn build_vector_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, Sto
         i64_arr(centroid_pruned),
         i64_arr(striped_bytes),
         i64_arr(striped_gets),
+        i64_arr(ivf_cells_total),
+        i64_arr(ivf_cells_probed),
+        i64_arr(ivf_probed_rows),
+        i64_arr(ivf_region_a_bytes),
+        i64_arr(ivf_region_b_bytes),
+        i64_arr(ivf_fetch_rounds),
+        i64_arr(ivf_whole_region_fallback),
     ];
     RecordBatch::try_new(vector_schema(), cols)
         .map(Some)

@@ -204,6 +204,12 @@ pub struct VectorAnnPayload {
     pub ivf_fetch_rounds: u64,
     #[serde(default)]
     pub ivf_whole_region_fallback: u64,
+    /// Physical PAX Region-A (RaBitQ) / Region-B (SQ8) bytes fetched by the
+    /// coarse probe (TD-RDSTRAT-8 PR-C1). Cache hits contribute zero.
+    #[serde(default)]
+    pub ivf_region_a_bytes: u64,
+    #[serde(default)]
+    pub ivf_region_b_bytes: u64,
 }
 
 /// Embedding modality payload — KEU token counts.
@@ -268,6 +274,8 @@ impl TracePayload {
             || snap.logical_striped_bytes > 0
             || snap.ivf_cells_total > 0
             || snap.ivf_whole_region_fallback > 0
+            || snap.ivf_region_a_bytes > 0
+            || snap.ivf_region_b_bytes > 0
         {
             TracePayload::VectorAnn(VectorAnnPayload {
                 centroid_total_blocks: snap.centroid_total_blocks,
@@ -279,6 +287,8 @@ impl TracePayload {
                 ivf_probed_rows: snap.ivf_probed_rows,
                 ivf_fetch_rounds: snap.ivf_fetch_rounds,
                 ivf_whole_region_fallback: snap.ivf_whole_region_fallback,
+                ivf_region_a_bytes: snap.ivf_region_a_bytes,
+                ivf_region_b_bytes: snap.ivf_region_b_bytes,
             })
         } else if snap.plan_nodes > 0
             || snap.plan_depth > 0
@@ -450,6 +460,8 @@ mod tests {
             ivf_probed_rows: 4096,
             ivf_fetch_rounds: 3,
             ivf_whole_region_fallback: 1,
+            ivf_region_a_bytes: 200_000,
+            ivf_region_b_bytes: 800_000,
             ..Default::default()
         };
         match TracePayload::classify(&snap) {
@@ -459,6 +471,8 @@ mod tests {
                 assert_eq!(v.ivf_probed_rows, 4096);
                 assert_eq!(v.ivf_fetch_rounds, 3);
                 assert_eq!(v.ivf_whole_region_fallback, 1);
+                assert_eq!(v.ivf_region_a_bytes, 200_000);
+                assert_eq!(v.ivf_region_b_bytes, 800_000);
             }
             other => panic!("expected VectorAnn, got {other:?}"),
         }
