@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — filed 2026-07-14 from the post-#953 ledger native sweep (SF 0.01 release).
+| Status | **Resolved (2026-07-14).** Current `push_predicates` extracts cross-side equality conjuncts from `Filter(CrossJoin)` and rewrites the join to `Inner` with a hash-capable strategy (`1a424f3c6`); residual predicates stay above the join. Later TD-REL-LOWER-6/7 cover disjunctive shared keys and N-way connectivity. Planner unit `comma_join_filter_normalizes_to_hash_join_with_residual` plus the native join e2es pin the original grind class.
 | Priority | P2 — perf, not correctness (results would be right if they ever finished); blocks native-route TPC coverage for join queries and starves `olap/native` join cost cells (the same coverage TD-REL-LOWER-1 unblocked at the *lowering* layer).
 | Component | `crates/query/proximadb-relational-frontend` (comma-FROM → `JoinKind::Cross` + WHERE), `proximadb-relational-planner` (no cross+filter → equi-join rewrite).
 | Evidence | Post-#953 native sweep 2026-07-14 (`TPC_PERF_SCALE=0.01`, 60 s budget): TPC-H Q9–Q22 (14/22) and TPC-DS q65/q67/q69/q70/q76/q79/q82/q87 (8) now LOWER AND EXECUTE — then time out. An earlier 300 s-budget run bounds Q9/Q10 at ≥300 s each. Pre-#953 these all failed fast at lowering, so this grind class was invisible.

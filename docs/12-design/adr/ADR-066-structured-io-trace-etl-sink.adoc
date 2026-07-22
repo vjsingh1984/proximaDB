@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Proposed; partially implemented** (reconciled 2026-07-18). S1 local sealing shipped in #1084, S2 dispatch in #1087, and S2b crash-aware delivery is implemented. Ingress remains best-effort and is not a billing/audit ledger; acceptance is still gated on hot-path evidence, governance/tenant-root integration, the S3 envelope, and S4 warehouse commit. Implemented under link:../../10-quality/td/TD-TRACE-2-structured-io-trace-etl-sink.adoc[TD-TRACE-2].
+| Status | **Proposed; S1–S4 substantially implemented** (reconciled 2026-07-21). S1 local sealing shipped in #1084, S2 dispatch in #1087, S2b crash-aware delivery in #1093, S3's versioned envelope in #1133, and S4's Iceberg-managed Parquet warehouse in #1136. Ingress remains best-effort and is not a billing/audit ledger; acceptance is still gated on representative hot-path evidence, duplicate-install/shutdown behavior, governance/tenant-root integration, and S4b background scheduling. Implemented under link:../../10-quality/td/TD-TRACE-2-structured-io-trace-etl-sink.adoc[TD-TRACE-2].
 | Decider | Vijaykumar Singh (2026-07-17)
 | Date | 2026-07-17
 | Relates to | link:ADR-064-query-engine-pipeline-decision-dispatch-lowering-trace.adoc[ADR-064] (the per-query TRACE this makes durable), link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (co-design spine — meter every dimension, measured-not-asserted), link:ADR-036-azure-objectstore-orientation.adoc[ADR-036] (per-object access tier = the at-rest GB-month cost lever this ADR pulls), link:ADR-027-unified-storage-and-metering-substrate.adoc[ADR-027] (metering substrate — billing never gated; this sink is a *separate* observer). Deliberately stays OFF the sampled `predicate_diagnostics` **quality/eval** bus (a distinct concern — see D2).
@@ -40,10 +40,12 @@ Before #1084/#1087 the trace was **ephemeral and shapeless**:
 S1/S2 now provide an external flat JSONL+zstd stream, but two target-model
 problems remain:
 
-1. **External history exists, but delivery is not durable.** The old formatted-log-only path was
-   fragile and not ETL-native; #1084/#1087 now emit structured JSONL+zstd. The sink still has a
-   bounded in-memory queue, drops oldest records, and does not retry local fallback files after
-   restart. The billing observer ships aggregates per tenant, not a per-query durable ledger.
+1. **External history exists and sealed batches are restart-safe, but ingress is intentionally
+   best-effort.** The old formatted-log-only path was fragile and not ETL-native; #1084/#1087 now
+   emit structured JSONL+zstd, and #1093 seals immutable pending files, conditionally creates the
+   object, verifies digest collisions, and retries pending files at startup. Records may still be
+   dropped from the bounded memory queue before sealing. The billing observer ships aggregates per
+   tenant, not a per-query durable ledger.
 
 2. **The snapshot is one wide, sparse, ever-widening struct.** `IoTraceSnapshot` is a flat superset:
    object-store counters, footer hits, `compute_ms`, wall spans, egress, route, the plan-geometry
@@ -260,22 +262,25 @@ Each of the five physical dimensions, and the dominant cost term this ADR moves 
   aborts a live worker and loses its queue. Shutdown timeout/drop state is observable.
 . **Hot-path budget:** representative p50/p95 serialization+enqueue overhead and allocation are
   recorded with sink OFF/ON; no query-path filesystem/network/compression work.
-. **S3 envelope:** explicit schema version and event identity; unknown payload variants remain
+. **S3 envelope (shipped #1133):** explicit schema version and event identity; unknown payload variants remain
   readable/skippable; billing observer input/output is byte-identical and separately tested.
 . **Governance:** operator-stream ACL/encryption contract and tenant-root mode are integration-tested;
   no raw query, row, vector, secret, or unbounded user value enters the trace.
-. **S4 warehouse commit:** JSONL→Parquet round-trip under an Iceberg manifest, crash/retry dedup,
-  schema evolution, source-retirement watermark, and small-file compaction tests.
+. **S4 warehouse core (shipped #1136):** JSONL→Parquet round-trip under an Iceberg manifest,
+  crash/retry dedup, schema evolution, and a source-retirement watermark. **S4b:** background
+  scheduling plus small-file compaction policy/tests.
 . **Honest delivery label:** until a fail-closed outbox is separately designed, the sink stays
   best-effort observability and cannot be used as billing/audit authority.
 
-**Flip verdict:** ADR-066 remains Proposed. S1/S2 validate the shape, but accepting the current text
-would bless a false durability contract. It may move to Accepted when these normative amendments are
-approved; implementation completion is then tracked independently in TD-TRACE-2.
+**Flip verdict:** ADR-066 remains Proposed. S1–S4 validate the landing, delivery, envelope, and
+warehouse-commit shape, but acceptance still requires the lifecycle/hot-path and governance conditions
+above plus the S4b background trigger. Shipped slices do not upgrade best-effort observability into
+billing-grade durability.
 
 == 7. Status of related work
 
 ADR-064 Decision 3 / TD-TRACE-1 delivered the in-process structured trace: Slice 1 (routing reasons +
 lowering declines, #1051) and Slice 2 (the per-operator `exec[]` vector, #1076). This ADR governs the
-external ETL of that trace; the implementation is sliced in TD-TRACE-2. S1 (#1084) and S2 (#1087)
-are shipped; delivery hardening, envelope, and Iceberg-managed warehouse compaction remain.
+external ETL of that trace; the implementation is sliced in TD-TRACE-2. S1 (#1084), S2 (#1087),
+S2b (#1093), S3 (#1133), and S4 (#1136) are shipped; lifecycle/governance evidence and the S4b
+background-compaction trigger remain.

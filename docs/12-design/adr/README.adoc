@@ -1,7 +1,8 @@
 = Architecture Decision Records
 :toc: left
 :icons: font
-:last-updated: 2026-06-30
+:last-updated: 2026-07-21
+// status-as-of: 2026-07-21
 
 [.lead]
 This directory contains Architecture Decision Records (ADRs) governing ProximaDB's implementation across all open issues (#25-#61). Each ADR defines canonical contracts, interfaces, and file plans that implementation must follow.
@@ -57,6 +58,26 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Accepted
 | REST/gRPC/Arrow/SQL/SDK schema-on-read and schema-on-write convergence
 
+| link:ADR-010-pax-block-format.adoc[ADR-010]
+| PAX Block Format for Internal Storage
+| Accepted
+| Canonical internal HTAP/projection block family; catalog, WAL, and `ProximaRecord` remain authority
+
+| link:ADR-011-filtered-ann-routing-modes.adoc[ADR-011]
+| Selectivity-Based Filtered ANN Routing Modes
+| Accepted
+| Inline/post/pre-filter routing contract; per-collection policy plumbing remains separately tracked
+
+| link:ADR-012-graph-branch-merge-semantics.adoc[ADR-012]
+| Graph Branch Merge Semantics
+| Accepted
+| Deterministic conflict semantics for branchable graph topology and attributes
+
+| link:ADR-013-protocol-type-coercion-matrix.adoc[ADR-013]
+| Protocol Type Coercion Matrix
+| Accepted
+| Lossless/lossy coercions across pgwire, Arrow Flight, Iceberg REST, and REST/gRPC
+
 | link:ADR-014-vector-query-2-shape.adoc[ADR-014]
 | Vector Query Two-Shape Boundary
 | Accepted
@@ -71,6 +92,46 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | `PortUserContext` — Boundary Type for `SecurityPort` Authentication
 | Accepted
 | Lossy projection of root-crate `UnifiedUserContext` so `SecurityPort::authenticate` can exist at the runtime boundary without dragging the typed permission graph into the runtime crate
+
+| link:ADR-017-dr-engine-surface.adoc[ADR-017]
+| DR Engine Surface — OSS / Operator Boundary
+| Accepted
+| Canonical public DR engine inventory and the OSS-mechanism/operator-policy ownership split
+
+| link:ADR-018-pgwire-sql-parity-roadmap.adoc[ADR-018]
+| pgwire / SQL Parity Roadmap
+| Accepted
+| Phased SQL/pgwire parity with explicit autocommit-only safety until transaction gates pass
+
+| link:ADR-019-relational-query-architecture.adoc[ADR-019]
+| Relational Query Architecture — Algebra, Executor, Transaction, Storage
+| Accepted
+| Shared logical algebra, execution, transaction, and storage boundaries for relational queries
+
+| link:ADR-020-canonical-wal-authority.adoc[ADR-020]
+| Canonical WAL Authority Model
+| Accepted
+| Canonical WAL is record-state authority; modality stores and indexes are projections or explicit external authority
+
+| link:ADR-021-turboquant-quantizer-and-in-kernel-allowlist.adoc[ADR-021]
+| TurboQuant Quantizer and In-Kernel Allowlist
+| Proposed
+| Training-free quantization plus SIMD allowlist; experimental until benchmark and recall gates close
+
+| link:ADR-022-agent-memory-layer.adoc[ADR-022]
+| Agent Memory Layer
+| Proposed
+| ProximaDB supplies the governed storage substrate beneath external memory-orchestration libraries
+
+| link:ADR-023-f2-cold-load-ordering.adoc[ADR-023]
+| F2 Cold-Load Ordering — Binary-First Tiered Index Serving
+| Proposed
+| Independently loadable binary-first cold tier followed by lazy full-fidelity upgrade
+
+| link:ADR-024-single-canonical-data-type-and-schema.adoc[ADR-024]
+| Single Canonical Data Type (`ProximaType`) and Schema
+| Accepted (phased rollout)
+| Collapse parallel internal logical types/schemas onto `ProximaType`; keep physical encoding orthogonal
 
 | link:ADR-025-deletion-vectors-cold-path.adoc[ADR-025]
 | Deletion Vectors for Cold-Path Deletes (Layered over MVCC)
@@ -149,7 +210,13 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 
 | link:ADR-040-conformance-accuracy-ratchet.adoc[ADR-040]
 | Conformance ratchets are ACCURACY ratchets — differential cross-engine + anchored answers, not "executes cleanly"
+| Accepted
 | The pgwire conformance ratchets (TPC-H 22, TPC-DS 16, graph 10, doc 11, ts 10) count queries that **execute without error**, not queries that return **correct answers** — only ~1 query per suite has its result asserted (TPC-H verifies Q1; the other 21 are execution-only). So the ratchet measures the *demo*, not the *eval* (against mandates #10/#13). The dual-engine cost-trace harness (PR #455), running each query on native AND DataFusion, proved this lets wrong results pass: `document` `d04/d08/d10` return **0 rows** (JSON-path SELECT projection silently empty) while `count(*)` shows the table non-empty; `g04` returns 16 rows native vs 32 DataFusion; `d06` 0 vs 1. *Decision:* a query counts only when verified correct by (1) **differential cross-engine equivalence** (native ≡ DataFusion after canonicalization — disagreement fails CI; near-free, no hand-grading) and/or (2) **anchored expected answers** (required for one-engine-only queries; catches "both wrong the same way"). Ratchet counts *accurate* queries, not merely executed. External Postgres/DuckDB oracle deferred. Phased rollout, one suite per PR (document first — pins the known JSON bug), each filing the bugs it uncovers. Tracked: TD-182
+
+| link:ADR-041-spec-driven-primary-document-surface.adoc[ADR-041]
+| OpenAPI is the source of truth for the document SDK surface
+| Accepted
+| Spec-driven document transport; generated/hand facade doctrine is subsequently refined by ADR-068
 
 | link:ADR-042-canonical-segment-statistics-contract.adoc[ADR-042]
 | Canonical SegmentStatistics Contract — format-uniform stats across ProximaBlocks + PAX, aggregated not re-derived
@@ -162,7 +229,7 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | TD-183 (document JSON-path) had to be "fixed" in four code paths because predicate/scalar evaluation is fragmented: **4 disagreeing cast mechanisms** (translator string-strip with a hard-coded suffix list that forgot `::int` and over-strips `::boolean`; a frontend `lower_expr` with **no `Cast` arm**; a partial native `cast_value`; a fuller-but-unreachable DataFusion matrix), **3 function "registries"** (canonical `builtins()`, an empty `NoFunctions` at the pushdown boundary, and JSON funcs defined **only** as DataFusion UDFs so native lacks them), and **2 error contracts** (operators propagate via `?`, but the storage-pushdown predicate is a `Fn(&[ProximaValue]) -> bool` closure that coerces eval errors to `false` → **silently drops rows** = a wrong answer that looks like success). *Decision:* three normative invariants — (1) **never silently drop on eval error** (type the pushdown closure `-> Result<bool, ExprError>`, propagate like `FilterExec`); (2) **one cast lowering owned by the typed frontend** (add the `Cast` arm, delete the translator strip list, fill `cast_value` gaps); (3) **one function definition per binding** (move JSON kernels into `proximadb-functions`; F2 auto-binds DataFusion; native gets them free; engine-only scalars prohibited except listed Arrow specials). SOLID for an OLTP+OLAP hybrid: fail-loud + single-definition let an engine that can't serve a query escalate (ADR-039) instead of returning a plausible wrong answer. Surfaced by the ADR-040 accuracy harness. Tracked: TD-186
 | link:ADR-044-stable-symbol-oid-correlated-cpg.adoc[ADR-044]
 | Stable, line-independent symbol object_id — the correlated-CPG join key
-| Proposed
+| Accepted
 | Cross-product audit 2026-06-28: the symbol `oid` is minted **3 different ways** across proximaDB / victor-codegraph / anvaiops and all embed the line number in identity, so a line move churns a symbol's vector + node + row — breaking fuse-on-shared-oid and forcing full re-index. *Decision:* one canonical, **line-independent** symbol oid minted once in `victor-codegraph`'s adapter and consumed verbatim by the SDK, connector, and substrate; identity = structural coordinates (`repo‖language‖module_path‖FQN‖overload-discriminator`), with line/col and body-hash as metadata, not identity. Extends ADR-031's tenet (stable id, mutable coordinate is metadata) to the symbol layer ADR-031 explicitly excluded. Mixed-read-safe, default-OFF. Tracked: TD-CG
 
 | link:ADR-045-pax-durable-core-vs-serving-metadata.adoc[ADR-045]
@@ -179,6 +246,16 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Collection-as-Table — Canonical ProximaType Schema Authority, Multi-Vector, Per-Column Quantization
 | Proposed
 | Make the canonical `ProximaType`-native `CatalogTableSchema` the single persisted schema authority for collections and tables (reinforces ADR-009); demote the narrow `CollectionConfig` schema fields to a legacy read-adapter and fix the `StoredSchema` non-text-column drop; add multi-vector columns (one `AxisIndex` per column), per-column quantization, and complex-type (Map/Array/Struct) columns. `collection ≡ table` (no rename). Phased TD-TBL-1..5; retires the ADR-019 backing-collection shim in Phase 5.
+
+| link:ADR-048-unified-system-catalog-native-authority.adoc[ADR-048]
+| Unified System Catalog as Native Authority
+| Proposed
+| Retire schema/config property-bag derivation in favor of typed catalog object and operations metadata
+
+| link:ADR-049-v1-to-v2-migration-to-native-model.adoc[ADR-049]
+| v1 → v2 Migration to the Native Model
+| Proposed
+| Make v1 a temporary wire adapter only; converge internals and durable formats on native records/types
 
 | link:ADR-050-statistics-fed-datafusion-route-selection.adoc[ADR-050]
 | Statistics-fed cost-based routing into the DataFusion OLAP arm
@@ -201,7 +278,7 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 
 | link:ADR-054-native-execution-engine-progressive-cutover.adoc[ADR-054]
 | Native execution engine — a per-query ExecutionEngine with internal SOLID contracts for progressive, evidence-gated substitution of DataFusion
-| Proposed
+| Accepted
 | Reverses ADR-052 invariant 2 ("do NOT reimplement HashAgg/HashJoin/Sort natively") justified by the evidence (Q3 594ms / Q14 296ms, 99% compute_ms — DataFusion 54's hash-join is the binding constraint; it does not spill and cannot host the multimodal join semantics that are ProximaDB's wedge). Decision (option C): define SOLID contracts (`ExecutionOperator`, `Pipeline`, `MorselScheduler`, `BatchStream` — zero DataFusion dependency, Arrow data plane) and substitute native operators progressively, each flag-gated (default-off) + ledger-gated for promotion (≥ parity on in-memory; conformance unchanged). **v3 consolidation (#755)**: ONE `ComputeBackend::Native` with an internal vectorized hook (Volcano for OLTP / vectorized for OLAP), NOT a separate peer variant. Cutover order: Phase 0 contracts (#755 ✓) → Phase 1 Arrow bridge (#758) → Phase 2 FilterProject (TD-OLAP-10) → Phase 3 native hash join (TD-OLAP-11, the #1 lever) → Phase 4 morsel scheduler → Phase 5 native-primary + fused multimodal operators. Tracked: TD-OLAP-10..13. Reviewed across 9 dimensions (v2 Revise); v3 records the post-ratification consolidation.
 
 | link:ADR-055-document-canonical-format-declaration-and-legacy-retirement.adoc[ADR-055]
@@ -211,13 +288,13 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 
 | link:ADR-056-adaptive-execution-predicate-pushdown-first.adoc[ADR-056]
 | Adaptive execution — predicate-pushdown-first (the two-schools decision)
-| Proposed
+| Accepted
 | Answers "do we handle AQE + what to learn from Spark/Trino/DuckDB/ClickHouse/Impala/Hive/Polars/Pandas" with a co-design position: AQE is TWO schools — *re-plan* (Spark; needs synchronous pipeline breakers from shuffle-disk) vs *predicate-pushdown* (Trino/DuckDB/ClickHouse/Polars; adapts which data the scan reads, no barrier). The *pipeline-breaker theorem* (Graefe 1994; Photon PVLDB 2024): re-planning is cheap only where the substrate already materializes — our streaming/single-node/object-storage substrate favors predicate-pushdown. Decision: **lead with predicate-pushdown** (we already have TD-OLAP-3 runtime filters default-ON + a `wait_complete()` rendezvous that's a free intra-query barrier + bloom semi-join ready-to-promote + the lock-free learn-router), + a thin operator-internal set (unified MemoryPool per DuckDB TMM, grace-hash spill). Defer the full Spark-AQE re-plan loop (shuffle-centric coalesce/skew are irrelevant single-node) + LLVM codegen + HDFS short-circuit (on-prem only). Binding directives: `HashJoinBuild`/`HashJoinProbe` (TD-OLAP-11) MUST be an explicit materialization boundary (preserves the future re-plan option); plan-cache must become plan-shape-aware for adaptive plans. Survey + full citations preserved in §4/§8. Tracked: link:../../10-quality/td/TD-AQE-1-adaptive-execution-roadmap.adoc[TD-AQE-1].
 
 | link:ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057]
 | PAX RaBitQ cascade — selective striped read + cost-driven read-strategy chooser
-| Accepted
-| Motivated by TD-RDSTRAT-2 (the read-strategy chooser/coalescing were wired into the RETIRED ProximaBlocks `.sst` reader; the live PAX cascade reads each segment WHOLE at `search/mod.rs:271`, and the per-block `record_range_gets` at `segment_format.rs:424` are LOGICAL projections, not physical GETs). Decision: give the PAX RaBitQ cascade a cost-driven, tier-aware choice between **whole-segment read** (today) and a **selective striped read** (Stage 1: only the RaBitQ codes stripes → rank; Stage 2: only the SQ8/exact-f32 bytes for the candidate rows → rerank) — MAKING PHYSICAL the two-stage read the cascade already models. Reuses four existing primitives (NOT a from-scratch build): `proximadb-block-format::ranged` (stripe reads via `stripe_offset`/`stripe_len`), `FileSystem::read_ranges` (batched/coalescing GET), `PaxSplitReader` (#736), and the pure unit-tested `choose_read_strategy` (`coalesce_strategy.rs`). Byte-identical + recall-gated (SIFT1M ratchet); default-OFF → observe → flip (ADR-052); crossover falls out of `per_get·n_gets + per_mib·n_bytes` (tier-aware), not a hardcoded selectivity %. Trace-first (mirrors ADR-055 P-Trace). Retires the dead `.sst` chooser sites. Tracked: link:../../10-quality/td/TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (atomic slices + fail-loud caps + ratchet thresholds; unblocked — sign-off 2026-07-09).
+| Accepted historically; operationally superseded by ADR-062 (#1024)
+| The striped-read chooser was a valid intermediate decision, but implementing it as a parallel PAX path was rejected once ADR-062 made the coalesced header + selected block ranges the canonical read shape. TD-RDSTRAT-2 closed as a resolved finding and TD-RDSTRAT-3 is superseded; this ADR remains historical rationale, not current implementation direction.
 
 | link:ADR-058-engine-routing-eligibility-selection-stats-trust.adoc[ADR-058]
 | Engine routing — eligibility (soundness) vs selection (cost), cost-override-opt-in, and the stats-trust safety gate
@@ -249,31 +326,35 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Accepted (2026-07-16, r3.1 — outer authenticated encryption envelope; acceptance = specified normative mechanism with an implementation gate)
 | Grounded in the measured TD-OBJSTORE-1 batch-3 reproduction (Azurite process-boundary test: acked, WAL-durable records unrecoverable after SIGKILL + fresh disk — NOT zero-vector-specific; the variable is unflushed WAL-only data on an object-store backend). **D1** the catalog stays object-store-native — generation-fenced put-if-absent snapshots under `_operator/catalog/_manifests/` (ADR-048), never a side RDBMS (rejects the Unity/Polaris/Gravitino shape; preserves scale-to-zero); **D2** the catalog is the recovery root — TARGET across ALL modalities (today only vector WAL recovery is catalog-enumerated; graph/document/observability converge via D6 migration TDs); **D3** ack-durability invariant: acked ⇒ data durable AND LISTable under the catalog-derived prefix — certified for PRIMARY S3/Azure/GCS endpoints only, LIST errors fail-closed (never read as "empty"); **D4 (r2 rewrite)** LIST is the *discovery* authority and correctness travels IN the self-describing WAL object: pre-PUT fenced ordering token `{lease epoch, per-collection sequence}` in key+header (with checksum/format/encryption metadata), put-if-absent create, in-memory same-key resolution in token order, crash-idempotent materialization via deterministic recovery-segment naming + conditional create, fail-closed legacy-orphan policy, equal-LSN Active/Flushed manifest dedup fixed (Flushed wins); the async manifest stays a pure cache; **D5** prefix-`exists()`-before-LIST is a forbidden pattern on flat keyspaces (HEAD-on-key = false for prefixes; confirmed backend-wide azure/s3/gcs) — source-guarded; **D6 (r2)** boot-constructor-derived durable-surface inventory (external-collections + pinning registries migrate; primary-pod registry finishes its existing catalog hydration; legacy document WAL superseded via canonical record store; observability WAL audited; AXIS event log = filesystem-backed rebuildable projection); **D7 (r2)** recovery is single-writer per collection — the recoverer acquires the collection's generation-fenced lease, whose epoch IS the D4 token epoch; **D8 (r2)** cost-credible CI tiers: PR = Azurite-only strict restart (`--features azure`) + object-store-crate contract tests on all 3 emulators; QA = one cloud-full build, Azure+S3 sequential + one strict recall ratchet; nightly = GCS best-effort + cross-backend recall (GCS never called a gate while warn-only). Rejected: side-RDBMS catalog (A1), sync pointer PUT per batch (A2 — no primitive atomically commits two independent objects; the self-describing object is the zero-round-trip answer), mutable tip pointer (A3), bucket-wide orphan scan (A4). Fix spec: TD-OBJSTORE-4 (S1-S6 + failure-mode table); gates: `zero_vector_kv_record_survives_restart` red→green, double-replay idempotency, out-of-order-orphan, equal-LSN dedup, the TD-OBJSTORE-2 three-boot proof. **r3 (review round 2):** incarnation-unique epoch via `begin_writer_incarnation` (plain lease renewal reuses the generation for a matching pod ID — restart could repeat `{epoch,seq}`), epoch-FIRST key encoding, canonical UUID lease key, ack-fencing on renewal failure; `FileSystem::write_if_absent` (production `write` overwrites on all backends) + digest-named recovery segment as THE commit record with `AlreadyExists`-verify-before-side-effects; **inline compaction suppressed during recovery materialization until WAL retirement** (post-flush compaction would consume the deterministic segment → crash → duplicates); semantic (not count-based) legacy-orphan policy; GCS LIST pagination fix (production backend reads one page); TST timeseries local-temp fallback added to the D6 inventory; contract tests target the production root FileSystem backends; PR-tier emulator job timeout 30-45 min, QA budget = measured ratchet.
 
+| link:ADR-064-query-engine-pipeline-decision-dispatch-lowering-trace.adoc[ADR-064]
+| Query-engine pipeline — decision, dispatch, lowering rule seam, and structured trace
+| Proposed
+| D1 dispatch and D3 trace core shipped; bounded subquery families reached native TPC-H 22/22, while the general rule seam and trace/governance tail remain open
+
 | link:ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065]
 | Clustered tier regions inside one atomic PAX segment
 | Accepted (2026-07-16; implementation reconciled 2026-07-17)
-| Extends ADR-062 without multiplying objects/commit points. **Shipped #1069:** Region B hoists SQ8 from blocks; coalesced flush uses SQ8-Morton order, compaction uses PCA+IVF/Hilbert, and byte-budgeted invariant/survivor/OID caches serve repeated ranges. **Not shipped:** optional exact-f32 Region C and a vector-free pure Region D. Their earlier fixed GET/byte predictions are not accepted evidence. The scale successor is TD-RDSTRAT-8: persist the existing IOP-derived compaction IVF plan and probe selected Region-A/B runs, avoiding the large-N choice between many scattered ranges and whole-region O(N) bytes. Region C/D remain trace-gated after that dominant lever.
+| Extends ADR-062 without multiplying objects/commit points. **Shipped #1069:** Region B hoists SQ8 from blocks; coalesced flush uses SQ8-Morton order, compaction uses PCA+IVF/Hilbert, and byte-budgeted caches serve repeated ranges. **Scale successor PR-A/PR-B shipped #1128/#1135:** TD-RDSTRAT-8 persists that existing IOP-derived plan in a default-OFF v3/A0 layout and selectively probes the nearest cells instead of fetching all of Region A. SIFT-scale absolute recall, durable `ivf_*` telemetry, and default-on promotion remain open. Optional exact-f32 Region C / vector-free Region D remain trace-gated after the dominant probe-routing lever.
 
 | link:ADR-066-structured-io-trace-etl-sink.adoc[ADR-066]
 | Structured io_trace ETL sink — versioned envelope → JSONL+zstd landing → Iceberg-managed Parquet
-| Proposed; S1 #1084 + S2 #1087 shipped
-| Takes ADR-064's trace external without touching billing. The current sink serializes flat JSON on query completion into bounded memory, seals JSONL+zstd, then direct-PUTs to `_operator/io_trace/`; failures fall back to local files. It is **best-effort observability, not billing/audit authority**. Acceptance requires S2b pending-file/restart retry, writer UUID+sequence+digest idempotency, delivery metrics/health, honest config and structural isolation; S3 adds the versioned envelope; S4 compacts to Iceberg-managed star-schema Parquet with crash/retry dedup and source watermark. Billing remains separate/fail-closed. `segment_bytes` is uncompressed bytes; 4 MiB is not a multipart claim.
+| Proposed; S1–S4 shipped (#1084/#1087/#1093/#1133/#1136)
+| Takes ADR-064's trace external without touching billing. The sink uses bounded memory ingress, immutable pending JSONL+zstd segments, conditional create + digest verification, startup retry, delivery metrics, a versioned header + modality-payload envelope, and an idempotent Iceberg-managed Parquet warehouse with a source watermark. It remains **best-effort before sealing, not billing/audit authority**. Acceptance still requires hot-path and lifecycle evidence, structural isolation/governance, and S4b background scheduling.
 | link:ADR-067-consume-ai-usage-gateway-egress-metering.adoc[ADR-067]
-| Consume the `sandhi` AI usage gateway for external-provider egress metering
-| Proposed
-| Thin **consumer** decision (authoritative: AnvaiOps ADR-0047). The Rust drainer's external egress (`AzureOpenAiClient::embed_batch`, BYO, OpenAI/Cohere) emits the shared neutral usage event; KEU stays authoritative + server-side (AnvaiOps ADR-0020 D6); OSS emits units, AnvaiOps prices. Wiring: TD-SANDHI-1.
+| Consume the `sandhi` neutral usage contract for external-provider egress metering
+| Accepted as amended (2026-07-21)
+| Embedding and generation egress emit `usage-event.v1` with real provider usage; KEU stays authoritative and OSS emits neutral units only. ProximaDB uses a local event struct plus `sandhi-core` parsers. A proxy or `sandhi-providers` transport dependency is explicitly not mandated without the ≥2-consumer/resilience trigger.
 | link:ADR-068-sdk-codegen-doctrine-hand-facade-generated-oracle.adoc[ADR-068]
 | SDK codegen doctrine — hand-maintained facade over narrow generated types; generated client as a CI oracle, not the shipped artifact
-| Proposed
-| Refines mandate #15 (spec-driven SDK transport) without repealing it: the first-party `utoipa` spec stays the contract, but the **shipped** SDK becomes a hand-maintained facade over narrow generated types, the full generated client is demoted to a **CI test oracle** (a `progenitor` panic stops being a merge blocker), and the **blocking** SDK gate becomes a behavioral **round-trip** (create → insert → search) instead of codegen-diff. Motivated by two facade bugs that escaped the codegen gate to the qa VM (8-char name validation; `search()` silent local-fallback) and the progenitor-0.14 panic that blocked #1103. Inspired by Sandhi ADR-0003. Migration tracked in link:../../10-quality/td/TD-SDK-1-sdk-codegen-doctrine-migration.adoc[TD-SDK-1].
+| Proposed; migration started (#1112/#1113)
+| Refines mandate #15 without repealing it: the first-party spec stays the contract, while the target shipped surface is a hand facade over narrow generated types and the blocking gate becomes behavioral. The two known Python facade defects are fixed; the live round-trip gate and oracle/gate migration remain open, so the doctrine is not yet accepted.
 | link:ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069]
 | WAL on a local reattachable disk; object store as the coalesced durable tier — bound write-op cost without losing durability on Spot
-| Proposed
-| Tiers the write path by frequency (refines ADR-036's placement lever): the per-write **WAL moves to a local reattachable disk** (`file://` PVC — survives Spot node reaping via detach/reattach), while object storage stays the **coalesced durable tier** for SST/VIPER/metadata/checkpoints. Removes an unbounded, workload-driven object-store *write-operation* cost on the hot path (a Spot testbed measured ~9M flat-Blob writes / ~$58 in one day) and cuts write-commit latency ~10–50×. Placement (per-tier `FilesystemFactory`), `PerBatch` fsync, and marker-gated truncation already exist; NEW: `min(size,time,capacity-budget)` flush (time = the RPO floor), two-watermark write backpressure (never ENOSPC-crash), guaranteed truncation cadence + soak test, the fsync durability contract + crash test, and the object-store-write-op regression canary. Tracked in link:../../10-quality/td/TD-WAL-1-wal-local-disk-tiered-flush.adoc[TD-WAL-1].
+| Proposed; S1–S4 core shipped/live-verified (#1117/#1118/#1132)
+| Tiers the per-write WAL onto a reattachable local filesystem while object storage remains the coalesced durable tier. Time/size/capacity policy, live auto-flush, reclamation, trigger metrics, two latent live-path fixes, and default-OFF critical-watermark writer rejection shipped. Acceptance remains open on primary REST batch 429 propagation, fsync/SIGKILL proof, residual canaries, the `file://` guardrail, and sustained soak.
 |===
 
-NOTE: ADR-010 through ADR-013 and ADR-048/ADR-049 exist in this directory but
-are not yet indexed in the table above; that catalogue gap is separate cleanup work.
+The index is complete and is enforced by `scripts/check_design_status_index.py`.
 
 == Relationship to Design Resolution Doc
 

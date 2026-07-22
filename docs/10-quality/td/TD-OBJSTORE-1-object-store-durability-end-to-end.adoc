@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **In progress — batch 3 is the active durability blocker.** Catalog and real-vector recovery now pass on the live object-store deployment, but dim-1 records written with `vector: [0.0]` are not recovered after restart. The deferred items below remain outside the single-VM MVP unless their triggering scale, multi-writer, or feature conditions are introduced.
+| Status | **Core batches 1–3 fixed; end-to-end closure remains open.** The batch-3 zero-vector/non-zero control restart repro is GREEN via #1061 and is a strict Azurite PR gate via #1072. Current code also contains the TD-OBJSTORE-4 S2–S6 protocol mechanisms (fenced incarnation tokens, conditional create, ordered replay, deterministic materialization, compaction suppression, equal-LSN dedup, and semantic legacy handling). Do not call the protocol fully closed yet: TD-OBJSTORE-4 still lacks several named adversarial gates, and TD-OBJSTORE-2 still owns the live ADLS/S3/GCS proof rerun. Deferred multimodal/local-filesystem escapes remain separately tracked.
 | Severity | Critical — with `storage.metadata_url = adls://…` (or `s3://`, `gcs://`) the server constructs invalid `file://adls://…` URLs and/or drives `std::fs`/`tokio::fs` at object-store URLs; metrics, document WAL, audit/event-log, and timeseries subsystems fail at startup or silently write to wrong local paths. Blocks the ADR-0028 anvaiops object-store deployment (issue #960).
 | Component | `src/network/shared_services.rs` (subsystem path wiring), `src/storage/persistence/write_ahead_log/wal_operations.rs` (unified WAL), `src/storage/engines/eventlog/*` (audit event log), `src/audit/*` (security audit storage), `crates/control/proximadb-catalog/src/delta.rs`, defensive: disk caches + tantivy log index.
 | Tracked-by | https://github.com/anvai-labs/proximaDB/issues/960[#960]; deploy consumer: anvaiops ADR-0028.
@@ -143,7 +143,7 @@ The bug class has two shapes:
 | ✅ Fixed (batch 2; follow-ups TD-CAT-4)
 |===
 
-== Batch 3 — zero-vector (dim-1 KV) records not recovered on restart
+== Batch 3 — resolved: zero-vector (dim-1 KV) records were not recovered on restart
 
 The anvaiops live durability proof pinned `sha-81248181f4f4-full`
 (`sha256:f4bddeb5…`, qa), deployed it to the single-VM `adls://` testbed, and ran
@@ -157,7 +157,7 @@ the seed → `az vm restart` → verify sequence.
   flushed segments are durable at
   `adls://…/collections/{id}/data/L0_*.helix`.
 
-=== Active blocker
+=== Historical observed failure
 
 Dim-1 zero-vector KV records are not recovered. The collections recover but come
 back empty:
@@ -209,6 +209,13 @@ Two stacked defects (full chain + evidence in TD-OBJSTORE-4):
 Fix spec: **TD-OBJSTORE-4** (LIST-authority recovery, per ADR-063 D3-D5). The
 design decision it implements: acked ⇒ data durable AND LISTable; manifests are
 caches, never the recovery gate.
+
+**Resolution on current `develop`:** #1061 landed LIST-authority discovery and the
+S2–S6 implementation; #1072 put this exact process-boundary repro into PR CI, and
+#1065/#1088 added source/backend/staged-I/O guards. The remaining work is not the
+old zero-vector symptom. It is closure evidence: the two missing TD-OBJSTORE-4
+adversarial gates plus TD-OBJSTORE-2's live three-store proof. #1129 closed the
+separate conditional-create backend/decorator conformance slice.
 
 === Engine-only reproduction
 

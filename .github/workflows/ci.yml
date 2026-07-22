@@ -1171,6 +1171,8 @@ jobs:
       # merge. Convention: docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc.
       - name: Check TD/ADR id uniqueness
         run: python3 scripts/check_td_adr_unique.py
+      - name: Check ADR/TD status coverage and index agreement
+        run: python3 scripts/check_design_status_index.py
       - name: Check resolved TD status/body consistency
         run: python3 scripts/check_td_status_consistency.py
       - name: Check documentation links

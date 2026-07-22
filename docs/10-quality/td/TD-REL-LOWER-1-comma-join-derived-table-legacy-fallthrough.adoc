@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open (core classes FIXED 2026-07-13, see §Progress) — filed 2026-07-13 from measured ledger evidence (TPC perf-ledger native sweep, SF 0.01 release).
+| Status | **Resolved.** #953 fixed the original comma-FROM/derived-table fallthrough and numeric-coercion classes. The residual query shapes were correctly split into TD-REL-LOWER-2..8 and subsequently closed; #1068 pins native TPC-H 22/22 with row-exact Q18/Q20 coverage. Keeping this parent open for every later lowering family obscured ownership.
 | Priority | P2 — correctness of the *error*, not of results (queries fail loudly, never return wrong rows); blocks native-route TPC-H coverage and starves `olap/native` cost-model cells for join shapes.
 | Component | `src/network/postgres/relational_pipeline.rs` (lowering decline → legacy fallthrough), legacy single-table FROM parser.
 | Evidence | TPC perf-ledger native sweep 2026-07-13: 72 ERR / 172 records. Taxonomy: `Table 'customer,' does not exist` ×8, `Table 'supplier,'`/`'lineitem,'`/`'store_sales,'`/… (every comma-list FROM), `Table '(select' does not exist` ×4 (derived tables), `operator - is not defined for Int64 and Float64` (TPC-H Q19) ×4.
@@ -72,7 +72,7 @@ Bisected and fixed the dominant decline class plus the two hardening directions:
   now widens both sides to f64 in `eval_arithmetic` — the same promotion `values_equal`/
   `compare_ord` already applied — and `Expr::result_type` agrees (`Float64`).
 
-Remaining (why this stays Open): full TPC-H native-route coverage — residual per-query lowering
+Historical residuals (split into their own TDs rather than keeping this finding open): full TPC-H native-route coverage — residual per-query lowering
 declines (e.g. CASE/EXTRACT/INTERVAL frontend gaps) now fail loudly with the 0A000 message; fix
 incrementally per the pgwire mandate.
 
