@@ -600,6 +600,11 @@ pub struct MultiServerBuilder {
     /// Mount the read-only `/admin` dashboard (from `[server.admin_ui] enabled`).
     /// Off by default; opt-in for standalone instances.
     admin_ui_enabled: bool,
+    /// Dashboard client-side auto-refresh (from `[server.admin_ui] auto_refresh`).
+    admin_ui_auto_refresh: bool,
+    /// Auto-refresh poll interval seconds (from `[server.admin_ui]
+    /// refresh_interval_seconds`).
+    admin_ui_refresh_interval_seconds: u32,
 }
 
 impl Default for MultiServerBuilder {
@@ -611,6 +616,8 @@ impl Default for MultiServerBuilder {
             api_config: None,
             data_dir: PathBuf::from("/tmp/proximadb/data"),
             admin_ui_enabled: false,
+            admin_ui_auto_refresh: false,
+            admin_ui_refresh_interval_seconds: 30,
         }
     }
 }
@@ -693,6 +700,14 @@ impl MultiServerBuilder {
         self
     }
 
+    /// Configure the dashboard's client-side auto-refresh (off by default). Wire
+    /// from `config.server.admin_ui.{auto_refresh, refresh_interval_seconds}`.
+    pub fn with_admin_ui_refresh(mut self, auto_refresh: bool, interval_seconds: u32) -> Self {
+        self.admin_ui_auto_refresh = auto_refresh;
+        self.admin_ui_refresh_interval_seconds = interval_seconds;
+        self
+    }
+
     /// Build the complete multi-server configuration
     pub fn build(mut self) -> Result<MultiServerConfig> {
         // Apply API config compression settings to builders if available
@@ -738,6 +753,8 @@ impl MultiServerBuilder {
             // `[api].transport`/`socket_dir`; the builder always starts in TCP mode.
             uds_socket_dir: None,
             admin_ui_enabled: self.admin_ui_enabled,
+            admin_ui_auto_refresh: self.admin_ui_auto_refresh,
+            admin_ui_refresh_interval_seconds: self.admin_ui_refresh_interval_seconds,
             // Cluster mode defaults
             #[cfg(feature = "cluster")]
             cluster_config: None, // Cluster mode disabled by default

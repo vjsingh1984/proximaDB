@@ -730,6 +730,11 @@ impl RestServer {
         tenant_config: TenantExtractorConfig,
         // Mount the read-only `/admin` dashboard (from `[server.admin_ui] enabled`).
         admin_ui_enabled: bool,
+        // Dashboard auto-refresh (from `[server.admin_ui] auto_refresh`).
+        admin_ui_auto_refresh: bool,
+        // Dashboard auto-refresh interval seconds (from
+        // `[server.admin_ui] refresh_interval_seconds`).
+        admin_ui_refresh_interval_seconds: u32,
     ) -> Router {
         let mut base_state = AppState::new(
             core,
@@ -838,7 +843,15 @@ impl RestServer {
         // Read-only admin dashboard at /admin (+ back-compat /dashboard alias),
         // gated by `[server.admin_ui] enabled` (off by default — empty router when
         // disabled). Mounted from the self-contained `proximadb-admin-ui` crate.
-        base_router = base_router.merge(proximadb_admin_ui::admin_router_if(admin_ui_enabled));
+        // The auto-refresh fields are server-injected into the page so the toggle
+        // reflects the operator's `[server.admin_ui]` default.
+        base_router = base_router.merge(proximadb_admin_ui::admin_router_if(
+            proximadb_admin_ui::AdminUiOptions {
+                enabled: admin_ui_enabled,
+                auto_refresh: admin_ui_auto_refresh,
+                refresh_interval_seconds: admin_ui_refresh_interval_seconds,
+            },
+        ));
         if admin_ui_enabled {
             tracing::info!("🖥️  Read-only admin dashboard enabled at /admin (+ /dashboard)");
         }

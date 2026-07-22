@@ -116,6 +116,13 @@ pub struct MultiServerConfig {
     /// operator explicitly opts in for a standalone instance.
     pub admin_ui_enabled: bool,
 
+    /// Sourced from `[server.admin_ui] auto_refresh` (default `false`). When
+    /// `false`, the dashboard's auto-refresh toggle is rendered disabled.
+    pub admin_ui_auto_refresh: bool,
+
+    /// Sourced from `[server.admin_ui] refresh_interval_seconds` (default 30).
+    pub admin_ui_refresh_interval_seconds: u32,
+
     /// Cluster mode configuration (consensus, replication, health services)
     /// Only used when `cluster` feature is enabled
     #[cfg(feature = "cluster")]
@@ -580,6 +587,8 @@ impl Default for MultiServerConfig {
             unified_bind_address: "0.0.0.0".to_string(),
             uds_socket_dir: None,    // TCP mode by default; portless opt-in only
             admin_ui_enabled: false, // read-only /admin dashboard off by default; opt-in via TOML
+            admin_ui_auto_refresh: false, // dashboard auto-refresh off by default; opt-in via TOML
+            admin_ui_refresh_interval_seconds: 30, // default poll cadence (seconds)
             // Cluster mode defaults
             #[cfg(feature = "cluster")]
             cluster_config: None, // Cluster mode disabled by default

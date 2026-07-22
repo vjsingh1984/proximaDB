@@ -1057,6 +1057,8 @@ impl MultiServer {
                     self.tenant_deployment_mode.clone(),
                 ),
                 self.config.admin_ui_enabled,
+                self.config.admin_ui_auto_refresh,
+                self.config.admin_ui_refresh_interval_seconds,
             );
 
             info!(

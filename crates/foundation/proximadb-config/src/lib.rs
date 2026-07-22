@@ -274,6 +274,26 @@ pub struct AdminUiConfig {
     /// (`bool::default()`).
     #[serde(default)]
     pub enabled: bool,
+
+    /// Enable client-side auto-refresh of the dashboard. Default: `false`
+    /// (`bool::default()`). When `false`, the auto-refresh toggle in the UI is
+    /// rendered **disabled** (greyed out) and the page only refreshes on an
+    /// explicit click — an operator must opt in here to allow live polling.
+    /// The setting is server-injected into the page; it does not persist per
+    /// user session beyond the configured default.
+    #[serde(default)]
+    pub auto_refresh: bool,
+
+    /// Auto-refresh poll interval in seconds. Default: `30`. Only takes effect
+    /// when `auto_refresh = true`. Clamped to a minimum of `5` at serve time so
+    /// a misconfigured tiny interval cannot DoS the diagnostic endpoints.
+    #[serde(default = "default_admin_refresh_interval")]
+    pub refresh_interval_seconds: u32,
+}
+
+/// Default admin-dashboard auto-refresh interval (seconds).
+fn default_admin_refresh_interval() -> u32 {
+    30
 }
 
 /// Request-tenant resolution mode encoded in TOML.

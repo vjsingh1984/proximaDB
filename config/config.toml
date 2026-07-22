@@ -18,6 +18,12 @@ default_tenant = "default"
 # See docs/04-operations/admin-dashboard.adoc.
 [server.admin_ui]
 enabled = false
+# Client-side auto-refresh of the dashboard. When false (default) the
+# auto-refresh toggle in the UI is rendered disabled (greyed out) and the page
+# only refreshes on an explicit click. Set true to allow live polling.
+auto_refresh = false
+# Auto-refresh poll interval in seconds (only effective when auto_refresh = true).
+refresh_interval_seconds = 30
 
 [storage]
 # Metadata storage (collection definitions, schemas)
