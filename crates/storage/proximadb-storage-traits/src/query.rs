@@ -299,12 +299,17 @@ impl StorageQueryContext {
         let metadata = StorageQueryMetadata {
             collection_id: collection.id.clone(),
             use_axis_indexes: config
-                .and_then(|c| {
-                    if c.index_configs.is_empty() {
-                        None
-                    } else {
-                        Some(true)
-                    }
+                .map(|c| {
+                    // AXIS when the collection has index_configs OR has opted out of
+                    // the co-designed PAX scan (`pax_vector_format:off`). index_configs
+                    // alone is too narrow a proxy: a collection that disables PAX falls
+                    // back to the legacy .sst + AXIS path, so the gate must not skip
+                    // AXIS for it (otherwise its AXIS store is never rebuilt from SST).
+                    let pax_off = c
+                        .tags
+                        .iter()
+                        .any(|t| t.trim().eq_ignore_ascii_case("pax_vector_format:off"));
+                    pax_off || !c.index_configs.is_empty()
                 })
                 .unwrap_or(false),
             has_quantization: config.and_then(|c| c.quantization.as_ref()).is_some(),
