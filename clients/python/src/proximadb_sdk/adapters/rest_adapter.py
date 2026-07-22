@@ -447,11 +447,16 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         if hasattr(query_vector, "tolist"):
             query_vector = query_vector.tolist()
 
+        # Delegate to the REST transport (protocols.rest_sync.ProximaDBClient).
+        # Kwarg names must match the transport's `search` signature EXACTLY
+        # (`vector` / `metadata_filter`, not `query_vector` / `metadata_filters`);
+        # a mismatch raises TypeError, which unified_client.search_single catches
+        # and silently converts into a local-only fallback (TD-SDK-1 S2b / ADR-068).
         results = self._client.search(
             collection_id=collection_id,
-            query_vector=query_vector,
+            vector=query_vector,
             top_k=top_k,
-            metadata_filters=filter,
+            metadata_filter=filter,
             include_vectors=include_vectors,
             include_metadata=include_metadata,
             **kwargs,
