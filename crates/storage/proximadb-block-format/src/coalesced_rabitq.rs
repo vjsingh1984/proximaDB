@@ -216,6 +216,74 @@ impl RaBitQRegion {
     }
 }
 
+/// Per-row code stride in a coalesced region: `dist f32 | inv f32 | bits`.
+pub fn code_stride(dim: u32) -> usize {
+    8 + (dim as usize).div_ceil(8)
+}
+
+/// TD-RDSTRAT-8 PR-B coarse probe: rank a **subset** of rows without reading the
+/// whole region. `header` comes from a small ranged GET of the region header
+/// (`[rabitq_off, rabitq_off + region_header_len(dim))`); `runs` are the probed
+/// cells' code bytes fetched via ranged GETs into their `a_off/a_len` extents.
+/// Each run is `(global_row_start, bytes)` where `bytes` is exactly
+/// `rows × code_stride(dim)` contiguous row codes starting at `global_row_start`
+/// (byte-identical to that slice of the region's code area).
+///
+/// Probed rows are **always present** — A0 cells cover only usable (embedded)
+/// rows, whose validity bits are all 1 — so a synthetic all-ones bitmap lets the
+/// canonical [`parse_rabitq_codes`] decode each run unchanged (no bitmap GET, no
+/// hand-rolled decoder). Returns up to `pool` **global** row indices
+/// nearest-first (same estimator + rotation as [`RaBitQRegion::rank`]).
+pub fn rank_probed_rows(
+    header: &CoalescedRaBitQHeader,
+    runs: &[(usize, &[u8])],
+    query: &[f32],
+    metric: RankMetric,
+    pool: usize,
+) -> Result<Vec<usize>> {
+    let dim = header.dim as usize;
+    if dim == 0 {
+        bail!("coarse-probe rank: region dim is 0");
+    }
+    let stride = code_stride(header.dim);
+    // Decode each probed run (all present) and remember each row's GLOBAL index.
+    let mut codes: Vec<Option<RaBitQCode>> = Vec::new();
+    let mut global: Vec<usize> = Vec::new();
+    for &(row_start, bytes) in runs {
+        if bytes.len() % stride != 0 {
+            bail!(
+                "coarse-probe run bytes {} not a multiple of code stride {stride}",
+                bytes.len()
+            );
+        }
+        let rows = bytes.len() / stride;
+        if rows == 0 {
+            continue;
+        }
+        // Synthesize the all-ones validity bitmap the canonical parser expects,
+        // then the run's code bytes verbatim → reuse the block decoder as-is.
+        let mut payload = vec![0xFFu8; rows.div_ceil(8)];
+        payload.extend_from_slice(bytes);
+        let run_codes = parse_rabitq_codes(&payload, rows, dim)?;
+        for (j, c) in run_codes.into_iter().enumerate() {
+            codes.push(c);
+            global.push(row_start + j);
+        }
+    }
+    if codes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let params = header.to_params();
+    let rotation = build_rotation_cached(params.dim, params.seed);
+    let q_rotated = rotate_query(query, &params, &rotation);
+    let local = match metric {
+        RankMetric::L2 => rank_candidates(&q_rotated, &codes, pool),
+        RankMetric::Cosine | RankMetric::DotProduct => rank_candidates_ip(&q_rotated, &codes, pool),
+    };
+    // Map local (subset) indices back to global row indices.
+    Ok(local.into_iter().map(|l| global[l]).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +326,64 @@ mod tests {
         assert!(
             parsed.code(ranked[0]).is_some(),
             "top survivor must be present"
+        );
+    }
+
+    /// TD-RDSTRAT-8 PR-B: the subset ranker reproduces the full-region ranking
+    /// when handed all rows, and restricts to the probed rows for a sub-run —
+    /// same estimator, same order, global indices mapped back correctly.
+    #[test]
+    fn rank_probed_rows_matches_region_rank() {
+        const DIM: usize = 64;
+        const N: usize = 256;
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| synth_vec(i as u64, DIM)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let seed = RABITQ_SEED_BASE ^ 20;
+        let (region, _c) = encode_region(&vectors, DIM as u32, seed).unwrap();
+        let header = CoalescedRaBitQHeader::parse(&region).unwrap();
+        let parsed = RaBitQRegion::from_bytes(&region).unwrap();
+        let query = corpus[10].clone();
+
+        let stride = code_stride(DIM as u32);
+        let codes_base = region_header_len(DIM as u32) + N.div_ceil(8);
+        let full = parsed.rank(&query, RankMetric::L2, N);
+
+        // One run over ALL rows must reproduce the full-region ranking exactly
+        // (same codes, same order, same estimator).
+        let all_bytes = &region[codes_base..codes_base + N * stride];
+        let probed_all =
+            rank_probed_rows(&header, &[(0, all_bytes)], &query, RankMetric::L2, N).unwrap();
+        assert_eq!(probed_all, full, "one run over all rows == region.rank");
+
+        // A subset run returns only rows in that subset, nearest-first; its top
+        // survivor equals the best full-rank survivor within the subset.
+        let (lo, hi) = (10usize, 40usize);
+        let sub_bytes = &region[codes_base + lo * stride..codes_base + hi * stride];
+        let probed =
+            rank_probed_rows(&header, &[(lo, sub_bytes)], &query, RankMetric::L2, hi - lo).unwrap();
+        assert!(
+            probed.iter().all(|&r| (lo..hi).contains(&r)),
+            "probed survivors stay within the probed rows"
+        );
+        let best_in_sub = full
+            .iter()
+            .copied()
+            .find(|&r| (lo..hi).contains(&r))
+            .expect("some full-rank survivor lies in the subset");
+        assert_eq!(
+            probed[0], best_in_sub,
+            "subset top == full-rank best within the subset"
+        );
+
+        // Two disjoint runs (mimicking two probed cells) cover their union.
+        let r1 = &region[codes_base..codes_base + 5 * stride];
+        let r2 = &region[codes_base + 100 * stride..codes_base + 110 * stride];
+        let two =
+            rank_probed_rows(&header, &[(0, r1), (100, r2)], &query, RankMetric::L2, 15).unwrap();
+        assert!(
+            two.iter()
+                .all(|&r| (0..5).contains(&r) || (100..110).contains(&r)),
+            "two-run survivors stay within the two probed cells"
         );
     }
 
