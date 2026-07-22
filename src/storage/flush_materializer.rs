@@ -51,6 +51,34 @@ pub struct CollectionFlushPlan {
     pub tenant_id: Option<String>,
 }
 
+/// Build a [`CollectionFlushPlan`] from a collection's catalog metadata. The single
+/// recipe shared by the inline size-trigger (`spawn_inline_flush`), the periodic
+/// `AutoFlushDriver`, and the shutdown flush — only *when* to fire differs across the
+/// three triggers, not *what* they materialize.
+pub fn flush_plan_from_collection_meta(
+    meta: &crate::proto::proximadb_v1::Collection,
+) -> CollectionFlushPlan {
+    let config = meta.config.as_ref();
+    let assignment = meta.storage_assignment.as_ref();
+    let engine_type = assignment
+        .map(|a| a.engine)
+        .or_else(|| config.and_then(|c| c.storage_engine))
+        .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
+    let dimension = config.map(|c| c.dimension).unwrap_or(0);
+    let base_location = assignment
+        .map(|a| a.base_location.clone())
+        .unwrap_or_default();
+    let tenant_id = proximadb_tenant::tenant_id_of(meta);
+    CollectionFlushPlan {
+        wal_key: meta.id.clone(),
+        canonical_id: meta.id.clone(),
+        base_location,
+        engine_type,
+        dimension,
+        tenant_id,
+    }
+}
+
 /// What a single collection's materialization produced.
 pub struct CollectionFlushOutcome {
     /// Records submitted to the engine (post tombstone-filter) — the count used

@@ -1145,6 +1145,77 @@ pub fn get_global_write_buffer_behavior()
         .cloned()
 }
 
+/// Per-collection in-flight flush guard for the inline size-trigger. A `Semaphore(1)`
+/// per collection: [`spawn_inline_flush`] try-acquires and skips if a flush is already
+/// running for that collection, so a burst of size-threshold-crossing writes collapses
+/// into a single in-flight materialization (avoiding duplicate segments). The periodic
+/// `AutoFlushDriver` is independently rate-limited by its tick; a concurrent driver
+/// flush of the same collection is harmless — `materialize_collection` no-ops via its
+/// `Ok(None)` empty-batches early-return once the inline flush has cleared them.
+static INLINE_FLUSH_GUARDS: std::sync::LazyLock<
+    dashmap::DashMap<String, std::sync::Arc<tokio::sync::Semaphore>>,
+> = std::sync::LazyLock::new(dashmap::DashMap::new);
+
+/// ADR-069 D2 inline size-trigger: fire-and-forget a `materialize_collection` for the
+/// collection. Per-collection guarded (see [`INLINE_FLUSH_GUARDS`]). Reuses the exact
+/// `AutoFlushDriver` recipe (same globals, same plan shape via
+/// `flush_plan_from_collection_meta`) — ONE materialization path; the inline trigger
+/// only adds *when* to fire (a size crossing on the live write path, vs. the driver's
+/// periodic tick).
+fn spawn_inline_flush(collection_id: String) {
+    use crate::storage::flush_materializer::{
+        flush_plan_from_collection_meta, materialize_collection,
+    };
+
+    tokio::spawn(async move {
+        // per-collection guard: skip if a flush is already in flight for this collection
+        let guard = INLINE_FLUSH_GUARDS
+            .entry(collection_id.clone())
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
+            .clone();
+        let _permit = match guard.try_acquire() {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::trace!(
+                    "inline size-flush: already in flight for '{}', skipping",
+                    collection_id
+                );
+                return;
+            }
+        };
+
+        let Some(write_buffer) = get_global_write_buffer_behavior() else {
+            return;
+        };
+        let axis = crate::index::get_global_axis_manager();
+        let catalog = list_collections_from_catalog().await;
+        let Some(meta) = catalog.iter().find(|c| c.id == collection_id) else {
+            tracing::warn!(
+                "inline size-flush: no catalog metadata for '{}', skipping",
+                collection_id
+            );
+            return;
+        };
+        let plan = flush_plan_from_collection_meta(meta);
+
+        let start = std::time::Instant::now();
+        match materialize_collection(&write_buffer, &plan, None, None, true, axis.as_deref()).await
+        {
+            Ok(Some(outcome)) => tracing::info!(
+                "✅ inline size-flush '{}': {} entries, {} bytes in {:.3}s",
+                collection_id,
+                outcome.entries_flushed,
+                outcome.bytes,
+                start.elapsed().as_secs_f64()
+            ),
+            Ok(None) => {
+                // nothing unflushed — a concurrent driver tick already flushed it
+            }
+            Err(e) => tracing::warn!("⚠️ inline size-flush '{}' failed: {}", collection_id, e),
+        }
+    });
+}
+
 /// Get the global WriteAheadLogManager registry
 pub fn get_write_ahead_log_manager_registry() -> &'static WriteAheadLogManagerRegistry {
     WAL_MANAGER_REGISTRY.get().get_or_init(|| {
@@ -2045,6 +2116,28 @@ impl WriteAheadLogManager {
                     .await
             }
         }?;
+
+        // ADR-069 D2 inline size-trigger — the responsive throughput path (the 300s
+        // periodic AutoFlushDriver is the RPO floor). After a successful append, if the
+        // collection's unflushed data crosses the size target, fire-and-forget a flush.
+        // Skipped for insert-only (tombstone/delete) writes so deletes never trigger a
+        // segment flush. ONE materialization path (spawn_inline_flush reuses the driver
+        // recipe); per-collection guarded so a burst of writes collapses to one flush.
+        if !insert_only && let Some(write_buffer) = get_global_write_buffer_behavior() {
+            use crate::storage::persistence::write_ahead_log::flush_policy::{
+                FlushPolicy, FlushReason,
+            };
+            // Lean per-write size check (sums sizes under the lock, no batch clone —
+            // get_unflushed_batches clones every batch and regressed write throughput).
+            let mem_bytes = write_buffer.unflushed_bytes(collection_id).await;
+            let policy = FlushPolicy::from_performance(&self.config.performance);
+            if matches!(
+                policy.evaluate(mem_bytes, 0).reason,
+                Some(FlushReason::Size)
+            ) {
+                spawn_inline_flush(collection_id.to_string());
+            }
+        }
 
         // Then, persist to disk if sync mode requires it
         if self.should_sync_to_disk(collection_id).await? {

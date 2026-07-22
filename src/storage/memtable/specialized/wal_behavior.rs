@@ -202,6 +202,22 @@ impl BatchCoordinator {
         }
     }
 
+    /// Sum the unflushed bytes for a collection WITHOUT cloning the batches. The
+    /// inline flush trigger checks this on the hot write path (per write), where
+    /// `get_unflushed_batches`'s per-batch clone was a throughput regression.
+    fn unflushed_bytes(&self, collection_id: &str) -> u64 {
+        self.batches
+            .get(collection_id)
+            .map(|collection_batches| {
+                collection_batches
+                    .values()
+                    .filter(|batch| !batch.is_flushed)
+                    .map(|batch| batch.total_size_bytes as u64)
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+
     /// Mark batch as flushed
     fn mark_batch_flushed(&mut self, collection_id: &str, batch_id: &str) -> Result<()> {
         if let Some(collection_batches) = self.batches.get_mut(collection_id)
@@ -721,6 +737,14 @@ impl WALBehaviorWrapper {
             .collect();
 
         Ok(unflushed_batches)
+    }
+
+    /// Sum unflushed bytes for a collection without cloning batches (hot-path
+    /// accessor for the inline flush trigger — `get_unflushed_batches` clones every
+    /// batch and regressed write throughput when called per write).
+    pub async fn unflushed_bytes(&self, collection_id: &str) -> u64 {
+        let coordinator = self.batch_coordinator.read().await;
+        coordinator.unflushed_bytes(collection_id)
     }
 
     /// Clear flushed batches for collection (MODERN - after successful storage engine flush)

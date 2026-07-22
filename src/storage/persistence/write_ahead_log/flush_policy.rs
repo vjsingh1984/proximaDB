@@ -113,8 +113,11 @@ impl FlushPolicy {
     }
 
     /// True when any periodic trigger (time or capacity) is enabled — i.e. when a
-    /// background scheduler is worth spawning. When false the policy reduces to the
-    /// pre-existing inline size trigger and no ticker is needed (S1 behavior-neutral).
+    /// background scheduler is worth spawning. The default config arms the 300s time
+    /// floor (ADR-069 D2 RPO safety net), so the auto-flush driver spawns by default and
+    /// segments materialize while the server runs. A config that sets both
+    /// `flush_interval_secs = 0` and `wal_max_bytes = 0` disables both periodic triggers
+    /// and falls back to the inline size trigger alone.
     pub fn needs_scheduler(&self) -> bool {
         self.time_floor_secs > 0 || self.capacity_budget_bytes > 0
     }
@@ -292,20 +295,27 @@ mod tests {
     }
 
     #[test]
-    fn defaults_are_size_only_and_behavior_neutral() {
-        // Default config: size target set (2MB), time+capacity disabled.
+    fn defaults_arm_time_trigger() {
+        // Default config (ADR-069 D2): the 300s time floor is armed so the auto-flush
+        // driver spawns by default and segments materialize while the server runs
+        // (no shutdown required). The inline size trigger still fires at the size target.
         let p = FlushPolicy::from_performance(&WalPerformanceConfig::default());
-        assert_eq!(p.time_floor_secs, 0);
+        assert_eq!(p.time_floor_secs, 300);
         assert_eq!(p.capacity_budget_bytes, 0);
-        assert!(!p.needs_scheduler(), "no periodic triggers ⇒ no scheduler");
-        // Below the size target: no flush. At/above it: size flush (old behavior).
-        assert_eq!(
-            p.evaluate(p.size_target_bytes - 1, 10_000),
-            FlushDecision::NONE
-        );
+        assert!(p.needs_scheduler(), "default time floor ⇒ driver spawns");
+        // Capacity stays off (S4 write-shedding admission control default-OFF).
+        assert!(p.write_admission_reject_pct(0).is_none());
+        // Below the size target, under the time floor: no flush.
+        assert_eq!(p.evaluate(p.size_target_bytes - 1, 10), FlushDecision::NONE);
+        // At/above the size target: size flush (the inline throughput trigger).
         assert_eq!(
             p.evaluate(p.size_target_bytes, 0).reason,
             Some(FlushReason::Size)
+        );
+        // Past the time floor with unflushed data: time flush (the RPO safety net).
+        assert_eq!(
+            p.evaluate(1, p.time_floor_secs).reason,
+            Some(FlushReason::Time)
         );
     }
 
