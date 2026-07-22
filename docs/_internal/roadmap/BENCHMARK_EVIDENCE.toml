@@ -80,6 +80,22 @@ version = "feat/adr069-s7-soak off develop @ 7d5a9e2cb"
 notes = "10-min bounded run (harness parameterized for multi-hour/nightly via --duration-s). wal_size_bytes is the cumulative on-disk WAL (plateaued = steady-state); the bounding input the gate guards is the unflushed memtable, which the backpressure engagements prove stayed within the critical line. Engagements concentrated in the warmup burst (steady-state flushes then kept up). Server exit was a clean flush-on-stop (slow shutdown, non-fatal). Indicative dev-machine evidence, not an SLA."
 
 [[claims]]
+id = "rdstrat8_ivf2_layout_coalescing_sift1m"
+claim = "TD-RDSTRAT-8 PR-C2 closes the v3 control/A0/Region-A GET fragmentation without changing recall. On full SIFT1M (100 official queries, top-10, Euclidean), the retained default-OFF policy combines a 64 KiB bounded prefix, independently cached probe metadata, and 1 MiB Region-A gap coalescing (4 MiB max range). Single-file nprobe=6 recall remains 0.985 while GETs/q fall 33 to 30 cold and 24 to 19 warm; four-file nprobe=3 recall remains 0.982 while GETs/q fall 75 to 65 cold and 62 to 44 warm. The object-store score 20*GET + 5*MiB improves 6.1-24.0%. A 4 MiB gap is rejected as a non-robust ~0.1% score gain that adds 3.59 MB/q in four-file geometry and worsens the single-file cold tail."
+metric = "recall@10 + physical range_gets_per_query + bytes_read_per_query by PAX region + cold/warm p50/p95 + object-store score"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "Single: PROXIMADB_SIFT_DATASET_DIR=<verified-sift> PROXIMADB_SIFT_IVF2_FILE_COUNTS=1 PROXIMADB_SIFT_IVF2_NPROBE_SWEEP=6 PROXIMADB_SIFT_IVF2_LAYOUT_PROOF=1 PROXIMADB_SIFT_IVF2_A_GAP_SWEEP=1048576 cargo test --release --test sift_pax_recall_ratchet_test sift_ivf2_probe_release_bakeoff_eval -- --ignored --nocapture; four-file: same with FILE_COUNTS=4 NPROBE_SWEEP=3"
+artifact = "docs/_internal/status/RDSTRAT8_IVF2_LAYOUT_COALESCING_SIFT1M_2026_07_22.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), release profile; candidate arms serialized over the same generated files and 100 queries"
+date = "2026-07-22"
+version = "feat/rdstrat8-prc2-layout-proof rebased onto develop @ f21a60f5b (measured candidate)"
+notes = "Full TEXMEX SIFT1M (1,000,000 x 128d), first 100 official queries, supplied full-corpus GT. Retained 1 MiB combined arm: single cold baseline/treatment 33/30 GETs, 26,728,854/27,130,193 bytes, score 793.453/744.967, p50/p95 18,208/22,207 vs 17,182/22,817 us; single warm 24/19 GETs, 17,973,196/18,307,400 bytes, score 568.103/479.296. Four cold 75/65 GETs, 56,390,706/57,570,090 bytes, score 1777.692/1594.116, p50/p95 44,040/83,653 vs 47,074/61,607 us; four warm 62/44 GETs, 40,629,552/41,545,058 bytes, score 1434.537/1089.702. Recall is bit-identical per geometry; probe engaged; zero fallback. Region bytes are computed from the physical per-stage GET trace; durable query telemetry separately records IVF engagement/fallback. Candidate gates remain default OFF. Indicative dev-machine run, not an SLA."
+
+[[claims]]
 id = "object_economy_cpu_cost"
 claim = "Object-economy vector route building-block CPU costs (100/1K/10K/100K records) non-regression baseline"
 metric = "cpu_cost_ms"
