@@ -81,6 +81,10 @@ pub use proximadb_observability_engine::trace_envelope;
 /// observer that spools each per-query snapshot to local JSONL+zstd segments (S1;
 /// object-store dispatch is S2). Billing stays untouched/always-on (ADR-027).
 pub mod io_trace_sink;
+/// TD-TRACE-2 S4 — Iceberg-managed Parquet warehouse: an async compactor that
+/// projects durable io_trace envelopes into a star schema (`trace_header` + modality
+/// satellites), committed through Iceberg with a source-retirement watermark.
+pub mod io_trace_warehouse;
 /// Metering event builder — converts SearchPlanTrace → operator metering
 /// event JSON shape so the data plane and operator pipelines can't drift.
 pub use proximadb_observability_engine::metering_event;
