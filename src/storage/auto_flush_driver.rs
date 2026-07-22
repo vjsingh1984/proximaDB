@@ -20,9 +20,10 @@
 //! uses (de-risked by TD-165 cold-read recall); the live insert→flush→search
 //! round-trip is the acceptance check.
 //!
-//! Spawned once from `StorageEngine::start()` and ONLY when a periodic trigger is
-//! armed (`policy.needs_scheduler()` — time or capacity budget set). With default
-//! config (size-only, both disabled) this is a no-op: no task, no wakeups.
+//! Spawned once from `StorageEngine::start()` when a periodic trigger is armed
+//! (`policy.needs_scheduler()` — time or capacity budget set). The default config arms
+//! the 300s time floor (ADR-069 D2 RPO safety net), so the driver spawns by default;
+//! a config setting both `flush_interval_secs = 0` and `wal_max_bytes = 0` opts out.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -56,8 +57,9 @@ pub struct AutoFlushDriver {
 }
 
 impl AutoFlushDriver {
-    /// Spawn the driver's background loop iff a periodic trigger is armed. No-op
-    /// (behavior-neutral) when only the size trigger is configured.
+    /// Spawn the driver's background loop iff a periodic trigger is armed. The default
+    /// config arms the 300s time floor so this spawns by default; setting both
+    /// `flush_interval_secs = 0` and `wal_max_bytes = 0` makes this a no-op.
     pub fn spawn(
         policy: FlushPolicy,
         axis_index_manager: Arc<AxisManager>,

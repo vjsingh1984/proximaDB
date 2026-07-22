@@ -1026,9 +1026,13 @@ pub struct WriteBufferUserConfig {
     pub global_manifest_url: Option<String>,
 
     /// ADR-069 D2 — time-based WAL flush interval (seconds); 0 = disabled. The RPO
-    /// floor: bounds worst-case loss on volume loss to this interval for low-traffic
-    /// collections that never reach `memory_flush_size_bytes`.
-    #[serde(default)]
+    /// floor: bounds worst-case loss on permanent local-volume loss to this interval for
+    /// low-traffic collections that never reach the inline size trigger
+    /// (`memory_flush_size_bytes`). With `sync_mode = "PerBatch"` (default) acknowledged
+    /// writes are fsync'd, so process-kill RPO is 0 and this only bounds volume-loss RPO.
+    /// Defaults to 300s so the inline size trigger (throughput) dominates and this stays
+    /// a coarse safety net (fewer/larger segments → fewer object-store PUTs).
+    #[serde(default = "default_flush_interval_secs")]
     pub flush_interval_secs: u64,
     /// ADR-069 D6 — per-collection WAL size budget (bytes) for the capacity flush +
     /// backpressure watermarks; 0 = disabled.
@@ -1052,6 +1056,13 @@ fn default_critical_watermark_pct() -> f64 {
     0.95
 }
 
+/// Serde default for [`WriteBufferUserConfig::flush_interval_secs`] (ADR-069 D2). The
+/// RPO floor — coarse on purpose so the inline size trigger dominates throughput and this
+/// only bounds volume-loss RPO for trickle workloads. See the field doc for rationale.
+fn default_flush_interval_secs() -> u64 {
+    300
+}
+
 impl Default for WriteBufferUserConfig {
     fn default() -> Self {
         Self {
@@ -1063,8 +1074,9 @@ impl Default for WriteBufferUserConfig {
             write_buffer_directory: "./data/write_buffer".to_string(),
             enable_wal: true,
             global_manifest_url: None,
-            // ADR-069 tiered-flush knobs — disabled by default (behavior-neutral).
-            flush_interval_secs: 0,
+            // ADR-069 D2: time floor defaults to 300s (RPO safety net; the inline
+            // size trigger handles throughput). wal_max_bytes stays 0 → S4 backpressure OFF.
+            flush_interval_secs: default_flush_interval_secs(),
             wal_max_bytes: 0,
             high_watermark_pct: default_high_watermark_pct(),
             critical_watermark_pct: default_critical_watermark_pct(),

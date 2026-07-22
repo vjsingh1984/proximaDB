@@ -105,10 +105,30 @@ pub use geo::{
 
 // Placeholder index structures for compilation
 use anyhow::Result;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::core::VectorId;
 use proximadb_records::ProximaRecord;
+
+/// Global concrete `AxisManager` handle, set once at storage-engine init
+/// (`StorageEngine::start`, alongside `set_sst_axis_manager`). The WAL-layer inline
+/// flush trigger resolves it here (mirroring `AutoFlushDriver`'s field) so an inline
+/// size-triggered flush can clear the in-memory AXIS projection exactly like the
+/// periodic/shutdown paths — preventing duplicate results for collections that use AXIS.
+static GLOBAL_AXIS_MANAGER: OnceLock<Arc<AxisManager>> = OnceLock::new();
+
+/// Set the global concrete `AxisManager` (once, at engine start). Idempotent: a second
+/// call is a no-op (the first wins), matching `OnceLock` semantics.
+pub fn set_global_axis_manager(manager: Arc<AxisManager>) {
+    let _ = GLOBAL_AXIS_MANAGER.set(manager);
+}
+
+/// Get the global concrete `AxisManager` if the engine has started. `None` before init
+/// — acceptable for the inline flush trigger, which then flushes without clearing the
+/// AXIS projection (same as if the manager were absent; the periodic driver clears it).
+pub fn get_global_axis_manager() -> Option<Arc<AxisManager>> {
+    GLOBAL_AXIS_MANAGER.get().cloned()
+}
 
 /// Global ID Index for cross-collection vector tracking
 ///

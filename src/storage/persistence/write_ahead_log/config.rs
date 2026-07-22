@@ -157,9 +157,11 @@ impl Default for WalPerformanceConfig {
             enable_optimized_write_buffer_writer: Some(false), // Disabled by default for gradual rollout
             background_writer_threads: None, // Will use 2 by default in optimized writer
             write_buffer_batch_size: None,   // Will use 100 by default in optimized writer
-            // ADR-069 / TD-WAL-1 S1: config surface; triggers default DISABLED (0) — S2 (time)
-            // and S3 (capacity) activate them and set their live defaults. No behavior change here.
-            flush_interval_secs: 0,
+            // ADR-069 D2: time floor defaults to 300s (RPO safety net). The live server
+            // also derives this from WriteBufferUserConfig (toml) via to_engine_config();
+            // kept in sync here so programmatic WALConfig::default()/tests agree.
+            // wal_max_bytes stays 0 → S4 write-shedding admission control stays OFF.
+            flush_interval_secs: 300,
             wal_max_bytes: 0,
             high_watermark_pct: 0.80,
             critical_watermark_pct: 0.95,
@@ -913,10 +915,12 @@ mod tests {
     }
 
     #[test]
-    fn wal_performance_defaults_disable_flush_triggers() {
-        // ADR-069 / TD-WAL-1 S1: new flush triggers ship DISABLED so S1 is behavior-neutral.
+    fn wal_performance_defaults_arm_time_trigger() {
+        // ADR-069 D2: the 300s time floor is armed by default (RPO safety net) so the
+        // auto-flush driver spawns and segments materialize while the server runs.
+        // wal_max_bytes stays 0 → S4 capacity/backpressure trigger stays OFF.
         let p = WalPerformanceConfig::default();
-        assert_eq!(p.flush_interval_secs, 0, "time-based flush off by default");
+        assert_eq!(p.flush_interval_secs, 300, "time floor armed by default");
         assert_eq!(p.wal_max_bytes, 0, "capacity budget off by default");
         assert_eq!(p.high_watermark_pct, 0.80);
         assert_eq!(p.critical_watermark_pct, 0.95);
@@ -925,9 +929,10 @@ mod tests {
     #[test]
     fn wal_storage_config_overrides_flush_triggers() {
         use crate::core::config::WalStorageConfig;
-        // Absent overrides (None) leave the runtime performance defaults intact.
+        // Absent overrides (None) leave the runtime performance defaults intact
+        // (the 300s time floor — ADR-069 D2).
         let base = WALConfig::from(&WalStorageConfig::default());
-        assert_eq!(base.performance.flush_interval_secs, 0);
+        assert_eq!(base.performance.flush_interval_secs, 300);
         assert_eq!(base.performance.wal_max_bytes, 0);
         assert_eq!(base.performance.high_watermark_pct, 0.80);
         assert_eq!(base.performance.critical_watermark_pct, 0.95);
