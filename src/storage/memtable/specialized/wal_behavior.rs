@@ -65,8 +65,9 @@ impl WALVectorBatch {
     /// Two consumers depend on a non-zero value: the wal_behavior
     /// per-collection backpressure check and the auto-flush driver's
     /// size/capacity triggers — a batch constructed with `total_size_bytes: 0`
-    /// silently disables BOTH. (Dedup follow-up: point the BulkWriteRouter
-    /// copy of this math here.)
+    /// silently disables BOTH. This is the **single owner** of the batch byte
+    /// math (TD-WAL-2 V1): `BulkWriteRouter::estimate_record_batch_size`
+    /// delegates here rather than keeping its own (previously fp32-only) copy.
     pub fn estimate_records_size(records: &[ProximaRecord]) -> usize {
         const PROPERTY_OVERHEAD_PER_RECORD: usize = 256;
         const ID_OVERHEAD_PER_RECORD: usize = 64;
