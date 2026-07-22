@@ -943,6 +943,33 @@ fn record_probe_trace(cells_total: u64, cells_probed: u64, probed_rows: u64, fet
     }
 }
 
+/// Record a coarse-probe outcome to BOTH durable surfaces (TD-RDSTRAT-8):
+/// the per-query io_trace → warehouse `VectorAnnPayload` (per-tenant, durable)
+/// and the aggregate Prometheus operator view. Call whenever the probe engages
+/// or armed-but-missed falls back to the whole region scan.
+fn record_ivf_probe_durable(
+    cells_total: u64,
+    cells_probed: u64,
+    probed_rows: u64,
+    fetch_rounds: u64,
+    whole_region_fallback: bool,
+) {
+    crate::observability::io_trace::record_ivf_coarse_probe(
+        cells_total,
+        cells_probed,
+        probed_rows,
+        fetch_rounds,
+        whole_region_fallback,
+    );
+    crate::storage::engines::sst::metrics::record_ivf_coarse_probe(
+        cells_total,
+        cells_probed,
+        probed_rows,
+        fetch_rounds,
+        whole_region_fallback,
+    );
+}
+
 /// Drain the recorded coarse-probe counters (empty when trace off / no probe).
 pub fn drain_probe_trace() -> Vec<(u64, u64, u64, u64)> {
     PROBE_TRACE
@@ -1177,10 +1204,10 @@ pub async fn rabitq_search_segment_coalesced(
     //    nprobe nearest cells (whole Region A never fetched); else the
     //    single-level whole-region scan (cold: 1 GET; hot: 0 — Arc clone). Any
     //    probe miss falls through, fail-safe, to the whole-region path.
-    let probe = if header.layout_version == SEG_LAYOUT_VERSION_TWO_LEVEL
+    let probe_armed = header.layout_version == SEG_LAYOUT_VERSION_TWO_LEVEL
         && header.a0_len > 0
-        && coarse_probe_enabled()
-    {
+        && coarse_probe_enabled();
+    let probe = if probe_armed {
         coarse_probe_survivors(fs, path, &header, query, metric, k, trace_on)
             .await
             .ok()
@@ -1192,8 +1219,25 @@ pub async fn rabitq_search_segment_coalesced(
         if trace_on {
             record_probe_trace(r.cells_total, r.cells_probed, r.probed_rows, r.fetch_rounds);
         }
+        // TD-RDSTRAT-8: durable per-query probe outcome → warehouse `VectorAnnPayload`
+        // (always-on when an io_trace scope is active; no-ops otherwise). The dominant
+        // cloud cost term is GET round-trips — recording the probe's cut per query is
+        // what makes nprobe/spill tuning evidence-led ("trace before you tune").
+        record_ivf_probe_durable(
+            r.cells_total,
+            r.cells_probed,
+            r.probed_rows,
+            r.fetch_rounds,
+            false,
+        );
         (r.survivors.clone(), None)
     } else {
+        // Armed probe that missed → whole-Region-A fallback (the GET budget the probe
+        // exists to avoid). Record the miss so it is observable; a non-v3 / probe-off
+        // read records nothing (no IVF occurred).
+        if probe_armed {
+            record_ivf_probe_durable(0, 0, 0, 0, true);
+        }
         let region_bytes: Arc<[u8]> = if let Some(inv) = cached.as_ref() {
             inv.region_bytes.clone()
         } else {
