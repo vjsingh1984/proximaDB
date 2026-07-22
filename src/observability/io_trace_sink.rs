@@ -882,4 +882,76 @@ mod tests {
         assert_eq!(trace_files_recursive(first.path()).len(), 1);
         assert!(trace_files_recursive(second.path()).is_empty());
     }
+
+    /// ADR-066 §6 #3 — the trace sink's *query-path* cost is bounded and CPU-only.
+    ///
+    /// The sink's observer closure (the only thing that runs synchronously on the
+    /// query path) does: `TraceEnvelope::from_snapshot` + `serde_json::to_vec` + a
+    /// bounded spool `push`. fsync / object-store upload / zstd compression all
+    /// happen in the *background* `Worker` (off the query path). This micro-bench
+    /// measures the closure's components over N representative envelopes and prints
+    /// p50/p95/p99 + bytes/query for the evidence ledger — the sink's incremental
+    /// per-query cost. Run:
+    ///   `cargo nextest run --lib observer_closure_hot_path_is_bounded -- --ignored --nocapture`
+    #[test]
+    #[ignore = "ADR-066 hot-path measurement — run with --ignored --nocapture"]
+    fn observer_closure_hot_path_is_bounded() {
+        // Representative vector-ANN snapshot, built via the public API to avoid
+        // struct-literal drift: 12 GETs, ~1.2 MB read, 8 range-gets, a centroid
+        // prune, two compute engines — the shape that lands in the warehouse.
+        let trace = io_trace::IoTrace::new();
+        for _ in 0..12 {
+            trace.record_op(io_trace::IoOp::Get);
+        }
+        trace.record_bytes_read(1_200_000);
+        trace.record_range_gets(8);
+        trace.record_centroid_prune(64, 40);
+        trace.record_compute_ms("volcano", 3);
+        trace.record_compute_ms("datafusion", 17);
+        let snap = trace.snapshot();
+
+        // The sink's spool (large cap ⇒ no drops during the bench).
+        let spool: Arc<Mutex<Spool>> = Arc::new(Mutex::new(Spool::new(64 * 1024 * 1024)));
+
+        const N: usize = 20_000;
+        let mut samples_ns: Vec<u64> = Vec::with_capacity(N);
+        let mut last_envelope_bytes = 0usize;
+        for i in 0..N as u64 {
+            let t0 = std::time::Instant::now();
+            let envelope = TraceEnvelope::from_snapshot(
+                &snap,
+                Some("tenant-acme"),
+                "writer-bench",
+                i,
+                1_700_000_000_000,
+            );
+            let mut bytes = serde_json::to_vec(&envelope).expect("serialize envelope");
+            bytes.push(b'\n');
+            last_envelope_bytes = bytes.len();
+            spool
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(SpoolLine { bytes, sequence: i });
+            samples_ns.push(t0.elapsed().as_nanos() as u64);
+        }
+        samples_ns.sort_unstable();
+        let p50 = samples_ns[N / 2];
+        let p95 = samples_ns[(N * 95) / 100];
+        let p99 = samples_ns[(N * 99) / 100];
+        eprintln!(
+            "ADR-066 hot-path: N={N} observer-closure p50={p50}ns p95={p95}ns p99={p99}ns \
+             envelope_bytes={last_envelope_bytes} (CPU-only: from_snapshot + serde_json + \
+             spool_push; no fsync/network/compress on the query path — those are the \
+             background worker)"
+        );
+        // Sanity guard (NOT a perf SLA): the sink must not add pathological per-query
+        // overhead. 100µs is well above any representative envelope's serialize+push
+        // and leaves headroom for a loaded CI runner; the evidence doc records the
+        // actual p50/p95 measured on a quiet machine.
+        assert!(
+            p95 < 100_000,
+            "sink observer p95 {p95}ns unexpectedly high — investigate"
+        );
+        assert!(last_envelope_bytes > 0);
+    }
 }

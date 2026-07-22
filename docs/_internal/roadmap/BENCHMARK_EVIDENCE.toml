@@ -30,6 +30,23 @@ header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_202
 # ---------------------------------------------------------------------------
 
 [[claims]]
+id = "io_trace_sink_hotpath_p95"
+claim = "ADR-066 trace-sink observer closure (the only synchronous query-path work: TraceEnvelope::from_snapshot + serde_json::to_vec + bounded Spool::push) adds a bounded ~16 us p95 / ~14 us p50 per query and is CPU-only — no fsync, network upload, or zstd compression on the query path (those run in the background Worker). Satisfies ADR-066 §6 acceptance #3 (the Proposed → Accepted blocker)."
+metric = "per-query observer-closure latency p50/p95/p99 + envelope bytes"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-066-structured-io-trace-etl-sink.adoc",
+  "docs/10-quality/td/TD-TRACE-2-structured-io-trace-etl-sink.adoc",
+]
+bench_source = "src/observability/io_trace_sink.rs"
+bench_command = "cargo nextest run --lib observer_closure_hot_path_is_bounded --run-ignored only --nocapture"
+artifact = "docs/12-design/runtime-evidence/IO_TRACE_SINK_HOT_PATH_P50_P95_2026_07_22.md"
+hardware = "Local macOS arm64 (Apple Silicon), serialized run, no competing workload"
+date = "2026-07-22"
+version = "feat/adr066-hotpath-evidence off develop @ f5246f5d2"
+notes = "N=20000 representative vector-ANN envelopes (585 bytes each): p50=13959ns p95=15959ns p99=58666ns. Closure sanity guard p95<100us holds with ~6x headroom. Micro-bench isolates the sink's INCREMENTAL cost (the snapshot is taken unconditionally at instrument() exit, sink ON or OFF); a full-query-path latency distribution OFF-vs-ON is the follow-up strengthening. Indicative dev-machine run, not an SLA."
+
+[[claims]]
 id = "object_economy_cpu_cost"
 claim = "Object-economy vector route building-block CPU costs (100/1K/10K/100K records) non-regression baseline"
 metric = "cpu_cost_ms"
