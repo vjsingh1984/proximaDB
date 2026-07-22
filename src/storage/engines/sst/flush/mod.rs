@@ -1424,6 +1424,10 @@ mod tests {
                 dimension: 4,
                 distance_metric: Some(DistanceMetric::Cosine as i32),
                 storage_engine: Some(StorageEngine::Sst as i32),
+                // This test asserts flush indexes into AXIS, so opt into the legacy
+                // .sst + AXIS path: index_flushed_into_axis builds AXIS only when
+                // index_configs is set OR pax_vector_format:off (the per-collection gate).
+                tags: vec!["pax_vector_format:off".to_string()],
                 ..Default::default()
             }),
             storage_assignment: Some(StorageAssignment {
