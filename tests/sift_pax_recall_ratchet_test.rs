@@ -727,3 +727,255 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
         );
     }
 }
+
+/// TD-RDSTRAT-8 PR-B SIFT-scale recall/GET gate for the two-level IVF coarse
+/// probe (the default-on ratchet). Mirrors `sift_coalesced_rabitq_scan_rerank_eval`
+/// but drives the v3 layout through the **production compaction trigger**
+/// (`workload_profile:append` + `l0_threshold:2` ⇒ compaction runs inline on the
+/// 2nd flush, the same path `sst_ivf2_compaction_route_proof_test` proves), then
+/// compares the coarse probe (ON) to the whole-region scan (OFF) on the SAME v3
+/// segment: the probe must hold recall while cutting range-GETs (the dominant
+/// cloud cost term).
+///
+/// Env (in addition to the coalesced harness's):
+///   PROXIMADB_SIFT_IVF_K          coarse cells (default 64); nprobe defaults to k_c/4
+///   PROXIMADB_SIFT_IVF2_RECALL_DROP max recall drop vs baseline (default 0.10)
+///
+/// Run: `PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 \
+///      cargo test --release --test sift_pax_recall_ratchet_test \
+///      sift_ivf2_coarse_probe_recall_ratchet -- --ignored --nocapture`
+#[ignore = "SIFT eval — set PROXIMADB_SIFT_DATASET_DIR + run with --ignored"]
+#[tokio::test]
+async fn sift_ivf2_coarse_probe_recall_ratchet() {
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
+        std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "1");
+        std::env::set_var("PROXIMADB_COUNT_FS_IO", "1");
+        // TD-RDSTRAT-8: arm the v3 compaction writer (the probe reader is toggled
+        // per-phase below). IVF_K sets the coarse-cell count.
+        std::env::set_var("PROXIMADB_IVF2", "1");
+        std::env::set_var(
+            "PROXIMADB_IVF_K",
+            &std::env::var("PROXIMADB_SIFT_IVF_K").unwrap_or_else(|_| "64".to_string()),
+        );
+        std::env::set_var("PROXIMADB_TRACE_GETS", "1");
+    }
+
+    let base_path = match dataset_path("sift_base.fvecs") {
+        Some(p) if p.exists() => p,
+        _ => {
+            eprintln!("skip: PROXIMADB_SIFT_DATASET_DIR unset/missing — IVF2 gate needs SIFT");
+            return;
+        }
+    };
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let subset_n: usize = std::env::var("PROXIMADB_SIFT_N")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(100_000);
+    let max_queries: usize = std::env::var("PROXIMADB_SIFT_QUERIES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(100.min(DEFAULT_QUERIES));
+    let recall_drop: f64 = std::env::var("PROXIMADB_SIFT_IVF2_RECALL_DROP")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|f| *f > 0.0)
+        .unwrap_or(0.10);
+
+    let base = read_vec_records_f32(&base_path, Some(subset_n)).expect("read sift_base.fvecs");
+    let n = base.len();
+    assert!(n >= TOP_K, "need at least {TOP_K} base vectors, got {n}");
+    let query_path = dataset_path("sift_query.fvecs");
+    let queries: Vec<Vec<f32>> = match query_path.as_ref().filter(|p| p.exists()) {
+        Some(p) => read_vec_records_f32(p, Some(max_queries)).expect("read sift_query.fvecs"),
+        None => base.iter().take(max_queries.min(n)).cloned().collect(),
+    };
+    let qcount = queries.len();
+    // Brute-force ground truth over the inserted subset (subset_n < 1M ⇒ no
+    // provided GT applies). Rayon-parallelised like the coalesced harness.
+    let ground_truth: Vec<std::collections::HashSet<String>> = queries
+        .iter()
+        .map(|q| {
+            brute_force_topk(&base, q, TOP_K)
+                .into_iter()
+                .take(TOP_K)
+                .collect()
+        })
+        .collect();
+
+    let temp_dir = TempDir::new().unwrap();
+    // Armed AppendBulk + L0 threshold 2: the 2nd flush crosses L0 >= 2 and runs
+    // compaction INLINE (the production v3 trigger — sst_ivf2_compaction_route_proof).
+    let collection = Collection {
+        id: "sift_ivf2_gate".to_string(),
+        config: Some(CollectionConfig {
+            name: "sift_ivf2_gate".to_string(),
+            dimension: DIMENSION as u32,
+            distance_metric: Some(DistanceMetric::Euclidean as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
+            tags: vec!["workload_profile:append".into(), "l0_threshold:2".into()],
+            ..Default::default()
+        }),
+        storage_assignment: Some(StorageAssignment {
+            base_location: temp_dir.path().to_str().unwrap().to_string(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let engine = SstEngine::new().await.unwrap();
+
+    // Flush the base in TWO batches ⇒ L0 crosses 2 ⇒ inline compaction ⇒ v3.
+    let half = n / 2;
+    let batch_a: Vec<VectorRecord> = base[..half]
+        .iter()
+        .enumerate()
+        .map(|(i, v)| vector_record(i as u32, v.clone()))
+        .collect();
+    let batch_b: Vec<VectorRecord> = base[half..]
+        .iter()
+        .enumerate()
+        .map(|(i, v)| vector_record((half + i) as u32, v.clone()))
+        .collect();
+    flush_batch(&engine, &collection, batch_a).await;
+    let params_b = FlushParameters {
+        collection_id: Some(collection.id.clone()),
+        vector_records: batch_b.into_iter().map(Into::into).collect(),
+        force: true,
+        synchronous: true,
+        collection_config: Some(collection.clone()),
+        ..Default::default()
+    };
+    let second = engine.do_flush(&params_b).await.expect("second flush");
+    assert!(second.success, "second flush must succeed");
+    assert!(
+        second
+            .engine_metrics
+            .get("compaction_ran")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        "armed compaction must run inline on the 2nd flush (compaction_error: {:?})",
+        second.compaction_error
+    );
+
+    // Measure recall + range-GETs for a query loop. `probe_on` toggles the
+    // coarse-probe reader; both phases search the SAME v3 segment.
+    async fn measure(
+        engine: &SstEngine,
+        collection: &Collection,
+        queries: &[Vec<f32>],
+        ground_truth: &[std::collections::HashSet<String>],
+        probe_on: bool,
+    ) -> (f64, u64, u64, usize) {
+        unsafe {
+            if probe_on {
+                std::env::set_var("PROXIMADB_IVF2_PROBE", "1");
+            } else {
+                std::env::remove_var("PROXIMADB_IVF2_PROBE");
+            }
+        }
+        let _ = proximadb::storage::engines::sst::segment_format::drain_get_trace();
+        let _ = proximadb::storage::engines::sst::segment_format::drain_probe_trace();
+        let (recall, measured, snap, _us) = proximadb::observability::io_trace::scope(async {
+            let mut recall_sum = 0.0f64;
+            let mut measured = 0usize;
+            for (qi, query) in queries.iter().enumerate() {
+                let got = search_topk(engine, collection, query.clone()).await;
+                if got.is_empty() {
+                    continue;
+                }
+                let got_ids: std::collections::HashSet<String> =
+                    got.into_iter().take(TOP_K).collect();
+                recall_sum += got_ids.intersection(&ground_truth[qi]).count() as f64 / TOP_K as f64;
+                measured += 1;
+            }
+            let recall = if measured > 0 {
+                recall_sum / measured as f64
+            } else {
+                0.0
+            };
+            let snap =
+                proximadb::observability::io_trace::snapshot().expect("io_trace scope active");
+            (recall, measured, snap, Vec::<u64>::new())
+        })
+        .await;
+        let per_q_gets = if measured > 0 {
+            snap.range_gets / measured as u64
+        } else {
+            0
+        };
+        let per_q_bytes = if measured > 0 {
+            snap.bytes_read / measured as u64
+        } else {
+            0
+        };
+        (recall, per_q_gets, per_q_bytes, measured)
+    }
+
+    let (recall_base, gets_base, bytes_base, measured_base) =
+        measure(&engine, &collection, &queries, &ground_truth, false).await;
+    let (recall_probe, gets_probe, bytes_probe, measured_probe) =
+        measure(&engine, &collection, &queries, &ground_truth, true).await;
+    let probe_trace = proximadb::storage::engines::sst::segment_format::drain_probe_trace();
+
+    eprintln!(
+        "=== TD-RDSTRAT-8 IVF2 coarse probe (N={n}, {qcount} queries, top-{TOP_K}, IVF_K from env) ===\n  \
+         baseline (probe OFF): recall@{TOP_K}={recall_base:.4}, range_gets/q={gets_base}, bytes/q={bytes_base}\n  \
+         probe    (ON):        recall@{TOP_K}={recall_probe:.4}, range_gets/q={gets_probe}, bytes/q={bytes_probe}, \
+         probes_recorded={}",
+        probe_trace.len()
+    );
+    if !probe_trace.is_empty() {
+        let cells_total: u64 = probe_trace.iter().map(|t| t.0).sum();
+        let cells_probed: u64 = probe_trace.iter().map(|t| t.1).sum();
+        let fetch_rounds: u64 = probe_trace.iter().map(|t| t.3).sum();
+        eprintln!(
+            "  probe engagement: Σcells_total={cells_total} Σcells_probed={cells_probed} \
+             Σfetch_rounds={fetch_rounds} over {} queries",
+            probe_trace.len()
+        );
+    }
+
+    assert!(
+        measured_base > 0 && measured_probe > 0,
+        "no queries measured"
+    );
+    // 1. The probe engaged on the v3 segment (ranked the coarse cells, ranged
+    //    only nprobe of them). This is the PR-B reader-correctness gate.
+    assert!(
+        !probe_trace.is_empty(),
+        "PROXIMADB_IVF2_PROBE=1 must engage the coarse probe on the v3 segment"
+    );
+    // 2. Recall held vs the whole-region baseline (the meaningful PR-B claim —
+    //    robust to the absolute RaBitQ recall level the corpus/quantizer set).
+    assert!(
+        recall_probe >= recall_base - recall_drop,
+        "probe recall@{TOP_K} = {recall_probe:.4} dropped > {recall_drop} vs baseline {recall_base:.4}"
+    );
+    // 3. The probe reads a strict subset of Region-A bytes (it ranges only the
+    //    nprobe nearest cells, never the whole region). This is the probe's
+    //    bandwidth/GB-month win.
+    assert!(
+        bytes_probe < bytes_base,
+        "probe bytes/q = {bytes_probe} must read fewer than baseline {bytes_base}"
+    );
+    // NOTE (co-design finding, recorded not asserted): at this scale (N=100k,
+    // single-file) the coalesced whole-region baseline is ALREADY GET-optimal
+    // (~13 range-GETs/q — GETs grow ∝ N, ~9 at 100k / ~51 at 1M). The coarse
+    // probe FRAGMENTS Region-A into more, smaller ranged reads, so range_gets/q
+    // can be HIGHER with the probe even as bytes drop. GET round-trips are the
+    // dominant cloud cost term, so the probe's GET win manifests only at larger
+    // N (1M) where the baseline GET count is high enough to outweigh the
+    // fragmentation. A 1M-scale GET-cut gate is the follow-up; this gate proves
+    // reader correctness (recall held + probe engaged + bytes cut), not that
+    // default-on is justified at 100k — that decision waits for the 1M number.
+    unsafe {
+        std::env::remove_var("PROXIMADB_IVF2");
+        std::env::remove_var("PROXIMADB_IVF2_PROBE");
+        std::env::remove_var("PROXIMADB_TRACE_GETS");
+    }
+}

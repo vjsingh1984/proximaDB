@@ -47,6 +47,22 @@ version = "feat/adr066-hotpath-evidence off develop @ f5246f5d2"
 notes = "N=20000 representative vector-ANN envelopes (585 bytes each): p50=13959ns p95=15959ns p99=58666ns. Closure sanity guard p95<100us holds with ~6x headroom. Micro-bench isolates the sink's INCREMENTAL cost (the snapshot is taken unconditionally at instrument() exit, sink ON or OFF); a full-query-path latency distribution OFF-vs-ON is the follow-up strengthening. Indicative dev-machine run, not an SLA."
 
 [[claims]]
+id = "rdstrat8_sift_ivf2_coarse_probe"
+claim = "TD-RDSTRAT-8 PR-B two-level IVF coarse probe (default-OFF PROXIMADB_IVF2_PROBE) on a v3 segment built by the production compaction trigger HOLDS recall and CUTS bytes, but does NOT cut GETs at N=100k. SIFT N=100000 (100 queries, top-10, Euclidean, brute-force GT, IVF_K=64, nprobe=16): baseline (probe OFF, whole-region) recall@10=0.9820, range_gets/q=13, bytes/q=6,258,456; probe (ON) recall@10=0.9800 (drop 0.002 — recall held), bytes/q=3,820,034 (-39%), range_gets/q=22 (UP — the probe fragments Region-A into more, smaller ranged reads; the coalesced baseline is already GET-optimal at this scale). Probe engaged on 100/100 queries (Σcells_total=6400 Σcells_probed=1600 Σfetch_rounds=799). Decision: default-on NOT justified at 100k (GETs, the dominant cloud cost, went up); a 1M-scale GET-cut gate is the follow-up. The probe stays default-OFF."
+metric = "recall@10 + range_gets_per_query + bytes_read_per_query + probe engagement"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_ivf2_coarse_probe_recall_ratchet -- --ignored --nocapture"
+artifact = "docs/_internal/status/RDSTRAT8_SIFT_IVF2_COARSE_PROBE_2026_07_22.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), serialized release run, no competing workload"
+date = "2026-07-22"
+version = "feat/rdstrat8-sift-ivf2-gate off develop @ 1a8404b62"
+notes = "v3 segment built via the production compaction trigger (workload_profile:append + l0_threshold:2 -> inline compaction on 2nd flush under PROXIMADB_IVF2=1), not a direct write_pax_segment_compacted call. Co-design finding: the coarse probe is recall-neutral + bytes-positive (-39%) but GET-negative at 100k single-file because GETs grow ~proportional to N (~9 at 100k, ~51 at 1M per coalesced_rabitq_noivf_decisive_sift1m) and the coalesced whole-region baseline is already GET-optimal here. The 1M-scale GET-cut evidence is the gated follow-up before default-on. Indicative dev-machine run, not an SLA."
+
+[[claims]]
 id = "object_economy_cpu_cost"
 claim = "Object-economy vector route building-block CPU costs (100/1K/10K/100K records) non-regression baseline"
 metric = "cpu_cost_ms"
