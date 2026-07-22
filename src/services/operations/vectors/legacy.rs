@@ -3616,10 +3616,15 @@ impl VectorOperationsService {
             }
         };
 
-        // Stage 3: Storage engine search - ONLY if we need more results
-        // Skip if WAL + AXIS already have enough high-quality results
+        // Stage 3: Storage engine search - ONLY if we need more results.
+        // Skip when WAL + AXIS already cover the candidate pool -- but that's only true
+        // when the collection USES AXIS (AXIS indexes the flushed vectors). For co-design
+        // collections (no index_configs) the flushed data lives ONLY in storage segments,
+        // so WAL alone is insufficient and storage must always be searched; otherwise the
+        // entire flushed set is never seen and recall collapses to the tiny WAL window.
         let total_indexed_results = wal_optimized_results.len() + axis_optimized_results.len();
-        let storage_results = if total_indexed_results >= candidates {
+        let storage_results = if collection_has_axis_indexes && total_indexed_results >= candidates
+        {
             debug!(
                 "Stage 3: Skipping storage search (have {} results from WAL+AXIS)",
                 total_indexed_results

@@ -1,0 +1,41 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-RECALL-1: Co-design PAX scan reads the segments but returns wrong distances → near-zero recall (the remaining SIFT recall blocker)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Proposed.** The dominant remaining recall blocker after the flush fixes (#1145/#1150/#1155, all merged) and the Stage-3 skip fix. Proven by io-trace (consumption metrics): the reader IS reading the segment data (~536 MB / 578 ranged GETs over 5 queries), yet recall@10 = 0.35%. So this is a decode/distance/coarse-probe defect, not a read or alignment defect.
+| Priority | **P1** — this is THE blocker for usable recall on co-design (no-index_configs) collections, which is the cost-optimized default route. Without it, the co-design PAX scan returns near-random results.
+| Component | `src/storage/engines/sst/object_economy_directory.rs` (`load_directory_for`, the VectorObjectEconomy route), `src/storage/engines/sst/segment_format.rs` (`PaxSegmentScanner`, RaBitQ/SQ8 region decode, `record_ivf_coarse_probe`), `src/storage/engines/sst/search/` (the scan + distance computation); `crates/storage/proximadb-block-format` (RaBitQ dequantize).
+| Evidence | SIFT 1M, co-design collection (no `index_configs`, euclidean, default RaBitQ segments). After the Stage-3 skip fix, the explain shows `merge_input_directory_records` scaling with `candidates` (storage contributes; was 10, now 100 at top_k=100) and `wal_delta_records_scanned=0` (all flushed). Recall@10 stays ~0.35% at BOTH top_k=10 and top_k=100 (so not an over-fetch issue). io-trace (`proximadb_object_store_bytes_read_total`=536 MB, `gets_total`=578 over 5 queries ≈ 107 MB/query ≈ 1/3 of the dataset) proves the reader fetches real segment data. Writer/reader alignment confirmed correct (self-describing: `SEGMENT_MAGIC` + region decode; `PROXIMADB_PAX_VECTOR_QUANT` is writer-side, default RaBitQ; the reader detects from the segment). So: reads the right bytes, produces wrong distances.
+|===
+
+== The finding
+
+The co-design PAX scan (the `vector_object_economy` route that #1145 sends no-`index_configs` collections down) reads the RaBitQ segments but returns non-nearest vectors:
+
+* **Reads the data** (io-trace: 536 MB / 578 GETs) — not a "not reading" defect.
+* **Writer/reader aligned** (self-describing RaBitQ) — not a format-mismatch defect.
+* **Returns wrong top-k** — recall@10 ≈ 0.35% at both top_k=10 and 100, so it is not candidate-budget starved.
+* ~107 MB read per query (≈1/3 of the dataset) is consistent with an A0 coarse-probe selecting a subset of blocks — *possibly the wrong subset*, or the RaBitQ dequantize/distance is off.
+
+== Suspects (to confirm by instrumentation, not hypothesis)
+
+1. **RaBitQ dequantize** returns garbage — dump a decoded vector vs its f32 original for a known segment; if they disagree, the decoder (or the encoder that wrote the codes) is wrong.
+2. **A0 coarse-probe selects the wrong blocks** — the IVF coarse-probe (`record_ivf_coarse_probe` at `segment_format.rs:1033`) picks blocks whose centroids are far from the query, so the true neighbors' blocks are never fetched. Check whether the probe-selected blocks contain the groundtruth neighbors.
+3. **Distance metric mismatch** — the collection is euclidean; confirm the scan computes euclidean (not cosine) on the dequantized vectors.
+
+== Direction
+
+Instrument-first (the lesson from this investigation — the io-trace/consumption metrics are the working channel):
+
+* Add a debug dump: for one query, log the probe-selected block ids + the fetched vectors' ids vs the groundtruth neighbor ids → localizes wrong-block vs wrong-distance.
+* Verify RaBitQ round-trip on a real segment (the `pax_cascade_prod_search_test` harness does this at small scale and passes at recall ≥ 0.90 — so compare its collection/ingest/flush/search setup to the live server's; the divergence is the bug). The proven path sets `PROXIMADB_PAX_VECTOR_SEGMENTS=1` + `PROXIMADB_PAX_VECTOR_QUANT=rabitq` and calls the SST engine directly; the live REST path may diverge in route/config.
+
+== Verification
+- SIFT 1M co-design collection over REST: recall@10 ≥ 0.90 (match `pax_cascade_prod_search_test`).
+- A co-design-PAX-scan e2e test (no `index_configs` collection, ingest + flush + search, assert recall) — the test gap that let this ship (the existing ratchets use `pax_vector_format:off` / direct-engine, not the live co-design REST route).
+
+== Related
+The flush fixes that preceded this: link:TD-WAL-3-flush-mechanism-consolidation.adoc[TD-WAL-3]; the recall-investigation notes in the agent memory (`project_recall_search_path_blocker_2026_07_22`). The Stage-3 skip fix (this PR) is a prerequisite — without it, storage never runs at all.
