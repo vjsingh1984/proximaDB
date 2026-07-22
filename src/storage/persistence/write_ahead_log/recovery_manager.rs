@@ -429,7 +429,34 @@ impl RecoveryManager {
                 collection_id,
             )
             .await;
-        let listed = disk_manager.list_collection_files(collection_id).await?;
+
+        // Issue #1125: the write path roots each collection's WAL under its
+        // catalog-assigned base_location (load-balanced across the configured
+        // storage locations), while this recovery manager's disk_manager is
+        // rooted at the single configured write-buffer directory. Listing only
+        // that one base silently missed fsync'd, manifest-Active WAL objects
+        // (restart data loss: "0 vectors from 0 files" with the .bcwal on disk).
+        // List every candidate base — the catalog assignment, every distinct
+        // manifest storage_url, and the configured base — and union the results.
+        let catalog_base =
+            crate::storage::persistence::write_ahead_log::list_collections_from_catalog()
+                .await
+                .into_iter()
+                .find(|collection| collection.id == collection_id)
+                .and_then(|collection| collection.storage_assignment)
+                .map(|assignment| assignment.base_location);
+        let manifest_bases: Vec<String> = manifest_entries
+            .iter()
+            .map(|entry| entry.storage_url.clone())
+            .collect();
+        let candidate_bases = Self::wal_candidate_bases(
+            catalog_base.as_deref(),
+            &manifest_bases,
+            disk_manager.get_base_wal_url(),
+        );
+        let listed =
+            Self::list_wal_files_across_bases(&disk_manager, &candidate_bases, collection_id)
+                .await?;
         if listed.is_empty() {
             return Ok((0, 0));
         }
@@ -654,6 +681,65 @@ impl RecoveryManager {
             });
         }
         Ok((vectors.len() as u64, replay.len() as u64))
+    }
+
+    /// Issue #1125: assemble the ordered, deduplicated list of WAL base URLs a
+    /// collection's files may live under. Priority: the catalog-assigned
+    /// base_location (what the write path uses), then every distinct manifest
+    /// storage_url (where files were actually recorded), then the configured
+    /// primary base (this recovery manager's disk_manager root). Trailing
+    /// slashes are normalized so `file:///x/` and `file:///x` dedupe.
+    fn wal_candidate_bases(
+        catalog_base: Option<&str>,
+        manifest_bases: &[String],
+        primary_base: &str,
+    ) -> Vec<String> {
+        let mut bases: Vec<String> = Vec::new();
+        let push_base = |bases: &mut Vec<String>, base: &str| {
+            let normalized = base.trim_end_matches('/').to_string();
+            if !normalized.is_empty() && !bases.contains(&normalized) {
+                bases.push(normalized);
+            }
+        };
+        if let Some(base) = catalog_base {
+            push_base(&mut bases, base);
+        }
+        for base in manifest_bases {
+            push_base(&mut bases, base);
+        }
+        push_base(&mut bases, primary_base);
+        bases
+    }
+
+    /// Issue #1125: list a collection's WAL files across every candidate base,
+    /// unioned and deduplicated by file URL. Listing failures stay fail-closed
+    /// (`?`), preserving the TD-OBJSTORE-4 posture: an unlistable base aborts
+    /// recovery rather than silently dropping data.
+    async fn list_wal_files_across_bases(
+        disk_manager: &Arc<WriteAheadLogDiskManager>,
+        candidate_bases: &[String],
+        collection_id: &str,
+    ) -> Result<Vec<WalFileInfo>> {
+        let primary_base = disk_manager.get_base_wal_url().trim_end_matches('/');
+        let mut listed: Vec<WalFileInfo> = Vec::new();
+        let mut seen_file_urls: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for base in candidate_bases {
+            let base_manager = if base == primary_base {
+                disk_manager.clone()
+            } else {
+                Arc::new(WriteAheadLogDiskManager::new(
+                    disk_manager.filesystem_factory().clone(),
+                    base.clone(),
+                ))
+            };
+            for file in base_manager.list_collection_files(collection_id).await? {
+                if seen_file_urls.insert(file.file_url.clone()) {
+                    listed.push(file);
+                }
+            }
+        }
+        Ok(listed)
     }
 
     /// Recover a single WAL file (public API)
@@ -1267,6 +1353,118 @@ mod tests {
             .expect("Failed to get stats");
         assert_eq!(stats.total_vectors_recovered, 3);
         assert_eq!(stats.total_files_recovered, 3);
+    }
+
+    /// Issue #1125 regression: candidate bases must union the catalog-assigned
+    /// base, every manifest storage_url, and the configured primary base —
+    /// deduplicated with trailing slashes normalized.
+    #[test]
+    fn wal_candidate_bases_unions_catalog_manifest_and_primary() {
+        let bases = RecoveryManager::wal_candidate_bases(
+            Some("file:///tmp/pdb/d2/"),
+            &[
+                "file:///tmp/pdb/d2".to_string(),
+                "file:///tmp/pdb/d3".to_string(),
+                String::new(),
+            ],
+            "file:///tmp/pdb/wal-primary",
+        );
+        assert_eq!(
+            bases,
+            vec![
+                "file:///tmp/pdb/d2".to_string(),
+                "file:///tmp/pdb/d3".to_string(),
+                "file:///tmp/pdb/wal-primary".to_string(),
+            ],
+            "catalog base first, manifest bases next, primary last; dedup + slash-normalized"
+        );
+
+        // No catalog / no manifest degrades to the primary base only (pre-#1125 behavior).
+        let primary_only =
+            RecoveryManager::wal_candidate_bases(None, &[], "file:///tmp/pdb/wal-primary");
+        assert_eq!(
+            primary_only,
+            vec!["file:///tmp/pdb/wal-primary".to_string()]
+        );
+    }
+
+    /// Issue #1125 regression: a WAL batch written under a NON-primary base
+    /// (the collection's assigned storage location — e.g. `d2` of a multi-disk
+    /// config) must be found by the cross-base listing. The single-base listing
+    /// this replaces returned zero files for exactly this layout, so an
+    /// acknowledged fsync'd batch was silently dropped on restart.
+    #[tokio::test]
+    async fn recovery_lists_wal_written_under_non_primary_base() {
+        let (primary_disk_manager, _flush_coordinator, _recovery_manager, primary_dir) =
+            create_test_managers().await;
+        let collection_id = "c1125";
+
+        // Simulate the write path: the collection's WAL lands under its
+        // assigned base_location (a different directory from the recovery
+        // manager's configured base).
+        let assigned_dir = TempDir::new().expect("Failed to create assigned dir");
+        let assigned_base = assigned_dir.path().to_str().unwrap().to_string();
+        let write_disk_manager = Arc::new(WriteAheadLogDiskManager::new(
+            primary_disk_manager.filesystem_factory().clone(),
+            assigned_base.clone(),
+        ));
+
+        use crate::storage::persistence::write_ahead_log::serialization::{
+            ProtocolBuffersSerializer, VectorBatchSerializer,
+        };
+        let serializer = ProtocolBuffersSerializer::new();
+        let vector = create_test_vector("r1125");
+        let data = serializer
+            .serialize_batch(std::slice::from_ref(&vector))
+            .expect("Failed to serialize");
+        write_disk_manager
+            .write_batch(
+                collection_id,
+                &BatchId::new(),
+                &data,
+                SerializationFormat::ProtocolBuffers,
+                1,
+            )
+            .await
+            .expect("Failed to write batch");
+
+        // Old behavior (primary base only): the batch is invisible.
+        let primary_only = RecoveryManager::list_wal_files_across_bases(
+            &primary_disk_manager,
+            &RecoveryManager::wal_candidate_bases(
+                None,
+                &[],
+                primary_disk_manager.get_base_wal_url(),
+            ),
+            collection_id,
+        )
+        .await
+        .expect("primary-only listing failed");
+        assert!(
+            primary_only.is_empty(),
+            "sanity: the batch does NOT live under the primary base"
+        );
+
+        // Fixed behavior: the assigned base (as the catalog/manifest would
+        // report it) is included, so the batch is found exactly once.
+        let unioned = RecoveryManager::list_wal_files_across_bases(
+            &primary_disk_manager,
+            &RecoveryManager::wal_candidate_bases(
+                Some(&assigned_base),
+                &[assigned_base.clone()], // manifest repeats it — must dedupe
+                primary_disk_manager.get_base_wal_url(),
+            ),
+            collection_id,
+        )
+        .await
+        .expect("cross-base listing failed");
+        assert_eq!(
+            unioned.len(),
+            1,
+            "the non-primary-base WAL batch must be listed exactly once (deduped)"
+        );
+        assert_eq!(unioned[0].collection_id, collection_id);
+        drop(primary_dir);
     }
 
     // Mock storage engine for testing

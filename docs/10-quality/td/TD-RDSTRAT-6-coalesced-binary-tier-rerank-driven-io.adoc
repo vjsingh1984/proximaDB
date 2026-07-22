@@ -6,10 +6,10 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Core implemented; point lookup + large-segment successor open (reconciled 2026-07-17).** Layout/read path #1019; adaptive-M/cache/IopsBudget cost control #1060; lossless scalar bytes #1064; ADR-065 Region-B SQ8 hoist + range cache #1069. Per-block OID Bloom remains open. Large-segment Region-A/B selective probing moved to link:TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8]. The historical measurements below remain provenance; current shipped order is SQ8-Morton at coalesced flush and PCA+IVF at compaction.
+| Status | **Core implemented; successor work split by control boundary (reconciled 2026-07-21).** Layout/read path #1019; adaptive-M/cache/IopsBudget #1060; lossless scalar bytes #1064; Region-B SQ8/range cache #1069; bounded parallel reads #1094. Per-block OID Bloom remains open. Large-segment selective Region-A/B probing is link:TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8]; collection file/cache/compaction policy is link:TD-RDSTRAT-9-collection-read-cost-envelope.adoc[TD-RDSTRAT-9]. Historical measurements below remain provenance; current order is SQ8-Morton at coalesced flush and PCA+IVF at compaction.
 | Severity | High — `per_get=20.0` is the dominant vector-route cost-model term; block-pruning is measured GET-capped (link:../../_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc[the eval]), so the GET lever is unreachable until this lands.
 | Component | `src/storage/engines/sst/segment_format.rs` (writer+reader); `crates/storage/proximadb-block-format/src/writer.rs::PaxBlockWriter` (`:134`) + `crates/storage/proximadb-storage-common/src/pax_block.rs::PaxSegmentScanner` (`:887`) + `stripe.rs::SegmentMeta`; `src/storage/engines/sst/search/mod.rs::try_pax_cascade`; `src/storage/engines/core/coalesce_strategy.rs` + `sst_query_engine.rs::{plan_selected_block_ranges (:733), ObjectRangeCoalescePolicy (:289)}`; `src/storage/engines/sst/compaction.rs`; `crates/storage/proximadb-storage-common` (a NEW per-backend `IopsBudget` — NOT the `StorageProfile` workload enum); `crates/storage/proximadb-storage-filesystem-types` (`FileSystem::read_ranges` — default is a sequential loop; the GET win is the coalesce policy's); `crates/storage/proximadb-object-store/src/lib.rs::put_if_absent` (`:247`, create-only — compaction CAS via Iceberg fresh-name+manifest-swap, ADR-020).
-| Relates | link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (decision), link:TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (rerank substrate), link:TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (gate), ADR-061 (pre-GA in-place/amend), ADR-046/045 (mixed-read/readability), ADR-036 (storage profile), ADR-020 (WAL authority; footer is advisory), ADR-047 (collection-as-table schema)
+| Relates | link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (decision), ADR-065 (Region-B extension), link:TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8] (per-segment scale), link:TD-RDSTRAT-9-collection-read-cost-envelope.adoc[TD-RDSTRAT-9] (collection control), link:TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (rerank substrate), link:TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (historical gate), ADR-061 (profile/authority core), ADR-046/045 (mixed-read/readability), ADR-036 (storage profile), ADR-020 (WAL authority; footer is advisory), ADR-047 (collection-as-table schema)
 | Pillar | COST (GET round-trips), PERF (recall at fixed GETs)
 |===
 
@@ -175,9 +175,11 @@ into a new block (a new GET), then stops — clustering makes this elasticity ch
 
 == GET-budget compaction (file-count = GET-count knob)
 
-A collection accumulates files LSM-style (flush → one self-contained file). Compaction triggers
-on a **query GET-budget**: projected RaBitQ-GETs/query (= file count) exceeds target, or
-file-count > threshold (3-5). Merge N→1: read each file's RaBitQ (cheap), re-cluster the union
+A collection accumulates files LSM-style (flush → one self-contained file). The accepted end state
+triggers compaction from a **collection query-cost envelope**, but the shipped mechanism today is
+the fixed `l0_threshold:N` segment count. TD-RDSTRAT-9 owns the observe-first GET/byte/cache/payback
+controller; do not tune another corpus-specific constant here. Merge N→1: read each file's RaBitQ,
+re-cluster the union
 (`cluster_order_pca_ivf`), rewrite one file. Double duty: fewer files (fewer GETs) AND tighter
 survivor locality. **Atomicity:** the object-store exposes only create-only `put_if_absent`
 (`proximadb-object-store/src/lib.rs:247`; no `if-match` CAS yet) → compaction uses the
@@ -193,9 +195,9 @@ per-workload-profile (ADR-061) so it never lands on a hot high-churn write path 
 path:
 
 * **AppendBulk** — direct fit (large-batch flushes → few well-sized files → RaBitQ header amortized).
-* **Churn** (agent code-RAG, high trickle-write churn) — the HOT path is the in-memory mutable
-  AXIS index (ADR-061 D4); this layout is Churn's **durable tier only**, fed batched via the
-  memtable. It does not touch the hot write path.
+* **Churn** (agent code-RAG, high trickle-write churn) — the HOT freshness path is the bounded
+  memtable delta + Strong brute-force merge (ADR-061 D4); this layout is Churn's **durable tier
+  only**, fed batched. It does not touch each mutation.
 * **Graph / ORION** — edges are CSR, epoch-rebuilt (not this layout); node embeddings use the
   vector layout under AppendBulk/Churn rules.
 

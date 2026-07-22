@@ -1923,6 +1923,49 @@ impl Compaction {
             file_path
         );
 
+        // Mixed-read: decode a PAX segment via the canonical inverse
+        // (`read_segment_records` — handles the legacy-block, coalesced v1
+        // AND two-level v3 layouts, including the Region-B vector overlay).
+        // The unified SSTable reader below predates the coalesced layout
+        // ("Invalid SSTable magic marker"), which made the ARMED compaction of
+        // coalesced `.pax` L0s a silent no-op: 0 records collected, the
+        // empty-merge early return reported success, inputs stayed unmerged —
+        // caught by the TD-RDSTRAT-8 production-trigger route proof. Non-PAX
+        // inputs fall through to the unified reader unchanged.
+        //
+        // Bytes come through the sanctioned URL→bytes boundary (#1082
+        // `read_object_bytes`), so a cloud-hosted `.pax` L0 reads through the
+        // FileSystem — never `tokio::fs::read` on a raw scheme path (the
+        // URL-string-strip class #1082 removed; would be silent data loss here
+        // since false-success compaction deletes the input segments).
+        if file_path.ends_with(proximadb_storage_common::pax_block::PAX_SEGMENT_EXT)
+            && let Ok(bytes) = crate::storage::engines::sst::staged_write::read_object_bytes(
+                &self.filesystem_factory,
+                file_path,
+            )
+            .await
+            && crate::storage::engines::sst::segment_format::SegmentFormat::detect(&bytes)
+                == crate::storage::engines::sst::segment_format::SegmentFormat::Pax
+        {
+            let records = crate::storage::engines::sst::segment_format::read_segment_records(
+                &bytes,
+                &[],
+                &[],
+                None,
+            )
+            .map_err(|e| {
+                crate::core::StorageError::SstEngine(format!(
+                    "PAX compaction read failed for {file_path}: {e}"
+                ))
+            })?;
+            info!(
+                "✅ COMPACTION UNIFIED: Read {} records from PAX segment {}",
+                records.len(),
+                file_path
+            );
+            return Ok(records.into_iter().map(VectorRecord::from).collect());
+        }
+
         // Use compaction-optimized reading strategy
         match self
             .unified_reader

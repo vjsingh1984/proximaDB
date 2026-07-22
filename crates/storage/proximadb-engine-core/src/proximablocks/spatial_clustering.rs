@@ -138,6 +138,21 @@ impl IncrementalPCA {
         let projected = self.transform(sample);
         projected.first().copied().unwrap_or(0.0)
     }
+
+    /// The fitted per-dimension mean (valid after [`Self::finalize`]).
+    ///
+    /// Exposed so write paths can persist the trained model (TD-RDSTRAT-8: the
+    /// A0 coarse directory stores mean + components for query-time projection —
+    /// the query must use the exact projection the writer used).
+    pub fn mean(&self) -> &[f64] {
+        &self.mean
+    }
+
+    /// The principal components (row-major, `n_components × dim`), or `None`
+    /// before [`Self::finalize`]. Same persistence rationale as [`Self::mean`].
+    pub fn components(&self) -> Option<&[Vec<f64>]> {
+        self.components.as_deref()
+    }
 }
 
 /// Power iteration to find dominant eigenvector.

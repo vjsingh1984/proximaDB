@@ -2,17 +2,38 @@
 // SPDX-License-Identifier: Apache-2.0
 = ADR-061: Per-collection workload profiles — storage-projection strategy is a first-class collection attribute; records stay authority
 
-:status: Accepted (2026-07-14)
+:status: Accepted core; D3/D5/D7 partially superseded (2026-07-21)
 :date: 2026-07-14
 :deciders: architecture
-:relates-to: ADR-044 (stable symbol OID), ADR-045/046 (PAX durable-core / LSN-coherent merge-read), ADR-052/058/059 (analytics execution routing), ADR-053 (cross-modal fabric), TD-133 (CrossModelTransactionCoordinator), TD-RDSTRAT-4/5 (clustering + centroid prune), TD-WLP-1..6 (implementation slices)
+:relates-to: ADR-044 (stable symbol OID), ADR-045/046 (PAX durable-core / LSN-coherent merge-read), ADR-052/058/059 (analytics execution routing), ADR-053 (cross-modal fabric), link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (current coalesced read contract), link:ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065] (current region contract), TD-133 (CrossModelTransactionCoordinator), TD-RDSTRAT-8 (large-segment probing), TD-RDSTRAT-9 (collection read-cost envelope), TD-WLP-1..10 (implementation/history)
 :supersedes: none
+:superseded-by: ADR-062/ADR-065 for AppendBulk serving projection and clustering payoff; TD-RDSTRAT-9 for adaptive compaction policy
 
 == Status
 
-**Accepted** (2026-07-14). Decision points D1–D7 below; implementation tracked by TD-WLP-1..6 and
-driven in the ProximaDB implementation session on handoff. Ships incrementally, every slice
-default-OFF and mixed-read-safe — absent the opt-in tag, behaviour is byte-for-byte today's.
+**Accepted core; partially superseded** (reconciled 2026-07-21). D1 (profile attribute), D2
+(canonical authority), D4 (bounded Churn delta), D6 (profile is not query routing), and D8
+(quality-gated activation) remain normative. The original AppendBulk serving mechanism in D3,
+fixed-threshold-as-final-policy language in D5, and radius-prune accelerator in D7 are superseded.
+
+[IMPORTANT]
+.Current contract — read this before the historical decision sections
+====
+* **Authority/profile:** this ADR D1/D2/D4/D6/D8 remains current.
+* **AppendBulk physical read path:**
+  link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062]
+  plus link:ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065]. Coalesced L0 flush uses
+  SQ8-Morton locality; compaction uses PCA+IVF/Hilbert. Region A rank → Region B rerank is the
+  canonical accelerator; VOE block-centroid/radius pruning is not the end state.
+* **Large segments:** link:../../10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8]
+  owns the compaction-persisted Region-A0 probe directory and selective A/B reader.
+* **Collection policy:** link:../../10-quality/td/TD-RDSTRAT-9-collection-read-cost-envelope.adoc[TD-RDSTRAT-9]
+  owns the file/cache/GET/compaction-payback controller. `l0_threshold:N` is the shipped fixed-count
+  actuation mechanism, not the final adaptive policy.
+
+Do **not** implement D3/D5/D7 from their 2026-07-14 wording. They are retained below only to
+explain how the current contract was reached.
+====
 
 **Amendment (2026-07-14, owner directive — pre-GA "no back-compat, arm defaults"):** the
 *default-OFF gating* clause above is superseded for the write-time internals as of TD-WLP-4.
@@ -85,7 +106,7 @@ read-acceleration projection strategy. It is deliberately **distinct** from the 
 [cols="1,2,1,2", options="header"]
 |===
 | Profile | Read-acceleration projection | Freshness | Clustering
-| `AppendBulk` (`append` / `bulk`) | Durable clustered PAX-LSM segments + VOE directory | flush + delta-merge | fp32-PCA IVF/Hilbert **at compaction**
+| `AppendBulk` (`append` / `bulk`) | Durable coalesced PAX Regions A/B + self-describing footer (ADR-062/065) | flush + delta-merge | SQ8-Morton bootstrap at coalesced flush; fp32-PCA IVF/Hilbert **at compaction**
 | `Churn` (code-RAG) | Bounded (~2 MB) memtable delta + Strong brute-force merge (TD-WLP-5) footnote:[Amended 2026-07-15 — see D4. The original "in-memory mutable ANN index + `oid` fusion" mechanism is retired as unnecessary: the unflushed delta is already backpressure-bounded to ~2 MB, so a Strong brute-force merge is sub-ms and already correct. ORION `oid` match-then-traverse fusion is already shipped (TD-045 `/rag`; graph node id == `oid`, no index needed — TD-ORION-1).] | immediate (pre-flush, Strong-merged) | none — small memory-resident delta; no compaction-cluster staleness
 |===
 
@@ -107,16 +128,22 @@ node+vector+edge transaction — `CrossModelTransactionCoordinator` (TD-133) sta
 differ only in the read-acceleration projection; never in the durability or recovery contract.**
 This is what keeps the change safe: a profile can never lose data, only change how reads are served.
 
-=== D3 — `AppendBulk`: clustered PAX-LSM with model training at compaction
+=== D3 — SUPERSEDED serving mechanism; current `AppendBulk` contract is ADR-062/065
 
-L0 flush uses a cheap, model-free **Hilbert-on-raw** ordering (no PCA model needed — cold-start
-safe). At **compaction**, train a PCA + IVF (k-means) model and re-cluster via the already-wired
-`write_pax_segment_full` path, populating the VOE directory's per-block centroids and its currently
-unused `pca_model_ref` (`src/storage/engines/sst/object_economy_directory.rs`). Clustering is
-computed on **fp32 (PCA-projected fp32), not on the quantized codes** — it is a write-time,
-low-cardinality decision where precision is cheap and directly buys read-side I/O; RaBitQ/SQ8 remain
-read-time per-vector cascade codes (never the clustering driver). One PCA projection serves the
-Hilbert score, the IVF assignment, and the stored centroid.
+The 2026-07-14 decision proposed a Hilbert-on-raw L0 bootstrap and VOE directory/radius-prune
+payoff. That serving mechanism is **retired; do not implement it from this ADR**. The measured VOE
+route was GET-capped near `0.87` recall, and the sidecar is not the canonical metadata authority.
+
+Current behavior separates lifetime and precision deliberately:
+
+* coalesced L0 flush uses cheap deterministic `cluster_order_sq8_morton`, aligned with Region B and
+  requiring no trained model;
+* compaction uses canonical-f32 PCA+IVF/Hilbert because its learned cell plan is amortized, improves
+  locality, and can become TD-RDSTRAT-8's query-visible Region A0; and
+* quantized Regions A/B remain rebuildable search projections, never canonical reconstruction data.
+
+ADR-062/065 own the physical read contract. TD-RDSTRAT-8 owns persisted compaction-model fields;
+reviving VOE `pca_model_ref` is not an alternative implementation of that work.
 
 === D4 — `Churn`: bounded-memtable delta + Strong brute-force merge (no dedicated mutable ANN index)
 
@@ -163,17 +190,17 @@ A dedicated mutable ANN index remains a *future evidence-gated option* (revisit 
 planned slice.
 ====
 
-=== D5 — Per-collection compaction override lifts the global gate
+=== D5 — Implemented actuation seam; fixed threshold superseded as final policy
 
-Add a per-collection compaction override resolved through the same cascade, mirroring how
-`CollectionWalConfig` already makes *flush* thresholds per-collection
-(`src/storage/persistence/write_ahead_log/config.rs`). Today compaction is global + default-OFF
-(`L0_COMPACTION_THRESHOLD = 5`; `OrchestratorCompactionConfig` in
-`src/storage/common/compaction_orchestrator.rs`). `AppendBulk` collections may **arm** compaction
-(to get re-clustering) while the global default stays OFF and `Churn` stays OFF. The global env
-remains the master kill-switch. *(Amended by the 2026-07-14 arm-defaults directive: `AppendBulk` —
-including untagged — collections are armed BY DEFAULT; `compaction:off` opts out; a falsy global
-env is the kill-switch; `Churn` stays OFF. See the Status amendment.)*
+The shipped cascade is current mechanism: explicitly falsy global env is the hard kill-switch;
+`compaction:on|off` is the per-collection override; otherwise `AppendBulk` (including untagged) is
+armed and `Churn` is off. `l0_threshold:N` supplies the fixed segment-count trigger, and #1012
+wires it to synchronous compaction execution.
+
+What is superseded is treating that constant as the durable query-cost policy. It cannot know
+whether a rewrite repays GET/byte savings, whether Region-A entries fit cache admission, or whether
+write churn invalidates the work. TD-RDSTRAT-9 layers an observe-first collection read-cost envelope
+over this existing gate and preserves its hard-disable, opt-out, and atomic publication seam.
 
 === D6 — Profile selects a read-path projection, not a query route
 
@@ -181,14 +208,16 @@ env is the kill-switch; `Churn` stays OFF. See the Status amendment.)*
 `ComputeScheduler` engine branch (routing stays on `engages_relational` / `parquet_backed`). Keeping
 the two orthogonal — and the names distinct — prevents accidental changes to OLAP/OLTP routing.
 
-=== D7 — The radius lower-bound prune is the `AppendBulk` read accelerator
+=== D7 — SUPERSEDED: radius lower-bound prune is not the canonical accelerator
 
-Fold in the measured lever: rank blocks by the distance lower bound `d(q, centroid) − k·radius`
-(`BlockPruneConfig.radius_k` + per-block `block_radii`,
-`crates/foundation/proximadb-search-types/src/search_params.rs`), default `radius_k = 0.0`
-(legacy, cosine-safe). `AppendBulk` may set a calibrated L2 value. This is the concrete read-side
-payoff that D3's clustering unlocks — it keeps spread-out blocks that a centre-only rank would
-wrongly prune.
+The implementation remains available as a default-neutral historical mechanism, but its promotion
+decision is closed: the SIFT evaluation found block-centroid pruning structurally GET-capped near
+`0.87` recall and `radius_k` moved recall by at most ~0.02. ADR-062's Region-A rank → adaptive-M →
+Region-B rerank path supersedes it for the object-store read spine.
+
+This tombstone is metric-significant. The old PCA/radius lower bound was L2-specific and must not
+be generalized into a cosine/dot correctness gate. TD-RDSTRAT-8 uses metric/dimension/distribution
+recall profiles until a score-space-consistent bound is separately proven.
 
 === D8 — Default-off optimization ratchets gate activation, not unrelated releases
 
@@ -211,17 +240,18 @@ passes without a waiver.
 == First principles / rationale
 
 * **Co-design against the trace, not the component.** For a serverless-on-object-store DB the
-  dominant cost is I/O round-trips + egress, not CPU. The append path optimises the *first driver*
-  (a tiny cached directory of centroids + radii + zone-maps) so few blocks are read; the churn path
-  optimises *freshness on a bounded set* where the round-trip funnel is irrelevant because the
-  working set is memory-resident.
+  dominant cost is I/O round-trips + transferred bytes, not a codec or distance kernel in
+  isolation. AppendBulk uses coalesced regions, cache, selective probing, and collection file
+  geometry; Churn optimizes freshness on a bounded delta. TD-RDSTRAT-9 charges compaction CPU and
+  write amplification against observed read savings.
 * **Vertical inside, standard outside.** WORM immutability is forced by object storage; we are at
   liberty to re-cluster/re-tier *inside* the segment at compaction. That licence is exactly what D3
   spends. But leveled-LSM compaction is workload-specific machinery, not universal — D4 declines it
   where the working set fits memory and mutation dominates.
-* **Cluster in the geometry you prune in.** The read-side block prune scores fp32 centroid distance;
-  clustering must therefore be fp32 (PCA), or clusters compact in code-space are not compact in
-  prune-space (D3). The sweep is the evidence: sign-bit (≈1-bit code) clustering measured 0.81.
+* **Spend precision where its lifetime repays it.** SQ8-Morton is a model-free L0 locality
+  bootstrap. Compaction uses canonical-f32 PCA/IVF because learned cells live longer, tighten
+  Region-B runs, and can become TD-RDSTRAT-8's probe directory. Neither projection becomes durable
+  value authority.
 
 == Consequences
 
@@ -229,19 +259,17 @@ passes without a waiver.
 
 * Each workload shape gets the right projection without forking the durability contract or the
   create-time engine.
-* The dark compaction re-cluster path (`write_pax_segment_full`) gets a **safe, per-collection**
-  trigger — it lights up only where it pays.
-* Zero-risk default *(superseded by the 2026-07-14 arm-defaults amendment — untagged collections
-  now cluster at write and compact at threshold by default)*: absent a `workload_profile:` tag →
-  `AppendBulk` → today's behaviour (compaction
-  still globally OFF). No migration, no format flag day.
+* The former dark compaction path now has a tested per-collection arm and hard kill-switch; the
+  future cost controller reuses it rather than adding another scheduler.
+* Untagged collections resolve to `AppendBulk`, cluster at write, and compact at the fixed threshold
+  today. TD-RDSTRAT-9 adaptive actuation remains independently default-OFF until evidenced.
 
 *Negative / cost.*
 
-* Two read-path projection strategies to maintain; the `Churn` memory-resident index adds an OOM
-  surface bounded by the working-set assumption (guarded + metered).
-* `AppendBulk` model staleness between compactions (mitigated: the Hilbert bootstrap keeps L0 usable
-  with no model).
+* Two read-path projection strategies to maintain; the bounded Churn delta still needs observable
+  backpressure and Strong-merge latency, but no dedicated mutable-index OOM surface was added.
+* `AppendBulk` model staleness between compactions (mitigated: SQ8-Morton keeps L0 usable without a
+  trained model).
 * A latent footgun: conflating `StorageProfile` with `CatalogWorkloadProfile` (mitigated by D6 +
   distinct naming).
 
@@ -252,8 +280,9 @@ passes without a waiver.
   is a read-path concern.
 * **A2 — make ORION the graph-primary authority for `Churn`.** Rejected: violates D2; ORION is Beta
   and explicitly a rebuildable projection with no default atomic node+vector+edge transaction.
-* **A3 — cluster on quantized codes (RaBitQ/SQ8/PQ).** Rejected: higher cardinality, precision loss,
-  and no read-I/O win over fp32; the sign-bit MVP is precisely this failure, measured at 0.81.
+* **A3 — use quantized-code order as learned compaction geometry.** Rejected: sign-bit ordering did
+  not produce the required locality/recall tradeoff. Narrow shipped exception: SQ8-Morton is the
+  cheap L0 bootstrap; it does not replace fp32/PCA compaction or become canonical authority.
 * **A4 — auto-infer the profile from the query/write mix in v1.** Deferred, not built:
   `infer_workload_profile` (`ddl/mod.rs`) can layer on later. v1 uses an explicit, predictable tag,
   matching the existing cascade convention.
@@ -265,10 +294,10 @@ Each TD-WLP slice ships its TDD gate:
 * Profile resolution — unit test of the tag>env>default cascade (TD-WLP-1).
 * Compaction arming — integration test that an `AppendBulk` collection arms compaction while the
   global gate is OFF (TD-WLP-2).
-* Radius prune — recall ratchet: recall at a fixed keep-ratio ≥ the `radius_k=0` baseline, and
-  `radius_k=0.0` reproduces exact legacy recall (TD-WLP-3).
-* Compaction clustering — integration test: post-compaction centroids + `pca_model_ref` populated,
-  intra-block coherence improves vs the L0 bootstrap; `Churn` does not train (TD-WLP-4).
+* Radius prune — retained as historical negative evidence; ADR-062's recall/GET/byte ratchets own
+  the canonical path (TD-RDSTRAT-6/7).
+* Compaction clustering — integration tests prove PCA+IVF locality and `Churn` exclusion; Region-A0
+  persistence/read compatibility belongs to TD-RDSTRAT-8, not VOE `pca_model_ref`.
 * Churn freshness — integration test: a re-embedded symbol is immediately visible pre-flush, and WAL
   replay reconstructs identical state; an `AppendBulk` collection in the same process is unaffected
   (TD-WLP-5).

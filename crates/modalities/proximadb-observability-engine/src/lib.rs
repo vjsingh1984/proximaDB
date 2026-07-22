@@ -87,6 +87,9 @@ pub mod tenant_label;
 pub mod trace_batcher;
 /// Trace digest — stable FNV-1a hash for billing dedup / idempotency keys.
 pub mod trace_digest;
+/// TD-TRACE-2 S3 — the durable io_trace record envelope (ADR-066 D1): a
+/// homogeneous header + modality-tagged payload, built from an `IoTraceSnapshot`.
+pub mod trace_envelope;
 /// Trace fingerprint — shape-only hash for incident-triage grouping.
 pub mod trace_fingerprint;
 /// Trace retention policy — companion to trace_sampling; per-tier age windows.

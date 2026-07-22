@@ -75,6 +75,8 @@ pub mod ingestion;
 /// co-design cost model minimizes. See
 /// `docs/12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` §4.1.
 pub use proximadb_observability_engine::io_trace;
+/// TD-TRACE-2 S3 — the durable io_trace record envelope (header + modality payload).
+pub use proximadb_observability_engine::trace_envelope;
 /// Durable io_trace ETL sink (TD-TRACE-2 / ADR-066) — a separate, default-OFF
 /// observer that spools each per-query snapshot to local JSONL+zstd segments (S1;
 /// object-store dispatch is S2). Billing stays untouched/always-on (ADR-027).

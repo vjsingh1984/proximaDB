@@ -489,12 +489,34 @@ impl SstEngine {
         let Some(axis) = self.axis_manager() else {
             return;
         };
-        // Already present in the AXIS store (warm / cold-loaded / rebuilt)?
+        // Already COVERED by the AXIS store (warm / cold-loaded / rebuilt)?
         // Nothing to do. (We key on the store rather than HNSW/IVF presence,
         // since those structures are built lazily and aren't a reliable signal
         // for small collections.)
-        if axis.registered_vector_count(collection_id).await > 0 {
-            return;
+        //
+        // Issue #1126 (L3): a bare `> 0` check here conflated "warm" with
+        // "has ANY vectors". WAL replay after a restart seeds the AXIS store
+        // with just the replayed records, which skipped this rebuild and made
+        // the orchestrated cold search return ONLY that subset — flushed-SST
+        // records were invisible to search while GET-by-id still found them.
+        // Rebuild whenever the durable segments hold more records than the
+        // store; when the durable total is uncountable (unknown format),
+        // rebuild anyway — an extra rebuild is cheap, invisible data is not.
+        let registered = axis.registered_vector_count(collection_id).await;
+        if registered > 0 {
+            let covered = match self.discover_sstable_files(storage_url).await {
+                Ok(files) if !files.is_empty() => {
+                    match self.durable_vector_count_for_rebuild(&files).await {
+                        Some(durable) => registered as u64 >= durable,
+                        None => false, // unknown → rebuild
+                    }
+                }
+                // No durable segments (or unlistable): nothing to rebuild from.
+                _ => true,
+            };
+            if covered {
+                return;
+            }
         }
         // Attempt at most one rebuild per collection concurrently. Attempts are
         // not sticky; the permit drop removes them so a later query can retry
@@ -578,6 +600,44 @@ impl SstEngine {
     /// segment (RawF32/SQ8/RaBitQ-with-tier) returns `false` (→ rebuild).
     /// Short-circuits on the first non-coarse segment. `files` is non-empty when
     /// called from the rebuild path.
+    /// Issue #1126 (L3): total record count across a collection's durable
+    /// segments, for the AXIS rebuild coverage check ONLY. `Some(total)` when
+    /// every file is countable (`SST1` header or `.pax` block scan);
+    /// `None` when any file is an unknown/uncountable format — the caller then
+    /// errs toward rebuilding. Kept separate from the TD-165
+    /// `segment_vector_count` gate, whose 0-on-unknown semantics ("fall through
+    /// to the approximate path") must not change.
+    async fn durable_vector_count_for_rebuild(&self, files: &[String]) -> Option<u64> {
+        use crate::storage::engines::sst::SstableHeader;
+        let mut total: u64 = 0;
+        for file_path in files {
+            let fs = self.filesystem().get_filesystem(file_path).ok()?;
+            if file_path.ends_with(".pax") {
+                // Segments are the flush unit and small relative to query cost;
+                // a full read + index parse is the same cost class as the
+                // coarse-RaBitQ probe below.
+                let bytes = fs.read(file_path).await.ok()?;
+                use proximadb_storage_common::pax_block::{PaxSegmentScanner, ScanPredicate};
+                let mut scanner =
+                    PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()).ok()?;
+                while let Some(block) = scanner.next_block() {
+                    total += block.row_count() as u64;
+                }
+            } else {
+                let prefix = fs.read_range(file_path, 0, 8).await.ok()?;
+                if prefix.len() < 8 || &prefix[0..4] != b"SST1" {
+                    return None; // unknown format (e.g. .arrow) → rebuild
+                }
+                let header_len =
+                    u32::from_le_bytes([prefix[4], prefix[5], prefix[6], prefix[7]]) as u64;
+                let header_data = fs.read_range(file_path, 8, header_len).await.ok()?;
+                let header = bincode::deserialize::<SstableHeader>(&header_data).ok()?;
+                total += header.entry_count;
+            }
+        }
+        Some(total)
+    }
+
     async fn all_segments_coarse_rabitq_pax_without_f32_tier(&self, files: &[String]) -> bool {
         use crate::storage::engines::sst::segment_format::pax_segment_is_coarse_rabitq_without_f32_tier;
         for file in files {
@@ -1031,7 +1091,14 @@ impl SstEngine {
                     )
                     .await
                 {
-                    Ok(Some(records)) => Some(records),
+                    Ok(Some(records)) => {
+                        debug!(
+                            file = %sstable_path,
+                            n = records.len(),
+                            "SST per-file result source=pax_cascade"
+                        );
+                        Some(records)
+                    }
                     Ok(None) => None,
                     Err(e) => {
                         warn!(
@@ -1144,10 +1211,10 @@ impl SstEngine {
 
             match search_result {
                 Ok(results) => {
-                    trace!(
-                        "SST: Found {} candidates in file {}",
-                        results.len(),
-                        file_idx + 1
+                    debug!(
+                        file = %sstable_path,
+                        n = results.len(),
+                        "SST per-file result (post-dispatch)"
                     );
                     all_candidates.extend(results);
                 }

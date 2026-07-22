@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — **rev 3 (2026-07-17): first-principles/code reconciliation.** Reuse and persist SST's existing compaction-time, IOP-derived PCA/IVF plan; do not train a second `sqrt(N)` quantizer. Host remains SST. Layout prototype + representative evidence are required before this architectural change is promoted to an ADR.
+| Status | Open — **rev 3 (2026-07-17): first-principles/code reconciliation.** Reuse and persist SST's existing compaction-time, IOP-derived PCA/IVF plan; do not train a second `sqrt(N)` quantizer. Host remains SST. Layout prototype + representative evidence are required before this architectural change is promoted to an ADR. **rev 3.1 (2026-07-20): PR-A landed, write path reconciled to rev 3** — A0 serde + header-prefix `layout_version=3` + additive footer section + compaction-only write path (`cluster_plan_ivf_probe` **persists the existing IOP-derived plan**; NO second `sqrt(N)` quantizer) + production-trigger route proof; default-OFF `PROXIMADB_IVF2=0` (see §As-built delta). Reads serve v3 through the order-agnostic single-level scan until the PR-B probe reader ranks the persisted centroids.
 | Priority | P2 → **P1 once any collection approaches ~2M vectors** — downstream, AnvaiOps ADR-0044 forbids >~5M-vector pooled onboarding until this re-measures (revenue + latency gate, successor to TD-RDSTRAT-6's role).
 | Severity | n/a (new capability, no regression). Default-OFF until gates pass.
 | Component | `src/storage/engines/sst/` — `segment_format.rs` (writer/reader), `block_cluster.rs` (clustering), `compaction.rs`/`compactor_impl.rs` (the only write path that clusters), `crates/storage/proximadb-storage-common/src/pax_block.rs` + `segment_layout.rs` (regions/footer), coalesce policy + `IopsBudget`. **NOVA is explicitly NOT the host** (rev 2).
@@ -115,8 +115,8 @@ Two placement constraints inherited from ADR-065 and shipped code:
 [Region A0: IVF probe directory — NEW, cached]
 [Region A : RaBitQ codes      — existing compaction-cell order]
 [Region B : SQ8 codes         — same order (PR3 / #1069)]
-[row blocks                   — existing result/exact data; ADR-065 Region C/D remain separate gates]
-[footer-index: block table | region directory | layout_version=2]
+[Region D : row blocks        — same order; block boundaries never straddle a coarse cell; ADR-065 Region C/D remain separate gates]
+[footer-index: block table | region table | A0 offset copy (optional section) — footer stays version 1, see §As-built delta]
 ----
 
 Everything ADR-062/065 guarantees is preserved: one PUT flush, one-object compaction CAS,
@@ -207,6 +207,98 @@ the directory/A/B/D rounds, so GET-budget compaction remains part of the accepta
   change, no re-ingest.
 * Auto-threshold (later phase): compactor writes the successor only when segment rows ≥
   `PROXIMADB_IVF2_MIN_ROWS` (default 500 000) — small segments keep `PXH1`.
+
+== As-built delta (PR-A) — layout versioning + the rev-3 write-path reconciliation
+
+*Write path reuses the existing IOP-derived plan (rev 3 — not a second `sqrt(N)`
+quantizer).* An earlier PR-A cut trained a fresh coarse k-means at
+`k_c = clamp(round(√N), 64, 4096)` over the fine IVF cells. The rev-3
+first-principles reconciliation (this doc's body) replaced it:
+`cluster_plan_ivf_probe` now persists the *same* plan `cluster_plan_pca_ivf`
+already computes — IOP-derived `k = clamp(N·dim/IOP, 2, 4096)`, the
+`ivf_projection_dims` law, `PROXIMADB_IVF_TRAIN_SAMPLE`, seed
+`0x5041_585F_4956_4631`, 15 iterations — into Region A0 rather than discarding
+it. Ranking those `k` centroids in RAM (≈305 at 10M, ≈3050 at 100M, capped
+4096) already breaks GETs ∝ N; a `sqrt(N)` level bought nothing and would
+fragment Region B into sub-IOP (~128 KiB) runs. The single-level (`PXH1`) f64
+path is untouched (byte-stable); the shared row-ordering is extracted into
+`order_rows_by_cell` so both plans stay identical to their inline form.
+
+*Layout versioning lives in the header-prefix, not the footer.* Between rev 2 and
+PR-A, ADR-065 PR3 (#1069) collapsed the footer v1/v2 split into a **single
+version-1 footer** with an optional-sections framework whose unknown tags old
+parsers skip (pinned by test). PR-A therefore does NOT introduce a footer v2/v3:
+
+* `SegmentHeaderPrefix.version = 3` (`SEG_LAYOUT_VERSION_TWO_LEVEL`; byte value
+  matches this TD's "v3" name, 2 intentionally skipped/reserved) selects the
+  two-level layout; the v3 prefix is 72 B (`+[a0_off u64][a0_len u64]`).
+  Readers fetch 72 B unconditionally (free within the same GET) and branch on
+  the version byte.
+* The footer gains an **additive** `SECTION_COARSE_DIRECTORY` section
+  (`[a0_off][a0_len]` mirror). A sectionless footer stays byte-identical.
+* A0 serde: `crates/storage/proximadb-storage-common/src/coarse_directory.rs`
+  (`PXA0` magic, own version byte, FNV-1a checksum, fixed layout —
+  `serialized_len` is exact so the writer computes all offsets in one pass).
+
+*Write/read projection consistency (f32-persisted model).* The PCA model is
+truncated to the f32 precision A0 persists **before** cell assignment: rows,
+centroids, and radii are all computed with the same `project_with_model` kernel
+the query path uses — no f64-train vs f32-read drift at cell boundaries.
+Vectors stay f32 end-to-end; only dot-product accumulators widen transiently to
+f64 (cancellation-safe accumulation, never stored).
+
+*Read-compat shipped in PR-A, probe reader in PR-B.* The current binary parses
+v3 and serves it through the existing single-level whole-region scan (Regions
+A/B are byte-identical in format; a full scan over cell-ordered rows is
+order-agnostic) — correct results at v2 GET cost until PR-B lands the A0
+probe. `read_segment_records` handles v3 (incl. the Region-B vector overlay),
+so re-compaction/recovery of v3 segments never drops vectors. Version-1-only
+binaries reject v3 at the prefix version check (fail-closed; contract pinned
+by `v1_only_reader_rejects_v3_prefix`).
+
+*Enabling fix — armed compaction of coalesced `.pax` was a silent no-op.* The
+production-trigger route proof (below) caught that the compaction unified
+reader predates the coalesced layout ("Invalid SSTable magic marker"): an
+armed AppendBulk collection flushing coalesced RaBitQ L0s (default-on since
+#1024) collected 0 records, hit the empty-merge early return, reported
+`compaction_ran=true`, and left inputs unmerged — no data loss, but the entire
+re-cluster arc (and this TD's write path) was dark on the real trigger.
+`read_all_records_from_file_unified` now routes PAX segments through the
+canonical `read_segment_records` inverse (mixed-read mandate: reuse the
+existing inverse).
+
+*Eval realization (the recall/GET gates must actually reach v3).* The SIFT
+harness (`tests/sift_pax_recall_ratchet_test.rs`) drives **flush only**, and v3
+is written **only** by `write_pax_segment_compacted` — so without explicit
+wiring no eval would ever measure a v3 segment:
+
+* The recall/GET ratchet reaches v3 via the **direct compaction-writer route**
+  — the harness calls `write_pax_segment_compacted()` under `PROXIMADB_IVF2=1`,
+  byte-identical to the production compaction product (and/or the established
+  `PROXIMADB_PAX_FLUSH_CLUSTER=ivf`-style eval-knob pattern for
+  flush-reachable measurement). Production policy is unchanged:
+  compaction-only, default-OFF.
+* One **production-trigger route proof** exists as of PR-A:
+  `tests/sst_ivf2_compaction_route_proof_test.rs` (mirrors the TD-WLP-7
+  execution gate) — armed AppendBulk flush past L0 threshold ⇒ inline
+  compaction emits a v3 segment with a parsable A0 covering every merged row,
+  production search over it stays exact, and the flag-off control stays v1.
+* **CI authority (PR-B):** wire the v3 recall/GET assertion into the qa-gate
+  ANN-recall conformance ratchet tier (develop→qa MEDIUM — SIFT + release
+  build are too heavy for the per-PR LIGHT tier). If the SIFT dataset is
+  unavailable in that tier, a deterministic synthetic-corpus variant of the
+  same gate runs unconditionally and the SIFT run stays `#[ignore]`d for the
+  quiet-machine eval; record which one is the CI authority here when wired.
+
+*PR-A landed surface (all default-OFF):* `PROXIMADB_IVF2` (gate) is the only new
+env; the probe plan reuses the single-level IVF knobs — `PROXIMADB_IVF_K`
+overrides the IOP-derived cell count, `PROXIMADB_IVF_TRAIN_SAMPLE` the
+sample-train — seed `0x5041_585F_4956_4631`, 15 iterations, with **no separate
+`sqrt(N)` surface** (`PROXIMADB_IVF2_KC` / `_TRAIN_SAMPLE` removed in the rev-3
+reconciliation). Determinism, cell-extent exactness, cell-boundary block
+padding, mixed-read, and the flag gates are unit/e2e tested (`pax_block.rs`,
+`segment_layout.rs`, `coarse_directory.rs`, `block_cluster.rs`,
+`segment_format.rs`, route-proof test).
 
 == Eval gates (ADR-062 pattern; eval doc in `docs/_internal/status/`)
 
