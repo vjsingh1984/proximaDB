@@ -703,6 +703,66 @@ fn plan_coalesced_row_ranges(
     out
 }
 
+/// One selected IVF cell's exact Region-A code slice. A coalesced physical
+/// range may contain gaps or unselected cells, but only these slices are ever
+/// handed to the RaBitQ ranker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProbeCellSlice {
+    start: u64,
+    end: u64,
+    row_start: usize,
+}
+
+/// One physical Region-A read containing one or more selected cell slices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProbeRangeFetch {
+    start: u64,
+    end: u64,
+    selected: Vec<ProbeCellSlice>,
+}
+
+/// Merge selected Region-A cell extents according to the provider-bounded
+/// range policy. The returned `selected` slices preserve the logical nprobe
+/// set, so gap over-read changes only physical I/O, never ranking semantics.
+fn plan_probe_cell_ranges(
+    cells: &[ProbeCellSlice],
+    policy: &crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy,
+) -> Vec<ProbeRangeFetch> {
+    let mut sorted = cells.to_vec();
+    sorted.sort_by_key(|cell| cell.start);
+    let mut out: Vec<ProbeRangeFetch> = Vec::new();
+    for cell in sorted {
+        if cell.end <= cell.start {
+            continue;
+        }
+        let merged = match out.last_mut() {
+            Some(last) => {
+                let gap = cell.start.saturating_sub(last.end);
+                let merged_len = cell.end.saturating_sub(last.start);
+                let within_gap = gap <= policy.max_gap_bytes;
+                let within_max =
+                    policy.max_range_bytes == 0 || merged_len <= policy.max_range_bytes;
+                if within_gap && within_max {
+                    last.end = last.end.max(cell.end);
+                    last.selected.push(cell);
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
+        };
+        if !merged {
+            out.push(ProbeRangeFetch {
+                start: cell.start,
+                end: cell.end,
+                selected: vec![cell],
+            });
+        }
+    }
+    out
+}
+
 /// Per-metric "lower = nearer" rerank score against a reconstructed vector.
 fn rerank_distance(metric: RankMetric, q: &[f32], v: &[f32]) -> f32 {
     match metric {
@@ -776,8 +836,10 @@ pub fn pax_rabitq_pool_for_top_k(k: usize, n: usize) -> usize {
 /// is the only way to reduce it — caching parsed structs downstream doesn't help).
 pub struct SegmentInvariants {
     pub header_bytes: Vec<u8>,
-    pub region_bytes: Arc<[u8]>,
+    pub region_bytes: Option<Arc<[u8]>>,
     pub footer_bytes: Vec<u8>,
+    pub a0_bytes: Option<Arc<[u8]>>,
+    pub rabitq_header_bytes: Option<Arc<[u8]>>,
 }
 
 /// Per-segment invariants cache, **byte-budgeted** (ADR-065 cache-co-design #35).
@@ -796,9 +858,17 @@ struct CacheInner {
     bytes_used: usize,
 }
 
-/// Bytes an invariants entry contributes (Region A dominates).
+/// Bytes an invariants entry contributes. Whole-scan entries are dominated by
+/// Region A; probe-only entries contain only small control metadata.
 fn inv_bytes(inv: &SegmentInvariants) -> usize {
-    inv.region_bytes.len() + inv.header_bytes.len() + inv.footer_bytes.len()
+    inv.region_bytes.as_ref().map_or(0, |bytes| bytes.len())
+        + inv.header_bytes.len()
+        + inv.footer_bytes.len()
+        + inv.a0_bytes.as_ref().map_or(0, |bytes| bytes.len())
+        + inv
+            .rabitq_header_bytes
+            .as_ref()
+            .map_or(0, |bytes| bytes.len())
 }
 
 impl SegmentInvariantsCache {
@@ -878,8 +948,12 @@ impl SegmentInvariantsCache {
 pub enum CacheTier {
     /// Region A (RaBitQ index scan): ~24 MB, re-read every query (hottest).
     InvariantIndex,
-    /// header / footer / SQ8 params: tiny, always-useful.
+    /// Header / A0 / RaBitQ parameters: the mandatory ANN control prefix.
+    SearchControl,
+    /// Tail footer / block map / SQ8 parameters: tiny, always-useful.
     InvariantMeta,
+    /// Selected Region-A IVF-cell code runs.
+    ProbeIndex,
     /// Region B survivor SQ8 ranges: variable, query-dependent.
     SurvivorPayload,
     /// Region D OID ranges: variable, query-dependent.
@@ -891,7 +965,9 @@ impl CacheTier {
     pub fn label(self) -> &'static str {
         match self {
             Self::InvariantIndex => "IdxA",
+            Self::SearchControl => "Ctl",
             Self::InvariantMeta => "Meta",
+            Self::ProbeIndex => "ProbeA",
             Self::SurvivorPayload => "Surv",
             Self::ResultPayload => "OID",
         }
@@ -900,10 +976,10 @@ impl CacheTier {
     /// pinned (a hit saves the most); query-dependent ranges are evicted first.
     pub fn evict_priority(self) -> u8 {
         match self {
-            Self::SurvivorPayload => 0,
+            Self::ProbeIndex | Self::SurvivorPayload => 0,
             Self::ResultPayload => 1,
             Self::InvariantMeta => 2,
-            Self::InvariantIndex => 3,
+            Self::InvariantIndex | Self::SearchControl => 3,
         }
     }
 }
@@ -1015,6 +1091,34 @@ struct CoarseProbeResult {
     cells_probed: u64,
     probed_rows: u64,
     fetch_rounds: u64,
+    a0_bytes: Arc<[u8]>,
+    rabitq_header_bytes: Arc<[u8]>,
+}
+
+fn prefetched_slice(prefix: &[u8], offset: u64, len: u64) -> Option<&[u8]> {
+    let start = usize::try_from(offset).ok()?;
+    let len = usize::try_from(len).ok()?;
+    let end = start.checked_add(len)?;
+    prefix.get(start..end)
+}
+
+fn prefix_prefetch_bytes() -> Option<u64> {
+    std::env::var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|bytes| *bytes > 0)
+}
+
+fn split_probe_metadata_cache_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "on" | "yes")
+    )
 }
 
 /// TD-RDSTRAT-8 PR-B: compute survivors from ONLY the `nprobe` nearest coarse
@@ -1031,6 +1135,8 @@ async fn coarse_probe_survivors(
     metric: RankMetric,
     k: usize,
     trace_on: bool,
+    cached: Option<&SegmentInvariants>,
+    prefix: &[u8],
 ) -> Result<Option<CoarseProbeResult>> {
     use proximadb_storage_common::coarse_directory::{CoarseDirectory, project_with_model};
 
@@ -1040,13 +1146,20 @@ async fn coarse_probe_survivors(
     }
 
     // 1. Region A0 (small, immediately after the header) — one ranged GET.
-    let a0_bytes = fs
-        .read_range(path, header.a0_off, header.a0_len)
-        .await
-        .map_err(|e| anyhow::anyhow!("coarse-probe A0 {path}: {e}"))?;
-    if trace_on {
-        record_get(CacheTier::InvariantMeta, header.a0_len);
-    }
+    let a0_bytes: Arc<[u8]> = if let Some(bytes) = cached.and_then(|inv| inv.a0_bytes.clone()) {
+        bytes
+    } else if let Some(bytes) = prefetched_slice(prefix, header.a0_off, header.a0_len) {
+        Arc::from(bytes.to_vec())
+    } else {
+        let bytes = fs
+            .read_range(path, header.a0_off, header.a0_len)
+            .await
+            .map_err(|e| anyhow::anyhow!("coarse-probe A0 {path}: {e}"))?;
+        if trace_on {
+            record_get(CacheTier::SearchControl, header.a0_len);
+        }
+        Arc::from(bytes)
+    };
     let Ok(dir) = CoarseDirectory::parse(&a0_bytes) else {
         return Ok(None);
     };
@@ -1090,48 +1203,84 @@ async fn coarse_probe_survivors(
 
     // 3. Region-A header (params + centroid) — one small ranged GET.
     let hdr_len = proximadb_block_format::region_header_len(dim as u32) as u64;
-    let hdr_bytes = fs
-        .read_range(path, header.rabitq_off, hdr_len)
-        .await
-        .map_err(|e| anyhow::anyhow!("coarse-probe region header {path}: {e}"))?;
-    if trace_on {
-        record_get(CacheTier::InvariantMeta, hdr_len);
-    }
+    let hdr_bytes: Arc<[u8]> =
+        if let Some(bytes) = cached.and_then(|inv| inv.rabitq_header_bytes.clone()) {
+            bytes
+        } else if let Some(bytes) = prefetched_slice(prefix, header.rabitq_off, hdr_len) {
+            Arc::from(bytes.to_vec())
+        } else {
+            let bytes = fs
+                .read_range(path, header.rabitq_off, hdr_len)
+                .await
+                .map_err(|e| anyhow::anyhow!("coarse-probe region header {path}: {e}"))?;
+            if trace_on {
+                record_get(CacheTier::SearchControl, hdr_len);
+            }
+            Arc::from(bytes)
+        };
     let Ok(rq_header) = proximadb_block_format::CoalescedRaBitQHeader::parse(&hdr_bytes) else {
         return Ok(None);
     };
 
-    // 4. Ranged-read the probed cells' Region-A code extents. Coalesce ONLY
-    //    physically-adjacent cells (gap 0) so we never over-read unprobed cells;
-    //    Hilbert emission order clusters near cells, so the nprobe nearest usually
-    //    collapse to a few contiguous runs.
+    // 4. Ranged-read the probed cells' Region-A code extents. The default
+    //    remains gap-zero. The proof gate can admit bounded gap over-read, but
+    //    the ranker receives only the selected slices so nprobe never changes.
     let stride = proximadb_block_format::code_stride(dim as u32) as u64;
-    let mut merged: Vec<(u64, u64, usize)> = Vec::new(); // (start, end, global row_start)
-    for &c in &probed {
-        let cell = &dir.cells[c];
-        let (s, e, rs) = (cell.a_off, cell.a_off + cell.a_len, cell.row_begin as usize);
-        match merged.last_mut() {
-            Some(last) if last.1 == s => last.1 = e, // contiguous → extend the run
-            _ => merged.push((s, e, rs)),
-        }
-    }
-    let mut run_bufs: Vec<(usize, Vec<u8>)> = Vec::with_capacity(merged.len());
-    let mut probed_rows: u64 = 0;
-    for (s, e, rs) in &merged {
-        let len = e - s;
+    let selected: Vec<ProbeCellSlice> = probed
+        .iter()
+        .map(|&cell_index| {
+            let cell = &dir.cells[cell_index];
+            ProbeCellSlice {
+                start: cell.a_off,
+                end: cell.a_off + cell.a_len,
+                row_start: cell.row_begin as usize,
+            }
+        })
+        .collect();
+    let max_gap_bytes = env_u64_or("PROXIMADB_PAX_A_COALESCE_GAP", 0);
+    let max_range_bytes = std::env::var("PROXIMADB_PAX_A_COALESCE_RANGE")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(0);
+    let policy =
+        crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+            max_gap_bytes,
+            max_range_bytes,
+        };
+    let fetches = plan_probe_cell_ranges(&selected, &policy);
+    let mut fetched = Vec::with_capacity(fetches.len());
+    let probed_rows: u64 = selected
+        .iter()
+        .map(|cell| (cell.end - cell.start) / stride)
+        .sum();
+    for fetch in fetches {
+        let len = fetch.end - fetch.start;
         let bytes = fs
-            .read_range(path, *s, len)
+            .read_range(path, fetch.start, len)
             .await
             .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?;
         if trace_on {
-            record_get(CacheTier::SurvivorPayload, len);
+            record_get(CacheTier::ProbeIndex, len);
         }
-        // `stride = code_stride(dim) >= 9` (dim >= 1, guarded above) so the
-        // division is always well-defined.
-        probed_rows += len / stride;
-        run_bufs.push((*rs, bytes));
+        fetched.push((fetch, bytes));
     }
-    let runs: Vec<(usize, &[u8])> = run_bufs.iter().map(|(rs, b)| (*rs, b.as_slice())).collect();
+    let mut runs: Vec<(usize, &[u8])> = Vec::with_capacity(selected.len());
+    for (fetch, bytes) in &fetched {
+        for cell in &fetch.selected {
+            let rel = usize::try_from(cell.start.saturating_sub(fetch.start))
+                .map_err(|_| anyhow::anyhow!("coarse-probe slice offset exceeds usize"))?;
+            let len = usize::try_from(cell.end.saturating_sub(cell.start))
+                .map_err(|_| anyhow::anyhow!("coarse-probe slice length exceeds usize"))?;
+            let end = rel
+                .checked_add(len)
+                .ok_or_else(|| anyhow::anyhow!("coarse-probe slice end overflow"))?;
+            let slice = bytes
+                .get(rel..end)
+                .ok_or_else(|| anyhow::anyhow!("coarse-probe selected slice outside fetch"))?;
+            runs.push((cell.row_start, slice));
+        }
+    }
     let pool = pax_rabitq_pool_for_top_k(k, probed_rows as usize);
     let survivors =
         proximadb_block_format::rank_probed_rows(&rq_header, &runs, query, metric, pool.max(k))?;
@@ -1141,7 +1290,9 @@ async fn coarse_probe_survivors(
         cells_total: k_c as u64,
         cells_probed: probed.len() as u64,
         probed_rows,
-        fetch_rounds: merged.len() as u64,
+        fetch_rounds: fetched.len() as u64,
+        a0_bytes,
+        rabitq_header_bytes: hdr_bytes,
     }))
 }
 
@@ -1164,7 +1315,8 @@ pub async fn rabitq_search_segment_coalesced(
     // is set, every read_range in this path records its on-disk byte length; the
     // eval drains it to print the distribution (GET count = the same-region
     // billing metric; GET sizes = the latency metric). Off by default (zero cost).
-    let trace_on = std::env::var_os("PROXIMADB_TRACE_GETS").is_some();
+    let trace_on = std::env::var_os("PROXIMADB_TRACE_GETS").is_some()
+        || std::env::var_os("PROXIMADB_TRACE_PAX_STAGES").is_some();
 
     // PR2: check the per-segment invariants cache. On hit, skip the 3
     // read_range calls (header + region + footer) → 3 GETs → 0 (hot path).
@@ -1185,9 +1337,18 @@ pub async fn rabitq_search_segment_coalesced(
         // TD-RDSTRAT-8: fetch the v3 prefix length unconditionally (clamped to
         // file size) — the 16 extra bytes ride the same GET and cover both the
         // v1 (56 B) and v3 (72 B) forms; `parse` branches on the version byte.
-        fs.read_range(path, 0, (SEG_HEADER_PREFIX_V3_LEN as u64).min(size))
+        let read_len = prefix_prefetch_bytes()
+            .unwrap_or(SEG_HEADER_PREFIX_V3_LEN as u64)
+            .max(SEG_HEADER_PREFIX_V3_LEN as u64)
+            .min(size);
+        let bytes = fs
+            .read_range(path, 0, read_len)
             .await
-            .map_err(|e| anyhow::anyhow!("coalesced scan header {path}: {e}"))?
+            .map_err(|e| anyhow::anyhow!("coalesced scan header {path}: {e}"))?;
+        if trace_on {
+            record_get(CacheTier::SearchControl, bytes.len() as u64);
+        }
+        bytes
     };
     // A v3 (two-level) segment parses here too and falls through to the same
     // single-level whole-region scan: Regions A/B are byte-identical in format
@@ -1208,10 +1369,20 @@ pub async fn rabitq_search_segment_coalesced(
         && header.a0_len > 0
         && coarse_probe_enabled();
     let probe = if probe_armed {
-        coarse_probe_survivors(fs, path, &header, query, metric, k, trace_on)
-            .await
-            .ok()
-            .flatten()
+        coarse_probe_survivors(
+            fs,
+            path,
+            &header,
+            query,
+            metric,
+            k,
+            trace_on,
+            cached.as_deref(),
+            &header_bytes,
+        )
+        .await
+        .ok()
+        .flatten()
     } else {
         None
     };
@@ -1238,20 +1409,21 @@ pub async fn rabitq_search_segment_coalesced(
         if probe_armed {
             record_ivf_probe_durable(0, 0, 0, 0, true);
         }
-        let region_bytes: Arc<[u8]> = if let Some(inv) = cached.as_ref() {
-            inv.region_bytes.clone()
-        } else {
-            let bytes = fs
-                .read_range(path, header.rabitq_off, header.rabitq_len)
-                .await
-                .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?;
-            // Trace the whole-region cost so the coarse probe's Region-A saving is
-            // observable (co-design: trace before you tune). Diagnostic-only.
-            if trace_on {
-                record_get(CacheTier::InvariantIndex, header.rabitq_len);
-            }
-            Arc::from(bytes)
-        };
+        let region_bytes: Arc<[u8]> =
+            if let Some(bytes) = cached.as_ref().and_then(|inv| inv.region_bytes.clone()) {
+                bytes
+            } else {
+                let bytes = fs
+                    .read_range(path, header.rabitq_off, header.rabitq_len)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?;
+                // Trace the whole-region cost so the coarse probe's Region-A saving is
+                // observable (co-design: trace before you tune). Diagnostic-only.
+                if trace_on {
+                    record_get(CacheTier::InvariantIndex, header.rabitq_len);
+                }
+                Arc::from(bytes)
+            };
         let region = RaBitQRegion::from_bytes(&region_bytes)?;
         // ADR-062 PR2: adaptive survivor pool — scale M with the segment's rows.
         let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
@@ -1265,26 +1437,51 @@ pub async fn rabitq_search_segment_coalesced(
     let footer_bytes: Vec<u8> = if let Some(inv) = cached.as_ref() {
         inv.footer_bytes.clone()
     } else {
-        fs.read_range(path, header.footer_off, header.footer_len)
+        let bytes = fs
+            .read_range(path, header.footer_off, header.footer_len)
             .await
-            .map_err(|e| anyhow::anyhow!("coalesced scan footer {path}: {e}"))?
+            .map_err(|e| anyhow::anyhow!("coalesced scan footer {path}: {e}"))?;
+        if trace_on {
+            record_get(CacheTier::InvariantMeta, bytes.len() as u64);
+        }
+        bytes
     };
     let footer = SegmentFooterIndex::parse(&footer_bytes)?;
 
-    // PR2: populate the cache on miss (the invariants parsed successfully →
-    // worth caching for hot repeat queries). Only on the whole-region path — the
-    // coarse probe never read the whole Region A, so there is nothing to cache
-    // here (its small A0/header/cell reads ride the survivor cache instead).
-    if cached.is_none()
-        && let Some(region_bytes) = region_bytes
-        && let Some(c) = cache
-    {
+    // Cache tiny ANN control metadata independently from the whole Region A.
+    // Probe queries therefore warm header/A0/RaBitQ params/footer without
+    // admitting a 24+ MiB invariant body they intentionally did not read.
+    let split_probe_meta = split_probe_metadata_cache_enabled();
+    let probe_a0 = if split_probe_meta {
+        probe.as_ref().map(|result| result.a0_bytes.clone())
+    } else {
+        None
+    };
+    let probe_rabitq_header = if split_probe_meta {
+        probe
+            .as_ref()
+            .map(|result| result.rabitq_header_bytes.clone())
+    } else {
+        None
+    };
+    let cached_region = cached.as_ref().and_then(|entry| entry.region_bytes.clone());
+    let cached_a0 = cached.as_ref().and_then(|entry| entry.a0_bytes.clone());
+    let cached_rabitq_header = cached
+        .as_ref()
+        .and_then(|entry| entry.rabitq_header_bytes.clone());
+    let cache_changed = (probe.is_none() && cached.is_none())
+        || (cached_region.is_none() && region_bytes.is_some())
+        || (cached_a0.is_none() && probe_a0.is_some())
+        || (cached_rabitq_header.is_none() && probe_rabitq_header.is_some());
+    if cache_changed && let Some(c) = cache {
         c.put(
             path.to_string(),
             Arc::new(SegmentInvariants {
                 header_bytes,
-                region_bytes,
+                region_bytes: region_bytes.or(cached_region),
                 footer_bytes,
+                a0_bytes: probe_a0.or(cached_a0),
+                rabitq_header_bytes: probe_rabitq_header.or(cached_rabitq_header),
             }),
         );
     }
@@ -1487,6 +1684,47 @@ pub async fn rabitq_search_segment_coalesced(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_range_coalescing_keeps_only_selected_cell_slices() {
+        let selected = vec![
+            ProbeCellSlice {
+                start: 100,
+                end: 200,
+                row_start: 0,
+            },
+            ProbeCellSlice {
+                start: 250,
+                end: 350,
+                row_start: 10,
+            },
+            ProbeCellSlice {
+                start: 900,
+                end: 1_000,
+                row_start: 20,
+            },
+        ];
+        let policy =
+            crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+                max_gap_bytes: 64,
+                max_range_bytes: 512,
+            };
+
+        let planned = plan_probe_cell_ranges(&selected, &policy);
+
+        assert_eq!(planned.len(), 2, "the 50-byte gap should merge");
+        assert_eq!((planned[0].start, planned[0].end), (100, 350));
+        assert_eq!(planned[0].selected, selected[..2]);
+        assert_eq!(planned[1].selected, selected[2..]);
+        let fetched: u64 = planned.iter().map(|range| range.end - range.start).sum();
+        let useful: u64 = planned
+            .iter()
+            .flat_map(|range| &range.selected)
+            .map(|cell| cell.end - cell.start)
+            .sum();
+        assert_eq!(useful, 300);
+        assert_eq!(fetched - useful, 50, "only the merged gap is over-read");
+    }
     use crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig;
     use proximadb_records::{EmbeddingCell, EmbeddingValues};
 
@@ -2516,11 +2754,19 @@ mod tests {
         }
         let _ = drain_get_trace();
         let _ = drain_probe_trace();
-        let probe = rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
-            .await
-            .unwrap()
-            .unwrap();
-        let probe_bytes: u64 = drain_get_trace().iter().map(|(_, b)| b).sum();
+        let (probe, probe_snapshot) = crate::observability::io_trace::scope(async {
+            let hits =
+                rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            let snapshot = crate::observability::io_trace::snapshot()
+                .expect("reader probe test runs inside an io_trace scope");
+            (hits, snapshot)
+        })
+        .await;
+        let probe_gets = drain_get_trace();
+        let probe_bytes: u64 = probe_gets.iter().map(|(_, b)| b).sum();
         let ptrace = drain_probe_trace();
 
         // 1. The probe engaged: cells_probed strictly inside (0, cells_total).
@@ -2536,6 +2782,11 @@ mod tests {
             "probed {probed_rows} of {N} rows (a strict subset)"
         );
         assert!(fetch_rounds >= 1, "at least one Region-A ranged GET");
+        assert_eq!(probe_snapshot.ivf_cells_total, cells_total);
+        assert_eq!(probe_snapshot.ivf_cells_probed, cells_probed);
+        assert_eq!(probe_snapshot.ivf_probed_rows, probed_rows);
+        assert_eq!(probe_snapshot.ivf_fetch_rounds, fetch_rounds);
+        assert_eq!(probe_snapshot.ivf_whole_region_fallback, 0);
 
         // 2. Materially fewer bytes than the whole-region baseline.
         assert!(
@@ -2552,11 +2803,166 @@ mod tests {
             "probe recall@{K} = {probe_recall:.2} must hold vs baseline {base_recall:.2} (nprobe=6/16)"
         );
 
+        // PR-C2 proof: bounded Region-A gap over-read may reduce physical
+        // ranges, but it must rank exactly the same selected cells and rows.
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_A_COALESCE_GAP", "1048576");
+            std::env::set_var("PROXIMADB_PAX_A_COALESCE_RANGE", "4194304");
+        }
+        let _ = drain_get_trace();
+        let _ = drain_probe_trace();
+        let (coalesced, coalesced_snapshot) = crate::observability::io_trace::scope(async {
+            let hits =
+                rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            let snapshot = crate::observability::io_trace::snapshot()
+                .expect("coalescing proof runs inside an io_trace scope");
+            (hits, snapshot)
+        })
+        .await;
+        let _ = drain_get_trace();
+        let _ = drain_probe_trace();
+        assert_eq!(
+            coalesced.iter().map(|hit| &hit.oid).collect::<Vec<_>>(),
+            probe.iter().map(|hit| &hit.oid).collect::<Vec<_>>(),
+            "physical gap over-read must not change logical survivors/results"
+        );
+        assert_eq!(coalesced_snapshot.ivf_cells_probed, cells_probed);
+        assert_eq!(coalesced_snapshot.ivf_probed_rows, probed_rows);
+        assert!(
+            coalesced_snapshot.ivf_fetch_rounds <= fetch_rounds,
+            "cost coalescing cannot add Region-A reads"
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_GAP");
+            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_RANGE");
+        }
+
+        // PR-C2 proof: a bounded prefix read must replace the separate header,
+        // A0 and RaBitQ-parameter GETs with one physical control GET.
+        let baseline_control_gets = probe_gets
+            .iter()
+            .filter(|(tier, _)| *tier == CacheTier::SearchControl)
+            .count();
+        assert!(
+            baseline_control_gets >= 3,
+            "control baseline needs header+A0+params"
+        );
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", "65536");
+        }
+        let _ = drain_get_trace();
+        let prefetched =
+            rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+                .await
+                .unwrap()
+                .unwrap();
+        let prefix_gets = drain_get_trace();
+        let _ = drain_probe_trace();
+        assert_eq!(
+            prefetched.iter().map(|hit| &hit.oid).collect::<Vec<_>>(),
+            probe.iter().map(|hit| &hit.oid).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            prefix_gets
+                .iter()
+                .filter(|(tier, _)| *tier == CacheTier::SearchControl)
+                .count(),
+            1,
+            "one prefix GET supplies header+A0+RaBitQ parameters"
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+        }
+
+        // PR-C2 proof: metadata warms independently even though the probe never
+        // admits the complete Region A into the invariant cache.
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "1");
+        }
+        let invariants = SegmentInvariantsCache::new(8 * 1024 * 1024);
+        let _ = drain_get_trace();
+        let _ = rabitq_search_segment_coalesced(
+            &fs,
+            p,
+            &query,
+            K,
+            RankMetric::L2,
+            Some(&invariants),
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let first_cached = drain_get_trace();
+        let _ = drain_probe_trace();
+        let _ = rabitq_search_segment_coalesced(
+            &fs,
+            p,
+            &query,
+            K,
+            RankMetric::L2,
+            Some(&invariants),
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let second_cached = drain_get_trace();
+        let _ = drain_probe_trace();
+        assert!(
+            first_cached.iter().any(|(tier, _)| matches!(
+                tier,
+                CacheTier::SearchControl | CacheTier::InvariantMeta
+            )),
+            "cold cache population reads control metadata"
+        );
+        assert!(
+            second_cached.iter().all(|(tier, _)| !matches!(
+                tier,
+                CacheTier::SearchControl | CacheTier::InvariantMeta
+            )),
+            "warm probe must not re-read cached control metadata"
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
+        }
+
+        // 4. Corrupt A0 fails closed to the canonical whole-Region-A scan and
+        //    makes that fallback visible in the durable query trace.
+        let mut corrupt = std::fs::read(&path).unwrap();
+        let corrupt_header = SegmentHeaderPrefix::parse(&corrupt).unwrap();
+        corrupt[corrupt_header.a0_off as usize] ^= 0x01;
+        std::fs::write(&path, corrupt).unwrap();
+        let (fallback, fallback_snapshot) = crate::observability::io_trace::scope(async {
+            let hits =
+                rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            let snapshot = crate::observability::io_trace::snapshot()
+                .expect("reader fallback test runs inside an io_trace scope");
+            (hits, snapshot)
+        })
+        .await;
+        assert!(
+            !fallback.is_empty(),
+            "A0 corruption fails closed, not empty"
+        );
+        assert_eq!(fallback_snapshot.ivf_cells_total, 0);
+        assert_eq!(fallback_snapshot.ivf_cells_probed, 0);
+        assert_eq!(fallback_snapshot.ivf_whole_region_fallback, 1);
         unsafe {
             std::env::remove_var("PROXIMADB_IVF2_PROBE");
             std::env::remove_var("PROXIMADB_IVF2_NPROBE");
             std::env::remove_var("PROXIMADB_TRACE_GETS");
             std::env::remove_var("PROXIMADB_IVF_K");
+            std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_GAP");
+            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_RANGE");
+            std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
         }
     }
 }

@@ -44,9 +44,17 @@ use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, StorageAssignment, StorageEngine, VectorRecord,
 };
 use proximadb::storage::engines::sst::SstEngine;
+use proximadb::storage::engines::sst::segment_format::{
+    CacheTier, SegmentInvariantsCache, drain_get_trace, rabitq_search_segment_coalesced,
+    write_pax_segment_compacted,
+};
+use proximadb::storage::engines::sst::survivor_range_cache::SurvivorRangeCache;
+use proximadb::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
 use proximadb::storage::traits::{
     FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
 };
+use proximadb_block_format::{RankMetric, VectorQuant};
+use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -728,22 +736,464 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
     }
 }
 
+#[derive(Debug)]
+struct Ivf2BakeMetrics {
+    recall: f64,
+    measured: usize,
+    snapshot: proximadb::observability::io_trace::IoTraceSnapshot,
+    p50_us: u64,
+    p95_us: u64,
+    get_trace: Vec<(CacheTier, u64)>,
+}
+
+fn ivf2_record(row: usize, vector: &[f32]) -> ProximaRecord {
+    ProximaRecord {
+        oid: vid(row as u32),
+        created_at_ns: 1_000 + row as i64,
+        updated_at_ns: 1_000 + row as i64,
+        record_version: 1,
+        embeddings: vec![EmbeddingCell {
+            model_id: "sift1m".into(),
+            modality: "dense_vector".into(),
+            dim: vector.len() as u32,
+            values: EmbeddingValues::Fp32(vector.to_vec()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+fn csv_usize_env(name: &str, defaults: &[usize]) -> Vec<usize> {
+    let values = std::env::var(name)
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .filter_map(|value| value.trim().parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| defaults.to_vec());
+    let mut values = values;
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+fn percentile_us(sorted: &[u64], percentile: usize) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    sorted[(sorted.len() - 1) * percentile.min(100) / 100]
+}
+
+fn write_ivf2_geometry(
+    root: &Path,
+    base: &[Vec<f32>],
+    file_count: usize,
+    v3: bool,
+) -> Vec<PathBuf> {
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "1");
+        std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
+        if v3 {
+            std::env::set_var("PROXIMADB_IVF2", "1");
+        } else {
+            std::env::remove_var("PROXIMADB_IVF2");
+        }
+    }
+    let rows_per_file = base.len().div_ceil(file_count);
+    let target_block =
+        proximadb_storage_common::iops_budget::IopsBudget::CLOUD.target_block_bytes() as usize;
+    let mut paths = Vec::new();
+    for file_index in 0..file_count {
+        let begin = file_index * rows_per_file;
+        if begin >= base.len() {
+            break;
+        }
+        let end = (begin + rows_per_file).min(base.len());
+        let records: Vec<ProximaRecord> = base[begin..end]
+            .iter()
+            .enumerate()
+            .map(|(local, vector)| ivf2_record(begin + local, vector))
+            .collect();
+        let path = root.join(format!(
+            "{}-{file_index:03}.pax",
+            if v3 { "v3" } else { "pxh1" }
+        ));
+        write_pax_segment_compacted(
+            &path,
+            &records,
+            "sift_ivf2_prc1",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(target_block),
+        )
+        .expect("write compacted bakeoff segment");
+        paths.push(path);
+    }
+    assert_eq!(paths.len(), file_count.min(base.len()));
+    paths
+}
+
+async fn search_ivf2_geometry(
+    fs: &LocalFileSystem,
+    paths: &[PathBuf],
+    query: &[f32],
+    invariants: Option<&SegmentInvariantsCache>,
+    survivors: Option<&SurvivorRangeCache>,
+) -> Vec<String> {
+    let mut hits = Vec::new();
+    for path in paths {
+        let path = path.to_str().expect("utf8 bakeoff path");
+        let segment_hits = rabitq_search_segment_coalesced(
+            fs,
+            path,
+            query,
+            TOP_K,
+            RankMetric::L2,
+            invariants,
+            survivors,
+        )
+        .await
+        .expect("coalesced segment search")
+        .expect("bakeoff segment is coalesced");
+        hits.extend(segment_hits);
+    }
+    hits.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    hits.truncate(TOP_K);
+    hits.into_iter().map(|hit| hit.oid).collect()
+}
+
+async fn run_ivf2_bake_arm(
+    fs: &LocalFileSystem,
+    paths: &[PathBuf],
+    queries: &[Vec<f32>],
+    ground_truth: &[std::collections::HashSet<String>],
+    warm: bool,
+) -> Ivf2BakeMetrics {
+    let _ = drain_get_trace();
+    let invariants = warm.then(|| SegmentInvariantsCache::new(512 * 1024 * 1024));
+    let survivors = warm.then(|| SurvivorRangeCache::new(512 * 1024 * 1024));
+    if warm {
+        for query in queries {
+            let _ = search_ivf2_geometry(fs, paths, query, invariants.as_ref(), survivors.as_ref())
+                .await;
+        }
+        let _ = drain_get_trace();
+    }
+    let (recall, measured, snapshot, mut query_us) =
+        proximadb::observability::io_trace::scope(async {
+            let mut recall_sum = 0.0;
+            let mut measured = 0usize;
+            let mut query_us = Vec::with_capacity(queries.len());
+            for (query_index, query) in queries.iter().enumerate() {
+                let started = Instant::now();
+                let got =
+                    search_ivf2_geometry(fs, paths, query, invariants.as_ref(), survivors.as_ref())
+                        .await;
+                query_us.push(started.elapsed().as_micros() as u64);
+                if got.is_empty() {
+                    continue;
+                }
+                let got: std::collections::HashSet<String> = got.into_iter().collect();
+                recall_sum +=
+                    got.intersection(&ground_truth[query_index]).count() as f64 / TOP_K as f64;
+                measured += 1;
+            }
+            let recall = if measured == 0 {
+                0.0
+            } else {
+                recall_sum / measured as f64
+            };
+            let snapshot = proximadb::observability::io_trace::snapshot()
+                .expect("bakeoff io_trace scope active");
+            (recall, measured, snapshot, query_us)
+        })
+        .await;
+    let get_trace = drain_get_trace();
+    query_us.sort_unstable();
+    Ivf2BakeMetrics {
+        recall,
+        measured,
+        snapshot,
+        p50_us: percentile_us(&query_us, 50),
+        p95_us: percentile_us(&query_us, 95),
+        get_trace,
+    }
+}
+
+fn ivf2_stage(metrics: &Ivf2BakeMetrics, tier: CacheTier) -> (u64, u64) {
+    metrics
+        .get_trace
+        .iter()
+        .filter(|(observed, _)| *observed == tier)
+        .fold((0, 0), |(gets, bytes), (_, size)| (gets + 1, bytes + size))
+}
+
+fn ivf2_read_cost(metrics: &Ivf2BakeMetrics) -> f64 {
+    let q = metrics.measured.max(1) as f64;
+    let gets = metrics.snapshot.range_gets as f64 / q;
+    let mib = metrics.snapshot.bytes_read as f64 / q / (1024.0 * 1024.0);
+    20.0 * gets + 5.0 * mib
+}
+
+fn ivf2_region_a_bytes(metrics: &Ivf2BakeMetrics) -> u64 {
+    ivf2_stage(metrics, CacheTier::InvariantIndex).1 + ivf2_stage(metrics, CacheTier::ProbeIndex).1
+}
+
+fn env_enabled(name: &str) -> bool {
+    matches!(
+        std::env::var(name)
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "on" | "yes")
+    )
+}
+
+unsafe fn set_ivf2_layout_proof_arm(prefix_bytes: Option<u64>, gap: Option<u64>, split: bool) {
+    unsafe {
+        std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+        std::env::remove_var("PROXIMADB_PAX_A_COALESCE_GAP");
+        std::env::remove_var("PROXIMADB_PAX_A_COALESCE_RANGE");
+        std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
+        if let Some(bytes) = prefix_bytes {
+            std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", bytes.to_string());
+        }
+        if let Some(bytes) = gap {
+            std::env::set_var("PROXIMADB_PAX_A_COALESCE_GAP", bytes.to_string());
+            std::env::set_var("PROXIMADB_PAX_A_COALESCE_RANGE", "4194304");
+        }
+        if split {
+            std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "1");
+        }
+    }
+}
+
+fn print_ivf2_bake_metric(
+    files: usize,
+    layout: &str,
+    temperature: &str,
+    nprobe: usize,
+    metrics: &Ivf2BakeMetrics,
+) {
+    let q = metrics.measured.max(1) as u64;
+    let (control_gets, control_bytes) = ivf2_stage(metrics, CacheTier::SearchControl);
+    let (meta_gets, meta_bytes) = ivf2_stage(metrics, CacheTier::InvariantMeta);
+    let (full_a_gets, full_a_bytes) = ivf2_stage(metrics, CacheTier::InvariantIndex);
+    let (probe_a_gets, probe_a_bytes) = ivf2_stage(metrics, CacheTier::ProbeIndex);
+    let (region_b_gets, region_b_bytes) = ivf2_stage(metrics, CacheTier::SurvivorPayload);
+    let (region_d_gets, region_d_bytes) = ivf2_stage(metrics, CacheTier::ResultPayload);
+    eprintln!(
+        "BAKE_METRIC rdstrat8_prc1 files={files} layout={layout} temperature={temperature} nprobe={nprobe} recall_at_10={:.4} queries={} range_gets_per_query={} bytes_read_per_query={} region_a_bytes_per_query={} region_b_bytes_per_query={} ivf_cells_total_per_query={} ivf_cells_probed_per_query={} probed_rows_per_query={} fetch_rounds_per_query={} whole_region_fallback={} p50_us={} p95_us={} control_gets_per_query={} control_bytes_per_query={} meta_gets_per_query={} meta_bytes_per_query={} full_a_gets_per_query={} full_a_bytes_per_query={} probe_a_gets_per_query={} probe_a_bytes_per_query={} region_b_gets_per_query={} traced_region_b_bytes_per_query={} region_d_gets_per_query={} region_d_bytes_per_query={}",
+        metrics.recall,
+        metrics.measured,
+        metrics.snapshot.range_gets / q,
+        metrics.snapshot.bytes_read / q,
+        (full_a_bytes + probe_a_bytes) / q,
+        region_b_bytes / q,
+        metrics.snapshot.ivf_cells_total / q,
+        metrics.snapshot.ivf_cells_probed / q,
+        metrics.snapshot.ivf_probed_rows / q,
+        metrics.snapshot.ivf_fetch_rounds / q,
+        metrics.snapshot.ivf_whole_region_fallback,
+        metrics.p50_us,
+        metrics.p95_us,
+        control_gets / q,
+        control_bytes / q,
+        meta_gets / q,
+        meta_bytes / q,
+        full_a_gets / q,
+        full_a_bytes / q,
+        probe_a_gets / q,
+        probe_a_bytes / q,
+        region_b_gets / q,
+        region_b_bytes / q,
+        region_d_gets / q,
+        region_d_bytes / q,
+    );
+}
+
+/// TD-RDSTRAT-8 PR-C1 release-profile bakeoff. The control and treatment use
+/// the same compaction writer, PCA/IVF row order, file partitions, SQ8/RaBitQ
+/// tiers, queries, and ground truth. The only layout difference is PXH1 versus
+/// v3/A0; each v3 arm changes only `nprobe`.
+#[tokio::test]
+#[ignore = "SIFT1M PR-C1 eval — set PROXIMADB_SIFT_DATASET_DIR + run release profile"]
+async fn sift_ivf2_probe_release_bakeoff_eval() {
+    let base_path = match dataset_path("sift_base.fvecs") {
+        Some(path) if path.exists() => path,
+        _ if dataset_required() => panic!("SIFT1M dataset required but missing"),
+        _ => {
+            eprintln!("skip: PROXIMADB_SIFT_DATASET_DIR unset/missing");
+            return;
+        }
+    };
+    let base = read_vec_records_f32(&base_path, None).expect("read SIFT1M base");
+    assert_eq!(base.len(), 1_000_000, "PR-C1 headline requires full SIFT1M");
+    let query_path = dataset_path("sift_query.fvecs").expect("SIFT query path");
+    let queries = read_vec_records_f32(&query_path, Some(100)).expect("read 100 SIFT queries");
+    assert_eq!(queries.len(), 100, "PR-C1 headline requires 100 queries");
+    let gt_path = dataset_path("sift_groundtruth.ivecs").expect("SIFT ground-truth path");
+    let truth = read_vec_records_u32(&gt_path, Some(queries.len())).expect("read SIFT truth");
+    let ground_truth: Vec<std::collections::HashSet<String>> = truth
+        .into_iter()
+        .map(|row| row.into_iter().take(TOP_K).map(vid).collect())
+        .collect();
+    let recall_floor = 0.98;
+    let file_counts = csv_usize_env("PROXIMADB_SIFT_IVF2_FILE_COUNTS", &[1, 4]);
+    let nprobes = csv_usize_env("PROXIMADB_SIFT_IVF2_NPROBE_SWEEP", &[4, 8, 16, 32]);
+    let layout_proof = env_enabled("PROXIMADB_SIFT_IVF2_LAYOUT_PROOF");
+    let proof_prefix = std::env::var("PROXIMADB_SIFT_IVF2_PREFIX_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(64 * 1024);
+    let proof_gaps = csv_usize_env("PROXIMADB_SIFT_IVF2_A_GAP_SWEEP", &[1024 * 1024]);
+    let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+        .await
+        .expect("local filesystem");
+
+    for file_count in file_counts {
+        let dir = TempDir::new().expect("bakeoff tempdir");
+        let pxh1 = write_ivf2_geometry(dir.path(), &base, file_count, false);
+        let v3 = write_ivf2_geometry(dir.path(), &base, file_count, true);
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_IVF2_PROBE");
+            std::env::remove_var("PROXIMADB_IVF2_NPROBE");
+            set_ivf2_layout_proof_arm(None, None, false);
+            std::env::set_var("PROXIMADB_TRACE_PAX_STAGES", "1");
+        }
+        let control_cold = run_ivf2_bake_arm(&fs, &pxh1, &queries, &ground_truth, false).await;
+        let control_warm = run_ivf2_bake_arm(&fs, &pxh1, &queries, &ground_truth, true).await;
+        print_ivf2_bake_metric(file_count, "pxh1", "cold", 0, &control_cold);
+        print_ivf2_bake_metric(file_count, "pxh1", "warm", 0, &control_warm);
+        assert!(
+            control_cold.recall >= recall_floor,
+            "PXH1 control recall {:.4} < {recall_floor} for {file_count} files",
+            control_cold.recall
+        );
+
+        let mut bytes_qualifying = false;
+        let mut joint_get_qualifying = false;
+        for nprobe in &nprobes {
+            unsafe {
+                set_ivf2_layout_proof_arm(None, None, false);
+                std::env::set_var("PROXIMADB_IVF2_PROBE", "1");
+                std::env::set_var("PROXIMADB_IVF2_NPROBE", nprobe.to_string());
+            }
+            let probe_cold = run_ivf2_bake_arm(&fs, &v3, &queries, &ground_truth, false).await;
+            let probe_warm = run_ivf2_bake_arm(&fs, &v3, &queries, &ground_truth, true).await;
+            print_ivf2_bake_metric(file_count, "v3_probe", "cold", *nprobe, &probe_cold);
+            print_ivf2_bake_metric(file_count, "v3_probe", "warm", *nprobe, &probe_warm);
+            assert!(
+                probe_cold.snapshot.ivf_cells_probed > 0,
+                "probe did not engage for files={file_count}, nprobe={nprobe}"
+            );
+            assert_eq!(
+                probe_cold.snapshot.ivf_whole_region_fallback, 0,
+                "probe silently fell back for files={file_count}, nprobe={nprobe}"
+            );
+            let q = probe_cold.measured.max(1) as u64;
+            let cq = control_cold.measured.max(1) as u64;
+            let clears_bytes = probe_cold.recall >= recall_floor
+                && probe_cold.snapshot.bytes_read / q < control_cold.snapshot.bytes_read / cq
+                && ivf2_region_a_bytes(&probe_cold) / q < ivf2_region_a_bytes(&control_cold) / cq;
+            bytes_qualifying |= clears_bytes;
+            joint_get_qualifying |= clears_bytes
+                && probe_cold.snapshot.range_gets / q < control_cold.snapshot.range_gets / cq;
+
+            if layout_proof {
+                let mut arms: Vec<(String, Option<u64>, Option<u64>, bool)> = vec![
+                    ("split_meta_cache".to_string(), None, None, true),
+                    (
+                        format!("prefix_{proof_prefix}"),
+                        Some(proof_prefix),
+                        None,
+                        false,
+                    ),
+                ];
+                for gap in &proof_gaps {
+                    arms.push((format!("a_gap_{gap}"), None, Some(*gap as u64), false));
+                    arms.push((
+                        format!("combined_gap_{gap}"),
+                        Some(proof_prefix),
+                        Some(*gap as u64),
+                        true,
+                    ));
+                }
+                for (label, prefix, gap, split) in arms {
+                    unsafe {
+                        set_ivf2_layout_proof_arm(prefix, gap, split);
+                    }
+                    let candidate_cold =
+                        run_ivf2_bake_arm(&fs, &v3, &queries, &ground_truth, false).await;
+                    let candidate_warm =
+                        run_ivf2_bake_arm(&fs, &v3, &queries, &ground_truth, true).await;
+                    print_ivf2_bake_metric(
+                        file_count,
+                        &format!("v3_{label}"),
+                        "cold",
+                        *nprobe,
+                        &candidate_cold,
+                    );
+                    print_ivf2_bake_metric(
+                        file_count,
+                        &format!("v3_{label}"),
+                        "warm",
+                        *nprobe,
+                        &candidate_warm,
+                    );
+                    assert!(
+                        (candidate_cold.recall - probe_cold.recall).abs() < f64::EPSILON,
+                        "layout-only arm {label} changed cold recall"
+                    );
+                    assert!(
+                        (candidate_warm.recall - probe_warm.recall).abs() < f64::EPSILON,
+                        "layout-only arm {label} changed warm recall"
+                    );
+                    let base_cold_cost = ivf2_read_cost(&probe_cold);
+                    let base_warm_cost = ivf2_read_cost(&probe_warm);
+                    let candidate_cold_cost = ivf2_read_cost(&candidate_cold);
+                    let candidate_warm_cost = ivf2_read_cost(&candidate_warm);
+                    eprintln!(
+                        "PROOF_GATE rdstrat8_prc2 files={file_count} nprobe={nprobe} arm={label} cold_cost={candidate_cold_cost:.3} baseline_cold_cost={base_cold_cost:.3} cold_accept={} warm_cost={candidate_warm_cost:.3} baseline_warm_cost={base_warm_cost:.3} warm_accept={}",
+                        candidate_cold_cost < base_cold_cost,
+                        candidate_warm_cost < base_warm_cost,
+                    );
+                }
+                unsafe {
+                    set_ivf2_layout_proof_arm(None, None, false);
+                }
+            }
+        }
+        eprintln!(
+            "BAKE_GATE rdstrat8_prc1 files={file_count} bytes_gate={bytes_qualifying} joint_get_gate={joint_get_qualifying}"
+        );
+        assert!(
+            bytes_qualifying,
+            "no v3 nprobe arm cleared recall/byte gates for {file_count} files"
+        );
+    }
+
+    unsafe {
+        std::env::remove_var("PROXIMADB_IVF2");
+        std::env::remove_var("PROXIMADB_IVF2_PROBE");
+        std::env::remove_var("PROXIMADB_IVF2_NPROBE");
+        std::env::remove_var("PROXIMADB_TRACE_PAX_STAGES");
+        set_ivf2_layout_proof_arm(None, None, false);
+    }
+}
+
 /// TD-RDSTRAT-8 PR-B SIFT-scale recall/GET gate for the two-level IVF coarse
-/// probe (the default-on ratchet). Mirrors `sift_coalesced_rabitq_scan_rerank_eval`
-/// but drives the v3 layout through the **production compaction trigger**
-/// (`workload_profile:append` + `l0_threshold:2` ⇒ compaction runs inline on the
-/// 2nd flush, the same path `sst_ivf2_compaction_route_proof_test` proves), then
-/// compares the coarse probe (ON) to the whole-region scan (OFF) on the SAME v3
-/// segment: the probe must hold recall while cutting range-GETs (the dominant
-/// cloud cost term).
-///
-/// Env (in addition to the coalesced harness's):
-///   PROXIMADB_SIFT_IVF_K          coarse cells (default 64); nprobe defaults to k_c/4
-///   PROXIMADB_SIFT_IVF2_RECALL_DROP max recall drop vs baseline (default 0.10)
-///
-/// Run: `PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 \
-///      cargo test --release --test sift_pax_recall_ratchet_test \
-///      sift_ivf2_coarse_probe_recall_ratchet -- --ignored --nocapture`
+/// probe. This drives v3 through the production compaction trigger, then
+/// compares probe ON with the whole-region scan over the same segment.
 #[ignore = "SIFT eval — set PROXIMADB_SIFT_DATASET_DIR + run with --ignored"]
 #[tokio::test]
 async fn sift_ivf2_coarse_probe_recall_ratchet() {
@@ -753,8 +1203,6 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
         std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
         std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "1");
         std::env::set_var("PROXIMADB_COUNT_FS_IO", "1");
-        // TD-RDSTRAT-8: arm the v3 compaction writer (the probe reader is toggled
-        // per-phase below). IVF_K sets the coarse-cell count.
         std::env::set_var("PROXIMADB_IVF2", "1");
         std::env::set_var(
             "PROXIMADB_IVF_K",
@@ -796,8 +1244,6 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
         None => base.iter().take(max_queries.min(n)).cloned().collect(),
     };
     let qcount = queries.len();
-    // Brute-force ground truth over the inserted subset (subset_n < 1M ⇒ no
-    // provided GT applies). Rayon-parallelised like the coalesced harness.
     let ground_truth: Vec<std::collections::HashSet<String>> = queries
         .iter()
         .map(|q| {
@@ -809,8 +1255,6 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
         .collect();
 
     let temp_dir = TempDir::new().unwrap();
-    // Armed AppendBulk + L0 threshold 2: the 2nd flush crosses L0 >= 2 and runs
-    // compaction INLINE (the production v3 trigger — sst_ivf2_compaction_route_proof).
     let collection = Collection {
         id: "sift_ivf2_gate".to_string(),
         config: Some(CollectionConfig {
@@ -829,7 +1273,6 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
     };
     let engine = SstEngine::new().await.unwrap();
 
-    // Flush the base in TWO batches ⇒ L0 crosses 2 ⇒ inline compaction ⇒ v3.
     let half = n / 2;
     let batch_a: Vec<VectorRecord> = base[..half]
         .iter()
@@ -862,8 +1305,6 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
         second.compaction_error
     );
 
-    // Measure recall + range-GETs for a query loop. `probe_on` toggles the
-    // coarse-probe reader; both phases search the SAME v3 segment.
     async fn measure(
         engine: &SstEngine,
         collection: &Collection,
@@ -944,35 +1385,18 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
         measured_base > 0 && measured_probe > 0,
         "no queries measured"
     );
-    // 1. The probe engaged on the v3 segment (ranked the coarse cells, ranged
-    //    only nprobe of them). This is the PR-B reader-correctness gate.
     assert!(
         !probe_trace.is_empty(),
         "PROXIMADB_IVF2_PROBE=1 must engage the coarse probe on the v3 segment"
     );
-    // 2. Recall held vs the whole-region baseline (the meaningful PR-B claim —
-    //    robust to the absolute RaBitQ recall level the corpus/quantizer set).
     assert!(
         recall_probe >= recall_base - recall_drop,
         "probe recall@{TOP_K} = {recall_probe:.4} dropped > {recall_drop} vs baseline {recall_base:.4}"
     );
-    // 3. The probe reads a strict subset of Region-A bytes (it ranges only the
-    //    nprobe nearest cells, never the whole region). This is the probe's
-    //    bandwidth/GB-month win.
     assert!(
         bytes_probe < bytes_base,
         "probe bytes/q = {bytes_probe} must read fewer than baseline {bytes_base}"
     );
-    // NOTE (co-design finding, recorded not asserted): at this scale (N=100k,
-    // single-file) the coalesced whole-region baseline is ALREADY GET-optimal
-    // (~13 range-GETs/q — GETs grow ∝ N, ~9 at 100k / ~51 at 1M). The coarse
-    // probe FRAGMENTS Region-A into more, smaller ranged reads, so range_gets/q
-    // can be HIGHER with the probe even as bytes drop. GET round-trips are the
-    // dominant cloud cost term, so the probe's GET win manifests only at larger
-    // N (1M) where the baseline GET count is high enough to outweigh the
-    // fragmentation. A 1M-scale GET-cut gate is the follow-up; this gate proves
-    // reader correctness (recall held + probe engaged + bytes cut), not that
-    // default-on is justified at 100k — that decision waits for the 1M number.
     unsafe {
         std::env::remove_var("PROXIMADB_IVF2");
         std::env::remove_var("PROXIMADB_IVF2_PROBE");
