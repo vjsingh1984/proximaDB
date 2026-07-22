@@ -2127,11 +2127,9 @@ impl WriteAheadLogManager {
             use crate::storage::persistence::write_ahead_log::flush_policy::{
                 FlushPolicy, FlushReason,
             };
-            let mem_bytes = write_buffer
-                .get_unflushed_batches(collection_id)
-                .await
-                .map(|b| b.iter().map(|x| x.total_size_bytes as u64).sum())
-                .unwrap_or(0);
+            // Lean per-write size check (sums sizes under the lock, no batch clone —
+            // get_unflushed_batches clones every batch and regressed write throughput).
+            let mem_bytes = write_buffer.unflushed_bytes(collection_id).await;
             let policy = FlushPolicy::from_performance(&self.config.performance);
             if matches!(
                 policy.evaluate(mem_bytes, 0).reason,
