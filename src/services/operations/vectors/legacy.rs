@@ -3541,59 +3541,78 @@ impl VectorOperationsService {
             "🔍 Stage 2: Searching AXIS HNSW index for {}",
             collection_id
         );
-        let axis_optimized_results = match build_axis_hybrid_query_with_policy(
-            // TD-AXIS-1: use the collection's canonical id (UUID) — NOT the
-            // caller's collection_id (which may be the human-readable NAME).
-            // enable_hmgi registered the UUID in hmgi_enabled_collections;
-            // passing the name caused is_hmgi_enabled to return false → HMGI
-            // skipped → IVF fallback → 0 results (ANN index not serving).
-            // ADR-031 follow-up: migrate hmgi_enabled_collections to the stable
-            // object_id (base62) and use that here instead of the UUID.
-            &collection.id,
-            &axis_search_params,
-            ann_filtering_mode,
-            ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
-            ann_filtering_selectivity,
-        ) {
-            Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
-                Ok(result) => {
-                    // TD-064(a): stop dropping `predicate_shortfall` /
-                    // `selected_filtering_mode`. Carry the AXIS-stage shortfall
-                    // onto the per-request diagnostics bus here (explicit
-                    // carrier — the value is then recomputed against the FINAL
-                    // WAL+AXIS+storage merge at the response boundary in
-                    // `search_records_with_tenant_context`, which clears any
-                    // post-merge false positive). `selected_filtering_mode` is
-                    // already reflected in the shortfall's `ann_filtering_mode`
-                    // label, so bind it to document it is captured, not
-                    // silently discarded.
-                    let axis_shortfall = result.predicate_shortfall;
-                    let _selected_filtering_mode = result.selected_filtering_mode;
-                    crate::observability::predicate_diagnostics::set_shortfall(axis_shortfall);
-                    let records: Vec<crate::core::search::results::OptimizedSearchRecord> = result
-                        .results
-                        .into_iter()
-                        .map(|r| {
-                            crate::core::search::results::OptimizedSearchRecord::new(
-                                r.vector_id,
-                                r.similarity,
-                            )
-                        })
-                        .collect();
-                    debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
-                    records
-                }
+        // Co-design: skip the in-memory AXIS (HNSW/IVF) query entirely for
+        // collections that have no index_configs. The PAX scan (RaBitQ + SQ8 +
+        // A0 coarse-probe) in the SST engine handles the search — the segment IS
+        // the index. This avoids the 8.6GB RSS + minutes of IVF training for
+        // cost-optimized, object-storage-backed collections.
+        let collection_has_axis_indexes = collection
+            .config
+            .as_ref()
+            .is_some_and(|c| !c.index_configs.is_empty());
+        let axis_optimized_results = if !collection_has_axis_indexes {
+            info!(
+                "🔍 Co-design: skipping AXIS for collection {} (no index_configs) — \
+                 using PAX scan path",
+                collection_id
+            );
+            Vec::new()
+        } else {
+            match build_axis_hybrid_query_with_policy(
+                // TD-AXIS-1: use the collection's canonical id (UUID) — NOT the
+                // caller's collection_id (which may be the human-readable NAME).
+                // enable_hmgi registered the UUID in hmgi_enabled_collections;
+                // passing the name caused is_hmgi_enabled to return false → HMGI
+                // skipped → IVF fallback → 0 results (ANN index not serving).
+                // ADR-031 follow-up: migrate hmgi_enabled_collections to the stable
+                // object_id (base62) and use that here instead of the UUID.
+                &collection.id,
+                &axis_search_params,
+                ann_filtering_mode,
+                ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
+                ann_filtering_selectivity,
+            ) {
+                Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
+                    Ok(result) => {
+                        // TD-064(a): stop dropping `predicate_shortfall` /
+                        // `selected_filtering_mode`. Carry the AXIS-stage shortfall
+                        // onto the per-request diagnostics bus here (explicit
+                        // carrier — the value is then recomputed against the FINAL
+                        // WAL+AXIS+storage merge at the response boundary in
+                        // `search_records_with_tenant_context`, which clears any
+                        // post-merge false positive). `selected_filtering_mode` is
+                        // already reflected in the shortfall's `ann_filtering_mode`
+                        // label, so bind it to document it is captured, not
+                        // silently discarded.
+                        let axis_shortfall = result.predicate_shortfall;
+                        let _selected_filtering_mode = result.selected_filtering_mode;
+                        crate::observability::predicate_diagnostics::set_shortfall(axis_shortfall);
+                        let records: Vec<crate::core::search::results::OptimizedSearchRecord> =
+                            result
+                                .results
+                                .into_iter()
+                                .map(|r| {
+                                    crate::core::search::results::OptimizedSearchRecord::new(
+                                        r.vector_id,
+                                        r.similarity,
+                                    )
+                                })
+                                .collect();
+                        debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
+                        records
+                    }
+                    Err(e) => {
+                        debug!("Stage 2 AXIS search failed: {}", e);
+                        Vec::new()
+                    }
+                },
                 Err(e) => {
-                    debug!("Stage 2 AXIS search failed: {}", e);
+                    warn!(
+                        "Stage 2 AXIS search skipped for collection {}: {}",
+                        collection_id, e
+                    );
                     Vec::new()
                 }
-            },
-            Err(e) => {
-                warn!(
-                    "Stage 2 AXIS search skipped for collection {}: {}",
-                    collection_id, e
-                );
-                Vec::new()
             }
         };
 

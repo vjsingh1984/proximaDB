@@ -60,6 +60,14 @@ impl SstEngine {
     /// the live write path does not populate AXIS, so flush is the first
     /// indexing point.
     async fn index_flushed_into_axis(&self, params: &FlushParameters, files_created: Vec<String>) {
+        // Co-design: skip the expensive AXIS index build (HNSW/IVF training, RAM)
+        // for collections that don't use AXIS. The search route (search/mod.rs) already
+        // gates AXIS on use_axis_indexes; this avoids the 8.6GB RSS + minutes of IVF
+        // training for co-design collections. Global env gate for now; per-collection
+        // threading via FlushParameters is a follow-up.
+        if std::env::var("PROXIMADB_SKIP_AXIS_INDEXING").as_deref() == Ok("1") {
+            return;
+        }
         let Some(axis_manager) = self.axis_manager() else {
             return;
         };
