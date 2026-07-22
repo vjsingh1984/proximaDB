@@ -178,6 +178,10 @@ enabled = false
 # compression = "zstd"
 # format = "jsonl"
 # spool_max_bytes = 268435456      # 256 MiB; drop-oldest on overflow
+# object_store_uri = "az://acct/container"   # S2 dispatch target (else local-only)
+# access_tier = "cold"                        # S2 at-rest tier (hot/cool/cold/archive)
+# warehouse_compaction_interval_s = 900       # S4b: compact envelopes → Iceberg Parquet
+                                              #      every N s (0/unset = off; needs object_store_uri)
 
 # ==============================================================================
 # LLM Integration Configuration (Q4 2025)

@@ -151,6 +151,10 @@ pub struct IoTraceSinkConfig {
     pub partition_by: Option<String>,
     /// Retention days for object-store lifecycle GC (S2).
     pub retention_days: Option<u64>,
+    /// TD-TRACE-2 S4b: interval (seconds) for the background warehouse compactor that
+    /// projects the durable envelopes into Iceberg-managed Parquet. `None`/`0` ⇒ off;
+    /// requires `object_store_uri` (the compactor reads the object-store segments).
+    pub warehouse_compaction_interval_s: Option<u64>,
 }
 
 impl IoTraceSinkConfig {
@@ -240,6 +244,13 @@ impl IoTraceSinkConfig {
             None => ObjectAccessTier::Cold,
         };
 
+        // S4b: background warehouse compaction interval. Env over TOML; `0` normalizes
+        // to `None` (off). Only meaningful with an `object_store_uri`.
+        let warehouse_compaction_interval_s =
+            env_u64("PROXIMADB_IO_TRACE_SINK_WAREHOUSE_COMPACTION_INTERVAL_S")
+                .or(from_toml.warehouse_compaction_interval_s)
+                .filter(|s| *s > 0);
+
         Ok(Some(ResolvedIoTraceSinkConfig {
             local_dir,
             segment_bytes,
@@ -250,6 +261,7 @@ impl IoTraceSinkConfig {
             format,
             object_store_uri,
             access_tier,
+            warehouse_compaction_interval_s,
         }))
     }
 }
@@ -270,6 +282,9 @@ pub struct ResolvedIoTraceSinkConfig {
     pub object_store_uri: Option<String>,
     /// Per-object access tier for the object-store PUT (S2). Default `Cold`.
     pub access_tier: ObjectAccessTier,
+    /// S4b background warehouse-compaction interval (seconds). `None` ⇒ off (also off
+    /// unless `object_store_uri` is set).
+    pub warehouse_compaction_interval_s: Option<u64>,
 }
 
 /// Queue subsystem runtime configuration. Lives at the `[queue]` TOML
@@ -445,6 +460,7 @@ mod queue_config_tests {
         // S2 defaults: no object store (local-only), Cold tier.
         assert_eq!(r.object_store_uri, None);
         assert_eq!(r.access_tier, ObjectAccessTier::Cold);
+        assert_eq!(r.warehouse_compaction_interval_s, None);
     }
 
     #[test]

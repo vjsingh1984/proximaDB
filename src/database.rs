@@ -198,7 +198,18 @@ impl ProximaDB {
         )
         .map_err(anyhow::Error::msg)?
         {
+            // S4b: run the background warehouse compactor when both an object-store
+            // dispatch target and a compaction interval are configured (the compactor
+            // reads the object-store segments). Capture before `sink_cfg` is moved.
+            let warehouse_trigger = sink_cfg
+                .object_store_uri
+                .clone()
+                .zip(sink_cfg.warehouse_compaction_interval_s);
             crate::observability::io_trace_sink::install(sink_cfg).map_err(anyhow::Error::msg)?;
+            if let Some((uri, interval_s)) = warehouse_trigger {
+                crate::observability::io_trace_warehouse::install(uri, interval_s)
+                    .map_err(anyhow::Error::msg)?;
+            }
         }
         // Co-design C5 (integration): register the tenant→tier Port to read the
         // header-fed tier registry (`X-Tenant-Tier` → `record_store::TENANT_TIERS`),
@@ -823,6 +834,7 @@ impl ProximaDB {
         // TD-TRACE-2: flush + stop the durable io_trace sink so buffered trace
         // segments are sealed to disk (no-op if the sink was not installed).
         crate::observability::io_trace_sink::shutdown().await;
+        crate::observability::io_trace_warehouse::shutdown().await;
 
         // 1a. Stop the async-ingest drainer first so it stops consuming
         //     before we shut down the storage layer it inserts into.

@@ -646,6 +646,7 @@ mod tests {
             format: "jsonl".to_string(),
             object_store_uri: None,
             access_tier: ObjectAccessTier::Cold,
+            warehouse_compaction_interval_s: None,
         }
     }
 

@@ -30,7 +30,9 @@
 //! path). Unparseable / unknown-modality records are skipped, not fatal.
 
 use std::collections::{BTreeSet, HashSet};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use arrow_array::{ArrayRef, BooleanArray, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
@@ -311,6 +313,121 @@ impl IoTraceWarehouse {
             StorageError::Serialization(format!("io_trace warehouse: watermark encode: {e}"))
         })?;
         self.store.put(&key, Bytes::from(bytes)).await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// S4b — background compaction trigger.
+// ---------------------------------------------------------------------------
+
+/// Wall-clock milliseconds since the Unix epoch — the per-run Iceberg snapshot id.
+/// Wall-clock is fine in production; only workflow scripts forbid it.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+struct TriggerHandle {
+    shutdown: tokio::sync::watch::Sender<bool>,
+    join: tokio::task::JoinHandle<()>,
+}
+
+static TRIGGER: OnceLock<Mutex<Option<TriggerHandle>>> = OnceLock::new();
+static TRIGGER_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn trigger_slot() -> &'static Mutex<Option<TriggerHandle>> {
+    TRIGGER.get_or_init(|| Mutex::new(None))
+}
+
+/// Install the background warehouse compactor: build the compactor from
+/// `object_store_uri` (the store the sink dispatches segments to) and spawn a task
+/// that runs [`IoTraceWarehouse::compact`] every `interval_s` seconds — and once
+/// more on shutdown. Rejects a duplicate install without disturbing the live worker.
+/// Default-OFF: a caller installs it only when S4b config opts in. Must run inside a
+/// tokio runtime (it is — `ProximaDB::new`).
+pub fn install(object_store_uri: String, interval_s: u64) -> Result<(), String> {
+    if TRIGGER_ACTIVE
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err("io_trace warehouse compactor is already installed".to_string());
+    }
+    let warehouse = match IoTraceWarehouse::from_url(&object_store_uri) {
+        Ok(w) => w,
+        Err(e) => {
+            TRIGGER_ACTIVE.store(false, Ordering::Release);
+            return Err(format!(
+                "io_trace warehouse compactor: object_store_uri {object_store_uri} invalid: {e}"
+            ));
+        }
+    };
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let join = tokio::spawn(run_compaction_loop(
+        warehouse,
+        interval_s.max(1),
+        shutdown_rx,
+    ));
+    *trigger_slot().lock().unwrap_or_else(|p| p.into_inner()) = Some(TriggerHandle {
+        shutdown: shutdown_tx,
+        join,
+    });
+    tracing::info!("io_trace warehouse compactor installed (interval {interval_s}s)");
+    Ok(())
+}
+
+/// Signal the compactor to run a final pass and stop, awaiting it with a short
+/// timeout. Called from `ProximaDB::shutdown()`. No-op if not installed.
+pub async fn shutdown() {
+    let handle = trigger_slot()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take();
+    if let Some(handle) = handle {
+        let _ = handle.shutdown.send(true);
+        match tokio::time::timeout(Duration::from_secs(30), handle.join).await {
+            Ok(Ok(())) => tracing::info!("io_trace warehouse compactor stopped"),
+            Ok(Err(e)) => tracing::warn!("io_trace warehouse compactor join error: {e}"),
+            Err(_) => tracing::warn!("io_trace warehouse compactor shutdown timed out (30s)"),
+        }
+        TRIGGER_ACTIVE.store(false, Ordering::Release);
+    }
+}
+
+async fn run_compaction_loop(
+    warehouse: IoTraceWarehouse,
+    interval_s: u64,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(interval_s));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Consume the immediate first tick; a fresh install shouldn't compact instantly.
+    interval.tick().await;
+    loop {
+        tokio::select! {
+            _ = interval.tick() => run_compaction_pass(&warehouse).await,
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    // Final pass so a graceful shutdown lands the latest segments.
+                    run_compaction_pass(&warehouse).await;
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// One compaction pass; best-effort — a failure is logged, never fatal.
+async fn run_compaction_pass(warehouse: &IoTraceWarehouse) {
+    match warehouse.compact(now_ms()).await {
+        Ok(summary) if summary.segments_processed > 0 => tracing::info!(
+            "io_trace warehouse: compacted {} segment(s), {} header row(s)",
+            summary.segments_processed,
+            summary.header_rows
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("io_trace warehouse: compaction pass failed: {e}"),
     }
 }
 
@@ -1043,6 +1160,30 @@ mod tests {
             "unknown modality still lands a header row"
         );
         assert_eq!(summary.relational_rows, 0);
+        assert_eq!(total_rows(&read_table(&store, T_HEADER).await), 1);
+    }
+
+    static TRIGGER_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+    /// S4b: install the background compactor over a `file://` store; a duplicate
+    /// install is rejected, and a graceful shutdown runs a final compaction pass that
+    /// lands the pending segment in the warehouse.
+    #[tokio::test]
+    async fn install_shutdown_runs_final_compaction() {
+        let _g = TRIGGER_TEST_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let (store, url) = store_url(dir.path());
+        write_segment(&store, "trace-trig", &[relational("w1", 0, 1)]).await;
+        // A long interval means only the shutdown final-pass compacts (deterministic).
+        install(url.clone(), 3600).unwrap();
+        assert!(
+            install(url.clone(), 3600).is_err(),
+            "duplicate install rejected while the first worker is live"
+        );
+        shutdown().await;
         assert_eq!(total_rows(&read_table(&store, T_HEADER).await), 1);
     }
 }
