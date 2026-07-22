@@ -1351,7 +1351,12 @@ pub async fn insert_records(
         }
         Err(e) => {
             error!("V2 API: Batch insert failed: {}", e);
-            Err(ApiError::Internal(format!("Insert failed: {}", e)))
+            // ADR-069 S4: promote a WalBackpressure in the chain to a retryable
+            // status (429 / RESOURCE_EXHAUSTED) instead of a non-retryable 500.
+            // NOTE: the batch path folds WAL-lane rejections into Ok(success=false)
+            // (#951), so this arm sees backpressure only on Err-propagating inserts;
+            // end-to-end 429 for the batch path is the TD-WAL-1 S4 residual.
+            Err(ApiError::from_write_error("Insert failed", e))
         }
     }
 }

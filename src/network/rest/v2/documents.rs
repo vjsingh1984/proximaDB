@@ -515,7 +515,12 @@ async fn ingest_documents_inner(
             };
             Ok((status, response))
         }
-        Err(e) => Err(ApiError::Internal(format!("Insert failed: {e}"))),
+        // ADR-069 S4: a WalBackpressure in the error chain maps to a retryable
+        // status (429 / RESOURCE_EXHAUSTED); anything else stays a 500. NOTE: the
+        // primary batch path folds WAL-lane rejections into Ok(success=false)
+        // (#951), so this arm sees backpressure only on Err-propagating inserts —
+        // end-to-end 429 for the batch path is the TD-WAL-1 S4 residual.
+        Err(e) => Err(ApiError::from_write_error("Insert failed", e)),
     }
 }
 
