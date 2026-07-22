@@ -154,6 +154,9 @@ impl RecoveryManager {
             "🔄 Starting WAL recovery using global manifest (mode: {:?})",
             self.recovery_mode
         );
+        // TD-WAL-1 S6: measure this boot's replay wall-clock for the
+        // `proximadb_wal_replay_duration_seconds` gauge.
+        let replay_started_at = std::time::Instant::now();
 
         // Get the recovery thread pool
         let thread_pool = get_recovery_thread_pool();
@@ -207,6 +210,9 @@ impl RecoveryManager {
         if collections.is_empty() {
             // Recovery phase complete
             recovery_guard.complete(0, 0).await;
+            crate::metrics::wal_flush_metrics::set_replay_duration(
+                replay_started_at.elapsed().as_secs_f64(),
+            );
             return Ok(WalRecoveryStats::default());
         }
 
@@ -327,6 +333,9 @@ impl RecoveryManager {
             info!("🧹 Removed {} flushed manifest entries", removed);
         }
 
+        crate::metrics::wal_flush_metrics::set_replay_duration(
+            replay_started_at.elapsed().as_secs_f64(),
+        );
         Ok(stats)
     }
 
