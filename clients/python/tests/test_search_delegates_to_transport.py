@@ -34,7 +34,9 @@ def _fresh_client():
 
 def test_search_delegates_to_transport_and_returns_results(monkeypatch) -> None:
     client = _fresh_client()
-    adapter = client._adapter  # the instance search_single uses (NOT _get_rest_adapter(), a different one)
+    adapter = (
+        client._adapter
+    )  # the instance search_single uses (NOT _get_rest_adapter(), a different one)
     assert adapter is not None, "REST adapter must be wired for connect_rest"
 
     expected = [
@@ -77,7 +79,9 @@ def test_search_delegates_to_transport_and_returns_results(monkeypatch) -> None:
 
 def test_search_metadata_filter_flows_to_transport(monkeypatch) -> None:
     client = _fresh_client()
-    adapter = client._adapter  # the instance search_single uses (NOT _get_rest_adapter(), a different one)
+    adapter = (
+        client._adapter
+    )  # the instance search_single uses (NOT _get_rest_adapter(), a different one)
     captured: dict[str, object] = {}
 
     def fake_transport_search(
