@@ -1424,6 +1424,10 @@ pub async fn rabitq_search_segment_coalesced(
                 }
                 Arc::from(bytes)
             };
+        // TD-RDSTRAT-8 PR-C1: record the whole-Region-A (RaBitQ) physical bytes
+        // fetched — the GET budget the armed probe exists to avoid. Region B
+        // (SQ8) is not read in this path. Cache hits still report Region-A length.
+        crate::observability::io_trace::record_pax_region_bytes(region_bytes.len() as u64, 0);
         let region = RaBitQRegion::from_bytes(&region_bytes)?;
         // ADR-062 PR2: adaptive survivor pool — scale M with the segment's rows.
         let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());

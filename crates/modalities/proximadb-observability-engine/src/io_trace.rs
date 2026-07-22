@@ -162,6 +162,12 @@ pub struct IoTrace {
     ivf_probed_rows: AtomicU64,
     ivf_fetch_rounds: AtomicU64,
     ivf_whole_region_fallback: AtomicU64,
+    /// Physical PAX Region-A (RaBitQ) and Region-B (SQ8) bytes fetched by the
+    /// coarse probe (TD-RDSTRAT-8 PR-C1). Metadata/A0/footer bytes stay in the
+    /// universal `bytes_read`; these are the vector-body bytes the probe paid
+    /// for. Cache hits contribute zero.
+    ivf_region_a_bytes: AtomicU64,
+    ivf_region_b_bytes: AtomicU64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): how often the probe scan's
     /// `wait_complete()` rendezvous resolved with the filter arrived (pruning
     /// enabled) vs timed out (filterless, conservative), plus the wall ms spent
@@ -427,6 +433,15 @@ impl IoTrace {
         }
     }
 
+    /// Record physical bytes fetched from PAX Region A (RaBitQ) and Region B
+    /// (SQ8) during the coarse probe. Additive; cache hits contribute zero.
+    pub fn record_pax_region_bytes(&self, region_a: u64, region_b: u64) {
+        self.ivf_region_a_bytes
+            .fetch_add(region_a, Ordering::Relaxed);
+        self.ivf_region_b_bytes
+            .fetch_add(region_b, Ordering::Relaxed);
+    }
+
     /// Record a runtime-filter wait outcome (ADR-056 AQE-S11): `arrived` = the
     /// filter completed within the wait budget (pruning enabled); otherwise it
     /// timed out (splits read filterless, conservative). `waited_ms` = the wall
@@ -613,6 +628,8 @@ impl IoTrace {
             ivf_probed_rows: self.ivf_probed_rows.load(Ordering::Relaxed),
             ivf_fetch_rounds: self.ivf_fetch_rounds.load(Ordering::Relaxed),
             ivf_whole_region_fallback: self.ivf_whole_region_fallback.load(Ordering::Relaxed),
+            ivf_region_a_bytes: self.ivf_region_a_bytes.load(Ordering::Relaxed),
+            ivf_region_b_bytes: self.ivf_region_b_bytes.load(Ordering::Relaxed),
             runtime_filter_arrived: self.runtime_filter_arrived.load(Ordering::Relaxed),
             runtime_filter_timed_out: self.runtime_filter_timed_out.load(Ordering::Relaxed),
             runtime_filter_wait_ms: self.runtime_filter_wait_ms.load(Ordering::Relaxed),
@@ -704,6 +721,12 @@ pub struct IoTraceSnapshot {
     pub ivf_fetch_rounds: u64,
     #[serde(default)]
     pub ivf_whole_region_fallback: u64,
+    /// Physical PAX Region-A (RaBitQ) / Region-B (SQ8) bytes fetched by the
+    /// coarse probe (TD-RDSTRAT-8 PR-C1). Cache hits contribute zero.
+    #[serde(default)]
+    pub ivf_region_a_bytes: u64,
+    #[serde(default)]
+    pub ivf_region_b_bytes: u64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): arrived vs timed-out +
     /// the wall ms spent waiting. `arrived / (arrived + timed_out)` is the
     /// per-workload signal the route cost model learns to tune the wait budget.
@@ -965,6 +988,13 @@ pub fn record_ivf_coarse_probe(
             whole_region_fallback,
         )
     });
+}
+
+/// Record physical PAX Region-A (RaBitQ) / Region-B (SQ8) bytes fetched by the
+/// coarse probe for the active query (TD-RDSTRAT-8 PR-C1). No-ops outside a
+/// query scope. See [`IoTrace::record_pax_region_bytes`].
+pub fn record_pax_region_bytes(region_a: u64, region_b: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_pax_region_bytes(region_a, region_b));
 }
 
 /// Record a runtime-filter wait outcome for the active query (ADR-056 AQE-S11).
@@ -1422,12 +1452,15 @@ mod tests {
         let t = IoTrace::new();
         t.record_ivf_coarse_probe(64, 8, 4096, 3, false);
         t.record_ivf_coarse_probe(0, 0, 0, 0, true); // armed-but-missed fallback
+        t.record_pax_region_bytes(200_000, 800_000); // physical PAX tier bytes
         let s = t.snapshot();
         assert_eq!(s.ivf_cells_total, 64);
         assert_eq!(s.ivf_cells_probed, 8);
         assert_eq!(s.ivf_probed_rows, 4096);
         assert_eq!(s.ivf_fetch_rounds, 3);
         assert_eq!(s.ivf_whole_region_fallback, 1);
+        assert_eq!(s.ivf_region_a_bytes, 200_000);
+        assert_eq!(s.ivf_region_b_bytes, 800_000);
     }
 
     #[test]
