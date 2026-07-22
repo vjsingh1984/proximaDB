@@ -69,11 +69,13 @@ mod tests {
     }
 
     #[test]
-    fn test_wal_config_defaults_disable_tiered_flush() {
-        // ADR-069/TD-WAL-1: the tiered-flush knobs default OFF so existing configs
-        // are behavior-neutral (only the pre-existing size trigger stays active).
+    fn test_wal_config_defaults_arm_time_floor() {
+        // ADR-069 D2: the time floor defaults to 300s (RPO safety net) so the
+        // auto-flush driver spawns by default and segments materialize while the
+        // server runs. The inline size trigger handles throughput; wal_max_bytes
+        // stays 0 so S4 write-shedding stays OFF.
         let config = WriteBufferUserConfig::default();
-        assert_eq!(config.flush_interval_secs, 0);
+        assert_eq!(config.flush_interval_secs, 300);
         assert_eq!(config.wal_max_bytes, 0);
         assert_eq!(config.high_watermark_pct, 0.80);
         assert_eq!(config.critical_watermark_pct, 0.95);
