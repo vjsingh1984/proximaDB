@@ -1,0 +1,21 @@
+[package]
+name = "proximadb-ledger"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://github.com/anvai-labs/proximaDB"
+description = "ProximaDB transactional Ledger modality — OLTP atomic-CAS keyed records with TTL leases (ADR-071 / TD-LEDGER-1). S1: the in-memory correctness core."
+
+[lib]
+name = "proximadb_ledger"
+path = "src/lib.rs"
+
+# S1 is deliberately ZERO-dependency: the correctness core is pure `std`, which keeps it
+# trivially testable, keeps the lean "ledger-only" deployment profile (ADR-071 §4) cheap to
+# carve out, and defers every substrate dependency (WAL, memtable, tenant) to S2/S3.
+[dependencies]
+
+[dev-dependencies]

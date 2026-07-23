@@ -81,6 +81,7 @@ members = [
     "crates/modalities/proximadb-observability-engine",
     "crates/modalities/proximadb-embedding",
     "crates/modalities/proximadb-queue",
+    "crates/modalities/proximadb-ledger",
     "crates/modalities/proximadb-rank-core",
     "crates/modalities/proximadb-rank-features",
     "crates/modalities/proximadb-rank-expr",
