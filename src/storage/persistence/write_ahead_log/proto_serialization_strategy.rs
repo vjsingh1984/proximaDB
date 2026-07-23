@@ -261,25 +261,6 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             .await
     }
 
-    async fn search_vectors_similarity(
-        &self,
-        _collection_id: &str,
-        _query_vector: &[f32],
-        _k: usize,
-        _distance_metric: Option<proximadb_distance_kernel::DistanceMetric>,
-    ) -> Result<Vec<(String, f32, proximadb_records::ProximaRecord)>> {
-        // For now, similarity search is delegated to storage engine
-        let engine = self.storage_engine.read().await;
-        if let Some(_engine) = engine.as_ref() {
-            // Deferred: Implement similarity search through storage engine
-            Err(anyhow::anyhow!(
-                "Similarity search should be done through storage engine"
-            ))
-        } else {
-            Err(anyhow::anyhow!("No storage engine configured"))
-        }
-    }
-
     async fn get_collection_vectors(
         &self,
         collection_id: &str,

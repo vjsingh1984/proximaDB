@@ -84,9 +84,7 @@ use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::traits::{FlushResult, UnifiedStorageFormat};
 use proximadb_distance_kernel::DistanceMetric;
 use proximadb_distance_kernel::engine::{DistanceComputeProvider, UnifiedDistanceCompute};
-use proximadb_records::{
-    EmbeddingCell, ProximaRecord, ProximaTreeNode, conversions::sql_value_to_proxima,
-};
+use proximadb_records::ProximaRecord;
 // DIP: CollectionPathResolver is re-exported below via pub use
 
 // Sub-modules
@@ -2482,61 +2480,6 @@ impl WriteAheadLogManager {
         wal_behavior.vector_by_id(collection_id, vector_id).await
     }
 
-    /// Similarity search for canonical records.
-    pub async fn search_vectors_similarity(
-        &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: Option<proximadb_distance_kernel::DistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, ProximaRecord)>> {
-        {
-            let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-            let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            let metric =
-                distance_metric.unwrap_or(proximadb_distance_kernel::DistanceMetric::Cosine);
-            let results = wal_behavior
-                .search_unflushed_vectors(
-                    collection_id,
-                    query_vector,
-                    k,
-                    metric,
-                    None, // no metadata filters
-                    true, // include vectors
-                    true, // include metadata
-                )
-                .await?;
-
-            Ok(results
-                .into_iter()
-                .map(|r| {
-                    let vector_id = r.id.clone();
-                    let dim = r.vector.len() as u32;
-                    let record = ProximaRecord {
-                        oid: r.id.clone(),
-                        record_version: r.version.unwrap_or_default() as u64,
-                        created_at_ns: r.timestamp.unwrap_or_default() * 1_000_000,
-                        props: r
-                            .metadata
-                            .into_iter()
-                            .map(|(key, value)| {
-                                (key, ProximaTreeNode::Value(sql_value_to_proxima(&value)))
-                            })
-                            .collect(),
-                        embeddings: vec![EmbeddingCell {
-                            model_id: "wal".to_string(),
-                            modality: "dense_vector".to_string(),
-                            dim,
-                            values: proximadb_records::EmbeddingValues::Fp32(r.vector),
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    };
-                    (vector_id, r.score as f32, record)
-                })
-                .collect())
-        }
-    }
     /// TD-WLP-8 (ADR-061 D4): current resident **working-set bytes** for a
     /// collection — the sum of its unflushed WAL/memtable batch sizes. This is
     /// the same quantity `MemtableManager::get_collection_memory_usage` reports
@@ -3468,6 +3411,7 @@ mod wal_manager_infra_tests {
     use crate::storage::persistence::write_ahead_log::config::{
         WALConfig, WriteBufferStrategyType,
     };
+    use proximadb_records::EmbeddingCell;
 
     #[tokio::test]
     async fn test_wal_manager_creation() {

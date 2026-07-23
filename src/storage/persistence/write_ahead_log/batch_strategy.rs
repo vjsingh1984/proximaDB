@@ -15,13 +15,9 @@ use crate::core::{String, VectorId};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::UnifiedStorageFormat;
-use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
 
 use super::{WALConfig, WALStats};
 use crate::storage::traits::FlushResult;
-use proximadb_records::{
-    EmbeddingCell, ProximaRecord, ProximaTreeNode, conversions::sql_value_to_proxima,
-};
 
 /// Modern batch-oriented Write Buffer strategy trait
 ///
@@ -344,113 +340,6 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             }
             // Deferred: Add storage engine lookup for flushed data
             Ok(None)
-        } else {
-            Err(anyhow::anyhow!("Write buffer behavior not available"))
-        }
-    }
-
-    /// Similarity search for vectors in Write Buffer with configurable distance metric
-    async fn search_vectors_similarity(
-        &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: Option<CoreDistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, proximadb_records::ProximaRecord)>> {
-        // Default implementation using get_wal_behavior
-        if let Some(wal_behavior) = self.get_wal_behavior() {
-            // Convert CoreDistanceMetric to unified DistanceMetric (they're the same due to alias)
-            let unified_metric = distance_metric.map(|m| match m {
-                CoreDistanceMetric::Unspecified => {
-                    proximadb_distance_kernel::DistanceMetric::Cosine
-                } // Default fallback
-                CoreDistanceMetric::Cosine => proximadb_distance_kernel::DistanceMetric::Cosine,
-                CoreDistanceMetric::Euclidean => {
-                    proximadb_distance_kernel::DistanceMetric::Euclidean
-                }
-                CoreDistanceMetric::DotProduct => {
-                    proximadb_distance_kernel::DistanceMetric::DotProduct
-                }
-                CoreDistanceMetric::Manhattan => {
-                    proximadb_distance_kernel::DistanceMetric::Manhattan
-                }
-                CoreDistanceMetric::Hamming => proximadb_distance_kernel::DistanceMetric::Hamming,
-                CoreDistanceMetric::Jaccard => proximadb_distance_kernel::DistanceMetric::Jaccard,
-                CoreDistanceMetric::Chebyshev => {
-                    proximadb_distance_kernel::DistanceMetric::Chebyshev
-                }
-                CoreDistanceMetric::Canberra => proximadb_distance_kernel::DistanceMetric::Canberra,
-                CoreDistanceMetric::Minkowski => {
-                    proximadb_distance_kernel::DistanceMetric::Minkowski
-                }
-                CoreDistanceMetric::Angular => proximadb_distance_kernel::DistanceMetric::Angular,
-                CoreDistanceMetric::BrayCurtis => {
-                    proximadb_distance_kernel::DistanceMetric::BrayCurtis
-                }
-                CoreDistanceMetric::Hellinger => {
-                    proximadb_distance_kernel::DistanceMetric::Hellinger
-                }
-                CoreDistanceMetric::Custom => proximadb_distance_kernel::DistanceMetric::Custom,
-            });
-
-            let results = wal_behavior
-                .search_unflushed_vectors(
-                    collection_id,
-                    query_vector,
-                    k,
-                    unified_metric.unwrap_or(proximadb_distance_kernel::DistanceMetric::Cosine),
-                    None, // No metadata filters
-                    true, // Include vectors
-                    true, // Include metadata
-                )
-                .await?;
-
-            // Convert SearchResult objects to the expected format
-            let converted_results: Vec<(VectorId, f32, ProximaRecord)> = results
-                .into_iter()
-                .map(|search_result| {
-                    let timestamp_ns = search_result
-                        .timestamp
-                        .unwrap_or(0)
-                        .saturating_mul(1_000_000);
-                    let props = search_result
-                        .metadata
-                        .iter()
-                        .map(|(key, value)| {
-                            (
-                                key.clone(),
-                                ProximaTreeNode::Value(sql_value_to_proxima(value)),
-                            )
-                        })
-                        .collect();
-                    let embeddings = if search_result.vector.is_empty() {
-                        Vec::new()
-                    } else {
-                        vec![EmbeddingCell {
-                            model_id: "default".to_string(),
-                            modality: "dense_vector".to_string(),
-                            dim: search_result.vector.len() as u32,
-                            values: proximadb_records::EmbeddingValues::Fp32(search_result.vector),
-                            ..Default::default()
-                        }]
-                    };
-
-                    let record = ProximaRecord {
-                        oid: search_result.id.clone(),
-                        record_version: search_result.version.unwrap_or(0) as u64,
-                        created_at_ns: timestamp_ns,
-                        updated_at_ns: timestamp_ns,
-                        props,
-                        embeddings,
-                        method: Some("wal_search".to_string()),
-                        ..ProximaRecord::default()
-                    };
-
-                    (search_result.id, search_result.score as f32, record)
-                })
-                .collect();
-
-            Ok(converted_results)
         } else {
             Err(anyhow::anyhow!("Write buffer behavior not available"))
         }

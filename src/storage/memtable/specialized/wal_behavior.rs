@@ -12,14 +12,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
-use tracing::debug;
 
 use crate::core::bloom::strategies::composite::CompositeBloomFilter;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use crate::storage::persistence::write_ahead_log::{BatchId, WALOperation, WALStats};
-use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
 use proximadb_records::ProximaRecord;
 
 /// Canonical key format for a metadata `field=value` entry in a batch's
@@ -572,112 +570,6 @@ impl WALBehaviorWrapper {
             .into_iter()
             .map(|(_, vector)| vector)
             .collect())
-    }
-
-    /// Search vectors in unflushed WAL data with enhanced bloom filter support
-    ///
-    /// This searches the WAL memtable for similar vectors that haven't been flushed yet.
-    /// Should be called BEFORE searching storage engines to get complete results.
-    /// Uses consistent signature with VectorOperationsService expectations.
-    pub async fn search_unflushed_vectors(
-        &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        top_k: usize,
-        distance_metric: proximadb_distance_kernel::DistanceMetric,
-        _metadata_filters: Option<&proximadb_filter_expression::FilterExpression>,
-        include_vectors: bool,
-        include_metadata: bool,
-    ) -> Result<Vec<crate::proto::proximadb_v1::SearchVectorRecord>> {
-        tracing::info!(
-            "🔍 WAL_SEARCH: Searching unflushed vectors in collection {} (top_k={}) using {:?}",
-            collection_id,
-            top_k,
-            distance_metric
-        );
-
-        // Convert unified DistanceMetric to CoreDistanceMetric for now
-        // Deferred: Update global partitioned memtable to accept unified DistanceMetric for all 13 metrics
-        let core_metric = match distance_metric {
-            proximadb_distance_kernel::DistanceMetric::Unspecified => CoreDistanceMetric::Cosine, // Default fallback
-            proximadb_distance_kernel::DistanceMetric::Cosine => CoreDistanceMetric::Cosine,
-            proximadb_distance_kernel::DistanceMetric::Euclidean => CoreDistanceMetric::Euclidean,
-            proximadb_distance_kernel::DistanceMetric::DotProduct => CoreDistanceMetric::DotProduct,
-            proximadb_distance_kernel::DistanceMetric::Manhattan => CoreDistanceMetric::Manhattan,
-            proximadb_distance_kernel::DistanceMetric::Hamming => CoreDistanceMetric::Hamming,
-            proximadb_distance_kernel::DistanceMetric::Jaccard => CoreDistanceMetric::Jaccard,
-            proximadb_distance_kernel::DistanceMetric::Chebyshev => CoreDistanceMetric::Chebyshev,
-            proximadb_distance_kernel::DistanceMetric::Canberra => CoreDistanceMetric::Canberra,
-            proximadb_distance_kernel::DistanceMetric::Minkowski => CoreDistanceMetric::Minkowski,
-            proximadb_distance_kernel::DistanceMetric::Angular => CoreDistanceMetric::Angular,
-            proximadb_distance_kernel::DistanceMetric::BrayCurtis => CoreDistanceMetric::BrayCurtis,
-            proximadb_distance_kernel::DistanceMetric::Hellinger => CoreDistanceMetric::Hellinger,
-            proximadb_distance_kernel::DistanceMetric::Custom => CoreDistanceMetric::Custom,
-        };
-
-        let raw_results = self
-            .inner
-            .search_vectors(query_vector, top_k, collection_id, core_metric)
-            .await?;
-
-        debug!(
-            "🔍 WAL_SEARCH: Found {} unflushed results",
-            raw_results.len()
-        );
-        tracing::info!(
-            "🔍 WAL_SEARCH: Found {} unflushed results",
-            raw_results.len()
-        );
-
-        // Convert (SimilarityResult, ProximaRecord) to SearchVectorRecord objects
-        let mut search_results = Vec::new();
-        for (similarity, vector_record) in raw_results.into_iter() {
-            let search_result = crate::proto::proximadb_v1::SearchVectorRecord {
-                id: vector_record.oid.clone(),
-                score: similarity.raw_value as f64,
-                similarity: Some(similarity.normalized_score),
-                vector: if include_vectors {
-                    vector_record
-                        .embeddings
-                        .first()
-                        .map(|e| e.values.to_fp32_owned())
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                },
-                metadata: if include_metadata {
-                    // Convert ProximaTree props to legacy SqlValue metadata map (protocol edge)
-                    {
-                        use crate::core::search::results::proxima_value_to_sql_value;
-                        use proximadb_records::ProximaTreeNode;
-                        vector_record
-                            .props
-                            .iter()
-                            .filter_map(|(k, node)| {
-                                if let ProximaTreeNode::Value(pv) = node {
-                                    Some((k.clone(), proxima_value_to_sql_value(pv.clone())))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect()
-                    }
-                } else {
-                    std::collections::HashMap::new()
-                },
-                version: Some(vector_record.record_version as u32),
-                timestamp: Some(vector_record.created_at_ns / 1_000_000),
-                source: None,
-                expanded_context: Vec::new(),
-                quantization_info: None,
-                engine_stats: std::collections::HashMap::new(),
-                index_path: None,
-                semantic_similarity: None,
-            };
-            search_results.push(search_result);
-        }
-
-        Ok(search_results)
     }
 
     /// Get vector by ID within a specific collection (MODERN)
