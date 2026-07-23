@@ -6,10 +6,12 @@
 //! OLTP primitives ProximaDB lacks today (`StorageKV` is non-atomic, `put_if_absent` is create-only,
 //! the transaction manager is unwired).
 //!
-//! This crate carries **no durability, no transport, and no windows** — those are S2 (the durable
-//! WAL, memtable counter, and TTL sweeper) and S3 (proto/gRPC/router). Per the TD build order, the
-//! correctness invariant is proven here *first*, in isolation, before any durability or wiring risk
-//! is taken on. Neutral units only — counts, never prices.
+//! The default build ([`InMemoryLedger`]) is the pure, zero-dependency correctness core (S1). The
+//! optional **`durable`** feature adds [`DurableLedger`] (S2): the same [`Ledger`] contract behind a
+//! CRC-framed write-ahead log, so spend / caps / in-flight leases survive a restart. **Transport and
+//! windows are still out** — the wire surface (proto/gRPC/router) and the splice onto the shared
+//! ADR-069 record WAL are S3. Per the TD build order, the correctness invariant is proven *first*, in
+//! isolation, before any wiring risk is taken on. Neutral units only — counts, never prices.
 //!
 //! ## The invariants (the acceptance bar — Sandhi TD-0007 C1–C3)
 //!
@@ -27,9 +29,13 @@
 //! generic keyspace (feature flags, config, quotas): a write lands only if the caller's expected
 //! version matches the current one.
 
+#[cfg(feature = "durable")]
+mod durable;
 mod memory;
 mod types;
 
+#[cfg(feature = "durable")]
+pub use durable::{DurableLedger, SyncPolicy};
 pub use memory::InMemoryLedger;
 pub use types::{CasError, Denied, Nanos, Policy, Reservation, ReserveOutcome, Version};
 

@@ -818,6 +818,9 @@ jobs:
           # Other gated surfaces invisible to default CI:
           - { label: "cluster",             pkg: proximadb,        args: "--features cluster" }
           - { label: "enterprise-catalogs", pkg: proximadb,        args: "--features enterprise-catalogs" }
+          # Ledger modality durable backend (S2, ADR-071) — the WAL-backed impl is behind the
+          # non-default `durable` feature, so it is invisible to the default workspace check.
+          - { label: "ledger-durable",      pkg: proximadb-ledger, args: "--features durable" }
           # Refactor/move coverage: these configurations catch cfg drift hidden
           # by the default build. Keep them in the same mandatory matrix rather
           # than relying on a PR being correctly labelled as mechanical.

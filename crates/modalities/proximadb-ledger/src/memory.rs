@@ -47,6 +47,69 @@ impl InMemoryLedger {
         let held = self.reserved.entry(scope.to_string()).or_insert(0);
         *held = held.saturating_sub(delta);
     }
+
+    // --- check / apply seams --------------------------------------------------
+    //
+    // Splitting the *decision* (`check_*`) from the *mutation* (`apply_*` / `peek_next_id`) lets a
+    // durable backend log the decided record and only then apply it (WAL-before-state), while the
+    // in-memory `reserve`/`compare_and_swap` above stay a check-then-apply with no logic duplicated.
+    // `apply_*` are also the replay path: reconstructing state from a log of decided records.
+
+    /// The admission decision for a `Block` cap (pure — no mutation). `Ok(())` = admit.
+    pub(crate) fn check_admit(&self, scope: &str, ceiling: u64) -> Result<(), Denied> {
+        if let Some(spec) = self.limits.get(scope).copied()
+            && spec.policy == Policy::Block
+            && let Some(limit) = spec.limit
+        {
+            let spent = self.spent(scope);
+            let reserved = self.reserved(scope);
+            if spent.saturating_add(reserved).saturating_add(ceiling) > limit {
+                return Err(Denied {
+                    scope: scope.to_string(),
+                    limit,
+                    spent,
+                    reserved,
+                    requested_ceiling: ceiling,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// The id the next reservation will take (without consuming it). `apply_reserve` advances past it.
+    pub(crate) fn peek_next_id(&self) -> u64 {
+        self.next_id
+    }
+
+    /// Apply an already-decided reservation (from `reserve`, or from a log record on replay). Bumps
+    /// `next_id` past `r.id` so a replayed id and a live id can never collide.
+    pub(crate) fn apply_reserve(&mut self, r: Reservation) {
+        self.next_id = self.next_id.max(r.id.saturating_add(1));
+        self.add_reserved(&r.scope, r.ceiling);
+        self.leases.insert(r.id, r);
+    }
+
+    /// The version-match decision for a CAS (pure). `Ok(v)` = the version the write would take.
+    pub(crate) fn check_cas(
+        &self,
+        key: &str,
+        expected: Option<Version>,
+    ) -> Result<Version, CasError> {
+        let actual = self.kv.get(key).map(|(v, _)| *v);
+        if actual != expected {
+            return Err(CasError::VersionMismatch {
+                key: key.to_string(),
+                expected,
+                actual,
+            });
+        }
+        Ok(actual.unwrap_or(0).saturating_add(1))
+    }
+
+    /// Apply an already-decided CAS write (from `compare_and_swap`, or a log record on replay).
+    pub(crate) fn apply_cas(&mut self, key: &str, version: Version, value: i64) {
+        self.kv.insert(key.to_string(), (version, value));
+    }
 }
 
 impl Ledger for InMemoryLedger {
@@ -62,34 +125,16 @@ impl Ledger for InMemoryLedger {
         now_ns: Nanos,
         ttl_ns: Nanos,
     ) -> ReserveOutcome {
-        // A hard `Block` cap is the only thing that can refuse admission. `Warn` (soft cap) and an
-        // unset/unlimited scope always admit; spend still accrues via the lease so alerts can fire.
-        if let Some(spec) = self.limits.get(scope).copied()
-            && spec.policy == Policy::Block
-            && let Some(limit) = spec.limit
-        {
-            let spent = self.spent(scope);
-            let reserved = self.reserved(scope);
-            if spent.saturating_add(reserved).saturating_add(ceiling) > limit {
-                return ReserveOutcome::Denied(Denied {
-                    scope: scope.to_string(),
-                    limit,
-                    spent,
-                    reserved,
-                    requested_ceiling: ceiling,
-                });
-            }
+        if let Err(denied) = self.check_admit(scope, ceiling) {
+            return ReserveOutcome::Denied(denied);
         }
-        let id = self.next_id;
-        self.next_id += 1;
         let reservation = Reservation {
-            id,
+            id: self.peek_next_id(),
             scope: scope.to_string(),
             ceiling,
             expires_at_ns: now_ns.saturating_add(ttl_ns),
         };
-        self.leases.insert(id, reservation.clone());
-        self.add_reserved(scope, ceiling);
+        self.apply_reserve(reservation.clone());
         ReserveOutcome::Admitted(reservation)
     }
 
@@ -122,17 +167,9 @@ impl Ledger for InMemoryLedger {
         expected: Option<Version>,
         new_value: i64,
     ) -> Result<Version, CasError> {
-        let actual = self.kv.get(key).map(|(v, _)| *v);
-        if actual != expected {
-            return Err(CasError::VersionMismatch {
-                key: key.to_string(),
-                expected,
-                actual,
-            });
-        }
-        let next = actual.unwrap_or(0).saturating_add(1);
-        self.kv.insert(key.to_string(), (next, new_value));
-        Ok(next)
+        let version = self.check_cas(key, expected)?;
+        self.apply_cas(key, version, new_value);
+        Ok(version)
     }
 
     fn limit(&self, scope: &str) -> Option<u64> {
