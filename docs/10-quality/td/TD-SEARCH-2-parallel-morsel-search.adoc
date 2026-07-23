@@ -1,0 +1,63 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-SEARCH-2: Parallel morsel-driven search — spawn one task per segment file, merge top-k
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Proposed.** The search path (`fallback_to_direct_search`, search/mod.rs:968) iterates SSTable files SEQUENTIALLY in a for loop — one core pinned at 99% CPU. For SIFT 1M with 7 segments, this is ~7× slower than necessary. The fix is embarrassingly parallel: each segment's `try_pax_cascade` is independent → spawn N tokio tasks → k-way merge via the existing `BoundedPriorityQueue`.
+| Priority | **P1** — the co-design PAX scan (ADR-070's default path) has cold latency ~476ms (single-core). Parallel morsel drops this to ~70ms (7 segments / 7 cores). This is the difference between "acceptable for codegraph" and "competitive."
+| Component | `src/storage/engines/sst/search/mod.rs` (`fallback_to_direct_search` ~968, the per-file loop ~1069-1232); `src/storage/engines/sst/readers/morsel_scheduler.rs` (existing intra-file morsel infra); `SearchParams.enable_parallel_morsels` (exists but not wired).
+| Evidence | SIFT 1M via REST: CPU 99.99% (one core), mean latency 476ms, 7 segment files scanned sequentially. `enable_parallel_morsels` is a field on `SearchParams` (query_optimizer.rs) but is never read by the search path. A morsel scheduler EXISTS (`morsel_scheduler.rs`) but is scoped to intra-file chunks (4096 rows), NOT inter-file parallelism.
+|===
+
+== The finding
+
+The per-file loop in `fallback_to_direct_search` (search/mod.rs:~1069):
+
+```
+for sstable_path in &sstable_files {
+    let pax_cascade = try_pax_cascade(sstable_path, ...);  // sequential!
+    all_candidates.extend(pax_cascade);
+}
+```
+
+Each iteration is independent (no shared state between files). The results are accumulated into `all_candidates` + merged by score at the end. This is a textbook fork-join parallel pattern.
+
+== Direction
+
+**Morsel = one segment file.** Spawn N tokio tasks (bounded by CPU cores or a configurable `max_parallel_segments`):
+
+```
+                    ┌─ tokio::spawn ──► try_pax_cascade(file1) ──► top-k1 ─┐
+                    ├─ tokio::spawn ──► try_pax_cascade(file2) ──► top-k2 ─┤
+fallback_to_direct ├─ ...                                                    ┤
+  _search          └─ tokio::spawn ──► try_pax_cascade(fileN) ──► top-kN ─┘
+                                                              │
+                                                              ▼
+                                              k-way merge (BoundedPriorityQueue)
+```
+
+- Gate behind `SearchParams.enable_parallel_morsels` (already in the struct — wire it).
+- Default ON for collections with >1 segment file (single-file = no benefit).
+- Bounded parallelism: `min(N_files, available_parallelism())` or a config knob.
+- Error handling: if one task fails, log + treat as empty (don't fail the whole search).
+
+== Slices
+
+S1 — **Wire the flag + spawn tasks.** Read `enable_parallel_morsels` from `SearchParams`. When true + >1 file: spawn one `tokio::spawn` per file → `try_pax_cascade` → collect via `join_all`. Merge into `all_candidates`. Default: ON.
+
+S2 — **Bounded parallelism.** Add `max_parallel_segments` to SstConfig (default: `available_parallelism()`). Use a `Semaphore` to bound concurrent tasks.
+
+S3 — **Observability.** Log the parallelism degree + per-file timing under a debug target (like the existing `sst_warm_phase` trace).
+
+== Expected speedup
+~min(N_files, N_cores)×. For 7 files on 8 cores: 476ms → ~70ms cold; ~28ms → ~4ms warm.
+
+== Verification
+- SIFT 1M (7 segments) with `parallel_morsels=on`: CPU spreads across cores, latency drops ~7×.
+- Single-file collection: no regression (sequential fallback).
+- Recall unchanged (parallel scan is exact — same files, same cascade, just concurrent).
+
+== Related
+link:../../12-design/adr/ADR-070-axis-not-needed-for-codesign-collections.adoc[ADR-070] (AXIS not needed — PAX scan is the default; this TD makes it fast enough to replace AXIS for latency-sensitive cases too).
