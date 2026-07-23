@@ -62,6 +62,93 @@ use tracing::{debug, error, info, warn};
 /// Backwards-compat alias for [`SstCompactionTask`].
 pub type CompactionTask = SstCompactionTask;
 
+/// Stage-boundary process-RSS checkpoints for the unified compaction pipeline
+/// (memory-holder triage: the PAX writer's own peak buffer is ~65 MB while the
+/// process grows by tens of GB at N=120k, so the holder is an intermediate
+/// stage — pin it by measuring, not assuming).
+///
+/// Zero work unless `PROXIMADB_TRACE_COMPACTION_MEM` is set (read once per
+/// process). When enabled, each pipeline stage boundary emits ONE line to both
+/// `tracing::info!` and stderr:
+///
+/// `[COMPACT mem] stage=<name> records=<n> rss_mb=<resident MB> delta_mb=<since previous stage>`
+///
+/// plus a one-time per-record deep-size sample at the canonical-conversion
+/// boundary:
+///
+/// `[COMPACT mem] sample vr_bytes=<..> pr_bytes=<..> emb_count=<..>`
+struct CompactionMemTrace {
+    /// `Some` only when tracing is enabled (holds the sysinfo handle so the
+    /// disabled path allocates nothing and refreshes nothing).
+    sys: Option<Box<sysinfo::System>>,
+    pid: sysinfo::Pid,
+    last_rss_mb: i64,
+}
+
+impl CompactionMemTrace {
+    fn enabled() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| {
+            std::env::var("PROXIMADB_TRACE_COMPACTION_MEM")
+                .map(|v| !v.is_empty() && v != "0")
+                .unwrap_or(false)
+        })
+    }
+
+    /// Construct the tracer; captures the baseline RSS when enabled so the
+    /// first stage's `delta_mb` is relative to compaction entry.
+    fn new() -> Self {
+        let pid = sysinfo::Pid::from_u32(std::process::id());
+        let mut tracer = Self {
+            sys: Self::enabled().then(|| Box::new(sysinfo::System::new())),
+            pid,
+            last_rss_mb: 0,
+        };
+        tracer.last_rss_mb = tracer.current_rss_mb().unwrap_or(0);
+        tracer
+    }
+
+    /// Refresh ONLY the current process (cheap at stage granularity) and
+    /// return its resident set in MB. `None` when tracing is disabled.
+    fn current_rss_mb(&mut self) -> Option<i64> {
+        let sys = self.sys.as_mut()?;
+        sys.refresh_process_specifics(self.pid, sysinfo::ProcessRefreshKind::new().with_memory());
+        sys.process(self.pid)
+            .map(|p| (p.memory() / (1024 * 1024)) as i64)
+    }
+
+    /// Emit one stage-boundary checkpoint line. No-op when disabled.
+    fn stage(&mut self, stage: &str, records: usize) {
+        let Some(rss_mb) = self.current_rss_mb() else {
+            return;
+        };
+        let delta_mb = rss_mb - self.last_rss_mb;
+        self.last_rss_mb = rss_mb;
+        let line = format!(
+            "[COMPACT mem] stage={stage} records={records} rss_mb={rss_mb} delta_mb={delta_mb}"
+        );
+        tracing::info!("{line}");
+        eprintln!("{line}");
+    }
+
+    /// One-time per-record deep-size sample at the canonical-conversion stage:
+    /// serialized (bincode) sizes of the same record in both forms, so the
+    /// per-record weight is measured rather than assumed. No-op when disabled.
+    fn sample_record(&self, vr: &VectorRecord, pr: &ProximaRecord) {
+        if self.sys.is_none() {
+            return;
+        }
+        let vr_bytes = bincode::serialize(vr).map(|b| b.len()).unwrap_or(0);
+        let pr_bytes = bincode::serialize(pr).map(|b| b.len()).unwrap_or(0);
+        let emb_count = pr.embeddings.len();
+        let line = format!(
+            "[COMPACT mem] sample vr_bytes={vr_bytes} pr_bytes={pr_bytes} emb_count={emb_count}"
+        );
+        tracing::info!("{line}");
+        eprintln!("{line}");
+    }
+}
+
 /// Compaction task to be processed by background workers
 #[derive(Debug, Clone)]
 pub struct SstCompactionTask {
@@ -902,6 +989,9 @@ impl Compaction {
         );
         let start_time = std::time::Instant::now();
 
+        // Stage-boundary RSS checkpoints (env-gated, PROXIMADB_TRACE_COMPACTION_MEM).
+        let mut memtrace = CompactionMemTrace::new();
+
         // OPTIMIZATION: Direct VectorRecord collection, no SstRecord conversions
         let mut all_vector_records: Vec<VectorRecord> = Vec::new();
         let mut bytes_read = 0u64;
@@ -930,6 +1020,9 @@ impl Compaction {
             // OPTIMIZED: Direct VectorRecord extraction (no SstRecord conversions)
             match self.read_all_records_from_file_unified(&input_path).await {
                 Ok(records) => {
+                    // Per-file checkpoint: catches reader-side residue (decoded
+                    // blocks, whole-file byte copies) accumulating across files.
+                    memtrace.stage("input_file_read", records.len());
                     info!(
                         "✅ Extracted {} VectorRecords from {} (no conversions)",
                         records.len(),
@@ -957,6 +1050,7 @@ impl Compaction {
             }
         }
 
+        memtrace.stage("all_records_extended", all_vector_records.len());
         info!(
             "✅ Collected {} total VectorRecords from {} input files (no conversions)",
             all_vector_records.len(),
@@ -983,6 +1077,7 @@ impl Compaction {
                 other => other,
             }
         });
+        memtrace.stage("input_sorted", all_vector_records.len());
 
         // OPTIMIZED: Merge-deduplicate legacy SST records directly, then lower
         // through canonical ProximaRecord for MVCC resolution.
@@ -1004,6 +1099,7 @@ impl Compaction {
             }
         }
 
+        memtrace.stage("dedup", merged_vector_records.len());
         info!(
             "🔍 UNIFIED COMPACTION: Merged to {} unique VectorRecords after deduplication",
             merged_vector_records.len()
@@ -1014,11 +1110,17 @@ impl Compaction {
             .iter()
             .map(ProximaRecord::from)
             .collect();
+        // One-time per-record deep-size sample: same record in both forms.
+        if let (Some(vr), Some(pr)) = (merged_vector_records.first(), canonical_records.first()) {
+            memtrace.sample_record(vr, pr);
+        }
+        memtrace.stage("canonical_convert", canonical_records.len());
         let resolved_records: Vec<VectorRecord> = resolver
             .resolve_batch(canonical_records)
             .into_iter()
             .map(VectorRecord::from)
             .collect();
+        memtrace.stage("mvcc_resolved", resolved_records.len());
         info!(
             "🔍 UNIFIED COMPACTION: MVCC resolution: {} records after resolution",
             resolved_records.len()
@@ -1084,6 +1186,9 @@ impl Compaction {
                 vector_records.push(vector_record.clone());
             }
         }
+        // After the :1081/:1084 merge clones (merged_vectors + vector_records are
+        // BOTH full clones while resolved_records is still alive = 3 copies).
+        memtrace.stage("merge_clones", vector_records.len());
 
         // Log cleanup statistics
         if expired_records_count > 0 || tombstones_removed_count > 0 {
@@ -1101,6 +1206,7 @@ impl Compaction {
         );
         let (sorted_vectors, sort_stats) =
             Self::sort_vectors_for_compaction(vector_records).await?;
+        memtrace.stage("sort_return", sorted_vectors.len());
         info!(
             "✅ UNIFIED COMPACTION: Sorted records (estimated compression improvement: {:.1}%)",
             sort_stats.compression_estimate * 100.0
@@ -1164,6 +1270,7 @@ impl Compaction {
         for (key, record) in sorted_vector_records {
             btree_records.insert(key, record);
         }
+        memtrace.stage("pre_write", btree_records.len());
 
         // M1-3 (ADR-049): the legacy ProximaBlocks write arms (which needed a
         // block size + a writer-local filesystem factory + compression config)
@@ -1259,6 +1366,7 @@ impl Compaction {
                         .unwrap_or_else(|_| "default".to_string());
                     let records: Vec<ProximaRecord> =
                         btree_records.values().map(ProximaRecord::from).collect();
+                    memtrace.stage("write_input_converted", records.len());
                     if let Some(parent) = staging_file_path.parent() {
                         std::fs::create_dir_all(parent)
                             .map_err(crate::core::StorageError::DiskIO)?;
@@ -1317,6 +1425,7 @@ impl Compaction {
                     // boundary from legacy SST compaction records.
                     let mut records: Vec<ProximaRecord> =
                         btree_records.values().map(ProximaRecord::from).collect();
+                    memtrace.stage("write_input_converted", records.len());
                     if let Some(target) = task.precision_hint {
                         for record in &mut records {
                             for cell in &mut record.embeddings {
@@ -1393,6 +1502,7 @@ impl Compaction {
                         .unwrap_or_else(|_| "default".to_string());
                     let records: Vec<ProximaRecord> =
                         btree_records.values().map(ProximaRecord::from).collect();
+                    memtrace.stage("write_input_converted", records.len());
                     if let Some(parent) = task.output_file.parent() {
                         std::fs::create_dir_all(parent)
                             .map_err(crate::core::StorageError::DiskIO)?;
@@ -1451,6 +1561,7 @@ impl Compaction {
                     // boundary from legacy SST compaction records.
                     let mut records: Vec<ProximaRecord> =
                         btree_records.values().map(ProximaRecord::from).collect();
+                    memtrace.stage("write_input_converted", records.len());
                     if let Some(target) = task.precision_hint {
                         for record in &mut records {
                             for cell in &mut record.embeddings {
@@ -1479,6 +1590,7 @@ impl Compaction {
             })?;
             metadata.size
         };
+        memtrace.stage("write_done", vector_records_len);
 
         debug!(
             "Wrote {} bytes to output file {}",

@@ -43,6 +43,21 @@ priority than query serving; expose `compaction_queue_depth`,
 (TD-METRICS family) so operators can see the queue instead of inferring it
 from CPU/RSS.
 
+S4 — **Interim mitigation available today — uniform fan-3 leveled geometry**:
+`3× Lₙ₋₁ → 1× Lₙ` up to the existing `max_levels = 7`
+(`compaction_threshold` 5 → 3 / `level_multiplier` → 3, or per-collection
+`l0_threshold:` tag). Peak compaction memory scales superlinearly with input
+size (measured: ~1 GB at 30k input vs 40-52 GB at 120k), so smaller L0/L1
+quanta reduce peak disproportionately, and 3^7 ≈ 2,187 flush-units of
+capacity is ample. Caveats: (a) the per-compaction bound is `3 × 3ⁿ`
+flush-units — the geometry protects the shallow levels where today's pressure
+is, but deep-level merges are large regardless of fan-in, so S2's byte budget
+(or TD-COMPACT-2 S2 streaming) must still clamp the tail; (b) write
+amplification rises (~log₃ vs log₅ passes/record — more PUT/GET churn on
+object storage); (c) slower convergence to the few-large-files state
+TD-FLUSH-3 wants for the read path. Treat as a stopgap until S1/S2 and the
+TD-COMPACT-2 write-phase fix land.
+
 == Notes
 
 * Queue depth alone is NOT sufficient: with today's per-job cost a depth-1
