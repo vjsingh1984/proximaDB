@@ -1,0 +1,137 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-COMPACT-2: L0→L1 compaction memory amplification OOM-kills the server (no input-size/memory guard)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Proposed.** Measured 2026-07-23 on SIFT 1M (develop @ 02725d81a, post #1161/#1163) during the restart/recovery pressure tests.
+| Priority | **P0** — the OOM takes down the whole server (all tenants, all collections), not just the compaction. On memory-constrained nodes (Spot instances, small pods) any 1M-scale compaction is a self-inflicted outage; jetsam/OOM-killer takes the process mid-compaction, which then also triggers the unclean-restart WAL-replay cost (TD-IVF-1).
+| Component | `src/storage/engines/sst/compaction.rs` (`perform_unified_vectorrecord_compaction`, lines ~890–1138); `src/core/search/mvcc_resolution.rs`; `compactor_impl.rs` (`k_way_merge`, `compact_level_tiered`, `retrain_pca_model_for_compaction`).
+| Evidence | macOS jetsam: `memorystatus: killing largest compressed process proximadb-server [15323] 125835 MB`. Input: 6 L0 `.pax` files, 763 MB on disk, 1M × 128-dim f32 (512 MB raw vectors). Server RSS was ~11 GB before the compaction; footprint ballooned to ~126 GB (compressed accounting) within ~2–4 min and the process was killed. Peak-RSS sweep below.
+|===
+
+== The finding
+
+Explicitly exercising the L0→L1 compaction path on a 1M-vector SIFT collection
+(763 MB across 6 L0 segments) ballooned the server's memory footprint from
+~11 GB RSS to a ~126 GB compressed jetsam kill. TD-COMPACT-1 recorded the same
+path as *slow* (666 s); under memory pressure it is *fatal*. The two findings
+share a root cause: the pipeline materializes everything, repeatedly.
+
+=== Memory-amplification mechanism (code trace)
+
+`perform_unified_vectorrecord_compaction` (`compaction.rs:890–1138`) holds
+**~5–7 simultaneous full materializations** of every input record — there is no
+streaming anywhere in the path:
+
+1. `:906/:948` — `all_vector_records: Vec<VectorRecord>`: every input file is
+   fully read and `extend`ed into one Vec (all 6 files at once).
+2. `:989` — `merged_vector_records`: dedup copy, live until the end.
+3. `:1013` — `canonical_records: Vec<ProximaRecord>`: full
+   `VectorRecord→ProximaRecord` round-trip copy #1.
+4. `:1017` — `MvccResolver::resolve_batch` builds an internal
+   `id_groups: HashMap<String, Vec<ProximaRecord>>`
+   (`mvcc_resolution.rs:51`) — another full copy.
+5. `:1081/:1084` — the merge loop clones each record **twice**
+   (`merged_vectors` + `vector_records`) while `resolved_records` is still live.
+6. `sort_vectors_for_compaction` (`:2010–2033`) does a **second** full
+   `VectorRecord→ProximaRecord→VectorRecord` round-trip.
+7. `:1110` — `sorted_vector_records: Vec<(String, VectorRecord)>`.
+
+The per-copy cost is inflated because `ProximaRecord`
+(`proximadb-records/src/lib.rs:776+`) is a heavyweight struct (embedding cells,
+principal vectors, provenance options, metadata maps): each conversion allocates
+KB-scale heap for a 512-byte SIFT vector. 1M records × 5–7 heavy copies × KB-scale
+per-record overhead ⇒ tens of GB resident.
+
+Additionally: `k_way_merge` (`compactor_impl.rs:583–631`) buffers everything into
+`id_versions: HashMap<String, Vec<ProximaRecord>>` on the other path, and
+`retrain_pca_model_for_compaction` (`compactor_impl.rs:1136`) trains PCA on the
+full in-memory slice.
+
+=== No guard exists
+
+There is **no memory or input-size bound** on compaction anywhere in
+`src/storage/engines/sst/`: the only byte budgets are read-side caches (survivor
+cache, block cache). `compact_level_tiered` (`compactor_impl.rs:1038`) compacts an
+entire level's file list in a single `compact_files` call — all 6 L0 files
+simultaneously — instead of bounded sub-batches.
+
+== Measured peak-RSS sweep (isolated single-collection server)
+
+Method: fresh server, ingest N in 6 chunks with an explicit flush per chunk
+(≈6 L0 files, mirroring the 1M run), final flush fires the inline threshold
+compaction; RSS sampled at 0.5 s cadence until the compaction completes or the
+process dies.
+
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| Compaction input (records) | Raw vector bytes | Base RSS | Peak RSS | Peak Δ | Outcome
+| 30,000 | 15 MB | 16.6 GB | 17.7 GB | +1.03 GB (~34 KB/record) | completed, 5→1 files in **12.3 s**
+| 120,000 | 61 MB (≈92 MB on disk, 6 files) | 4.06 GB | **55.6 GB** | +51.6 GB — **attributed to the concurrent AXIS trainer (see below)** | completed, 5→1 files in **880 s** (local SSD, 64 GB machine — deep in swap)
+| 1,000,000 | 512 MB (763 MB on disk, 6 files) | ~11 GB | >126 GB (compressed accounting) | n/a | **jetsam kill ~2–4 min in**
+|===
+
+**ATTRIBUTION (resolved by the AXIS-only control, 2026-07-23):** an AXIS-only
+control run (same 120k ingest, NO compaction) peaked at **55.59 GB** — equal to
+the compaction-window peak. The dominant memory consumer at 120k+ scale is the
+**insert-path AXIS clustering trainer (TD-IVF-2)**, which runs concurrently
+under default config, not the compaction pipeline itself. The compaction-only
+delta measured ~1 GB at 30k input (~34 KB/record) — the collect-everything
+copies traced above are real and scale linearly with heavyweight
+`ProximaRecord` conversions, but the 126 GB jetsam kill and the swap-driven
+880 s duration belong primarily to TD-IVF-2.
+
+Corollaries:
+
+* **Duration and memory unify.** PR #1166's phase timers measured ~8 s per
+  ~500k compaction when memory was calm; this sweep's 120k compaction took
+  880 s while the co-resident AXIS trainer pushed the process into swap (peak
+  55.6 GB on a 64 GB machine). TD-COMPACT-1's residual duration variance (and
+  the >3 min finalize stall seen in the #1166 session) is largely memory
+  pressure from TD-IVF-2, not compaction I/O pathology.
+* **Ordering of fixes:** gate the AXIS insert path (TD-IVF-2 S1) first — it
+  removes the OOM class for co-design collections; then bound compaction input
+  (S1 here) as the fail-safe and stream the merge (S2) so compaction memory is
+  O(write-buffer) for the collections that remain.
+
+== Direction
+
+S1 — **Bound the input (the user-visible guard, do first):** add a
+`max_compaction_input_bytes` budget enforced in
+`compact_level_tiered`/`compact_size_tiered`, defaulting to a fraction of
+detected available RAM (e.g. `available_ram / (K × measured_amplification)`
+with the amplification factor from the sweep table; conservatively ~1/8 of
+available RAM). A level whose files exceed the budget is compacted in
+sub-batches of files, never all at once. This makes worst-case compaction
+memory proportional to server memory instead of dataset size.
+
+S2 — **Stream the merge (the real fix):** replace the collect-everything design
+with a k-way heap merge that pulls one record per input iterator and writes
+straight to the PAX writer — MVCC/tombstone resolution happens incrementally
+per-key as the sorted streams converge. This eliminates `all_vector_records`,
+both `ProximaRecord` round-trips, and the dual clones; peak memory becomes
+O(write-buffer), not O(input).
+
+S3 — **Cheap interim cuts** (if S2 is deferred): drop
+`merged_vector_records`/`resolved_records` before building the sort input and
+remove the second round-trip in `sort_vectors_for_compaction` — cuts peak from
+~6× to ~2×. Train compaction-time PCA on a reservoir sample, not the full slice.
+
+== Relationship to existing TDs
+
+* TD-COMPACT-1 (666 s duration, recall dip, 0.0 MB/s metric) — same path,
+  different resource. The 2026-07-23 phase-timer measurement (PR #1166,
+  `PROXIMADB_TRACE_PAX_WRITE`) showed current-code compaction *duration* is
+  finalize/write-I/O-bound (~68% in `PaxSegmentWriter::finish()`), k-means
+  negligible, and ~8 s per ~500k on local SSD — so TD-COMPACT-1's S3/S4 are
+  redirected at finalize. **This TD is orthogonal: it is about peak memory,
+  which OOM-killed the server regardless of duration.** Note the same
+  measurement session saw a ~548k compaction stall in finalize for >3 min —
+  duration variance and memory growth compound on loaded hosts.
+* TD-COMPACT-3 (operator compaction trigger is a no-op stub for SST) — found in
+  the same session; without it there is no safe operator-driven way to compact
+  in bounded windows.
+* TD-IVF-1 — the OOM kill converts every oversized compaction into an unclean
+  restart, which then pays the WAL-replay AXIS retraining cost.
