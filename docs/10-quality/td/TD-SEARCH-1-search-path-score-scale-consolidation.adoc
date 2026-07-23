@@ -25,7 +25,9 @@
 * Pruned `proximadb-vector` to its externally-used surface (quantization, `IndexConfig`, transform-index, metric enum + proto conversions): deleted the duplicate distance engine (`engine.rs`/`impls.rs`/`avx512.rs`/`int8_simd.rs` — the latter had zero users even in-crate), the duplicate `SimilarityResult`, `search.rs` (`BruteForceSearch`), and `service.rs` (`VectorServiceImpl`). ~2,000 lines removed.
 * Deleted the ORPHANED `write_ahead_log/tests/` module tree (~2,700 lines: avro/bincode serialization, batch-strategy, flush-coordinator, background-flush test files) — `tests/mod.rs` was never declared as a module, so none of it compiled ("TODO: Fix compilation errors" era); live serialization round-trip coverage is `serialization::{avro,bincode}::tests`. Dropped the mock-based `test_search_vectors_similarity` from the live `batch_strategy_tests.rs` (it asserted only that a mock errors or returns empty).
 
-*Remaining:* item 1 (single normalization boundary or same-metric debug-assert in the merges), item 4 (`_v1` DTO sunset slice), and folding `global_partitioned` search + the live WAL search into one scoring core.
+*Slice 2 (score-scale contract as executable assertions):* `proximadb-search-types` now carries `cross_stage_score_normalizations_agree_per_metric` (asserts `SimilarityResult::new(d, m).normalized_score` == `standardized_distance_to_similarity(d, m)` across Euclidean/Cosine/Manhattan sample distances — the two formulas every merge input flows through) and `normalized_score_is_monotonic_in_distance` (descending-score sort ⇔ ascending true distance, per metric domain). If either formula drifts, the contract test fails before a cross-scale merge can ship.
+
+*Remaining:* the structural fix for item 1 (ONE shared normalization function instead of two asserted-equal copies), item 4 (`_v1` DTO sunset slice), and folding `global_partitioned` search + the live WAL search into one scoring core.
 
 == Verification
 * One memtable search entry point; the dead pair deleted or delegated.

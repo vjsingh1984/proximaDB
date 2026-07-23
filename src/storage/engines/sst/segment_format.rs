@@ -888,6 +888,11 @@ impl SegmentInvariantsCache {
         self.inner.lock().ok()?.map.get(path).cloned()
     }
 
+    /// Resident bytes currently held (TD-METRICS-1 gauge source).
+    pub fn bytes_used(&self) -> usize {
+        self.inner.lock().map(|inner| inner.bytes_used).unwrap_or(0)
+    }
+
     /// Insert; evict arbitrary entries while over the byte budget. Region A
     /// (region_bytes) dominates, so this effectively bounds the index tier.
     pub fn put(&self, path: String, inv: Arc<SegmentInvariants>) {
@@ -1321,6 +1326,19 @@ pub async fn rabitq_search_segment_coalesced(
     // PR2: check the per-segment invariants cache. On hit, skip the 3
     // read_range calls (header + region + footer) → 3 GETs → 0 (hot path).
     let cached = cache.and_then(|c| c.get(path));
+    // TD-METRICS-1: this lookup is the cache's only read boundary — count
+    // hit/miss here (a hit means 3 GETs avoided) and sample resident bytes.
+    if cache.is_some() {
+        if cached.is_some() {
+            crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.inc();
+        } else {
+            crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_MISSES_TOTAL.inc();
+        }
+        if let Some(c) = cache {
+            crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_BYTES
+                .set(c.bytes_used() as i64);
+        }
+    }
 
     // 1. Header-prefix → region/footer extents. From cache (hot) or read (cold).
     let header_bytes: Vec<u8> = if let Some(inv) = cached.as_ref() {

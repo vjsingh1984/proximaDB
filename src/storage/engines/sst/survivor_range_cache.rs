@@ -106,12 +106,32 @@ impl SurvivorRangeCache {
         let key = CacheKey::new(TENANT, kind, format!("{path}:{off}:{len}"));
         // Ranges are ≤ a few MiB; cap the weight at u32::MAX defensively.
         let weight: u32 = len.try_into().unwrap_or(u32::MAX);
-        self.inner
+        let result = self
+            .inner
             .get_or_load(key, weight, || async {
                 let bytes = loader().await?;
                 Ok::<Arc<[u8]>, FilesystemError>(Arc::from(bytes))
             })
-            .await
+            .await;
+        self.sync_prometheus();
+        result
+    }
+
+    /// TD-METRICS-1: mirror the `TenantCache` hit/miss/bytes atomics into the
+    /// prometheus gauges after each lookup. `tenant_stats()` iterates a
+    /// handful of (tenant, kind) rows — negligible next to the ranged GET the
+    /// cache exists to avoid. Gauges (not counters) because the source is a
+    /// running total we sample.
+    fn sync_prometheus(&self) {
+        let (mut hits, mut misses, mut bytes) = (0i64, 0i64, 0i64);
+        for stat in self.inner.tenant_stats() {
+            hits += stat.hits as i64;
+            misses += stat.misses as i64;
+            bytes += stat.bytes as i64;
+        }
+        crate::metrics::operational_metrics::SURVIVOR_CACHE_HITS.set(hits);
+        crate::metrics::operational_metrics::SURVIVOR_CACHE_MISSES.set(misses);
+        crate::metrics::operational_metrics::SURVIVOR_CACHE_BYTES.set(bytes);
     }
 }
 

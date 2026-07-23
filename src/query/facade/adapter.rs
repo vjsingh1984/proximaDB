@@ -373,11 +373,25 @@ impl QueryFacadeAdapter {
             query_request = query_request.with_vector_advanced_filter(filter);
         }
 
-        // Execute through facade
-        let result = self.facade.execute(query_request).await?;
+        // Execute through facade. TD-METRICS-1: this is the cross-surface
+        // search entry, so the operational query counters + latency histogram
+        // live here (the /metrics/prometheus signal that replaced the stale
+        // struct-exporter zeros).
+        crate::metrics::operational_metrics::QUERIES_TOTAL.inc();
+        let result = match self.facade.execute(query_request).await {
+            Ok(result) => result,
+            Err(e) => {
+                crate::metrics::operational_metrics::QUERIES_FAILED_TOTAL.inc();
+                crate::metrics::operational_metrics::SEARCH_LATENCY_SECONDS
+                    .observe(start.elapsed().as_secs_f64());
+                return Err(e);
+            }
+        };
 
         // Convert QueryResult to VectorOperationResponse
         let response = self.query_result_to_vector_response(result)?;
+        crate::metrics::operational_metrics::SEARCH_LATENCY_SECONDS
+            .observe(start.elapsed().as_secs_f64());
 
         debug!(
             results = response.results.as_ref().map_or(0, |r| r.results.len()),
