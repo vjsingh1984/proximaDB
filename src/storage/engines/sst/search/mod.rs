@@ -225,7 +225,7 @@ impl SstEngine {
     }
 
     /// TD-165: exact brute-force search over the collection's segment(s), bypassing
-    /// any approximate index. Forces `block_prune.force_exact` so neither the
+    /// any approximate index. Forces `prune_config.force_exact` so neither the
     /// centroid file-pruning nor the Z-order block-pruning can drop the true NN —
     /// the same guarantee the index-less embedded path already provides.
     async fn execute_exact_segment_scan(
@@ -1033,7 +1033,7 @@ impl SstEngine {
         let search_mode = &ctx.search_params.search_mode;
 
         // **Honor SearchMode::Exact (2026-05-30)**: when the caller
-        // asked for an exact search, force `block_prune.force_exact = true`
+        // asked for an exact search, force `prune_config.force_exact = true`
         // so the sqrt-based centroid block pruning doesn't silently
         // drop recall. Without this override, an Exact search at 100K
         // (where the SST has ≥100 blocks) keeps only `sqrt(num_blocks)`
@@ -1225,7 +1225,7 @@ impl SstEngine {
                     file_idx + 1,
                     sstable_files.len(),
                     sstable_path,
-                    block_prune.force_exact
+                    prune_config.force_exact
                 );
 
                 // PAX RaBitQ→SQ8 cascade (PAX Phase 2 read-side wiring): try it first
@@ -1325,7 +1325,7 @@ impl SstEngine {
                                 k, // Use exact k
                                 distance_metric,
                                 Some(&*ctx.collection),
-                                block_prune,
+                                prune_config,
                             )
                             .await
                     } else if use_parallel_morsels {
@@ -1338,7 +1338,7 @@ impl SstEngine {
                                 k, // Use exact k
                                 distance_metric,
                                 Some(&*ctx.collection),
-                                block_prune,
+                                prune_config,
                                 None, // Use default worker count (CPU cores)
                             )
                             .await
@@ -1352,7 +1352,7 @@ impl SstEngine {
                                 k, // Use exact k
                                 distance_metric,
                                 Some(&*ctx.collection),
-                                block_prune,
+                                prune_config,
                             )
                             .await
                     } else {
@@ -1365,7 +1365,7 @@ impl SstEngine {
                                 k, // Use exact k
                                 distance_metric,
                                 Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
-                                block_prune, // Pass block pruning config for Z-order/centroid pruning
+                                prune_config, // Pass block pruning config for Z-order/centroid pruning
                             )
                             .await
                     }
