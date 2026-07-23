@@ -21,6 +21,10 @@ L0→L1 compaction triggered correctly (threshold=5, 6 files present) and succee
 
 3. **Recall dip (0.999→0.986)**: re-clustering rebuilds IVF centroids from the merged 1M-vector set. The new centroids may shift cell boundaries slightly → some queries' true neighbors land in a different cell → not probed → missed. Still above the 0.90 ratchet.
 
+== Review note (2026-07-23 TD sweep)
+
+Call-chain audit for TD-IVF-1 confirms S3's premise: the only reachable `AxisClusteringEngine::train_model` callers are the IVF `External` build path (`dual_store_ivf.rs`) and the poll-driven discovery recluster pass — the 666s re-cluster compaction re-enters the same k-means that TD-IVF-1 removes from restart. Fixing S3 (carry the persisted A0 model into the compacted segment) therefore addresses BOTH the compaction wall-clock and the recall dip (cell boundaries stay put), and it is the same mixed-read-safe persisted-model-reuse mechanism as TD-IVF-1 S1. Kept OUT of the 2026-07-23 TD-sweep PR deliberately: it is flush-path surgery that needs its own 1M-recall ratchet run before merging.
+
 == Direction
 
 S1 — **Investigate the 666s**: profile the re-cluster compaction. Is it RaBitQ re-encode (CPU)? IVF k-means (CPU, O(N × k × iterations))? Or I/O (reading/writing segments)? The 0.0 MB/s metric suggests CPU-bound.

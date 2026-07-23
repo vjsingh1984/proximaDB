@@ -733,4 +733,77 @@ mod score_vector_tests {
         };
         assert_eq!(c.name, "x");
     }
+
+    /// TD-SEARCH-1 score-scale contract, as an executable assertion.
+    ///
+    /// The cross-stage merges (`merge_delta_with_directory_results`, the
+    /// two-stage dedup sort) rank `OptimizedSearchRecord.score` values produced
+    /// by DIFFERENT stages: the WAL delta scan + memtable Stage-1 score via
+    /// `SimilarityResult::new(d, metric).normalized_score` (distance-kernel),
+    /// while the SST PAX cascade scores via
+    /// `standardized_distance_to_similarity(d, metric)` (this crate). Those two
+    /// normalizations MUST be the same function of (distance, metric), or
+    /// records from one stage systematically displace the other's in the merged
+    /// top-k regardless of true distance — the TD-RECALL-1 failure mode (recall
+    /// collapsed to the memtable fraction when the delta re-score ran on a
+    /// different scale). If either formula changes, change the other AND every
+    /// producer, or better: collapse them into one shared function.
+    #[test]
+    fn cross_stage_score_normalizations_agree_per_metric() {
+        use proximadb_distance_kernel::DistanceMetric;
+        use proximadb_distance_kernel::engine::SimilarityResult;
+
+        // Canonical-distance samples per metric, spanning exact-match to far.
+        let cases: &[(DistanceMetric, &[f32])] = &[
+            (DistanceMetric::Euclidean, &[0.0, 0.5, 1.8, 137.0, 5000.0]),
+            (DistanceMetric::Cosine, &[0.0, 0.05, 0.5, 1.0, 2.0]),
+            (DistanceMetric::Manhattan, &[0.0, 1.0, 10.0, 300.0]),
+        ];
+        for (metric, distances) in cases {
+            for &d in *distances {
+                let kernel = SimilarityResult::new(d, *metric).normalized_score;
+                let search_types =
+                    OptimizedSearchRecord::standardized_distance_to_similarity(d, metric);
+                assert!(
+                    (kernel - search_types).abs() < 1e-6,
+                    "score-scale contract violated for {metric:?} at d={d}: \
+                     kernel SimilarityResult={kernel} vs \
+                     standardized_distance_to_similarity={search_types}"
+                );
+            }
+        }
+    }
+
+    /// Same contract, monotonicity leg: within one metric the normalized score
+    /// must be strictly decreasing in canonical distance (higher = closer)
+    /// across that metric's valid distance domain, so a descending-score sort
+    /// ranks by true distance for records from ANY stage that honors the
+    /// contract. (Cosine distance lives in [0, 2] — the conversion clamps
+    /// beyond that, so its samples stay inside the domain.)
+    #[test]
+    fn normalized_score_is_monotonic_in_distance() {
+        use proximadb_distance_kernel::DistanceMetric;
+        let cases: &[(DistanceMetric, &[f32])] = &[
+            (
+                DistanceMetric::Euclidean,
+                &[0.0, 0.1, 0.5, 1.0, 1.9, 10.0, 100.0],
+            ),
+            (DistanceMetric::Cosine, &[0.0, 0.1, 0.5, 1.0, 1.5, 1.9]),
+            (
+                DistanceMetric::Manhattan,
+                &[0.0, 0.1, 0.5, 1.0, 1.9, 10.0, 100.0],
+            ),
+        ];
+        for (metric, distances) in cases {
+            let mut prev = f32::INFINITY;
+            for &d in *distances {
+                let s = OptimizedSearchRecord::standardized_distance_to_similarity(d, metric);
+                assert!(
+                    s < prev,
+                    "{metric:?}: score not strictly decreasing at d={d} (s={s}, prev={prev})"
+                );
+                prev = s;
+            }
+        }
+    }
 }
