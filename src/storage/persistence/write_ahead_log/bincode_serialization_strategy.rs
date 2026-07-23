@@ -20,7 +20,6 @@ use crate::storage::persistence::write_ahead_log::{
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
 use crate::storage::traits::UnifiedStorageFormat;
-use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
 /// Bincode WAL batch strategy using serialization-first architecture
 pub struct BincodeSerializationStrategy {
@@ -325,52 +324,6 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         self.memtable_manager
             .search_vector_by_id(collection_id, vector_id)
             .await
-    }
-
-    async fn search_vectors_similarity(
-        &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: Option<proximadb_distance_kernel::DistanceMetric>,
-    ) -> Result<Vec<(String, f32, proximadb_records::ProximaRecord)>> {
-        // For tests, we can do a simple search in memtable
-        let vectors = self
-            .memtable_manager
-            .get_collection_vectors(collection_id)
-            .await?;
-
-        if vectors.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // CRITICAL: Create distance compute locally per query to avoid cross-query contamination
-        let distance_compute = UnifiedDistanceCompute::default();
-
-        // Use the unified distance compute to calculate distances
-        let metric = distance_metric.unwrap_or(proximadb_distance_kernel::DistanceMetric::Cosine);
-        let mut results: Vec<(String, f32, proximadb_records::ProximaRecord)> = Vec::new();
-
-        for vector in vectors {
-            let Some(embedding) = vector.embeddings.first() else {
-                continue;
-            };
-            let distance_result = distance_compute.calculate_distance(
-                query_vector,
-                &embedding.as_fp32_cow(),
-                &metric,
-            );
-            // Use empty string for vectors without IDs
-            let id = vector.oid.clone();
-            // Use rank_value for sorting (lower = more similar)
-            results.push((id, distance_result.rank_value, vector));
-        }
-
-        // Sort by distance (ascending) and take top k
-        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        results.truncate(k);
-
-        Ok(results)
     }
 
     async fn get_collection_vectors(

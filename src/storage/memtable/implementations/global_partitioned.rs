@@ -970,6 +970,17 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Search for similar vectors within a specific collection using configurable distance metric
+    /// Brute-force memtable search over a collection's unflushed batches.
+    ///
+    /// TD-SEARCH-1: the LIVE serving path is
+    /// `WriteAheadLogManager::search_unflushed_vectors` (write_ahead_log/mod.rs),
+    /// which scans `get_unflushed_batches` with deferred materialization and
+    /// tombstone handling. This method is retained as the unit-test harness for
+    /// the partition-level MVCC/tombstone/TTL semantics exercised by this
+    /// module's tests; the consolidation direction is one shared scoring core.
+    /// The dead wrappers that used to sit above it (per-strategy
+    /// `search_vectors_similarity`, `WALBehaviorWrapper::search_unflushed_vectors`)
+    /// were removed — do not reintroduce a parallel search path here.
     pub async fn search_vectors(
         &self,
         query_vector: &[f32],

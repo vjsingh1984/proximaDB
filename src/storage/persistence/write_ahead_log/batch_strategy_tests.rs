@@ -18,7 +18,6 @@ mod write_ahead_log_batch_strategy_tests {
     use anyhow::Result;
     use async_trait::async_trait;
     use proximadb_data_model::ProximaValue;
-    use proximadb_distance_kernel::DistanceMetric;
     use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -801,41 +800,6 @@ mod write_ahead_log_batch_strategy_tests {
     }
 
     // Distance metric and similarity search tests
-
-    #[tokio::test]
-    async fn test_search_vectors_similarity() {
-        let mut strategy = MockWALBatchStrategy::new("test_similarity");
-        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
-        let config = WALConfig::default();
-        strategy.initialize(&config, filesystem).await.unwrap();
-
-        let collection_id = "similarity_collection";
-        let query_vector = vec![1.0, 2.0, 3.0, 4.0];
-
-        // Test search (should fail gracefully since mock doesn't implement full behavior)
-        let result = strategy
-            .search_vectors_similarity(
-                collection_id,
-                &query_vector,
-                5,
-                Some(DistanceMetric::Cosine),
-            )
-            .await;
-
-        match result {
-            Ok(results) => {
-                // Mock returns empty results
-                assert!(results.is_empty());
-            }
-            Err(e) => {
-                // Expected since mock doesn't provide full write buffer behavior
-                assert!(
-                    e.to_string()
-                        .contains("Write buffer behavior not available")
-                );
-            }
-        }
-    }
 
     #[tokio::test]
     async fn test_search_vector_by_id() {
