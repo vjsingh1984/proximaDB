@@ -2,7 +2,7 @@
 :author: Vijaykumar Singh
 :email: vjdsingh@icloud.com
 :date: 2026-07-23
-:status: Draft
+:status: Accepted
 :toc: left
 :toclevels: 3
 
@@ -166,6 +166,27 @@ Per the co-design review rule ("watch for silent duplication of an existing prim
 * `MultiModelTransactionManager` (Serializable OCC, currently unwired) — the substrate for **future
   multi-key / cross-modal ledger transactions**, complementary to and out of scope for the v1
   single-scope hot path.
+
+=== Modularity: shared-substrate stacking *and* selective launch
+
+Two design forces, deliberately held together:
+
+* **Stack, don't silo (shared economy).** The ledger modality **composes the existing engine
+  substrate** rather than building a parallel one — durability on the ADR-069 local-disk WAL, the
+  authoritative counter in the existing memtable, HA via the fenced partition-lease single-writer,
+  isolation/billing via `TenantContext`, at-rest tiering via `ObjectAccessTier`, and scope discovery
+  + metrics via the catalog/observability spine. One durability path, one HA path, one tenancy path,
+  **amortized across every modality**. This is the co-design economy (ADR-052): a new modality should
+  *harvest* the platform, not re-pay for it. Cross-pollination also runs the other way — once the
+  transaction manager is wired (Future Possibilities), budgets/quotas can attach to vector/document
+  collections as first-class cross-modal metadata.
+* **Launch only the modality you need (lean single-purpose).** The modality is independently
+  enablable — a cargo feature (`experimental-ledger`) plus a runtime modality-enablement gate at
+  service registration (`src/network/multi_server.rs`) — so a deployment can launch **ledger-only**
+  (WAL + memtable + ledger service + object-store; **no** AXIS/PAX/DataFusion/vector/graph footprint),
+  a lean OLTP-KV that competes directly with Redis/etcd, *or* run the ledger as one facet of the full
+  multi-model store. **Same engine, dialed by deployment.** The shared substrate makes the lean build
+  cheap to carve out precisely because the ledger reuses the common lower layers.
 
 === Acceptance bar
 
