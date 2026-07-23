@@ -352,6 +352,10 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | WAL on a local reattachable disk; object store as the coalesced durable tier — bound write-op cost without losing durability on Spot
 | Proposed; S1–S4 core shipped/live-verified (#1117/#1118/#1132)
 | Tiers the per-write WAL onto a reattachable local filesystem while object storage remains the coalesced durable tier. Time/size/capacity policy, live auto-flush, reclamation, trigger metrics, two latent live-path fixes, and default-OFF critical-watermark writer rejection shipped. Acceptance remains open on primary REST batch 429 propagation, fsync/SIGKILL proof, residual canaries, the `file://` guardrail, and sustained soak.
+| link:ADR-070-axis-not-needed-for-codesign-collections.adoc[ADR-070]
+| AXIS is not the default for co-design collections — the PAX scan + memtable cover everything
+| Accepted (2026-07-23)
+| With the flush path fixed (#1150/#1155/#1158), the AXIS Stage-2 index duplicates in RAM the same flushed data the Stage-3 PAX segment scan already serves; co-design collections default to memtable + PAX scan (with the survivor cache), and AXIS becomes a per-collection opt-in. Proven on SIFT 1M via REST: recall@10=0.999 cold, 0.5ms hot.
 |===
 
 The index is complete and is enforced by `scripts/check_design_status_index.py`.

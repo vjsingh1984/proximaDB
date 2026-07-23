@@ -37,6 +37,7 @@ mod tests {
             prefetch_enabled: false,
             prefetch_size_kb: 64,
             decompression_cache_config: None,
+            ..Default::default()
         }
     }
 
