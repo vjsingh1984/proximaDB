@@ -7488,6 +7488,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-ledger"
+version = "0.2.0"
+
+[[package]]
 name = "proximadb-mcp"
 version = "0.2.0"
 dependencies = [
