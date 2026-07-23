@@ -46,10 +46,10 @@ use futures::future::join_all;
 /// over the config field — operators can tune without a restart.
 fn resolve_search_parallelism(config_value: u16) -> u16 {
     // Env override (hot-path tuning)
-    if let Ok(v) = std::env::var("PROXIMADB_SEARCH_PARALLEL_FILES") {
-        if let Ok(n) = v.trim().parse::<u16>() {
-            return resolve_parallel_degree(n);
-        }
+    if let Ok(v) = std::env::var("PROXIMADB_SEARCH_PARALLEL_FILES")
+        && let Ok(n) = v.trim().parse::<u16>()
+    {
+        return resolve_parallel_degree(n);
     }
     resolve_parallel_degree(config_value)
 }
@@ -1100,7 +1100,6 @@ impl SstEngine {
         // per-file scan also honors `force_exact` when the caller
         // asked for an exact search.
         let scan_start = std::time::Instant::now();
-        let block_prune = prune_config;
 
         // TD-SEARCH-2: inter-file parallel search. The degree is config/env-driven:
         //   search_parallel_files = 0 → 50% of CPU cores (wise default)
@@ -1124,7 +1123,6 @@ impl SstEngine {
             // Build per-file futures (borrow &self — no 'static needed).
             let file_futures = sstable_files.iter().map(|sstable_path| {
                 let sstable_path = sstable_path.as_str();
-                let block_prune = block_prune;
                 let filter_owned = filter_expression.cloned();
                 async move {
                     let result: Result<Vec<OptimizedSearchRecord>, String> = async {
@@ -1193,7 +1191,7 @@ impl SstEngine {
                                     k,
                                     distance_metric,
                                     Some(&*ctx.collection),
-                                    block_prune,
+                                    prune_config,
                                 )
                                 .await
                         };
