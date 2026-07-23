@@ -936,6 +936,16 @@ pub struct OptimizationConfig {
     pub enable_zone_map_pruning: bool,
 
     /// Enable AXIS indexes for approximate nearest neighbor search.
+    ///
+    /// Default is `false` per ADR-070: the co-design PAX scan + survivor cache
+    /// is the default ANN path (recall@10=0.999, ~0.5ms hot for ~600 MB RAM
+    /// per collection, vs AXIS at ~1ms for ~8.6 GB RAM). AXIS remains
+    /// available per collection via `index_configs` (the #1145 gate:
+    /// `pax_off || !index_configs.is_empty()`), independent of this flag.
+    /// NOTE (TD-AXIS-2): this flag is not yet wired to boot-time AxisManager
+    /// initialization — the manager still constructs at startup either way;
+    /// the per-collection gate is what keeps AXIS cost off co-design
+    /// collections today.
     #[serde(default = "default_enable_axis_indexes")]
     pub enable_axis_indexes: bool,
 
@@ -961,7 +971,8 @@ fn default_enable_zone_map_pruning() -> bool {
 }
 
 fn default_enable_axis_indexes() -> bool {
-    true
+    // ADR-070: co-design (PAX scan + survivor cache) is the default ANN path.
+    false
 }
 
 fn default_index_type() -> String {
@@ -1420,7 +1431,8 @@ mod tests {
 
         assert!(config.enable_mmap);
         assert!(config.enable_zone_map_pruning);
-        assert!(config.enable_axis_indexes);
+        // ADR-070: AXIS is opt-in; co-design PAX + survivor cache is the default.
+        assert!(!config.enable_axis_indexes);
         assert_eq!(config.default_index_type, "hnsw");
         assert!(config.enable_progressive_search);
         assert!(config.enable_bloom_filters);

@@ -26,7 +26,9 @@ tags = ["cloud", "durable", "primary"]
 # cloud storage location.
 enable_mmap = false
 enable_zone_map_pruning = true
-enable_axis_indexes = true
+# ADR-070: co-design PAX scan is the default ANN path; AXIS is per-collection
+# opt-in via index_configs.
+enable_axis_indexes = false
 enable_progressive_search = true
 enable_bloom_filters = true
 

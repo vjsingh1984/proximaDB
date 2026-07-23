@@ -56,8 +56,10 @@ tags = ["local", "disk3"]
 enable_mmap = true
 # Enable zone map pruning to skip irrelevant blocks (30-50% faster search)
 enable_zone_map_pruning = true
-# Enable AXIS indexes for approximate nearest neighbor search
-enable_axis_indexes = true
+# Enable AXIS indexes for approximate nearest neighbor search.
+# ADR-070: false by default — the co-design PAX scan + survivor cache is the
+# default ANN path; collections opt into AXIS per-collection via index_configs.
+enable_axis_indexes = false
 # Default index type for new collections: flat, hnsw, ivf, lsh
 default_index_type = "hnsw"
 # Enable progressive quantization search (Binary → INT8 → FP32)
