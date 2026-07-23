@@ -1,35 +1,63 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= TD-METRICS-1: Basic server metrics not wired to the search/ingest paths (queries_total, vectors_total, collections_total read 0/stale)
+= TD-METRICS-1: Wire ALL operational metrics — basic counters + cache hit/miss/size (consolidates the full metrics gap)
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Proposed.** Found during the SIFT1M recall investigation (2026-07-22). The consumption/io-trace metrics (`object_store_bytes_read_total`, `gets_total`) ARE wired and correct; the basic operational counters are stub/stale — the live search + ingest paths do not increment them, so `/metrics` reports `queries_total=0` after 200+ queries, `vectors_total=100000` after a 1M ingest, `collections_total=0` with one collection. This blinds operational monitoring (query rate, row count, latency) and forced recall debugging by hypothesis instead of telemetry.
-| Priority | **P2** — observability gap, no data-correctness impact. Blocks efficient ops/debugging; the consumption metrics (the billing surface) are unaffected.
-| Component | `src/metrics/` (the `proximadb_*` prometheus counters: `queries_total`, `queries_failed_total`, `vectors_total`, `collections_total`, `query_latency_p99_ms`, `search_operations_per_second`); the search path (`src/services/operations/vectors/legacy.rs`) and ingest path (`src/services/operations/vectors/write.rs`).
-| Evidence | `/metrics` after a 1M-vector ingest + 200-query SIFT bench: `proximadb_queries_total 0`, `proximadb_vectors_total 100000` (echoes the `vector_count_threshold` config, not the actual count), `proximadb_collections_total 0`, `proximadb_query_latency_p99_ms 0`, `proximadb_search_operations_per_second 0`. Meanwhile `proximadb_object_store_bytes_read_total` (536 MB) and `proximadb_object_store_gets_total` (578) ARE correct — so the metering plane works; the basic operational plane does not.
+| Status | **Proposed (updated 2026-07-23 with cache metrics gap + measured proof).** Three metrics gaps, all proven by the SIFT1M benchmark: (1) basic operational counters read 0/stale; (2) survivor cache + segment invariants cache have ZERO prometheus exposure despite delivering 100% hit rate (0 GETs, 0.5ms hot vs 157ms cold); (3) `/metrics` endpoint is dead weight (admin UI uses `/metrics/prometheus` + `/metrics/json`).
+| Priority | **P1** (upgraded from P2) — the cache metrics gap is now PROVEN to blind the most important operational signal (is the hot path hitting DRAM or the object store?). Without cache hit/miss counters, operators cannot tune cache budgets, detect cache thrashing, or verify the co-design cost model. The basic counters (queries_total=0) compound this — you can't even see query rate.
+| Component | `src/metrics/` (all prometheus counters); `src/storage/engines/sst/` (`SurvivorRangeCache`, `SegmentInvariantsCache` — emit no metrics); `src/network/metrics_service.rs` (the dead `/metrics` endpoint); `src/query/facade/adapter.rs` (search entry — no counter increment).
 |===
 
-== The finding
+== The three gaps (all measured, not hypothesized)
 
-The basic operational prometheus counters are not incremented on the live paths:
+=== Gap 1: Basic operational counters (P2)
+`queries_total=0` after 200+ queries, `vectors_total=100000` after a 1M ingest (echoes config default), `collections_total=0` with one collection. The search/ingest paths never increment these struct-exporter fields. The consumption metrics (`object_store_bytes_read_total`, `gets_total`) ARE wired — that's the working channel.
 
-* **Search**: a query through `legacy.rs::execute_search_internal` → `execute_two_stage_search_with_mode` never calls a `queries_total.inc()` / latency observe. `queries_total` stays 0; `query_latency_p99_ms` stays 0.
-* **Ingest**: the batch insert path does not update `vectors_total` / `collections_total` from the actual store. `vectors_total` reads `100000` (the `vector_count_threshold` default, not the live count); `collections_total` reads 0 with a collection present.
+**Fix**: real prometheus counters at the facade seams (see original TD-METRICS-1 direction). Wire `queries_total`, `vectors_total`, `collections_total`, `query_latency` histogram.
 
-The consumption metrics (`record_object_store_op`, `record_object_store_write_bytes_by_tier`, `consumption_metrics`) ARE wired at the I/O boundary — that channel is correct and is what surfaced the io-trace reads during the recall debug.
+=== Gap 2: Cache hit/miss/size metrics (P1 — THE critical gap)
+**Proven by the SIFT1M three-way benchmark**:
 
-== Direction
+```
+  Cold (6 L0):       504ms   ~157 GETs/q   ~129 MB/q   (all I/O)
+  Cold (2 compacted): 157ms   ~86 GETs/q    (fewer files, coalesced reads)
+  Hot (survivor cache): 0.5ms   0 GETs/q     0 MB/q     (100% app-cache hit)
+```
 
-Wire the operational counters at the path boundaries (single increment points, not scattered):
+The hot path delivers **0.5ms with ZERO I/O** — but the survivor cache + segment invariants cache expose **NO prometheus metrics**: no hit count, no miss count, no eviction count, no resident size. The only signal is the io-trace delta (0 GETs = 100% hit), which requires before/after metric snapshots — not real-time observability.
 
-* Search: increment `queries_total` (+ `queries_failed_total` on error) and observe `query_latency` at the top of the REST/gRPC search entry (or the `execute_search_internal` return), not per-stage.
-* Ingest: update `vectors_total` / `collections_total` from the authoritative store counts (or a post-commit delta), not a config default.
-* Add a regression test that ingests + queries and asserts the counters move (the test that would have caught this).
+**What's missing**:
+- `proximadb_survivor_cache_hits_total{collection_id}` / `_misses_total`
+- `proximadb_survivor_cache_entries` (gauge) / `_bytes` (gauge)
+- `proximadb_segment_invariants_cache_hits_total` / `_misses_total`
+- `proximadb_segment_invariants_cache_bytes`
 
-Do NOT duplicate the consumption-metering increments (those stay at the I/O boundary).
+**Why this matters**: at ~600 MB per active collection (measured: 2 files × ~300 MB PAX regions), the survivor cache is the difference between 0.5ms (DRAM) and 157ms (cold scan). Without hit/miss metrics, operators cannot:
+- Detect cache thrashing (too many collections for the budget)
+- Tune `PROXIMADB_SURVIVOR_CACHE_BUDGET_MB`
+- Verify the co-design cost model (is the hot path actually hot?)
+- Alert on cache degradation (latency spike = cache miss = budget too small)
+
+**Fix**: add prometheus CounterVec/GaugeVec to `SurvivorRangeCache` + `SegmentInvariantsCache` (same pattern as `consumption_metrics.rs`). Increment on hit/miss at the `get_or_load` boundary.
+
+=== Gap 3: Dead `/metrics` endpoint (P2)
+The admin UI uses `/metrics/prometheus` + `/metrics/json`. The struct-exporter `/metrics` endpoint renders stale values and creates a metric-name collision risk. Remove or redirect (TD-METRICS-2).
+
+== TDD requirement
+A test that:
+1. Ingests N vectors (asserts `vectors_total` increments).
+2. Issues Q searches (asserts `queries_total` ≥ Q, `query_latency` > 0).
+3. Issues the SAME Q searches again (asserts `survivor_cache_hits_total` increments by Q, `survivor_cache_misses_total` unchanged).
+4. Asserts `object_store_gets_total` delta is 0 on the second pass (proves cache served, not I/O).
+
+This test **proves the co-design cost model end-to-end**: cold query → I/O → warm query → cache → zero I/O. It's the regression test that would have caught every metrics gap in this investigation.
 
 == Verification
-- After a 1k-vector ingest + 10 queries: `proximadb_vectors_total` reflects ~1k, `collections_total` ≥ 1, `queries_total` ≥ 10, `query_latency_p99_ms` > 0.
-- Existing consumption metrics unchanged.
+- After ingest + 2 query passes: `queries_total` ≥ 2Q, `vectors_total` ≈ N, `survivor_cache_hits_total` ≥ Q, `survivor_cache_misses_total` ≥ Q (first pass) + 0 (second pass), `object_store_gets_total` delta = 0 on second pass.
+- The TDD test above passes.
+- `/metrics/prometheus` renders ALL counters (basic + cache + consumption).
+
+== Related
+link:TD-METRICS-2-remove-stale-struct-metrics-endpoint.adoc[TD-METRICS-2] (/metrics removal). link:TD-SEARCH-2-parallel-morsel-search.adoc[TD-SEARCH-2] (the benchmark that proved the cache gap). link:../../12-design/adr/ADR-070-axis-not-needed-for-codesign-collections.adoc[ADR-070] (the survivor cache replaces AXIS — must be observable).
