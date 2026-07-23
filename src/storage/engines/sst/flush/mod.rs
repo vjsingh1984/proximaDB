@@ -66,8 +66,9 @@ impl SstEngine {
         // on the flush path via FlushParameters.collection_config so co-design
         // collections don't pay the build for an index that's never queried (this was
         // the flush-latency bottleneck: ~101s/21k vecs of pure HNSW build). The
-        // PROXIMADB_SKIP_AXIS_INDEXING=1 env remains as a global override; when
-        // collection_config is absent we conservatively build (old behavior).
+        // PROXIMADB_SKIP_AXIS_INDEXING=1 env remains as a global override. When
+        // collection_config is absent (recovery flushes), skip — co-design is the default
+        // per ADR-070, so "unknown collection" means "no AXIS" (not "train AXIS").
         let axis_needed = match params
             .collection_config
             .as_ref()
@@ -80,7 +81,7 @@ impl SstEngine {
                     .any(|t| t.trim().eq_ignore_ascii_case("pax_vector_format:off"));
                 pax_off || !c.index_configs.is_empty()
             }
-            None => true,
+            None => false,
         };
         if !axis_needed || std::env::var("PROXIMADB_SKIP_AXIS_INDEXING").as_deref() == Ok("1") {
             return;
@@ -228,9 +229,12 @@ impl SstEngine {
             )
             .await?;
 
-        // Train/update PCA model for Z-Order spatial encoding
-        // This is done after flush to ensure collection-level PCA model is up-to-date
-        if params.vector_records.len() >= 100 {
+        // Train/update PCA model for Z-Order spatial encoding.
+        // TD-IVF-1: skip during recovery flushes (collection_config absent) — the segments
+        // already have the persisted PCA/IVF model in the A0 region, and re-training loads
+        // the entire dataset into RAM (5.7 GB for 1M vectors, 100% CPU for minutes).
+        // The cascade reader loads centroids lazily from A0 at search time.
+        if params.vector_records.len() >= 100 && params.collection_config.is_some() {
             // Only train with enough samples
             match self
                 .train_and_cache_pca_model(
