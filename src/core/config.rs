@@ -1301,6 +1301,14 @@ pub struct SstConfig {
     /// Default: `None` (disabled).
     #[serde(default)]
     pub tiering: Option<crate::storage::engines::sst::tiering_integration::SstTieringConfig>,
+
+    /// TD-SEARCH-2: inter-file search parallelism degree.
+    /// `0` = 50% of CPU cores (wise default — leaves cores for flush/compaction).
+    /// `1` = sequential (debugging).
+    /// `n > 1` = exactly n concurrent segment-file scans.
+    /// Hot-path override: `PROXIMADB_SEARCH_PARALLEL_FILES` env var.
+    #[serde(default)]
+    pub search_parallel_files: u16,
 }
 
 fn default_block_format() -> String {
@@ -1382,7 +1390,8 @@ impl Default for SstConfig {
             ),
             vector_encoding_strategy: default_vector_encoding_strategy(),
             block_format: default_block_format(),
-            tiering: None, // Default: tier-migration disabled
+            tiering: None,            // Default: tier-migration disabled
+            search_parallel_files: 0, // TD-SEARCH-2: 0 = 50% of CPU cores
         }
     }
 }
