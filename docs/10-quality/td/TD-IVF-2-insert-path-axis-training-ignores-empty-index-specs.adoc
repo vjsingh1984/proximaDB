@@ -48,6 +48,17 @@ the #1145 gate "keeps AXIS build cost off co-design collections" holds for
 search/flush but not for insert-driven incremental training — the measurements
 above are all from a collection the gate classifies as co-design.
 
+=== Clean restarts are NOT immune (and SIGTERM is blocked)
+
+A graceful-shutdown restart of the 1M collection re-fired the full 1M
+clustering training ~60 s after boot (no unflushed WAL — the trainer is re-fed
+by boot-time rehydration, not only WAL replay), pinning ~1 core for the next
+~50 min until the process was killed. During training, SIGTERM was ignored
+(process had to be SIGKILLed), which converts every operator restart attempt
+into an *unclean* shutdown — whose next boot retrains again. Restart → retrain
+→ blocked shutdown → SIGKILL → retrain is a self-sustaining loop on any
+1M-scale co-design collection under default config.
+
 === Memory profile (controlled, 2026-07-23)
 
 AXIS-only control: fresh server, one collection (empty `index_specs`), ingest
