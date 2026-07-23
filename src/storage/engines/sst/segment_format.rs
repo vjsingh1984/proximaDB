@@ -292,6 +292,7 @@ pub fn write_pax_segment_compacted(
     // path computes (no second quantizer); it falls back to the plain single-level
     // plan whenever the model can't be trained (fail-safe, never a worse segment).
     let coalesced = quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled();
+    let t_cluster_plan = std::time::Instant::now();
     let mut probe_model = None;
     let plan = if cluster {
         if coalesced && block_cluster::ivf_probe_enabled() {
@@ -308,6 +309,15 @@ pub fn write_pax_segment_compacted(
     } else {
         None
     };
+    // TD-COMPACT-1 S1: cluster-plan wall clock (encode/finalize are timed inside
+    // `write_pax_segment_ordered` under the same gate).
+    if pax_write_trace() {
+        eprintln!(
+            "[PAX write] n={n} kind=compaction | cluster_plan {ms:.0} ms",
+            n = records.len(),
+            ms = t_cluster_plan.elapsed().as_secs_f64() * 1e3,
+        );
+    }
     write_pax_segment_ordered(
         path,
         records,
@@ -367,6 +377,8 @@ fn write_pax_segment_ordered(
     if let Some(model) = two_level {
         writer = writer.with_two_level(model);
     }
+    let trace = pax_write_trace();
+    let t_encode = std::time::Instant::now();
     match &plan {
         Some(plan) => {
             let mut next_run = 1usize;
@@ -388,7 +400,26 @@ fn write_pax_segment_ordered(
             }
         }
     }
-    writer.finish()
+    let encode_ms = t_encode.elapsed().as_secs_f64() * 1e3;
+    let t_finalize = std::time::Instant::now();
+    let result = writer.finish();
+    let finalize_ms = t_finalize.elapsed().as_secs_f64() * 1e3;
+    // TD-COMPACT-1 S1: encode = per-record RaBitQ/SQ8 quantize; finalize =
+    // serialize regions + footer. Combined with `cluster_plan` (logged by the
+    // compaction entry under the same gate) and `PROXIMADB_TRACE_IVF_FLUSH`'s
+    // cluster internals, this accounts the full re-cluster wall clock.
+    if trace {
+        eprintln!(
+            "[PAX write] n={n} quant={q:?} coalesced={c} | encode {enc:.0} ms  finalize {fin:.0} ms  | total {tot:.0} ms",
+            n = records.len(),
+            q = quant,
+            c = quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled(),
+            enc = encode_ms,
+            fin = finalize_ms,
+            tot = encode_ms + finalize_ms,
+        );
+    }
+    result
 }
 
 fn lossless_clustered_enabled() -> bool {
@@ -413,6 +444,19 @@ fn lossless_scalar_enabled() -> bool {
             .as_deref(),
         Some("1") | Some("true") | Some("on") | Some("yes")
     )
+}
+
+/// TD-COMPACT-1 S1: env-gated (`PROXIMADB_TRACE_PAX_WRITE`) phase timer for the
+/// PAX segment WRITE path. Logs `cluster_plan` (the re-cluster ordering wall
+/// clock) + `encode` (per-record RaBitQ/SQ8 quantize) + `finalize` (serialize
+/// regions + footer to disk). Complements `PROXIMADB_TRACE_IVF_FLUSH`, which
+/// breaks the cluster plan into pca/project/kmeans/assign/order internals — the
+/// two together localize the L0→L1 re-cluster wall clock (observed 666s on SIFT
+/// 1M) to cluster-vs-encode-vs-finalize, which is the data needed to choose the
+/// fix (S3 preserve the IVF model vs S4 parallelize the re-encode). Off in prod
+/// (env unset): a single `var_os` check per write, zero formatting cost.
+fn pax_write_trace() -> bool {
+    std::env::var_os("PROXIMADB_TRACE_PAX_WRITE").is_some()
 }
 
 /// True only when every vector row in every input `.pax` segment has an exact
@@ -1688,6 +1732,19 @@ pub async fn rabitq_search_segment_coalesced(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pax_write_trace_defaults_off() {
+        // TD-COMPACT-1 S1: the write-path phase timer MUST be off in prod (env
+        // unset) so the eprintln + Instant bookkeeping never fires on the hot
+        // write path. Default-off is the safety property; the on-path is
+        // exercised end-to-end by setting PROXIMADB_TRACE_PAX_WRITE at the bench.
+        // No test in this binary sets the var, so the default read is deterministic.
+        assert!(
+            !pax_write_trace(),
+            "PROXIMADB_TRACE_PAX_WRITE must be unset by default"
+        );
+    }
 
     #[test]
     fn probe_range_coalescing_keeps_only_selected_cell_slices() {
