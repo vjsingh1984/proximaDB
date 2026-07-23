@@ -1,0 +1,52 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-COMPACT-4: memory-aware cross-collection compaction admission control (queue + budget + query priority)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Proposed** (2026-07-23, restart/recovery pressure tests). Ops-side complement to TD-COMPACT-2 (per-job memory) and TD-COMPACT-3 (trigger honesty).
+| Priority | **P1** — multi-collection servers can start several compactions concurrently (per-engine workers, `background_thread_count = 4`) with NO global admission control; measured single-job cost today is ~40 GB at 120k input, so even two concurrent mid-size compactions exceed a 64 GB node. Queries co-resident with a swapping compaction degrade ~6× (cold mean 148 ms → 880 s wall for the compaction window).
+| Component | `src/storage/engines/sst/compaction.rs` (`start_workers`/`schedule_compaction`), flush-path inline compaction (`services/operations/vectors/flush.rs`), a new global admission gate shared across collections/engines.
+| Evidence | Pressure tests 2026-07-23: one 120k-input compaction = ~40 GB peak / 17-20 min (rebased, trainer gated); 1M-input = jetsam kill at ~126 GB. Flush path runs compaction inline (awaited), so "compaction is async/internal" does not hold on that path today.
+|===
+
+== The finding
+
+Compaction scheduling is per-collection/per-engine with a thread-count cap
+only. There is no global controller that (a) bounds how many compactions run
+concurrently across ALL collections, (b) accounts for projected per-job
+memory, or (c) subordinates background work to query traffic. Under default
+config a busy multi-tenant node can therefore self-inflict memory exhaustion
+even after the per-job fixes land, and today a single unbounded job already
+does (TD-COMPACT-2).
+
+== Direction
+
+S1 — **Global admission gate**: one server-wide async semaphore for compaction
+jobs across all collections/engines. Default concurrency: min(2,
+cores/4). All entry points (threshold scheduler, flush-path inline call, the
+repaired operator trigger from TD-COMPACT-3) must acquire it — the inline
+flush-path call becomes "enqueue and return" (flush durability does not depend
+on compaction).
+
+S2 — **Memory-aware admission**: gate on projected job cost, not just count:
+`projected = input_bytes × amplification` (amplification from the measured
+sweep table in TD-COMPACT-2 until the streaming fix lands, then
+O(write-buffer)). Admit while `sum(projected of running jobs) + headroom <
+available_ram × fraction`; oversized single jobs are split per TD-COMPACT-2 S1
+(sub-batch by files) instead of admitted whole.
+
+S3 — **Priority + observability**: background jobs run at lower scheduling
+priority than query serving; expose `compaction_queue_depth`,
+`compaction_running`, `compaction_projected_bytes` as Prometheus gauges
+(TD-METRICS family) so operators can see the queue instead of inferring it
+from CPU/RSS.
+
+== Notes
+
+* Queue depth alone is NOT sufficient: with today's per-job cost a depth-1
+  queue still OOMs at 1M input — S2's budget (and TD-COMPACT-2's per-job fix)
+  carry the correctness burden; the queue carries stability under fan-out.
+* Interacts with #1164's cores-ratio compaction threads (CPU-side cap); this
+  TD adds the memory-side and cross-collection dimensions.

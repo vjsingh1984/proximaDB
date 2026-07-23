@@ -1,0 +1,60 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-RDSTRAT-11: probe-locality cell placement — order cells by co-probe affinity so nprobe ranges coalesce (51 → ~10 GETs/query)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Proposed** (2026-07-23, from the restart/recovery pressure-test floor analysis). Design-stage; no code yet.
+| Priority | **P1** — GETs/query is the dominant round-trip cost term on object storage (co-design mandate); measured 51 GETs/q at 1M (ADR-065 evidence) vs a coalescing floor of ~5–10. Pure layout change: no recall impact, no new data structures.
+| Component | flush/compaction cell-ordering (`cluster_plan` in the PAX writer), `ObjectRangeCoalescePolicy`, coalesced-region layout (`coalesced_rabitq.rs`), segment footer cell directory.
+| Evidence (floor analysis) | A query probes `nprobe` cells; today cells are laid out in arbitrary (cluster-id) order, so probe sets translate to ~nprobe disjoint ranges (+ rerank ranges) ⇒ 51 GETs/q at 1M. Neighboring centroids are probed together by construction (a query's nprobe set = the k nearest centroids, which are mutually close), so ordering cells by centroid proximity makes typical probe sets *contiguous on disk* — the existing `ObjectRangeCoalescePolicy` then merges them into a handful of ranged GETs.
+|===
+
+== First-principles finding
+
+The round-trips term is set not by how MANY cells a query probes but by how
+many *disjoint byte ranges* those cells occupy. Probe sets are not random:
+they are k-NN sets in centroid space, i.e. clusters of mutually-near
+centroids. Placing near centroids' cells adjacently on disk converts most
+probe sets into 1–3 contiguous runs. This is the same insight as
+Morton-ordering rows within a cell (TD-RDSTRAT-4 / the sign-bit bootstrap),
+lifted one level: **order the cells themselves, not just the rows within
+them.**
+
+== Direction
+
+S1 — **Ordering heuristic at write time**: after training/loading centroids,
+compute a locality order over cells — options in ascending fidelity: (a)
+Morton/Hilbert code of the (PCA-projected) centroid, (b) greedy nearest-
+neighbor tour over the centroid k-NN graph, (c) recursive bisection of the
+centroid set. Write cells in that order in the coalesced region; record the
+order in the footer cell directory (readers are order-agnostic today — they
+look up offsets — so this is mixed-read-safe by construction and needs no
+format flag).
+
+S2 — **Measure with the existing harness**: SIFT 1M, IVF-on, report
+`range_gets/query` before/after (evidence ledger gate; the io-trace already
+counts it). Target: 51 → ≤15 at unchanged recall (ordering cannot change
+which cells are probed, only their adjacency — recall is provably invariant).
+
+S3 — **Tune the coalesce policy jointly**: with locality ordering, the
+`ObjectRangeCoalescePolicy` gap threshold becomes the knob trading wasted
+bytes (reading small gaps between near-adjacent cells) vs round-trips; sweep
+it on the measured trace and set per the cost model (a 50 ms GET buys a lot
+of gap bytes on object storage).
+
+S4 — **Compaction is the natural application point**: cell order is fixed at
+segment write, so the lever engages at flush for new segments and at
+compaction for existing ones — no migration needed; old segments simply keep
+their order until compacted (mixed-read-safe).
+
+== Risks / notes
+
+* Adjacency helps the *typical* probe set; adversarial queries whose probe
+  set spans distant centroids still pay ~nprobe ranges — the floor, not a
+  regression.
+* Interacts positively with TD-RDSTRAT-8 (two-level coarse probe): coarse-
+  cell super-clusters are exactly the locality groups to keep adjacent.
+* Orthogonal to TD-RDSTRAT-10 (temperature split): ordering applies within
+  each temperature object independently.
