@@ -33,8 +33,41 @@ pub mod operations;
 pub mod optimizer;
 
 use anyhow::Result;
+use futures::future::join_all;
+
+/// TD-SEARCH-2: resolve the inter-file search parallelism degree.
+///
+/// Config field `search_parallel_files` (from `[storage.optimization]` in TOML):
+/// - `0` (default) → 50% of CPU cores (wise default — leaves cores for flush/compaction/gRPC)
+/// - `1` → sequential (no parallelism; for debugging)
+/// - `n > 1` → exactly n parallel workers
+///
+/// Hot-path override: `PROXIMADB_SEARCH_PARALLEL_FILES` env var takes precedence
+/// over the config field — operators can tune without a restart.
+fn resolve_search_parallelism(config_value: u16) -> u16 {
+    // Env override (hot-path tuning)
+    if let Ok(v) = std::env::var("PROXIMADB_SEARCH_PARALLEL_FILES")
+        && let Ok(n) = v.trim().parse::<u16>()
+    {
+        return resolve_parallel_degree(n);
+    }
+    resolve_parallel_degree(config_value)
+}
+
+fn resolve_parallel_degree(requested: u16) -> u16 {
+    let cores = std::thread::available_parallelism()
+        .map(|n| u16::try_from(n.get()).unwrap_or(u16::MAX))
+        .unwrap_or(4);
+    // Advisory ceiling: 2× logical cores (I/O-bound search oversubscription —
+    // workers wait on object-store GETs, so extra workers use idle CPU).
+    let ceiling = cores.saturating_mul(2);
+    match requested {
+        0 => (cores / 2).max(1),            // 0 = half the cores (wise default)
+        _ => requested.min(ceiling).max(1), // clamp to [1, 2×cores]
+    }
+}
 use std::collections::HashMap;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace, warn}; // TD-SEARCH-2: concurrent inter-file scan
 
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
@@ -192,7 +225,7 @@ impl SstEngine {
     }
 
     /// TD-165: exact brute-force search over the collection's segment(s), bypassing
-    /// any approximate index. Forces `block_prune.force_exact` so neither the
+    /// any approximate index. Forces `prune_config.force_exact` so neither the
     /// centroid file-pruning nor the Z-order block-pruning can drop the true NN —
     /// the same guarantee the index-less embedded path already provides.
     async fn execute_exact_segment_scan(
@@ -1000,7 +1033,7 @@ impl SstEngine {
         let search_mode = &ctx.search_params.search_mode;
 
         // **Honor SearchMode::Exact (2026-05-30)**: when the caller
-        // asked for an exact search, force `block_prune.force_exact = true`
+        // asked for an exact search, force `prune_config.force_exact = true`
         // so the sqrt-based centroid block pruning doesn't silently
         // drop recall. Without this override, an Exact search at 100K
         // (where the SST has ≥100 blocks) keeps only `sqrt(num_blocks)`
@@ -1067,171 +1100,293 @@ impl SstEngine {
         // per-file scan also honors `force_exact` when the caller
         // asked for an exact search.
         let scan_start = std::time::Instant::now();
-        let block_prune = prune_config;
-        for (file_idx, sstable_path) in sstable_files.iter().enumerate() {
-            trace!(
-                "SST: Searching file [{}/{}]: {} (force_exact={})",
-                file_idx + 1,
-                sstable_files.len(),
-                sstable_path,
-                block_prune.force_exact
+
+        // TD-SEARCH-2: inter-file parallel search. The degree is config/env-driven:
+        //   search_parallel_files = 0 → 50% of CPU cores (wise default)
+        //   search_parallel_files = 1 → sequential
+        //   search_parallel_files = N → exactly N workers
+        // Hot-path override: PROXIMADB_SEARCH_PARALLEL_FILES env takes precedence.
+        let file_count = u16::try_from(sstable_files.len()).unwrap_or(u16::MAX);
+        let parallel_degree = resolve_search_parallelism(self.config().search_parallel_files)
+            .min(file_count)
+            .max(1);
+
+        let enable_parallel = parallel_degree > 1;
+
+        if enable_parallel {
+            tracing::info!(
+                file_count = sstable_files.len(),
+                parallel_degree,
+                "TD-SEARCH-2: parallel inter-file scan"
             );
 
-            // PAX RaBitQ→SQ8 cascade (PAX Phase 2 read-side wiring): try it first
-            // for `.pax` segments under a validated metric (Euclidean or Cosine).
-            // The generic dispatch below handles every other case — `.arrow`, legacy
-            // `.sst`, AND `.pax` under Dot/other metrics or any cascade miss
-            // (not-PAX / no RaBitQ / error) — so this is additive and mixed-read-safe.
-            let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path.ends_with(".pax")
-                && matches!(
-                    distance_metric,
-                    DistanceMetric::Euclidean | DistanceMetric::Cosine | DistanceMetric::DotProduct
-                ) {
-                match self
-                    .try_pax_cascade(
-                        sstable_path,
-                        query_vector,
-                        filter_expression,
-                        k,
-                        distance_metric,
-                        collection_id,
-                        storage_url,
-                    )
-                    .await
-                {
-                    Ok(Some(records)) => {
+            // Build per-file futures (borrow &self — no 'static needed).
+            let file_futures = sstable_files.iter().map(|sstable_path| {
+                let sstable_path = sstable_path.as_str();
+                let filter_owned = filter_expression.cloned();
+                async move {
+                    let result: Result<Vec<OptimizedSearchRecord>, String> = async {
+                        // PAX cascade
+                        let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path
+                            .ends_with(".pax")
+                            && matches!(
+                                distance_metric,
+                                DistanceMetric::Euclidean
+                                    | DistanceMetric::Cosine
+                                    | DistanceMetric::DotProduct
+                            ) {
+                            match self
+                                .try_pax_cascade(
+                                    sstable_path,
+                                    query_vector,
+                                    filter_expression,
+                                    k,
+                                    distance_metric,
+                                    collection_id,
+                                    storage_url,
+                                )
+                                .await
+                            {
+                                Ok(Some(records)) => Some(records),
+                                Ok(None) => None,
+                                Err(e) => {
+                                    warn!(
+                                        file = sstable_path,
+                                        error = %e,
+                                        "PAX cascade unavailable; falling back to generic scan"
+                                    );
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
+
+                        let search_result = if let Some(records) = pax_cascade {
+                            Ok(records)
+                        } else if sstable_path.ends_with(".arrow") {
+                            self.search_arrow_file(
+                                sstable_path,
+                                query_vector,
+                                filter_owned.clone(),
+                                k,
+                                distance_metric,
+                            )
+                            .await
+                        } else if sstable_path.ends_with(".pax") {
+                            self.search_pax_file_exact(
+                                sstable_path,
+                                query_vector,
+                                filter_owned.clone(),
+                                k,
+                                distance_metric,
+                            )
+                            .await
+                        } else {
+                            self.sstable_reader()
+                                .search_with_filter_and_pruning(
+                                    sstable_path,
+                                    query_vector,
+                                    filter_owned.clone(),
+                                    k,
+                                    distance_metric,
+                                    Some(&*ctx.collection),
+                                    prune_config,
+                                )
+                                .await
+                        };
+
+                        search_result.map_err(|e| format!("{sstable_path}: {e}"))
+                    }
+                    .await;
+                    (sstable_path, result)
+                }
+            });
+
+            let results = join_all(file_futures).await;
+            for (path, result) in results {
+                match result {
+                    Ok(file_results) => {
                         debug!(
-                            file = %sstable_path,
-                            n = records.len(),
-                            "SST per-file result source=pax_cascade"
+                            file = path,
+                            n = file_results.len(),
+                            "SST parallel per-file result"
                         );
-                        Some(records)
+                        all_candidates.extend(file_results);
                     }
-                    Ok(None) => None,
-                    Err(e) => {
-                        warn!(
-                            file = %sstable_path,
-                            error = %e,
-                            "PAX cascade unavailable; falling back to generic scan"
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            // Dispatch based on file format (Arrow vs ProximaBlocks); the PAX
-            // cascade short-circuits above when it applies.
-            let search_result = if let Some(records) = pax_cascade {
-                Ok(records)
-            } else if sstable_path.ends_with(".arrow") {
-                // Use ArrowBlockReader for Arrow format files
-                self.search_arrow_file(
-                    sstable_path,
-                    query_vector,
-                    filter_expression.cloned(),
-                    k, // Use exact k
-                    distance_metric,
-                )
-                .await
-            } else if sstable_path.ends_with(".pax") {
-                // A `.pax` segment the RaBitQ cascade did not cover (non-L2/Cosine
-                // metric, non-RaBitQ quant, or a cascade miss/error). Exact
-                // materialize-and-rank via the mixed-format reader so `.pax` is
-                // searchable under every metric/quant — this is what makes the PAX
-                // write-default flip safe (otherwise the ProximaBlocks-only
-                // `sstable_reader` below would fail to decode a `.pax` file).
-                self.search_pax_file_exact(
-                    sstable_path,
-                    query_vector,
-                    filter_expression.cloned(),
-                    k,
-                    distance_metric,
-                )
-                .await
-            } else {
-                // Use SSTable reader for ProximaBlocks format
-                // Choose execution strategy based on flags (TD-041, TD-039, TD-031)
-                let use_parallel_morsels =
-                    ctx.search_params.enable_parallel_morsels.unwrap_or(false);
-                let use_vectorized = ctx
-                    .search_params
-                    .enable_vectorized_execution
-                    .unwrap_or(false);
-                let use_pipeline = ctx.search_params.enable_pipeline_execution.unwrap_or(false);
-
-                if use_pipeline {
-                    trace!("SST: Using pipeline-based execution path (TD-031)");
-                    self.sstable_reader()
-                        .search_with_pipeline_execution(
-                            sstable_path,
-                            query_vector,
-                            filter_expression.cloned(),
-                            k, // Use exact k
-                            distance_metric,
-                            Some(&*ctx.collection),
-                            block_prune,
-                        )
-                        .await
-                } else if use_parallel_morsels {
-                    trace!("SST: Using parallel morsel execution path (TD-039)");
-                    self.sstable_reader()
-                        .search_with_filter_parallel_morsels(
-                            sstable_path,
-                            query_vector,
-                            filter_expression.cloned(),
-                            k, // Use exact k
-                            distance_metric,
-                            Some(&*ctx.collection),
-                            block_prune,
-                            None, // Use default worker count (CPU cores)
-                        )
-                        .await
-                } else if use_vectorized {
-                    trace!("SST: Using vectorized execution path (TD-041)");
-                    self.sstable_reader()
-                        .search_with_filter_vectorized(
-                            sstable_path,
-                            query_vector,
-                            filter_expression.cloned(),
-                            k, // Use exact k
-                            distance_metric,
-                            Some(&*ctx.collection),
-                            block_prune,
-                        )
-                        .await
-                } else {
-                    trace!("SST: Using scalar execution path");
-                    self.sstable_reader()
-                        .search_with_filter_and_pruning(
-                            sstable_path,
-                            query_vector,
-                            filter_expression.cloned(),
-                            k, // Use exact k
-                            distance_metric,
-                            Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
-                            block_prune, // Pass block pruning config for Z-order/centroid pruning
-                        )
-                        .await
-                }
-            };
-
-            match search_result {
-                Ok(results) => {
-                    debug!(
-                        file = %sstable_path,
-                        n = results.len(),
-                        "SST per-file result (post-dispatch)"
-                    );
-                    all_candidates.extend(results);
-                }
-                Err(e) => {
-                    warn!("SST: Failed to search file {}: {}", sstable_path, e);
-                    // Continue with other files
+                    Err(e) => warn!("SST: Failed to search file {e}"),
                 }
             }
-        }
+        } else {
+            // Sequential fallback (single file or flag explicitly off)
+            for (file_idx, sstable_path) in sstable_files.iter().enumerate() {
+                trace!(
+                    "SST: Searching file [{}/{}]: {} (force_exact={})",
+                    file_idx + 1,
+                    sstable_files.len(),
+                    sstable_path,
+                    prune_config.force_exact
+                );
+
+                // PAX RaBitQ→SQ8 cascade (PAX Phase 2 read-side wiring): try it first
+                // for `.pax` segments under a validated metric (Euclidean or Cosine).
+                // The generic dispatch below handles every other case — `.arrow`, legacy
+                // `.sst`, AND `.pax` under Dot/other metrics or any cascade miss
+                // (not-PAX / no RaBitQ / error) — so this is additive and mixed-read-safe.
+                let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path
+                    .ends_with(".pax")
+                    && matches!(
+                        distance_metric,
+                        DistanceMetric::Euclidean
+                            | DistanceMetric::Cosine
+                            | DistanceMetric::DotProduct
+                    ) {
+                    match self
+                        .try_pax_cascade(
+                            sstable_path,
+                            query_vector,
+                            filter_expression,
+                            k,
+                            distance_metric,
+                            collection_id,
+                            storage_url,
+                        )
+                        .await
+                    {
+                        Ok(Some(records)) => {
+                            debug!(
+                                file = %sstable_path,
+                                n = records.len(),
+                                "SST per-file result source=pax_cascade"
+                            );
+                            Some(records)
+                        }
+                        Ok(None) => None,
+                        Err(e) => {
+                            warn!(
+                                file = %sstable_path,
+                                error = %e,
+                                "PAX cascade unavailable; falling back to generic scan"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // Dispatch based on file format (Arrow vs ProximaBlocks); the PAX
+                // cascade short-circuits above when it applies.
+                let search_result = if let Some(records) = pax_cascade {
+                    Ok(records)
+                } else if sstable_path.ends_with(".arrow") {
+                    // Use ArrowBlockReader for Arrow format files
+                    self.search_arrow_file(
+                        sstable_path,
+                        query_vector,
+                        filter_expression.cloned(),
+                        k, // Use exact k
+                        distance_metric,
+                    )
+                    .await
+                } else if sstable_path.ends_with(".pax") {
+                    // A `.pax` segment the RaBitQ cascade did not cover (non-L2/Cosine
+                    // metric, non-RaBitQ quant, or a cascade miss/error). Exact
+                    // materialize-and-rank via the mixed-format reader so `.pax` is
+                    // searchable under every metric/quant — this is what makes the PAX
+                    // write-default flip safe (otherwise the ProximaBlocks-only
+                    // `sstable_reader` below would fail to decode a `.pax` file).
+                    self.search_pax_file_exact(
+                        sstable_path,
+                        query_vector,
+                        filter_expression.cloned(),
+                        k,
+                        distance_metric,
+                    )
+                    .await
+                } else {
+                    // Use SSTable reader for ProximaBlocks format
+                    // Choose execution strategy based on flags (TD-041, TD-039, TD-031)
+                    let use_parallel_morsels =
+                        ctx.search_params.enable_parallel_morsels.unwrap_or(false);
+                    let use_vectorized = ctx
+                        .search_params
+                        .enable_vectorized_execution
+                        .unwrap_or(false);
+                    let use_pipeline = ctx.search_params.enable_pipeline_execution.unwrap_or(false);
+
+                    if use_pipeline {
+                        trace!("SST: Using pipeline-based execution path (TD-031)");
+                        self.sstable_reader()
+                            .search_with_pipeline_execution(
+                                sstable_path,
+                                query_vector,
+                                filter_expression.cloned(),
+                                k, // Use exact k
+                                distance_metric,
+                                Some(&*ctx.collection),
+                                prune_config,
+                            )
+                            .await
+                    } else if use_parallel_morsels {
+                        trace!("SST: Using parallel morsel execution path (TD-039)");
+                        self.sstable_reader()
+                            .search_with_filter_parallel_morsels(
+                                sstable_path,
+                                query_vector,
+                                filter_expression.cloned(),
+                                k, // Use exact k
+                                distance_metric,
+                                Some(&*ctx.collection),
+                                prune_config,
+                                None, // Use default worker count (CPU cores)
+                            )
+                            .await
+                    } else if use_vectorized {
+                        trace!("SST: Using vectorized execution path (TD-041)");
+                        self.sstable_reader()
+                            .search_with_filter_vectorized(
+                                sstable_path,
+                                query_vector,
+                                filter_expression.cloned(),
+                                k, // Use exact k
+                                distance_metric,
+                                Some(&*ctx.collection),
+                                prune_config,
+                            )
+                            .await
+                    } else {
+                        trace!("SST: Using scalar execution path");
+                        self.sstable_reader()
+                            .search_with_filter_and_pruning(
+                                sstable_path,
+                                query_vector,
+                                filter_expression.cloned(),
+                                k, // Use exact k
+                                distance_metric,
+                                Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
+                                prune_config, // Pass block pruning config for Z-order/centroid pruning
+                            )
+                            .await
+                    }
+                };
+
+                match search_result {
+                    Ok(results) => {
+                        debug!(
+                            file = %sstable_path,
+                            n = results.len(),
+                            "SST per-file result (post-dispatch)"
+                        );
+                        all_candidates.extend(results);
+                    }
+                    Err(e) => {
+                        warn!("SST: Failed to search file {}: {}", sstable_path, e);
+                        // Continue with other files
+                    }
+                }
+            } // end sequential fallback
+        } // end if enable_parallel / else
 
         let scan_us = scan_start.elapsed().as_micros() as u64;
         let candidate_count_before_merge = all_candidates.len();

@@ -713,6 +713,8 @@ impl UnifiedTestEnvironment {
             // Tier-migration integration — disabled in tests so the
             // SST engine doesn't pull in the tiering policy engine.
             tiering: None,
+
+            ..Default::default()
         }
     }
 
