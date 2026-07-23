@@ -1353,6 +1353,22 @@ fn default_vector_encoding_strategy() -> String {
     "FullVector".to_string() // Default to FullVector (best for vector databases - WORM workloads)
 }
 
+/// Default background compaction thread count: 50% of available cores,
+/// clamped to [1, 4].
+///
+/// `available_parallelism()` respects cgroup CPU limits, so a container
+/// capped at 4 vCPUs (e.g. an Azure B4ms node with a 3.5-CPU pod limit)
+/// gets 2 compaction threads — a fixed 4 was measured to saturate small
+/// nodes and starve concurrent search/gRPC/REST. The cap keeps the
+/// pre-existing ceiling of 4 on large hosts, where compaction parallelism
+/// beyond that showed no benefit and steals cores from queries.
+fn default_background_thread_count() -> u32 {
+    std::thread::available_parallelism()
+        .map(|n| n.get() as u32 / 2)
+        .unwrap_or(2)
+        .clamp(1, 4)
+}
+
 // BloomFilterConfig moved to core::bloom module for polymorphic design
 // Re-export for backward compatibility
 pub use crate::core::bloom::BloomFilterConfig;
@@ -1372,7 +1388,7 @@ impl Default for SstConfig {
             max_files_per_level: 10,
             level_size_multiplier: 10.0,
             max_levels: 7,
-            background_thread_count: 4,
+            background_thread_count: default_background_thread_count(),
             data_directory: "./sst_data".to_string(),
             mmap_enabled: true,
             prefetch_enabled: true,
