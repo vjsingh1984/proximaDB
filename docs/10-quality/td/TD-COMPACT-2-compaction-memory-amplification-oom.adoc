@@ -83,6 +83,39 @@ copies traced above are real and scale linearly with heavyweight
 `ProximaRecord` conversions, but the 126 GB jetsam kill and the swap-driven
 880 s duration belong primarily to TD-IVF-2.
 
+**Rebased re-measurement (develop @ bcbcde710, trainer gated, PROXIMADB_TRACE_PAX_WRITE=1):**
+compaction-only at 120k input STILL balloons — peak RSS ~40.6 GB from a 1.17 GB
+base — and the phase timers localize it: `cluster_plan` 0.6 s, `finalize`
+3.6-3.8 s (both healthy), but **`encode` = 1,013-1,188 s (~10 ms/record)** vs
+the flush path's 1.07 s for 460k (~2.3 us/record) — a ~4,000x per-record gap
+on the same writer loop. The compaction-path RaBitQ re-encode inside
+`write_pax_segment_ordered` -> `PaxSegmentWriter::add_record` is BOTH the time
+and the memory monster; sub-phase instrumentation inside the writer is being
+added to pin the exact allocation site. Preferred fix upgraded accordingly:
+**carry-forward encoding** - compaction reuses the already-encoded RaBitQ codes
+from input segments (carrying the model per TD-COMPACT-1 S3) and re-orders
+bytes instead of re-encoding; eliminates the phase entirely. A per-collection
+"compaction encode strategy" tag (reuse|re-encode) is the operational valve -
+NOT a global encoding on/off switch, which would break the read cascade
+(coarse stage requires the RaBitQ region).
+
+**Sub-phase instrumentation verdict (2026-07-23, `[PAX write detail]`):** the
+compaction segment write of 105k records spent 381 s in per-record buffering
+(`FlatRow::from_record` props clone + msgpack + embedding clones — ~3.6 ms per
+record for microsecond-scale work) and 338 s in block compression (8 blocks,
+~42 s each), while RaBitQ/SQ8 encoding took 1.4 s and the writer's own peak
+buffer was **65 MB**. Refuted: block-cut storm, per-record quantizer
+construction, writer-held memory. Confirmed: the process holds ~40-52 GB
+during compaction (RSS), so every small allocation faults against swap —
+encode slowness is a SYMPTOM; the memory holder is the disease. The holder is
+upstream of the writer in the compaction pipeline (collect-everything copies,
+input-segment readers, or an expanded intermediate weighing ~100+ KB/record —
+naive copy math explains only ~2 GB, so one representation is far fatter than
+assumed). NEXT: heap-profile `perform_unified_vectorrecord_compaction` to pin
+the ~100 KB/record holder; the S2 streaming rewrite removes the entire class.
+Encode kernels are scalar (no NEON — separate, smaller lever; see TD-IVF-2
+S1b for the shared kernel direction).
+
 Corollaries:
 
 * **Duration and memory unify.** PR #1166's phase timers measured ~8 s per

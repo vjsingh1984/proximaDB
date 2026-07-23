@@ -38,6 +38,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use proximadb_block_format::coalesced_rabitq::{
@@ -517,6 +518,36 @@ struct TwoLevelState {
     cell_end_blocks: Vec<u32>,
 }
 
+/// TD-COMPACT-1 S2: cumulative writer sub-phase timers, allocated only when
+/// `PROXIMADB_TRACE_PAX_WRITE` is set at writer construction. Buckets cover the
+/// per-record `add_record` work plus the finish-time coalesced region encodes;
+/// one summary line is emitted from [`PaxSegmentWriter::finish`]. Near-zero cost
+/// when the env is unset: a single `Option` discriminant check per span.
+#[derive(Default)]
+struct WriteTraceStats {
+    /// Coalesced Region A: per-record f32 buffering for `rabitq_vectors` +
+    /// the finish-time `encode_region` (fit + rotation + per-vector encode).
+    rabitq_encode: Duration,
+    /// Coalesced Region B: the finish-time `encode_sq8_region` (SQ8 rerank tier).
+    rerank_encode: Duration,
+    /// `PaxBlockWriter::add_record` row buffering (FlatRow extraction, msgpack
+    /// props, embedding clones, column pushes).
+    raw_buffer: Duration,
+    /// Every `flush_current_block` body: block serialize (stripes + codecs),
+    /// re-open for stats/zone summaries, and `file_buf` append.
+    block_cut_compress: Duration,
+    /// Centroid/radius accumulation (`accumulate_centroid`).
+    cluster_bookkeeping: Duration,
+    /// `add_record` remainder (size estimate, two-level boundary checks, ...).
+    other: Duration,
+    /// Blocks cut so far (size-triggered + cell-boundary + final flushes).
+    blocks_cut: u64,
+    /// Running f32 bytes buffered in `rabitq_vectors` for the coalesced regions.
+    rabitq_buf_bytes: usize,
+    /// Peak of `file_buf` + coalesced vector buffer observed at block cuts.
+    peak_buffered_bytes: usize,
+}
+
 pub struct PaxSegmentWriter {
     path: PathBuf,
     mode: BlockMode,
@@ -590,6 +621,9 @@ pub struct PaxSegmentWriter {
     /// dim + the quant/f32_tier/embedding_count config). Replaces the flat 1024
     /// that overestimated SQ8 blocks by ~4.5×. 0 = not yet computed.
     per_row_estimate: usize,
+    /// TD-COMPACT-1 S2: `Some` iff `PROXIMADB_TRACE_PAX_WRITE` was set when the
+    /// writer was constructed (read ONCE, here) — cumulative sub-phase timers.
+    write_trace: Option<Box<WriteTraceStats>>,
 }
 
 impl PaxSegmentWriter {
@@ -649,6 +683,9 @@ impl PaxSegmentWriter {
             rabitq_vectors: Vec::new(),
             two_level: None,
             per_row_estimate: 0,
+            write_trace: std::env::var_os("PROXIMADB_TRACE_PAX_WRITE")
+                .is_some()
+                .then(|| Box::new(WriteTraceStats::default())),
         }
     }
 
@@ -821,10 +858,34 @@ impl PaxSegmentWriter {
     ///
     /// Flushes the block automatically when it exceeds `block_size_threshold`.
     pub fn add_record(&mut self, record: &ProximaRecord) -> Result<()> {
+        // TD-COMPACT-1 S2: per-span timers, active only when the writer was
+        // constructed with `PROXIMADB_TRACE_PAX_WRITE` set (plain bool check +
+        // no `Instant::now` otherwise). Spans are accumulated into locals and
+        // merged into `write_trace` once at the end of this call.
+        let trace_on = self.write_trace.is_some();
+        let t_total = trace_on.then(Instant::now);
+        let flush_before = self
+            .write_trace
+            .as_deref()
+            .map(|tr| tr.block_cut_compress)
+            .unwrap_or_default();
+        let mut d_raw = Duration::ZERO;
+        let mut d_cluster = Duration::ZERO;
+        let mut d_rabitq = Duration::ZERO;
+        let mut rabitq_bytes = 0usize;
+
+        let t = trace_on.then(Instant::now);
         self.current_writer.add_record(record)?;
         self.row_count += 1;
+        if let Some(t) = t {
+            d_raw = t.elapsed();
+        }
         if self.compute_centroids {
+            let t = trace_on.then(Instant::now);
             self.accumulate_centroid(record);
+            if let Some(t) = t {
+                d_cluster = t.elapsed();
+            }
         }
         // ADR-062: buffer the embedding-0 f32 vector (in cluster/add order) for
         // the segment-level RaBitQ region. The caller has already reordered
@@ -834,7 +895,12 @@ impl PaxSegmentWriter {
             // f32 for the RaBitQ+SQ8 segment-level quantization. The old Fp32-only
             // extraction silently dropped non-Fp32 embeddings (e.g. after ingest-time
             // canonical-precision coercion) → garbage SQ8 params → 0.35% recall.
+            let t = trace_on.then(Instant::now);
             let v = record.embeddings.first().map(|e| e.values.to_fp32_owned());
+            if let Some(t) = t {
+                d_rabitq = t.elapsed();
+                rabitq_bytes = v.as_ref().map_or(0, |v| v.len() * 4);
+            }
             self.rabitq_vectors.push(v);
         }
 
@@ -881,6 +947,20 @@ impl PaxSegmentWriter {
                 tl.cell_end_blocks.push(block_count);
                 tl.next_boundary += 1;
             }
+        }
+        // TD-COMPACT-1 S2: merge this call's spans. Block flushes triggered above
+        // accounted themselves into `block_cut_compress` (see
+        // `flush_current_block`), so `other` = total − spans − flush delta:
+        // the size-estimate arithmetic + boundary checks + anything unattributed.
+        if let (Some(t0), Some(tr)) = (t_total, self.write_trace.as_deref_mut()) {
+            tr.raw_buffer += d_raw;
+            tr.cluster_bookkeeping += d_cluster;
+            tr.rabitq_encode += d_rabitq;
+            tr.rabitq_buf_bytes += rabitq_bytes;
+            let flush_delta = tr.block_cut_compress.saturating_sub(flush_before);
+            tr.other += t0
+                .elapsed()
+                .saturating_sub(d_raw + d_cluster + d_rabitq + flush_delta);
         }
         Ok(())
     }
@@ -952,6 +1032,9 @@ impl PaxSegmentWriter {
         if self.current_writer.is_empty() {
             return Ok(());
         }
+        // TD-COMPACT-1 S2: everything in this body (block serialize + codecs +
+        // stats/zone re-open + file_buf append) is the `block_cut_compress` bucket.
+        let t_flush = self.write_trace.is_some().then(Instant::now);
         // Capture timestamp bounds before flush (flush does not reset internal state).
         let min_ts = self.current_writer.min_ts();
         let max_ts = self.current_writer.max_ts();
@@ -997,6 +1080,17 @@ impl PaxSegmentWriter {
         // Reset writer for the next block (preserving the segment's quant + f32-tier +
         // rerank + shred-spec strategy — see `fresh_block_writer`).
         self.current_writer = self.fresh_block_writer();
+        if let Some(t) = t_flush {
+            let file_len = self.file_buf.len();
+            if let Some(tr) = self.write_trace.as_deref_mut() {
+                tr.block_cut_compress += t.elapsed();
+                tr.blocks_cut += 1;
+                let buffered = file_len + tr.rabitq_buf_bytes;
+                if buffered > tr.peak_buffered_bytes {
+                    tr.peak_buffered_bytes = buffered;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1023,11 +1117,44 @@ impl PaxSegmentWriter {
             .map(|v| v.len())
             .unwrap_or(0) as u32;
 
-        if self.coalesced_rabitq && coalesced_dim > 0 {
+        let result = if self.coalesced_rabitq && coalesced_dim > 0 {
             self.finish_coalesced(coalesced_dim)
         } else {
             self.finish_legacy()
+        };
+        self.emit_write_trace();
+        result
+    }
+
+    /// TD-COMPACT-1 S2: emit ONE cumulative sub-phase summary line for this
+    /// segment write. No-op unless `PROXIMADB_TRACE_PAX_WRITE` was set when the
+    /// writer was constructed. Mirrored to stderr so it interleaves with the
+    /// S1 `[PAX write]` phase timers emitted by the flush/compaction entry.
+    fn emit_write_trace(&mut self) {
+        let row_count = self.row_count;
+        let file_len = self.file_buf.len();
+        let Some(tr) = self.write_trace.as_deref_mut() else {
+            return;
+        };
+        let buffered = file_len + tr.rabitq_buf_bytes;
+        if buffered > tr.peak_buffered_bytes {
+            tr.peak_buffered_bytes = buffered;
         }
+        let ms = |d: Duration| d.as_secs_f64() * 1e3;
+        let line = format!(
+            "[PAX write detail] records={} blocks_cut={} rabitq={:.0} ms rerank={:.0} ms raw_buffer={:.0} ms block={:.0} ms cluster={:.0} ms other={:.0} ms peak_buffered_bytes={}",
+            row_count,
+            tr.blocks_cut,
+            ms(tr.rabitq_encode),
+            ms(tr.rerank_encode),
+            ms(tr.raw_buffer),
+            ms(tr.block_cut_compress),
+            ms(tr.cluster_bookkeeping),
+            ms(tr.other),
+            tr.peak_buffered_bytes,
+        );
+        tracing::info!("{line}");
+        eprintln!("{line}");
     }
 
     /// Legacy `[blocks][SegmentIndex][SEGMENT_MAGIC]` layout (readability-preserving
@@ -1224,10 +1351,21 @@ impl PaxSegmentWriter {
         //    blocks at 0-based offsets (relative to the blocks region).
         let refs: Vec<Option<&[f32]>> = self.rabitq_vectors.iter().map(|o| o.as_deref()).collect();
         let seed = RABITQ_SEED_BASE ^ (col_id::EMBED_BASE as u64);
+        // TD-COMPACT-1 S2: the finish-time Region A encode (fit + rotation +
+        // per-vector RaBitQ) accumulates into the `rabitq` bucket, Region B
+        // (segment-level SQ8) into `rerank`.
+        let t = self.write_trace.is_some().then(Instant::now);
         let (region_bytes, _centroid) = encode_region(&refs, dim, seed)?;
+        if let (Some(t), Some(tr)) = (t, self.write_trace.as_deref_mut()) {
+            tr.rabitq_encode += t.elapsed();
+        }
         // ADR-065 Region B: the SQ8 rerank tier, hoisted out of blocks so survivor
         // rerank fetches read pure dense SQ8 (one segment-level Sq8Params fit).
+        let t = self.write_trace.is_some().then(Instant::now);
         let (sq8_region_bytes, sq8_params) = encode_sq8_region(&refs, dim)?;
+        if let (Some(t), Some(tr)) = (t, self.write_trace.as_deref_mut()) {
+            tr.rerank_encode += t.elapsed();
+        }
 
         // TD-RDSTRAT-8: geometry first — A0's byte length is deterministic from
         // (k_c, dim, n_comp), so every downstream offset is known BEFORE A0's
