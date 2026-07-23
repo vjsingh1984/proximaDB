@@ -1711,7 +1711,14 @@ impl VectorOperationsService {
             return Ok((optimized_results, None));
         }
 
-        let distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
+        // Use the COLLECTION's configured metric for the WAL delta re-score.
+        // This was hardcoded Cosine, which put delta scores on a different
+        // scale than the directory/storage results (Euclidean = 1/(1+L2) ≈
+        // 0.005 vs cosine ≈ 0.9 on SIFT-like data) — so ANY unflushed record
+        // displaced EVERY flushed result in the merged top-k and recall
+        // collapsed to the memtable fraction of the corpus (TD-RECALL-1).
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let distance_metric = Self::collection_distance_metric(&collection);
         // Slice 5.10: fetch both LSN and ns watermarks so BoundedStale
         // can apply its time-bound check. When unavailable, fall back
         // to (0, 0) — the scan helper treats ns=0 as "time unknown"
@@ -3445,6 +3452,27 @@ impl VectorOperationsService {
         Ok(())
     }
 
+    /// Resolve a collection's configured distance metric (Cosine when unset /
+    /// Unspecified). Single source of truth for every internal search stage —
+    /// Stage-1 WAL, Stage-2 AXIS, Stage-3 storage, and the freshness delta
+    /// re-score MUST all rank on this same metric, or their normalized scores
+    /// land on incomparable scales and the cross-stage merge is garbage.
+    fn collection_distance_metric(
+        collection: &Collection,
+    ) -> crate::proto::proximadb_v1::DistanceMetric {
+        match collection.config.as_ref() {
+            Some(cfg) => match cfg.distance_metric.and_then(|metric| {
+                crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
+            }) {
+                Some(crate::proto::proximadb_v1::DistanceMetric::Unspecified) | None => {
+                    crate::proto::proximadb_v1::DistanceMetric::Cosine
+                }
+                Some(metric) => metric,
+            },
+            None => crate::proto::proximadb_v1::DistanceMetric::Cosine,
+        }
+    }
+
     async fn execute_two_stage_search_with_mode(
         &self,
         collection_id: &str,
@@ -3466,17 +3494,7 @@ impl VectorOperationsService {
 
         // Get collection for distance metric
         let collection = self.get_or_load_collection(collection_id).await?;
-        let distance_metric = match collection.config.as_ref() {
-            Some(cfg) => match cfg.distance_metric.and_then(|metric| {
-                crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
-            }) {
-                Some(crate::proto::proximadb_v1::DistanceMetric::Unspecified) | None => {
-                    crate::proto::proximadb_v1::DistanceMetric::Cosine
-                }
-                Some(metric) => metric,
-            },
-            None => crate::proto::proximadb_v1::DistanceMetric::Cosine,
-        };
+        let distance_metric = Self::collection_distance_metric(&collection);
 
         // Execute Stage 1 and Stage 2 in PARALLEL for maximum performance
         debug!(
@@ -4390,9 +4408,11 @@ impl VectorOperationsService {
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
         let metadata = crate::core::search::results::proxima_map_to_sql(result.metadata.clone());
 
-        // Use normalized similarity score for user-facing display (0-1 range, higher = better)
-        // Internal sorting uses result.score (raw distance), but users should see normalized values
-        let display_score = result.similarity.unwrap_or(0.0) as f64;
+        // Use normalized similarity score for user-facing display (0-1 range, higher = better).
+        // Fall back to `score` (the cross-engine normalized similarity used for ranking) when
+        // a producer didn't populate the optional `similarity` field — a 0.0 fallback rendered
+        // every such hit as "no match" at the API boundary.
+        let display_score = result.similarity.unwrap_or(result.score) as f64;
 
         // DEBUG: Log the values to understand what's happening
         tracing::debug!(

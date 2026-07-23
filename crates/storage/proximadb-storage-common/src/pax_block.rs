@@ -50,7 +50,7 @@ use proximadb_block_format::{
     BlockCompression, BlockMode, BlockStats, BlockZoneSource, ColumnMeta, FlatRow, PaxBlockReader,
     PaxBlockWriter, RowGroupBlock, VectorQuant, col_id, header::fnv1a_hash,
 };
-use proximadb_records::{EmbeddingValues, ProximaRecord};
+use proximadb_records::ProximaRecord;
 use serde::{Deserialize, Serialize};
 
 use crate::coarse_directory::{CoarseCellEntry, CoarseDirectory, CoarseModel};
