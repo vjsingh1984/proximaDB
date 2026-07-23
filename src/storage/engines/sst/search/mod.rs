@@ -299,13 +299,15 @@ impl SstEngine {
                     let records = hits
                         .into_iter()
                         .map(|h| {
-                            let mut r = OptimizedSearchRecord::new(
-                                h.oid,
-                                OptimizedSearchRecord::standardized_distance_to_similarity(
-                                    h.distance,
-                                    &distance_metric,
-                                ),
+                            let sim = OptimizedSearchRecord::standardized_distance_to_similarity(
+                                h.distance,
+                                &distance_metric,
                             );
+                            let mut r = OptimizedSearchRecord::new(h.oid, sim);
+                            // `new` leaves `similarity: None`, and the response
+                            // boundary displays `similarity.unwrap_or(0.0)` — set
+                            // it so cascade hits don't render as score 0.0.
+                            r.similarity = Some(sim);
                             if let Some(v) = h.vector {
                                 r = r.add_vector(v);
                             }
