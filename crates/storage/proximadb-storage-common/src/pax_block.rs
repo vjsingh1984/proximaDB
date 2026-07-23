@@ -830,10 +830,11 @@ impl PaxSegmentWriter {
         // the segment-level RaBitQ region. The caller has already reordered
         // records by `cluster_order_pca_ivf`, so this preserves survivor locality.
         if self.coalesced_rabitq {
-            let v = record.embeddings.first().and_then(|e| match &e.values {
-                EmbeddingValues::Fp32(v) => Some(v.clone()),
-                _ => None,
-            });
+            // Dequantize ANY EmbeddingValues variant (Fp32/Fp16/Bf16/Int8/UInt8) to
+            // f32 for the RaBitQ+SQ8 segment-level quantization. The old Fp32-only
+            // extraction silently dropped non-Fp32 embeddings (e.g. after ingest-time
+            // canonical-precision coercion) → garbage SQ8 params → 0.35% recall.
+            let v = record.embeddings.first().map(|e| e.values.to_fp32_owned());
             self.rabitq_vectors.push(v);
         }
 
@@ -842,10 +843,7 @@ impl PaxSegmentWriter {
         // (from the first record). This replaces the flat 1024 B/row estimate
         // that overestimated SQ8 blocks by ~4.5× (actual ~228 B/row for 128d).
         if self.per_row_estimate == 0
-            && let Some(dim) = record.embeddings.first().and_then(|e| match &e.values {
-                EmbeddingValues::Fp32(v) => Some(v.len()),
-                _ => None,
-            })
+            && let Some(dim) = record.embeddings.first().map(|e| e.dim as usize)
         {
             self.per_row_estimate = self.estimate_per_row_bytes(dim);
         }
@@ -892,9 +890,11 @@ impl PaxSegmentWriter {
     /// representation contributes; other variants are skipped (the block's
     /// centroid is the mean over its Fp32 rows).
     fn accumulate_centroid(&mut self, record: &ProximaRecord) {
-        let Some(EmbeddingValues::Fp32(v)) = record.embeddings.first().map(|e| &e.values) else {
+        // Dequantize ANY variant to f32 for the centroid sum (was Fp32-only).
+        let Some(cell) = record.embeddings.first() else {
             return;
         };
+        let v = cell.as_fp32_cow();
         if v.is_empty() {
             return;
         }
@@ -903,7 +903,7 @@ impl PaxSegmentWriter {
         }
         if self.cur_centroid_sum.len() == v.len() {
             let mut norm_sq = 0f64;
-            for (s, &x) in self.cur_centroid_sum.iter_mut().zip(v) {
+            for (s, &x) in self.cur_centroid_sum.iter_mut().zip(v.iter()) {
                 let x = x as f64;
                 *s += x;
                 norm_sq += x * x;
