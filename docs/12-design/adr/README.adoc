@@ -356,6 +356,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | AXIS is not the default for co-design collections — the PAX scan + memtable cover everything
 | Accepted (2026-07-23)
 | With the flush path fixed (#1150/#1155/#1158), the AXIS Stage-2 index duplicates in RAM the same flushed data the Stage-3 PAX segment scan already serves; co-design collections default to memtable + PAX scan (with the survivor cache), and AXIS becomes a per-collection opt-in. Proven on SIFT 1M via REST: recall@10=0.999 cold, 0.5ms hot.
+
+| link:ADR-071-transactional-ledger-modality.adoc[ADR-071]
+| Adopt a transactional Ledger modality — OLTP atomic-CAS KV on the shared engine substrate
+| Accepted (2026-07-23)
+| Formalizes RFC-0001 (#1165): a first-class `Ledger` modality (small keyed records with atomic conditional write / TTL leases / idempotent settle) for control-plane state — budgets, quotas, rate limits, flags, leases — the OLTP gap the audit found (StorageKV non-atomic, `put_if_absent` create-only, transaction manager unwired). Two load-bearing decisions: (a) durability **rides the ADR-069 local-disk WAL** with a memtable-authoritative counter + configurable sync (the sqlite/redis/memsql/memcache synthesis) — no new engine; (b) the modality both **stacks** on the shared substrate (WAL, memtable, partition-lease HA, TenantContext, object-store tiering — the co-design economy) **and is independently launchable** (a lean ledger-only OLTP-KV competing with Redis/etcd, or one facet of the full multi-model store). Acceptance = the Sandhi TD-0007 conformance suite (C1–C6); ships Experimental, feature-gated, C5 gated on BENCHMARK_EVIDENCE.toml. Tracked: TD-LEDGER-1.
 |===
 
 The index is complete and is enforced by `scripts/check_design_status_index.py`.
