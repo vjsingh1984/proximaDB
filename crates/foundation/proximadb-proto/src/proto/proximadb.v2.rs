@@ -8467,3 +8467,737 @@ pub mod proxima_entity_service_server {
         const NAME: &'static str = SERVICE_NAME;
     }
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetLimitRequest {
+    #[prost(string, tag = "1")]
+    pub scope: ::prost::alloc::string::String,
+    /// absent = clear the cap (unlimited but tracked)
+    #[prost(uint64, optional, tag = "2")]
+    pub limit: ::core::option::Option<u64>,
+    #[prost(enumeration = "LedgerPolicy", tag = "3")]
+    pub policy: i32,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetLimitResponse {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReserveRequest {
+    #[prost(string, tag = "1")]
+    pub scope: ::prost::alloc::string::String,
+    /// conservative upper bound to hold as a lease
+    #[prost(uint64, tag = "2")]
+    pub ceiling: u64,
+    /// lease lifetime in nanoseconds (the server stamps `now`)
+    #[prost(int64, tag = "3")]
+    pub ttl_ns: i64,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReserveResponse {
+    #[prost(bool, tag = "1")]
+    pub admitted: bool,
+    /// Set when admitted:
+    #[prost(uint64, tag = "2")]
+    pub reservation_id: u64,
+    #[prost(int64, tag = "3")]
+    pub expires_at_ns: i64,
+    /// Set when denied (admitted = false) — the cap snapshot that refused it:
+    #[prost(uint64, tag = "4")]
+    pub limit: u64,
+    #[prost(uint64, tag = "5")]
+    pub spent: u64,
+    #[prost(uint64, tag = "6")]
+    pub reserved: u64,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SettleRequest {
+    #[prost(uint64, tag = "1")]
+    pub reservation_id: u64,
+    /// measured usage; 0 releases the lease without recording spend
+    #[prost(uint64, tag = "2")]
+    pub actual: u64,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SettleResponse {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CompareAndSwapRequest {
+    #[prost(string, tag = "1")]
+    pub key: ::prost::alloc::string::String,
+    /// absent = expect the key absent (create)
+    #[prost(uint64, optional, tag = "2")]
+    pub expected_version: ::core::option::Option<u64>,
+    #[prost(int64, tag = "3")]
+    pub value: i64,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CompareAndSwapResponse {
+    #[prost(bool, tag = "1")]
+    pub swapped: bool,
+    /// the new version when swapped
+    #[prost(uint64, tag = "2")]
+    pub version: u64,
+    /// On mismatch (swapped = false), the observed version:
+    #[prost(bool, tag = "3")]
+    pub actual_present: bool,
+    #[prost(uint64, tag = "4")]
+    pub actual_version: u64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetScopeRequest {
+    #[prost(string, tag = "1")]
+    pub scope: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetScopeResponse {
+    #[prost(uint64, optional, tag = "1")]
+    pub limit: ::core::option::Option<u64>,
+    #[prost(uint64, tag = "2")]
+    pub spent: u64,
+    #[prost(uint64, tag = "3")]
+    pub reserved: u64,
+    #[prost(enumeration = "LedgerPolicy", tag = "4")]
+    pub policy: i32,
+}
+/// How a scope reacts when a reservation's ceiling would exceed its limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum LedgerPolicy {
+    /// treated as BLOCK
+    Unspecified = 0,
+    /// hard cap — refuse an over-ceiling reserve
+    Block = 1,
+    /// soft cap — never refuse; spend still accrues
+    Warn = 2,
+}
+impl LedgerPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "LEDGER_POLICY_UNSPECIFIED",
+            Self::Block => "LEDGER_POLICY_BLOCK",
+            Self::Warn => "LEDGER_POLICY_WARN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "LEDGER_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "LEDGER_POLICY_BLOCK" => Some(Self::Block),
+            "LEDGER_POLICY_WARN" => Some(Self::Warn),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod proxima_ledger_service_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// Transactional ledger service. Each RPC is a thin facade over the shared `LedgerService` port.
+    #[derive(Debug, Clone)]
+    pub struct ProximaLedgerServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl ProximaLedgerServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> ProximaLedgerServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> ProximaLedgerServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            ProximaLedgerServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        pub async fn set_limit(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SetLimitRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SetLimitResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaLedgerService/SetLimit",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v2.ProximaLedgerService", "SetLimit"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn reserve(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ReserveRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ReserveResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaLedgerService/Reserve",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v2.ProximaLedgerService", "Reserve"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn settle(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SettleRequest>,
+        ) -> std::result::Result<tonic::Response<super::SettleResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaLedgerService/Settle",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v2.ProximaLedgerService", "Settle"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn compare_and_swap(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CompareAndSwapRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CompareAndSwapResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaLedgerService/CompareAndSwap",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaLedgerService",
+                        "CompareAndSwap",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_scope(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetScopeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetScopeResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaLedgerService/GetScope",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v2.ProximaLedgerService", "GetScope"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod proxima_ledger_service_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with ProximaLedgerServiceServer.
+    #[async_trait]
+    pub trait ProximaLedgerService: std::marker::Send + std::marker::Sync + 'static {
+        async fn set_limit(
+            &self,
+            request: tonic::Request<super::SetLimitRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SetLimitResponse>,
+            tonic::Status,
+        >;
+        async fn reserve(
+            &self,
+            request: tonic::Request<super::ReserveRequest>,
+        ) -> std::result::Result<tonic::Response<super::ReserveResponse>, tonic::Status>;
+        async fn settle(
+            &self,
+            request: tonic::Request<super::SettleRequest>,
+        ) -> std::result::Result<tonic::Response<super::SettleResponse>, tonic::Status>;
+        async fn compare_and_swap(
+            &self,
+            request: tonic::Request<super::CompareAndSwapRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CompareAndSwapResponse>,
+            tonic::Status,
+        >;
+        async fn get_scope(
+            &self,
+            request: tonic::Request<super::GetScopeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetScopeResponse>,
+            tonic::Status,
+        >;
+    }
+    /// Transactional ledger service. Each RPC is a thin facade over the shared `LedgerService` port.
+    #[derive(Debug)]
+    pub struct ProximaLedgerServiceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> ProximaLedgerServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>>
+    for ProximaLedgerServiceServer<T>
+    where
+        T: ProximaLedgerService,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/proximadb.v2.ProximaLedgerService/SetLimit" => {
+                    #[allow(non_camel_case_types)]
+                    struct SetLimitSvc<T: ProximaLedgerService>(pub Arc<T>);
+                    impl<
+                        T: ProximaLedgerService,
+                    > tonic::server::UnaryService<super::SetLimitRequest>
+                    for SetLimitSvc<T> {
+                        type Response = super::SetLimitResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SetLimitRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaLedgerService>::set_limit(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SetLimitSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaLedgerService/Reserve" => {
+                    #[allow(non_camel_case_types)]
+                    struct ReserveSvc<T: ProximaLedgerService>(pub Arc<T>);
+                    impl<
+                        T: ProximaLedgerService,
+                    > tonic::server::UnaryService<super::ReserveRequest>
+                    for ReserveSvc<T> {
+                        type Response = super::ReserveResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ReserveRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaLedgerService>::reserve(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ReserveSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaLedgerService/Settle" => {
+                    #[allow(non_camel_case_types)]
+                    struct SettleSvc<T: ProximaLedgerService>(pub Arc<T>);
+                    impl<
+                        T: ProximaLedgerService,
+                    > tonic::server::UnaryService<super::SettleRequest>
+                    for SettleSvc<T> {
+                        type Response = super::SettleResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SettleRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaLedgerService>::settle(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SettleSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaLedgerService/CompareAndSwap" => {
+                    #[allow(non_camel_case_types)]
+                    struct CompareAndSwapSvc<T: ProximaLedgerService>(pub Arc<T>);
+                    impl<
+                        T: ProximaLedgerService,
+                    > tonic::server::UnaryService<super::CompareAndSwapRequest>
+                    for CompareAndSwapSvc<T> {
+                        type Response = super::CompareAndSwapResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CompareAndSwapRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaLedgerService>::compare_and_swap(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CompareAndSwapSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaLedgerService/GetScope" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetScopeSvc<T: ProximaLedgerService>(pub Arc<T>);
+                    impl<
+                        T: ProximaLedgerService,
+                    > tonic::server::UnaryService<super::GetScopeRequest>
+                    for GetScopeSvc<T> {
+                        type Response = super::GetScopeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetScopeRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaLedgerService>::get_scope(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetScopeSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for ProximaLedgerServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "proximadb.v2.ProximaLedgerService";
+    impl<T> tonic::server::NamedService for ProximaLedgerServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
+    }
+}

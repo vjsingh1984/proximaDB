@@ -821,6 +821,9 @@ jobs:
           # Ledger modality durable backend (S2, ADR-071) — the WAL-backed impl is behind the
           # non-default `durable` feature, so it is invisible to the default workspace check.
           - { label: "ledger-durable",      pkg: proximadb-ledger, args: "--features durable" }
+          # Ledger modality gRPC service (S3, ADR-071) — the ProximaLedgerService + its port wiring
+          # are behind the non-default `experimental-ledger` feature on the root crate.
+          - { label: "experimental-ledger", pkg: proximadb,        args: "--features experimental-ledger" }
           # Refactor/move coverage: these configurations catch cfg drift hidden
           # by the default build. Keep them in the same mandatory matrix rather
           # than relying on a PR being correctly labelled as mechanical.

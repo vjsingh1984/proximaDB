@@ -393,6 +393,8 @@ proximadb-orion-engine = { workspace = true }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-observability-engine = { path = "crates/modalities/proximadb-observability-engine" }
+# Optional: the experimental transactional Ledger modality (gated by `experimental-ledger`).
+proximadb-ledger = { path = "crates/modalities/proximadb-ledger", optional = true }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
 proximadb-queue = { path = "crates/modalities/proximadb-queue" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
@@ -690,6 +692,9 @@ tenant_access = []
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.
 experimental-engines = ["proximadb-raptor-engine/experimental-engines"]
+# Experimental transactional Ledger modality (ADR-071 / TD-LEDGER-1): the durable atomic-CAS
+# KV + TTL-lease OLTP surface. Off by default; enables the durable backend + its gRPC service.
+experimental-ledger = ["dep:proximadb-ledger", "proximadb-ledger/durable"]
 # Experimental SIMD path; not enabled by default
 simd-experimental = ["proximadb-codec/simd-experimental"]
 # TD-160 / ADR-027 / ADR-030: gate the PERF-CLASS I/O-trace *emission* (the
