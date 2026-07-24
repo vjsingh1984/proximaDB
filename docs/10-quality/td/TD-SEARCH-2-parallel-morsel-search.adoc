@@ -19,6 +19,44 @@
 
 **Measured**: recall 0.9990 ✓ (unchanged). Latency ~500ms (no improvement on local disk — CPU-bound, join_all is single-thread cooperative). The speedup materializes on **object storage** where overlapping 157 GET round-trips cuts I/O time 6×.
 
+== S2 measured update (2026-07-24, 1M cold concurrency sweep)
+
+Measured on the 1M SIFT bed (10 segments, local SSD, 10-core M-series), fresh
+never-cached queries:
+
+|===
+| concurrency | QPS | mean | p95
+| c=1 | 3.9 | 258 ms | 420 ms
+| c=8 | 16.8 | 468 ms | 651 ms
+| c=16 | **18.2 (ceiling)** | 861 ms | 1250 ms
+|===
+
+Three conclusions that sharpen S2:
+
+1. **The morsel-vs-concurrent tension is RESOLVED by data**: even pure
+   inter-query concurrency (16 independent queries — the "concurrent" column's
+   best case) saturates at 18.2 QPS on 10 cores = **47% scaling efficiency**
+   (ideal from the c=1 rate would be ~39 QPS). Concurrency alone does not
+   reach the machine; the ceiling is shared-state serialization + per-query
+   scan CPU. S2 must therefore deliver BOTH: `tokio::spawn` for intra-query
+   spread AND removal of cross-query serialization points.
+2. **New suspects for the 53% loss** (profile before fixing):
+   `SegmentInvariantsCache` is a single `std::sync::Mutex<HashMap>` taken on
+   EVERY per-segment scan entry (segment_format.rs) — 16 queries × N segments
+   contend on one lock; `TenantCache` (survivor ranges) sharding/locking under
+   concurrent `get_or_load`; the tokio blocking-pool interplay with
+   CPU-heavy rank sections that never yield.
+3. **Unit economics stake**: cold capacity is ~1 QPS/vCPU ≈ **$30/mo per cold
+   QPS** at Azure F-series list vs ~$0.06/QPS for RAM-pinned hot traffic.
+   Every point of scaling efficiency S2 recovers is COGS, not just latency —
+   at 90% efficiency the same node serves ~35 cold QPS (≈2× the fleet-sizing
+   floor for the post-restart herd case; see TD-CACHE-1 for the complementary
+   demand-side fix).
+
+Verification for S2 (updated): the c=16 sweep above re-run on the S2 build
+must show ≥70% scaling efficiency (≥27 QPS on this bed) with recall unchanged,
+plus a lock-contention profile (no single mutex >10% of scan wall-clock).
+
 == S2 (proposed): true multi-core parallelism via `tokio::spawn`
 
 **The problem**: `join_all` polls futures cooperatively on ONE thread. I/O overlaps (futures yield at `.await`), but CPU-bound work (SQ8 decode + RaBitQ rank + distance computation) is sequential. On local disk where CPU dominates (~500ms), this gives no speedup.
