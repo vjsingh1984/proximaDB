@@ -123,12 +123,17 @@ impl ProximaLedgerService for ProximaLedgerServiceImpl {
         &self,
         request: Request<pv2::SettleRequest>,
     ) -> Result<Response<pv2::SettleResponse>, Status> {
-        // Resolve tenant for auth even though settle is by opaque reservation id (v1 note in the
-        // port: the id is a bearer capability; a tenant-verified settle index is a follow-up).
-        let _tenant = grpc_auth::resolved_tenant_id(&request)?;
+        // Settle is verified against the caller's tenant: a reservation id belonging to another
+        // tenant is refused (the reservation's owner is recovered from its namespaced scope).
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
-        self.ledger.settle(req.reservation_id, req.actual);
-        Ok(Response::new(pv2::SettleResponse {}))
+        if self.ledger.settle(&tenant, req.reservation_id, req.actual) {
+            Ok(Response::new(pv2::SettleResponse {}))
+        } else {
+            Err(Status::permission_denied(
+                "reservation does not belong to this tenant",
+            ))
+        }
     }
 
     async fn compare_and_swap(

@@ -74,14 +74,32 @@ impl<L: Ledger> LedgerService<L> {
         outcome
     }
 
-    /// Settle a reservation by its id.
+    /// Settle a reservation by id, **verified against `tenant`**. Returns `true` if the settle was
+    /// applied (or was a harmless no-op for an unknown / already-settled / reclaimed id), and `false`
+    /// if the reservation belongs to a *different* tenant — a cross-tenant settle attempt, refused.
     ///
-    /// **v1 note:** settle is by opaque reservation id (a bearer capability the caller received from
-    /// [`reserve`](Self::reserve)); it is not re-verified against `tenant`. Cross-tenant isolation on
-    /// the persistent budget/flag data (scopes, CAS keys) *is* enforced by namespacing. A
-    /// tenant-verified settle (a reservation→tenant index) is a tracked follow-up.
-    pub fn settle(&self, reservation_id: u64, actual: u64) {
-        self.lock().settle(reservation_id, actual);
+    /// Closes the bearer-capability gap: a reservation's owning tenant is recovered from its
+    /// namespaced scope (WAL-durable, so it survives a restart), so a leaked or guessed id cannot
+    /// settle another tenant's lease. The lookup + settle are one locked (atomic) step.
+    pub fn settle(&self, tenant: &str, reservation_id: u64, actual: u64) -> bool {
+        let mut ledger = self.lock();
+        match ledger.reservation_scope(reservation_id) {
+            // A live reservation owned by another tenant — refuse without touching it.
+            Some(scope) if !Self::scope_belongs_to(&scope, tenant) => false,
+            // Owned by this tenant, or unknown (already settled / reclaimed → idempotent no-op).
+            _ => {
+                ledger.settle(reservation_id, actual);
+                true
+            }
+        }
+    }
+
+    /// Does a namespaced `scope` belong to `tenant` — i.e. is it exactly `tenant` + [`SEP`] + …?
+    fn scope_belongs_to(scope: &str, tenant: &str) -> bool {
+        scope
+            .strip_prefix(tenant)
+            .and_then(|rest| rest.chars().next())
+            == Some(SEP)
     }
 
     /// Reclaim expired leases across all tenants (the timed sweep — the caller/runtime schedules it).
@@ -169,7 +187,7 @@ mod tests {
         s.set_limit("globex", "team", Some(100), Policy::Block);
 
         let a = admitted(s.reserve("acme", "team", 90, NOW, TTL));
-        s.settle(a.id, 90);
+        assert!(s.settle("acme", a.id, 90));
         assert_eq!(s.spent("acme", "team"), 90);
         assert_eq!(
             s.spent("globex", "team"),
@@ -238,8 +256,28 @@ mod tests {
         // A crashed reserver's lease is swept by expiry.
         assert_eq!(s.reclaim_expired(TTL + 1), 1);
         assert_eq!(s.reserved("acme", "team"), 0);
-        // Settling the (now reclaimed) lease is a harmless no-op.
-        s.settle(r.id, 40);
+        // Settling the (now reclaimed) lease is a harmless no-op — unknown id, returns true.
+        assert!(s.settle("acme", r.id, 40));
         assert_eq!(s.spent("acme", "team"), 0);
+    }
+
+    #[test]
+    fn cross_tenant_settle_is_refused() {
+        // The bearer-capability gap, closed: a reservation id leaked/guessed by another tenant
+        // cannot settle the owner's lease.
+        let s = svc();
+        s.set_limit("acme", "team", Some(100), Policy::Block);
+        let r = admitted(s.reserve("acme", "team", 50, NOW, TTL));
+        // globex presents acme's reservation id — refused, and acme's lease is untouched.
+        assert!(!s.settle("globex", r.id, 50), "cross-tenant settle refused");
+        assert_eq!(s.reserved("acme", "team"), 50, "acme's lease still held");
+        assert_eq!(s.spent("acme", "team"), 0);
+        // The rightful owner settles fine…
+        assert!(s.settle("acme", r.id, 40));
+        assert_eq!(s.spent("acme", "team"), 40);
+        assert_eq!(s.reserved("acme", "team"), 0);
+        // …and settling an unknown id is a harmless no-op (idempotent), reported as applied.
+        assert!(s.settle("acme", 99_999, 10));
+        assert_eq!(s.spent("acme", "team"), 40);
     }
 }

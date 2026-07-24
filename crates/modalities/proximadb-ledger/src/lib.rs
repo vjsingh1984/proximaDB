@@ -99,6 +99,11 @@ pub trait Ledger {
     /// The current `(version, value)` at a compare-and-swap key, or `None` if absent.
     fn get(&self, key: &str) -> Option<(Version, i64)>;
 
+    /// The scope of an in-flight reservation, or `None` if the id is unknown (already settled or
+    /// reclaimed). Lets a caller verify a settle against the reservation's owner — under the
+    /// tenant-scoped port the tenant is encoded in the scope, and it survives a restart via the WAL.
+    fn reservation_scope(&self, reservation_id: u64) -> Option<String>;
+
     /// Remaining headroom = `limit - spent - reserved` (saturating). Unlimited scopes report
     /// [`u64::MAX`].
     fn available(&self, scope: &str) -> u64 {
