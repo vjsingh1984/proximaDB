@@ -129,7 +129,7 @@ modality-vector       = ["dep:proximadb-vector"]
 modality-graph        = ["dep:proximadb-graph", "dep:proximadb-orion-engine"]
 modality-document     = ["dep:proximadb-document"]
 modality-relational   = ["datafusion-integration"]           # SQL/tables
-modality-observability= ["dep:proximadb-observability", "dep:proximadb-observability-engine"]
+modality-observability = ["dep:proximadb-observability", "dep:proximadb-observability-engine"]
 modality-timeseries   = ["modality-observability"]           # shares the obs family
 modality-event        = ["modality-observability"]
 modality-ledger       = ["dep:proximadb-ledger", "proximadb-ledger/durable"]  # == today's experimental-ledger
