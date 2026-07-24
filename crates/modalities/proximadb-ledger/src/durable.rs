@@ -258,6 +258,10 @@ impl Ledger for DurableLedger {
     fn get(&self, key: &str) -> Option<(Version, i64)> {
         self.state.get(key)
     }
+
+    fn reservation_scope(&self, reservation_id: u64) -> Option<String> {
+        self.state.reservation_scope(reservation_id)
+    }
 }
 
 /// Apply one recovered log record to the in-memory state (the replay path — no re-logging).

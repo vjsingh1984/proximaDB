@@ -191,6 +191,10 @@ impl Ledger for InMemoryLedger {
     fn get(&self, key: &str) -> Option<(Version, i64)> {
         self.kv.get(key).copied()
     }
+
+    fn reservation_scope(&self, reservation_id: u64) -> Option<String> {
+        self.leases.get(&reservation_id).map(|r| r.scope.clone())
+    }
 }
 
 #[cfg(test)]
