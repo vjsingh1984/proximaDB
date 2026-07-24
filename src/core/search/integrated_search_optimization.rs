@@ -493,7 +493,7 @@ impl AdvancedSearchOptimizer {
             .first_query_vector()
             .context("No query vector provided")?;
 
-        let top_k = search_params.top_k.unwrap_or(10);
+        let top_k = search_params.top_k.unwrap_or(10) as usize;
         let distance_metric = search_params
             .distance_metric
             .unwrap_or(DistanceMetric::Cosine);
@@ -1086,7 +1086,7 @@ impl AdvancedSearchOptimizer {
         }
 
         let batch_size = self.config.streaming_batch_size;
-        let total_results = search_params.top_k.unwrap_or(10);
+        let total_results = search_params.top_k.unwrap_or(10) as usize;
 
         // Create a stream that processes batches lazily
         // Convert records into owned chunks to avoid lifetime issues

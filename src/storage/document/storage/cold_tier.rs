@@ -283,8 +283,8 @@ impl ColdTierRetriever for StorageEngineColdTierRetriever {
         // Create search parameters with the filter
         // We use a placeholder vector since documents don't have real vectors
         let search_params = Arc::new(SearchParams {
-            vector: Some(vec![0.0]), // Placeholder vector for document retrieval
-            top_k: Some(ids.len()),  // We want at most as many results as IDs requested
+            vector: Some(vec![0.0]),       // Placeholder vector for document retrieval
+            top_k: Some(ids.len() as u16), // We want at most as many results as IDs requested
             filter_expression: Some(filter),
             include_expired: Some(false),
             ..Default::default()

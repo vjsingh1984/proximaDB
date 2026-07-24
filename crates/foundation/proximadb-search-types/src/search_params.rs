@@ -431,8 +431,12 @@ pub struct UnifiedSearchParams {
     /// Single query vector (alternative to query_vectors for single queries)
     pub vector: Option<Vec<f32>>,
 
-    /// Number of results to return
-    pub top_k: Option<usize>,
+    /// Number of results to return. `u16` — top_k is a small result count
+    /// (realistic ≤ ~10⁴, well under u16's 65 535 cap), and this shrinks the
+    /// per-query field from `Option<usize>` (16 B) to `Option<u16>` (4 B).
+    /// Cast to `usize` only at genuine size-boundaries (Vec::truncate, heap
+    /// capacity, loop bounds); TD-SEARCH-2 S3.
+    pub top_k: Option<u16>,
 
     /// Distance metric to use for similarity calculation
     #[serde(skip)]
@@ -450,8 +454,10 @@ pub struct UnifiedSearchParams {
     /// Include expired vectors in results
     pub include_expired: Option<bool>,
 
-    /// Search timeout in milliseconds
-    pub timeout_ms: Option<u64>,
+    /// Search timeout in milliseconds. `u32` (not `u64`) — 4B ms ≈ 49 days is
+    /// far beyond any query timeout; halves the field (Option<u64> 16B →
+    /// Option<u32> 8B). Convert at use sites (`as u64`); TD-SEARCH-2 S3.
+    pub timeout_ms: Option<u32>,
 
     /// Enable two-stage search with quantization
     pub enable_two_stage: Option<bool>,

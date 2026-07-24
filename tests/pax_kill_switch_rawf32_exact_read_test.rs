@@ -178,7 +178,7 @@ async fn kill_switch_flushes_rawf32_pax_and_reads_back_exact() {
     let ctx = StorageQueryContext {
         search_params: Arc::new(SearchParams {
             query_vectors: Some(vec![QUERY.to_vec()]),
-            top_k: Some(TOP_K),
+            top_k: Some(TOP_K as u16),
             distance_metric: Some(DistanceMetric::Euclidean),
             block_prune: BlockPruneConfig {
                 radius_k: 0.0,

@@ -407,7 +407,7 @@ impl StorageQueryContext {
 
     /// Get top_k value with fallback to default.
     pub fn top_k(&self) -> usize {
-        self.search_params.top_k.unwrap_or(10)
+        self.search_params.top_k.unwrap_or(10) as usize
     }
 
     /// Get distance metric (pre-computed from collection config).

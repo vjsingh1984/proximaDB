@@ -202,7 +202,7 @@ mod performance_comparison_tests {
             let query_start = Instant::now();
             let search_params = Arc::new(proximadb::core::search::SearchParams {
                 query_vectors: Some(vec![query.clone()]),
-                top_k: Some(K_NEIGHBORS),
+                top_k: Some(K_NEIGHBORS as u16),
                 distance_metric: Some(DistanceMetric::Euclidean),
                 filter_expression: None,
                 // Enable block pruning with sensible minimum to avoid expensive PCA on small datasets

@@ -708,7 +708,7 @@ mod tests {
             // Get ground truth with exact search
             let exact_params = Arc::new(SearchParams {
                 vector: Some(query_vector.clone()),
-                top_k: Some(k),
+                top_k: Some(k as u16),
                 search_mode: SearchMode::Exact,
                 ..Default::default()
             });
@@ -733,7 +733,7 @@ mod tests {
             // Get approximate results
             let approx_params = Arc::new(SearchParams {
                 vector: Some(query_vector.clone()),
-                top_k: Some(k),
+                top_k: Some(k as u16),
                 search_mode: SearchMode::Approximate { nprobe: None }, // Auto nprobe
                 ..Default::default()
             });

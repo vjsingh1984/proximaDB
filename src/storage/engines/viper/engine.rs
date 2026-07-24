@@ -1507,7 +1507,7 @@ impl ViperEngine {
 
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector.to_vec()),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             ..SearchParams::default()
         });
 
@@ -2614,7 +2614,7 @@ impl UnifiedStorageFormat for ViperEngine {
         let _search_params = crate::core::search::SearchParams {
             query_vectors: None,
             vector: Some(query_vector.to_vec()),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             filter_expression: filter_expression.cloned(),
             distance_metric: Some(distance_metric),
             filters: None,

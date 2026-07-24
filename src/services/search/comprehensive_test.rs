@@ -465,7 +465,7 @@ mod tests {
 
             let search_params = SearchParams {
                 query_vectors: Some(vec![test_case.query_vector.clone()]),
-                top_k: Some(test_case.top_k),
+                top_k: Some(test_case.top_k as u16),
                 distance_metric: Some(test_case.distance_metric.clone()),
                 filter_expression: test_case.filter_expression.clone(),
                 ..Default::default()
@@ -530,7 +530,7 @@ mod tests {
 
             let search_params = SearchParams {
                 query_vectors: Some(vec![test_case.query_vector.clone()]),
-                top_k: Some(test_case.top_k),
+                top_k: Some(test_case.top_k as u16),
                 distance_metric: Some(test_case.distance_metric.clone()),
                 filter_expression: test_case.filter_expression.clone(),
                 ..Default::default()

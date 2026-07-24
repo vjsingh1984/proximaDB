@@ -902,7 +902,7 @@ pub mod operations {
         let search_params = Arc::new(proximadb::core::search::SearchParams {
             vector: Some(query_vector.to_vec()),
             query_vectors: None,
-            top_k: Some(top_k),
+            top_k: Some(top_k as u16),
             distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
             filter_expression: None,
             timeout_ms: None,
@@ -959,7 +959,7 @@ pub mod operations {
         let collection = Arc::new(environment.create_test_collection());
         let search_params = Arc::new(proximadb::core::search::SearchParams {
             vector: Some(query_vector.to_vec()),
-            top_k: Some(top_k),
+            top_k: Some(top_k as u16),
             distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
             ..Default::default()
         });

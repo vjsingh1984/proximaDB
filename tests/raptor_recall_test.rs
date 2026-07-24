@@ -184,7 +184,7 @@ mod raptor_recall_tests {
 
             let search_params = Arc::new(SearchParams {
                 vector: Some(query.clone()),
-                top_k: Some(K_NEIGHBORS),
+                top_k: Some(K_NEIGHBORS as u16),
                 distance_metric: Some(
                     proximadb::compute::distance_computation::DistanceMetric::Euclidean,
                 ),
@@ -242,7 +242,7 @@ mod raptor_recall_tests {
 
             let search_params = Arc::new(SearchParams {
                 vector: Some(query.clone()),
-                top_k: Some(K_NEIGHBORS),
+                top_k: Some(K_NEIGHBORS as u16),
                 distance_metric: Some(
                     proximadb::compute::distance_computation::DistanceMetric::Euclidean,
                 ),

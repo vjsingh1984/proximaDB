@@ -1197,7 +1197,7 @@ impl NovaEngine {
 
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector.to_vec()),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             ..SearchParams::default()
         });
 

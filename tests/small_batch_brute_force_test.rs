@@ -68,7 +68,7 @@ mod small_batch_tests {
     ) -> StorageQueryContext {
         let search_params = Arc::new(SearchParams {
             query_vectors: Some(vec![query_vector]),
-            top_k: Some(TOP_K),
+            top_k: Some(TOP_K as u16),
             distance_metric: Some(DistanceMetric::Cosine),
             search_mode: SearchMode::Exact,
             block_prune: BlockPruneConfig {
@@ -504,7 +504,7 @@ mod small_batch_tests {
     ) -> StorageQueryContext {
         let search_params = Arc::new(SearchParams {
             query_vectors: Some(vec![query_vector]),
-            top_k: Some(TOP_K),
+            top_k: Some(TOP_K as u16),
             distance_metric: Some(DistanceMetric::Cosine),
             search_mode: SearchMode::Approximate { nprobe: None }, // Auto sqrt(n)
             block_prune: BlockPruneConfig {
@@ -667,7 +667,7 @@ mod small_batch_tests {
     ) -> StorageQueryContext {
         let search_params = Arc::new(SearchParams {
             query_vectors: Some(vec![query_vector]),
-            top_k: Some(TOP_K),
+            top_k: Some(TOP_K as u16),
             distance_metric: Some(DistanceMetric::Cosine),
             search_mode: SearchMode::Approximate { nprobe: None },
             block_prune: BlockPruneConfig {
