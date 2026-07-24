@@ -25,6 +25,9 @@ into `SegmentInvariantsCache` — exactly the bytes the first query would fetch,
 penalty per segment into boot-time background I/O measured in tens of ms.
 Bounded by the existing cache byte budget; no format change; no config beyond
 an on/off env (default ON — it is strictly work the first queries would do).
+NOTE: prefill retention assumes priority-aware eviction — see TD-CACHE-2 (the
+invariants cache currently evicts arbitrary victims when over budget, which
+could shed warmed Region A entries first).
 
 S2 — **Survivor-range warm-set manifest (small persisted artifact, opt-in).**
 The survivor cache's keys `(path, off, len, kind)` describe the hot set

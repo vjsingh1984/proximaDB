@@ -45,7 +45,9 @@ Three conclusions that sharpen S2:
    EVERY per-segment scan entry (segment_format.rs) — 16 queries × N segments
    contend on one lock; `TenantCache` (survivor ranges) sharding/locking under
    concurrent `get_or_load`; the tokio blocking-pool interplay with
-   CPU-heavy rank sections that never yield.
+   CPU-heavy rank sections that never yield. The invariants-cache rework
+   should also wire `CacheTier::evict_priority` (currently unwired — arbitrary
+   victim selection; TD-CACHE-2): same structure, one surgery.
 3. **Unit economics stake**: cold capacity is ~1 QPS/vCPU ≈ **$30/mo per cold
    QPS** at Azure F-series list vs ~$0.06/QPS for RAM-pinned hot traffic.
    Every point of scaling efficiency S2 recovers is COGS, not just latency —

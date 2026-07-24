@@ -1,0 +1,56 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-CACHE-2: `CacheTier::evict_priority()` is unwired — actual eviction is arbitrary (invariants cache) and kind-blind (survivor cache)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Proposed.** Found 2026-07-24 while auditing the ADR-065 tiering design against the code: the per-tier admission/eviction policy the enum documents is not enforced anywhere.
+| Priority | **P2** (P1 once TD-CACHE-1 warming lands — warming's value depends on priority-aware retention).
+| Component | `src/storage/engines/sst/segment_format.rs` (`CacheTier::evict_priority`, `SegmentInvariantsCache::put` eviction loop), `crates/foundation/proximadb-cache` (`TenantCache`, `CacheKind`).
+| Evidence | `grep -rn "evict_priority"` → **zero callers** outside the definition. `SegmentInvariantsCache::put` evicts `map.keys().next()` — HashMap iteration order, i.e. an arbitrary victim: a hot segment's Region A (~24 MB, re-read every query — the tier the enum pins at priority 3) can be evicted while a cold segment's entry survives. `TenantCache` uses `CacheKind` for stats separation only; eviction is byte-budget/moka policy, kind-blind.
+|===
+
+== The finding
+
+The ADR-065 cache-co-design intent — RaBitQ Region A + control prefix hardest
+to evict (a hit saves the full-region GET), then meta, then OID ranges, then
+SQ8 survivor ranges (cheapest to refetch) — is encoded in
+`CacheTier::evict_priority()` and its doc comment ("One enum drives BOTH the
+per-tier GET trace AND the cache's per-tier admission/eviction policy"). Only
+the first half is true: the trace uses the enum; no eviction path consults it.
+
+What protection exists today is **structural only**: Region A lives in
+`SegmentInvariantsCache` with its own byte budget, so survivor/OID churn in
+the separate `TenantCache` cannot displace it. Within each cache, policy is
+absent (arbitrary victim) or generic (moka default).
+
+== Direction
+
+S1 — **Invariants cache: priority-then-recency victim selection.** Replace the
+`keys().next()` loop with: evict lowest `evict_priority` first, ties by
+least-recent touch (a per-entry `last_hit: AtomicU64` tick is enough; no full
+LRU list needed at this entry count). This is the same small rework moment as
+the TD-SEARCH-2 S2 lock fix (shard or `RwLock` the map) — do both in one pass
+over the structure.
+
+S2 — **Survivor cache: kind-weighted budgets.** Give `TenantCache` optional
+per-`CacheKind` budget fractions (e.g. QuantizedCodes ≥ 70% of pool) so OID
+churn cannot flush SQ8 survivor ranges; full priority eviction inside moka is
+not required — budget partitioning approximates it cheaply.
+
+S3 — **Warming interaction (TD-CACHE-1)**: prefill (its S1/S2) must insert
+with correct tiers so a budget-exceeding warm-up sheds the *right* entries
+(survivor ranges before Region A), not arbitrary ones.
+
+== Verification
+- Unit: over-budget `put` sequence mixing tiers → Region A/control entries
+  survive, survivor/probe entries evicted first, ties by recency.
+- The TD-SEARCH-2 S2 concurrency sweep re-run shows no hit-rate regression
+  (policy change must not cost the 100%-hit hot path anything).
+
+== Related
+link:TD-CACHE-1-restart-cache-warming-cold-herd.adoc[TD-CACHE-1] (warming
+fills what this TD makes sticky), link:TD-SEARCH-2-parallel-morsel-search.adoc[TD-SEARCH-2]
+(same-structure lock rework — combine the surgeries), ADR-065 (the design
+this enforces).
