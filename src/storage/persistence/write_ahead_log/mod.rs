@@ -2128,11 +2128,25 @@ impl WriteAheadLogManager {
             // Lean per-write size check (sums sizes under the lock, no batch clone —
             // get_unflushed_batches clones every batch and regressed write throughput).
             let mem_bytes = write_buffer.unflushed_bytes(collection_id).await;
+            // TD-FLUSH-3 S1: the predicted-segment-bytes floor input (Σ dim×9/8+8 —
+            // what the segment will occupy, vs mem_bytes' serialized-record size).
+            let predicted_bytes = write_buffer.unflushed_predicted_bytes(collection_id).await;
             let policy = FlushPolicy::from_performance(&self.config.performance);
             if matches!(
-                policy.evaluate(mem_bytes, 0).reason,
+                policy
+                    .evaluate_with_predicted(mem_bytes, 0, predicted_bytes)
+                    .reason,
                 Some(FlushReason::Size)
             ) {
+                // TD-FLUSH-3 S2: attribute the trigger in the log so segment-size
+                // regressions are diagnosable from the flush line alone.
+                tracing::debug!(
+                    collection_id,
+                    mem_bytes,
+                    predicted_bytes,
+                    floor_bytes = policy.floor_predicted_bytes,
+                    "inline flush trigger: reason=size (predicted >= floor)"
+                );
                 spawn_inline_flush(collection_id.to_string());
             }
         }

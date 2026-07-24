@@ -1069,7 +1069,6 @@ impl SegmentInvariantsCache {
 
     /// Remove a path (call from flush/compaction when a segment is rewritten).
     pub fn invalidate(&self, path: &str) {
-        use std::sync::atomic::Ordering;
         if let Ok(mut shard) = self.shard_for(path).write()
             && let Some(removed) = shard.remove(path)
         {

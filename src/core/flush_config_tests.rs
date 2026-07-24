@@ -51,6 +51,7 @@ mod tests {
             global_manifest_url: None,
             // ADR-069 tiered-flush knobs.
             flush_interval_secs: 300,
+            flush_floor_predicted_mb: 128,
             wal_max_bytes: 25 * 1024 * 1024 * 1024,
             high_watermark_pct: 0.75,
             critical_watermark_pct: 0.9,

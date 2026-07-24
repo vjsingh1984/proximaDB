@@ -88,6 +88,11 @@ pub struct FlushPolicy {
     pub high_watermark_bytes: u64,
     /// Backpressure line in bytes: `budget × critical_watermark_pct` (0 when disabled).
     pub critical_watermark_bytes: u64,
+    /// TD-FLUSH-3 S1: minimum PREDICTED segment bytes before the size trigger
+    /// may flush (0 = floor disabled). Gates ONLY the size reason — time (RPO)
+    /// and capacity outrank it, so trickle collections and memory pressure
+    /// still drain. `= flush_floor_predicted_mb × 1 MiB`.
+    pub floor_predicted_bytes: u64,
 }
 
 impl FlushPolicy {
@@ -109,6 +114,7 @@ impl FlushPolicy {
             capacity_budget_bytes: budget,
             high_watermark_bytes: high,
             critical_watermark_bytes: critical,
+            floor_predicted_bytes: cfg.flush_floor_predicted_mb.saturating_mul(1024 * 1024),
         }
     }
 
@@ -133,7 +139,28 @@ impl FlushPolicy {
 
     /// The single flush decision. `mem_bytes` = current unflushed memtable size for
     /// the collection; `age_secs` = age of the oldest unflushed data. Pure.
+    ///
+    /// Legacy entry: treats the TD-FLUSH-3 floor as satisfied (predicted =
+    /// u64::MAX). Callers that track predicted segment bytes use
+    /// [`Self::evaluate_with_predicted`]; callers that don't (time/capacity
+    /// scheduler paths, where the floor never gates anyway) keep this.
     pub fn evaluate(&self, mem_bytes: u64, age_secs: u64) -> FlushDecision {
+        self.evaluate_with_predicted(mem_bytes, age_secs, u64::MAX)
+    }
+
+    /// TD-FLUSH-3 S1: the full decision with the predicted-segment-bytes input.
+    /// The floor gates ONLY the size reason: a memtable over
+    /// `memory_flush_size_bytes` (a RAM bound measured in serialized-record
+    /// bytes, ~1.6 KB/record) does not flush until the segment it would write
+    /// (`predicted_bytes` = Σ dim×9/8+8) reaches `floor_predicted_bytes` —
+    /// killing the tiny-segment pathology (104 Azurite flushes → 1,812
+    /// GETs/query). Capacity and time verdicts are unchanged and override.
+    pub fn evaluate_with_predicted(
+        &self,
+        mem_bytes: u64,
+        age_secs: u64,
+        predicted_bytes: u64,
+    ) -> FlushDecision {
         // 1. Capacity ceiling first — memory safety outranks throughput and RPO.
         if self.capacity_budget_bytes > 0 {
             if self.critical_watermark_bytes > 0 && mem_bytes >= self.critical_watermark_bytes {
@@ -149,8 +176,26 @@ impl FlushPolicy {
                 };
             }
         }
-        // 2. Size target — the throughput-optimal coalescing point.
-        if self.size_target_bytes > 0 && mem_bytes >= self.size_target_bytes {
+        // 2. Size target — the throughput-optimal coalescing point, gated by the
+        // TD-FLUSH-3 predicted-segment floor (segments below the floor cost
+        // ~26 GETs/query each on the read path and buy nothing).
+        // Collections without dense embeddings (document/graph) report
+        // `predicted == 0` (the predictor sums quantized-vector bytes only).
+        // For them, SERIALIZED memtable bytes are a faithful segment-size
+        // proxy (props/text land ~1:1 in blocks, modulo block compression) —
+        // unlike vectors, where serialized bytes overstate the segment ~10×.
+        // So the floor applies to every collection: vector collections floor
+        // on predicted RaBitQ+SQ8 bytes, non-vector collections on mem_bytes.
+        let effective_predicted = if predicted_bytes == 0 {
+            mem_bytes
+        } else {
+            predicted_bytes
+        };
+        if self.size_target_bytes > 0
+            && mem_bytes >= self.size_target_bytes
+            && (self.floor_predicted_bytes == 0
+                || effective_predicted >= self.floor_predicted_bytes)
+        {
             return FlushDecision {
                 reason: Some(FlushReason::Size),
                 backpressure: false,
@@ -317,6 +362,102 @@ mod tests {
             p.evaluate(1, p.time_floor_secs).reason,
             Some(FlushReason::Time)
         );
+    }
+
+    /// TD-FLUSH-3 S1: the predicted-bytes floor gates the SIZE reason only.
+    #[test]
+    fn floor_gates_size_trigger_only() {
+        let mut c = cfg(16 << 20, 300, 0, 0.80, 0.95);
+        c.flush_floor_predicted_mb = 128;
+        let p = FlushPolicy::from_performance(&c);
+        assert_eq!(p.floor_predicted_bytes, 128 << 20);
+
+        // Memtable over the RAM size target but the predicted segment is tiny
+        // (the Azurite pathology: serialized bytes >> payload) → NO flush.
+        assert_eq!(
+            p.evaluate_with_predicted(20 << 20, 0, 5 << 20),
+            FlushDecision::NONE
+        );
+        // Predicted reaches the floor → size flush fires.
+        assert_eq!(
+            p.evaluate_with_predicted(20 << 20, 0, 128 << 20).reason,
+            Some(FlushReason::Size)
+        );
+        // RPO timer OVERRIDES the floor (trickle collections still drain).
+        assert_eq!(
+            p.evaluate_with_predicted(1 << 20, 300, 0).reason,
+            Some(FlushReason::Time)
+        );
+        // Capacity OVERRIDES the floor (memory ceiling outranks segment sizing).
+        let mut c2 = cfg(16 << 20, 0, 100 << 20, 0.80, 0.95);
+        c2.flush_floor_predicted_mb = 128;
+        let p2 = FlushPolicy::from_performance(&c2);
+        assert_eq!(
+            p2.evaluate_with_predicted(90 << 20, 0, 1 << 20).reason,
+            Some(FlushReason::Capacity)
+        );
+        // predicted == 0 (document/graph collection): the floor applies to
+        // SERIALIZED bytes instead — a faithful proxy for their segments.
+        // Below the floor: gated; at the floor: flush.
+        assert_eq!(
+            p.evaluate_with_predicted(20 << 20, 0, 0),
+            FlushDecision::NONE,
+            "doc collections floor on serialized bytes — 20MB < 128MB floor"
+        );
+        assert_eq!(
+            p.evaluate_with_predicted(128 << 20, 0, 0).reason,
+            Some(FlushReason::Size),
+            "doc collections flush once serialized bytes reach the floor"
+        );
+
+        // floor = 0 disables the gate (legacy behavior).
+        let p3 = FlushPolicy::from_performance(&cfg(16 << 20, 0, 0, 0.80, 0.95));
+        // cfg() inherits default floor 128MB; zero it explicitly:
+        let mut c3 = cfg(16 << 20, 0, 0, 0.80, 0.95);
+        c3.flush_floor_predicted_mb = 0;
+        let p3z = FlushPolicy::from_performance(&c3);
+        assert_eq!(
+            p3z.evaluate_with_predicted(16 << 20, 0, 0).reason,
+            Some(FlushReason::Size)
+        );
+        // And the legacy evaluate() treats the floor as satisfied.
+        assert_eq!(p3.evaluate(16 << 20, 0).reason, Some(FlushReason::Size));
+    }
+
+    /// TD-FLUSH-3 pressure test across common embedding dims: the 128 MB floor
+    /// yields well-sized segments (RaBitQ region ≥ the 4 MiB IOP target) for
+    /// every mainstream model dimension. predicted/vec = d×9/8 + 8.
+    #[test]
+    fn floor_math_holds_for_common_embedding_dims() {
+        let per_vec = |d: u64| d + d / 8 + 8;
+        // (dim, expected vectors within ±1 of 128MB/per_vec, min rabitq MB)
+        for (dim, approx_vecs, min_rabitq_mb) in [
+            (128u64, 883_000u64, 15u64), // SIFT / MiniLM-class
+            (384, 305_000, 12),          // bge-small / MiniLM-L6
+            (768, 154_000, 12),          // bge-base / e5-base
+            (1536, 77_000, 12),          // openai text-embedding-3-small
+        ] {
+            let floor: u64 = 128 << 20;
+            let vecs = floor / per_vec(dim);
+            let tolerance = approx_vecs / 10;
+            assert!(
+                vecs.abs_diff(approx_vecs) < tolerance,
+                "dim {dim}: {vecs} vectors at floor (expected ≈{approx_vecs})"
+            );
+            // RaBitQ region for that segment: (d/8 + 8) × vecs — must clear the
+            // 4 MiB Azure IOP target by a wide margin so Region A stays a
+            // few-GET scan.
+            let rabitq_bytes = (dim / 8 + 8) * vecs;
+            assert!(
+                rabitq_bytes >= min_rabitq_mb << 20,
+                "dim {dim}: rabitq region {}MB below the {min_rabitq_mb}MB bar",
+                rabitq_bytes >> 20
+            );
+            assert!(
+                rabitq_bytes >= 4 << 20,
+                "dim {dim}: below the 4MiB IOP target"
+            );
+        }
     }
 
     #[test]

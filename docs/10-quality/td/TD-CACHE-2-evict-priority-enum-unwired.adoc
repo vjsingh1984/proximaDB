@@ -52,6 +52,18 @@ per-`CacheKind` budget fractions (e.g. QuantizedCodes ≥ 70% of pool) so OID
 churn cannot flush SQ8 survivor ranges; full priority eviction inside moka is
 not required — budget partitioning approximates it cheaply.
 
+S2d — **Compaction/flush invalidation wiring.** Cache correctness across
+IVF/k-means re-clustering is STRUCTURAL (immutable segments + UUID-unique
+output names + directory discovery: a re-clustered model only exists under
+the new path, and old paths are never queried again) — but nothing calls
+`SegmentInvariantsCache::invalidate` (zero callers, the TD-CACHE-4 disease),
+so entries for compaction-DELETED files squat in the budget until
+priority-then-recency ages them out. Wire the compactor's input-file deletion
+loop (compaction.rs) to invalidate both caches — requires threading the cache
+handles into `SstCompactor`; the survivor cache additionally needs a
+per-path purge API on `TenantCache` (its keys are `(tenant, kind,
+path:off:len)` — a prefix/predicate removal).
+
 S3 — **Warming interaction (TD-CACHE-1)**: prefill (its S1/S2) must insert
 with correct tiers so a budget-exceeding warm-up sheds the *right* entries
 (survivor ranges before Region A), not arbitrary ones.
