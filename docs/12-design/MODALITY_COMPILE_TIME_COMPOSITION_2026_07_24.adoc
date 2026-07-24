@@ -1,0 +1,272 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= Compile-time modality + cloud composition — the strategy, and a per-modality handoff
+:toc: left
+:toclevels: 3
+:icons: font
+
+[.lead]
+Every modality (native, hybrid, support) and every cloud backend is a **compile-time-selectable
+feature**, so a deployment links only the code it actually serves — smaller binary, fewer static
+registries, less resident memory, no dead engine paths. Hybrid modalities declare **cargo-feature
+edges onto the native modalities they stack on**, so an illegal composition (e.g. fusion without
+vector) cannot compile. This generalizes the worked pattern from the transactional Ledger modality
+(link:adr/ADR-071-transactional-ledger-modality.adoc[ADR-071] /
+link:../10-quality/td/TD-LEDGER-1-transactional-ledger-modality.adoc[TD-LEDGER-1]) to the whole
+modality surface, and hands each modality's migration to a parallel session.
+
+Status: **Design / handoff (proposed).** Additive and incremental — the `default` build is unchanged
+until each modality opts in. May be promoted to an ADR (the decision) + one TD per modality (the work).
+
+== Why compile-time, not runtime
+
+Today the storage modalities (vector, graph, document, observability, relational, …) are **always
+compiled**; only a few surfaces are feature-gated (`experimental-engines`, `experimental-ledger`,
+`experimental-turboquant`, `cluster`, the cloud backends `aws`/`azure`/`gcp`). The cost of
+"always-compiled" is not just binary size:
+
+* **Static footprint.** Each engine crate pulls its own `lazy_static`/`OnceCell` registries, index
+  factories, codec tables, and per-process caches — resident whether or not a request ever touches
+  that modality. link:adr/ADR-070-axis-not-needed-for-codesign-collections.adoc[ADR-070] measured one
+  such path (AXIS HNSW/IVF) holding **~8.6 GB** for a workload the PAX scan already served; a runtime
+  flag still *links and can initialise* that code, a compile-time gate **removes it from the binary**.
+* **Dependency bloat.** DataFusion, ONNX runtime, the cloud SDKs, GPU/Metal, RocksDB, quantization
+  kernels — each is a heavy transitive tree. A single-cloud, ledger-only node should not link three
+  cloud SDKs and a query engine.
+* **Blast radius.** Code that isn't compiled can't panic, can't be a CVE surface, can't drift.
+
+Runtime gating (an `if config.enabled` branch) leaves all of that linked and often initialised.
+**Compile-time gating (`#[cfg(feature = …)]`) is the only lever that actually reclaims the memory and
+the attack surface.** That is the thesis of this document.
+
+== Modality taxonomy
+
+[cols="1,2,3", options="header"]
+|===
+| Class | Members | Definition
+| *Native storage* | Vector, Graph, Document, Relational, Observability (logs/metrics), TimeSeries, Event, **Ledger** | Owns a storage engine + a `DataModel` variant + its own read/write path. Independently launchable.
+| *Hybrid / composite* | Fusion, Entity, Ranking | Owns **no** storage; orchestrates ≥2 native modalities. Compiling one **requires** its natives.
+| *Support* | Embedding, Quantization | Enhances a single native (Embedding feeds Vector; Quantization compresses Vector). Optional per that native.
+|===
+
+**The dependency graph (what "stacks on" means):**
+
+[source,text]
+----
+                Fusion ───────┐   Entity ──────┐   Ranking ──┐
+                 │  │  │       │    │  │  │      │      │      │
+        ┌────────┘  │  └───┐   │    │  │  └──┐   │      └──────┤ (over any retrieval)
+        ▼           ▼      ▼   ▼    ▼  ▼     ▼   ▼             ▼
+     Vector      Graph   Document    (Vector Graph Document)  results
+       ▲  ▲
+       │  └── Quantization (support)
+       └───── Embedding (support)
+
+     Relational   Observability ── TimeSeries ── Event   Ledger
+     (standalone) (standalone family)                    (standalone)
+----
+
+Fusion and Entity are the interdependence the strategy must encode: they are **thin facades over the
+native ports** (the `FusionService` port takes `vector + graph + fulltext(document)`; the entity
+service is "an orchestration facade over graph + vector + document"). Their feature **must** pull the
+natives, or they won't build.
+
+== The feature model
+
+=== Per-modality features
+
+One feature per modality, gating its engine crate dependency, its gRPC/REST service, its router
+registration, and its `DataModel` arm (mechanics in the next section):
+
+[source,toml]
+----
+[features]
+# --- native storage modalities (each independently launchable) ---
+modality-vector       = ["dep:proximadb-vector"]
+modality-graph        = ["dep:proximadb-graph", "dep:proximadb-orion-engine"]
+modality-document     = ["dep:proximadb-document"]
+modality-relational   = ["datafusion-integration"]           # SQL/tables
+modality-observability= ["dep:proximadb-observability", "dep:proximadb-observability-engine"]
+modality-timeseries   = ["modality-observability"]           # shares the obs family
+modality-event        = ["modality-observability"]
+modality-ledger       = ["dep:proximadb-ledger", "proximadb-ledger/durable"]  # == today's experimental-ledger
+
+# --- support modalities (enhance a native) ---
+support-embedding     = ["dep:proximadb-embedding", "modality-vector"]
+support-quantization  = ["dep:proximadb-quantization-model", "modality-vector"]
+support-onnx          = ["support-embedding", "proximadb-embedding/onnx"]
+
+# --- HYBRID modalities: the edges that enforce interdependence at compile time ---
+modality-fusion       = ["modality-vector", "modality-graph", "modality-document"]
+modality-entity       = ["modality-graph",  "modality-vector", "modality-document"]
+modality-ranking      = ["dep:proximadb-rank-core"]          # stacks on whatever retrieval is enabled
+----
+
+Because `modality-fusion` *is defined as* `["modality-vector", "modality-graph", "modality-document"]`,
+Cargo makes the interdependence **unforgeable**: you cannot compile Fusion without its natives, and a
+node that enables Fusion automatically links exactly (and only) what Fusion needs.
+
+=== Cloud profiles — one cloud vs. many
+
+The cloud backends are already compile-time features (`object_store/aws`, `object_store/azure`, the
+`google-cloud-storage` dep for `gcp`). Formalize single- vs. multi-cloud as the memory lever it is —
+a single-cloud node must not link three SDKs:
+
+[source,toml]
+----
+cloud-aws   = ["aws"]                  # object_store/aws + proximadb-catalog/aws
+cloud-azure = ["azure"]                # object_store/azure
+cloud-gcp   = ["gcp"]                  # google-cloud-storage
+cloud-multi = ["cloud-aws", "cloud-azure", "cloud-gcp"]   # == today's cloud-full
+# default: local filesystem object store only — zero cloud SDKs linked.
+----
+
+Per link:adr/ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069], the **WAL stays on local disk on
+every profile**; the cloud feature only selects the *bulk-at-rest* object-store backend. A
+single-cloud image links one SDK; multi-cloud links three. This is orthogonal to the modality axis, so
+the two compose: `edition-search + cloud-aws` is a distinct, minimal binary.
+
+=== Editions (bundles operators actually deploy)
+
+[cols="1,3,2", options="header"]
+|===
+| Edition | Enables | Competes with / serves
+| `edition-ledger` (lite) | `modality-ledger` only | Redis / etcd — a lean OLTP-KV, no search engines linked (ADR-071 §4)
+| `edition-vector` | `modality-vector` + `support-embedding` + `support-quantization` | a pure vector DB
+| `edition-search` | vector + graph + document + `modality-fusion` + `modality-entity` + `modality-ranking` | RAG / knowledge-graph
+| `edition-observability` | `modality-observability` + timeseries + event | logs/metrics/traces
+| `edition-analytics` | `modality-relational` + `datafusion-integration` | SQL warehouse
+| `edition-full` | all modalities | the current always-on build
+|===
+
+Crossed with a cloud profile (`edition-search + cloud-aws`) these are the concrete images CI builds
+and ships — each linking only its slice.
+
+== Wire-gating mechanics (the ledger-proven pattern)
+
+Each modality repeats the exact pattern ADR-071 S3 proved, so a session has a checklist, not a
+research project. All edits are tight `#[cfg(feature = "modality-<x>")]` blocks; the `default` build
+is untouched.
+
+1. **Engine crate** → an `optional = true` dependency in the root `[dependencies]`, pulled by the
+   modality feature (`dep:proximadb-<x>`).
+2. **`DataModel` variant** — gate the enum arm and every exhaustive `match`:
++
+[source,rust]
+----
+pub enum DataModel { Vector, Graph, /* … */ #[cfg(feature = "modality-ledger")] Ledger }
+// and at each exhaustive match:
+#[cfg(feature = "modality-ledger")] DataModel::Ledger => …,
+----
++
+NOTE: This is the one genuinely invasive edit — ~7 exhaustive `match` sites per variant (audited for
+Ledger). Prefer a catch-all `_` where semantically safe; gate the arm where not. This is why the
+migration is *one modality per PR*.
+3. **gRPC service** — `#[cfg(feature = "modality-<x>")] pub mod <x>_service;` in
+   `src/network/grpc/v2/mod.rs`; the proto lives in `proto/proximadb/v2/<x>.proto` (regenerated via
+   `PROXIMADB_REGEN_PROTO=1 cargo build -p proximadb-proto` — *verify the pristine regen reproduces
+   the committed file first, so the diff stays additive*).
+4. **Shared state** — a `#[cfg(feature = "modality-<x>")] pub <x>_store: Arc<…>` field on
+   `SharedServices`, constructed in `SharedServices::new`, populated in the struct literal.
+5. **Router** — a `#[cfg(feature = "modality-<x>")] fn canonical_<x>_grpc_service(…)` builder + a
+   cfg-gated `.add_service(…)` at all **three** startup sites in `src/network/multi_server.rs`
+   (`start` / `start_unified` / `start_with_cluster`).
+6. **CI** — one feature-matrix row (`cargo check -p proximadb --features modality-<x>`) so the gated
+   surface can't cfg-drift; keep the `default`-build check as the untouched-baseline guard.
+
+The **port/impl split** is mandatory: a transport-agnostic port (the `FusionService` /
+`LedgerService` shape) owns the logic and tenant-namespacing; the gRPC/REST impl is a thin facade.
+This is what lets the same modality serve gRPC, REST, and pgwire without duplicating logic, and lets a
+hybrid facade hold `Arc<NativePort>`s.
+
+== The build-order template (generalized S1→S4)
+
+Every modality — native or hybrid — follows the ledger's phased arc, so work is isolated and each
+phase is provable before the next risk is taken on:
+
+[cols="1,3,2", options="header"]
+|===
+| Phase | Work | Isolation
+| *S1 — core* | The engine/correctness logic in its own crate, behind a trait seam, **unit-tested against a conformance suite**. No wiring, minimal deps. | A crate; zero blast radius.
+| *S2 — durable* | Persistence behind the same trait (WAL/segment), replay-on-open, restart-survival tests. Feature-gated deps. | Same crate.
+| *S3 — wire* | The port + gRPC/REST service + `SharedServices` field + router registration + `DataModel` arm, all `#[cfg]`-gated. | Central files, tight cfg-blocks (this doc §Wire-gating).
+| *S4 — integrate / HA* | Splice onto shared substrates (the ADR-069 record WAL, cluster/partition-lease), cross-modal edges, benchmark evidence, graduate from Experimental. | Core engine; wants owner review.
+|===
+
+Hybrid modalities collapse S1/S2 (no storage of their own) and spend their weight on S3 (the facade
+over native ports) and S4 (the fuse/rank algorithm) — but the feature edges to their natives are
+declared up front (§Feature model).
+
+== Handoff — per modality
+
+Each row is an independent stream a session can own end-to-end. "Gated today?" = whether the code is
+already behind a feature; most natives are **always-on today** and the migration is to gate them
+additively (default keeps them on via an `edition-full`-style default until the cutover).
+
+[cols="1,1,1,1,1,2", options="header"]
+|===
+| Modality | Class | Stacks on | Gated today? | Target feature | Phase / handoff notes
+| Ledger | native | — | ✅ `experimental-ledger` | `modality-ledger` | **S1–S3 done** (ADR-071). Next: S4 shared-WAL splice; rename feature `experimental-ledger`→`modality-ledger` (alias during transition).
+| Vector | native | — | ❌ always-on | `modality-vector` | Gate engine + service + `DataModel::Vector`. Watch: it is the most-referenced modality — many `match` sites. Do first (unblocks Fusion/Entity/Embedding).
+| Graph | native | — | ❌ always-on | `modality-graph` | Gate proximadb-graph + orion-engine. Do early (Fusion/Entity dep).
+| Document | native | — | ❌ (canonical-document-store gates *storage mode*, not the modality) | `modality-document` | Gate service + `DataModel::Document`. Fusion/Entity dep.
+| Relational | native | — | partial (`datafusion-integration`) | `modality-relational` | Mostly a rename/formalize over the existing datafusion gate + pgwire surface.
+| Observability | native | — | partial (`otlp-metering`, io-trace) | `modality-observability` | Fold logs/metrics; timeseries + event ride this family.
+| TimeSeries | native | Observability | ❌ | `modality-timeseries` | `= ["modality-observability"]`.
+| Event | native | Observability | ❌ | `modality-event` | `= ["modality-observability"]`.
+| Embedding | support | Vector | partial (`onnx`) | `support-embedding` | `= [..., "modality-vector"]`; `support-onnx` pulls the ORT tree only when needed.
+| Quantization | support | Vector | partial (`experimental-turboquant`) | `support-quantization` | `= [..., "modality-vector"]`.
+| Fusion | hybrid | Vector+Graph+Document | ❌ always-on | `modality-fusion` | **The interdependence archetype.** Feature = the three natives. Facade already exists (`fusion_service`).
+| Entity | hybrid | Graph+Vector+Document | ❌ always-on | `modality-entity` | Feature = the three natives.
+| Ranking | hybrid | (any retrieval) | partial (`proximadb-rank-*`) | `modality-ranking` | Stacks on retrieval results; gate rank-core + rerank path.
+| Cloud (AWS/Azure/GCP) | axis | — | ✅ `aws`/`azure`/`gcp` | `cloud-{aws,azure,gcp,multi}` | Orthogonal axis; formalize single-vs-multi + the `edition-*` crosses.
+|===
+
+**Sequencing (dependency-safe):** gate the **leaf natives first** — Vector, Graph, Document — because
+the hybrids' feature edges point at them; a hybrid feature can't be written until its natives have
+features. Then Relational / Observability family. Then the hybrids (Fusion, Entity, Ranking) and
+supports (Embedding, Quantization). Ledger is already done and is the reference implementation. One
+modality per PR (the `DataModel` `match` edits force this granularity); each PR adds its CI
+feature-matrix row.
+
+== Memory-pressure accounting (make the win measurable)
+
+Per co-design (link:adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052], "design
+against the dominant cost term"), each gating PR should record the reclaimed footprint, not assert it:
+
+* **Binary delta** — `cargo bloat` / stripped-size before vs. after enabling only the target edition.
+* **RSS at idle** — resident memory of a booted server for `edition-<x>` vs. `edition-full` (the AXIS
+  ~8.6 GB figure in ADR-070 is the archetype of what a compile-time gate reclaims that a runtime flag
+  cannot).
+* **Link-tree delta** — transitive crate/SDK count dropped (e.g. single-cloud drops two cloud SDKs).
+
+File these into `BENCHMARK_EVIDENCE.toml`; a modality's gate "graduates" when the reclaimed footprint
+is measured, not claimed.
+
+== Risks & non-goals
+
+* *Risk — `DataModel` cfg sprawl.* Gating enum variants ripples into exhaustive matches (~7 sites per
+  variant). Mitigation: one modality per PR; prefer catch-all arms; a `cfg`-drift matrix row per
+  feature. This is the main reason the migration is incremental, not a big-bang.
+* *Risk — feature-combination explosion.* N modalities × 3 clouds is a large matrix. Mitigation: CI
+  checks the **editions** (a curated handful) + each single-modality row, not the full power set.
+* *Non-goal — changing any modality's behavior or wire contract.* This is packaging/composition only;
+  each modality's semantics are unchanged. `default` stays `edition-full`-equivalent until an explicit
+  cutover ADR.
+* *Non-goal — runtime hot-swapping of modalities.* Composition is fixed at build time by design (that
+  is where the memory win is).
+
+== References
+
+* link:adr/ADR-071-transactional-ledger-modality.adoc[ADR-071] /
+  link:../10-quality/td/TD-LEDGER-1-transactional-ledger-modality.adoc[TD-LEDGER-1] — the worked
+  example this generalizes (S1 core → S2 durable → S3 wire → S4 HA, feature-gated, port/impl split).
+* link:adr/ADR-070-axis-not-needed-for-codesign-collections.adoc[ADR-070] — the archetype of a
+  compiled-in-but-redundant RAM path a compile-time gate reclaims.
+* link:adr/ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069] — WAL on local disk on every cloud
+  profile; the cloud feature selects only the at-rest tier.
+* link:adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] — meter the dominant
+  cost term; the memory-pressure accounting above.
+* Existing feature exemplars: `experimental-ledger`, `experimental-engines`, `experimental-turboquant`,
+  `cluster`, `aws`/`azure`/`gcp`/`cloud-full`, `enterprise-catalogs` (a bundle-of-features pattern to
+  mirror for `edition-*`).

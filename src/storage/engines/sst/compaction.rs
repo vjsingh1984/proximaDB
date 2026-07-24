@@ -1397,11 +1397,24 @@ impl Compaction {
                         crate::storage::engines::sst::segment_format::pax_inputs_rerank_quant(
                             &task.input_files,
                         );
+                    // TD-COMPACT-2 root cause: this argument is the collection's
+                    // embedding-MODALITY count, not the record count. Passing
+                    // `records.len()` made the block writer allocate one embedding
+                    // column buffer PER RECORD (105k columns for a 105k-record
+                    // compaction → ~40 GB of untracked per-block row buffers and
+                    // ~42 s/block serializing all-null stripes). Derive it from the
+                    // merged records (compaction has no collection config in hand).
+                    let embedding_count = records
+                        .iter()
+                        .map(|r| r.embeddings.len())
+                        .max()
+                        .unwrap_or(1)
+                        .max(1);
                     crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
                         &staging_file_path,
                         &records,
                         &collection_id,
-                        records.len(),
+                        embedding_count,
                         proximadb_block_format::VectorQuant::RaBitQ,
                         rerank_quant,
                         f32_tier,
@@ -1533,11 +1546,19 @@ impl Compaction {
                         crate::storage::engines::sst::segment_format::pax_inputs_rerank_quant(
                             &task.input_files,
                         );
+                    // TD-COMPACT-2 root cause: embedding-MODALITY count, not the
+                    // record count — see the atomic-path call above.
+                    let embedding_count = records
+                        .iter()
+                        .map(|r| r.embeddings.len())
+                        .max()
+                        .unwrap_or(1)
+                        .max(1);
                     crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
                         &task.output_file,
                         &records,
                         &collection_id,
-                        records.len(),
+                        embedding_count,
                         proximadb_block_format::VectorQuant::RaBitQ,
                         rerank_quant,
                         f32_tier,

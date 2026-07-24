@@ -58,6 +58,27 @@ segments without re-encoding — same carry-forward machinery as TD-COMPACT-2's
 streaming direction) restores the file-count floor without paying the current
 compaction pathology.
 
+S4 — **Retire the time trigger; bound recovery by WAL bytes.** Durability is
+the WAL's job, and both things the 300 s timer bounds — recovery-replay time
+and the read-path delta for slow-trickle collections — are byte-proportional,
+not wall-clock-proportional. Replace `flush_interval_secs` with an enabled
+`wal_max_bytes` cap (the knob exists, default 0/off): flush when predicted
+segment bytes >= floor (S1), OR accumulated WAL bytes >= wal_max_bytes
+(replay bound), OR memtable RAM pressure. All triggers become size-based; a
+trickle collection flushes when it has enough bytes to deserve a segment, and
+replay debt is capped in the unit that determines replay cost.
+
+S5 — **Lane split: the floor governs the trickle/OLTP lane only.** Bulk loads
+should use the guarded Flight `WriteLane::BulkAppendCommit` +
+`DirectCommitAllowed` path (`src/services/write_intent.rs:58`): the client
+already holds the complete dataset, so the server streams it into right-sized
+L0 segments directly — no memtable cadence, no emergent sizing, no per-row
+WAL amplification. Measured corroboration (2026-07-24, Azurite): when ingest
+outpaced the flush loop and one explicit flush drained the whole 1M memtable,
+the resulting few-large-file layout gave 84-168 GETs/query cold and a 100%
+survivor-cache hot path (0 GETs, sub-ms) vs 1,812/279 GETs/query on the
+104-file emergent layout — an 11-21x round-trip difference from layout alone.
+
 == Relationships
 
 * TD-RDSTRAT-11 (probe locality) reduces GETs per file; this TD reduces the
