@@ -1636,6 +1636,28 @@ impl SharedServices {
             Arc::new(proximadb_ledger::LedgerService::new(durable))
         };
 
+        // Timed TTL reclaim (ADR-071 / TD-LEDGER-1, invariant C2): sweep expired ledger leases on a
+        // fixed cadence so a crashed reserver's held capacity is freed even when no request touches
+        // the scope. Server profile only; the sweep is idempotent and O(held leases) — cheap.
+        #[cfg(feature = "experimental-ledger")]
+        if profile.is_server() {
+            let sweeper = ledger_store.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+                loop {
+                    tick.tick().await;
+                    let now_ns = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
+                        .unwrap_or(0);
+                    let reclaimed = sweeper.reclaim_expired(now_ns);
+                    if reclaimed > 0 {
+                        tracing::debug!("ledger sweeper reclaimed {reclaimed} expired lease(s)");
+                    }
+                }
+            });
+        }
+
         // Create GraphOperationsService for native graph database operations
         // IMPORTANT: Pass the shared GraphCollectionService instance
         debug!(
