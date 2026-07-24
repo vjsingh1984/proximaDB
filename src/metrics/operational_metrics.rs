@@ -97,6 +97,49 @@ lazy_static! {
         "proximadb_segment_invariants_cache_bytes",
         "Resident bytes in the segment-invariants cache",
     );
+    /// TD-COMPACT-1 S2: compaction I/O + wall-clock. Counters (event-sourced
+    /// at compaction completion), scraped by /metrics/prometheus. A stuck-at-0
+    /// bytes counter alongside advancing runs now points at the size probes
+    /// (which WARN on failure) instead of silently reading 0.0 MB/s.
+    pub static ref COMPACTIONS_TOTAL: IntCounter = counter(
+        "proximadb_compactions_total",
+        "LSM compactions completed",
+    );
+    pub static ref COMPACTION_BYTES_READ_TOTAL: IntCounter = counter(
+        "proximadb_compaction_bytes_read_total",
+        "Bytes read from input segments across completed compactions",
+    );
+    pub static ref COMPACTION_BYTES_WRITTEN_TOTAL: IntCounter = counter(
+        "proximadb_compaction_bytes_written_total",
+        "Bytes written to merged output segments across completed compactions",
+    );
+    /// Buckets span sub-second flush-sized merges through multi-minute
+    /// re-encode compactions (the TD-COMPACT-1 regression regime).
+    pub static ref COMPACTION_SECONDS: Histogram = histogram(
+        "proximadb_compaction_seconds",
+        "Wall-clock duration of completed LSM compactions",
+        vec![0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
+    );
+}
+
+/// Force-initialize every lazy metric family at boot so they are REGISTERED
+/// (and scrape as 0) before the first event. Without this, a family is
+/// invisible to /metrics/prometheus until its first increment — absent-vs-zero
+/// ambiguity that cost a diagnostic cycle during the TD-COMPACT-1 ratchet run.
+pub fn touch() {
+    QUERIES_TOTAL.get();
+    QUERIES_FAILED_TOTAL.get();
+    let _ = SEARCH_LATENCY_SECONDS.get_sample_count();
+    SURVIVOR_CACHE_HITS.get();
+    SURVIVOR_CACHE_MISSES.get();
+    SURVIVOR_CACHE_BYTES.get();
+    SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.get();
+    SEGMENT_INVARIANTS_CACHE_MISSES_TOTAL.get();
+    SEGMENT_INVARIANTS_CACHE_BYTES.get();
+    COMPACTIONS_TOTAL.get();
+    COMPACTION_BYTES_READ_TOTAL.get();
+    COMPACTION_BYTES_WRITTEN_TOTAL.get();
+    let _ = COMPACTION_SECONDS.get_sample_count();
 }
 
 #[cfg(test)]
