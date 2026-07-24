@@ -137,6 +137,25 @@ compaction path (cells ≠ blocks; a cell can span multiple bounded blocks) or
 stream stripes to the block buffer instead of materializing per-row
 `Option<Vec<f32>>` columns for 13k-row blocks.
 
+**ROOT CAUSE FOUND AND FIXED (2026-07-23):** compaction passed `records.len()`
+as the writer's `embedding_count` (the embedding-MODALITY count, normally 1)
+at all three PAX compaction call sites (`compaction.rs:1391,1535`,
+`compactor_impl.rs:990`). The block writer therefore allocated **105,000
+embedding-column buffers** and pushed 105,000 `Option<Vec<f32>>` (24 B each)
+per record (~2.5 MB/record of phantom all-null columns) and serialized 105k
+empty stripes at every block cut (~42 s/block) — the +40.5 GB and the entire
+compaction-path encode pathology. The flush path passes the correct count,
+which is why it was always healthy. Fix: derive `embedding_count` from
+`max(records[i].embeddings.len())`; plus defense-in-depth
+`MAX_BLOCK_ROWS = 16 * 1024` block cut (cells still force-cut; blocks never
+span cells; the A0 directory stores block RANGES and the probe reader is
+row/byte-granular, so multi-block cells are format-compatible — no read-path
+change). Unit test `two_level_row_bound_splits_giant_cells` covers bound +
+alignment + round-trip; recall invariant (default geometry emits identical
+cuts). The streaming rewrite (S2) and the input-size guard (S1) remain as
+hardening; the admission controller (TD-COMPACT-4) remains for fan-out
+stability.
+
 Corollaries:
 
 * **Duration and memory unify.** PR #1166's phase timers measured ~8 s per

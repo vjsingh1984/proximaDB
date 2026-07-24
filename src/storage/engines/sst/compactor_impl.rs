@@ -983,11 +983,21 @@ impl SstCompactor {
                     .unwrap_or("default")
                     .to_string();
                 let records: Vec<ProximaRecord> = records.iter().map(ProximaRecord::from).collect();
+                // TD-COMPACT-2 root cause: this argument is the collection's
+                // embedding-MODALITY count, not the record count (`records.len()`
+                // allocated one embedding column buffer per record in the block
+                // writer). Derive it from the merged records.
+                let embedding_count = records
+                    .iter()
+                    .map(|r| r.embeddings.len())
+                    .max()
+                    .unwrap_or(1)
+                    .max(1);
                 crate::storage::engines::sst::segment_format::write_pax_segment(
                     path,
                     &records,
                     &collection_id,
-                    records.len(),
+                    embedding_count,
                     proximadb_block_format::VectorQuant::RaBitQ,
                     None,
                 )?;
