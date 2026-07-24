@@ -706,7 +706,7 @@ impl FederatedExecutor {
         };
 
         let search_params = Arc::new(SearchParams {
-            top_k: Some(top_k),
+            top_k: Some(top_k as u16),
             vector: Some(query_vector),
             ..Default::default()
         });

@@ -191,7 +191,7 @@ pub fn build_axis_hybrid_query_with_policy(
         vector_query,
         metadata_filters,
         id_filters,
-        top_k: search_params.top_k.unwrap_or(10),
+        top_k: search_params.top_k.unwrap_or(10) as usize,
         include_expired: search_params.include_expired.unwrap_or(false),
         ann_filtering_mode,
         ann_filtering_policy,

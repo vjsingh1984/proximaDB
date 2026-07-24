@@ -64,7 +64,7 @@ mod helix_cold_search_recall {
         let force_exact = matches!(search_mode, SearchMode::Exact);
         let search_params = Arc::new(SearchParams {
             query_vectors: Some(vec![query_vector]),
-            top_k: Some(TOP_K),
+            top_k: Some(TOP_K as u16),
             distance_metric: Some(DistanceMetric::Euclidean),
             search_mode,
             block_prune: BlockPruneConfig {

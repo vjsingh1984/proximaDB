@@ -95,7 +95,7 @@ async fn progressive_search_real(
     let search_params = Arc::new(SearchParams {
         vector: Some(query.to_vec()),
         query_vectors: None,
-        top_k: Some(k),
+        top_k: Some(k as u16),
         distance_metric: Some(DistanceMetric::Cosine),
         filter_expression: None,
         filters: None,

@@ -1277,7 +1277,7 @@ impl UnifiedQueryOptimizer {
                             .and_then(|v| v.as_u64())
                             .map(|v| v as usize),
                         query_vector: None, // Will be set during execution
-                        top_k: context.search_params.and_then(|p| p.top_k).unwrap_or(10),
+                        top_k: context.search_params.and_then(|p| p.top_k).unwrap_or(10) as usize,
                         filter: None, // Will be set from filter params if needed
                     },
                 },
@@ -2197,7 +2197,7 @@ impl UnifiedQueryOptimizer {
             has_metadata_filter: filter_expression.is_some(),
             has_aggregation: false,
             query_complexity,
-            top_k,
+            top_k: top_k as usize,
         })
     }
 
@@ -2884,7 +2884,8 @@ impl UnifiedQueryOptimizer {
                         use_two_stage: false,
                         candidate_multiplier: 5,
                     }),
-                    candidates: context.search_params.and_then(|p| p.top_k).unwrap_or(10) * 20,
+                    candidates: context.search_params.and_then(|p| p.top_k).unwrap_or(10) as usize
+                        * 20,
                 }],
                 resource_allocation: ResourceAllocation {
                     memory_budget_mb: 128,

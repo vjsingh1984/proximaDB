@@ -82,7 +82,7 @@ fn clustered_vectors() -> Vec<VectorRecord> {
 fn search_params(query: Vec<f32>, metric: DistanceMetric, force_exact: bool) -> Arc<SearchParams> {
     Arc::new(SearchParams {
         query_vectors: Some(vec![query]),
-        top_k: Some(TOP_K),
+        top_k: Some(TOP_K as u16),
         distance_metric: Some(metric),
         block_prune: BlockPruneConfig {
             radius_k: 0.0,

@@ -134,7 +134,7 @@ async fn flush_batch(engine: &SstEngine, collection: &Collection, batch: Vec<Vec
 async fn search(engine: &SstEngine, collection: &Collection, query: Vec<f32>) -> Vec<String> {
     let params = Arc::new(SearchParams {
         query_vectors: Some(vec![query]),
-        top_k: Some(TOP_K),
+        top_k: Some(TOP_K as u16),
         distance_metric: Some(DistanceMetric::Euclidean),
         // TD-184: use Approximate so the search takes the AXIS/orchestrated path,
         // which triggers the rebuild-from-SST when the in-memory index is absent.

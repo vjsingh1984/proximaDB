@@ -68,7 +68,7 @@ mod tests {
             },
             filter_expression: None,
             query_vector: params.vector.clone(),
-            top_k: params.top_k.unwrap_or(10),
+            top_k: params.top_k.unwrap_or(10) as usize,
             min_score: None,
             enable_early_termination: true,
         }
@@ -221,7 +221,7 @@ mod tests {
 
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector.to_vec()),
-            top_k: Some(top_k),
+            top_k: Some(top_k as u16),
             distance_metric: Some(distance_metric),
             filter_expression,
             ..SearchParams::default()

@@ -270,7 +270,7 @@ async fn search_topk(engine: &SstEngine, collection: &Collection, query: Vec<f32
     let ctx = StorageQueryContext {
         search_params: Arc::new(SearchParams {
             query_vectors: Some(vec![query]),
-            top_k: Some(TOP_K),
+            top_k: Some(TOP_K as u16),
             distance_metric: Some(DistanceMetric::Euclidean),
             block_prune: BlockPruneConfig {
                 radius_k: 0.0,

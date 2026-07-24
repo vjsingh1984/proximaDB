@@ -2520,7 +2520,7 @@ impl VectorOperationsService {
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             ..Default::default()
         };
         let optimization_goal = config
@@ -2663,7 +2663,7 @@ impl VectorOperationsService {
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             ..Default::default()
         };
         let optimization_goal = config
@@ -2916,7 +2916,7 @@ impl VectorOperationsService {
         // Run the optimizer on the EXPLAIN path (non-hot) to surface ADR-011 filtering mode.
         let collection = self.get_or_load_collection(collection_id).await?;
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             filter_expression: filter.clone(),
             ..Default::default()
         };
@@ -3042,7 +3042,7 @@ impl VectorOperationsService {
         // Create unified context (combines what used to be two separate contexts)
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            top_k: Some(top_k),
+            top_k: Some(top_k as u16),
             filter_expression: filter.clone(),
             enable_progressive_search: Some(true), // Enable by default if quantization available
             ..Default::default()
@@ -3165,7 +3165,7 @@ impl VectorOperationsService {
         // Run the optimizer on the EXPLAIN path (non-hot) to surface ADR-011 filtering mode.
         let collection = self.get_or_load_collection(collection_id).await?;
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             filter_expression: filter.clone(),
             ..Default::default()
         };
@@ -3503,7 +3503,7 @@ impl VectorOperationsService {
         // Prepare storage search context first
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            top_k: Some(candidates),
+            top_k: Some(candidates as u16),
             distance_metric: Some(distance_metric),
             filter_expression: filter.clone(), // Pass the same FilterExpression to storage engine
             include_expired: Some(false),
@@ -3919,7 +3919,7 @@ impl VectorOperationsService {
         // Convert IndexLookupParams to SearchParams
         let search_params = crate::core::search::SearchParams {
             query_vectors: params.query_vector.map(|v| vec![v]),
-            top_k: Some(params.top_k),
+            top_k: Some(params.top_k as u16),
             filter_expression: params.filter,
             include_expired: Some(false),
             ..Default::default()
