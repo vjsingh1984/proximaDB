@@ -6779,6 +6779,7 @@ dependencies = [
  "proximadb-index-types",
  "proximadb-interner",
  "proximadb-kernel",
+ "proximadb-ledger",
  "proximadb-mcp",
  "proximadb-metrics",
  "proximadb-mongodb-parser",
