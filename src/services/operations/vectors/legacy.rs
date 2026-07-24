@@ -2974,9 +2974,7 @@ impl VectorOperationsService {
             filter_expression: filter.clone(),
             requires_ordering: Some(true),
             enable_progressive_search: Some(true),
-            progressive_scenario: config.scenario.clone(),
             progressive_recalls: config.progressive_recalls.clone(),
-            optimization_hint: config.scenario.clone(),
             ..Default::default()
         };
 
@@ -3046,7 +3044,6 @@ impl VectorOperationsService {
             query_vectors: Some(vec![query_vector.clone()]),
             top_k: Some(top_k),
             filter_expression: filter.clone(),
-            optimization_hint: Some(optimization_goal.to_string()),
             enable_progressive_search: Some(true), // Enable by default if quantization available
             ..Default::default()
         };
@@ -3925,7 +3922,6 @@ impl VectorOperationsService {
             top_k: Some(params.top_k),
             filter_expression: params.filter,
             include_expired: Some(false),
-            optimization_hint: Some(format!("IndexLookup:{:?}", index_type)),
             ..Default::default()
         };
 
