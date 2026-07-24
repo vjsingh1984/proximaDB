@@ -2811,6 +2811,8 @@ impl SharedServices {
             // ADR-069/TD-WAL-1: the tiered-flush knobs (time RPO floor + capacity
             // watermarks) — the live server path where they actually reach the engine.
             flush_interval_secs: toml_config.flush_interval_secs,
+            // TD-FLUSH-3 S1: the predicted-segment flush floor.
+            flush_floor_predicted_mb: toml_config.flush_floor_predicted_mb,
             wal_max_bytes: toml_config.wal_max_bytes,
             high_watermark_pct: toml_config.high_watermark_pct,
             critical_watermark_pct: toml_config.critical_watermark_pct,

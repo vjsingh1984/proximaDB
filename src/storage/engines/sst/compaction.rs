@@ -1028,9 +1028,25 @@ impl Compaction {
                         records.len(),
                         input_path
                     );
-                    // Estimate file size for statistics
-                    if let Ok(metadata) = fs.metadata(&input_path).await {
-                        bytes_read += metadata.size;
+                    // TD-COMPACT-1 S2: input-size accounting for the throughput
+                    // metric. The plugin-FS metadata call can fail on scheme-
+                    // prefixed path strings (`file:///…`) — fall back to
+                    // std::fs on the scheme-stripped path and WARN when both
+                    // fail instead of silently reporting 0.0 MB/s.
+                    match fs.metadata(&input_path).await {
+                        Ok(metadata) => bytes_read += metadata.size,
+                        Err(_) => {
+                            let local = input_path
+                                .strip_prefix("file://")
+                                .unwrap_or(input_path.as_ref());
+                            match std::fs::metadata(local) {
+                                Ok(m) => bytes_read += m.len(),
+                                Err(e) => warn!(
+                                    "compaction throughput: cannot size input {input_path}: {e} \
+                                     (bytes_read will under-report)"
+                                ),
+                            }
+                        }
                     }
 
                     if records.is_empty() {
@@ -1605,11 +1621,28 @@ impl Compaction {
                 }
             }
 
+            // TD-COMPACT-1 S2: size the output for the throughput metric with
+            // the same plugin-FS → std::fs fallback as the input sizing — and
+            // never fail the (already durable) compaction over a metric probe.
             let output_path = task.output_file.to_string_lossy();
-            let metadata = fs.metadata(&output_path).await.map_err(|e| {
-                crate::core::StorageError::DiskIO(std::io::Error::other(e.to_string()))
-            })?;
-            metadata.size
+            match fs.metadata(&output_path).await {
+                Ok(metadata) => metadata.size,
+                Err(_) => {
+                    let local = output_path
+                        .strip_prefix("file://")
+                        .unwrap_or(output_path.as_ref());
+                    match std::fs::metadata(local) {
+                        Ok(m) => m.len(),
+                        Err(e) => {
+                            warn!(
+                                "compaction throughput: cannot size output {output_path}: {e} \
+                                 (bytes_written will report 0)"
+                            );
+                            0
+                        }
+                    }
+                }
+            }
         };
         memtrace.stage("write_done", vector_records_len);
 
@@ -1657,12 +1690,28 @@ impl Compaction {
             total_time
         );
 
+        // Print absolute bytes alongside the rate: a long stall (e.g. the
+        // TD-COMPACT-2 swap storm) makes a real ~28 MB compaction print as
+        // "0.0MB/s" at one decimal, which reads as "metric broken" (the
+        // original TD-COMPACT-1 S2 misdiagnosis).
         tracing::info!(
-            "⚡ [LSM COMPACTION PERFORMANCE] Read: {:.1}MB/s, Write: {:.1}MB/s, Compression: {:.1}x",
+            "⚡ [LSM COMPACTION PERFORMANCE] Read: {:.1}MB ({:.2}MB/s), Write: {:.1}MB ({:.2}MB/s), Compression: {:.1}x",
+            bytes_read as f64 / 1024.0 / 1024.0,
             read_throughput_mb_sec,
+            bytes_written as f64 / 1024.0 / 1024.0,
             write_throughput_mb_sec,
             compression_ratio
         );
+
+        // TD-COMPACT-1 S2: event-sourced compaction counters (default
+        // prometheus registry → /metrics/prometheus).
+        {
+            use crate::metrics::operational_metrics as om;
+            om::COMPACTIONS_TOTAL.inc();
+            om::COMPACTION_BYTES_READ_TOTAL.inc_by(bytes_read);
+            om::COMPACTION_BYTES_WRITTEN_TOTAL.inc_by(bytes_written);
+            om::COMPACTION_SECONDS.observe(total_time.as_secs_f64());
+        }
 
         // COMPACTION PERFORMANCE WARNINGS (compaction can be slower than flush)
         if total_time.as_millis() > 5000 {

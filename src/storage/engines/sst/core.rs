@@ -425,6 +425,51 @@ impl SstEngine {
             info!("🔗 SST Engine: AXIS manager integration enabled (HNSW/IVF indexes available)");
         }
 
+        // TD-CACHE-4: ARM the warm-tier caches at construction. The builder
+        // setters below (`with_segment_invariants_cache` / `with_survivor_cache`)
+        // had ZERO production callers, so both caches stayed `None` on the live
+        // serving path and every novel query re-paid the full GET chain (the
+        // ADR-065 #32-35 warm tier was dead code; found when the TD-METRICS-1
+        // hit/miss counters scraped 0 across a 920-query 1M run).
+        //
+        // Budgets are config-first (`SstConfig.segment_invariants_cache_mb` =
+        // 256 MB / `survivor_cache_mb` = 1024 MB — the 2026-07-24 sizing
+        // decision that also updated ADR-065's survivor default-OFF), env
+        // override wins, 0 disables either.
+        let segment_invariants_cache = {
+            let mb = std::env::var("PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(config.segment_invariants_cache_mb);
+            (mb > 0).then(|| {
+                Arc::new(
+                    crate::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
+                        (mb as usize) * 1024 * 1024,
+                    ),
+                )
+            })
+        };
+        let survivor_cache = {
+            let mb = std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(config.survivor_cache_mb);
+            (mb > 0).then(|| {
+                Arc::new(
+                    crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::new(
+                        mb * 1024 * 1024,
+                    ),
+                )
+            })
+        };
+        if segment_invariants_cache.is_some() || survivor_cache.is_some() {
+            info!(
+                "🧠 SST warm-tier caches armed: invariants={} survivor={}",
+                segment_invariants_cache.is_some(),
+                survivor_cache.is_some()
+            );
+        }
+
         Ok(Self {
             config,
             compaction_manager,
@@ -441,8 +486,8 @@ impl SstEngine {
             axis_manager,
             pca_model_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             directory_cache: None,
-            segment_invariants_cache: None,
-            survivor_cache: None,
+            segment_invariants_cache,
+            survivor_cache,
             tiering_integration: None,
             freshness_lsn_source: None,
         })

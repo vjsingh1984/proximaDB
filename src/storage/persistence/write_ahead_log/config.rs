@@ -127,6 +127,14 @@ pub struct WalPerformanceConfig {
     /// The RPO floor: bounds worst-case loss on volume loss to this interval.
     pub flush_interval_secs: u64,
 
+    /// TD-FLUSH-3 S1 — minimum PREDICTED segment bytes (MB) before the size
+    /// trigger may flush; 0 = floor disabled. Predicted = Σ_records
+    /// (dim × 9/8 + 8) — the RaBitQ+SQ8 bytes the segment will occupy (the
+    /// f32 tier, when tagged on, makes this an under-prediction → segments
+    /// only get LARGER, which is the safe direction). Time (RPO) and capacity
+    /// triggers override the floor.
+    pub flush_floor_predicted_mb: u64,
+
     /// ADR-069 D6 — per-collection WAL size budget (bytes) for the capacity flush +
     /// backpressure watermarks; 0 = disabled.
     pub wal_max_bytes: usize,
@@ -162,6 +170,7 @@ impl Default for WalPerformanceConfig {
             // kept in sync here so programmatic WALConfig::default()/tests agree.
             // wal_max_bytes stays 0 → S4 write-shedding admission control stays OFF.
             flush_interval_secs: 300,
+            flush_floor_predicted_mb: 128,
             wal_max_bytes: 0,
             high_watermark_pct: 0.80,
             critical_watermark_pct: 0.95,
@@ -994,6 +1003,7 @@ mod tests {
                 background_writer_threads: None,
                 write_buffer_batch_size: None,
                 flush_interval_secs: 0,
+                flush_floor_predicted_mb: 0,
                 wal_max_bytes: 0,
                 high_watermark_pct: 0.80,
                 critical_watermark_pct: 0.95,
@@ -1494,6 +1504,7 @@ mod tests {
             background_writer_threads: None,
             write_buffer_batch_size: None, // corrected field name
             flush_interval_secs: 0,
+            flush_floor_predicted_mb: 0,
             wal_max_bytes: 0,
             high_watermark_pct: 0.80,
             critical_watermark_pct: 0.95,

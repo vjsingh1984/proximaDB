@@ -157,6 +157,39 @@ struct BatchCoordinator {
     batches: HashMap<String, HashMap<String, WALVectorBatch>>,
     /// Individual vector index for fast search (vector_id -> (collection_id, batch_id, index_in_batch))
     vector_index: HashMap<String, (String, String, usize)>,
+    /// TD-FLUSH-3: per-batch PREDICTED segment bytes (Σ dim×9/8+8 over the
+    /// batch's records — the RaBitQ+SQ8 bytes the flushed segment will occupy,
+    /// as opposed to `total_size_bytes` which counts serialized-record bytes
+    /// ~1.6 KB/record). Keyed (collection_id -> batch_id); maintained by
+    /// `add_batch` and pruned wherever batches are removed, so
+    /// `unflushed_predicted_bytes` reads the O(1) counter below; this map is
+    /// the SUBTRACTION source when individual batches flush/remove.
+    predicted_per_batch: HashMap<String, HashMap<String, u64>>,
+    /// TD-FLUSH-3: running per-collection predicted-bytes counter maintained
+    /// at WRITE time (co-design: the memtable touches every byte on entry, so
+    /// the flush statistic is kept incrementally — O(1) at decision time
+    /// instead of an O(#batches) sum that grows to ~900 batches per 128 MB
+    /// segment while the floor accumulates). Direction (TD-FLUSH-3 S4): grow
+    /// into the per-class byte spine (serialized/vector/row/f32) feeding
+    /// flush policy, WAL gauges, KSU raw-GB prediction, and cache
+    /// auto-sizing from ONE write-boundary accounting.
+    predicted_unflushed: HashMap<String, u64>,
+}
+
+/// TD-FLUSH-3 predictor: RaBitQ (`d/8 + 8`) + SQ8 (`d`) bytes for one record's
+/// first embedding — ≈ `d × 9/8 + 8`. The optional f32 tier is deliberately
+/// ignored (under-predicting only DELAYS the flush → larger segments — the safe
+/// direction). Verified against measured segments (254 B/vec at 128d incl. row
+/// data vs 152 predicted).
+fn predicted_record_bytes(record: &proximadb_records::ProximaRecord) -> u64 {
+    record
+        .embeddings
+        .first()
+        .map(|e| {
+            let d = e.dim as u64;
+            d + d / 8 + 8
+        })
+        .unwrap_or(0)
 }
 
 impl BatchCoordinator {
@@ -164,6 +197,8 @@ impl BatchCoordinator {
         Self {
             batches: HashMap::new(),
             vector_index: HashMap::new(),
+            predicted_per_batch: HashMap::new(),
+            predicted_unflushed: HashMap::new(),
         }
     }
 
@@ -178,6 +213,22 @@ impl BatchCoordinator {
                 (collection_id.to_string(), batch_id.clone(), index),
             );
         }
+
+        // TD-FLUSH-3: predicted segment bytes for this batch (one pass over the
+        // batch at add time — batches arrive per client request, not per record).
+        let predicted: u64 = batch
+            .vector_records
+            .iter()
+            .map(predicted_record_bytes)
+            .sum();
+        self.predicted_per_batch
+            .entry(collection_id.to_string())
+            .or_default()
+            .insert(batch_id.clone(), predicted);
+        *self
+            .predicted_unflushed
+            .entry(collection_id.to_string())
+            .or_default() += predicted;
 
         // Store batch
         self.batches
@@ -216,8 +267,33 @@ impl BatchCoordinator {
             .unwrap_or(0)
     }
 
+    /// TD-FLUSH-3: predicted segment bytes of the unflushed delta — O(1) read
+    /// of the write-time counter.
+    fn unflushed_predicted_bytes(&self, collection_id: &str) -> u64 {
+        self.predicted_unflushed
+            .get(collection_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Subtract a flushed/removed batch's predicted bytes from the running
+    /// counter (saturating; a missing per-batch entry credits 0).
+    fn credit_predicted(&mut self, collection_id: &str, batch_id: &str) {
+        let credit = self
+            .predicted_per_batch
+            .get_mut(collection_id)
+            .and_then(|m| m.remove(batch_id))
+            .unwrap_or(0);
+        if let Some(total) = self.predicted_unflushed.get_mut(collection_id) {
+            *total = total.saturating_sub(credit);
+        }
+    }
+
     /// Mark batch as flushed
     fn mark_batch_flushed(&mut self, collection_id: &str, batch_id: &str) -> Result<()> {
+        // TD-FLUSH-3: the batch leaves the unflushed set — credit its
+        // predicted bytes so the floor counter tracks only unflushed data.
+        self.credit_predicted(collection_id, batch_id);
         if let Some(collection_batches) = self.batches.get_mut(collection_id)
             && let Some(batch) = collection_batches.get_mut(batch_id)
         {
@@ -249,21 +325,29 @@ impl BatchCoordinator {
             // OPTIMIZATION: Use retain instead of collect+remove to avoid extra allocation
             // First collect IDs from flushed batches for index cleanup
             let mut cleared_batch_records = Vec::new();
-            for batch in collection_batches.values() {
+            let mut cleared_batch_ids = Vec::new();
+            for (batch_id, batch) in collection_batches.iter() {
                 if batch.is_flushed {
                     cleared_batch_records
                         .extend(batch.vector_records.iter().map(|v| v.oid.clone()));
+                    cleared_batch_ids.push(batch_id.clone());
                 }
             }
 
             let original_count = collection_batches.len();
             collection_batches.retain(|_, batch| !batch.is_flushed);
 
+            cleared_count = original_count - collection_batches.len();
             // Remove vector index entries for cleared batches
             for vector_id in cleared_batch_records {
                 self.vector_index.remove(&vector_id);
             }
-            cleared_count = original_count - collection_batches.len();
+            // TD-FLUSH-3: defensive counter credit — normally a no-op because
+            // mark_batch_flushed already credited (credit removes the map
+            // entry, so double-crediting is impossible).
+            for batch_id in cleared_batch_ids {
+                self.credit_predicted(collection_id, &batch_id);
+            }
         }
 
         tracing::debug!(
@@ -581,16 +665,6 @@ impl WALBehaviorWrapper {
         self.inner.vector_by_id(collection_id, vector_id).await
     }
 
-    /// Check if global flush is needed
-    pub async fn needs_global_flush(&self) -> Result<bool> {
-        // Use the same logic as should_flush but with a more conservative threshold
-        let size = self.size_bytes().await; // Use our actual size calculation
-        let count = self.inner.len().await;
-
-        // Global flush needed if we exceed larger thresholds
-        Ok(size >= self.config.flush_threshold_bytes * 2 || count >= 50000)
-    }
-
     /// Clear flushed entries for a specific collection
     pub async fn clear_flushed_by_collection_id(&self, collection_id: &str) -> Result<usize> {
         // Delegate to the string-based method
@@ -637,6 +711,13 @@ impl WALBehaviorWrapper {
     pub async fn unflushed_bytes(&self, collection_id: &str) -> u64 {
         let coordinator = self.batch_coordinator.read().await;
         coordinator.unflushed_bytes(collection_id)
+    }
+
+    /// TD-FLUSH-3: predicted segment bytes (RaBitQ+SQ8) of the unflushed delta —
+    /// the flush-floor input. Cheap map-sum, same contract as `unflushed_bytes`.
+    pub async fn unflushed_predicted_bytes(&self, collection_id: &str) -> u64 {
+        let coordinator = self.batch_coordinator.read().await;
+        coordinator.unflushed_predicted_bytes(collection_id)
     }
 
     /// Clear flushed batches for collection (MODERN - after successful storage engine flush)
@@ -925,6 +1006,8 @@ impl WALBehaviorWrapper {
                     coordinator.vector_index.remove(&vector_record.oid);
                 }
             }
+            // TD-FLUSH-3: credit the removed batch's predicted bytes.
+            coordinator.credit_predicted(collection_id, batch_id);
         }
         drop(coordinator);
 

@@ -888,18 +888,55 @@ pub struct SegmentInvariants {
 
 /// Per-segment invariants cache, **byte-budgeted** (ADR-065 cache-co-design #35).
 /// The old entry-count cap was wrong for Region A entries (~24 MB each → 64
-/// entries = 1.5 GB unbounded). Now the cache caps **total bytes** (dominated by
-/// Region A `region_bytes`), evicting arbitrary entries when over budget. Region A
-/// is the `CacheTier::InvariantIndex` tier (hottest, highest value); header/footer
-/// are `InvariantMeta` (tiny, ~free). Thread-safe; the lock is held briefly.
+/// entries = 1.5 GB unbounded). The cache caps **total bytes** (dominated by
+/// Region A `region_bytes`).
+///
+/// TD-CACHE-2 S1: eviction is **priority-then-recency** — victims are chosen
+/// by lowest [`CacheTier::evict_priority`] first (meta-only entries before
+/// control-bearing before Region-A-bearing), ties broken by least-recent
+/// touch. This enforces the ADR-065 intent the enum documents: a hot
+/// segment's Region A (a hit saves the full-region GET, re-read every query)
+/// is the last thing shed under budget pressure.
+///
+/// TD-CACHE-2 S2a (concurrency): the map is **sharded** (16 shards, per-shard
+/// `RwLock`) with a shared `AtomicUsize` byte budget and `AtomicU64` recency
+/// ticks — a cache HIT takes only a shard *read* lock plus one relaxed store,
+/// so the 100%-hit hot path never serializes on a global mutex (the c=16
+/// contention suspect in TD-SEARCH-2). Victim selection scans per-shard
+/// minima under read locks then confirms under the victim shard's write lock
+/// — exact (priority, recency) policy at segment-count cardinality, no global
+/// lock ever held. Eviction races are benign: each entry's bytes are credited
+/// exactly once by whichever thread removes it.
 pub struct SegmentInvariantsCache {
-    inner: std::sync::Mutex<CacheInner>,
+    shards: Box<[std::sync::RwLock<std::collections::HashMap<String, CacheEntry>>]>,
+    bytes_used: std::sync::atomic::AtomicUsize,
+    /// Monotonic touch counter for recency (relaxed; ordering slack between
+    /// racing touches is irrelevant to eviction quality).
+    tick: std::sync::atomic::AtomicU64,
     byte_budget: usize,
 }
 
-struct CacheInner {
-    map: std::collections::HashMap<String, Arc<SegmentInvariants>>,
-    bytes_used: usize,
+const INVARIANTS_CACHE_SHARDS: usize = 16;
+
+struct CacheEntry {
+    inv: Arc<SegmentInvariants>,
+    /// Tick of the last `get`/`put` touch (recency for eviction ties). Atomic
+    /// so a hit updates it under the shard READ lock.
+    last_hit: std::sync::atomic::AtomicU64,
+}
+
+/// The eviction tier of a cached entry, derived from which byte classes it
+/// carries: Region-A-bearing entries are `InvariantIndex` (pinned hardest),
+/// control-prefix entries (`a0`/RaBitQ params) are `SearchControl`, and
+/// header+footer-only entries are `InvariantMeta` (cheapest to refetch).
+fn entry_tier(inv: &SegmentInvariants) -> CacheTier {
+    if inv.region_bytes.is_some() {
+        CacheTier::InvariantIndex
+    } else if inv.a0_bytes.is_some() || inv.rabitq_header_bytes.is_some() {
+        CacheTier::SearchControl
+    } else {
+        CacheTier::InvariantMeta
+    }
 }
 
 /// Bytes an invariants entry contributes. Whole-scan entries are dominated by
@@ -918,52 +955,124 @@ fn inv_bytes(inv: &SegmentInvariants) -> usize {
 impl SegmentInvariantsCache {
     /// `byte_budget` caps the total cached bytes (Region A region_bytes dominate).
     pub fn new(byte_budget: usize) -> Self {
+        let shards = (0..INVARIANTS_CACHE_SHARDS)
+            .map(|_| std::sync::RwLock::new(std::collections::HashMap::new()))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         Self {
-            inner: std::sync::Mutex::new(CacheInner {
-                map: std::collections::HashMap::new(),
-                bytes_used: 0,
-            }),
+            shards,
+            bytes_used: std::sync::atomic::AtomicUsize::new(0),
+            tick: std::sync::atomic::AtomicU64::new(0),
             byte_budget,
         }
     }
 
-    /// On hit, return the cached invariants (Arc clone — refcount bump only).
+    fn shard_for(
+        &self,
+        path: &str,
+    ) -> &std::sync::RwLock<std::collections::HashMap<String, CacheEntry>> {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        path.hash(&mut h);
+        &self.shards[(h.finish() as usize) % self.shards.len()]
+    }
+
+    fn next_tick(&self) -> u64 {
+        self.tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+    }
+
+    /// Credit bytes back without underflow (saturating; relaxed — the budget
+    /// check tolerates transient slack).
+    fn sub_bytes(&self, n: usize) {
+        use std::sync::atomic::Ordering;
+        let _ = self
+            .bytes_used
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(v.saturating_sub(n))
+            });
+    }
+
+    /// On hit, return the cached invariants (Arc clone — refcount bump only)
+    /// and stamp the entry's recency tick. Takes only the shard READ lock —
+    /// the recency store is a relaxed atomic (TD-CACHE-2 S2a).
     pub fn get(&self, path: &str) -> Option<Arc<SegmentInvariants>> {
-        self.inner.lock().ok()?.map.get(path).cloned()
+        let shard = self.shard_for(path).read().ok()?;
+        let entry = shard.get(path)?;
+        entry
+            .last_hit
+            .store(self.next_tick(), std::sync::atomic::Ordering::Relaxed);
+        Some(entry.inv.clone())
     }
 
     /// Resident bytes currently held (TD-METRICS-1 gauge source).
     pub fn bytes_used(&self) -> usize {
-        self.inner.lock().map(|inner| inner.bytes_used).unwrap_or(0)
+        self.bytes_used.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Insert; evict arbitrary entries while over the byte budget. Region A
-    /// (region_bytes) dominates, so this effectively bounds the index tier.
+    /// Insert; while over the byte budget, evict the entry with the lowest
+    /// `evict_priority`, ties by least-recent touch (TD-CACHE-2 S1). Victim
+    /// search takes per-shard READ locks to find the global (priority, recency)
+    /// minimum, then confirms-and-removes under that shard's WRITE lock — no
+    /// lock is held across shards, and a racing removal simply retries.
     pub fn put(&self, path: String, inv: Arc<SegmentInvariants>) {
+        use std::sync::atomic::Ordering;
         let entry_bytes = inv_bytes(&inv);
-        if let Ok(mut inner) = self.inner.lock() {
-            // Replacing an existing path: credit the old entry's bytes back.
-            if let Some(old) = inner.map.remove(&path) {
-                inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&old));
+        // Replacing an existing path: credit the old entry's bytes back.
+        if let Ok(mut shard) = self.shard_for(&path).write()
+            && let Some(old) = shard.remove(&path)
+        {
+            self.sub_bytes(inv_bytes(&old.inv));
+        }
+        // Evict by (priority asc, last_hit asc) until the new entry fits.
+        // Bounded retries guard against pathological races.
+        let mut attempts = 0;
+        while self.bytes_used().saturating_add(entry_bytes) > self.byte_budget && attempts < 64 {
+            attempts += 1;
+            // Phase 1: find the global minimum under per-shard read locks.
+            let mut victim: Option<(u8, u64, usize, String)> = None;
+            for (idx, shard) in self.shards.iter().enumerate() {
+                if let Ok(guard) = shard.read() {
+                    for (key, entry) in guard.iter() {
+                        let prio = entry_tier(&entry.inv).evict_priority();
+                        let hit = entry.last_hit.load(Ordering::Relaxed);
+                        if victim.as_ref().is_none_or(|v| (prio, hit) < (v.0, v.1)) {
+                            victim = Some((prio, hit, idx, key.clone()));
+                        }
+                    }
+                }
             }
-            // Evict arbitrary entries until the new entry fits under budget.
-            while inner.bytes_used + entry_bytes > self.byte_budget
-                && let Some(key) = inner.map.keys().next().cloned()
-                && let Some(removed) = inner.map.remove(&key)
-            {
-                inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&removed));
+            // Phase 2: confirm-and-remove under the victim shard's write lock.
+            match victim {
+                Some((_, _, idx, key)) => {
+                    if let Ok(mut guard) = self.shards[idx].write()
+                        && let Some(removed) = guard.remove(&key)
+                    {
+                        self.sub_bytes(inv_bytes(&removed.inv));
+                    }
+                    // Removed elsewhere in a race → loop re-checks the budget.
+                }
+                None => break, // cache empty; admit regardless (budget < entry)
             }
-            inner.bytes_used += entry_bytes;
-            inner.map.insert(path, inv);
+        }
+        let tick = self.next_tick();
+        if let Ok(mut shard) = self.shard_for(&path).write() {
+            self.bytes_used.fetch_add(entry_bytes, Ordering::Relaxed);
+            shard.insert(
+                path,
+                CacheEntry {
+                    inv,
+                    last_hit: std::sync::atomic::AtomicU64::new(tick),
+                },
+            );
         }
     }
 
     /// Remove a path (call from flush/compaction when a segment is rewritten).
     pub fn invalidate(&self, path: &str) {
-        if let Ok(mut inner) = self.inner.lock()
-            && let Some(removed) = inner.map.remove(path)
+        if let Ok(mut shard) = self.shard_for(path).write()
+            && let Some(removed) = shard.remove(path)
         {
-            inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&removed));
+            self.sub_bytes(inv_bytes(&removed.inv));
         }
     }
 }
@@ -1750,6 +1859,71 @@ pub async fn rabitq_search_segment_coalesced(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-CACHE-2 S1 verification: over-budget insertion mixing tiers must
+    /// shed meta-only entries before Region-A-bearing ones, ties by recency —
+    /// never an arbitrary victim.
+    #[test]
+    fn invariants_cache_evicts_priority_then_recency() {
+        fn region_entry(bytes: usize) -> Arc<SegmentInvariants> {
+            Arc::new(SegmentInvariants {
+                header_bytes: Vec::new(),
+                region_bytes: Some(Arc::from(vec![0u8; bytes].as_slice())),
+                footer_bytes: Vec::new(),
+                a0_bytes: None,
+                rabitq_header_bytes: None,
+            })
+        }
+        fn meta_entry(bytes: usize) -> Arc<SegmentInvariants> {
+            Arc::new(SegmentInvariants {
+                header_bytes: vec![0u8; bytes],
+                region_bytes: None,
+                footer_bytes: Vec::new(),
+                a0_bytes: None,
+                rabitq_header_bytes: None,
+            })
+        }
+
+        let cache = SegmentInvariantsCache::new(1000);
+        cache.put("regionA1".into(), region_entry(400));
+        cache.put("regionA2".into(), region_entry(400));
+        cache.put("meta1".into(), meta_entry(150));
+        assert_eq!(cache.bytes_used(), 950);
+
+        // Touch regionA1 so it is more recent than regionA2.
+        assert!(cache.get("regionA1").is_some());
+
+        // Over budget by 100: the meta entry (lower priority) must be the
+        // victim — NOT either Region A entry.
+        cache.put("meta2".into(), meta_entry(150));
+        assert!(cache.get("meta1").is_none(), "meta-only evicted first");
+        assert!(cache.get("regionA1").is_some());
+        assert!(cache.get("regionA2").is_some());
+        assert!(cache.get("meta2").is_some());
+
+        // Re-touch regionA1 (the assertion `get`s above stamped recency too,
+        // leaving regionA2 fresher) so regionA2 is deterministically the
+        // least-recent Region A entry.
+        assert!(cache.get("regionA1").is_some());
+
+        // Force a Region-A eviction: meta2 goes first (priority), then the
+        // LEAST-RECENT Region A entry (regionA2 — regionA1 was touched).
+        cache.put("regionA3".into(), region_entry(400));
+        assert!(
+            cache.get("meta2").is_none(),
+            "meta evicted before any region"
+        );
+        assert!(
+            cache.get("regionA2").is_none(),
+            "least-recent Region A evicted on priority tie"
+        );
+        assert!(
+            cache.get("regionA1").is_some(),
+            "recency-protected survivor"
+        );
+        assert!(cache.get("regionA3").is_some());
+        assert!(cache.bytes_used() <= 1000);
+    }
 
     #[test]
     fn pax_write_trace_defaults_off() {

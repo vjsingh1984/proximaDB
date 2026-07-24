@@ -136,7 +136,15 @@ impl AutoFlushDriver {
             wal_flush_metrics::set_budget(collection_id, budget, high, critical);
 
             let age = self.window_age_secs(collection_id).await;
-            let decision = self.policy.evaluate(mem_bytes, age);
+            // TD-FLUSH-3 S1: the driver honors the predicted-segment floor too —
+            // without this, its ~30s tick size-flushed sub-floor segments and
+            // silently overrode the floor the inline path enforced (measured:
+            // 4 segments instead of 2 on the 1M verification). Time (RPO) and
+            // capacity verdicts are unaffected.
+            let predicted_bytes = write_buffer.unflushed_predicted_bytes(collection_id).await;
+            let decision = self
+                .policy
+                .evaluate_with_predicted(mem_bytes, age, predicted_bytes);
             let Some(reason) = decision.reason else {
                 continue;
             };

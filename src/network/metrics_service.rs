@@ -86,6 +86,10 @@ pub struct MetricsService {
 impl MetricsService {
     /// Create new metrics service
     pub fn new(config: MetricsServiceConfig, metrics_collector: Arc<MetricsCollector>) -> Self {
+        // TD-METRICS-1: force-register every lazy operational-metric family so
+        // /metrics/prometheus scrapes them as 0 before their first event
+        // (absent-vs-zero ambiguity cost a diagnostic cycle in the ratchet run).
+        crate::metrics::operational_metrics::touch();
         Self {
             config,
             metrics_collector,

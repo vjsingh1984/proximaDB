@@ -719,6 +719,29 @@ impl VectorOperationsService {
         request: RichSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<RichSearchResponse> {
+        // TD-METRICS-1: this — not the query-facade adapter — is the entry the
+        // canonical REST v2 record search actually traverses (verified live:
+        // the adapter-side counters never moved during the SIFT ratchet run).
+        // Count + time here; the adapter keeps its own increments for the
+        // facade surfaces, which do not route through this method.
+        let om_start = std::time::Instant::now();
+        crate::metrics::operational_metrics::QUERIES_TOTAL.inc();
+        let result = self
+            .search_records_with_tenant_context_inner(request, tenant_context)
+            .await;
+        if result.is_err() {
+            crate::metrics::operational_metrics::QUERIES_FAILED_TOTAL.inc();
+        }
+        crate::metrics::operational_metrics::SEARCH_LATENCY_SECONDS
+            .observe(om_start.elapsed().as_secs_f64());
+        result
+    }
+
+    async fn search_records_with_tenant_context_inner(
+        &self,
+        request: RichSearchRequest,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<RichSearchResponse> {
         let collection_id = request.collection_id.clone();
 
         // Authorize before touching data, matching `search_v1_with_tenant_context`.

@@ -1034,6 +1034,19 @@ pub struct WriteBufferUserConfig {
     /// a coarse safety net (fewer/larger segments → fewer object-store PUTs).
     #[serde(default = "default_flush_interval_secs")]
     pub flush_interval_secs: u64,
+    /// TD-FLUSH-3 S1 — minimum PREDICTED segment size (MB) before the inline
+    /// size trigger may flush; 0 = floor disabled (legacy behavior). Predicted
+    /// bytes = Σ_records dim × k with k = 1/8 (RaBitQ) + 1 (SQ8) [+ 4 when the
+    /// f32 tier is enabled] — i.e. the bytes the segment will actually occupy,
+    /// NOT the serialized-record bytes `memory_flush_size_bytes` counts
+    /// (~1.6 KB/record, which made "16 MB" ≈ 5 MB raw and produced the 104
+    /// tiny Azurite segments → 1,812 GETs/query). The RPO timer
+    /// (`flush_interval_secs`) and the capacity watermarks OVERRIDE the floor
+    /// (a trickle collection still drains). Default 128 (≈0.9M vectors/segment
+    /// at 128d) tuned for object-store reads; set 32 for local-disk-only
+    /// deployments (per-scheme auto-detection is a follow-up).
+    #[serde(default = "default_flush_floor_predicted_mb")]
+    pub flush_floor_predicted_mb: u64,
     /// ADR-069 D6 — per-collection WAL size budget (bytes) for the capacity flush +
     /// backpressure watermarks; 0 = disabled.
     #[serde(default)]
@@ -1059,8 +1072,19 @@ fn default_critical_watermark_pct() -> f64 {
 /// Serde default for [`WriteBufferUserConfig::flush_interval_secs`] (ADR-069 D2). The
 /// RPO floor — coarse on purpose so the inline size trigger dominates throughput and this
 /// only bounds volume-loss RPO for trickle workloads. See the field doc for rationale.
+/// TD-FLUSH-3 demotion: this timer is explicitly NOT a durability mechanism (the WAL
+/// replays on restart) and NOT a segment-sizing mechanism (`flush_floor_predicted_mb`
+/// governs that) — it exists solely to bound restart replay time / volume-loss RPO for
+/// collections that never reach the size floor.
 fn default_flush_interval_secs() -> u64 {
     300
+}
+
+/// Serde default for [`WriteBufferUserConfig::flush_floor_predicted_mb`] (TD-FLUSH-3 S1).
+/// 128 MB predicted ≈ 0.9M vectors/segment at 128d RaBitQ+SQ8 — the Parquet-convention
+/// band that keeps cold GETs/query (∝ file count × ~26) bounded on object storage.
+fn default_flush_floor_predicted_mb() -> u64 {
+    128
 }
 
 impl Default for WriteBufferUserConfig {
@@ -1077,6 +1101,7 @@ impl Default for WriteBufferUserConfig {
             // ADR-069 D2: time floor defaults to 300s (RPO safety net; the inline
             // size trigger handles throughput). wal_max_bytes stays 0 → S4 backpressure OFF.
             flush_interval_secs: default_flush_interval_secs(),
+            flush_floor_predicted_mb: default_flush_floor_predicted_mb(),
             wal_max_bytes: 0,
             high_watermark_pct: default_high_watermark_pct(),
             critical_watermark_pct: default_critical_watermark_pct(),
@@ -1104,6 +1129,7 @@ impl WriteBufferUserConfig {
             performance: PerformanceConfig {
                 memory_flush_size_bytes: self.memory_flush_size_bytes,
                 flush_interval_secs: self.flush_interval_secs,
+                flush_floor_predicted_mb: self.flush_floor_predicted_mb,
                 wal_max_bytes: self.wal_max_bytes,
                 high_watermark_pct: self.high_watermark_pct,
                 critical_watermark_pct: self.critical_watermark_pct,
@@ -1161,6 +1187,24 @@ pub struct SstConfig {
     pub bloom_filter_config: Option<BloomFilterConfig>,
     /// Cache size for SST blocks in MB
     pub cache_size_mb: u64,
+    /// TD-CACHE-4: budget (MB) for the per-segment invariants cache — the
+    /// ADR-065 warm tier holding Region A (RaBitQ codes, `d/8+8` B/vector →
+    /// ~24 MB per 1M vectors at 128d) + control prefix + footer; a hit elides
+    /// the 3 control GETs per segment per query. Priority-then-recency
+    /// eviction (TD-CACHE-2). 256 MB pins ~10× 1M-vector or ~100× 100k-vector
+    /// collections. 0 disables. Env override:
+    /// `PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB`. Distinct from `cache_size_mb`
+    /// (legacy SST block cache) and `decompression_cache_config` (decompressed
+    /// block LRU).
+    pub segment_invariants_cache_mb: u64,
+    /// TD-CACHE-4 + ADR-065 update: budget (MB) for the survivor/OID range
+    /// cache (Region B SQ8 rerank ranges, `d` B/vector, + Region D OID
+    /// ranges). DEFAULT-ON at 1024 MB (decision 2026-07-24: ADR-065's
+    /// default-OFF predated sound eviction (TD-CACHE-2) and was never armed in
+    /// production anyway (TD-CACHE-4) — with it off, every novel query re-pays
+    /// the full ranged-GET chain). 0 disables. Env override:
+    /// `PROXIMADB_SURVIVOR_CACHE_BUDGET_MB`.
+    pub survivor_cache_mb: u64,
     /// Maximum files per level
     pub max_files_per_level: u32,
     /// Size multiplier between levels
@@ -1393,6 +1437,8 @@ impl Default for SstConfig {
             compression_level: 3,           // LZ4 compression level
             bloom_filter_config: Some(BloomFilterConfig::default()),
             cache_size_mb: 128,
+            segment_invariants_cache_mb: 256,
+            survivor_cache_mb: 1024,
             max_files_per_level: 10,
             level_size_multiplier: 10.0,
             max_levels: 7,
