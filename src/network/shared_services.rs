@@ -352,6 +352,13 @@ pub struct SharedServices {
     /// (graph: tracing-only; pgwire: opens its own appender locally).
     pub canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
 
+    /// Experimental transactional ledger store (ADR-071 / TD-LEDGER-1) — the durable, tenant-scoped
+    /// ledger port shared with the gRPC `ProximaLedgerService`. Node-level (one store per node;
+    /// tenants are namespaced *inside* the keys, not by separate stores), with its WAL on local disk
+    /// (ADR-069). Present only under the `experimental-ledger` feature.
+    #[cfg(feature = "experimental-ledger")]
+    pub ledger_store: Arc<proximadb_ledger::LedgerService<proximadb_ledger::DurableLedger>>,
+
     /// The single canonical WAL-backed record store, built + WAL-recovered ONCE here and
     /// shared across ALL surfaces — the REST/gRPC `DmlService` and the pgwire direct-write
     /// path both route relational tables through this instance — so a write on any protocol
@@ -1601,6 +1608,34 @@ impl SharedServices {
             None
         };
 
+        // Experimental transactional ledger store (ADR-071 / TD-LEDGER-1): a node-level durable
+        // ledger shared with the gRPC `ProximaLedgerService`. Its WAL lives on LOCAL disk (ADR-069:
+        // the per-write log belongs on a reattachable local volume, not object storage); when the
+        // metadata store is object-backed (no `file://`), the ledger WAL falls back to a local
+        // `data/ledger` directory. One store per node — tenants are namespaced inside the keys.
+        #[cfg(feature = "experimental-ledger")]
+        let ledger_store = {
+            let ledger_url = join_storage_url(&storage_config.metadata_url, "ledger/ledger.wal");
+            let ledger_path = match ledger_url.strip_prefix("file://") {
+                Some(local) => std::path::PathBuf::from(local),
+                None => std::path::PathBuf::from("data/ledger/ledger.wal"),
+            };
+            if let Some(parent) = ledger_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating ledger WAL dir {}", parent.display()))?;
+            }
+            let durable = proximadb_ledger::DurableLedger::open(
+                &ledger_path,
+                proximadb_ledger::SyncPolicy::PerOp,
+            )
+            .with_context(|| format!("opening ledger WAL at {}", ledger_path.display()))?;
+            info!(
+                "✅ SharedServices: experimental ledger store opened at {}",
+                ledger_path.display()
+            );
+            Arc::new(proximadb_ledger::LedgerService::new(durable))
+        };
+
         // Create GraphOperationsService for native graph database operations
         // IMPORTANT: Pass the shared GraphCollectionService instance
         debug!(
@@ -2563,6 +2598,8 @@ impl SharedServices {
                 // share the same next_sequence counter.
                 canonical_wal_appender,
                 canonical_record_store,
+                #[cfg(feature = "experimental-ledger")]
+                ledger_store,
                 // TD-064 / LLD §5: per-collection recall-probe gate. Empty
                 // at startup; populated as the stats refresher / search path
                 // observe probe outcomes. Route-health surfaces per-scope

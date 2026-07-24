@@ -199,6 +199,19 @@ impl MultiServer {
         .into_server()
     }
 
+    /// Build the canonical v2 ledger gRPC service (ADR-071 / TD-LEDGER-1). Experimental — compiled
+    /// only under the `experimental-ledger` feature. Shares the node-level ledger port constructed
+    /// once in `SharedServices`.
+    #[cfg(feature = "experimental-ledger")]
+    fn canonical_ledger_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_ledger_service_server::ProximaLedgerServiceServer<
+        crate::network::grpc::v2::ProximaLedgerServiceImpl,
+    > {
+        crate::network::grpc::v2::ProximaLedgerServiceImpl::new(services.ledger_store.clone())
+            .into_server()
+    }
+
     /// Build the canonical v2 entity gRPC service.
     ///
     /// EntityService is an orchestration facade over graph + vector + document,
@@ -623,6 +636,13 @@ impl MultiServer {
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(standard_health_server);
+
+            // Experimental transactional ledger service (ADR-071 / TD-LEDGER-1): registered only
+            // under the `experimental-ledger` feature (off by default).
+            #[cfg(feature = "experimental-ledger")]
+            {
+                server = server.add_service(Self::canonical_ledger_grpc_service(&services));
+            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
@@ -1154,6 +1174,13 @@ impl MultiServer {
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
+            // Experimental transactional ledger service (ADR-071 / TD-LEDGER-1): registered only
+            // under the `experimental-ledger` feature (off by default).
+            #[cfg(feature = "experimental-ledger")]
+            {
+                server = server.add_service(Self::canonical_ledger_grpc_service(&services));
+            }
+
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
                 debug!("Adding gRPC reflection service (unified mode)");
@@ -1514,6 +1541,13 @@ impl MultiServer {
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(standard_health_server);
+
+            // Experimental transactional ledger service (ADR-071 / TD-LEDGER-1): registered only
+            // under the `experimental-ledger` feature (off by default).
+            #[cfg(feature = "experimental-ledger")]
+            {
+                server = server.add_service(Self::canonical_ledger_grpc_service(&services));
+            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
