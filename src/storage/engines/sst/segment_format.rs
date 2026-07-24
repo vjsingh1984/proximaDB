@@ -888,18 +888,47 @@ pub struct SegmentInvariants {
 
 /// Per-segment invariants cache, **byte-budgeted** (ADR-065 cache-co-design #35).
 /// The old entry-count cap was wrong for Region A entries (~24 MB each → 64
-/// entries = 1.5 GB unbounded). Now the cache caps **total bytes** (dominated by
-/// Region A `region_bytes`), evicting arbitrary entries when over budget. Region A
-/// is the `CacheTier::InvariantIndex` tier (hottest, highest value); header/footer
-/// are `InvariantMeta` (tiny, ~free). Thread-safe; the lock is held briefly.
+/// entries = 1.5 GB unbounded). The cache caps **total bytes** (dominated by
+/// Region A `region_bytes`).
+///
+/// TD-CACHE-2 S1: eviction is **priority-then-recency** — victims are chosen
+/// by lowest [`CacheTier::evict_priority`] first (meta-only entries before
+/// control-bearing before Region-A-bearing), ties broken by least-recent
+/// touch. This enforces the ADR-065 intent the enum documents: a hot
+/// segment's Region A (a hit saves the full-region GET, re-read every query)
+/// is the last thing shed under budget pressure. Thread-safe; the lock is
+/// held briefly (victim scan is O(entries), entry count = segment count).
 pub struct SegmentInvariantsCache {
     inner: std::sync::Mutex<CacheInner>,
     byte_budget: usize,
 }
 
+struct CacheEntry {
+    inv: Arc<SegmentInvariants>,
+    /// Monotonic tick of the last `get`/`put` touch (recency for eviction ties).
+    last_hit: u64,
+}
+
 struct CacheInner {
-    map: std::collections::HashMap<String, Arc<SegmentInvariants>>,
+    map: std::collections::HashMap<String, CacheEntry>,
     bytes_used: usize,
+    /// Monotonic touch counter (incremented under the lock; never wraps in
+    /// practice — u64 at one tick per cache access).
+    tick: u64,
+}
+
+/// The eviction tier of a cached entry, derived from which byte classes it
+/// carries: Region-A-bearing entries are `InvariantIndex` (pinned hardest),
+/// control-prefix entries (`a0`/RaBitQ params) are `SearchControl`, and
+/// header+footer-only entries are `InvariantMeta` (cheapest to refetch).
+fn entry_tier(inv: &SegmentInvariants) -> CacheTier {
+    if inv.region_bytes.is_some() {
+        CacheTier::InvariantIndex
+    } else if inv.a0_bytes.is_some() || inv.rabitq_header_bytes.is_some() {
+        CacheTier::SearchControl
+    } else {
+        CacheTier::InvariantMeta
+    }
 }
 
 /// Bytes an invariants entry contributes. Whole-scan entries are dominated by
@@ -922,14 +951,21 @@ impl SegmentInvariantsCache {
             inner: std::sync::Mutex::new(CacheInner {
                 map: std::collections::HashMap::new(),
                 bytes_used: 0,
+                tick: 0,
             }),
             byte_budget,
         }
     }
 
-    /// On hit, return the cached invariants (Arc clone — refcount bump only).
+    /// On hit, return the cached invariants (Arc clone — refcount bump only)
+    /// and stamp the entry's recency tick.
     pub fn get(&self, path: &str) -> Option<Arc<SegmentInvariants>> {
-        self.inner.lock().ok()?.map.get(path).cloned()
+        let mut inner = self.inner.lock().ok()?;
+        inner.tick += 1;
+        let tick = inner.tick;
+        let entry = inner.map.get_mut(path)?;
+        entry.last_hit = tick;
+        Some(entry.inv.clone())
     }
 
     /// Resident bytes currently held (TD-METRICS-1 gauge source).
@@ -937,24 +973,37 @@ impl SegmentInvariantsCache {
         self.inner.lock().map(|inner| inner.bytes_used).unwrap_or(0)
     }
 
-    /// Insert; evict arbitrary entries while over the byte budget. Region A
-    /// (region_bytes) dominates, so this effectively bounds the index tier.
+    /// Insert; while over the byte budget, evict the entry with the lowest
+    /// `evict_priority`, ties by least-recent touch (TD-CACHE-2 S1). Never
+    /// evicts entries to make room for a lower-priority insert beyond what the
+    /// budget forces — the incoming entry is admitted last, so an oversized
+    /// low-tier insert can only displace what the policy allows.
     pub fn put(&self, path: String, inv: Arc<SegmentInvariants>) {
         let entry_bytes = inv_bytes(&inv);
         if let Ok(mut inner) = self.inner.lock() {
             // Replacing an existing path: credit the old entry's bytes back.
             if let Some(old) = inner.map.remove(&path) {
-                inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&old));
+                inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&old.inv));
             }
-            // Evict arbitrary entries until the new entry fits under budget.
-            while inner.bytes_used + entry_bytes > self.byte_budget
-                && let Some(key) = inner.map.keys().next().cloned()
-                && let Some(removed) = inner.map.remove(&key)
-            {
-                inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&removed));
+            // Evict by (priority asc, last_hit asc) until the new entry fits.
+            while inner.bytes_used + entry_bytes > self.byte_budget && !inner.map.is_empty() {
+                let victim = inner
+                    .map
+                    .iter()
+                    .min_by_key(|(_, e)| (entry_tier(&e.inv).evict_priority(), e.last_hit))
+                    .map(|(k, _)| k.clone());
+                match victim.and_then(|k| inner.map.remove(&k)) {
+                    Some(removed) => {
+                        inner.bytes_used =
+                            inner.bytes_used.saturating_sub(inv_bytes(&removed.inv));
+                    }
+                    None => break,
+                }
             }
+            inner.tick += 1;
+            let tick = inner.tick;
             inner.bytes_used += entry_bytes;
-            inner.map.insert(path, inv);
+            inner.map.insert(path, CacheEntry { inv, last_hit: tick });
         }
     }
 
@@ -963,7 +1012,7 @@ impl SegmentInvariantsCache {
         if let Ok(mut inner) = self.inner.lock()
             && let Some(removed) = inner.map.remove(path)
         {
-            inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&removed));
+            inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&removed.inv));
         }
     }
 }
@@ -1750,6 +1799,65 @@ pub async fn rabitq_search_segment_coalesced(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-CACHE-2 S1 verification: over-budget insertion mixing tiers must
+    /// shed meta-only entries before Region-A-bearing ones, ties by recency —
+    /// never an arbitrary victim.
+    #[test]
+    fn invariants_cache_evicts_priority_then_recency() {
+        fn region_entry(bytes: usize) -> Arc<SegmentInvariants> {
+            Arc::new(SegmentInvariants {
+                header_bytes: Vec::new(),
+                region_bytes: Some(Arc::from(vec![0u8; bytes].as_slice())),
+                footer_bytes: Vec::new(),
+                a0_bytes: None,
+                rabitq_header_bytes: None,
+            })
+        }
+        fn meta_entry(bytes: usize) -> Arc<SegmentInvariants> {
+            Arc::new(SegmentInvariants {
+                header_bytes: vec![0u8; bytes],
+                region_bytes: None,
+                footer_bytes: Vec::new(),
+                a0_bytes: None,
+                rabitq_header_bytes: None,
+            })
+        }
+
+        let cache = SegmentInvariantsCache::new(1000);
+        cache.put("regionA1".into(), region_entry(400));
+        cache.put("regionA2".into(), region_entry(400));
+        cache.put("meta1".into(), meta_entry(150));
+        assert_eq!(cache.bytes_used(), 950);
+
+        // Touch regionA1 so it is more recent than regionA2.
+        assert!(cache.get("regionA1").is_some());
+
+        // Over budget by 100: the meta entry (lower priority) must be the
+        // victim — NOT either Region A entry.
+        cache.put("meta2".into(), meta_entry(150));
+        assert!(cache.get("meta1").is_none(), "meta-only evicted first");
+        assert!(cache.get("regionA1").is_some());
+        assert!(cache.get("regionA2").is_some());
+        assert!(cache.get("meta2").is_some());
+
+        // Re-touch regionA1 (the assertion `get`s above stamped recency too,
+        // leaving regionA2 fresher) so regionA2 is deterministically the
+        // least-recent Region A entry.
+        assert!(cache.get("regionA1").is_some());
+
+        // Force a Region-A eviction: meta2 goes first (priority), then the
+        // LEAST-RECENT Region A entry (regionA2 — regionA1 was touched).
+        cache.put("regionA3".into(), region_entry(400));
+        assert!(cache.get("meta2").is_none(), "meta evicted before any region");
+        assert!(
+            cache.get("regionA2").is_none(),
+            "least-recent Region A evicted on priority tie"
+        );
+        assert!(cache.get("regionA1").is_some(), "recency-protected survivor");
+        assert!(cache.get("regionA3").is_some());
+        assert!(cache.bytes_used() <= 1000);
+    }
 
     #[test]
     fn pax_write_trace_defaults_off() {

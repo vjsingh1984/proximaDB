@@ -43,6 +43,32 @@ S3 — **Warming interaction (TD-CACHE-1)**: prefill (its S1/S2) must insert
 with correct tiers so a budget-exceeding warm-up sheds the *right* entries
 (survivor ranges before Region A), not arbitrary ones.
 
+== Design note (2026-07-24): single pool vs per-region structures
+
+Resolved three-axis split (from the "one DashMap or one-per-region?" question):
+
+* **Budget = ONE shared byte pool** with per-class floor/ceiling fractions —
+  never per-region static budgets (they need estimation and go stale as the
+  workload phase shifts between ingest-heavy and read-heavy). Floors give the
+  isolation separate pools would; elasticity removes the sizing guess.
+* **Physical structures = two, by CONTENTION DOMAIN** (invariants + survivor),
+  not five by region. When the TD-SEARCH-2 S2 lock rework shards the
+  invariants map (DashMap-style), strict global victim selection conflicts
+  with sharding — use **sampled eviction** (pick ~8 random entries across
+  shards, evict worst by `(evict_priority, last_hit)`, Redis-style): near-exact
+  policy, no global lock.
+* **Entry granularity = split invariants keys by byte class** —
+  `(segment, RegionA)` / `(segment, Control)` / `(segment, Meta)` instead of
+  one bundled entry. Today evicting a segment's entry discards its ~100 KB
+  always-useful control prefix along with the ~24 MB region; per-class keys
+  make control/meta effectively evict-never (tiny) and Region A the single
+  elastic class the pool manages. This delivers per-region policy without
+  per-region structures.
+
+S1 (exact global min under the existing mutex) is the correct stepping stone:
+policy semantics land now; sampling + sharding + key-split ride the S2
+structure rework.
+
 == Verification
 - Unit: over-budget `put` sequence mixing tiers → Region A/control entries
   survive, survivor/probe entries evicted first, ties by recency.
