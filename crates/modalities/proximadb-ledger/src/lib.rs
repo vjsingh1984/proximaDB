@@ -8,9 +8,10 @@
 //!
 //! The default build ([`InMemoryLedger`]) is the pure, zero-dependency correctness core (S1). The
 //! optional **`durable`** feature adds [`DurableLedger`] (S2): the same [`Ledger`] contract behind a
-//! CRC-framed write-ahead log, so spend / caps / in-flight leases survive a restart. **Transport and
-//! windows are still out** — the wire surface (proto/gRPC/router) and the splice onto the shared
-//! ADR-069 record WAL are S3. Per the TD build order, the correctness invariant is proven *first*, in
+//! CRC-framed write-ahead log, so spend / caps / in-flight leases survive a restart. [`LedgerService`]
+//! (S3) is the transport-agnostic, **tenant-scoped** port a gRPC/REST layer wraps as `Arc<_>`. Still
+//! out: the transport itself (proto/gRPC/router), calendar windows, and the splice onto the shared
+//! ADR-069 record WAL. Per the TD build order, the correctness invariant is proven *first*, in
 //! isolation, before any wiring risk is taken on. Neutral units only — counts, never prices.
 //!
 //! ## The invariants (the acceptance bar — Sandhi TD-0007 C1–C3)
@@ -32,11 +33,13 @@
 #[cfg(feature = "durable")]
 mod durable;
 mod memory;
+mod service;
 mod types;
 
 #[cfg(feature = "durable")]
 pub use durable::{DurableLedger, SyncPolicy};
 pub use memory::InMemoryLedger;
+pub use service::LedgerService;
 pub use types::{CasError, Denied, Nanos, Policy, Reservation, ReserveOutcome, Version};
 
 /// The atomic ledger contract — the seam every backend implements.
