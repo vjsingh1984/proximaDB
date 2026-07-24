@@ -116,6 +116,27 @@ the ~100 KB/record holder; the S2 streaming rewrite removes the entire class.
 Encode kernels are scalar (no NEON — separate, smaller lever; see TD-IVF-2
 S1b for the shared kernel direction).
 
+**HOLDER PINNED (stage-boundary memory profile, `PROXIMADB_TRACE_COMPACTION_MEM`,
+2026-07-23):** at 105k records every pipeline stage is benign — input reads
+~112 MB, canonical conversion +139 MB, MVCC +194 MB, merge clones +83 MB, sort
++196 MB (total ≈ 440 MB; sampled record sizes vr=576 B / pr=692 B, ONE
+embedding — the fat-record and double-fp32 theories are refuted). Then:
+`stage=pre_write rss=4,356 MB` → `stage=write_done rss=44,834 MB,
+delta=+40,475 MB`. **The entire blow-up (+40.5 GB, ≈385 KB/record) happens
+inside the segment write call** (`write_pax_segment_ordered` →
+`PaxSegmentWriter`), while the writer's tracked buffers (`file_buf` + rabitq
+region) peak at 65 MB — the holder is the UNTRACKED block/stripe assembly:
+compaction writes only 8 giant cell-boundary blocks (~13k rows each) and each
+block takes ~42 s to cut/compress, vs the flush path's small blocks that never
+exhibit this. RSS grew 4.36 → 41.5 GB within the FIRST 15 s of the write
+(~2.5 GB/s). Also observed live: a second compaction started concurrently
+with the first's write (no admission control — direct TD-COMPACT-4 evidence).
+NEXT (one step from the fix): instrument/inspect the per-block stripe buffers
+in the block writer for the giant-block path — bound block row-count on the
+compaction path (cells ≠ blocks; a cell can span multiple bounded blocks) or
+stream stripes to the block buffer instead of materializing per-row
+`Option<Vec<f32>>` columns for 13k-row blocks.
+
 Corollaries:
 
 * **Duration and memory unify.** PR #1166's phase timers measured ~8 s per
