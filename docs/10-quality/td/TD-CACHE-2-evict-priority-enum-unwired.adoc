@@ -27,14 +27,27 @@ absent (arbitrary victim) or generic (moka default).
 
 == Direction
 
-S1 — **Invariants cache: priority-then-recency victim selection.** Replace the
+S1 — **[SHIPPED with this TD's PR] Invariants cache: priority-then-recency victim selection.** Replace the
 `keys().next()` loop with: evict lowest `evict_priority` first, ties by
 least-recent touch (a per-entry `last_hit: AtomicU64` tick is enough; no full
 LRU list needed at this entry count). This is the same small rework moment as
 the TD-SEARCH-2 S2 lock fix (shard or `RwLock` the map) — do both in one pass
 over the structure.
 
-S2 — **Survivor cache: kind-weighted budgets.** Give `TenantCache` optional
+S2a — **[SHIPPED with this TD's PR] Invariants cache sharding.** 16 shards
+(per-shard `RwLock` + shared `AtomicUsize` budget + `AtomicU64` recency): a
+hit takes only a shard read lock + one relaxed store (the DashMap-is-not-
+lock-free gotcha below, applied); victim selection scans per-shard minima
+under read locks and confirms under the victim shard's write lock — exact
+(priority, recency) policy at segment-count cardinality, no global lock.
+Public API unchanged (`get`/`put`/`invalidate`/`bytes_used`). Sampling
+replaces the exact scan only if entry cardinality ever explodes.
+
+S2b — **Per-class keys** (`(segment, RegionA)` / `(segment, Control)` /
+`(segment, Meta)`) — the read-path contract change; rides the TD-SEARCH-2 S2
+scan rework (see Design note).
+
+S2c — **Survivor cache: kind-weighted budgets.** Give `TenantCache` optional
 per-`CacheKind` budget fractions (e.g. QuantizedCodes ≥ 70% of pool) so OID
 churn cannot flush SQ8 survivor ranges; full priority eviction inside moka is
 not required — budget partitioning approximates it cheaply.
