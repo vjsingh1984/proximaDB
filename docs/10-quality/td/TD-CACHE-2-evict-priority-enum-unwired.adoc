@@ -69,6 +69,15 @@ S1 (exact global min under the existing mutex) is the correct stepping stone:
 policy semantics land now; sampling + sharding + key-split ride the S2
 structure rework.
 
+**Sharding gotcha (recorded so S2 doesn't trip):** DashMap is sharded-LOCK,
+not lock-free — and S1's recency stamp mutates the entry on every `get`.
+Ported naively, every cache HIT takes a shard WRITE lock, re-serializing the
+read-dominant hot path. S2 must store `last_hit` as an `AtomicU64` in the
+entry (shard read-lock + one relaxed store per hit). True lock-free maps
+(`flurry`/`papaya`) are an escalation reserved for the case where the ≥70%
+efficiency gate still fails with shard read-locks in the profile — at
+segment-count cardinality this is not expected.
+
 == Verification
 - Unit: over-budget `put` sequence mixing tiers → Region A/control entries
   survive, survivor/probe entries evicted first, ties by recency.
