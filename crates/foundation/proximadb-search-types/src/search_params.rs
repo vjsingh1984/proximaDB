@@ -500,15 +500,9 @@ pub struct UnifiedSearchParams {
     /// Enable progressive quantization-aware search
     pub enable_progressive_search: Option<bool>,
 
-    /// Progressive search scenario (high_recall, balanced, high_speed, low_memory)
-    pub progressive_scenario: Option<String>,
-
     /// Custom recall rates for progressive stages
     #[serde(skip)]
     pub progressive_recalls: Option<ProgressiveRecalls>,
-
-    /// Optimization hint for search strategy
-    pub optimization_hint: Option<String>,
 
     /// Search mode for accuracy vs speed tradeoff (LanceDB-inspired IVF optimization)
     /// Defaults to Exact (100% recall). Use Approximate for faster queries with ~95-98% recall.
@@ -551,9 +545,7 @@ impl Default for UnifiedSearchParams {
             requires_ordering: None,
             runtime_hints: None,
             enable_progressive_search: Some(false),
-            progressive_scenario: None,
             progressive_recalls: None,
-            optimization_hint: None,
             search_mode: SearchMode::default(), // cost-adaptive by default (TD-165); exact when cheap
             block_prune: BlockPruneConfig::default(),
             text_query: None,
