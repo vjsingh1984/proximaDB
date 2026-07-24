@@ -114,6 +114,17 @@ pub struct ApiConfig {
     #[serde(default)]
     pub pg_port: Option<u16>,
 
+    /// Optional override for the unified-mode internal multiplexer upstream
+    /// port (the loopback gRPC + Arrow Flight listener the TCP multiplexer
+    /// forwards HTTP/2 to). When `None` (the default), the port is resolved
+    /// from the `PROXIMADB_INTERNAL_MUX_PORT` env var, else derived as
+    /// `unified_port + 10001` (5678 → 15679, the historical constant), so
+    /// co-hosted instances with distinct unified ports get distinct internal
+    /// upstreams instead of hijacking each other's gRPC/Flight traffic
+    /// (TD-NET-1).
+    #[serde(default)]
+    pub internal_mux_port: Option<u16>,
+
     /// Optional port for the reference MCP (Model Context Protocol) surface
     /// (ADR-037 Decision 5). When `None` (the default) the MCP transport is
     /// **off** — it is bound only when a port is configured here (or via the
@@ -191,6 +202,7 @@ impl Default for ApiConfig {
             http2_max_concurrent_streams: 1000,
             max_connections: 10000,
             pg_port: None,
+            internal_mux_port: None,
             mcp_port: None,
             transport: default_transport(),
             socket_dir: None,
@@ -1308,6 +1320,33 @@ mod tests {
         assert!(config.enable_arrow_flight);
         assert_eq!(config.http2_max_concurrent_streams, 1000);
         assert_eq!(config.max_connections, 10000);
+        assert_eq!(config.pg_port, None);
+        assert_eq!(config.internal_mux_port, None);
+    }
+
+    /// TD-NET-1 S1: `[api] internal_mux_port` deserializes when present and
+    /// defaults to `None` when absent (same optional-port pattern as
+    /// `pg_port`).
+    #[test]
+    fn api_internal_mux_port_parses_and_defaults_none() {
+        let mut value = serde_json::to_value(ApiConfig::default())
+            .unwrap_or_else(|e| panic!("default api config must serialize: {e}"));
+        let obj = value
+            .as_object_mut()
+            .unwrap_or_else(|| panic!("api config must serialize to a JSON object"));
+
+        obj.insert("internal_mux_port".to_string(), serde_json::json!(25679));
+        let parsed: ApiConfig = serde_json::from_value(value.clone())
+            .unwrap_or_else(|e| panic!("api config with internal_mux_port must parse: {e}"));
+        assert_eq!(parsed.internal_mux_port, Some(25679));
+
+        let obj = value
+            .as_object_mut()
+            .unwrap_or_else(|| panic!("api config must serialize to a JSON object"));
+        obj.remove("internal_mux_port");
+        let absent: ApiConfig = serde_json::from_value(value)
+            .unwrap_or_else(|e| panic!("api config without internal_mux_port must parse: {e}"));
+        assert_eq!(absent.internal_mux_port, None);
     }
 
     #[test]

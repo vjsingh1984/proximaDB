@@ -18,7 +18,8 @@
 //! MultiServer::start()
 //!     ↓ unified mode
 //! TCP mux (port 5678) → REST on 127.0.0.1:15678 (HTTP/1.1)
-//!                     → gRPC on 127.0.0.1:15679 (HTTP/2)
+//!                     → gRPC on 127.0.0.1:15679 (HTTP/2; port resolved per
+//!                       instance: config > env > unified_port+10001, TD-NET-1)
 //!     ↓ multi-port mode
 //! REST on :5678 | gRPC on :5679 | Arrow Flight on :5680 | pgwire on :5433
 //! ```
@@ -949,9 +950,23 @@ impl MultiServer {
         let internal_rest_addr: std::net::SocketAddr = "127.0.0.1:15678"
             .parse()
             .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 15678)));
-        let internal_grpc_addr: std::net::SocketAddr = "127.0.0.1:15679"
-            .parse()
-            .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 15679)));
+        // TD-NET-1 S1: the internal gRPC/Arrow-Flight upstream port is resolved
+        // per-instance (config `[api] internal_mux_port` > env
+        // `PROXIMADB_INTERNAL_MUX_PORT` > derived `unified_port + 10001`,
+        // 5678 → 15679 = the historical constant) instead of a hardcoded 15679,
+        // so co-hosted instances with distinct unified ports never forward
+        // HTTP/2 traffic into each other's internal listener. Resolved ONCE
+        // here; the internal listener bind and the multiplexer upstream below
+        // both use this same address.
+        let internal_grpc_port = resolve_internal_mux_port(
+            self.config
+                .api_config
+                .as_ref()
+                .and_then(|api| api.internal_mux_port),
+            std::env::var("PROXIMADB_INTERNAL_MUX_PORT").ok().as_deref(),
+            self.config.unified_port,
+        );
+        let internal_grpc_addr = SocketAddr::from(([127, 0, 0, 1], internal_grpc_port));
 
         let mut handles = Vec::new();
 
@@ -1149,6 +1164,24 @@ impl MultiServer {
             info!(
                 "🔗 gRPC + Arrow Flight Server starting on {} (internal)",
                 internal_grpc_addr
+            );
+
+            // TD-NET-1 S2 (fail-closed): the spawned tonic serve below detaches
+            // its bind result into a task, so a bind failure used to be
+            // log-only while the multiplexer kept forwarding HTTP/2 to whatever
+            // foreign process owned the port. Pre-flight the bind so startup
+            // fails instead of silently routing to another instance.
+            drop(
+                std::net::TcpListener::bind(internal_grpc_addr).map_err(|e| {
+                    anyhow::anyhow!(
+                        "TD-NET-1: cannot bind the internal gRPC/Arrow-Flight upstream {} for the \
+                     unified-port multiplexer ({}). The port is likely owned by another \
+                     process/instance; set [api] internal_mux_port or \
+                     PROXIMADB_INTERNAL_MUX_PORT to a free port. Refusing to start fail-open.",
+                        internal_grpc_addr,
+                        e
+                    )
+                })?,
             );
 
             let grpc_handle = tokio::spawn(async move {
@@ -1763,6 +1796,71 @@ fn build_grpc_reflection_service() -> Result<
         .register_encoded_file_descriptor_set(include_bytes!("../proto/proximadb_descriptor.bin"))
         .build_v1()
         .context("failed to build gRPC reflection service")
+}
+
+/// TD-NET-1 S1: resolve the unified-mode internal gRPC/Arrow-Flight upstream
+/// port (the loopback listener the TCP multiplexer forwards HTTP/2 to).
+///
+/// Precedence: explicit `[api] internal_mux_port` config > the
+/// `PROXIMADB_INTERNAL_MUX_PORT` env var (invalid values are warned about and
+/// ignored) > derived `unified_port + 10001` (5678 → 15679, bit-identical to
+/// the historical hardcoded constant). If the derivation would overflow `u16`,
+/// fall back to the legacy 15679.
+fn resolve_internal_mux_port(
+    configured: Option<u16>,
+    env_override: Option<&str>,
+    unified_port: u16,
+) -> u16 {
+    if let Some(port) = configured {
+        return port;
+    }
+    if let Some(raw) = env_override {
+        match raw.trim().parse::<u16>() {
+            Ok(port) => return port,
+            Err(_) => warn!(
+                "Ignoring invalid PROXIMADB_INTERNAL_MUX_PORT={raw:?} (expected a u16 port); using the derived default"
+            ),
+        }
+    }
+    u16::try_from(u32::from(unified_port) + 10001).unwrap_or(15679)
+}
+
+#[cfg(test)]
+mod internal_mux_port_tests {
+    use super::resolve_internal_mux_port;
+
+    #[test]
+    fn derived_default_matches_legacy_constant() {
+        // unified_port 5678 must yield exactly the historical 15679.
+        assert_eq!(resolve_internal_mux_port(None, None, 5678), 15679);
+        // A co-hosted instance on a different unified port gets a distinct upstream.
+        assert_eq!(resolve_internal_mux_port(None, None, 6678), 16679);
+    }
+
+    #[test]
+    fn config_beats_env_beats_derived() {
+        assert_eq!(
+            resolve_internal_mux_port(Some(25000), Some("26000"), 5678),
+            25000
+        );
+        assert_eq!(resolve_internal_mux_port(None, Some("26000"), 5678), 26000);
+    }
+
+    #[test]
+    fn invalid_env_is_ignored_with_derived_fallback() {
+        assert_eq!(
+            resolve_internal_mux_port(None, Some("not-a-port"), 5678),
+            15679
+        );
+        // Out of u16 range → invalid → derived default.
+        assert_eq!(resolve_internal_mux_port(None, Some("70000"), 5678), 15679);
+    }
+
+    #[test]
+    fn derived_overflow_falls_back_to_legacy_15679() {
+        assert_eq!(resolve_internal_mux_port(None, None, u16::MAX), 15679);
+        assert_eq!(resolve_internal_mux_port(None, None, 60000), 15679);
+    }
 }
 
 // Deferred: Re-add TTL sweeper code in proper function context if needed
