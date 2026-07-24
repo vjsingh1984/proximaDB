@@ -1695,6 +1695,15 @@ jobs:
       # PROXIMADB_OLAP_DELTA_MERGE process env between awaited queries, so they
       # must not run concurrently within one process.
       - name: Run pgwire accuracy e2e
+        env:
+          # TD-STACK-1 mitigation: the document/JSON pgwire path carries a latent
+          # ~2 MB-deep recursion that overflows tokio's default worker stacks
+          # (document_json_pgwire_e2e + events_tsbs_pgwire_e2e SIGABRT; bisect
+          # landed on a pure-function commit — a code-layout straw, not the
+          # cause). tokio workers are std threads and honor RUST_MIN_STACK when
+          # no explicit stack size is set; 16 MiB is empirically green. Remove
+          # once the recursion itself is fixed (see TD-STACK-1).
+          RUST_MIN_STACK: "16777216"
         run: |
           for test_name in \
             pgwire_fk_referential_actions_e2e \
