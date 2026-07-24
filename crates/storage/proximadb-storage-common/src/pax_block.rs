@@ -56,7 +56,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::coarse_directory::{CoarseCellEntry, CoarseDirectory, CoarseModel};
 use crate::engine_constants::{
-    DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES, DEFAULT_TARGET_BLOCK_SIZE_BYTES,
+    DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES, DEFAULT_TARGET_BLOCK_SIZE_BYTES, MAX_BLOCK_ROWS,
     MAX_TARGET_BLOCK_SIZE_BYTES,
 };
 use crate::segment_layout::{
@@ -925,7 +925,14 @@ impl PaxSegmentWriter {
         let metadata_bytes = self.current_writer.accumulated_metadata_bytes();
         let block_overhead = 1024; // header(64B) + footer(32B) + column footer — amortized
         let total = vector_bytes + metadata_bytes + block_overhead;
-        if total >= self.block_size_threshold {
+        // TD-COMPACT-2: ALSO cut on a hard row bound. The byte cut works off the
+        // modeled `per_row` estimate; when it under-counts (coalesced mode hoists
+        // vectors out of blocks → ~200 B/row modeled), a giant two-level cell
+        // would otherwise become one giant block whose cut-time stripe assembly
+        // is the untracked memory/latency spike. Cell alignment is preserved: a
+        // mid-cell cut just makes the cell span more whole blocks, which the A0
+        // directory's `d_block_begin..d_block_end` range already represents.
+        if total >= self.block_size_threshold || self.current_writer.row_count() >= MAX_BLOCK_ROWS {
             self.flush_current_block()?;
         }
         // TD-RDSTRAT-8: pad/flush at every coarse-cell boundary so blocks never
@@ -2822,6 +2829,145 @@ mod tests {
         let h1 = SegmentHeaderPrefix::parse(&v1_bytes)?;
         assert_eq!(h1.layout_version, SEG_LAYOUT_VERSION);
         assert_eq!((h1.a0_off, h1.a0_len), (0, 0));
+        Ok(())
+    }
+
+    /// TD-COMPACT-2: a two-level cell far past the hard row bound must NOT
+    /// become one giant block. The writer cuts at `MAX_BLOCK_ROWS` mid-cell;
+    /// blocks stay aligned to cell boundaries (a cell = whole D-blocks, now
+    /// possibly several); the persisted probe directory maps every cell to its
+    /// exact row/byte/block ranges; and the persisted layout round-trips every
+    /// record's id + vector.
+    #[test]
+    fn two_level_row_bound_splits_giant_cells() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        const DIM: usize = 8;
+        // One cell well past the row bound + a small trailing cell.
+        let cell_rows = vec![MAX_BLOCK_ROWS as u64 + 700, 300];
+        let n_rows = MAX_BLOCK_ROWS + 700 + 300;
+
+        let model = CoarseModel {
+            dim: DIM as u32,
+            n_comp: 1,
+            pca_mean: vec![0.0; DIM],
+            pca_components: vec![0.1; DIM],
+            centroids: vec![0.5; 2],
+            radii: vec![1.0, 1.0],
+            cell_rows: cell_rows.clone(),
+            seed: 7,
+            trained_on: n_rows as u64,
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("giant.pax");
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            // Largest allowed byte target: the byte cut alone would admit ~19k
+            // rows at the coalesced ~200 B/row model, so only the row bound can
+            // split the giant cell below.
+            Some(MAX_TARGET_BLOCK_SIZE_BYTES),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_two_level(model);
+        let vec_for = |row: usize| -> Vec<f32> {
+            (0..DIM)
+                .map(|d| ((row * 7 + d) % 13) as f32 - 6.0)
+                .collect()
+        };
+        for row in 0..n_rows {
+            let mut r = make_record(&format!("r{row:05}"), "t", 1);
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(vec_for(row)),
+                ..Default::default()
+            });
+            writer.add_record(&r)?;
+        }
+        let meta = writer.finish()?;
+        let bytes = std::fs::read(&path)?;
+
+        // (a) Every block's row count respects the bound; the giant cell split.
+        let footer = SegmentFooterIndex::locate_in_segment(&bytes)?
+            .ok_or_else(|| anyhow::anyhow!("v3 segment must carry a footer-index"))?;
+        assert_eq!(footer.row_count, n_rows as u64);
+        assert!(
+            meta.block_count >= 3,
+            "giant cell must split into multiple blocks (got {})",
+            meta.block_count
+        );
+        for (i, b) in footer.blocks.iter().enumerate() {
+            assert!(
+                (b.row_count as usize) <= MAX_BLOCK_ROWS,
+                "block {i} rows {} exceed MAX_BLOCK_ROWS {MAX_BLOCK_ROWS}",
+                b.row_count
+            );
+        }
+
+        // (b)+(d) The probe directory still maps every cell to exact row/byte
+        // extents and WHOLE-block ranges; the over-bound cell spans several.
+        let h = SegmentHeaderPrefix::parse(&bytes)?;
+        let a0 = CoarseDirectory::parse(&bytes[h.a0_off as usize..(h.a0_off + h.a0_len) as usize])?;
+        assert_eq!(a0.model.cell_rows, cell_rows);
+        let stride_a = 8 + DIM.div_ceil(8);
+        let codes_base_a =
+            h.rabitq_off as usize + rabitq_region_header_len(DIM as u32) + n_rows.div_ceil(8);
+        let codes_base_b = h.sq8_off as usize + sq8_codes_offset(n_rows);
+        let mut row = 0u64;
+        for (i, cell) in a0.cells.iter().enumerate() {
+            assert_eq!(cell.row_begin, row, "cell {i} row_begin");
+            assert_eq!(cell.row_end - cell.row_begin, cell_rows[i], "cell {i} rows");
+            assert_eq!(cell.a_off as usize, codes_base_a + row as usize * stride_a);
+            assert_eq!(cell.a_len as usize, cell_rows[i] as usize * stride_a);
+            assert_eq!(cell.b_off as usize, codes_base_b + row as usize * DIM);
+            assert_eq!(cell.b_len as usize, cell_rows[i] as usize * DIM);
+            let (d0, d1) = (cell.d_block_begin as usize, cell.d_block_end as usize);
+            assert!(d0 < d1 && d1 <= footer.blocks.len(), "cell {i} d-range");
+            let rows_before: u64 = footer.blocks[..d0].iter().map(|b| b.row_count as u64).sum();
+            let rows_in: u64 = footer.blocks[d0..d1]
+                .iter()
+                .map(|b| b.row_count as u64)
+                .sum();
+            assert_eq!(
+                rows_before, cell.row_begin,
+                "cell {i} starts on a block edge"
+            );
+            assert_eq!(rows_in, cell_rows[i], "cell {i} = whole blocks");
+            row = cell.row_end;
+        }
+        let big = &a0.cells[0];
+        assert!(
+            big.d_block_end - big.d_block_begin >= 2,
+            "the over-bound cell must span multiple whole blocks"
+        );
+
+        // (c) Round-trip: block rows preserve add (cluster) order and ids, and
+        // Region B row i is row i's vector (the overlay contract the production
+        // inverse `read_segment_records` relies on), within SQ8 tolerance.
+        let mut scanner = PaxSegmentScanner::from_bytes(bytes.clone(), ScanPredicate::default())?;
+        let recs = scanner.read_records(&[], &[], None)?;
+        assert_eq!(recs.len(), n_rows, "scanner must read every row");
+        let sq8 = proximadb_block_format::coalesced_sq8::Sq8Region::from_bytes(
+            &bytes[h.sq8_off as usize..(h.sq8_off + h.sq8_len) as usize],
+        )?;
+        for (i, rec) in recs.iter().enumerate() {
+            assert_eq!(rec.oid, format!("r{i:05}"), "row {i} id");
+            let v = sq8
+                .decode_row(i)
+                .ok_or_else(|| anyhow::anyhow!("row {i} missing from Region B"))?;
+            for (got, exp) in v.iter().zip(vec_for(i).iter()) {
+                assert!(
+                    (got - exp).abs() <= 0.05,
+                    "row {i}: SQ8 vector {got} not within 0.05 of {exp}"
+                );
+            }
+        }
         Ok(())
     }
 

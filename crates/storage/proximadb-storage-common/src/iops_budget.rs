@@ -160,13 +160,13 @@ mod tests {
 
     #[test]
     fn for_path_resolves_by_scheme() {
-        assert_eq!(IopsBudget::for_path("s3://bucket/key"), IopsBudget::CLOUD);
+        assert_eq!(IopsBudget::for_path("s3://bucket/key"), IopsBudget::S3);
         assert_eq!(
             IopsBudget::for_path("abfs://container/path"),
-            IopsBudget::CLOUD
+            IopsBudget::AZURE
         );
-        assert_eq!(IopsBudget::for_path("adls://acct/fs"), IopsBudget::CLOUD);
-        assert_eq!(IopsBudget::for_path("gs://b/o"), IopsBudget::CLOUD);
+        assert_eq!(IopsBudget::for_path("adls://acct/fs"), IopsBudget::AZURE);
+        assert_eq!(IopsBudget::for_path("gs://b/o"), IopsBudget::GCS);
         assert_eq!(IopsBudget::for_path("/var/data/seg.pax"), IopsBudget::LOCAL);
         assert_eq!(
             IopsBudget::for_path("file:///var/data/seg.pax"),
