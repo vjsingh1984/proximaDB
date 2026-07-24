@@ -16,7 +16,7 @@
 use std::sync::Mutex;
 
 use crate::Ledger;
-use crate::types::{CasError, Nanos, Policy, ReserveOutcome, Version};
+use crate::types::{CasError, Nanos, Policy, ReserveOutcome, Version, Window};
 
 /// Namespace separator between tenant and scope/key. ASCII Unit Separator — not valid in the tenant
 /// ids or scope names the gateway mints, so the composed key is unambiguous.
@@ -48,9 +48,16 @@ impl<L: Ledger> LedgerService<L> {
     }
 
     /// Configure a scope's cap + policy, isolated to `tenant`.
-    pub fn set_limit(&self, tenant: &str, scope: &str, limit: Option<u64>, policy: Policy) {
+    pub fn set_limit(
+        &self,
+        tenant: &str,
+        scope: &str,
+        limit: Option<u64>,
+        window: Window,
+        policy: Policy,
+    ) {
         self.lock()
-            .set_limit(&Self::key(tenant, scope), limit, policy);
+            .set_limit(&Self::key(tenant, scope), limit, window, policy);
     }
 
     /// Reserve a ceiling for `tenant`'s `scope`. The returned reservation/denial carries the caller's
@@ -81,14 +88,14 @@ impl<L: Ledger> LedgerService<L> {
     /// Closes the bearer-capability gap: a reservation's owning tenant is recovered from its
     /// namespaced scope (WAL-durable, so it survives a restart), so a leaked or guessed id cannot
     /// settle another tenant's lease. The lookup + settle are one locked (atomic) step.
-    pub fn settle(&self, tenant: &str, reservation_id: u64, actual: u64) -> bool {
+    pub fn settle(&self, tenant: &str, reservation_id: u64, actual: u64, now_ns: Nanos) -> bool {
         let mut ledger = self.lock();
         match ledger.reservation_scope(reservation_id) {
             // A live reservation owned by another tenant — refuse without touching it.
             Some(scope) if !Self::scope_belongs_to(&scope, tenant) => false,
             // Owned by this tenant, or unknown (already settled / reclaimed → idempotent no-op).
             _ => {
-                ledger.settle(reservation_id, actual);
+                ledger.settle(reservation_id, actual, now_ns);
                 true
             }
         }
@@ -183,11 +190,11 @@ mod tests {
     fn tenants_are_isolated_on_the_same_scope_name() {
         let s = svc();
         // Same scope name "team", different tenants → independent caps + spend.
-        s.set_limit("acme", "team", Some(100), Policy::Block);
-        s.set_limit("globex", "team", Some(100), Policy::Block);
+        s.set_limit("acme", "team", Some(100), Window::Total, Policy::Block);
+        s.set_limit("globex", "team", Some(100), Window::Total, Policy::Block);
 
         let a = admitted(s.reserve("acme", "team", 90, NOW, TTL));
-        assert!(s.settle("acme", a.id, 90));
+        assert!(s.settle("acme", a.id, 90, NOW));
         assert_eq!(s.spent("acme", "team"), 90);
         assert_eq!(
             s.spent("globex", "team"),
@@ -210,7 +217,7 @@ mod tests {
     #[test]
     fn returned_reservation_carries_the_bare_scope() {
         let s = svc();
-        s.set_limit("acme", "team", Some(100), Policy::Block);
+        s.set_limit("acme", "team", Some(100), Window::Total, Policy::Block);
         let r = admitted(s.reserve("acme", "team", 10, NOW, TTL));
         assert_eq!(
             r.scope, "team",
@@ -250,14 +257,14 @@ mod tests {
     #[test]
     fn reserve_settle_reclaim_round_trip() {
         let s = svc();
-        s.set_limit("acme", "team", Some(100), Policy::Block);
+        s.set_limit("acme", "team", Some(100), Window::Total, Policy::Block);
         let r = admitted(s.reserve("acme", "team", 80, NOW, TTL));
         assert_eq!(s.reserved("acme", "team"), 80);
         // A crashed reserver's lease is swept by expiry.
         assert_eq!(s.reclaim_expired(TTL + 1), 1);
         assert_eq!(s.reserved("acme", "team"), 0);
         // Settling the (now reclaimed) lease is a harmless no-op — unknown id, returns true.
-        assert!(s.settle("acme", r.id, 40));
+        assert!(s.settle("acme", r.id, 40, NOW));
         assert_eq!(s.spent("acme", "team"), 0);
     }
 
@@ -266,18 +273,21 @@ mod tests {
         // The bearer-capability gap, closed: a reservation id leaked/guessed by another tenant
         // cannot settle the owner's lease.
         let s = svc();
-        s.set_limit("acme", "team", Some(100), Policy::Block);
+        s.set_limit("acme", "team", Some(100), Window::Total, Policy::Block);
         let r = admitted(s.reserve("acme", "team", 50, NOW, TTL));
         // globex presents acme's reservation id — refused, and acme's lease is untouched.
-        assert!(!s.settle("globex", r.id, 50), "cross-tenant settle refused");
+        assert!(
+            !s.settle("globex", r.id, 50, NOW),
+            "cross-tenant settle refused"
+        );
         assert_eq!(s.reserved("acme", "team"), 50, "acme's lease still held");
         assert_eq!(s.spent("acme", "team"), 0);
         // The rightful owner settles fine…
-        assert!(s.settle("acme", r.id, 40));
+        assert!(s.settle("acme", r.id, 40, NOW));
         assert_eq!(s.spent("acme", "team"), 40);
         assert_eq!(s.reserved("acme", "team"), 0);
         // …and settling an unknown id is a harmless no-op (idempotent), reported as applied.
-        assert!(s.settle("acme", 99_999, 10));
+        assert!(s.settle("acme", 99_999, 10, NOW));
         assert_eq!(s.spent("acme", "team"), 40);
     }
 }

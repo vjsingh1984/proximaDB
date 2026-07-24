@@ -23,6 +23,32 @@ pub enum Policy {
     Warn,
 }
 
+/// The window over which a scope's spend accrues before it resets. Calendar-aligned in UTC.
+///
+/// `Monthly` is intentionally absent for now (it needs civil-calendar math); `Total` + `Daily` are
+/// pure integer arithmetic on the nanosecond clock, which keeps this crate dependency-free.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Window {
+    /// Never resets — a lifetime cap.
+    #[default]
+    Total,
+    /// Resets at each UTC midnight.
+    Daily,
+}
+
+/// Nanoseconds in a day.
+pub const NANOS_PER_DAY: Nanos = 86_400 * 1_000_000_000;
+
+/// The inclusive start (in ns) of the current window containing `now_ns`. Calendar-aligned in UTC
+/// (the Unix epoch is itself UTC midnight, so flooring to a day boundary *is* UTC midnight). `Total`
+/// returns 0 (all-time). `now_ns` is expected non-negative (a real wall clock).
+pub fn window_start_ns(now_ns: Nanos, window: Window) -> Nanos {
+    match window {
+        Window::Total => 0,
+        Window::Daily => (now_ns / NANOS_PER_DAY) * NANOS_PER_DAY,
+    }
+}
+
 /// A held reservation: a lease over `ceiling` units in `scope`, valid until `expires_at_ns`.
 ///
 /// `id` is opaque and assigned by the ledger; the caller settles by it or lets it expire.

@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Ledger;
 use crate::memory::InMemoryLedger;
-use crate::types::{CasError, Denied, Nanos, Policy, Reservation, ReserveOutcome, Version};
+use crate::types::{CasError, Denied, Nanos, Policy, Reservation, ReserveOutcome, Version, Window};
 
 /// When the WAL is flushed to stable storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +48,7 @@ enum LogRecord {
     SetLimit {
         scope: String,
         limit: Option<u64>,
+        window: u8,
         policy: u8,
     },
     Reserve {
@@ -59,6 +60,7 @@ enum LogRecord {
     Settle {
         id: u64,
         actual: u64,
+        settled_at_ns: Nanos,
     },
     Cas {
         key: String,
@@ -77,6 +79,19 @@ fn policy_from_u8(v: u8) -> Policy {
     match v {
         1 => Policy::Warn,
         _ => Policy::Block,
+    }
+}
+
+fn window_to_u8(w: Window) -> u8 {
+    match w {
+        Window::Total => 0,
+        Window::Daily => 1,
+    }
+}
+fn window_from_u8(v: u8) -> Window {
+    match v {
+        1 => Window::Daily,
+        _ => Window::Total,
     }
 }
 
@@ -149,17 +164,18 @@ impl DurableLedger {
 }
 
 impl Ledger for DurableLedger {
-    fn set_limit(&mut self, scope: &str, limit: Option<u64>, policy: Policy) {
+    fn set_limit(&mut self, scope: &str, limit: Option<u64>, window: Window, policy: Policy) {
         let record = LogRecord::SetLimit {
             scope: scope.to_string(),
             limit,
+            window: window_to_u8(window),
             policy: policy_to_u8(policy),
         };
         if let Err(e) = self.append(&record) {
             eprintln!("proximadb-ledger: set_limit append failed, not applied: {e}");
             return;
         }
-        self.state.set_limit(scope, limit, policy);
+        self.state.set_limit(scope, limit, window, policy);
     }
 
     fn reserve(
@@ -169,7 +185,9 @@ impl Ledger for DurableLedger {
         now_ns: Nanos,
         ttl_ns: Nanos,
     ) -> ReserveOutcome {
-        // Decide first (no mutation)…
+        // Roll the window first so the admit check sees the current window's spend (a hard cap must
+        // never be checked against stale spend), then decide (no mutation)…
+        self.state.roll(scope, now_ns);
         if let Err(denied) = self.state.check_admit(scope, ceiling) {
             return ReserveOutcome::Denied(denied);
         }
@@ -201,16 +219,17 @@ impl Ledger for DurableLedger {
         ReserveOutcome::Admitted(reservation)
     }
 
-    fn settle(&mut self, reservation_id: u64, actual: u64) {
+    fn settle(&mut self, reservation_id: u64, actual: u64, now_ns: Nanos) {
         if let Err(e) = self.append(&LogRecord::Settle {
             id: reservation_id,
             actual,
+            settled_at_ns: now_ns,
         }) {
             // Settle is idempotent/retryable: skip applying so state never runs ahead of the WAL.
             eprintln!("proximadb-ledger: settle append failed, not applied (retryable): {e}");
             return;
         }
-        self.state.settle(reservation_id, actual);
+        self.state.settle(reservation_id, actual, now_ns);
     }
 
     fn reclaim_expired(&mut self, now_ns: Nanos) -> usize {
@@ -270,8 +289,14 @@ fn apply_record(state: &mut InMemoryLedger, record: LogRecord) {
         LogRecord::SetLimit {
             scope,
             limit,
+            window,
             policy,
-        } => state.set_limit(&scope, limit, policy_from_u8(policy)),
+        } => state.set_limit(
+            &scope,
+            limit,
+            window_from_u8(window),
+            policy_from_u8(policy),
+        ),
         LogRecord::Reserve {
             id,
             scope,
@@ -283,7 +308,11 @@ fn apply_record(state: &mut InMemoryLedger, record: LogRecord) {
             ceiling,
             expires_at_ns,
         }),
-        LogRecord::Settle { id, actual } => state.settle(id, actual),
+        LogRecord::Settle {
+            id,
+            actual,
+            settled_at_ns,
+        } => state.settle(id, actual, settled_at_ns),
         LogRecord::Cas {
             key,
             version,
@@ -344,9 +373,9 @@ mod tests {
         let dir = tmp();
         {
             let mut l = open(&dir);
-            l.set_limit("g", Some(100), Policy::Block);
+            l.set_limit("g", Some(100), Window::Total, Policy::Block);
             let r = admit(&mut l, "g", 50);
-            l.settle(r.id, 40);
+            l.settle(r.id, 40, NOW);
             assert_eq!(l.spent("g"), 40);
         } // dropped — simulate a restart
         let reopened = open(&dir);
@@ -361,7 +390,7 @@ mod tests {
         let dir = tmp();
         let id = {
             let mut l = open(&dir);
-            l.set_limit("g", Some(100), Policy::Block);
+            l.set_limit("g", Some(100), Window::Total, Policy::Block);
             admit(&mut l, "g", 80).id // reserved but NOT settled before the "crash"
         };
         let mut reopened = open(&dir);
@@ -377,7 +406,7 @@ mod tests {
             ReserveOutcome::Denied(_)
         ));
         // …and the recovered lease settles by its original id.
-        reopened.settle(id, 55);
+        reopened.settle(id, 55, NOW);
         assert_eq!(reopened.spent("g"), 55);
         assert_eq!(reopened.reserved("g"), 0);
     }
@@ -388,13 +417,13 @@ mod tests {
         let dir = tmp();
         let id = {
             let mut l = open(&dir);
-            l.set_limit("g", Some(100), Policy::Block);
+            l.set_limit("g", Some(100), Window::Total, Policy::Block);
             let r = admit(&mut l, "g", 50);
-            l.settle(r.id, 40);
+            l.settle(r.id, 40, NOW);
             r.id
         };
         let mut reopened = open(&dir);
-        reopened.settle(id, 999); // replayed settle on an already-settled (now absent) lease
+        reopened.settle(id, 999, NOW); // replayed settle on an already-settled (now absent) lease
         assert_eq!(reopened.spent("g"), 40, "replayed settle is a no-op");
     }
 
@@ -419,7 +448,7 @@ mod tests {
         let dir = tmp();
         {
             let mut l = open(&dir);
-            l.set_limit("g", Some(100), Policy::Block);
+            l.set_limit("g", Some(100), Window::Total, Policy::Block);
             let _crashed = admit(&mut l, "g", 80);
         }
         let mut reopened = open(&dir);
@@ -437,9 +466,9 @@ mod tests {
         let path = dir.path().join("ledger.wal");
         {
             let mut l = DurableLedger::open(&path, SyncPolicy::PerOp).unwrap();
-            l.set_limit("g", Some(100), Policy::Block);
+            l.set_limit("g", Some(100), Window::Total, Policy::Block);
             let r = admit(&mut l, "g", 50);
-            l.settle(r.id, 40);
+            l.settle(r.id, 40, NOW);
         }
         // Append 6 bytes of garbage — a plausible torn frame header/body.
         {
@@ -458,9 +487,9 @@ mod tests {
         let path = dir.path().join("ledger.wal");
         {
             let mut l = DurableLedger::open(&path, SyncPolicy::Deferred).unwrap();
-            l.set_limit("g", Some(100), Policy::Block);
+            l.set_limit("g", Some(100), Window::Total, Policy::Block);
             let r = admit(&mut l, "g", 30);
-            l.settle(r.id, 30);
+            l.settle(r.id, 30, NOW);
             l.flush().unwrap(); // explicit checkpoint under the deferred (throughput) policy
         }
         let reopened = DurableLedger::open(&path, SyncPolicy::Deferred).unwrap();
@@ -472,13 +501,13 @@ mod tests {
         // The C1 invariant holds identically on the durable backend (same decision seam).
         let dir = tmp();
         let mut l = open(&dir);
-        l.set_limit("g", Some(100), Policy::Block);
+        l.set_limit("g", Some(100), Window::Total, Policy::Block);
         let r = admit(&mut l, "g", 100);
         assert!(matches!(
             l.reserve("g", 1, NOW, TTL),
             ReserveOutcome::Denied(_)
         ));
-        l.settle(r.id, 40);
+        l.settle(r.id, 40, NOW);
         assert!(l.spent("g") + l.reserved("g") <= 100);
     }
 
@@ -489,7 +518,7 @@ mod tests {
         let path = dir.path().join("ledger.wal");
         {
             let mut l = DurableLedger::open(&path, SyncPolicy::PerOp).unwrap();
-            l.set_limit("s", Some(1), Policy::Warn);
+            l.set_limit("s", Some(1), Window::Total, Policy::Warn);
         }
         let mut f = File::open(&path).unwrap();
         f.rewind().unwrap();
@@ -505,5 +534,30 @@ mod tests {
             u32::from_le_bytes(crc_buf),
             "framed crc matches payload"
         );
+    }
+
+    #[test]
+    fn daily_window_config_and_spend_survive_reopen() {
+        const DAY: Nanos = 86_400_000_000_000;
+        let dir = tmp();
+        {
+            let mut l = open(&dir);
+            l.set_limit("g", Some(100), Window::Daily, Policy::Block);
+            let ReserveOutcome::Admitted(r) = l.reserve("g", 80, 0, TTL) else {
+                panic!("fits on day 0");
+            };
+            l.settle(r.id, 80, 0); // 80 spent on day 0
+        }
+        let mut reopened = open(&dir);
+        // Day 0 spend + the Daily window config are recovered: 80 already spent, so 80 more is denied.
+        assert!(matches!(
+            reopened.reserve("g", 80, 0, TTL),
+            ReserveOutcome::Denied(_)
+        ));
+        // Day 1: the recovered Daily window rolls → spend resets → 80 fits (a Total cap would deny).
+        assert!(matches!(
+            reopened.reserve("g", 80, DAY, TTL),
+            ReserveOutcome::Admitted(_)
+        ));
     }
 }
