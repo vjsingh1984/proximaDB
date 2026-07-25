@@ -9,7 +9,7 @@ toc::[]
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Draft / not started** (2026-07-23). Design gate only; no implementation yet. Ships **Experimental**, feature-gated (`experimental-ledger`), and graduates per `docs/SUPPORTED_SURFACE.adoc` once the conformance suite is green with filed benchmark evidence.
+| Status | **S1–S3 + v1 gaps shipped** (updated 2026-07-24). Correctness core (#1170), durable WAL (#1171), service port (#1174), gRPC proto+service (#1177), server registration (#1178), tenant-verified settle (#1182), background TTL sweeper (#1183), Total/Daily windows (#1185). Ships **Experimental**, feature-gated (`experimental-ledger`). **Amended 2026-07-24 (ADR-071):** durability is a **dedicated** ledger WAL, *not* the shared record WAL (queue-modality precedent) — see §Synthesis + §stacking table. Remaining: HA (S4), Monthly window, reflection descriptor (deferred).
 | Implements | link:../../12-design/adr/ADR-071-transactional-ledger-modality.adoc[ADR-071] / link:../../rfcs/0001-transactional-ledger-modality.adoc[RFC-0001]
 | Acceptance bar | the Sandhi `TD-0007` `EnforcementLedger` conformance suite (C1–C6)
 |===
@@ -46,9 +46,11 @@ ProximaDB's answer by mapping their lessons onto the substrate we already have (
 |===
 
 **Synthesis (the decision, ADR-071 §3).** The ledger is a **memtable-authoritative counter**
-(memcache/memsql read/write latency) made durable by an **append to the ADR-069 local-disk WAL**
-(sqlite-class durability, flat-cost, sub-ms fsync) with a **configurable sync policy** (the redis
-knob), reclaimed by a **timed TTL sweeper** (the memcache lease idea, made durable). Group-commit
+(memcache/memsql read/write latency) made durable by an **append to the ledger's dedicated
+ADR-069-style local-disk WAL** (sqlite-class durability, flat-cost, sub-ms fsync; *not* the shared
+record WAL — divergent access patterns, per the queue-modality precedent, amended 2026-07-24) with a
+**configurable sync policy** (the redis knob), reclaimed by a **timed TTL sweeper** (the memcache
+lease idea, made durable). Group-commit
 batches concurrent appends to amortize fsync. Crucially, **none of this is a new engine** — it is the
 existing `RecordStore::write_mutations` → `TableWalAppender::append_operations` → memtable path
 (`src/services/record_store.rs:1848`, `src/services/canonical_wal.rs:132`) with one new operation kind.
@@ -60,7 +62,7 @@ ADR-071 §2. The modality composes existing machinery; each row is cost *not* re
 [cols="2,2,2", options="header"]
 |===
 | Shared component (file) | Reused by the ledger for | Economic / coherence benefit
-| ADR-069 local-disk WAL (`canonical_wal.rs`) | per-op durability | no new durability path; flat-cost, sub-ms fsync, single-writer already assumed
+| ADR-069 local-disk WAL *pattern* — a **dedicated** ledger log, not `canonical_wal.rs` | per-op durability | reuses the ADR-069 *pattern* (flat-cost, sub-ms fsync), not the shared record log — divergent access patterns (queue-modality precedent, amended 2026-07-24)
 | memtable / partition (`src/storage/memtable/`) | the authoritative counter + live leases | O(1) read/write; restart via WAL replay — no bespoke persistence
 | partition-lease single-writer, CAS-fenced (`src/cluster/partition_lease.rs`) | HA + linearizable-per-scope | no per-op consensus; owner failover for free
 | `TenantContext` + `DrPathBuilder` | per-scope isolation & billing | fail-closed multi-tenancy at no extra cost
