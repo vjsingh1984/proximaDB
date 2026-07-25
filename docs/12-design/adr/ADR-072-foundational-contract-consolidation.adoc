@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Proposed — P3 research-calibrated** (2026-07-24). Formalizes link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]; build plan in link:../../10-quality/td/TD-FOUNDATION-1-modality-consolidation.adoc[TD-FOUNDATION-1]. Additive + feature-gated; `default` behavior unchanged until each modality opts in. **P2: D3/D5 amended + D9/D10 added after a three-model adversarial review (Kimi, GLM-5.2, DeepSeek) reconciled against the code. P3: D11/D12 added + D3/D5/D1 refined after calibrating against 10 research papers. P4: D13 added — per-modality calibration (columnar/PAX substrate, per-modality identity, vector-RLS, graph-address WAL) from 5 vector/graph/field-report papers + TS systems. See _Design-gate revision (P3)_ and _Research bibliography_.**
+| Status | **Proposed — P3 research-calibrated** (2026-07-24). Formalizes link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]; build plan in link:../../10-quality/td/TD-FOUNDATION-1-modality-consolidation.adoc[TD-FOUNDATION-1]. Additive + feature-gated; `default` behavior unchanged until each modality opts in. **P2: D3/D5 amended + D9/D10 added after a three-model adversarial review (Kimi, GLM-5.2, DeepSeek) reconciled against the code. P3: D11/D12 added + D3/D5/D1 refined after calibrating against 10 research papers. P4: D13 added — per-modality calibration (columnar/PAX substrate, per-modality identity, vector-RLS, graph-address WAL) from 5 vector/graph/field-report papers + TS systems. P5: D14 added — delete representation is tier-split (MVCC visibility model + deletion vectors in the immutable cold tier). See _Design-gate revision (P3)_ and _Research bibliography_.**
 | Decider | Vijaykumar Singh (2026-07-24)
 | Date | 2026-07-24
 | Relates to | link:ADR-039-olap-engine-boundary-swappable-physical-backend.adoc[ADR-039] (DataFusion swappable behind the read IR — the compute half of the storage⊥compute decoupling), link:ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069] (local-disk WAL substrate), link:ADR-071-transactional-ledger-modality.adoc[ADR-071] (ledger dedicated WAL — the "divergent access ⇒ own impl behind the contract" precedent), link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (co-design spine).
@@ -195,7 +195,9 @@ retry-vs-conflict — Cornus `LogOnce` returns the settled state <<biblio-cornus
 **capability-typed** — each impl **declares its atomic scope/granularity** (ScalarDB's *Atomicity Unit*
 <<biblio-scalardb>>; CCaaS's row-vs-txn granularity leak <<biblio-ccaas>>), not a boolean `supports_cas`.
 Non-unique secondary indexes are **blind-writes keyed by the PK** (no conflict check); only `UNIQUE`
-takes the coordinated path (DSQL <<biblio-dsql>>).
+takes the coordinated path (DSQL <<biblio-dsql>>). _(Refined P5 — D14: MVCC here is the *visibility /
+uniqueness* model; its *physical* delete representation is tier-split — deletion vectors in the immutable
+cold tier.)_
 
 **D12 — Metamodel: identity is family-parameterized, graph edges are first-class, logical splits from
 physical.** (Refines D1.) U-Schema <<biblio-uschema>> — the most complete unified metamodel in the
@@ -256,6 +258,30 @@ TS systems) confirm D12 with primary sources and add one architectural refinemen
   in scope. Vector/TS-as-first-class-modalities have no field-consensus cover — justified here on the
   engineering evidence above.
 
+**D14 — Delete representation is tier-split: MVCC model everywhere, deletion vectors in the immutable
+cold tier.** (P5 refinement of D11/D13.) MVCC (D11) is the *visibility / uniqueness / snapshot-isolation*
+**model** — it answers "is key K live at snapshot T?" and is what uniqueness enforcement needs; it is
+**not** a physical delete encoding. Its physical realization is split by tier:
+
+* **Hot / local-WAL (mutable):** row-level MVCC — versioned rows + tombstones, resolved in memory / WAL.
+  Fast point updates, uniqueness checks, snapshot isolation.
+* **Cold / columnar-PAX on object store (immutable):** **deletion vectors / merge-on-read** — a compact
+  roaring-bitmap of deleted row positions per data object, applied at scan time (Iceberg-v3 Puffin
+  <<biblio-icebergdv>> / Delta Lake <<biblio-deltadv>>). You **cannot mutate an immutable object**, so
+  copy-on-write would rewrite whole files; a deletion vector marks rows dead in O(1) and is purged at
+  compaction. A CoW rewrite is the fallback only for read-heavy files.
+
+The **bridge:** a hot-tier MVCC tombstone (D11) **materializes as a deletion-vector entry** on flush to
+the cold tier; DV-marked rows are purged at compaction **behind the same oldest-active-reader watermark**
+D11 uses. So a deletion vector is *how D11's append-only tombstone + watermark-GC is realized on immutable
+storage* — a refinement, not a competitor.
+
+**Load-bearing caveat:** a deletion vector **encodes deletes but does not enforce uniqueness** — it cannot
+answer "is PK K currently live across all base files + their DVs?" That answer stays with the MVCC
+visibility model + the durable `ConditionalKeyStore` index (D3/D11). DV is a storage optimization *under*
+the uniqueness layer, never instead of it. Build split: MVCC visibility in **F1d** (hot); deletion
+vectors / merge-on-read in **F3v** (cold, parallel — not on the critical path).
+
 == Research bibliography
 
 Full-text briefs and section citations live in RFC-0002 §_Research calibration_. arXiv links:
@@ -276,6 +302,8 @@ Full-text briefs and section citations live in RFC-0002 §_Research calibration_
 * [[biblio-vecpolicy]] **Policy-aware Vector Search** — Fine-Grained Access Control. arXiv:2606.19803. https://arxiv.org/abs/2606.19803
 * [[biblio-pgvector]] **Filter-Agnostic Vector Search on a PostgreSQL Database** (SIGMOD 2026). arXiv:2603.23710. https://arxiv.org/abs/2603.23710
 * Time-series identity/storage calibrated against InfluxDB/IOx, Prometheus, TimescaleDB (systems, no single arXiv anchor — corpus-thin axis).
+* [[biblio-icebergdv]] **Apache Iceberg v3** — deletion vectors (Puffin blob, roaring bitmap; merge-on-read). https://iceberg.apache.org/spec/#deletion-vectors
+* [[biblio-deltadv]] **Delta Lake** — deletion vectors / merge-on-read. https://docs.delta.io/latest/delta-deletion-vectors.html
 
 == Consequences
 

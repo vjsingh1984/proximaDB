@@ -9,7 +9,7 @@ toc::[]
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Draft / design gate — P4 research-calibrated** (2026-07-24). No implementation yet. Additive + feature-gated; graduates per `docs/SUPPORTED_SURFACE.adoc` with filed benchmark evidence. Revised after the three-model review reconciliation (P2), calibration against 10 research papers (P3), and per-modality vector/graph/TS calibration (P4, D13) — see link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072 §Design-gate revision (P2)/(P3)] and RFC-0002 §_Research calibration_ / §_Modality calibration_.
+| Status | **Draft / design gate — P5 research-calibrated** (2026-07-24). No implementation yet. Additive + feature-gated; graduates per `docs/SUPPORTED_SURFACE.adoc` with filed benchmark evidence. Revised after the three-model review reconciliation (P2), calibration against 10 research papers (P3), per-modality vector/graph/TS calibration (P4, D13), and tier-split delete representation (P5, D14 — MVCC + deletion vectors) — see link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072 §Design-gate revision] and RFC-0002 §_Research calibration_ / §_Modality calibration_.
 | Implements | link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072] / link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]
 | Acceptance bar | the composite-natural-PK MVP passes **fenced** atomic-uniqueness under concurrency + serverless restart (exactly-one winner, idempotent retry distinguished from real conflict); PK-`UPDATE`/`DELETE`-reclaim leaves no orphaned slot; the typed-identity codec passes collision / order-preserving / NULL property tests; no modality regresses; reclaimed-footprint/latency evidence filed
 |===
@@ -80,6 +80,11 @@ single-writer + CRC-framed torn-tail-tolerant replay) is the reference. Extract 
     (resolved by `version ≤ snapshot`), reclaimed behind an oldest-active-reader watermark — it never
     delete-then-reinserts a durable slot. This dissolves the reclaim race and largely subsumes the
     explicit fence into MVCC ordering (cMVBT; unanimous with BatchWeave/DSQL — ADR-072 §P3).
+    **Tier-split physical delete (D14):** MVCC is the *visibility/uniqueness* model; its physical delete
+    is row-level MVCC in the hot/local-WAL tier and **deletion vectors / merge-on-read** in the immutable
+    cold columnar tier (a hot tombstone flushes to a DV, purged at compaction behind the same watermark).
+    A DV encodes deletes but does **not** enforce uniqueness — that stays with MVCC + this index. Build
+    split: hot MVCC = F1d; cold deletion vectors = F3v.
   * **Capability-typed scope:** each impl *declares* its atomic scope/granularity (ScalarDB Atomicity
     Unit; not a boolean), so callers never assume uniform atomicity.
 - **Two impls behind it (ADR-072 D4/D5 — revised):**
@@ -136,8 +141,9 @@ the storage layer**, serverless-capable — replacing the op-lock crutch.
 | *F0* | **Typed composite `Identity` codec** (ADR-072 D9) — replace `oid: String` + `encode_primary_key_tuple` string-join with a length-delimited, order-preserving, NULL-explicit, type-tagged, tenant-scoped key; `oid`/`local_id` derive from it. Property-tested. Foundational prerequisite for F1.
 | *F1* | Extract the **fenced** `ConditionalKeyStore` + the **generation-fenced local-WAL impl** (default) and the object-store escape-hatch impl; ledger CAS re-expressed as a consumer (proves the shared primitive, fence preserved).
 | *F2* | **MVP:** composite-natural-PK uniqueness on the relational insert path via F0/F1 (row-keyed-by-PK); op-lock **retained** (secondary UNIQUE/FK stay in it); `oltp-integrity` feature.
-| *F3* | Re-express ledger/queue/TS dedicated WALs as impls of the WAL contract (stop off-contract silos); siloed modalities consume the shared tiering contract instead of their own tiers.
-| *F4* | Finish document's canonical-store migration; onboard vector reads-side where the shared scan suffices (keep ANN as an extension operator).
+| *F3* | Re-express ledger/queue/TS dedicated WALs as impls of the WAL contract (stop off-contract silos); siloed modalities consume the shared tiering contract instead of their own tiers; standardize the record-store substrate on columnar/PAX (D13).
+| *F3v* | **Deletion vectors / merge-on-read (D14)** — cold-tier physical delete for immutable columnar objects (roaring-bitmap DV per data file, Iceberg-v3/Delta style); hot-tier MVCC tombstone → DV on flush; DV-purge at compaction behind the reader watermark; CoW fallback for read-heavy files. Parallel to the critical path. Depends on F1d + F3.
+| *F4* | Finish document's canonical-store migration; onboard vector reads-side where the shared scan suffices (keep ANN as an extension operator). Depends on F3v (cold-tier delete path).
 | *F5* | FK / referential integrity (phase 2, `get` on `ConditionalKeyStore`); then HTAP — native compute (Volcano/DataFusion) TPC-H over atomically-consistent data.
 |===
 
