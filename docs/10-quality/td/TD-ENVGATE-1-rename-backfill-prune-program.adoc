@@ -1,0 +1,49 @@
+= TD-ENVGATE-1: env-gate rename/backfill/prune program (registry-governed, phased — NOT a mass rename)
+:status: S1 shipped (2026-07-25); S2 on-touch; S3 scheduled per-area
+:filed: 2026-07-25
+:priority: P2 (cognitive load / operational safety)
+
+== Decision: why NOT one rename PR
+
+221 shipped `PROXIMADB_*` names are operational API (deploy scripts, CI,
+ledger `bench_command`s, cross-session harnesses, runbooks). Registry rule 5
+makes every rename a permanent alias, so a mass rename yields 221 aliases +
+221 new names — MORE catalog, not less. It is also the maximum-conflict PR
+across concurrent sessions (env reads touch everything; SOLID mandate d).
+Confusion concentrates in near-miss PAIRS and undocumented defaults; those
+are attacked surgically.
+
+== S1 (shipped): alias-aware helper + the canonical offender pair
+
+`env_gate_on(name, legacy_alias)` (block_cluster.rs) — semantic name wins,
+legacy alias honored forever. Renamed with aliases:
+
+- `PROXIMADB_PAX_WRITE_A0_TRAIN` (alias `PROXIMADB_IVF2`) — WRITE: train A0.
+- `PROXIMADB_PAX_READ_COARSE_PROBE` (alias `PROXIMADB_IVF2_PROBE`) — READ:
+  probe via A0.
+
+== S2 (continuous, guard-enforced): documentation backfill on-touch
+
+Any PR that touches code reading a `TODO`-semantics gate MUST complete its
+registry row (semantic, default+rationale, owner, tier). The
+`check_env_gates.py` guard already blocks NEW unregistered names; reviewers
+enforce the backfill-on-touch rule using the registry's TODO markers as the
+worklist. Additional near-miss pairs found during backfill get the S1
+rename-with-alias treatment (batched per-area, never cross-cutting).
+
+== S3 (scheduled): prune after experiments conclude
+
+Eval/diagnostic gates (`TRACE_*`, `COUNT_FS_IO` variants, bench-only knobs)
+and superseded opt-ins are DELETED per-area once their experiment/TD closes,
+each deletion justified by: (a) grep across repo + CI workflows + ledger
+commands showing no live consumer, (b) the owning TD/ADR marked resolved.
+Registry rows move to a "Retired" section (names stay reserved — never
+repurpose). First candidates: gates owned by closed TDs whose evidence
+landed in BENCHMARK_EVIDENCE.toml.
+
+== Related
+
+`docs/12-design/ENV_GATE_REGISTRY.adoc` (rules + catalog),
+`scripts/check_env_gates.py` (the chokepoint), mandate #8 (default-OFF
+opt-ins — the generator of gates; the registry is its governance
+counterweight).

@@ -472,15 +472,24 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
 /// shipped `IVF2` name (the successor IVF layout), though rev 3 dropped the
 /// second `sqrt(N)` level the name originally implied.
 pub fn ivf_probe_enabled() -> bool {
-    matches!(
-        std::env::var("PROXIMADB_IVF2")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-            .map(|v| v.to_ascii_lowercase())
-            .as_deref(),
-        Some("1") | Some("true") | Some("on") | Some("yes")
-    )
+    // ENV_GATE_REGISTRY rule 2: semantic name PROXIMADB_PAX_WRITE_A0_TRAIN
+    // (this is the WRITE half: compaction trains + emits the A0 directory);
+    // the shipped PROXIMADB_IVF2 stays honored forever as its alias.
+    env_gate_on("PROXIMADB_PAX_WRITE_A0_TRAIN", "PROXIMADB_IVF2")
+}
+
+/// Alias-aware boolean gate read: the semantic name wins, the legacy alias
+/// is honored (operational API — never dies), and truthy = `1|true|on|yes`.
+pub(crate) fn env_gate_on(name: &str, legacy_alias: &str) -> bool {
+    let read = |k: &str| {
+        std::env::var(k).ok().map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            )
+        })
+    };
+    read(name).or_else(|| read(legacy_alias)).unwrap_or(false)
 }
 
 /// The persisted IVF probe directory compaction plan (rev 3): the physical row
