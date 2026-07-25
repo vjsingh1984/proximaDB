@@ -51,7 +51,17 @@ fn resolve_search_parallelism(config_value: u16) -> u16 {
     {
         return resolve_parallel_degree(n);
     }
-    resolve_parallel_degree(config_value)
+    let base = resolve_parallel_degree(config_value);
+    // S2b: when auto (config_value == 0), divide by in-flight queries so
+    // concurrent searches don't oversubscribe. Explicit n > 0 is honored.
+    if config_value == 0 {
+        adaptive_degree(
+            base,
+            IN_FLIGHT_SEARCHES.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    } else {
+        base
+    }
 }
 
 fn resolve_parallel_degree(requested: u16) -> u16 {
@@ -66,6 +76,32 @@ fn resolve_parallel_degree(requested: u16) -> u16 {
         _ => requested.min(ceiling).max(1), // clamp to [1, 2×cores]
     }
 }
+// TD-SEARCH-2 S2b: process-global count of concurrent searches. The auto
+// parallel degree divides by this (cores/2 / in_flight) so concurrent queries
+// don't oversubscribe. Explicit config/env values bypass the adaptive cap.
+static IN_FLIGHT_SEARCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// S2b: adaptive degree formula - pure for unit-testing. Divides base by the
+/// in-flight count, floored at 1.
+fn adaptive_degree(base: u16, in_flight: usize) -> u16 {
+    (base / (in_flight.max(1) as u16)).max(1)
+}
+
+/// S2b: RAII guard - increments on acquire, decrements on drop. Lives for the
+/// search scope so every exit path (return, ?, unwind) decrements correctly.
+struct InFlightSearchGuard;
+impl InFlightSearchGuard {
+    fn acquire() -> Self {
+        IN_FLIGHT_SEARCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self
+    }
+}
+impl Drop for InFlightSearchGuard {
+    fn drop(&mut self) {
+        IN_FLIGHT_SEARCHES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 use std::collections::HashMap;
 use tracing::{debug, info, trace, warn}; // TD-SEARCH-2: concurrent inter-file scan
 
@@ -1758,6 +1794,7 @@ impl SstEngine {
         ctx: &StorageQueryContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let _compute_guard = ComputeMsGuard::new("sst");
+        let _in_flight_guard = InFlightSearchGuard::acquire(); // S2b: adaptive degree
 
         if let Some(orch) = self.orchestrator() {
             (**orch).pattern_tracker().track_access_async(
@@ -2363,6 +2400,17 @@ mod tests {
     use proximadb_data_model::ProximaValue;
     use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use std::sync::Arc;
+
+    /// TD-SEARCH-2 S2b: the adaptive degree formula divides the base degree
+    /// by the in-flight query count, floored at 1 (never 0).
+    #[test]
+    fn s2b_adaptive_degree_divides_by_in_flight() {
+        assert_eq!(adaptive_degree(4, 1), 4, "1 in-flight: full degree");
+        assert_eq!(adaptive_degree(4, 2), 2, "2 in-flight: halved");
+        assert_eq!(adaptive_degree(4, 4), 1, "4 in-flight: quartered");
+        assert_eq!(adaptive_degree(4, 8), 1, "8 in-flight: floored at 1");
+        assert_eq!(adaptive_degree(4, 0), 4, "0 in-flight: treated as 1");
+    }
 
     /// TD-SEARCH-2 S2: multi-core (`tokio::spawn`) inter-file search is
     /// recall-neutral vs sequential. Flushes 3 batches → 3 files (no compaction),
