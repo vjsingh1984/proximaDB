@@ -279,6 +279,13 @@ pub struct IoTrace {
     /// join key for the future warehouse header↔satellite tables. `None` until
     /// stamped (e.g. a raw `IoTrace::new()` outside `instrument`).
     query_id: Mutex<Option<String>>,
+    /// TD-CACHE-3 S1: the requesting tenant, stamped at `instrument()` scope
+    /// entry. Ambient carrier for engine-side per-tenant consumers (survivor
+    /// cache fair-share keys, billing labels) — the same task-local scope that
+    /// already wraps every instrumented request, so no per-call threading.
+    /// Absent outside an instrumented scope (or across un-propagated spawns —
+    /// the same constraint all io_trace metering already has).
+    tenant_id: Mutex<Option<String>>,
 }
 
 /// Neutral primitive tuple carrying one operator's metered actuals into
@@ -318,6 +325,19 @@ impl IoTrace {
     /// Stamp the stable per-query id (TD-TRACE-2). Set once at `instrument()` entry.
     pub fn set_query_id(&self, id: String) {
         *self.query_id.lock().unwrap_or_else(|p| p.into_inner()) = Some(id);
+    }
+
+    /// Stamp the requesting tenant for this scope (TD-CACHE-3 S1).
+    pub fn set_tenant(&self, tenant: Option<String>) {
+        *self.tenant_id.lock().unwrap_or_else(|p| p.into_inner()) = tenant;
+    }
+
+    /// The stamped tenant, if any.
+    pub fn tenant(&self) -> Option<String> {
+        self.tenant_id
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// The stamped per-query id, if any.
@@ -1275,6 +1295,14 @@ pub async fn scope<F: std::future::Future>(future: F) -> F::Output {
 /// snapshot as a [`TARGET`] event labelled by `tenant_id`/`route`. This is the
 /// one call a request handler adds at the query boundary — co-locate it with
 /// the existing `predicate_diagnostics::scope`.
+/// TD-CACHE-3 S1: the ambient tenant of the current instrumented request
+/// scope, if any. Engine-side per-tenant consumers (survivor-cache fair-share
+/// keys) read this instead of threading tenant through every search
+/// signature. `None` outside a scope — callers must fall back gracefully.
+pub fn current_tenant() -> Option<String> {
+    IO_TRACE.try_with(|t| t.tenant()).ok().flatten()
+}
+
 pub async fn instrument<F>(
     tenant_id: Option<String>,
     route: impl Into<String>,
@@ -1290,6 +1318,9 @@ where
             // trace sink can identify (and later join) every query's record. One
             // UUID + one lock set per query — negligible, and off any row loop.
             let _ = IO_TRACE.try_with(|t| t.set_query_id(uuid::Uuid::new_v4().to_string()));
+            // TD-CACHE-3 S1: stamp the tenant into the scope so engine-side
+            // consumers (per-tenant cache keys) can read it ambiently.
+            let _ = IO_TRACE.try_with(|t| t.set_tenant(tenant_id.clone()));
             let out = future.await;
             // Still inside the scope: read and emit before the binding drops.
             if let Ok((snap, stamped_route)) = IO_TRACE.try_with(|t| (t.snapshot(), t.route())) {

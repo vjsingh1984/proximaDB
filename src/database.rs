@@ -805,6 +805,87 @@ impl ProximaDB {
                 })?;
         }
 
+        // TD-CACHE-1 S2: background restart warming — replay per-tenant
+        // warm-set manifests (demand-proven hot ranges from the previous
+        // instance) + control-invariants prefill for the referenced segments.
+        // Background task: boot latency unaffected; tenants without manifests
+        // cost one negative read each. Gated by PROXIMADB_CACHE_PREFILL.
+        {
+            let base_url = self._config.storage.storage_urls().into_iter().next();
+            if let Some(base_url) = base_url {
+                tokio::spawn(async move {
+                    let factory = match crate::storage::persistence::filesystem::FilesystemFactory::create_default().await {
+                        Ok(f) => std::sync::Arc::new(f),
+                        Err(e) => {
+                            tracing::warn!("cache warming skipped (fs init): {e}");
+                            return;
+                        }
+                    };
+                    // Small grace so engine arming (which registers the cache
+                    // handles) has completed before replay looks them up.
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    // Tenants = catalog-tagged tenant ids ∪ the single-tenant
+                    // default — manifests are keyed by the REQUEST tenant, which
+                    // is "default" for untagged/single-tenant deployments.
+                    let mut tenant_set: std::collections::HashSet<String> =
+                        crate::storage::persistence::write_ahead_log::list_collections_from_catalog()
+                            .await
+                            .iter()
+                            .filter_map(proximadb_tenant::tenant_id_of)
+                            .collect();
+                    tenant_set.insert("default".to_string());
+                    let tenants: Vec<String> = tenant_set.into_iter().collect();
+                    crate::storage::engines::sst::warming::boot_warm(factory, base_url, tenants)
+                        .await;
+                });
+            }
+        }
+
+        // TD-CACHE-1 S4: eviction-notice fast-drain — opt-in IMDS watch
+        // (`PROXIMADB_EVICTION_WATCH=azure|aws|gcp`). On the Spot notice
+        // (which precedes SIGTERM and may be followed by a hard kill),
+        // persist the warm manifests and flush the memtable early.
+        if let Ok(provider) = std::env::var("PROXIMADB_EVICTION_WATCH") {
+            let provider = provider.trim().to_ascii_lowercase();
+            if !provider.is_empty() && provider != "0" && provider != "off" {
+                let base_url = self._config.storage.storage_urls().into_iter().next();
+                if let Some(base_url) = base_url {
+                    let storage = self.storage.clone();
+                    tokio::spawn(async move {
+                        let factory = match crate::storage::persistence::filesystem::FilesystemFactory::create_default().await {
+                            Ok(f) => std::sync::Arc::new(f),
+                            Err(e) => {
+                                tracing::warn!("eviction watch skipped (fs init): {e}");
+                                return;
+                            }
+                        };
+                        let flush: std::sync::Arc<
+                            dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync,
+                        > = std::sync::Arc::new(move || {
+                            let storage = storage.clone();
+                            Box::pin(async move {
+                                let engine = storage.read().await;
+                                match engine.flush_memtable_to_storage().await {
+                                    Ok(r) => tracing::info!(
+                                        collections = r.collections_flushed,
+                                        vectors = r.total_vectors_flushed,
+                                        "fast-drain memtable flush complete"
+                                    ),
+                                    Err(e) => {
+                                        tracing::warn!("fast-drain memtable flush failed: {e}")
+                                    }
+                                }
+                            })
+                        });
+                        crate::storage::engines::sst::warming::eviction_watch(
+                            provider, factory, base_url, flush,
+                        )
+                        .await;
+                    });
+                }
+            }
+        }
+
         // Step 5: Initialize RL Query Planner (if enabled)
         tracing::info!("🎯 ProximaDB::start - Step 5: Initializing RL Query Planner...");
         self.init_rl_planner().await?;
@@ -891,6 +972,38 @@ impl ProximaDB {
                 Ok(Ok(())) => tracing::debug!("Graph WAL flush complete"),
                 Ok(Err(e)) => tracing::warn!("Graph WAL flush error: {}", e),
                 Err(_) => tracing::warn!("Graph WAL flush timeout - forcing continuation"),
+            }
+        }
+
+        // TD-CACHE-1 S2: persist per-tenant warm-set manifests so the next
+        // boot (Spot replacement) replays the measured hot set instead of
+        // paying the cold herd. Best-effort with a hard timeout — shutdown
+        // never blocks on the object store.
+        {
+            let base_url = self._config.storage.storage_urls().into_iter().next();
+            if let Some(base_url) = base_url {
+                match crate::storage::persistence::filesystem::FilesystemFactory::create_default()
+                    .await
+                {
+                    Ok(factory) => {
+                        let factory = std::sync::Arc::new(factory);
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(10),
+                            crate::storage::engines::sst::warming::emit_warm_manifests(
+                                &factory, &base_url,
+                            ),
+                        )
+                        .await
+                        {
+                            Ok(n) if n > 0 => {
+                                tracing::info!("🔥 {n} warm manifest(s) persisted for next boot")
+                            }
+                            Ok(_) => {}
+                            Err(_) => tracing::warn!("warm manifest emit timed out (skipped)"),
+                        }
+                    }
+                    Err(e) => tracing::warn!("warm manifest emit skipped (fs init): {e}"),
+                }
             }
         }
 

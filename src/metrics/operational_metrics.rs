@@ -40,6 +40,16 @@ fn gauge(name: &str, help: &str) -> IntGauge {
     })
 }
 
+fn gauge_vec(name: &str, help: &str, labels: &[&str]) -> prometheus::IntGaugeVec {
+    prometheus::register_int_gauge_vec!(name, help, labels).unwrap_or_else(|_| {
+        prometheus::IntGaugeVec::new(
+            prometheus::Opts::new(format!("{name}_fallback"), help),
+            labels,
+        )
+        .unwrap_or_else(|_| unreachable!("valid gauge-vec metric descriptor"))
+    })
+}
+
 fn histogram(name: &str, help: &str, buckets: Vec<f64>) -> Histogram {
     register_histogram!(name, help, buckets.clone()).unwrap_or_else(|_| {
         Histogram::with_opts(
@@ -81,6 +91,26 @@ lazy_static! {
     pub static ref SURVIVOR_CACHE_BYTES: IntGauge = gauge(
         "proximadb_survivor_cache_bytes",
         "Resident bytes in the survivor-range cache",
+    );
+
+    /// TD-CACHE-3 S1: per-tenant survivor-cache series (bounded — only the
+    /// top tenants by resident bytes are emitted per sync; see
+    /// `SURVIVOR_TENANT_SERIES_CAP`). The noisy-neighbor / hot-tier
+    /// entitlement signal.
+    pub static ref SURVIVOR_CACHE_TENANT_BYTES: prometheus::IntGaugeVec = gauge_vec(
+        "proximadb_survivor_cache_tenant_bytes",
+        "Resident survivor-cache bytes per tenant (top tenants only)",
+        &["tenant_id"],
+    );
+    pub static ref SURVIVOR_CACHE_TENANT_HITS: prometheus::IntGaugeVec = gauge_vec(
+        "proximadb_survivor_cache_tenant_hits",
+        "Cumulative survivor-cache hits per tenant (top tenants only)",
+        &["tenant_id"],
+    );
+    pub static ref SURVIVOR_CACHE_TENANT_MISSES: prometheus::IntGaugeVec = gauge_vec(
+        "proximadb_survivor_cache_tenant_misses",
+        "Cumulative survivor-cache misses per tenant (top tenants only)",
+        &["tenant_id"],
     );
 
     /// Segment-invariants cache (footer/region-A metadata; a hit skips 3

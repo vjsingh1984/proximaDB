@@ -1077,6 +1077,71 @@ impl SegmentInvariantsCache {
     }
 }
 
+/// TD-CACHE-1 S1: prefill a segment's CONTROL-plane invariants (header prefix,
+/// footer index, A0 coarse directory) into the invariants cache WITHOUT
+/// searching — the exact bytes the first query would otherwise fetch as 3
+/// ranged GETs. Region A/B payloads are deliberately NOT prefetched (they
+/// enrich lazily via the search path's cache merge), keeping warming cost to
+/// a few KB per segment. Used by tier-gated boot warming and manifest replay;
+/// never called speculatively for idle collections (co-design: warming is
+/// demand-proven or contract-driven, not a boot sweep).
+///
+/// Best-effort: any error leaves the cache unchanged (first query pays the
+/// legacy path). A non-coalesced/legacy segment (no `PXH1` prefix) is skipped.
+pub async fn prefetch_segment_invariants(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+    cache: &SegmentInvariantsCache,
+) -> anyhow::Result<bool> {
+    use proximadb_storage_common::segment_layout::{
+        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SegmentHeaderPrefix,
+    };
+    if cache.get(path).is_some() {
+        return Ok(false); // already warm
+    }
+    let size = fs
+        .metadata(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("prefetch stat {path}: {e}"))?
+        .size;
+    if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
+        return Ok(false);
+    }
+    let read_len = (SEG_HEADER_PREFIX_V3_LEN as u64).min(size);
+    let header_bytes = fs
+        .read_range(path, 0, read_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("prefetch header {path}: {e}"))?;
+    let Ok(header) = SegmentHeaderPrefix::parse(&header_bytes) else {
+        return Ok(false); // legacy/non-coalesced segment — nothing to warm
+    };
+    let footer_bytes = fs
+        .read_range(path, header.footer_off, header.footer_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("prefetch footer {path}: {e}"))?;
+    let a0_bytes = if header.a0_len > 0 {
+        Some(Arc::from(
+            fs.read_range(path, header.a0_off, header.a0_len)
+                .await
+                .map_err(|e| anyhow::anyhow!("prefetch a0 {path}: {e}"))?
+                .as_slice(),
+        ))
+    } else {
+        None
+    };
+    cache.put(
+        path.to_string(),
+        Arc::new(SegmentInvariants {
+            header_bytes,
+            region_bytes: None,
+            footer_bytes,
+            a0_bytes,
+            rabitq_header_bytes: None,
+        }),
+    );
+    Ok(true)
+}
+
 /// ADR-062 / TD-RDSTRAT-6 **scan-then-rerank** over a coalesced-RaBitQ segment
 /// on the engine's own filesystem — the ranged analogue of
 /// [`rabitq_search_segment`] for the new layout:
@@ -2645,6 +2710,106 @@ mod tests {
         assert_eq!(
             hits[0].oid, "r137",
             "the query vector itself must be the top hit"
+        );
+    }
+
+    /// TD-CACHE-1 S1: `prefetch_segment_invariants` warms the CONTROL plane
+    /// (header/footer/A0) so a subsequent cold search issues fewer control
+    /// GETs than a fully cold one — without touching Region A/B payloads.
+    #[tokio::test]
+    async fn prefetch_invariants_reduces_first_search_control_gets() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::FileSystem;
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        const DIM: usize = 64;
+        const N: usize = 300;
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 37 + d * 13) % 199) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("p{i}"), 2000 + i as i64, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefetch.pax");
+        write_pax_segment(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            Some(16 * 1024),
+        )
+        .unwrap();
+
+        let local = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let counters = global_counters();
+        let fs: Arc<dyn FileSystem> =
+            Arc::new(CountingFileSystem::new(Arc::new(local), counters.clone()));
+        let path_str = path.to_str().unwrap();
+
+        // Cold search WITHOUT any cache: baseline GET count.
+        let before = counters.range_reads.load(Ordering::Relaxed);
+        rabitq_search_segment_coalesced(
+            fs.as_ref(),
+            path_str,
+            &corpus[42],
+            5,
+            RankMetric::L2,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("cold search hits");
+        let cold_gets = counters.range_reads.load(Ordering::Relaxed) - before;
+
+        // Prefetch into a fresh invariants cache (control plane only).
+        let cache = SegmentInvariantsCache::new(8 * 1024 * 1024);
+        let warmed = prefetch_segment_invariants(fs.as_ref(), path_str, &cache)
+            .await
+            .unwrap();
+        assert!(warmed, "coalesced segment should prefill");
+        let inv = cache.get(path_str).expect("invariants cached");
+        assert!(!inv.header_bytes.is_empty());
+        assert!(!inv.footer_bytes.is_empty());
+        assert!(inv.region_bytes.is_none(), "payload must NOT be prefetched");
+        // Idempotent: second prefetch is a no-op.
+        assert!(
+            !prefetch_segment_invariants(fs.as_ref(), path_str, &cache)
+                .await
+                .unwrap()
+        );
+
+        // First search WITH the prefilled cache: fewer GETs than fully cold.
+        let before = counters.range_reads.load(Ordering::Relaxed);
+        rabitq_search_segment_coalesced(
+            fs.as_ref(),
+            path_str,
+            &corpus[42],
+            5,
+            RankMetric::L2,
+            Some(&cache),
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("warm search hits");
+        let warm_gets = counters.range_reads.load(Ordering::Relaxed) - before;
+        assert!(
+            warm_gets < cold_gets,
+            "prefetch must elide control GETs (cold={cold_gets}, warm={warm_gets})"
         );
     }
 
