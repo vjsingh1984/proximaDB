@@ -10,6 +10,17 @@ import json, re, struct, subprocess, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from statistics import mean
 
+def bench_conc(default_factor=1.6):
+    """Hot-phase concurrency: BENCH_HOT_CONC env override, else
+    round(default_factor x cores) — 16 on the 10-core protocol box, portable
+    elsewhere. Keep overrides recorded next to any published numbers."""
+    import os
+    v = os.environ.get("BENCH_HOT_CONC")
+    if v and v.isdigit() and int(v) > 0:
+        return int(v)
+    return max(4, round((os.cpu_count() or 8) * default_factor))
+
+
 SERVER = "http://127.0.0.1:5678"
 BASE = "/Users/vijaysingh/sift1m/sift_base.fvecs"
 QUERY = "/Users/vijaysingh/sift1m/sift_query.fvecs"
@@ -144,10 +155,10 @@ def main():
     for vec in hot:
         one(vec)
     t0 = time.time()
-    with ThreadPoolExecutor(16) as ex:
+    with ThreadPoolExecutor(bench_conc()) as ex:
         lats = sorted(ex.map(one, hot))
     wall = time.time() - t0
-    print(f"HOT  c=16 n=200: QPS={len(hot)/wall:.0f} mean={mean(lats):.1f}ms "
+    print(f"HOT  c={bench_conc()} n=200: QPS={len(hot)/wall:.0f} mean={mean(lats):.1f}ms "
           f"p50={lats[len(lats)//2]:.1f} p95={lats[int(len(lats)*0.95)]:.1f}", flush=True)
 
     with urllib.request.urlopen(SERVER + "/metrics/prometheus", timeout=30) as r:
