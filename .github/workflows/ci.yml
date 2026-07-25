@@ -2325,6 +2325,60 @@ jobs:
           fi
 
   # ============================================================================
+  # SIFT PAX CASCADE RECALL RATCHET (feat→develop tier)
+  # Catches flush/cascade/segment regressions BEFORE they reach develop — the
+  # gap that let TD-FLUSH-4 (zero .pax files) land undetected. Path-filtered
+  # (only fires on search/WAL/PAX changes), N=10k (fast), floor 0.85.
+  # The qa-gate runs the full N=100k version; this is the early-warning tripwire.
+  # ============================================================================
+  sift-recall-ratchet:
+    name: SIFT PAX recall ratchet (N=10k)
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # only run when search/flush/WAL/PAX/cascade code changes
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (needs.changes.outputs.storage_changes == 'true')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-sift-ratchet"
+      - name: Cache SIFT corpus
+        uses: actions/cache@v4
+        with:
+          path: ~/sift1m
+          key: sift1m-texmem-fvecs-v1
+      - name: Download SIFT corpus (first-time only, cached after)
+        run: |
+          mkdir -p "$HOME/sift1m"
+          cd "$HOME/sift1m"
+          base=https://huggingface.co/datasets/qbo-odp/sift1m/resolve/main
+          for f in sift_base.fvecs sift_query.fvecs sift_groundtruth.ivecs; do
+            if [ ! -s "$f" ]; then
+              curl -L --fail --retry 3 -o "$f" "$base/$f"
+            fi
+          done
+      - name: Build ratchet binary
+        env:
+          CARGO_BUILD_JOBS: "4"
+        run: cargo test --release --test sift_pax_recall_ratchet_test --no-run
+      - name: Run SIFT PAX recall ratchet (N=10000, floor=0.85)
+        env:
+          PROXIMADB_SIFT_DATASET_DIR: /home/runner/sift1m
+          PROXIMADB_SIFT_N: "10000"
+          PROXIMADB_SIFT_QUERIES: "100"
+          PROXIMADB_SIFT_RECALL_FLOOR: "0.85"
+          PROXIMADB_RECALL_DATASET_REQUIRED: "1"
+        run: cargo test --release --test sift_pax_recall_ratchet_test -- --nocapture
+
+  # ============================================================================
   # SUMMARY - Final status check
   # ============================================================================
   ci-success:
@@ -2379,6 +2433,8 @@ jobs:
       # gates that encode load-bearing decisions as checks
       - docs-authority
       - risk-coverage
+      # SIFT PAX cascade recall ratchet (path-filtered — skips on non-search PRs)
+      - sift-recall-ratchet
       # promotion correctness — a promotion PR must not be a stale snapshot
       - promotion-freshness
     if: always()
