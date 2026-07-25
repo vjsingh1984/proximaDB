@@ -1676,7 +1676,8 @@ impl SstEngine {
                 let prune = prune_config.clone();
                 handles.push(tokio::spawn(async move {
                     let _permit = permit; // released on task drop
-                    (&*engine)
+                    // `engine` is `Arc<SstEngine>`; method-call auto-derefs to `&self`.
+                    engine
                         .scan_single_file(
                             &path,
                             &collection,
