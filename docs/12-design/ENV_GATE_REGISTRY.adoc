@@ -1,0 +1,265 @@
+= ENV GATE REGISTRY — the authoritative catalog of `PROXIMADB_*` environment gates
+:status: Authoritative (CI-enforced by `scripts/check_env_gates.py`)
+:updated: 2026-07-25
+
+== Why this exists
+
+221 unique `PROXIMADB_*` variables exist in the tree. Unregistered
+proliferation is a cognitive-load tax and produces near-miss names — the
+canonical incident: `PROXIMADB_IVF2` (WRITE: train A0 at compaction) vs
+`PROXIMADB_IVF2_PROBE` (READ: use A0 at search), two default-OFF halves of
+one feature whose confusion cost a full measurement cycle on 2026-07-25.
+This file is the single source of truth: **a `PROXIMADB_*` name that is not
+listed here fails CI** (`check_env_gates.py`, wired into
+`make work-commit-check`).
+
+== Naming rules (new gates MUST follow; existing names are frozen aliases)
+
+1. `PROXIMADB_<AREA>_<SEMANTIC>` — area = subsystem (PAX, CACHE, SEARCH,
+   WAL, QUEUE, TRACE, TEST…). Semantic says what it DOES, not the feature
+   codename.
+2. **Paired write/read gates carry `WRITE_`/`READ_` (or `EMIT_`/`USE_`)
+   explicitly** — never two near-identical names. (Had the rule existed:
+   `PROXIMADB_PAX_WRITE_A0_TRAIN` / `PROXIMADB_PAX_READ_COARSE_PROBE`.)
+3. Booleans: presence-style gates accept `1|true|on|yes`; kill-switches are
+   named for what they DISABLE (`…_DISABLE`) so unset = shipped default.
+4. State the compile-time default and the flip-precondition in this table at
+   introduction time; `TODO` is only legal for pre-registry legacy rows.
+5. Renaming a shipped gate = alias forever (operational API, mixed-safety):
+   support both names, document the alias here, never repurpose a name.
+
+== Lifecycle tiers
+
+*eval* (diagnostics/benchmarks; may change anytime) · *opt-in* (default-OFF
+feature, flip-precondition documented) · *kill-switch* (default-ON, env is
+the emergency off) · *config-mirror* (env overrides a config field) ·
+*test-only* (never read in production paths).
+
+== Catalog
+
+[cols="3,4,2,2,3", options="header"]
+|===
+| Variable | Semantic | Default | Owner (TD/ADR) | Declared in
+
+| `PROXIMADB_ADVISOR_OBS_DISK_SIDECAR` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/advisor_observations.rs`
+| `PROXIMADB_API_GRPC_PORT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config_loader_tests.rs`
+| `PROXIMADB_AUTOROUTE_QUANT_HELIX` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/collection/engine_selector.rs`
+| `PROXIMADB_AZURE_EMULATOR` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/persistence/filesystem/mod.rs`
+| `PROXIMADB_AZURE_TEST` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/indexes/dual_store_ivf.rs`
+| `PROXIMADB_BENCH_HNSW_EF` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/management/manager.rs`
+| `PROXIMADB_CACHE_PREFILL` | restart warming replay (0=off) | ON | TD-CACHE-1 | `src/database.rs (+1)`
+| `PROXIMADB_CACHE_TIERS_PATH` | operator tier policy JSON (floors/weights) | unset = uniform | TD-CACHE-3 S1 | `src/network/shared_services.rs (+3)`
+| `PROXIMADB_CATALOG_DRPATH` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/shared_services.rs`
+| `PROXIMADB_CATALOG_FOLLOWER_POLL_SECS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/shared_services.rs`
+| `PROXIMADB_CATALOG_OBJECT_ID_PATHS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/control/proximadb-catalog/src/native.rs (+1)`
+| `PROXIMADB_CATALOG_SNAPSHOT_KEEP` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/catalog_snapshot_store.rs`
+| `PROXIMADB_CATALOG_SNAPSHOT_MIN_AGE_SECS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/catalog_snapshot_store.rs`
+| `PROXIMADB_CATALOG_SNAPSHOT_RETENTION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/catalog_snapshot_store.rs`
+| `PROXIMADB_CATALOG_SNAPSHOT_THRESHOLD` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/system_catalog.rs`
+| `PROXIMADB_CATALOG_TENANT_NAMESPACES` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/collection/manager.rs`
+| `PROXIMADB_CHURN_WORKING_SET_MB` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-storage-common/src/storage_profile.rs (+2)`
+| `PROXIMADB_COMPUTE_REGION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/database.rs (+1)`
+| `PROXIMADB_CONFIG` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/core/ops/simd_config.rs`
+| `PROXIMADB_CORPUS_VERSION_PATH` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/database.rs`
+| `PROXIMADB_COUNT_FS_IO` | counting-FS physical GET/byte meters | OFF (eval) | ADR-027/030 | `crates/storage/proximadb-storage-filesystem-types/src/counting.rs (+1)`
+| `PROXIMADB_CROSS_MODEL_TX_ENABLED` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/dml/mod.rs (+1)`
+| `PROXIMADB_DATA_DIR` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/postgres/protocol.rs (+1)`
+| `PROXIMADB_DESCRIPTION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/version.rs`
+| `PROXIMADB_DF_BLOOM_SEMIJOIN` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/datafusion/engine_adapters/object_store_parquet_reader.rs`
+| `PROXIMADB_DF_BLOOM_SEMIJOIN_MIN_KEYS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/datafusion/engine_adapters/object_store_parquet_reader.rs`
+| `PROXIMADB_DF_PAX_RANGED` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/datafusion/document_pax_provider.rs (+1)`
+| `PROXIMADB_DF_PAX_READER` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/datafusion/engine_adapters/pax_adapter.rs (+1)`
+| `PROXIMADB_DF_RUNTIME_FILTER_PRUNE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/datafusion/engine_adapters/pax_adapter.rs (+1)`
+| `PROXIMADB_DF_RUNTIME_FILTER_WAIT_MS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/datafusion/proxima_scan_exec.rs`
+| `PROXIMADB_DF_STATS_VALUE_BOUNDS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/datafusion/schema_inference.rs`
+| `PROXIMADB_DISABLE_` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/fusion_service.rs (+1)`
+| `PROXIMADB_DISABLE_GRAPH_FUSION_CALIBRATION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/fusion_service.rs`
+| `PROXIMADB_DISABLE_PAX_RANGE_COALESCE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/core/formats/proximablocks/sst_io_layer.rs`
+| `PROXIMADB_DISABLE_SST_SCAN_COALESCE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/readers/sst_query_engine.rs`
+| `PROXIMADB_DISABLE_SYSTEM_CATALOG` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/shared_services.rs (+1)`
+| `PROXIMADB_DISABLE_WAL` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-orion-engine/src/lib.rs (+2)`
+| `PROXIMADB_DISK_CLASS` | hdd => CLOUD coalescing profile for file:// paths | unset (LOCAL profile) | ADR-073 | `crates/storage/proximadb-storage-common/src/iops_budget.rs`
+| `PROXIMADB_DOC_CANONICAL_VECTOR` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/document/service.rs (+1)`
+| `PROXIMADB_DRIFT_INTERVAL_SECS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/discovery/drift.rs`
+| `PROXIMADB_DRIFT_THRESHOLD_WRITES` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/discovery/drift.rs`
+| `PROXIMADB_DUCKDB_ROUTE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/query/compute_scheduler.rs (+2)`
+| `PROXIMADB_EMBED_ASYNC_QUEUE_CAP` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-embedding/src/scheduler.rs`
+| `PROXIMADB_EMBED_ASYNC_WORKERS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-embedding/src/scheduler.rs`
+| `PROXIMADB_EMBED_DRAINER_PARTITIONS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs (+1)`
+| `PROXIMADB_EMBED_INTRA_OP_THREADS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-embedding/src/models/bge.rs`
+| `PROXIMADB_EMBED_MODEL_DIR` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-embedding/src/models/bge.rs (+1)`
+| `PROXIMADB_EMBED_PRECISION_SCHEMA_V2` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/foundation/proximadb-config/src/lib.rs (+1)`
+| `PROXIMADB_EMBED_PROVIDER` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-embedding/src/models/bge.rs`
+| `PROXIMADB_EMBED_SESSIONS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-embedding/src/models/bge.rs`
+| `PROXIMADB_EMBED_SYNC_QUEUE_CAP` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-embedding/src/scheduler.rs`
+| `PROXIMADB_EMBED_SYNC_WORKERS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-embedding/src/scheduler.rs`
+| `PROXIMADB_EMBED_VARIANT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `apps/proximadb-server/src/main.rs`
+| `PROXIMADB_EMIT_USAGE_EVENTS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/ai/llm_integration/providers/anthropic.rs (+2)`
+| `PROXIMADB_ENABLE_AI` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/deployment/automation/provisioner.rs`
+| `PROXIMADB_ENABLE_MONITORING` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/deployment/automation/provisioner.rs`
+| `PROXIMADB_EVICTION_WATCH` | Spot IMDS watch (azure|aws|gcp) | OFF | TD-CACHE-1 S4 | `src/database.rs (+1)`
+| `PROXIMADB_EXTERNAL_TABLE_ROOTS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/ddl/mod.rs`
+| `PROXIMADB_FILTER_FAIL_LOUD` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/operations/vectors/legacy.rs`
+| `PROXIMADB_FILTER_STRICT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/search/progressive_search_pipeline.rs`
+| `PROXIMADB_FS_COPY_KEY` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/persistence/filesystem/mod.rs`
+| `PROXIMADB_FS_FACTORY_KEY` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/persistence/filesystem/mod.rs`
+| `PROXIMADB_FUSION_POOL_CAP` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/search/cross_modal_fusion.rs (+1)`
+| `PROXIMADB_GCS_` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/persistence/filesystem/mod.rs`
+| `PROXIMADB_GCS_ANONYMOUS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/persistence/filesystem/mod.rs`
+| `PROXIMADB_GCS_ENDPOINT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/persistence/filesystem/mod.rs`
+| `PROXIMADB_GCS_TEST` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/indexes/dual_store_ivf.rs`
+| `PROXIMADB_GCS_TEST_BUCKET` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/indexes/dual_store_ivf.rs (+1)`
+| `PROXIMADB_GCS_TEST_ENDPOINT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-object-store/src/lib.rs (+2)`
+| `PROXIMADB_GRAPH_CANONICAL_RECOVERY` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/shared_services.rs (+1)`
+| `PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-orion-engine/src/lib.rs (+3)`
+| `PROXIMADB_GRAPH_COLD_PAYLOADS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-orion-engine/src/persistence.rs (+5)`
+| `PROXIMADB_GRAPH_SEGMENT_STORE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/graph/service.rs (+1)`
+| `PROXIMADB_INDEX_CATALOG_PATHS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/control/proximadb-catalog/src/native.rs (+3)`
+| `PROXIMADB_INDEX_PERSIST_URL` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/shared_services.rs`
+| `PROXIMADB_INTERNAL_MUX_PORT` | internal gRPC/Flight upstream port override | derived | TD-NET-1 | `crates/foundation/proximadb-config/src/lib.rs (+1)`
+| `PROXIMADB_IO_TRACE_SINK` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs (+1)`
+| `PROXIMADB_IO_TRACE_SINK_` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IO_TRACE_SINK_ACCESS_TIER` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IO_TRACE_SINK_COMPRESSION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IO_TRACE_SINK_FLUSH_INTERVAL_S` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IO_TRACE_SINK_FORMAT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IO_TRACE_SINK_LOCAL_DIR` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IO_TRACE_SINK_OBJECT_STORE_URI` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IO_TRACE_SINK_PENDING_MAX_BYTES` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IO_TRACE_SINK_SEGMENT_BYTES` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IO_TRACE_SINK_SPOOL_MAX_BYTES` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IO_TRACE_SINK_WAREHOUSE_COMPACTION_INTERVAL_S` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_IVF2` | WRITE gate: compaction emits the trained v3/A0 coarse directory | OFF | TD-RDSTRAT-8 PR-A; MISNAMED pair with _PROBE — see naming rule | `crates/storage/proximadb-storage-common/src/segment_layout.rs (+3)`
+| `PROXIMADB_IVF2_NPROBE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_IVF2_PROBE` | READ gate: coarse probe uses A0 on v3 segments | OFF (recall-ratchet gated) | TD-RDSTRAT-8 PR-B; flip precondition = nprobe tuning (TD-COMPACT-5) | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_IVF_BINARY_TIER` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/indexes/dual_store_ivf.rs`
+| `PROXIMADB_IVF_K` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/block_cluster.rs (+1)`
+| `PROXIMADB_IVF_NCOMP` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/block_cluster.rs`
+| `PROXIMADB_IVF_NCOMP_A` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/block_cluster.rs`
+| `PROXIMADB_IVF_NCOMP_B` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/block_cluster.rs`
+| `PROXIMADB_IVF_TRAIN_SAMPLE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/block_cluster.rs`
+| `PROXIMADB_KSU_GAUGE_INTERVAL_SECS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/database.rs`
+| `PROXIMADB_L0_COMPACTION_ENABLED` | arm L0 compaction (count arm + TD-COMPACT-5 training arm) | OFF (or collection tag compaction:on) | TD-WLP-7 | `crates/storage/proximadb-storage-common/src/compaction_override.rs (+1)`
+| `PROXIMADB_LEASE_MANIFEST_KEEP` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/shared_services.rs`
+| `PROXIMADB_LEASE_MANIFEST_MIN_AGE_SECS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/shared_services.rs`
+| `PROXIMADB_LEASE_MANIFEST_PRUNE_INTERVAL_SECS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/shared_services.rs`
+| `PROXIMADB_LEASE_MANIFEST_RETENTION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/shared_services.rs`
+| `PROXIMADB_MASTER_KEY` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-storage-encryption/src/file_encryption.rs (+4)`
+| `PROXIMADB_MATERIALIZE_OBJECT_ID_PATHS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/dml/mod.rs`
+| `PROXIMADB_MATERIALIZE_ROW_GROUP_ROWS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-iceberg-engine/src/lib.rs`
+| `PROXIMADB_MAX_SEARCH_TOP_K` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/rest/v2/records.rs`
+| `PROXIMADB_MEMORY_MB` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/deployment/automation/provisioner.rs`
+| `PROXIMADB_MEMORY_POOL_SIZE_MB` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/core/ops/performance_optimization.rs`
+| `PROXIMADB_METERING_FLUSH_INTERVAL_SECS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/database.rs`
+| `PROXIMADB_NAME` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/version.rs`
+| `PROXIMADB_NATIVE_ALLOW_GROUPED_AGG` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/postgres/relational_pipeline.rs`
+| `PROXIMADB_NATIVE_JOIN` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/query/execution/native_engine.rs (+2)`
+| `PROXIMADB_NATIVE_JOIN_SHADOW` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/query/execution/native_shadow.rs`
+| `PROXIMADB_NATIVE_MORSEL` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/query/execution/morsel_scheduler.rs (+1)`
+| `PROXIMADB_NATIVE_MORSEL_NUMA` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/query/execution/morsel_scheduler.rs`
+| `PROXIMADB_NATIVE_ROUTE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/query/compute_scheduler.rs (+1)`
+| `PROXIMADB_NATIVE_SHADOW` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/query/execution/native_engine.rs`
+| `PROXIMADB_NATIVE_VECTORIZED` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/query/execution/native_engine.rs`
+| `PROXIMADB_NETWORK_SCOPE_MAP` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/database.rs (+1)`
+| `PROXIMADB_NEW_RELATIONAL_PIPELINE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/postgres/mod.rs (+1)`
+| `PROXIMADB_NOVA_MAX_ROW_GROUP_SIZE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/nova/operations/flush.rs`
+| `PROXIMADB_OBJECT_STORE_LOCALITY` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/metrics/consumption_metrics.rs`
+| `PROXIMADB_OBJECT_STORE_URL` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `apps/proximadb-server/tests/object_store_restart_recovery.rs`
+| `PROXIMADB_OLAP_DELTA_MERGE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/postgres/relational_pipeline.rs (+1)`
+| `PROXIMADB_OLAP_TABLE_CACHE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/datafusion/engine_adapters/table_open_cache.rs`
+| `PROXIMADB_OPERATION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/audit/correlation.rs`
+| `PROXIMADB_OTLP_ENDPOINT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-observability-engine/src/lib.rs (+3)`
+| `PROXIMADB_PARQUET_FOOTER_HINT_KB` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/datafusion/engine_adapters/object_store_parquet_reader.rs`
+| `PROXIMADB_PARTITION_LEASE_ON` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/ddl/mod.rs (+1)`
+| `PROXIMADB_PAX_A_COALESCE_GAP` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_A_COALESCE_RANGE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_BLOCK_CLUSTER` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/block_cluster.rs (+1)`
+| `PROXIMADB_PAX_BLOCK_SIZE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-storage-common/src/iops_budget.rs (+1)`
+| `PROXIMADB_PAX_COALESCED_RABITQ` | coalesced Region-A segment layout (writer+reader) | ON (env = kill-switch) | ADR-065 | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_COALESCE_GAP` | coalesce max_gap override (bytes) | backend profile | ADR-065/073 | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_COALESCE_RANGE` | coalesce max_range override (bytes) | backend profile | ADR-065/073 | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_DROP_TENANT_COL` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-block-format/src/writer.rs`
+| `PROXIMADB_PAX_F32_TIER` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-block-format/src/record.rs (+1)`
+| `PROXIMADB_PAX_FLUSH_CLUSTER` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/block_cluster.rs (+1)`
+| `PROXIMADB_PAX_LOSSLESS_CLUSTERED` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_LOSSLESS_SCALAR` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_PREFIX_PREFETCH_BYTES` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_RABITQ_POOL` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_RABITQ_POOL_MIN` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_RABITQ_POOL_MULT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_RABITQ_POOL_RATE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_RERANK_QUANT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/flush/mod.rs`
+| `PROXIMADB_PAX_SPLIT_PROBE_META_CACHE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_VECTOR_QUANT` | flush vector quant codec (rabitq|sq8|...) | rabitq | Phase F | `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs (+1)`
+| `PROXIMADB_PAX_VECTOR_SEGMENTS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/flush/mod.rs`
+| `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/flush/mod.rs`
+| `PROXIMADB_PGWIRE_RATE_LIMIT_RPM` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/multi_server.rs`
+| `PROXIMADB_POD_ID` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/cluster/primary_pod_registry.rs (+2)`
+| `PROXIMADB_PRIMARY_POD_PERSISTENCE_MODE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/cluster/primary_pod_registry.rs`
+| `PROXIMADB_PSEUDO_QUERY_FIELD` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/operations/vectors/legacy.rs (+2)`
+| `PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/operations/vectors/legacy.rs (+2)`
+| `PROXIMADB_QUERY_RESULT_CACHE` | pgwire OLAP result cache | OFF | #708/ADR-051 | `src/network/postgres/protocol.rs (+2)`
+| `PROXIMADB_QUEUE_` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
+| `PROXIMADB_QUEUE_OBJECT_ARCHIVE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-queue/src/config.rs (+2)`
+| `PROXIMADB_QUEUE_ROOT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-queue/src/config.rs (+3)`
+| `PROXIMADB_QUEUE_SYNC_MODE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-queue/src/config.rs (+1)`
+| `PROXIMADB_READ_RANGES_PARALLEL` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-storage-filesystem-types/src/lib.rs`
+| `PROXIMADB_READ_STRATEGY_CHOOSER` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/core/coalesce_strategy.rs (+2)`
+| `PROXIMADB_REAL_CORPUS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/indexes/dual_store_ivf.rs`
+| `PROXIMADB_REGEN_PROTO` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/foundation/proximadb-proto/build.rs`
+| `PROXIMADB_RELATIONAL_BOOTSTRAP_DEMO_TABLE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/postgres/relational_pipeline.rs`
+| `PROXIMADB_REST_V1_COMPAT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/middleware/v1_sunset.rs (+1)`
+| `PROXIMADB_REST_V1_SUNSET` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/middleware/v1_sunset.rs`
+| `PROXIMADB_ROUTE_COST_OVERRIDE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/database.rs (+2)`
+| `PROXIMADB_ROUTE_RTT_BUDGET` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/query/route_cost_model.rs`
+| `PROXIMADB_S3_` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/persistence/filesystem/mod.rs`
+| `PROXIMADB_S3_BUCKET` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/storage/universal_index_storage.rs`
+| `PROXIMADB_S3_ENDPOINT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/persistence/filesystem/mod.rs`
+| `PROXIMADB_S3_FORCE_PATH_STYLE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/persistence/filesystem/mod.rs`
+| `PROXIMADB_S3_REGION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/metrics/consumption_metrics.rs (+1)`
+| `PROXIMADB_S3_TEST_ACCESS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/indexes/dual_store_ivf.rs`
+| `PROXIMADB_S3_TEST_BUCKET` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/indexes/dual_store_ivf.rs`
+| `PROXIMADB_S3_TEST_ENDPOINT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/indexes/dual_store_ivf.rs`
+| `PROXIMADB_S3_TEST_SECRET` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/indexes/dual_store_ivf.rs`
+| `PROXIMADB_SCAN_INDEX_DISABLE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/record_store.rs (+1)`
+| `PROXIMADB_SEARCH_MORSEL_DEGREE` | intra-query rank parallelism (0=adaptive,1=off,n) | 0 = adaptive (all cores only when scan is alone) | TD-SEARCH-2 S2 | `src/storage/engines/sst/search/mod.rs`
+| `PROXIMADB_SEARCH_PARALLEL_FILES` | inter-file search workers (0=50% cores) | 0 | TD-SEARCH-2 S1 | `src/core/config.rs (+1)`
+| `PROXIMADB_SECONDARY_INDEX_DISABLE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/dml/tests.rs (+1)`
+| `PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB` | segment invariants cache pool (0=off) | 256 (config-first) | TD-CACHE-4 | `src/core/config.rs (+1)`
+| `PROXIMADB_SEQUENTIAL_VALIDATION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/graph/service.rs`
+| `PROXIMADB_SERVERLESS_CERTIFIED` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/persistence/write_ahead_log/recovery_token.rs`
+| `PROXIMADB_SERVER_PORT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config_loader_tests.rs`
+| `PROXIMADB_SKIP_AXIS_INDEXING` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/flush/mod.rs`
+| `PROXIMADB_STORAGE_CACHE_SIZE_MB` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config_loader_tests.rs`
+| `PROXIMADB_STORAGE_ENGINE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/deployment/automation/provisioner.rs`
+| `PROXIMADB_STORAGE_PROFILE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-storage-common/src/compaction_override.rs (+1)`
+| `PROXIMADB_STORE_REGION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/database.rs (+1)`
+| `PROXIMADB_SURVIVOR_CACHE_BUDGET_MB` | survivor range cache pool (0=off) | 1024 (config-first) | TD-CACHE-4/ADR-065 | `src/core/config.rs (+2)`
+| `PROXIMADB_SURVIVOR_OID_CEILING_FRAC` | CacheKind::Other admission ceiling | 0.3 | TD-CACHE-2 S2c | `src/storage/engines/sst/survivor_range_cache.rs`
+| `PROXIMADB_SURVIVOR_PIN_RESERVE_FRAC` | true-pin reserve fraction (needs tiers policy) | 0 = OFF | TD-CACHE-3 S2 | `src/storage/engines/sst/survivor_range_cache.rs`
+| `PROXIMADB_SYSCAT_WARM_DIR` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/collection/manager.rs`
+| `PROXIMADB_TENANT_HEADER_TRUST` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/foundation/proximadb-tenant/src/identity_trust.rs (+3)`
+| `PROXIMADB_TENANT_ID` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/deployment/automation/provisioner.rs`
+| `PROXIMADB_TEST_BERT_ONNX_PATH` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-rank-onnx/src/ort_tokenized_scorer_session.rs`
+| `PROXIMADB_TEST_LOG_LEVEL` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config_loader_tests.rs`
+| `PROXIMADB_TEST_NODE_ID` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config_loader_tests.rs`
+| `PROXIMADB_TEST_ONNX_PATH` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-rank-onnx/src/ort_scorer_session.rs`
+| `PROXIMADB_TEST_RECOVERY_CRASH_POINT` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `apps/proximadb-server/tests/object_store_restart_recovery.rs (+1)`
+| `PROXIMADB_TEST_SECRET` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/cdc/sinks/kafka.rs (+1)`
+| `PROXIMADB_TIER_CONFIG_PATH` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/foundation/proximadb-tenant/src/tenant_tier_types.rs`
+| `PROXIMADB_TOKENIZER_PATH` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/modalities/proximadb-embedding/src/models/bge.rs (+1)`
+| `PROXIMADB_TRACE_COMPACTION_MEM` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/compaction.rs`
+| `PROXIMADB_TRACE_GETS` | per-GET size trace on the PAX read path | OFF (eval) | ADR-065 | `src/storage/engines/sst/segment_format.rs (+1)`
+| `PROXIMADB_TRACE_IVF_FLUSH` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/block_cluster.rs (+1)`
+| `PROXIMADB_TRACE_PAX_STAGES` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_TRACE_PAX_WRITE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-storage-common/src/pax_block.rs (+1)`
+| `PROXIMADB_TRAINING_COMPACTION_MIN_MB` | min untrained-L0 size for the training arm | 32 | TD-COMPACT-5 | `src/storage/engines/sst/flush/mod.rs`
+| `PROXIMADB_TYPED_PATHS` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/control/proximadb-catalog/src/lib.rs (+6)`
+| `PROXIMADB_VECTOR_BOUNDS_PRUNE_DISABLE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/nova/operations/search.rs (+1)`
+| `PROXIMADB_VECTOR_RABITQ` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-block-format/src/vparam.rs (+2)`
+| `PROXIMADB_VECTOR_SQ8_DISABLE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `crates/storage/proximadb-block-format/src/writer.rs`
+| `PROXIMADB_VERSION` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/monitoring/dashboard/mod.rs (+7)`
+| `PROXIMADB_WAL_OBJECT_ID_KEY` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/services/record_store.rs`
+| `PROXIMADB_WAREHOUSE_DRPATH` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/network/shared_services.rs`
+| `PROXIMADB_WRITE_FENCING` | storage-write fence enforcement | OFF (fail-open) | A6 | `src/database.rs (+6)`
+|===
