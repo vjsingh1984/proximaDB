@@ -9,9 +9,9 @@ toc::[]
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Draft / design gate** (2026-07-24). No implementation yet. Additive + feature-gated; graduates per `docs/SUPPORTED_SURFACE.adoc` with filed benchmark evidence.
+| Status | **Draft / design gate — P3 research-calibrated** (2026-07-24). No implementation yet. Additive + feature-gated; graduates per `docs/SUPPORTED_SURFACE.adoc` with filed benchmark evidence. Revised after the three-model review reconciliation (P2) and calibration against 10 research papers (P3) — see link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072 §Design-gate revision (P2)/(P3)] and RFC-0002 §_Research calibration_.
 | Implements | link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072] / link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]
-| Acceptance bar | the composite-natural-PK MVP passes atomic-uniqueness under concurrency + serverless (object-store) restart; no modality regresses; reclaimed-footprint/latency evidence filed
+| Acceptance bar | the composite-natural-PK MVP passes **fenced** atomic-uniqueness under concurrency + serverless restart (exactly-one winner, idempotent retry distinguished from real conflict); PK-`UPDATE`/`DELETE`-reclaim leaves no orphaned slot; the typed-identity codec passes collision / order-preserving / NULL property tests; no modality regresses; reclaimed-footprint/latency evidence filed
 |===
 
 == Context
@@ -40,9 +40,28 @@ stack on one foundation, with modality-specific impls behind the contracts where
 `Container → Entity → Attribute → Identity/Uniqueness → Index → Constraint/Policy`, projected per
 modality (relational `db/table/column/PK/btree`; vector `namespace/collection/field/oid/ANN`; document
 `collection/path/_id/fulltext`; graph `graph/node·edge/property/(src,dst,type)/CSR`; observability
-`namespace/stream/field/(series,ts)/Tantivy`). DDL/RBAC/schema-evolution/constraint-enforcement written
-**once** against the metamodel. The MVP's uniqueness key is *the entity's Identity level*, encoded to
-bytes — the same for a relational PK and a vector `oid`.
+`namespace/stream/field/(series,ts)/Tantivy`). DDL/RBAC/schema-evolution written **once** against the
+metamodel — this is the **naming/governance** unification, and it is real.
+
+**Scope narrowed (P2).** The metamodel unifies *naming and governance*, **not** a universal uniqueness
+primitive. The reviews correctly flagged that "uniqueness on the Identity key" is procrustean beyond
+relational + document: a **vector `oid` is a system surrogate** (not a natural PK — it conflicts with the
+"natural keys mandatory" rule); a **graph edge is identified by an `edge_id`** and is multigraph-capable
+(`(src,dst,type)` is *not* its identity — verified in `orion-engine/.../memory_pool.rs`), and it is
+itself an FK-pair; **time-series identity is monotonic-append `(series, ts)`, not a uniqueness
+constraint.** The fenced `ConditionalKeyStore` therefore applies to **relational PK/UNIQUE (and document
+`_id`)**; other modalities enforce identity through their own operators. Note this is a *doc* narrowing:
+`ProximaRecord` already models `edge`/`sequence` first-class (ADR-072 D10), so no record change follows.
+
+**Metamodel calibration (P3 — ADR-072 D12, grounded in U-Schema <<biblio-uschema>>).** The leading
+unified metamodel confirms and sharpens this: (1) a **graph edge is a first-class `RelationshipType`
+(peer of `EntityType`) + a `Reference`** — model edges as a first-class relationship construct, *not*
+through the `Identity/Uniqueness` slot; (2) the identity slot is **family-parameterized** (graph omits
+it, key-value detaches it, time-series is ordering-not-uniqueness) — carry a per-modality
+"completeness-gap" list rather than one uniform semantics; (3) U-Schema **splits physical (Index) and
+Constraint into a separate metamodel** — so split our governance-logical layer from the physical-index
+layer rather than one `…→Index→Constraint` chain. **Open risk:** no unified-metamodel paper covers
+**time-series or vector** identity — pressure-test these before finalizing D1.
 
 == `ConditionalKeyStore` extraction
 
@@ -50,13 +69,26 @@ The ledger's proven CAS core (`crates/modalities/proximadb-ledger`: atomic condi
 single-writer + CRC-framed torn-tail-tolerant replay) is the reference. Extract + generalize:
 
 - **Generalize the key/value:** ledger CAS keys on `&str` → version `i64`; the shared primitive keys on
-  `&[u8]` (encoded composite tuple) → `Oid` (payload/row pointer).
-- **Contract:** `put_if_absent(t: &TenantContext, keyspace, key: &[u8], oid) -> Result<(), Conflict>` +
-  `get` + `delete`.
-- **Two impls behind it (ADR-072 D4/D5):**
-  * *object-store `put_if_absent`* — **serverless default** (create-only conditional put; already backs
-    Iceberg manifest/lease commits). Serialization = the object store; scale-to-zero, no writer node.
-  * *local-WAL CAS* — the ledger core generalized `bytes→oid`; sub-ms hot opt-in.
+  the **typed composite `Identity`** (F0, below) → `Oid` (payload/row pointer). Crucially, **keep the
+  fence:** the ledger CAS returns a `Version`; the shared contract must too.
+- **Contract (fenced + capability-typed — ADR-072 D3/D11):**
+  `put_if_absent(t, keyspace, key: &Identity, oid, fence) -> Result<Committed, Conflict{holder: Oid}>`
+  + `get` + **append-only tombstone** (not a reclaiming delete). Three research-driven properties:
+  * **Returns the current holder on conflict** (not a bare failure), so a loser resolves
+    retry-vs-real-conflict — Cornus `LogOnce` returns the settled state (ADR-072 <<biblio-cornus>>).
+  * **Append-only reclaim (D11):** a PK `UPDATE`/`DELETE` appends a tombstone + new version under the key
+    (resolved by `version ≤ snapshot`), reclaimed behind an oldest-active-reader watermark — it never
+    delete-then-reinserts a durable slot. This dissolves the reclaim race and largely subsumes the
+    explicit fence into MVCC ordering (cMVBT; unanimous with BatchWeave/DSQL — ADR-072 §P3).
+  * **Capability-typed scope:** each impl *declares* its atomic scope/granularity (ScalarDB Atomicity
+    Unit; not a boolean), so callers never assume uniform atomicity.
+- **Two impls behind it (ADR-072 D4/D5 — revised):**
+  * *generation-fenced local-WAL CAS* — the ledger core generalized `Identity→oid`; sub-ms; **the hot,
+    correctness-carrying default.**
+  * *object-store `put_if_absent`* — the **scale-to-zero escape hatch**, not the default. Its existing
+    proof (Iceberg manifest / partition lease) uses *fresh monotonically-versioned successor slots*, an
+    append-only pattern that does **not** transfer to a reclaimable fixed PK slot; used only where its
+    generation-fence + successor-slot discipline (per `partition_lease.rs`) is honored.
 - The ledger's own CAS keyspace becomes a specialization of the same contract (str→version is a
   `bytes→scalar` case).
 
@@ -68,27 +100,42 @@ the storage layer**, serverless-capable — replacing the op-lock crutch.
 **Seams (from the map):**
 - Integrity checks today: `execute_insert` `src/services/dml/mod.rs:3004-3043` (PK), `:3045` (UNIQUE),
   guarded by the table op-lock `:2968`, then commit `write_mutations` `:3089`.
-- Target: move the guarantee **into** `TableRecordStore::write_mutations` (`record_store.rs:502`) as a
-  `ConditionalKeyStore::put_if_absent` on `encode_primary_key_tuple(a,b,c)` → oid, under the tenant
-  context. The op-lock **demotes** from the correctness mechanism to (at most) a batch latch.
+- Target (revised P2/P3): move the **primary-key** guarantee **into** `TableRecordStore::write_mutations`
+  (`record_store.rs:502`) as a **fenced** `ConditionalKeyStore::put_if_absent` on the row's own
+  PK-derived identity — recall `oid == primary_key_string` (`relational.rs:282`), so PK uniqueness is a
+  **single row-keyed-by-PK** conditional write, not a separate index entry. **Only `UNIQUE` constraints
+  take the coordinated path; non-unique secondary indexes are blind-writes keyed by the PK** (they cannot
+  conflict independently of the base row — Aurora DSQL's CALM/blind-write result, ADR-072 <<biblio-dsql>>).
+  Secondary `UNIQUE` (a real second durable write) and FK (a `get`) **remain inside the op-lock critical
+  section** for the MVP.
+- **The op-lock is retained, not demoted** — its docstring (`proximadb-catalog/src/manager.rs`) shows it
+  orders `ON DELETE CASCADE` (child-scan → child-mutation → parent-tombstone); demoting it re-opens the
+  cascade-orphan race. A concurrent-INSERT throughput win comes later, from narrowing the lock to the
+  secondary-index critical section once F0's fenced primitive owns PK uniqueness — not from removing it.
 
 **Acceptance:**
-- Concurrent inserts of the same composite PK → exactly one succeeds, no lock serializing the whole
-  table (throughput win measured).
-- Serverless (object-store impl): duplicate rejected across a compute restart / from two compute
-  instances with no coordination node.
+- Concurrent inserts of the same composite PK → exactly one succeeds; the fence lets the losing writer's
+  idempotent retry be distinguished from a genuine conflict (no false-conflict livelock).
+- PK-`UPDATE` / `DELETE` then re-insert of the same key leaves **no orphaned slot** (fenced tombstone,
+  not unconditional delete).
+- Local-WAL (default): fenced uniqueness holds across a crash/restart (torn-tail replay). Object-store
+  (escape hatch): duplicate rejected across a compute restart **where the partition-lease generation
+  fence is held** — not from a naked fixed-key create.
+- Typed-identity codec (F0) passes property tests: no two distinct tuples collide, no tuple encodes two
+  ways, byte order preserves column order incl. NULL/type-tag.
 - `default` build + all existing tests unchanged (behind an `oltp-integrity` cfg feature).
 
-**Scope:** composite-PK + single/multi-column UNIQUE now. **FK is phase 2** — a `get` on the same
-contract (parent-existence), different shape, cleanly deferred.
+**Scope:** composite-PK now (row-keyed-by-PK, fenced) + single/multi-column UNIQUE inside the op-lock.
+**FK is phase 2** — a `get` on the same contract (parent-existence), different shape, cleanly deferred.
 
 == Contract-adoption roadmap (leaf-first, additive, feature-gated)
 
 [cols="1,3", options="header"]
 |===
 | Step | Work
-| *F1* | Extract `ConditionalKeyStore` + the object-store impl; ledger CAS re-expressed as a consumer (proves the shared primitive).
-| *F2* | **MVP:** composite-natural-PK uniqueness on the relational insert path via F1; op-lock demoted; `oltp-integrity` feature.
+| *F0* | **Typed composite `Identity` codec** (ADR-072 D9) — replace `oid: String` + `encode_primary_key_tuple` string-join with a length-delimited, order-preserving, NULL-explicit, type-tagged, tenant-scoped key; `oid`/`local_id` derive from it. Property-tested. Foundational prerequisite for F1.
+| *F1* | Extract the **fenced** `ConditionalKeyStore` + the **generation-fenced local-WAL impl** (default) and the object-store escape-hatch impl; ledger CAS re-expressed as a consumer (proves the shared primitive, fence preserved).
+| *F2* | **MVP:** composite-natural-PK uniqueness on the relational insert path via F0/F1 (row-keyed-by-PK); op-lock **retained** (secondary UNIQUE/FK stay in it); `oltp-integrity` feature.
 | *F3* | Re-express ledger/queue/TS dedicated WALs as impls of the WAL contract (stop off-contract silos); siloed modalities consume the shared tiering contract instead of their own tiers.
 | *F4* | Finish document's canonical-store migration; onboard vector reads-side where the shared scan suffices (keep ANN as an extension operator).
 | *F5* | FK / referential integrity (phase 2, `get` on `ConditionalKeyStore`); then HTAP — native compute (Volcano/DataFusion) TPC-H over atomically-consistent data.
@@ -113,14 +160,40 @@ time, with reclaimed-footprint / latency / throughput evidence filed to `BENCHMA
 
 - *Risk:* moving uniqueness into `write_mutations` is on the hot write path + touches a central store —
   gated behind `oltp-integrity`, MVP-scoped, evidence-gated.
-- *Risk:* object-store `put_if_absent` latency — the local-WAL impl is the hot escape hatch behind the
-  same contract.
+- *Risk:* object-store `put_if_absent` latency/cost + non-transferable reclaim semantics — it is the
+  escape hatch, not the default; the generation-fenced local-WAL impl is the hot default (ADR-072 D5).
 - *Non-goals:* multi-statement ACID transactions; one shared WAL for all modalities (rejected, ADR-072
   D2); changing any modality's semantics; a single god storage trait.
 
 == Unresolved questions
 
-- `KeyspaceId` shape + the shared composite-key encoding (reuse `encode_primary_key_tuple`).
-- Object-store `put_if_absent` as the sole default vs. co-equal-with-local-WAL behind the contract
-  (lean: object-store-primary for the serverless minimum).
+- **Resolved (P2):** the shared composite-key encoding is **not** a reuse of `encode_primary_key_tuple`
+  — that codec is documented-defective (unescaped `\u{1f}` separator collisions, non-order-preserving,
+  type-lossy; `relational.rs:864`). F0 replaces it with a typed codec. Open: exact type-tag/collation
+  table per `ProximaType`.
+- **Resolved (P2):** object-store is the **escape hatch**, generation-fenced local-WAL is the default
+  (ADR-072 D5) — reverses the earlier lean.
+- The exact `Generation`/fence source for the local-WAL default (reuse the partition-lease generation, or
+  a WAL-sequence epoch?) — F1 detail.
+- Whether to later narrow the op-lock to a secondary-index-only latch (throughput) once F0/F1 own PK
+  uniqueness — measure first.
 - How far to widen `RecordStore` into observability/timeseries vs. keeping them contract-impl silos.
+- The `ProximaRecord` union → composed `RecordCore` + `#[cfg]` modality-extension refactor (ADR-072 D10)
+  — routed to the compile-time modality-composition track (#1180), not this MVP.
+- **Thin-in-corpus (P3):** order-preserving key encoding (F0) and secondary-index maintenance are weakly
+  covered by research — calibrate F0/F1 against system engineering (FoundationDB tuple layer, CockroachDB
+  key encoding) rather than papers.
+
+== Research bibliography
+
+Full-text briefs in RFC-0002 §_Research calibration_; decisions in ADR-072 §_Design-gate revision (P3)_.
+
+- [[biblio-cornus]] **Cornus** — Atomic Commit for a Cloud DBMS with Storage Disaggregation. https://arxiv.org/abs/2102.10185
+- [[biblio-batchweave]] **BatchWeave** — A Consistent Object-Store-Native Data Plane. https://arxiv.org/abs/2605.09994
+- [[biblio-m2]] **M2** — An Analytic System with Specialized Storage Engines. https://arxiv.org/abs/2508.02508
+- [[biblio-bigdawg]] **BigDAWG** — The BigDAWG Polystore System and Architecture. https://arxiv.org/abs/1609.07548
+- [[biblio-scalardb]] **ScalarDB** — Breaking the Barriers of Database-Agnostic Transactions. https://arxiv.org/abs/2602.19440
+- [[biblio-ccaas]] **CCaaS** — Concurrency Control as a Service. https://arxiv.org/abs/2603.13897
+- [[biblio-dsql]] **Aurora DSQL** — Scalable, Multi-Region OLTP. https://arxiv.org/abs/2607.13276
+- [[biblio-cmvbt]] **cMVBT** — Multiversion Concurrency Control for Multiversion B-Trees. https://arxiv.org/abs/2606.09133
+- [[biblio-uschema]] **U-Schema** — A Unified Metamodel for NoSQL and Relational Databases. https://arxiv.org/abs/2105.06494
