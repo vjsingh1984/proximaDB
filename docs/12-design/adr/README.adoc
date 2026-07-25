@@ -371,3 +371,19 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Proposed (2026-07-25)
 | Measured coalescing sweep (SIFT-1M, 5 profiles): the shipped `IopsBudget::LOCAL` profile is at the SSD latency minimum while profile choice swings reads/query 117× — validates per-backend derivation, rejects free-form config as overengineering; ONE addition = a disk-class hint (HDD-backed `file://` needs the cloud-like profile). Decides the growth-stage tier ladder: RaBitQ+control in RAM (built, ~100% hit), SQ8 through the survivor cache onto a reattachable-PVC disk tier ($3–6/mo per 100M×768d; survives Spot reaps, warms at zero GETs), fp32/row on object storage (per-hit fetches bounded by k — no GET explosion). AKS anchor+Spot topology; metadata authority stays object storage, DDL via anchor, no Raft. Prereq: eliminate cwd-relative `./data` state.
 |===
+
+The index is complete and is enforced by `scripts/check_design_status_index.py`.
+
+== Relationship to Design Resolution Doc
+
+These ADRs formalize and extend the decisions in `docs/_internal/roadmap/implementation/active/E1_E3_OPEN_TICKET_DESIGN_RESOLUTION_2026_04_01.adoc`. The design resolution doc remains the authoritative source for E1-E3 sequencing and sprint board semantics. ADRs govern the implementation contracts.
+
+== Issue Coverage
+
+Every open issue (#25-#61) is governed by at least one ADR:
+
+* **E1 (Capability Registry)**: ADR-001
+* **E2 (Filtered ANN)**: ADR-002
+* **E3 (Multi-Model Plan)**: ADR-003, ADR-004
+* **Gap Closure**: ADR-005 (document/graph), ADR-006 (infrastructure)
+* **Production Hardening**: ADR-001 (#25, #26, #30), ADR-006 (#27, #28, #55, #60, #61)
