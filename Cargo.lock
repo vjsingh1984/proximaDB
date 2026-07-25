@@ -7051,6 +7051,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-cks-local"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "proximadb-storage-ports",
+ "tokio",
+]
+
+[[package]]
 name = "proximadb-clustering-kernel"
 version = "0.2.0"
 dependencies = [
