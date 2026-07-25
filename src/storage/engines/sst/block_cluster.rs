@@ -467,29 +467,25 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
 
 /// TD-RDSTRAT-8 (rev 3): opt-in gate for the persisted-IVF-probe v3 compaction
 /// layout (the IOP-derived plan written into Region A0). Default **OFF**
-/// (`PROXIMADB_IVF2=1` to enable) until the recall/GET eval gates pass;
-/// mixed-read-safe beside single-level segments either way. The env keeps its
-/// shipped `IVF2` name (the successor IVF layout), though rev 3 dropped the
-/// second `sqrt(N)` level the name originally implied.
+/// (`PROXIMADB_PAX_WRITE_A0_TRAIN=1` to enable) until the recall/GET eval
+/// gates pass; mixed-read-safe beside single-level segments either way.
+/// Pre-GA clean rename (TD-ENVGATE-1): the former `PROXIMADB_IVF2` name is
+/// RETIRED (ENV_GATE_REGISTRY "Retired names" — reserved, never repurposed).
 pub fn ivf_probe_enabled() -> bool {
-    // ENV_GATE_REGISTRY rule 2: semantic name PROXIMADB_PAX_WRITE_A0_TRAIN
-    // (this is the WRITE half: compaction trains + emits the A0 directory);
-    // the shipped PROXIMADB_IVF2 stays honored forever as its alias.
-    env_gate_on("PROXIMADB_PAX_WRITE_A0_TRAIN", "PROXIMADB_IVF2")
+    env_gate_on("PROXIMADB_PAX_WRITE_A0_TRAIN")
 }
 
-/// Alias-aware boolean gate read: the semantic name wins, the legacy alias
-/// is honored (operational API — never dies), and truthy = `1|true|on|yes`.
-pub(crate) fn env_gate_on(name: &str, legacy_alias: &str) -> bool {
-    let read = |k: &str| {
-        std::env::var(k).ok().map(|v| {
+/// Boolean gate read: truthy = `1|true|on|yes`.
+pub(crate) fn env_gate_on(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|v| {
             matches!(
                 v.trim().to_ascii_lowercase().as_str(),
                 "1" | "true" | "on" | "yes"
             )
         })
-    };
-    read(name).or_else(|| read(legacy_alias)).unwrap_or(false)
+        .unwrap_or(false)
 }
 
 /// The persisted IVF probe directory compaction plan (rev 3): the physical row
