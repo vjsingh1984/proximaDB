@@ -912,6 +912,14 @@ impl ProximaDB {
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
         info!("Graceful shutdown requested");
 
+        // TD-LIFECYCLE-1: signal every registered background loop FIRST so
+        // cooperative exits overlap the rest of the shutdown sequence (no
+        // in-flight discovery/observer pass outlives the runtime).
+        let fired = crate::services::shutdown_registry::fire_all();
+        if fired > 0 {
+            tracing::info!(loops = fired, "background loops signaled to stop");
+        }
+
         // Persist the learned route cost model so measured history survives the
         // restart (best-effort; off the hot path, on graceful shutdown only).
         crate::query::route_cost_model::persist_cost_model(&self._config.server.data_dir);

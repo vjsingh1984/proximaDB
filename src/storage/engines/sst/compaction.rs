@@ -1659,6 +1659,11 @@ impl Compaction {
         );
 
         // Remove input files after successful compaction using plugin filesystem
+        // TD-CACHE-2 S2d: evict the warm-tier cache entries for each deleted
+        // input file — correctness is structural (UUID-unique outputs, old
+        // paths never queried again), but without eviction the dead entries
+        // squat in the invariants/survivor budgets until recency ages them out.
+        let warm_caches = crate::storage::engines::sst::core::get_warm_tier_caches();
         for input_file in &task.input_files {
             let input_path = input_file.to_string_lossy();
             if let Err(e) = fs.delete(&input_path).await {
@@ -1667,6 +1672,16 @@ impl Compaction {
                     input_file.display(),
                     e
                 );
+            } else if let Some((invariants, survivor)) = &warm_caches {
+                invariants.invalidate(&input_path);
+                let purged = survivor.purge_path(&input_path).await;
+                if purged > 0 {
+                    debug!(
+                        file = %input_path,
+                        purged,
+                        "evicted survivor-cache ranges for compacted-away file"
+                    );
+                }
             }
         }
 

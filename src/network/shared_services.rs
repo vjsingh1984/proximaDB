@@ -1308,9 +1308,9 @@ impl SharedServices {
             // This polls the EventLog and builds AXIS indexes when flush events occur
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-            // Store shutdown sender for graceful shutdown (could be stored in SharedServices if needed)
-            // For now, the consumer will run until the process exits
-            std::mem::forget(shutdown_tx); // Prevent sender from being dropped
+            // TD-LIFECYCLE-1: registered (not leaked) so a clean shutdown
+            // can stop the loop; see services::shutdown_registry.
+            crate::services::shutdown_registry::register("axis-eventlog-consumer", shutdown_tx);
 
             if let Some(event_log_service) = crate::services::events::log::event_log_service() {
                 let _consumer_handle =
@@ -2411,7 +2411,7 @@ impl SharedServices {
                 .with_vector_ops(vector_operations_service.clone()),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("discovery-executor", shutdown_tx);
             // The discovery executor is a long-running background task; we
             // intentionally drop the JoinHandle so it runs for the process
             // lifetime. `spawn_discovery_executor` spawns its own task
@@ -2443,7 +2443,7 @@ impl SharedServices {
                 .with_discovery(discovery_service.clone()),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("recall-observer", shutdown_tx);
             #[allow(clippy::let_underscore_future)]
             let _ = crate::services::recall_observer::spawn_recall_observer(
                 observer,
@@ -2476,7 +2476,7 @@ impl SharedServices {
                 ),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("drift-watcher", shutdown_tx);
             #[allow(clippy::let_underscore_future)]
             let _ = crate::services::discovery::spawn_drift_watcher(
                 watcher,
@@ -2502,7 +2502,7 @@ impl SharedServices {
                 ),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("drift-observer", shutdown_tx);
             #[allow(clippy::let_underscore_future)]
             let _ = crate::services::recall_drift_sweeper::spawn_recall_drift_sweeper(
                 sweeper,

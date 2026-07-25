@@ -43,16 +43,28 @@ under read locks and confirms under the victim shard's write lock — exact
 Public API unchanged (`get`/`put`/`invalidate`/`bytes_used`). Sampling
 replaces the exact scan only if entry cardinality ever explodes.
 
-S2b — **Per-class keys** (`(segment, RegionA)` / `(segment, Control)` /
-`(segment, Meta)`) — the read-path contract change; rides the TD-SEARCH-2 S2
-scan rework (see Design note).
+S2b — **Per-class keys** ✅ SHIPPED (2026-07-25): Region A is stored as a
+separate internal entry (`{path}\u{1}A`, tier InvariantIndex) from the
+control entry (header/footer/A0/params — tier SearchControl/InvariantMeta);
+`get` recomposes so the read contract is UNCHANGED (no scan rework needed).
+Budget pressure can now shed a 24 MB region while the few-KB control plane
+keeps serving (control-only hit still saves the 3 control GETs);
+`invalidate` removes both.
 
-S2c — **Survivor cache: kind-weighted budgets.** Give `TenantCache` optional
-per-`CacheKind` budget fractions (e.g. QuantizedCodes ≥ 70% of pool) so OID
-churn cannot flush SQ8 survivor ranges; full priority eviction inside moka is
-not required — budget partitioning approximates it cheaply.
+S2c — **Survivor cache: kind-weighted budgets** ✅ SHIPPED (2026-07-25):
+`CacheBudget::with_kind_ceiling(kind, frac)` — per-kind admission ceilings as
+pool fractions, reconciled by the eviction listener + pin-recycle paths.
+Survivor cache arms `Other ≤ 0.3` (env `PROXIMADB_SURVIVOR_OID_CEILING_FRAC`)
+so OID churn cannot flush SQ8 survivor ranges (QuantizedCodes keeps ≥70%);
+unlisted kinds stay elastic.
 
-S2d — **Compaction/flush invalidation wiring.** Cache correctness across
+S2d — ✅ SHIPPED (2026-07-25): the compactor's input-deletion loop now
+invalidates BOTH caches per deleted file via the process-global handles
+(`get_warm_tier_caches` — no handle-threading needed): invariants
+`invalidate(path)` (both split entries) + new `SurvivorRangeCache::purge_path`
+(→ `TenantCache::purge_where`, covering the shared pool AND pinned floor,
+gauges reconciled). Original filing: **Compaction/flush invalidation
+wiring.** Cache correctness across
 IVF/k-means re-clustering is STRUCTURAL (immutable segments + UUID-unique
 output names + directory discovery: a re-clustered model only exists under
 the new path, and old paths are never queried again) — but nothing calls

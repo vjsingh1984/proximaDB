@@ -154,7 +154,13 @@ pub fn spawn_discovery_executor(
                     }
                 }
                 _ = tokio::time::sleep(interval) => {
-                    while executor.run_once().await.is_some() {}
+                    // TD-LIFECYCLE-1: re-check shutdown between drained jobs so
+                    // a queued backlog cannot extend teardown.
+                    while executor.run_once().await.is_some() {
+                        if *shutdown.borrow() {
+                            break;
+                        }
+                    }
                 }
             }
         }

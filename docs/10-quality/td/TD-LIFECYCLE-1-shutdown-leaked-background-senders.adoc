@@ -1,5 +1,5 @@
 = TD-LIFECYCLE-1: process exit after SIGTERM blocked by leaked background shutdown senders
-:status: Open (mitigated)
+:status: Resolved (durable fix 2026-07-25; shutdown_timeout kept as defense-in-depth)
 :filed: 2026-07-24
 :priority: P2
 
@@ -41,7 +41,17 @@ Spot instance the process wastes the eviction notice window doing nothing.
 `ProximaDB::shutdown` before this point, so bounding teardown is safe. The
 process now exits deterministically ≤5 s after a clean shutdown.
 
-== Durable fix (open)
+== Durable fix ✅ SHIPPED (2026-07-25)
+
+`services::shutdown_registry` — all five leaked senders (discovery executor,
+recall observer, drift watcher, drift observer, AXIS EventLog consumer) now
+`register(name, sender)` instead of `std::mem::forget`; `ProximaDB::shutdown`
+calls `fire_all()` FIRST so cooperative exits overlap the shutdown sequence.
+The discovery drain loop re-checks its receiver between jobs so a queued
+backlog cannot extend teardown. `runtime.shutdown_timeout(5s)` stays as
+defense-in-depth. Original plan below.
+
+== Durable fix (original plan)
 
 1. Register the leaked senders in a process-level shutdown registry
    (discovery executor, recall observer, drift watch) and flip them from
