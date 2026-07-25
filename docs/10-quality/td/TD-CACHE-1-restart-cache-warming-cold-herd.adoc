@@ -41,10 +41,14 @@ today); entries referencing compacted-away segments fail the existence check
 and are dropped. Billing: replay GETs are metered exactly like the cold
 queries they replace — net ≤ 0 new GETs, strictly better latency shape.
 
-S3 — **Tenant-priority warming.** Warm in tier order (Enterprise/pinned
-first — the hot-cache tier at $0.15/GB-mo is a *contract* to be warm), then
-recently-active tenants from the manifest's hit counts. A free/idle tenant
-stays cold-on-first-touch by design.
+S3 — **Tenant-priority warming.** ✅ SHIPPED (with S1/S2): `boot_warm`
+orders replay via `warming::tier_ordered` — `TierSpec.weight` desc (ties:
+`floor_frac` desc, then tenant id for determinism), policy loaded from the
+same `PROXIMADB_CACHE_TIERS_PATH` the admission floors use, tenant→tier via
+the live registry. Enterprise/pinned first — the hot-cache tier at
+$0.15/GB-mo is a *contract* to be warm; no policy ⇒ deterministic name
+order. A free/idle tenant stays cold-on-first-touch by design (manifest
+presence, not tier, decides *whether* to warm; tier decides *when*).
 
 S4 — **Eviction-notice fast-drain hook.** On the Spot 30 s notice: flush
 memtable (existing), snapshot the warm manifest (S2), and pre-signal the

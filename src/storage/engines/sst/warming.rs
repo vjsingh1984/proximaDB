@@ -170,14 +170,54 @@ pub async fn replay_tenant(
     .await
 }
 
-/// Boot warm task body: replay every tenant that has a manifest. Tenants are
-/// derived from the catalog's collections; tenants without manifests cost one
-/// cheap negative read each. Gated by `PROXIMADB_CACHE_PREFILL` (unset/1 = on).
+/// TD-CACHE-1 S3: order tenants for replay by cache-tier entitlement —
+/// highest `TierSpec.weight` first (ties: larger `floor_frac`, then tenant id
+/// for determinism). A contract-pinned (paid hot-tier) tenant's warmup is an
+/// entitled cost, so it must not queue behind free-tier replays on a shared
+/// boot. Unknown tenants resolve to `default_tier`; no policy ⇒ plain
+/// deterministic name order.
+pub fn tier_ordered(
+    mut tenants: Vec<String>,
+    policy: Option<&proximadb_cache::TierPolicy>,
+    tier_of: &dyn Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    let rank = |tenant: &str| -> (u32, f64) {
+        let Some(policy) = policy else {
+            return (0, 0.0);
+        };
+        let tier = tier_of(tenant).unwrap_or_else(|| policy.default_tier.clone());
+        policy
+            .tiers
+            .get(&tier)
+            .or_else(|| policy.tiers.get(&policy.default_tier))
+            .map(|spec| (spec.weight, spec.floor_frac))
+            .unwrap_or((0, 0.0))
+    };
+    tenants.sort_by(|a, b| {
+        let (wa, fa) = rank(a);
+        let (wb, fb) = rank(b);
+        wb.cmp(&wa).then(fb.total_cmp(&fa)).then_with(|| a.cmp(b))
+    });
+    tenants
+}
+
+/// Boot warm task body: replay every tenant that has a manifest, hot tiers
+/// first (S3). Tenants are derived from the catalog's collections; tenants
+/// without manifests cost one cheap negative read each. Gated by
+/// `PROXIMADB_CACHE_PREFILL` (unset/1 = on).
 pub async fn boot_warm(factory: Arc<FilesystemFactory>, base_url: String, tenants: Vec<String>) {
     if std::env::var("PROXIMADB_CACHE_PREFILL").ok().as_deref() == Some("0") {
         tracing::info!("cache warming disabled (PROXIMADB_CACHE_PREFILL=0)");
         return;
     }
+    // Same operator policy the survivor cache's admission floors use.
+    let policy = std::env::var("PROXIMADB_CACHE_TIERS_PATH")
+        .ok()
+        .and_then(|path| std::fs::read_to_string(&path).ok())
+        .and_then(|json| proximadb_cache::TierPolicy::from_json(&json).ok());
+    let tenants = tier_ordered(tenants, policy.as_ref(), &|t| {
+        crate::services::record_store::tenant_tier(t)
+    });
     let mut total_ranges = 0usize;
     let mut total_segments = 0usize;
     for tenant in &tenants {
@@ -191,6 +231,51 @@ pub async fn boot_warm(factory: Arc<FilesystemFactory>, base_url: String, tenant
             ranges = total_ranges,
             segments = total_segments,
             "🔥 restart cache warming complete"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TD-CACHE-1 S3: replay order is tier weight desc, then floor desc, then
+    /// tenant id; unknown tenants rank at default tier; no policy = name order.
+    #[test]
+    fn tier_ordered_puts_hot_tiers_first() {
+        let policy = proximadb_cache::TierPolicy::from_json(
+            r#"{
+                "default_tier": "free",
+                "tiers": {
+                    "enterprise": {"weight": 8, "floor_frac": 0.5, "ceiling_frac": 1.0},
+                    "pro":        {"weight": 4, "floor_frac": 0.2, "ceiling_frac": 0.8},
+                    "free":       {"weight": 1, "floor_frac": 0.0, "ceiling_frac": 0.5}
+                }
+            }"#,
+        )
+        .unwrap();
+        let tier_of = |t: &str| -> Option<String> {
+            match t {
+                "acme" => Some("enterprise".to_string()),
+                "beta_corp" => Some("pro".to_string()),
+                _ => None, // unknown → default_tier (free)
+            }
+        };
+        let tenants = vec![
+            "zeta".to_string(),
+            "beta_corp".to_string(),
+            "alpha".to_string(),
+            "acme".to_string(),
+        ];
+        assert_eq!(
+            tier_ordered(tenants.clone(), Some(&policy), &tier_of),
+            vec!["acme", "beta_corp", "alpha", "zeta"],
+            "weight desc, unknown tenants at default tier in name order"
+        );
+        assert_eq!(
+            tier_ordered(tenants, None, &tier_of),
+            vec!["acme", "alpha", "beta_corp", "zeta"],
+            "no policy = deterministic name order"
         );
     }
 }
