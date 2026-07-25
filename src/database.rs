@@ -841,6 +841,51 @@ impl ProximaDB {
             }
         }
 
+        // TD-CACHE-1 S4: eviction-notice fast-drain — opt-in IMDS watch
+        // (`PROXIMADB_EVICTION_WATCH=azure|aws|gcp`). On the Spot notice
+        // (which precedes SIGTERM and may be followed by a hard kill),
+        // persist the warm manifests and flush the memtable early.
+        if let Ok(provider) = std::env::var("PROXIMADB_EVICTION_WATCH") {
+            let provider = provider.trim().to_ascii_lowercase();
+            if !provider.is_empty() && provider != "0" && provider != "off" {
+                let base_url = self._config.storage.storage_urls().into_iter().next();
+                if let Some(base_url) = base_url {
+                    let storage = self.storage.clone();
+                    tokio::spawn(async move {
+                        let factory = match crate::storage::persistence::filesystem::FilesystemFactory::create_default().await {
+                            Ok(f) => std::sync::Arc::new(f),
+                            Err(e) => {
+                                tracing::warn!("eviction watch skipped (fs init): {e}");
+                                return;
+                            }
+                        };
+                        let flush: std::sync::Arc<
+                            dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync,
+                        > = std::sync::Arc::new(move || {
+                            let storage = storage.clone();
+                            Box::pin(async move {
+                                let engine = storage.read().await;
+                                match engine.flush_memtable_to_storage().await {
+                                    Ok(r) => tracing::info!(
+                                        collections = r.collections_flushed,
+                                        vectors = r.total_vectors_flushed,
+                                        "fast-drain memtable flush complete"
+                                    ),
+                                    Err(e) => {
+                                        tracing::warn!("fast-drain memtable flush failed: {e}")
+                                    }
+                                }
+                            })
+                        });
+                        crate::storage::engines::sst::warming::eviction_watch(
+                            provider, factory, base_url, flush,
+                        )
+                        .await;
+                    });
+                }
+            }
+        }
+
         // Step 5: Initialize RL Query Planner (if enabled)
         tracing::info!("🎯 ProximaDB::start - Step 5: Initializing RL Query Planner...");
         self.init_rl_planner().await?;

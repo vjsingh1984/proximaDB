@@ -50,10 +50,18 @@ $0.15/GB-mo is a *contract* to be warm; no policy ⇒ deterministic name
 order. A free/idle tenant stays cold-on-first-touch by design (manifest
 presence, not tier, decides *whether* to warm; tier decides *when*).
 
-S4 — **Eviction-notice fast-drain hook.** On the Spot 30 s notice: flush
-memtable (existing), snapshot the warm manifest (S2), and pre-signal the
-replacement node (when the control plane orchestrates one) so warming starts
-before DNS/LB cutover.
+S4 — **Eviction-notice fast-drain hook.** ✅ SHIPPED (OSS half):
+`warming::eviction_watch` — opt-in `PROXIMADB_EVICTION_WATCH=azure|aws|gcp`
+IMDS poll (Azure Scheduled Events Preempt/Terminate/Redeploy; AWS
+`spot/instance-action` presence via IMDSv2; GCP `instance/preempted` flag),
+5 s cadence backing off to 60 s after repeated probe failures (non-cloud box
+safety). On the first notice — which precedes SIGTERM and may be followed by
+a hard kill — it emits the warm manifests (S2, idempotent; the SIGTERM path
+re-emits) and flushes the memtable via an injected
+`flush_memtable_to_storage` closure, so the replacement node warms even from
+an ungraceful death. Parsers are pure + unit-tested. REMAINING (commercial,
+ADR-060 boundary): pre-signaling the replacement node so warming starts
+before DNS/LB cutover — control-plane orchestration, not OSS.
 
 == Non-goals
 Whole-corpus RAM residency (the Qdrant model — surrendered cost advantage);

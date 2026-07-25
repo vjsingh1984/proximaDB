@@ -239,6 +239,26 @@ pub async fn boot_warm(factory: Arc<FilesystemFactory>, base_url: String, tenant
 mod tests {
     use super::*;
 
+    /// TD-CACHE-1 S4: notice parsers — Azure fires only on lifecycle-ending
+    /// event types; GCP on the TRUE flag; malformed input never fires.
+    #[test]
+    fn eviction_notice_parsers() {
+        assert!(azure_eviction_imminent(
+            r#"{"DocumentIncarnation":1,"Events":[{"EventId":"x","EventType":"Preempt","ResourceType":"VirtualMachine","NotBefore":"Mon, 19 Sep 2016 18:29:47 GMT"}]}"#
+        ));
+        assert!(azure_eviction_imminent(
+            r#"{"Events":[{"EventType":"Freeze"},{"EventType":"Terminate"}]}"#
+        ));
+        assert!(!azure_eviction_imminent(
+            r#"{"Events":[{"EventType":"Freeze"}]}"#
+        ));
+        assert!(!azure_eviction_imminent(r#"{"Events":[]}"#));
+        assert!(!azure_eviction_imminent("not json"));
+        assert!(gcp_eviction_imminent("TRUE\n"));
+        assert!(!gcp_eviction_imminent("FALSE"));
+        assert!(!gcp_eviction_imminent(""));
+    }
+
     /// TD-CACHE-1 S3: replay order is tier weight desc, then floor desc, then
     /// tenant id; unknown tenants rank at default tier; no policy = name order.
     #[test]
@@ -278,4 +298,137 @@ mod tests {
             "no policy = deterministic name order"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// TD-CACHE-1 S4 — eviction-notice fast-drain.
+//
+// Spot preemption gives an advance notice (Azure Scheduled Events ~30 s
+// before Preempt; AWS spot/instance-action 2 min; GCP preempted flag) that
+// arrives BEFORE any SIGTERM — and a hard kill can follow without one. The
+// watcher polls the cloud's instance-metadata endpoint (opt-in,
+// `PROXIMADB_EVICTION_WATCH=azure|aws|gcp`) and on the first notice runs the
+// fast-drain: persist the warm-set manifests (S2, idempotent — the SIGTERM
+// path re-emits) and flush the memtable, so the replacement node warms even
+// when the instance dies ungracefully. Pre-signaling the replacement node is
+// control-plane orchestration (commercial, ADR-060 boundary) — not here.
+// ---------------------------------------------------------------------------
+
+/// Azure Scheduled Events: eviction-imminent when any event is a
+/// Preempt/Terminate/Redeploy (all end this instance's serving life).
+pub fn azure_eviction_imminent(scheduled_events_json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(scheduled_events_json)
+        .ok()
+        .and_then(|v| v.get("Events").and_then(|e| e.as_array()).cloned())
+        .map(|events| {
+            events.iter().any(|e| {
+                matches!(
+                    e.get("EventType").and_then(|t| t.as_str()),
+                    Some("Preempt") | Some("Terminate") | Some("Redeploy")
+                )
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// GCP: the `instance/preempted` metadata value flips to `TRUE`.
+pub fn gcp_eviction_imminent(preempted_body: &str) -> bool {
+    preempted_body.trim().eq_ignore_ascii_case("true")
+}
+
+/// One IMDS probe for the given provider. AWS needs no body parse: the
+/// `spot/instance-action` document only EXISTS (HTTP 200) once an
+/// interruption is scheduled.
+async fn probe_eviction(client: &reqwest::Client, provider: &str) -> Result<bool, String> {
+    match provider {
+        "azure" => {
+            let resp = client
+                .get("http://169.254.169.254/metadata/scheduledevents?api-version=2020-07-01")
+                .header("Metadata", "true")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let body = resp.text().await.map_err(|e| e.to_string())?;
+            Ok(azure_eviction_imminent(&body))
+        }
+        "aws" => {
+            let token = client
+                .put("http://169.254.169.254/latest/api/token")
+                .header("X-aws-ec2-metadata-token-ttl-seconds", "300")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?
+                .text()
+                .await
+                .map_err(|e| e.to_string())?;
+            let resp = client
+                .get("http://169.254.169.254/latest/meta-data/spot/instance-action")
+                .header("X-aws-ec2-metadata-token", token.trim())
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(resp.status().is_success())
+        }
+        "gcp" => {
+            let resp = client
+                .get("http://metadata.google.internal/computeMetadata/v1/instance/preempted")
+                .header("Metadata-Flavor", "Google")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let body = resp.text().await.map_err(|e| e.to_string())?;
+            Ok(gcp_eviction_imminent(&body))
+        }
+        other => Err(format!("unknown eviction-watch provider '{other}'")),
+    }
+}
+
+/// S4 watch loop. Polls every 5 s; consecutive probe failures back off to
+/// 60 s (a non-cloud box with the flag set must not spam). On the first
+/// notice: emit warm manifests, then run the injected memtable flush, then
+/// return (the normal SIGTERM path re-emits both — this is the safety copy
+/// for the hard-kill case).
+pub async fn eviction_watch(
+    provider: String,
+    factory: Arc<FilesystemFactory>,
+    base_url: String,
+    flush: Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>,
+) {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    else {
+        tracing::warn!("eviction watch disabled: http client init failed");
+        return;
+    };
+    tracing::info!(provider, "👁 eviction-notice watch armed (S4 fast-drain)");
+    let mut consecutive_failures = 0u32;
+    loop {
+        match probe_eviction(&client, &provider).await {
+            Ok(true) => break,
+            Ok(false) => consecutive_failures = 0,
+            Err(e) => {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures == 5 {
+                    tracing::warn!(
+                        provider,
+                        "eviction watch: 5 consecutive probe failures (not on this \
+                         cloud, or IMDS blocked?) — backing off to 60s: {e}"
+                    );
+                }
+            }
+        }
+        let secs = if consecutive_failures >= 5 { 60 } else { 5 };
+        tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+    }
+    tracing::warn!(
+        provider,
+        "⚡ EVICTION NOTICE — fast-drain: manifests + flush"
+    );
+    let n = emit_warm_manifests(&factory, &base_url).await;
+    flush().await;
+    tracing::warn!(
+        manifests = n,
+        "⚡ fast-drain complete — awaiting SIGTERM/kill"
+    );
 }
