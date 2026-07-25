@@ -3,7 +3,7 @@
 :email: vjdsingh@icloud.com
 :date: 2026-07-24
 :status: Draft (P3 research-calibrated)
-:revremark: P2 — reconciled against a three-model adversarial review (Kimi, GLM-5.2, DeepSeek). P3 — calibrated against 10 research papers: reclaim is append-only MVCC; contract returns-holder-on-conflict + capability-typed; graph edges first-class; logical/physical metamodel split. P4 — per-modality calibration (§Modality calibration): shared record-store substrate is columnar/PAX (pgvector 55–85% row-heap tax); vector identity is a surrogate; TS is ordering; vector RLS must be pre-filter not post-filter. P5 — delete representation is tier-split: MVCC visibility/uniqueness model + deletion vectors (merge-on-read) in the immutable cold tier.
+:revremark: P2 — reconciled against a three-model adversarial review (Kimi, GLM-5.2, DeepSeek). P3 — calibrated against 10 research papers: reclaim is append-only MVCC; contract returns-holder-on-conflict + capability-typed; graph edges first-class; logical/physical metamodel split. P4 — per-modality calibration (§Modality calibration): shared record-store substrate is columnar/PAX (pgvector 55–85% row-heap tax); vector identity is a surrogate; TS is ordering; vector RLS must be pre-filter not post-filter. P5 — delete representation is tier-split: MVCC visibility/uniqueness model + deletion vectors (merge-on-read) in the immutable cold tier. P6 — production-systems calibration (LanceDB/Vespa/Weaviate, §Production-systems calibration): cost-based hybrid/filter planner (D15), tiered compute placement (D16), first-class background plane (D17); strong convergent validation of the storage stack.
 :toc: left
 :toclevels: 3
 
@@ -320,6 +320,30 @@ purged at compaction behind the same reader watermark. A deletion vector **encod
 enforce uniqueness** — that stays with MVCC + the `ConditionalKeyStore` index. Build split: hot MVCC = F1d
 (critical path), cold deletion vectors = F3v (parallel).
 
+=== Production-systems calibration (P6)
+
+Calibrated against three production multi-modal systems (full architecture docs + the Lance paper):
+**LanceDB** <<biblio-lance>>, **Vespa** <<biblio-vespa>>, **Weaviate** <<biblio-weaviate>>. Net: **strong
+convergent validation** — LanceDB independently built our storage/table half (columnar substrate + MVCC +
+deletion vectors + successor-slot manifest + object-store storage⊥compute + surrogate identity), Vespa our
+compute/serving half, Weaviate our tenancy/hybrid half. Three decisions added in ADR-072:
+
+- **D15 — hybrid ANN+filter is a *cost-based* planner** (not pre-vs-post): a per-query selectivity
+  estimator switches pre / post / **exact**; the predicate is a **global doc-id allow-list woven into ANN
+  traversal**; **tenancy/RLS rides the same global filter, always ANDed** (Vespa + Weaviate). → *F7*.
+- **D16 — storage ⊥ compute is *tiered placement***: match + first/second-phase compute runs
+  near storage, only top-k rerank goes compute-far; the contract expresses both, plus a read-cache over
+  object storage (Vespa + LanceDB). Do not promise full disaggregation on the hybrid hot path.
+- **D17 — the background plane is first-class** (compaction / index-optimize / GC / read-cache), the place
+  LanceDB's real production pain lives. → *F6*.
+
+Refinements: adaptive encoding *within* columnar + 3-tier blob path (D13); adaptive deletion rep + a
+**single unified row-mask engine** for deletion-vectors and filters (F3v/F1d); reverse-lex manifest naming
++ external-manifest fallback (F1c); tenant lifecycle (lazy-load + ACTIVE/INACTIVE/OFFLOADED + flat→dynamic→HNSW,
+D6). Two open tensions recorded: **cross-tenant edges vs. fail-closed isolation** (Weaviate banned them),
+and a **per-modality consistency knob** vs. one global model (Vespa's eventual floor is too weak for a
+system of record).
+
 === Residual risk (honestly flagged)
 
 - **Time-series and vector identity: now calibrated (P4)** as surrogate/ordering (not uniqueness) — but no
@@ -349,6 +373,9 @@ enforce uniqueness** — that stays with MVCC + the `ConditionalKeyStore` index.
 - [[biblio-pgvector]] **Filter-Agnostic Vector Search on a PostgreSQL Database** (SIGMOD 2026). https://arxiv.org/abs/2603.23710
 - [[biblio-icebergdv]] **Apache Iceberg v3** — deletion vectors (Puffin, roaring bitmap; merge-on-read). https://iceberg.apache.org/spec/#deletion-vectors
 - [[biblio-deltadv]] **Delta Lake** — deletion vectors / merge-on-read. https://docs.delta.io/latest/delta-deletion-vectors.html
+- [[biblio-lance]] **Lance / LanceDB** — columnar ML format + object-store storage⊥compute. arXiv:2504.15247 · https://lance.org/format/
+- [[biblio-vespa]] **Vespa** — serving engine (content/container nodes, tensors, constrained ANN). https://docs.vespa.ai/en/overview.html
+- [[biblio-weaviate]] **Weaviate** — vector-native DB (shard-per-tenant, pre-filter allow-list→HNSW). https://docs.weaviate.io/weaviate/concepts/storage
 
 == Migration Path
 
