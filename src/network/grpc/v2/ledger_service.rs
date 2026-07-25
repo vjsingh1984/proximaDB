@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tonic::{Request, Response, Status};
 
-use proximadb_ledger::{CasError, DurableLedger, LedgerService, Policy, ReserveOutcome};
+use proximadb_ledger::{CasError, DurableLedger, LedgerService, Policy, ReserveOutcome, Window};
 
 use crate::network::grpc::auth as grpc_auth;
 use crate::proto::proximadb_v2 as pv2;
@@ -45,6 +45,14 @@ fn policy_to_wire(policy: Policy) -> i32 {
     match policy {
         Policy::Block => pv2::LedgerPolicy::Block as i32,
         Policy::Warn => pv2::LedgerPolicy::Warn as i32,
+    }
+}
+
+/// Wire enum (`LedgerWindow`) → the port's [`Window`]. Unspecified/unknown ⇒ `Total`.
+fn window_from_wire(value: i32) -> Window {
+    match pv2::LedgerWindow::try_from(value) {
+        Ok(pv2::LedgerWindow::Daily) => Window::Daily,
+        _ => Window::Total,
     }
 }
 
@@ -77,8 +85,13 @@ impl ProximaLedgerService for ProximaLedgerServiceImpl {
         if req.scope.trim().is_empty() {
             return Err(Status::invalid_argument("scope is required"));
         }
-        self.ledger
-            .set_limit(&tenant, &req.scope, req.limit, policy_from_wire(req.policy));
+        self.ledger.set_limit(
+            &tenant,
+            &req.scope,
+            req.limit,
+            window_from_wire(req.window),
+            policy_from_wire(req.policy),
+        );
         Ok(Response::new(pv2::SetLimitResponse {}))
     }
 
@@ -127,7 +140,10 @@ impl ProximaLedgerService for ProximaLedgerServiceImpl {
         // tenant is refused (the reservation's owner is recovered from its namespaced scope).
         let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
-        if self.ledger.settle(&tenant, req.reservation_id, req.actual) {
+        if self
+            .ledger
+            .settle(&tenant, req.reservation_id, req.actual, now_ns())
+        {
             Ok(Response::new(pv2::SettleResponse {}))
         } else {
             Err(Status::permission_denied(

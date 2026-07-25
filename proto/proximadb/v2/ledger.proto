@@ -25,12 +25,21 @@ enum LedgerPolicy {
   LEDGER_POLICY_WARN = 2;        // soft cap — never refuse; spend still accrues
 }
 
+// The window over which a scope's spend accrues before it resets (calendar-aligned, UTC).
+// MONTHLY is reserved for a follow-up (needs civil-calendar math); TOTAL + DAILY ship now.
+enum LedgerWindow {
+  LEDGER_WINDOW_UNSPECIFIED = 0; // treated as TOTAL
+  LEDGER_WINDOW_TOTAL = 1;       // never resets (lifetime cap)
+  LEDGER_WINDOW_DAILY = 2;       // resets at each UTC midnight
+}
+
 // --- SetLimit -------------------------------------------------------------
 
 message SetLimitRequest {
   string scope = 1;
   optional uint64 limit = 2; // absent = clear the cap (unlimited but tracked)
   LedgerPolicy policy = 3;
+  LedgerWindow window = 4;   // absent/UNSPECIFIED = TOTAL
 }
 
 message SetLimitResponse {}

@@ -40,7 +40,9 @@ mod types;
 pub use durable::{DurableLedger, SyncPolicy};
 pub use memory::InMemoryLedger;
 pub use service::LedgerService;
-pub use types::{CasError, Denied, Nanos, Policy, Reservation, ReserveOutcome, Version};
+pub use types::{
+    CasError, Denied, Nanos, Policy, Reservation, ReserveOutcome, Version, Window, window_start_ns,
+};
 
 /// The atomic ledger contract — the seam every backend implements.
 ///
@@ -49,14 +51,16 @@ pub use types::{CasError, Denied, Nanos, Policy, Reservation, ReserveOutcome, Ve
 /// mutating methods take `&mut self`: exclusive access *is* the serialization point (the caller holds
 /// the partition write lock — modeled in tests by a `Mutex`). Neutral units only — no pricing.
 pub trait Ledger {
-    /// Set (or clear, with `limit = None`) a scope's cap + policy.
-    fn set_limit(&mut self, scope: &str, limit: Option<u64>, policy: Policy);
+    /// Set (or clear, with `limit = None`) a scope's cap + window + policy. Spend accrues over the
+    /// [`Window`] and resets at each calendar boundary (`Total` never resets).
+    fn set_limit(&mut self, scope: &str, limit: Option<u64>, window: Window, policy: Policy);
 
     /// Atomically admit a call by holding `ceiling` units as a lease expiring at `now_ns + ttl_ns`.
     ///
-    /// The check is `spent + reserved + ceiling ≤ limit` for a `Block` scope; a `Warn` scope (soft
-    /// cap) and an unset scope always admit. Returns [`ReserveOutcome::Denied`] when a hard cap could
-    /// not fit — the call is never dispatched, so the cap cannot be overshot (C1).
+    /// The check is `spent + reserved + ceiling ≤ limit` for a `Block` scope, where `spent` is the
+    /// **current window's** spend (rolled to `now_ns` first); a `Warn` scope (soft cap) and an unset
+    /// scope always admit. Returns [`ReserveOutcome::Denied`] when a hard cap could not fit — the
+    /// call is never dispatched, so the cap cannot be overshot (C1).
     fn reserve(
         &mut self,
         scope: &str,
@@ -65,10 +69,11 @@ pub trait Ledger {
         ttl_ns: Nanos,
     ) -> ReserveOutcome;
 
-    /// Idempotently settle a reservation to its actual usage, releasing the lease. A no-op if the id
-    /// is unknown (already settled, or reclaimed after expiry) — safe under at-least-once delivery
-    /// (C3). `actual = 0` releases the lease without recording spend (the failed/cancelled path).
-    fn settle(&mut self, reservation_id: u64, actual: u64);
+    /// Idempotently settle a reservation to its actual usage, releasing the lease and accruing the
+    /// spend into the scope's **current window** (rolled to `now_ns`). A no-op if the id is unknown
+    /// (already settled, or reclaimed after expiry) — safe under at-least-once delivery (C3).
+    /// `actual = 0` releases the lease without recording spend (the failed/cancelled path).
+    fn settle(&mut self, reservation_id: u64, actual: u64, now_ns: Nanos);
 
     /// Reclaim every lease expired at or before `now_ns`; returns how many were reclaimed. A
     /// reclaimed lease releases its held ceiling **without** recording spend, on a timed basis (C2).
@@ -90,7 +95,10 @@ pub trait Ledger {
     /// The configured policy for a scope (`Block` when unset).
     fn policy(&self, scope: &str) -> Policy;
 
-    /// Settled units recorded against a scope.
+    /// Settled units in the scope's **current window**, as of the last `reserve`/`settle` (writes
+    /// roll the window). A read taken after a window boundary but before the next write may still
+    /// report the prior window's value until then; enforcement (`reserve`) always rolls first, so a
+    /// hard cap is never checked against stale spend.
     fn spent(&self, scope: &str) -> u64;
 
     /// Units held by in-flight (unsettled, unexpired) leases.

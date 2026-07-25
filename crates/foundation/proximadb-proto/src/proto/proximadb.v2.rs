@@ -8476,6 +8476,9 @@ pub struct SetLimitRequest {
     pub limit: ::core::option::Option<u64>,
     #[prost(enumeration = "LedgerPolicy", tag = "3")]
     pub policy: i32,
+    /// absent/UNSPECIFIED = TOTAL
+    #[prost(enumeration = "LedgerWindow", tag = "4")]
+    pub window: i32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SetLimitResponse {}
@@ -8585,6 +8588,40 @@ impl LedgerPolicy {
             "LEDGER_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
             "LEDGER_POLICY_BLOCK" => Some(Self::Block),
             "LEDGER_POLICY_WARN" => Some(Self::Warn),
+            _ => None,
+        }
+    }
+}
+/// The window over which a scope's spend accrues before it resets (calendar-aligned, UTC).
+/// MONTHLY is reserved for a follow-up (needs civil-calendar math); TOTAL + DAILY ship now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum LedgerWindow {
+    /// treated as TOTAL
+    Unspecified = 0,
+    /// never resets (lifetime cap)
+    Total = 1,
+    /// resets at each UTC midnight
+    Daily = 2,
+}
+impl LedgerWindow {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "LEDGER_WINDOW_UNSPECIFIED",
+            Self::Total => "LEDGER_WINDOW_TOTAL",
+            Self::Daily => "LEDGER_WINDOW_DAILY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "LEDGER_WINDOW_UNSPECIFIED" => Some(Self::Unspecified),
+            "LEDGER_WINDOW_TOTAL" => Some(Self::Total),
+            "LEDGER_WINDOW_DAILY" => Some(Self::Daily),
             _ => None,
         }
     }
