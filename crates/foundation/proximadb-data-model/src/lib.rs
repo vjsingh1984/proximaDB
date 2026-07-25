@@ -31,6 +31,10 @@ use std::sync::Arc;
 // and column stats across storage, query, and network layers.
 pub mod metadata_types;
 
+/// Typed, order-preserving composite key encoding (F0 · ADR-072 D9) — the
+/// `Identity` codec that replaces the collision-prone `encode_primary_key_tuple`.
+pub mod key_codec;
+
 // ---------------------------------------------------------------------------
 // Stats Trust (ADR-058 D5 / §9.A)
 // ---------------------------------------------------------------------------
