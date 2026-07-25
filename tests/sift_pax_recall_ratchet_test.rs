@@ -797,9 +797,9 @@ fn write_ivf2_geometry(
         std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "1");
         std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
         if v3 {
-            std::env::set_var("PROXIMADB_IVF2", "1");
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
         } else {
-            std::env::remove_var("PROXIMADB_IVF2");
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
         }
     }
     let rows_per_file = base.len().div_ceil(file_count);
@@ -1065,8 +1065,8 @@ async fn sift_ivf2_probe_release_bakeoff_eval() {
         let v3 = write_ivf2_geometry(dir.path(), &base, file_count, true);
 
         unsafe {
-            std::env::remove_var("PROXIMADB_IVF2_PROBE");
-            std::env::remove_var("PROXIMADB_IVF2_NPROBE");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
             set_ivf2_layout_proof_arm(None, None, false);
             std::env::set_var("PROXIMADB_TRACE_PAX_STAGES", "1");
         }
@@ -1085,8 +1085,8 @@ async fn sift_ivf2_probe_release_bakeoff_eval() {
         for nprobe in &nprobes {
             unsafe {
                 set_ivf2_layout_proof_arm(None, None, false);
-                std::env::set_var("PROXIMADB_IVF2_PROBE", "1");
-                std::env::set_var("PROXIMADB_IVF2_NPROBE", nprobe.to_string());
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_NPROBE", nprobe.to_string());
             }
             let probe_cold = run_ivf2_bake_arm(&fs, &v3, &queries, &ground_truth, false).await;
             let probe_warm = run_ivf2_bake_arm(&fs, &v3, &queries, &ground_truth, true).await;
@@ -1183,9 +1183,9 @@ async fn sift_ivf2_probe_release_bakeoff_eval() {
     }
 
     unsafe {
-        std::env::remove_var("PROXIMADB_IVF2");
-        std::env::remove_var("PROXIMADB_IVF2_PROBE");
-        std::env::remove_var("PROXIMADB_IVF2_NPROBE");
+        std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+        std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+        std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
         std::env::remove_var("PROXIMADB_TRACE_PAX_STAGES");
         set_ivf2_layout_proof_arm(None, None, false);
     }
@@ -1203,7 +1203,7 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
         std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
         std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "1");
         std::env::set_var("PROXIMADB_COUNT_FS_IO", "1");
-        std::env::set_var("PROXIMADB_IVF2", "1");
+        std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
         std::env::set_var(
             "PROXIMADB_IVF_K",
             &std::env::var("PROXIMADB_SIFT_IVF_K").unwrap_or_else(|_| "64".to_string()),
@@ -1314,9 +1314,9 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
     ) -> (f64, u64, u64, usize) {
         unsafe {
             if probe_on {
-                std::env::set_var("PROXIMADB_IVF2_PROBE", "1");
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
             } else {
-                std::env::remove_var("PROXIMADB_IVF2_PROBE");
+                std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
             }
         }
         let _ = proximadb::storage::engines::sst::segment_format::drain_get_trace();
@@ -1387,7 +1387,7 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
     );
     assert!(
         !probe_trace.is_empty(),
-        "PROXIMADB_IVF2_PROBE=1 must engage the coarse probe on the v3 segment"
+        "PROXIMADB_PAX_READ_COARSE_PROBE=1 must engage the coarse probe on the v3 segment"
     );
     assert!(
         recall_probe >= recall_base - recall_drop,
@@ -1398,8 +1398,8 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
         "probe bytes/q = {bytes_probe} must read fewer than baseline {bytes_base}"
     );
     unsafe {
-        std::env::remove_var("PROXIMADB_IVF2");
-        std::env::remove_var("PROXIMADB_IVF2_PROBE");
+        std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+        std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
         std::env::remove_var("PROXIMADB_TRACE_GETS");
     }
 }

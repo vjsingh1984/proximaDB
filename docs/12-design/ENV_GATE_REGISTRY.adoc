@@ -130,8 +130,8 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_IO_TRACE_SINK_SPOOL_MAX_BYTES` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
 | `PROXIMADB_IO_TRACE_SINK_WAREHOUSE_COMPACTION_INTERVAL_S` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/core/config.rs`
 | `PROXIMADB_PAX_WRITE_A0_TRAIN` | WRITE gate: compaction trains + emits the v3/A0 coarse directory (semantic name) | OFF | TD-RDSTRAT-8 PR-A | `src/storage/engines/sst/block_cluster.rs`
+| `PROXIMADB_PAX_READ_COARSE_NPROBE` | READ knob: coarse-probe cell count (nprobe) | adaptive default | TD-RDSTRAT-8 PR-B; retired alias name: `PROXIMADB_IVF2_NPROBE` | `src/storage/engines/sst/segment_format.rs`
 | `PROXIMADB_PAX_READ_COARSE_PROBE` | READ gate: search probes via A0 on v3 segments (semantic name) | OFF (recall-ratchet gated) | TD-RDSTRAT-8 PR-B | `src/storage/engines/sst/segment_format.rs`
-| `PROXIMADB_IVF2_NPROBE` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/segment_format.rs`
 | `PROXIMADB_IVF_BINARY_TIER` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/index/axis/indexes/dual_store_ivf.rs`
 | `PROXIMADB_IVF_K` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/block_cluster.rs (+1)`
 | `PROXIMADB_IVF_NCOMP` | TODO — backfill on next touch (guard enforces new entries only going forward) | TODO | — | `src/storage/engines/sst/block_cluster.rs`
@@ -271,3 +271,4 @@ layer; at GA, renames become alias-forever):
 
 * `PROXIMADB_IVF2` → `PROXIMADB_PAX_WRITE_A0_TRAIN` (2026-07-25)
 * `PROXIMADB_IVF2_PROBE` → `PROXIMADB_PAX_READ_COARSE_PROBE` (2026-07-25)
+* `PROXIMADB_IVF2_NPROBE` → `PROXIMADB_PAX_READ_COARSE_NPROBE` (2026-07-25)

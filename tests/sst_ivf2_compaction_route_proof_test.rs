@@ -1,5 +1,5 @@
 //! TD-RDSTRAT-8 PR-A route proof: the PRODUCTION compaction trigger emits the
-//! persisted-IVF-probe (v3) layout under `PROXIMADB_IVF2=1` — and only then.
+//! persisted-IVF-probe (v3) layout under `PROXIMADB_PAX_WRITE_A0_TRAIN=1` — and only then.
 //!
 //! The SIFT recall harness drives flush only, and v3 is written exclusively by
 //! `write_pax_segment_compacted`, so without this gate the v3 emission path
@@ -218,12 +218,12 @@ async fn flush_to_compaction(id: &str) -> Result<(tempfile::TempDir, SstEngine, 
     Ok((dir, engine, coll))
 }
 
-/// `PROXIMADB_IVF2=1`: the production compaction product is a v3 segment with
+/// `PROXIMADB_PAX_WRITE_A0_TRAIN=1`: the production compaction product is a v3 segment with
 /// a parsable Region A0, and production search over it stays exact.
 #[tokio::test]
 async fn test_ivf2_compaction_route_emits_v3_and_searches() -> Result<()> {
     unsafe {
-        std::env::set_var("PROXIMADB_IVF2", "1");
+        std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
     }
     let (dir, engine, coll) = flush_to_compaction("ivf2_route_on").await?;
 
@@ -239,7 +239,7 @@ async fn test_ivf2_compaction_route_emits_v3_and_searches() -> Result<()> {
         .collect();
     assert!(
         !v3.is_empty(),
-        "PROXIMADB_IVF2=1: the compacted product must carry layout_version=3 \
+        "PROXIMADB_PAX_WRITE_A0_TRAIN=1: the compacted product must carry layout_version=3 \
          (found versions: {versions:?})"
     );
     // The v3 segment's Region A0 parses and covers the merged corpus.
@@ -269,7 +269,7 @@ async fn test_ivf2_compaction_route_emits_v3_and_searches() -> Result<()> {
 #[tokio::test]
 async fn test_ivf2_off_compaction_route_stays_v1() -> Result<()> {
     unsafe {
-        std::env::remove_var("PROXIMADB_IVF2");
+        std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
     }
     let (dir, engine, coll) = flush_to_compaction("ivf2_route_off").await?;
 
@@ -279,7 +279,7 @@ async fn test_ivf2_off_compaction_route_stays_v1() -> Result<()> {
         versions
             .iter()
             .all(|(_, v)| *v != SEG_LAYOUT_VERSION_TWO_LEVEL),
-        "without PROXIMADB_IVF2 no v3 segment may exist (found: {versions:?})"
+        "without PROXIMADB_PAX_WRITE_A0_TRAIN no v3 segment may exist (found: {versions:?})"
     );
     let ids = search_ids(&engine, &coll, vector_for(17)).await;
     assert_eq!(ids.first().map(String::as_str), Some("v0017"));
