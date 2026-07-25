@@ -109,14 +109,26 @@ impl SurvivorRangeCache {
     /// (`TierPolicy::resolver` output) — the same seam the footer/index caches
     /// use. With a resolver, hot-tier tenants get admission floors /
     /// fair-share weights from the operator tier JSON; without one the pool
-    /// stays uniform elastic fair share. NOTE (TD-CACHE-3 S2): the floor is
-    /// admission-only today — eviction is TinyLFU floor-agnostic; a true
-    /// never-evict pin needs the reserved-segment restructure.
+    /// stays uniform elastic fair share.
+    ///
+    /// TD-CACHE-3 S2: setting `PROXIMADB_SURVIVOR_PIN_RESERVE_FRAC` (0.0–0.5,
+    /// default 0 = off) carves that fraction of the budget into the true-pin
+    /// reserve — tier floors then become never-evicted-by-others pinned
+    /// segments instead of admission-only preferences. Requires a resolver
+    /// (floors come from the tier policy); without floors the reserve idles,
+    /// so the flag is only meaningful together with `PROXIMADB_CACHE_TIERS_PATH`.
     pub fn with_resolver(
         budget_bytes: u64,
         resolver: Option<Arc<proximadb_cache::LimitsResolver>>,
     ) -> Self {
-        let budget = CacheBudget::new(budget_bytes, budget_bytes).with_high_watermark(0.9);
+        let pin_frac = std::env::var("PROXIMADB_SURVIVOR_PIN_RESERVE_FRAC")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|f| *f > 0.0 && resolver.is_some())
+            .unwrap_or(0.0);
+        let budget = CacheBudget::new(budget_bytes, budget_bytes)
+            .with_high_watermark(0.9)
+            .with_pin_reserve(pin_frac);
         let cache = match resolver {
             Some(r) => TenantCache::new(budget).with_limits_resolver(r),
             None => TenantCache::new(budget),
@@ -272,6 +284,87 @@ impl SurvivorRangeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-CACHE-3 S2 e2e (survivor level): tenant A's tier floor is pinned —
+    /// tenant B churning far past the pool cannot evict it. A's ranges are
+    /// still served without re-running the loader after B's flood, inside
+    /// each tenant's real io_trace scope (the S1 ambient route).
+    #[tokio::test]
+    async fn pinned_tenant_floor_survives_churner_flood() {
+        // SAFETY: nextest runs process-per-test; the env var cannot leak.
+        unsafe { std::env::set_var("PROXIMADB_SURVIVOR_PIN_RESERVE_FRAC", "0.5") };
+        let resolver: Arc<proximadb_cache::LimitsResolver> =
+            Arc::new(|tenant: &str| proximadb_cache::TenantLimits {
+                floor_bytes: if tenant == "tenant-a" { 4_000 } else { 0 },
+                hard_ceiling_bytes: 10_000,
+                weight: 1,
+            });
+        let cache = SurvivorRangeCache::with_resolver(10_000, Some(resolver));
+
+        // A loads its working set inside its tenant scope (4 × 1 KB = floor).
+        crate::observability::io_trace::instrument(Some("tenant-a".to_string()), "test", async {
+            for i in 0..4u64 {
+                cache
+                    .get_or_fetch(
+                        CacheKind::QuantizedCodes,
+                        "a.pax",
+                        i * 1_000,
+                        1_000,
+                        || async { Ok(vec![i as u8; 1_000]) },
+                    )
+                    .await
+                    .unwrap();
+            }
+        })
+        .await;
+
+        // B floods 100 KB through the 5 KB shared pool from its own scope.
+        crate::observability::io_trace::instrument(Some("tenant-b".to_string()), "test", async {
+            for i in 0..100u64 {
+                cache
+                    .get_or_fetch(
+                        CacheKind::QuantizedCodes,
+                        "b.pax",
+                        i * 1_000,
+                        1_000,
+                        || async { Ok(vec![0u8; 1_000]) },
+                    )
+                    .await
+                    .unwrap();
+            }
+        })
+        .await;
+
+        // A's floor must be served from the pinned segment: loader NOT re-run.
+        crate::observability::io_trace::instrument(Some("tenant-a".to_string()), "test", async {
+            for i in 0..4u64 {
+                let reloaded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let r2 = reloaded.clone();
+                let bytes = cache
+                    .get_or_fetch(
+                        CacheKind::QuantizedCodes,
+                        "a.pax",
+                        i * 1_000,
+                        1_000,
+                        move || {
+                            let r = r2.clone();
+                            async move {
+                                r.store(true, std::sync::atomic::Ordering::SeqCst);
+                                Ok(vec![i as u8; 1_000])
+                            }
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(bytes[0], i as u8);
+                assert!(
+                    !reloaded.load(std::sync::atomic::Ordering::SeqCst),
+                    "range {i}: pinned floor entry must survive B's churn"
+                );
+            }
+        })
+        .await;
+    }
 
     /// TD-CACHE-1 S2: warm_set ranks by hit count, caps at top_k, and
     /// replay_entry re-loads a range through the read-through path.
