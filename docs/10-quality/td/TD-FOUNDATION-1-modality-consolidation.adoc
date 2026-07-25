@@ -1,0 +1,126 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-FOUNDATION-1: Foundational modality consolidation — contract extraction + build order
+:toc: macro
+:icons: font
+
+toc::[]
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Draft / design gate** (2026-07-24). No implementation yet. Additive + feature-gated; graduates per `docs/SUPPORTED_SURFACE.adoc` with filed benchmark evidence.
+| Implements | link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072] / link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]
+| Acceptance bar | the composite-natural-PK MVP passes atomic-uniqueness under concurrency + serverless (object-store) restart; no modality regresses; reclaimed-footprint/latency evidence filed
+|===
+
+== Context
+
+The canonical spine (`TableRecordStore` + `TableWalAppender`, tenancy in every signature) is adopted on
+a gradient; siloed modalities re-invent tiers/tenancy/WAL and drift on correctness/security (RFC-0002
+§map). This TD is the build plan to consolidate the **contract surface** (ADR-072 D1) so modalities
+stack on one foundation, with modality-specific impls behind the contracts where access diverges (D2).
+
+== Contract inventory (exists · widen · new)
+
+[cols="1,1,3", options="header"]
+|===
+| Contract | Action | Notes
+| `RecordStore` (`record_store.rs:500`) | widen | already used by relational (full), vector (durability); onboard document (finish the canonical-store migration) then others.
+| WAL / durability (`canonical_wal.rs`) | re-express | ledger/queue/TS dedicated WALs become *impls of this contract*, not off-contract silos (ratifies ADR-071).
+| **`ConditionalKeyStore`** | **NEW** | the atomic OLTP primitive; extraction plan §below.
+| Read IR (`LogicalNode`, ADR-039) | reuse | compute stays swappable; modality reads project in or extend.
+| Tiering (memtable→object-store→PAX) | widen | siloed modalities *consume* it instead of re-rolling tiers.
+| Tenancy (`TenantContext`/`DrPathBuilder`/`ObjectAccessTier`) | universalize | in every contract signature — structural security (D6).
+| **Catalog / governance** (`proximadb-catalog`, `CatalogTableSchema`) | formalize | the **governance metamodel** — one model, N vocabularies (next).
+|===
+
+=== The catalog governance metamodel (the seam that makes the primitive modality-agnostic)
+
+`Container → Entity → Attribute → Identity/Uniqueness → Index → Constraint/Policy`, projected per
+modality (relational `db/table/column/PK/btree`; vector `namespace/collection/field/oid/ANN`; document
+`collection/path/_id/fulltext`; graph `graph/node·edge/property/(src,dst,type)/CSR`; observability
+`namespace/stream/field/(series,ts)/Tantivy`). DDL/RBAC/schema-evolution/constraint-enforcement written
+**once** against the metamodel. The MVP's uniqueness key is *the entity's Identity level*, encoded to
+bytes — the same for a relational PK and a vector `oid`.
+
+== `ConditionalKeyStore` extraction
+
+The ledger's proven CAS core (`crates/modalities/proximadb-ledger`: atomic conditional admit + WAL +
+single-writer + CRC-framed torn-tail-tolerant replay) is the reference. Extract + generalize:
+
+- **Generalize the key/value:** ledger CAS keys on `&str` → version `i64`; the shared primitive keys on
+  `&[u8]` (encoded composite tuple) → `Oid` (payload/row pointer).
+- **Contract:** `put_if_absent(t: &TenantContext, keyspace, key: &[u8], oid) -> Result<(), Conflict>` +
+  `get` + `delete`.
+- **Two impls behind it (ADR-072 D4/D5):**
+  * *object-store `put_if_absent`* — **serverless default** (create-only conditional put; already backs
+    Iceberg manifest/lease commits). Serialization = the object store; scale-to-zero, no writer node.
+  * *local-WAL CAS* — the ledger core generalized `bytes→oid`; sub-ms hot opt-in.
+- The ledger's own CAS keyspace becomes a specialization of the same contract (str→version is a
+  `bytes→scalar` case).
+
+== The MVP — composite-natural-PK atomic uniqueness
+
+**Goal:** a `PRIMARY KEY (a, b, c)` (composite, natural) insert is rejected on duplicate **atomically at
+the storage layer**, serverless-capable — replacing the op-lock crutch.
+
+**Seams (from the map):**
+- Integrity checks today: `execute_insert` `src/services/dml/mod.rs:3004-3043` (PK), `:3045` (UNIQUE),
+  guarded by the table op-lock `:2968`, then commit `write_mutations` `:3089`.
+- Target: move the guarantee **into** `TableRecordStore::write_mutations` (`record_store.rs:502`) as a
+  `ConditionalKeyStore::put_if_absent` on `encode_primary_key_tuple(a,b,c)` → oid, under the tenant
+  context. The op-lock **demotes** from the correctness mechanism to (at most) a batch latch.
+
+**Acceptance:**
+- Concurrent inserts of the same composite PK → exactly one succeeds, no lock serializing the whole
+  table (throughput win measured).
+- Serverless (object-store impl): duplicate rejected across a compute restart / from two compute
+  instances with no coordination node.
+- `default` build + all existing tests unchanged (behind an `oltp-integrity` cfg feature).
+
+**Scope:** composite-PK + single/multi-column UNIQUE now. **FK is phase 2** — a `get` on the same
+contract (parent-existence), different shape, cleanly deferred.
+
+== Contract-adoption roadmap (leaf-first, additive, feature-gated)
+
+[cols="1,3", options="header"]
+|===
+| Step | Work
+| *F1* | Extract `ConditionalKeyStore` + the object-store impl; ledger CAS re-expressed as a consumer (proves the shared primitive).
+| *F2* | **MVP:** composite-natural-PK uniqueness on the relational insert path via F1; op-lock demoted; `oltp-integrity` feature.
+| *F3* | Re-express ledger/queue/TS dedicated WALs as impls of the WAL contract (stop off-contract silos); siloed modalities consume the shared tiering contract instead of their own tiers.
+| *F4* | Finish document's canonical-store migration; onboard vector reads-side where the shared scan suffices (keep ANN as an extension operator).
+| *F5* | FK / referential integrity (phase 2, `get` on `ConditionalKeyStore`); then HTAP — native compute (Volcano/DataFusion) TPC-H over atomically-consistent data.
+|===
+
+Each step: additive, `#[cfg]`-gated (compile-time composition, ADR-072 D7), one modality/contract at a
+time, with reclaimed-footprint / latency / throughput evidence filed to `BENCHMARK_EVIDENCE.toml`
+(measure-don't-assert).
+
+== Cohesion / coupling / correctness
+
+- *Cohesion:* a modality owns only its semantics + operators (ANN, CSR, PromQL, budgets) and its
+  contract impl where access diverges.
+- *Coupling:* modalities couple to the foundation **via contracts only, never to each other**; the
+  storage⊥compute contract is the one deliberate seam (both swap). Coarse-grained dispatch (per
+  batch/query) → zero per-row cost.
+- *Correctness under security:* every contract carries `TenantContext` (fail-closed); the atomic
+  primitive removes the TOCTOU race the op-lock papered over; the object-store impl makes it correct at
+  serverless scale.
+
+== Risks & non-goals
+
+- *Risk:* moving uniqueness into `write_mutations` is on the hot write path + touches a central store —
+  gated behind `oltp-integrity`, MVP-scoped, evidence-gated.
+- *Risk:* object-store `put_if_absent` latency — the local-WAL impl is the hot escape hatch behind the
+  same contract.
+- *Non-goals:* multi-statement ACID transactions; one shared WAL for all modalities (rejected, ADR-072
+  D2); changing any modality's semantics; a single god storage trait.
+
+== Unresolved questions
+
+- `KeyspaceId` shape + the shared composite-key encoding (reuse `encode_primary_key_tuple`).
+- Object-store `put_if_absent` as the sole default vs. co-equal-with-local-WAL behind the contract
+  (lean: object-store-primary for the serverless minimum).
+- How far to widen `RecordStore` into observability/timeseries vs. keeping them contract-impl silos.

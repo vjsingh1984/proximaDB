@@ -1,0 +1,108 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-072: Foundational contract consolidation — one contract surface, many implementations
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Proposed** (2026-07-24). Formalizes link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]; build plan in link:../../10-quality/td/TD-FOUNDATION-1-modality-consolidation.adoc[TD-FOUNDATION-1]. Additive + feature-gated; `default` behavior unchanged until each modality opts in.
+| Decider | Vijaykumar Singh (2026-07-24)
+| Date | 2026-07-24
+| Relates to | link:ADR-039-olap-engine-boundary-swappable-physical-backend.adoc[ADR-039] (DataFusion swappable behind the read IR — the compute half of the storage⊥compute decoupling), link:ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069] (local-disk WAL substrate), link:ADR-071-transactional-ledger-modality.adoc[ADR-071] (ledger dedicated WAL — the "divergent access ⇒ own impl behind the contract" precedent), link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (co-design spine).
+| Non-goals | A single "god" storage-engine trait (the repo favors a *family* of narrow ports — kept); forcing every modality onto one shared WAL (explicitly rejected — see D2); multi-statement ACID transactions (out of scope; the insert path is autocommit); changing any modality's semantics or wire contract.
+|===
+
+== Context
+
+The canonical spine (`trait TableRecordStore` + `trait TableWalAppender`, `TenantContext` in every
+signature) already exists but is adopted on a **gradient**: relational rides it fully, vector for
+durability only, document is mid-migration, and graph/observability/timeseries/ledger/queue each carry
+**their own WAL and re-implement their own tier storage + tenancy plumbing** (RFC-0002 §map). Two
+costs: **code proliferation** (the queue re-rolls memory/disk/object tiers; N private WALs) and
+**inconsistent correctness/security** (an off-contract modality does not inherit fail-closed tenant
+isolation, tiering, or the CDC feed). Independently, the just-shipped ledger and the relational OLTP
+insert path want the **same atomic primitive** — insert-if-absent on a composite key — which the store
+lacks, so relational fakes it with a coarse table op-lock. The minimum bar (serverless, low-cost,
+composite natural keys) forces the atomic primitive into the storage layer.
+
+== Decision
+
+**D1 — Consolidate the CONTRACT surface, not the implementations.** A small family of narrow,
+tenancy-carrying contracts (record store, WAL/durability, `ConditionalKeyStore`, read IR, tiering,
+tenancy, and the **catalog**) is the single foundation every modality stacks on. The **catalog is the
+governance seam**: one metamodel — `Container → Entity → Attribute → Identity/Uniqueness → Index →
+Constraint/Policy` — governs *all* modality data (schema, RBAC, tenancy, constraints, indexes), with
+only the *vocabulary and index shapes* differing per modality (relational `database/table/column`,
+btree/bitmap; vector `namespace/collection/field`, ANN/axis-index; document `collection/field·path`,
+path/fulltext/array/geo; graph `graph/node·edge/property`, CSR-adjacency; observability
+`namespace/stream/field`, Tantivy/PromQL). DDL, RBAC, schema evolution, and constraint/index
+enforcement are written **once** against the metamodel — which is precisely why the `ConditionalKeyStore`
+(D3) is modality-agnostic ("uniqueness on the entity's identity key" is a metamodel concept). This
+formalizes the existing `proximadb-storage-ports` family; it does **not** introduce one god-trait.
+
+**D2 — One contract, many implementations; divergent access keeps its own impl *behind* the contract.**
+A modality may not invent an off-contract WAL or re-roll tiers/tenancy. Where its access pattern truly
+diverges (ledger hot counters, queue offsets, timeseries ingest), it ships its **own implementation of
+the shared contract** — ratifying ADR-071's ledger WAL and the queue's dedicated log as *contract
+impls*, not silos. Forcing everyone onto one shared WAL is rejected (the map + ADR-071 + the queue
+precedent prove access patterns legitimately diverge).
+
+**D3 — New `ConditionalKeyStore` contract = the atomic OLTP primitive.**
+`put_if_absent(tenant, keyspace, key: &[u8], oid) -> Result<(), Conflict>` (+ `get`, `delete`),
+extracted from the ledger's proven CAS core and immediately reused by the relational OLTP insert path
+for composite-natural-`PRIMARY KEY`/`UNIQUE`. It replaces the `get_by_key` + op-lock + `write_mutations`
+sequence with one storage-level atomic write; the op-lock demotes from *the guarantee* to (at most) a
+batch latch — unlocking concurrent inserts to a table.
+
+**D4 — Storage ⊥ compute, decoupled + swappable behind contracts.** Compute (insert executor; Volcano/
+DataFusion/DuckDB readers) depends only on the contracts, never a storage impl; storage impls (canonical
+WAL, dedicated WAL, object-store) and compute engines (ADR-039) swap independently. Dispatch is
+**coarse-grained** (per batch / per query), so swappability bears **zero per-row cost** — the balance
+between flexibility and speed.
+
+**D5 — Serverless-first `ConditionalKeyStore` default = object-store `put_if_absent`.** The
+serialization point lives in the storage layer, not an in-process writer, so the primitive works at
+scale-to-zero with no coordination node — satisfying the serverless + low-cost minimum by default.
+Local-WAL CAS (the ledger core, generalized `bytes→oid`) is the sub-ms hot opt-in behind the same
+contract.
+
+**D6 — Tenancy in every contract signature; enterprise security is structural.** `TenantContext`
+(fail-closed), `DrPathBuilder` per-tenant paths, and `ObjectAccessTier` are foundation facilities every
+modality inherits at the contract boundary — never re-implemented per silo. Neutral units only.
+
+**D7 — Compile-time modality composition.** Every modality + its contract impls are `#[cfg]`-gated
+features, so a deployment links only what it runs (lean profiles) — per the modality-composition
+handoff. Reduced binary/RAM/attack surface, lower cost to operate.
+
+**D8 — Additive, incremental, evidence-gated migration.** Widen contract adoption modality-by-modality,
+leaf-first; each step additive + feature-gated, with reclaimed-footprint / latency evidence filed to
+`BENCHMARK_EVIDENCE.toml` (ADR-052 measure-don't-assert). `default` unchanged until opt-in.
+
+== Consequences
+
+* **Positive:** reduced code proliferation (siloed modalities stop re-inventing tiers/tenancy/WAL-framing
+  and inherit CDC + tiering + fail-closed isolation); foundational consistency; storage and compute swap
+  at ease; enterprise security structural; serverless + low-cost by default; modalities build on each
+  other (fusion is the proof — pure compose-over-contracts).
+* **Cost:** an abstraction tax (mitigated by coarse-grained, map-derived contracts); a multi-crate
+  migration (mitigated by additive, feature-gated, one-modality-per-step); the object-store
+  `ConditionalKeyStore` trades latency for serverless operation (the hot impl is the escape hatch).
+* **Boundary preserved:** neutral units; tenancy fail-closed; the measure-vs-price line untouched; no
+  modality's semantics change.
+
+== Alternatives considered
+
+* *One shared WAL for all modalities* — rejected (D2): divergent access patterns (ledger/queue/TS)
+  make it wrong; ADR-071 already ratified the ledger's own WAL.
+* *A single god storage-engine trait* — rejected: too coarse; the narrow-port family is the right grain.
+* *Status quo (per-modality silos)* — the code-proliferation + inconsistent-security cost this ADR
+  exists to stop.
+
+== References
+
+* link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002] — full proposal + the
+  shared-vs-siloed map.
+* link:../../10-quality/td/TD-FOUNDATION-1-modality-consolidation.adoc[TD-FOUNDATION-1] — build plan,
+  composite-PK MVP, contract-adoption roadmap.
+* ADR-039 (compute swappability), ADR-069 (WAL substrate), ADR-071 (ledger dedicated WAL precedent),
+  ADR-052 (co-design + measure-don't-assert).

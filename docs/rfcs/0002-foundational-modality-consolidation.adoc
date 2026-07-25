@@ -1,0 +1,251 @@
+= RFC-0002: Foundational modality consolidation — one contract surface, many implementations
+:author: Vijaykumar Singh
+:email: vjdsingh@icloud.com
+:date: 2026-07-24
+:status: Draft
+:toc: left
+:toclevels: 3
+
+== Summary
+
+Every ProximaDB modality — vector, graph, document, observability/metrics/timeseries/event, relational,
+ledger, and the fusion orchestrator — is, at the level that matters for maintenance, the **same
+shape**: a **storage plane** + a **compute plane** + a thin layer of **modality semantics**. Today
+that shape is realized inconsistently: relational rides the shared canonical spine end-to-end, vector
+shares it for durability but not reads, document is mid-migration onto it, and graph, observability,
+timeseries, ledger, and queue each carry **their own WAL and re-implement their own tier storage and
+tenancy plumbing**. The result is code proliferation and inconsistent correctness/security guarantees.
+
+This RFC proposes consolidating the **contract surface** — not the implementations. A small family of
+narrow, tenancy-carrying contracts (durability/WAL, a `ConditionalKeyStore` for atomic keyed writes, a
+record store, a read IR, tiering, tenancy, catalog) becomes the **single foundation every modality
+stacks on**. Where a modality's access pattern genuinely diverges (the ledger's hot counters, the
+queue's offsets, observability's time-partitioned ingest), it keeps its **own implementation behind
+the same contract** — cohesion and performance preserved — instead of a bespoke off-contract silo. The
+flagship new contract, `ConditionalKeyStore` (atomic insert-if-absent on composite-key bytes), is
+extracted from the just-shipped ledger's proven CAS core and immediately reused by the relational OLTP
+insert path for composite-natural-key `PRIMARY KEY`/`UNIQUE` — replacing a coarse table lock with a
+storage-level, serverless-capable atomic write.
+
+The outcome: **foundational consistency + reduced code (one contract, many impls), cohesion per
+modality, decoupling via contracts (storage and compute swap at ease), and enterprise security carried
+in the contracts (tenant context, fail-closed, at every I/O boundary).**
+
+== Motivation
+
+=== The map: a shared spine adopted on a gradient
+
+The canonical spine already exists — `trait TableRecordStore` (`src/services/record_store.rs:500`) +
+`trait TableWalAppender` (`src/services/canonical_wal.rs`), with `TenantContext` in *every* method
+signature. But adoption is uneven:
+
+[cols="1,2,2,2", options="header"]
+|===
+| Modality | Write / WAL | Read engine | On the shared spine?
+| *Relational* | shared `DirectWalTableRecordStore` + `FramedTableWalAppender` | shared `LogicalNode` IR → Volcano/DataFusion | **fully**
+| *Vector* | shared store (PAX layout route) | siloed ANN (HNSW/IVF) | durability only
+| *Document* | HYBRID — own legacy `UnifiedWALWriter`; canonical route default-on (feature) | siloed JSON projection | mid-migration
+| *Graph* | HYBRID — canonical edge records + own ORION engine-WAL (CSR) + own metadata file | siloed ORION traversal / Cypher | partial
+| *Observability / TS / Event* | **own** `ObservabilityStoragePort` WAL; `TimeSeriesService` own partitions/WAL | siloed LOGS/METRICS/PromQL/Tantivy | no
+| *Ledger* | **own** `DurableLedger` `ledger.wal` (ratified, ADR-071) | counter reads | no
+| *Queue* | **own** `QueueFs` segments ("access patterns differ") | siloed | no
+| *Fusion* | none (orchestrates) | cross-modal fan-out + rank | n/a (pure compute)
+|===
+
+**Two costs of the gradient.** (1) *Code proliferation* — the queue re-implements memory/disk/object
+tiers (`proximadb-queue/src/{memory_tier,disk_tier,object_tier}.rs`), each siloed modality re-rolls WAL
+framing, and tenancy is re-plumbed per silo. (2) *Inconsistent guarantees* — a modality off the shared
+contracts does not automatically inherit the tenant-fail-closed isolation, the tiering, or the CDC feed
+the spine provides; correctness and security drift per modality.
+
+=== The commonality is a primitive, not a coincidence
+
+The ledger (just shipped) and the relational OLTP insert path want the *same* atomic operation. A
+composite-`PRIMARY KEY` insert reduces to **atomic insert-if-absent on the encoded key tuple**; the
+ledger's `compare_and_swap(key, expected = None)` is that exact shape. Today the relational path fakes
+it with a **coarse in-process table op-lock** (`src/services/dml/mod.rs:2968`) wrapped around a
+`get_by_key` + a later `write_mutations` — a TOCTOU window closed by serializing *all* inserts to a
+table. That lock is a throughput ceiling and a correctness crutch standing in for a storage-level
+atomic write the store lacks (confirmed: no atomic conditional write in `write_mutations`).
+
+=== The minimum bar: serverless, low-cost, composite natural keys
+
+- **Serverless / scale-to-zero** forbids relying on an in-process single writer: the serialization
+  point must live in the **storage layer**. ProximaDB already ships the serverless-correct primitive —
+  object-store `put_if_absent` (create-only conditional put; today backing Iceberg manifest commits +
+  partition leases). Keyed on the composite-key bytes it is an atomic, durable, **coordination-node-free**
+  unique index that works at zero scale.
+- **Composite natural keys are a hard requirement:** the key is an encoded byte-tuple
+  (`encode_primary_key_tuple` already exists), never a surrogate.
+- **Low cost to operate + use:** one substrate to run (fewer moving parts), scale-to-zero pay-per-use,
+  object-store cold tier, and compile-time-lean profiles (link only the modalities you deploy, RFC-0001
+  §4 / the modality-composition handoff).
+
+== Detailed Design
+
+=== The layer model
+
+[source,text]
+----
+COMPUTE plane   Volcano · DataFusion · DuckDB · ANN · ORION traversal · PromQL · fusion/rank
+                 ▲  depends ONLY on contracts (read IR + write ops), never on a storage impl
+─── CONTRACT surface (the consolidation boundary) ─────────────────────────────────────────
+   RecordStore · WAL/durability · ConditionalKeyStore · Scan/read-IR · Tiering · Tenancy · Catalog
+                 ▼  many implementations, chosen by deployment/workload
+STORAGE plane   canonical (WAL+memtable+object-store) · dedicated (ledger/queue/TS) · object-store CAS
+─── FOUNDATION (shared, tenancy-carrying) ─────────────────────────────────────────────────
+   TenantContext · DrPathBuilder · ObjectAccessTier · block-format/PAX · proximadb-catalog
+─── MODALITIES (cohesive; implement the contracts + own their operators) ──────────────────
+   Ledger · Relational-OLTP · Vector · Graph · Document · Observability · … · Fusion(compose)
+----
+
+=== The contract family
+
+Some contracts exist and are widened; one is new. Each **carries `TenantContext`** so security is
+structural, not per-modality.
+
+[cols="1,1,3", options="header"]
+|===
+| Contract | Status | Surface (consolidation target)
+| `RecordStore` | exists (`TableRecordStore`, record_store.rs:500) | `write_mutations` / `get_by_key` / `scan_records_filtered` / CDC `read_changes_since`. Widen adoption; keep per-layout routes.
+| WAL / durability | exists (`TableWalAppender`, canonical_wal.rs) | `append_operations`. A modality with divergent access implements *its own* appender behind this contract (ledger/queue already do — legitimize it) rather than a non-contract WAL.
+| **`ConditionalKeyStore`** | **NEW** | `put_if_absent(tenant, keyspace, key: &[u8], oid) -> Result<(), Conflict>` + `get` + `delete`. The atomic OLTP primitive. Extracted from the ledger CAS core; two impls (below).
+| Scan / read IR | exists (`LogicalNode`, relational-algebra:466; ADR-039) | Read-only IR + swappable compute backend. Modality reads project into it (or extension operators).
+| Tiering | exists (memtable→object-store→PAX; block-format) | Hot/cold contract siloed modalities *consume* instead of re-implementing their own tiers.
+| Tenancy | exists (`TenantContext`/`DrPathBuilder`/`ObjectAccessTier`) | Threaded through every contract method — fail-closed, per-tenant paths.
+| Catalog / governance | exists (`proximadb-catalog`, `CatalogTableSchema`) | The **governance seam** — one metamodel, N vocabularies (below).
+|===
+
+=== The catalog: one governance metamodel, N modality vocabularies
+
+The catalog is not merely another contract — it is the **governance seam**. *All* modality data,
+whatever its nomenclature, is governed by **one metamodel** — `Container → Entity → Attribute →
+Identity/Uniqueness → Index → Constraint/Policy` — carrying schema, RBAC, tenancy, and
+constraint/index declarations **uniformly**. Only the *vocabulary and index shapes* differ:
+
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| Metamodel level | Relational | Vector | Document | Graph | Observability / TS
+| *Container* | database / schema | namespace | namespace | graph / namespace | namespace
+| *Entity* | table | collection | collection | node type · edge type | stream / metric
+| *Attribute* | column | field (vector + payload) | field · JSON path | property | field · label
+| *Identity / uniqueness* | PRIMARY KEY · UNIQUE | id / oid | `_id` | node id · edge (src,dst,type) | (series, timestamp)
+| *Index* | btree · bitmap | axis / ANN (HNSW·IVF) | path · fulltext · array · geo | adjacency (CSR) | Tantivy · PromQL
+| *Constraint / policy* | PK·UNIQUE·FK·CHECK | dim · metric | schema-mode | edge cardinality | retention · rollup
+|===
+
+So DDL, RBAC, schema evolution, tenancy, and constraint/index enforcement are written **once** against
+the metamodel; a modality plugs in its vocabulary (`namespace/collection/field` vs
+`database/table/column`) and its index kinds (ANN/axis vs btree/bitmap vs CSR-adjacency vs
+path/fulltext). Crucially, this is *why* `ConditionalKeyStore` (below) is modality-agnostic:
+**"uniqueness on the entity's identity key" is a metamodel concept** — relational PK, vector `oid`,
+document `_id`, and a graph edge's `(src,dst,type)` all resolve to *"the identity key of an entity"*,
+encoded as bytes and guarded by one atomic primitive. One governance model; one uniqueness primitive; N
+projections.
+
+=== `ConditionalKeyStore` — the flagship, and its two impls (storage⊥compute, swappable)
+
+[source,rust]
+----
+trait ConditionalKeyStore {                                   // the storage plane's OLTP primitive
+    fn put_if_absent(&self, t: &TenantContext, keyspace: KeyspaceId, key: &[u8], oid: Oid)
+        -> Result<(), Conflict>;                              // PRIMARY KEY / UNIQUE
+    fn get(&self, t: &TenantContext, keyspace: KeyspaceId, key: &[u8]) -> Option<Oid>; // FK (phase 2)
+    fn delete(&self, t: &TenantContext, keyspace: KeyspaceId, key: &[u8]);
+}
+----
+
+[cols="1,2,1,2", options="header"]
+|===
+| Impl | Serialization point | Latency | Fit
+| *object-store `put_if_absent`* | the object store itself | tens of ms | **serverless, scale-to-zero, low-cost (default)**
+| *local-WAL CAS* (the ledger core, generalized `bytes→oid`) | in-process single-writer + WAL | sub-ms | hot single-node opt-in
+|===
+
+Compute (the insert executor; the Volcano/DataFusion readers) calls the contract and never learns
+*how* uniqueness is enforced — so the storage impl swaps (serverless vs hot) and the compute engine
+swaps (ADR-039) independently. The contract is invoked at a **coarse grain** (per insert-batch / per
+query), so swappability costs **zero per-row dispatch** — the speed-vs-flexibility balance point.
+
+=== The consolidation principle (cohesion + balanced coupling)
+
+**Consume the shared contracts; implement modality-specific behavior behind them.** A modality does not
+get to invent an off-contract WAL or re-roll tiers/tenancy; it either uses the canonical impl or ships
+its *own impl of the shared contract*. This is the balance the mandate asks for:
+
+- *Foundational consistency + reduced code:* one contract surface; siloed modalities stop re-inventing
+  tiers/tenancy/WAL-framing and inherit CDC, tiering, and fail-closed isolation.
+- *Cohesion:* each modality owns only its semantics + operators (ANN, CSR traversal, PromQL, budget
+  counters) and its contract impl where access diverges.
+- *Balanced decoupling:* modalities couple to the **foundation via contracts only, never to each
+  other**; the storage⊥compute contract is the one deliberate seam, making both swappable.
+
+Fusion is the proof the layering holds: it is **pure compute over the modality ports**, owns no
+storage, and composes vector+graph+document — a modality that is nothing but composition over
+contracts.
+
+=== Enterprise security
+
+`TenantContext` is already a parameter of every `TableRecordStore` method; the consolidation makes that
+**universal** — it is in every contract signature, so tenant isolation is enforced at the contract
+boundary for *every* modality (not re-implemented per silo). Per-tenant physical paths (`DrPathBuilder`),
+at-rest tier control (`ObjectAccessTier`), and block-format RLS tenant-hash skipping are foundation
+facilities every modality inherits. Neutral units only; no pricing crosses any contract.
+
+== Migration Path
+
+Additive and incremental — no modality is forced to change at once, and `default` behavior is
+unchanged until each opts in. The order (leaf-first, lowest-risk-first) and the composite-PK MVP are in
+**TD-FOUNDATION-1**. Divergent-access modalities (ledger, queue, timeseries) are *ratified* on their
+own WAL — but re-expressed as **impls of the shared WAL/tiering contract**, so they stop carrying
+bespoke tier code.
+
+== Drawbacks
+
+- A contract family is an abstraction tax; drawn too fine it ossifies, too coarse it leaks. Mitigation:
+  contracts are invoked at coarse (batch/query) grain and are exactly the seams the map already shows.
+- Widening adoption touches many crates over time (though each step is additive + feature-gated).
+- The `ConditionalKeyStore` object-store impl trades latency for serverless operation; the hot impl is
+  the opt-in escape hatch.
+
+== Rationale and Alternatives
+
+- *One WAL for everything* — **rejected.** The map + ADR-071 (ledger) + the queue's explicit
+  "access patterns differ" prove divergent modalities need their own log. Consolidate the *contract*,
+  not the log.
+- *Status-quo silos* — the code-proliferation + inconsistent-security cost this RFC exists to stop.
+- *A single god storage-engine trait* — too coarse; the repo already favors a *family* of narrow ports
+  (`proximadb-storage-ports`). This RFC formalizes that family, it does not replace it with one trait.
+
+== Prior Art
+
+- Snowflake/Databricks **storage⊥compute separation** — swap either side behind a contract.
+- ProximaDB's own **ADR-039** (DataFusion swappable behind the read-only `LogicalNode` IR) — the compute
+  half of this decoupling, already accepted.
+- **ADR-071** (ledger dedicated WAL) + the **queue** precedent — the "divergent access ⇒ own impl behind
+  the contract" rule, generalized here.
+- The **modality compile-time composition** handoff (docs/12-design/MODALITY_COMPILE_TIME_COMPOSITION)
+  — the deployment axis this RFC's contracts make clean.
+
+== Unresolved Questions
+
+- Exact `KeyspaceId` + composite-key byte encoding shared by ledger CAS and relational PK (reuse
+  `encode_primary_key_tuple`?).
+- Whether the object-store `put_if_absent` impl is the *sole* default or co-equal with local-WAL behind
+  the contract (lean: object-store-primary for the serverless minimum).
+- How far to widen `RecordStore` adoption into observability/timeseries vs. keeping them contract-impl
+  silos.
+
+== Future Possibilities
+
+- Cross-modal multi-key transactions once a transaction contract exists (the unwired
+  `MultiModelTransactionManager` is the seed).
+- FK / referential integrity as a `get` on `ConditionalKeyStore` (phase 2).
+- HTAP: native compute (Volcano/DataFusion) runs TPC-H over data with genuine atomic OLTP integrity.
+
+== Implementation Plan
+
+Milestones live in **TD-FOUNDATION-1**; decisions in **ADR-072**. Headline: (1) extract
+`ConditionalKeyStore` from the ledger core; (2) composite-natural-`PRIMARY KEY` MVP on the relational
+insert path via the object-store impl; (3) widen contract adoption modality-by-modality, leaf-first,
+each additive + feature-gated + benchmark-evidenced.
