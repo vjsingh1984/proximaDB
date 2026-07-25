@@ -9,7 +9,7 @@ toc::[]
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Draft / design gate — P5 research-calibrated** (2026-07-24). No implementation yet. Additive + feature-gated; graduates per `docs/SUPPORTED_SURFACE.adoc` with filed benchmark evidence. Revised after the three-model review reconciliation (P2), calibration against 10 research papers (P3), per-modality vector/graph/TS calibration (P4, D13), and tier-split delete representation (P5, D14 — MVCC + deletion vectors) — see link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072 §Design-gate revision] and RFC-0002 §_Research calibration_ / §_Modality calibration_.
+| Status | **Draft / design gate — P6 research-calibrated** (2026-07-25). No implementation yet. Additive + feature-gated; graduates per `docs/SUPPORTED_SURFACE.adoc` with filed benchmark evidence. Revised through P2 (three-model review), P3 (10 research papers), P4 (per-modality vector/graph/TS, D13), P5 (tier-split delete, D14), and **P6 (production systems — LanceDB/Vespa/Weaviate: D15 hybrid planner, D16 tiered compute, D17 background plane + F6/F7 packages)**; the F0 key codec is calibrated (Appendix A) — see link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072 §Design-gate revision] and RFC-0002 §_Research/Modality calibration_.
 | Implements | link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072] / link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]
 | Acceptance bar | the composite-natural-PK MVP passes **fenced** atomic-uniqueness under concurrency + serverless restart (exactly-one winner, idempotent retry distinguished from real conflict); PK-`UPDATE`/`DELETE`-reclaim leaves no orphaned slot; the typed-identity codec passes collision / order-preserving / NULL property tests; no modality regresses; reclaimed-footprint/latency evidence filed
 |===
@@ -145,6 +145,8 @@ the storage layer**, serverless-capable — replacing the op-lock crutch.
 | *F3v* | **Deletion vectors / merge-on-read (D14)** — cold-tier physical delete for immutable columnar objects (roaring-bitmap DV per data file, Iceberg-v3/Delta style); hot-tier MVCC tombstone → DV on flush; DV-purge at compaction behind the reader watermark; CoW fallback for read-heavy files. Parallel to the critical path. Depends on F1d + F3.
 | *F4* | Finish document's canonical-store migration; onboard vector reads-side where the shared scan suffices (keep ANN as an extension operator). Depends on F3v (cold-tier delete path).
 | *F5* | FK / referential integrity (phase 2, `get` on `ConditionalKeyStore`); then HTAP — native compute (Volcano/DataFusion) TPC-H over atomically-consistent data.
+| *F6* | **Background plane (P6/D17)** — request-path-isolated services: compaction (merge-on-read rewrite), incremental index-optimize (fold unindexed fragments; brute-force until folded), version/DV GC behind the reader watermark, read-cache over object storage. Parallel. Depends on F3v.
+| *F7* | **Hybrid/filter query planner (P6/D15)** — cost-based pre/post/exact by filter selectivity; structured predicate compiled to a global doc-id allow-list woven into ANN traversal; tenancy/RLS rides the same global filter (always ANDed); exact fallback for restrictive filters. Terminal of the multimodal chain (~16w). Depends on F4.
 |===
 
 Each step: additive, `#[cfg]`-gated (compile-time composition, ADR-072 D7), one modality/contract at a
@@ -186,9 +188,50 @@ time, with reclaimed-footprint / latency / throughput evidence filed to `BENCHMA
 - How far to widen `RecordStore` into observability/timeseries vs. keeping them contract-impl silos.
 - The `ProximaRecord` union → composed `RecordCore` + `#[cfg]` modality-extension refactor (ADR-072 D10)
   — routed to the compile-time modality-composition track (#1180), not this MVP.
-- **Thin-in-corpus (P3):** order-preserving key encoding (F0) and secondary-index maintenance are weakly
-  covered by research — calibrate F0/F1 against system engineering (FoundationDB tuple layer, CockroachDB
-  key encoding) rather than papers.
+- **Key encoding — calibrated (R2 done):** the F0 codec is specified against the FoundationDB tuple layer
+  + CockroachDB key encoding — see _Appendix A: F0 `Identity` codec_. Secondary-index maintenance remains
+  thin in research; calibrate during F1.
+
+[appendix]
+== Appendix A — F0 `Identity` codec spec (R2 calibration)
+
+Grounded in the FoundationDB tuple layer <<biblio-fdbtuple>> and CockroachDB key encoding
+<<biblio-crdbenc>>. Three principles both systems share (and the current `encode_primary_key_tuple`
+violates): **prefix-free / self-terminating** per column (concatenation is unambiguous → no two tuples
+collide), **order-preserving** per type (`enc(x) ≤ enc(y) ⇔ x ≤ y`), and **type-tagged** (self-describing).
+
+Layout: `tenant/keyspace prefix ‖ col₀ ‖ col₁ ‖ …`, each `colᵢ = <type-tag> <order-preserving payload>`.
+The tenant/keyspace is a leading length-delimited string field → each tenant's keyspace is a contiguous,
+isolated range (satisfies D6).
+
+[cols="2,1,4", options="header"]
+|===
+| ProximaType | Tag | Payload (order-preserving)
+| `Null` | `0x00` | empty (sorts first)
+| `Boolean` | `0x01` | 1 byte `00`/`01` (false < true)
+| `Int8/16/32/64`, `Date`(i32), `Time/Timestamp/TimestampTz`(i64) | `0x02` | big-endian, **high bit flipped** (`v XOR 2^(n-1)`) — maps signed onto monotonic unsigned
+| `UInt8/16/32/64` | `0x03` | big-endian as-is (already monotonic)
+| `Float16/32/64` | `0x04` | IEEE big-endian; **sign set → flip all bits, else flip sign bit** (total order incl. `-0<0`, NaN)
+| `String`/`Symbol` | `0x06` | UTF-8, `0x00 → 0x00 0xFF`, terminate `0x00` (byte order = codepoint order)
+| `Binary`/`BinaryVector` | `0x07` | bytes, `0x00 → 0x00 0xFF`, terminate `0x00`
+| `Uuid`/`ULID` | `0x08` | 16 bytes big-endian as-is (ULID stays time-sortable)
+| `Decimal` | `0x05` | order-preserving `(sign, exp, digits)` — **phase 2 / restricted**
+| `Json/Jsonb/Array/Map/Struct/DenseVector/SparseVector` | — | **rejected as PK/UNIQUE component** at DDL
+|===
+
+Four semantic rules the codec must carry (beyond bytes):
+
+1. **`UNIQUE` + NULL ≠ duplicate.** SQL `NULL != NULL` — two tuples differing only in a NULL column are
+   *not* a violation. The codec encodes NULL (`0x00`); the **uniqueness enforcer skips the check when any
+   UNIQUE column is NULL** (F1a/F2 concern, not the codec).
+2. **TimeUnit normalization.** Normalize `Time/Timestamp/TimestampTz` to a canonical unit (nanos) before
+   encoding, or `1s` and `1000ms` diverge.
+3. **Structured types rejected at schema validation** (PK/UNIQUE columns must be scalar order-comparable).
+4. **Descending columns = phase 2** (per-column byte-complement, CRDB technique); Decimal + locale-aware
+   collation (ICU keys) likewise phase 2 — MVP is all-ascending, binary/UTF-8 collation.
+
+F0 acceptance (property tests): no collisions; order-preserving per type + composite; round-trip decode;
+NULL/type-tag correctness; TimeUnit-normalization idempotence; embedded-`0x00` escape.
 
 == Research bibliography
 
@@ -203,3 +246,8 @@ Full-text briefs in RFC-0002 §_Research calibration_; decisions in ADR-072 §_D
 - [[biblio-dsql]] **Aurora DSQL** — Scalable, Multi-Region OLTP. https://arxiv.org/abs/2607.13276
 - [[biblio-cmvbt]] **cMVBT** — Multiversion Concurrency Control for Multiversion B-Trees. https://arxiv.org/abs/2606.09133
 - [[biblio-uschema]] **U-Schema** — A Unified Metamodel for NoSQL and Relational Databases. https://arxiv.org/abs/2105.06494
+- [[biblio-fdbtuple]] **FoundationDB tuple layer** — order-preserving type-tagged key encoding. https://github.com/apple/foundationdb/blob/main/design/tuple.md
+- [[biblio-crdbenc]] **CockroachDB** — memcomparable key encoding tech note. https://github.com/cockroachdb/cockroach/blob/master/docs/tech-notes/encoding.md
+- [[biblio-lance]] **Lance / LanceDB** — columnar ML format (adaptive encoding, deletion files, manifest commits). https://lance.org/format/
+- [[biblio-vespa]] **Vespa** — serving engine (content/container nodes, tensor fields, constrained ANN). https://docs.vespa.ai/en/overview.html
+- [[biblio-weaviate]] **Weaviate** — vector-native DB (shard-per-tenant, pre-filter allow-list→HNSW). https://docs.weaviate.io/weaviate/concepts/storage
