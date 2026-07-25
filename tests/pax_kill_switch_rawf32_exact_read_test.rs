@@ -1,6 +1,6 @@
 //! M1-3 (ADR-049) — kill-switch → RawF32-PAX → exact read end-to-end.
 //!
-//! Pre-M1-3 the global kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE`
+//! Pre-M1-3 the global kill-switch `PROXIMADB_PAX_QUANT_DISABLE`
 //! forced the retired legacy `.sst` streaming format. Post-M1-3 flush ALWAYS
 //! writes PAX, so the kill-switch instead selects the recall-exact `RawF32`
 //! quant: the flushed segment is still `.pax`, but it carries raw f32 vectors
@@ -27,7 +27,7 @@ use tempfile::TempDir;
 
 const DIM: usize = 4;
 const TOP_K: usize = 3;
-const KILL_SWITCH: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE";
+const KILL_SWITCH: &str = "PROXIMADB_PAX_QUANT_DISABLE";
 
 /// Query = [1, 0, 0, 0]. Vectors at DISTINCT Euclidean distances from the query:
 ///   v0 = [1, 0, 0, 0]  (L2 = 0)

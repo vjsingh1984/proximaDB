@@ -113,7 +113,7 @@ impl BlockFooter {
 /// PAX block writer — buffers records and serialises to PAX block bytes.
 /// Per-segment vector quantization selection (P3 Phase D — caller/collection-controlled,
 /// replacing the process-global env flags). `Auto` preserves the legacy env behavior
-/// (`PROXIMADB_VECTOR_RABITQ` / `PROXIMADB_VECTOR_SQ8_DISABLE`) so existing callers are
+/// (`PROXIMADB_VECTOR_RABITQ_ENABLE` / `PROXIMADB_VECTOR_SQ8_DISABLE`) so existing callers are
 /// unchanged; the flush passes an explicit strategy from the collection's config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VectorQuant {
@@ -1825,7 +1825,7 @@ fn sq8_disabled() -> bool {
 /// instead of SQ8 — ~30× smaller, search-by-estimator + rerank. Off by default
 /// (SQ8 reconstructs more faithfully without a rerank tier).
 fn rabitq_enabled() -> bool {
-    std::env::var_os("PROXIMADB_VECTOR_RABITQ").is_some()
+    std::env::var_os("PROXIMADB_VECTOR_RABITQ_ENABLE").is_some()
 }
 
 /// Default for dropping the per-row tenant stripe (catalog-resolution). Off

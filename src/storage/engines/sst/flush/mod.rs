@@ -176,7 +176,7 @@ impl SstEngine {
         // M1-3 (ADR-049): PAX is the ONLY vector write format — the legacy v1
         // streaming path (`write_sorted_proxima_records` → ProximaBlocks `.sst`) is
         // retired from flush. A non-Arrow collection ALWAYS writes a `.pax`
-        // segment; the global kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE`
+        // segment; the global kill-switch `PROXIMADB_PAX_QUANT_DISABLE`
         // and the per-collection `pax_vector_format:off` tag no longer force
         // legacy `.sst` — they select the recall-exact RawF32 quant instead (see
         // `resolve_pax_vector_quant`), so such a segment is exact-scan searchable
@@ -874,7 +874,7 @@ impl SstEngine {
             return Ok(Some(threshold));
         }
         // TD-COMPACT-5 training arm — only meaningful when the A0-emitting
-        // trainer is armed (`PROXIMADB_PAX_WRITE_A0_TRAIN`, alias `PROXIMADB_IVF2`); without it compaction outputs
+        // trainer is armed (`PROXIMADB_PAX_WRITE_A0_TRAIN`; retired name: `PROXIMADB_IVF2`); without it compaction outputs
         // stay layout v1, the untrained condition never self-clears, and the
         // arm would fire on every flush (compaction loop).
         if !crate::storage::engines::sst::block_cluster::ivf_probe_enabled() {
@@ -1077,7 +1077,7 @@ const PAX_VECTOR_SEGMENTS_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS";
 /// write path retired it now means RawF32-PAX, exact-scan searchable via
 /// `search_pax_file_exact`). Follows the `PROXIMADB_DISABLE_*` convention
 /// (`PROXIMADB_DISABLE_SYSTEM_CATALOG`, `PROXIMADB_DISABLE_WAL`).
-const PAX_VECTOR_SEGMENTS_DISABLE_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE";
+const PAX_VECTOR_SEGMENTS_DISABLE_ENV: &str = "PROXIMADB_PAX_QUANT_DISABLE";
 
 /// Tag key prefix encoding the per-collection PAX-format override on
 /// `CollectionConfig.tags` — mirrors the `recall_target:` convention
@@ -1125,7 +1125,7 @@ fn collection_pax_format_tag(
 }
 
 /// Resolve the PAX vector-quantization strategy. M1-3 (ADR-049): the global
-/// kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE` and the per-collection
+/// kill-switch `PROXIMADB_PAX_QUANT_DISABLE` and the per-collection
 /// `pax_vector_format:off` tag are no longer FORMAT escapes (flush always writes
 /// PAX) — they select the recall-exact `RawF32` quant instead, so such a segment
 /// is exact-scan searchable (`search_pax_file_exact`) rather than

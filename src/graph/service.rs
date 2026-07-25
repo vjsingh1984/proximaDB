@@ -2716,12 +2716,12 @@ impl GraphOperationsService {
 
             // Step 2: Check if sequential validation is requested
             let sequential =
-                std::env::var("PROXIMADB_SEQUENTIAL_VALIDATION").unwrap_or_default() == "1";
+                std::env::var("PROXIMADB_GRAPH_SEQUENTIAL_VALIDATION").unwrap_or_default() == "1";
 
             if sequential {
                 // Sequential validation (original implementation for comparison)
                 tracing::warn!(
-                    "TEST MODE: Using sequential validation via PROXIMADB_SEQUENTIAL_VALIDATION=1"
+                    "TEST MODE: Using sequential validation via PROXIMADB_GRAPH_SEQUENTIAL_VALIDATION=1"
                 );
                 for (edge, from, to) in &validation_data {
                     self.enforce_schema_on_edge(graph_id, edge, &from.labels, &to.labels)

@@ -144,7 +144,7 @@ pub fn read_segment_records(
 ///
 /// `embedding_count` is the collection's embedding-modality count (≥1). `quant` selects
 /// the vector quantization strategy (P3 Phase D): `VectorQuant::Auto` keeps the env
-/// default (SQ8 unless `PROXIMADB_VECTOR_RABITQ`), `RaBitQ` writes ~30× binary codes.
+/// default (SQ8 unless `PROXIMADB_VECTOR_RABITQ_ENABLE`), `RaBitQ` writes ~30× binary codes.
 ///
 /// `target_block` is the optional target block size in bytes (TD-156 / ADR-026
 /// configurable geometry). `None` keeps the writer default; a larger value (e.g.
@@ -1525,8 +1525,8 @@ async fn coarse_probe_survivors(
             }
         })
         .collect();
-    let max_gap_bytes = env_u64_or("PROXIMADB_PAX_A_COALESCE_GAP", 0);
-    let max_range_bytes = std::env::var("PROXIMADB_PAX_A_COALESCE_RANGE")
+    let max_gap_bytes = env_u64_or("PROXIMADB_PAX_VECTOR_COALESCE_GAP", 0);
+    let max_range_bytes = std::env::var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
@@ -3396,8 +3396,8 @@ mod tests {
         // PR-C2 proof: bounded Region-A gap over-read may reduce physical
         // ranges, but it must rank exactly the same selected cells and rows.
         unsafe {
-            std::env::set_var("PROXIMADB_PAX_A_COALESCE_GAP", "1048576");
-            std::env::set_var("PROXIMADB_PAX_A_COALESCE_RANGE", "4194304");
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP", "1048576");
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE", "4194304");
         }
         let _ = drain_get_trace();
         let _ = drain_probe_trace();
@@ -3426,8 +3426,8 @@ mod tests {
             "cost coalescing cannot add Region-A reads"
         );
         unsafe {
-            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_GAP");
-            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_RANGE");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
         }
 
         // PR-C2 proof: a bounded prefix read must replace the separate header,
@@ -3550,8 +3550,8 @@ mod tests {
             std::env::remove_var("PROXIMADB_TRACE_GETS");
             std::env::remove_var("PROXIMADB_IVF_K");
             std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
-            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_GAP");
-            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_RANGE");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
             std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
         }
     }

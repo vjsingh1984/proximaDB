@@ -266,11 +266,11 @@ impl ProximaDB {
         //
         //   1. **Prometheus level gauge** — in-memory `.set()` of the resident level
         //      that Prometheus integrates downstream. Default 5min (env
-        //      `PROXIMADB_KSU_GAUGE_INTERVAL_SECS`); storage doesn't move faster, so
+        //      `PROXIMADB_METERING_KSU_GAUGE_INTERVAL_SECS`); storage doesn't move faster, so
         //      a per-minute poll only multiplied the list-collections work.
         {
             let cs = collection_service.clone();
-            let interval_secs = std::env::var("PROXIMADB_KSU_GAUGE_INTERVAL_SECS")
+            let interval_secs = std::env::var("PROXIMADB_METERING_KSU_GAUGE_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .filter(|s| *s > 0)

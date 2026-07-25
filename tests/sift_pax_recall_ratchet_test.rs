@@ -959,15 +959,15 @@ fn env_enabled(name: &str) -> bool {
 unsafe fn set_ivf2_layout_proof_arm(prefix_bytes: Option<u64>, gap: Option<u64>, split: bool) {
     unsafe {
         std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
-        std::env::remove_var("PROXIMADB_PAX_A_COALESCE_GAP");
-        std::env::remove_var("PROXIMADB_PAX_A_COALESCE_RANGE");
+        std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
+        std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
         std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
         if let Some(bytes) = prefix_bytes {
             std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", bytes.to_string());
         }
         if let Some(bytes) = gap {
-            std::env::set_var("PROXIMADB_PAX_A_COALESCE_GAP", bytes.to_string());
-            std::env::set_var("PROXIMADB_PAX_A_COALESCE_RANGE", "4194304");
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP", bytes.to_string());
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE", "4194304");
         }
         if split {
             std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "1");
