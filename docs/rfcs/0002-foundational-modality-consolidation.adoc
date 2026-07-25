@@ -3,7 +3,7 @@
 :email: vjdsingh@icloud.com
 :date: 2026-07-24
 :status: Draft (P3 research-calibrated)
-:revremark: P2 — reconciled against a three-model adversarial review (Kimi, GLM-5.2, DeepSeek). P3 — calibrated against 10 research papers: reclaim is append-only MVCC; contract returns-holder-on-conflict + capability-typed; graph edges first-class; logical/physical metamodel split. P4 — per-modality calibration (§Modality calibration): shared record-store substrate is columnar/PAX (pgvector 55–85% row-heap tax); vector identity is a surrogate; TS is ordering; vector RLS must be pre-filter not post-filter.
+:revremark: P2 — reconciled against a three-model adversarial review (Kimi, GLM-5.2, DeepSeek). P3 — calibrated against 10 research papers: reclaim is append-only MVCC; contract returns-holder-on-conflict + capability-typed; graph edges first-class; logical/physical metamodel split. P4 — per-modality calibration (§Modality calibration): shared record-store substrate is columnar/PAX (pgvector 55–85% row-heap tax); vector identity is a surrogate; TS is ordering; vector RLS must be pre-filter not post-filter. P5 — delete representation is tier-split: MVCC visibility/uniqueness model + deletion vectors (merge-on-read) in the immutable cold tier.
 :toc: left
 :toclevels: 3
 
@@ -311,6 +311,15 @@ is a hard invariant decoupled from recall as QoS (<<biblio-vecpolicy>>). Graph p
 composable components but cautions "**interoperability, not unification**" and "a data lake ≠ integrated
 data" — so the catalog metamodel is an *interoperability substrate*, not a universal language.
 
+**Delete representation is tier-split (P5, ADR-072 D14).** MVCC is the *visibility / uniqueness* model
+everywhere; its *physical* delete encoding follows the tier: row-level MVCC in the hot/local-WAL tier, and
+**deletion vectors / merge-on-read** (roaring-bitmap per data object, Iceberg-v3 <<biblio-icebergdv>> /
+Delta Lake <<biblio-deltadv>>) in the immutable cold columnar tier — because an object store cannot mutate
+objects in place and copy-on-write would rewrite whole files. A hot-tier tombstone flushes to a DV entry,
+purged at compaction behind the same reader watermark. A deletion vector **encodes deletes but does not
+enforce uniqueness** — that stays with MVCC + the `ConditionalKeyStore` index. Build split: hot MVCC = F1d
+(critical path), cold deletion vectors = F3v (parallel).
+
 === Residual risk (honestly flagged)
 
 - **Time-series and vector identity: now calibrated (P4)** as surrogate/ordering (not uniqueness) — but no
@@ -338,6 +347,8 @@ data" — so the catalog metamodel is an *interoperability substrate*, not a uni
 - [[biblio-compass]] **Compass** — General Filtered Search across Vector and Structured Data. https://arxiv.org/abs/2510.27141
 - [[biblio-vecpolicy]] **Policy-aware Vector Search** — Fine-Grained Access Control. https://arxiv.org/abs/2606.19803
 - [[biblio-pgvector]] **Filter-Agnostic Vector Search on a PostgreSQL Database** (SIGMOD 2026). https://arxiv.org/abs/2603.23710
+- [[biblio-icebergdv]] **Apache Iceberg v3** — deletion vectors (Puffin, roaring bitmap; merge-on-read). https://iceberg.apache.org/spec/#deletion-vectors
+- [[biblio-deltadv]] **Delta Lake** — deletion vectors / merge-on-read. https://docs.delta.io/latest/delta-deletion-vectors.html
 
 == Migration Path
 
