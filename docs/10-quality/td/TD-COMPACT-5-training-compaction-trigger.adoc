@@ -44,18 +44,18 @@ coupling entirely and is strictly smaller.
 == Measured (E2E, this PR, 2026-07-25)
 
 1M ingest, production floor, `PROXIMADB_L0_COMPACTION_ENABLED=1
-PROXIMADB_IVF2=1`: inline flush observable (55→110 s), training compaction
+PROXIMADB_IVF2=1` (semantic name: `PROXIMADB_PAX_WRITE_A0_TRAIN`): inline flush observable (55→110 s), training compaction
 produced **v3/A0 segments** and the arm self-cleared (the second flush's L0
 received its own pass; final bed = all-trained). Cold novel queries measured
 MID-TRANSITION (one trained L1 + one untrained L0): **108.5 GETs / 88 MB per
 query** (from 179.7/104.3 untrained), recall@10 **0.9840**, clean shutdown
 with zero `__flush` stragglers. The fully-trained cold band (20–51 GETs) is
 the follow-up evidence run on an all-trained bed with the read-side probe
-armed. NOTE: the arm requires the A0 trainer (`PROXIMADB_IVF2`) — without it
+armed. NOTE: the arm requires the A0 trainer (`PROXIMADB_PAX_WRITE_A0_TRAIN`, alias `PROXIMADB_IVF2`) — without it
 compaction outputs stay v1 and the arm would loop, so the gate checks
 `ivf_probe_enabled()` first.
 
-== Probe-armed follow-up measurement (same bed, all-trained, `PROXIMADB_IVF2_PROBE=1`)
+== Probe-armed follow-up measurement (same bed, all-trained, `PROXIMADB_PAX_READ_COARSE_PROBE=1`, alias `PROXIMADB_IVF2_PROBE`)
 
 The read-side coarse probe is a SEPARATE default-OFF gate. Armed on the
 all-trained bed: **82.9 GETs / 77.5 MB per query, mean 76 ms / p95 90 ms**

@@ -1353,13 +1353,9 @@ pub fn drain_probe_trace() -> Vec<(u64, u64, u64, u64)> {
 /// the single-level whole-region scan until this flips (recall/GET-ratchet
 /// gated, mirroring the PR-A writer gate). v1 segments never probe.
 pub fn coarse_probe_enabled() -> bool {
-    // ENV_GATE_REGISTRY rule 2: semantic name PROXIMADB_PAX_READ_COARSE_PROBE
-    // (the READ half: search probes via A0); shipped PROXIMADB_IVF2_PROBE is
-    // its permanent alias.
-    crate::storage::engines::sst::block_cluster::env_gate_on(
-        "PROXIMADB_PAX_READ_COARSE_PROBE",
-        "PROXIMADB_IVF2_PROBE",
-    )
+    // ENV_GATE_REGISTRY rule 2: the READ half — search probes via A0.
+    // Pre-GA clean rename (TD-ENVGATE-1): PROXIMADB_IVF2_PROBE is RETIRED.
+    crate::storage::engines::sst::block_cluster::env_gate_on("PROXIMADB_PAX_READ_COARSE_PROBE")
 }
 
 /// Number of coarse cells to probe. `PROXIMADB_IVF2_NPROBE` overrides (the

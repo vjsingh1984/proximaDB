@@ -874,7 +874,7 @@ impl SstEngine {
             return Ok(Some(threshold));
         }
         // TD-COMPACT-5 training arm — only meaningful when the A0-emitting
-        // trainer is armed (`PROXIMADB_IVF2`); without it compaction outputs
+        // trainer is armed (`PROXIMADB_PAX_WRITE_A0_TRAIN`, alias `PROXIMADB_IVF2`); without it compaction outputs
         // stay layout v1, the untrained condition never self-clears, and the
         // arm would fire on every flush (compaction loop).
         if !crate::storage::engines::sst::block_cluster::ivf_probe_enabled() {

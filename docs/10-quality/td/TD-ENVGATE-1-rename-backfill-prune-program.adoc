@@ -13,14 +13,22 @@ across concurrent sessions (env reads touch everything; SOLID mandate d).
 Confusion concentrates in near-miss PAIRS and undocumented defaults; those
 are attacked surgically.
 
-== S1 (shipped): alias-aware helper + the canonical offender pair
+== Policy revision (2026-07-25, user decision): pre-GA = CLEAN renames
 
-`env_gate_on(name, legacy_alias)` (block_cluster.rs) — semantic name wins,
-legacy alias honored forever. Renamed with aliases:
+There are no external operators pre-release, so renames until GA are clean
+breaks: old name deleted from code, moved to the registry's "Retired names"
+section (reserved forever). The alias-forever discipline (registry rule 5)
+ACTIVATES AT GA. A stale name in a local harness fails loudly (gate
+defaults OFF → behavior visibly untrained/unprobed).
 
-- `PROXIMADB_PAX_WRITE_A0_TRAIN` (alias `PROXIMADB_IVF2`) — WRITE: train A0.
-- `PROXIMADB_PAX_READ_COARSE_PROBE` (alias `PROXIMADB_IVF2_PROBE`) — READ:
-  probe via A0.
+== S1 (shipped): the canonical offender pair (clean rename)
+
+`env_gate_on(name)` (block_cluster.rs) single-name truthy reads:
+
+- `PROXIMADB_PAX_WRITE_A0_TRAIN` — WRITE: compaction trains + emits A0
+  (retired: `PROXIMADB_IVF2`).
+- `PROXIMADB_PAX_READ_COARSE_PROBE` — READ: search probes via A0 (retired:
+  `PROXIMADB_IVF2_PROBE`).
 
 == S2 (continuous, guard-enforced): documentation backfill on-touch
 

@@ -91,7 +91,7 @@ asserted_in = [
   "docs/10-quality/td/TD-FLUSH-5-flush-encode-single-threaded.adoc",
 ]
 bench_source = "scripts/bench/recall_adjudicate.py"
-bench_command = "flush_e2e_verify + trained_band probes (session scratchpad, promoted protocol in scripts/bench/recall_adjudicate.py); PROXIMADB_L0_COMPACTION_ENABLED=1 PROXIMADB_IVF2=1 [PROXIMADB_IVF2_PROBE=1]"
+bench_command = "flush_e2e_verify + trained_band probes (session scratchpad, promoted protocol in scripts/bench/recall_adjudicate.py); PROXIMADB_L0_COMPACTION_ENABLED=1 PROXIMADB_PAX_WRITE_A0_TRAIN=1 [PROXIMADB_PAX_READ_COARSE_PROBE=1]"
 artifact = "docs/10-quality/td/TD-COMPACT-5-training-compaction-trigger.adoc"
 hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build, serialized runs"
 date = "2026-07-25"
