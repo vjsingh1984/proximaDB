@@ -66,6 +66,22 @@ date = "2026-07-24"
 version = "feat/restart-resilience -> develop (#1187)"
 
 [[claims]]
+id = "morsel_rank_lone_query_cold_1m"
+claim = "TD-SEARCH-2 S2 lone-query multi-core rank, SIFT 1M / 3-segment flush-floor bed, REST e2e: cold c=1 5.8-5.9 -> 10.4-10.7 QPS, mean 174/168 -> 96/93 ms (~1.8x, stable across 3 sessions). Adaptive posture ships morsels ONLY when the scan is alone in flight (INFLIGHT_SCANS==1 -> all cores; else sequential baseline) because every concurrency-sharing formula tried was inside the box's +/-30% run-to-run variance with matched-pair regressions. Recall 0.9860-0.9880 (tie-boundary wiggle, both clear the 0.984 ratchet); chunk-merge == sequential rank unit-proven."
+metric = "cold c=1 QPS + mean/p95 latency, A/B via PROXIMADB_SEARCH_MORSEL_DEGREE"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-SEARCH-2-parallel-morsel-search.adoc",
+]
+bench_source = "scripts/bench/morsel_cold_sweep.py"
+bench_command = "python3 scripts/bench/morsel_cold_sweep.py target/release/proximadb-server /tmp/morsel-bed.toml /tmp/pdb-morsel-bed 5678 <ingest|degree1|adaptive>"
+artifact = "docs/_internal/status/MORSEL_RANK_COLD_SWEEP_2026_07_25.adoc"
+hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build; NOTE +/-30% run-to-run throughput variance at c>=8 (thermal), lone-query numbers stable"
+date = "2026-07-25"
+version = "feat/search-multicore -> develop"
+
+
+[[claims]]
 id = "io_trace_sink_hotpath_p95"
 claim = "ADR-066 trace-sink observer closure (the only synchronous query-path work: TraceEnvelope::from_snapshot + serde_json::to_vec + bounded Spool::push) adds a bounded ~16 us p95 / ~14 us p50 per query and is CPU-only — no fsync, network upload, or zstd compression on the query path (those run in the background Worker). Satisfies ADR-066 §6 acceptance #3 (the Proposed → Accepted blocker)."
 metric = "per-query observer-closure latency p50/p95/p99 + envelope bytes"

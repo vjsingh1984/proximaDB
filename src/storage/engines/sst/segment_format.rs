@@ -1519,6 +1519,53 @@ async fn coarse_probe_survivors(
     }))
 }
 
+/// TD-SEARCH-2 S2: multi-core Stage-A rank. The whole-region RaBitQ scan is
+/// the dominant cold-CPU term (~hundreds of ms at 500k rows/segment); split
+/// the rows into `morsel_degree()` chunks ranked on `spawn_blocking` threads
+/// (real cores — the tokio workers stay free for I/O), then merge the
+/// per-chunk `(row, score)` lists by score. Exactly equivalent to a full
+/// sequential rank (each chunk keeps its own top-`pool`; the global
+/// top-`pool` is a subset of their union). Small regions and degree 1 keep
+/// the sequential path — no task overhead where there is nothing to win.
+const MORSEL_MIN_ROWS: usize = 65_536;
+
+async fn rank_region_morsels(
+    region: proximadb_block_format::RaBitQRegion,
+    query: &[f32],
+    metric: RankMetric,
+    pool: usize,
+) -> Vec<usize> {
+    let degree = crate::storage::engines::sst::search::morsel_degree();
+    let n_rows = region.n_rows();
+    if degree <= 1 || n_rows < MORSEL_MIN_ROWS {
+        return region.rank(query, metric, pool);
+    }
+    let region = std::sync::Arc::new(region);
+    let chunk = n_rows.div_ceil(degree);
+    let tasks: Vec<_> = (0..degree)
+        .map(|i| {
+            let region = region.clone();
+            let query = query.to_vec();
+            let rows = (i * chunk)..(((i + 1) * chunk).min(n_rows));
+            tokio::task::spawn_blocking(move || {
+                region.rank_range_scored(&query, metric, pool, rows)
+            })
+        })
+        .collect();
+    let mut merged: Vec<(usize, f32)> = Vec::with_capacity(pool * degree);
+    for t in tasks {
+        match t.await {
+            Ok(part) => merged.extend(part),
+            // A cancelled/panicked worker degrades to a partial pool — the
+            // remaining chunks still rank; never fail the query for it.
+            Err(e) => tracing::warn!("morsel rank worker failed (partial pool): {e}"),
+        }
+    }
+    merged.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    merged.truncate(pool);
+    merged.into_iter().map(|(i, _)| i).collect()
+}
+
 pub async fn rabitq_search_segment_coalesced(
     fs: &dyn proximadb_storage_filesystem_types::FileSystem,
     path: &str,
@@ -1667,7 +1714,8 @@ pub async fn rabitq_search_segment_coalesced(
         let region = RaBitQRegion::from_bytes(&region_bytes)?;
         // ADR-062 PR2: adaptive survivor pool — scale M with the segment's rows.
         let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
-        (region.rank(query, metric, pool.max(k)), Some(region_bytes))
+        let survivors = rank_region_morsels(region, query, metric, pool.max(k)).await;
+        (survivors, Some(region_bytes))
     };
     if survivors.is_empty() {
         return Ok(Some(Vec::new()));
