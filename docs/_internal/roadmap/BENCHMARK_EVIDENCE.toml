@@ -30,6 +30,40 @@ header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_202
 # ---------------------------------------------------------------------------
 
 [[claims]]
+id = "warmtier_flushfloor_1m_e2e"
+claim = "The #1179 warm-tier/flush-floor package, measured REST-e2e at SIFT 1M on one box across three builds: the TD-FLUSH-3 predicted-bytes floor (128MB) cuts L0 segments 10 -> 2 with ZERO compactions needed and recall@10 0.9865; armed warm-tier caches serve the invariants control plane at 99.9% hit (1,838/2); cold c=16 ceiling 18.2 -> 38.6 QPS (+112%); hot repeats 4,085 QPS p50 3.8ms; operational counters (proximadb_queries_total et al.) live on the serving path. Interim 4-segment datapoint: cold c=16 59.4 QPS — file count trades inter-file parallelism against GETs; 2 segments optimizes the billed GET dimension (TD-SEARCH-2 S2 is the latency answer)."
+metric = "L0 segment count + recall@10 + cold c1/c8/c16 QPS + hot QPS + invariants-cache hit rate"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-FLUSH-3-segment-size-emergent-from-backend-latency.adoc",
+  "docs/10-quality/td/TD-CACHE-4-warm-tier-caches-never-armed.adoc",
+  "docs/10-quality/td/TD-CACHE-2-evict-priority-enum-unwired.adoc",
+  "docs/10-quality/td/TD-COMPACT-1-slow-recluster-compaction.adoc",
+]
+bench_source = "scripts/bench/sift_rest_warmtier_sweep.py"
+bench_command = "python3 scripts/bench/sift_rest_warmtier_sweep.py  # server on :5678, bench config + PROXIMADB_PAX_COALESCED_RABITQ=1 PROXIMADB_PAX_VECTOR_QUANT=rabitq"
+artifact = "docs/_internal/status/WARMTIER_FLUSHFLOOR_1M_EVIDENCE_2026_07_24.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release runs, no competing workload"
+date = "2026-07-24"
+version = "feat/warm-tier-flush-floor-codesign -> develop @ c6865cd78 (#1179)"
+notes = "Three-build ladder on identical protocol (paced streaming ingest, disjoint query sets, full-1M brute-force GT). Cold-QPS scaling efficiency 47% -> 58%; the remaining gap is intra-query single-task CPU (TD-SEARCH-2 S2 gate: >=70%). Floor memtable residency ~11GB transient at 1M ingest (bounded; documented). Compaction-health companion measurement (#1175 verification: 9 compactions 19.7s total, RSS 7.4GB) posted on that PR from the same bed. Indicative dev-machine runs, not an SLA."
+
+[[claims]]
+id = "restart_resilience_100k_e2e"
+claim = "Restart-under-load, SIFT 100k REST-e2e, one box: SIGTERM under c=8 load persists a demand-proven warm manifest (579-1,092 hot ranges, tenant-keyed under the DrPath manifests prefix); relaunch under immediate c=8 load recovers to p95 <= 2x steady-state in the FIRST 1s window (steady 3,701 QPS p50 1.9ms / p95 3.7ms; post-restart window-0 p95 3.2ms, 0 errors); boot replay re-loads all manifest ranges inside the tenant io_trace scope and prefills segment control invariants; process exits cleanly after SIGTERM (TD-LIFECYCLE-1 bounded teardown). Local-SSD bed verifies mechanics; the object-store win is the bounded replay GET budget vs an unbounded cold herd."
+metric = "recovery window (s) + steady/post-restart p50/p95 + manifest entries replayed + clean-exit"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-CACHE-1-restart-cache-warming-cold-herd.adoc",
+  "docs/10-quality/td/TD-CACHE-3-hot-tier-per-tenant-enforcement.adoc",
+  "docs/10-quality/td/TD-LIFECYCLE-1-shutdown-leaked-background-senders.adoc",
+]
+bench_source = "scripts/bench/restart_under_load_verify.py"
+bench_command = "python3 scripts/bench/restart_under_load_verify.py target/release/proximadb-server /tmp/restart-bed.toml /tmp/pdb-restart-bed 5678  # PROXIMADB_PAX_COALESCED_RABITQ=1 PROXIMADB_PAX_VECTOR_QUANT=rabitq set by harness"
+artifact = "docs/_internal/status/RESTART_RESILIENCE_VERIFICATION_2026_07_24.adoc"
+date = "2026-07-24"
+
+[[claims]]
 id = "io_trace_sink_hotpath_p95"
 claim = "ADR-066 trace-sink observer closure (the only synchronous query-path work: TraceEnvelope::from_snapshot + serde_json::to_vec + bounded Spool::push) adds a bounded ~16 us p95 / ~14 us p50 per query and is CPU-only — no fsync, network upload, or zstd compression on the query path (those run in the background Worker). Satisfies ADR-066 §6 acceptance #3 (the Proposed → Accepted blocker)."
 metric = "per-query observer-closure latency p50/p95/p99 + envelope bytes"

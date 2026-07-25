@@ -55,7 +55,14 @@ use proximadb_storage_filesystem_types::{FilesystemError, FsResult};
 /// *fair-sharing* dimension (per-tenant floors/ceilings under pool pressure).
 /// v1 uses a single shared tenant (one elastic pool); per-tenant fair-sharing
 /// is a follow-up that threads the real `tenant_id` into the search path.
-const TENANT: &str = "survivor-cache";
+/// Fallback pool id when no request tenant is in scope (unauthenticated
+/// surfaces, background work, tests). Real requests resolve the tenant
+/// ambiently from the io_trace scope (TD-CACHE-3 S1) so per-tenant
+/// fair-share/stats work without threading tenant through every search
+/// signature. NOTE: isolation is STRUCTURAL either way — the DrPath-scoped
+/// segment path inside the key prevents cross-tenant reads; the tenant field
+/// only drives fair-share/budget/stat attribution.
+const FALLBACK_TENANT: &str = "survivor-cache";
 
 /// A byte-range cache for survivor (Region B SQ8) and OID (Region D) ranges of
 /// immutable coalesced segments. Read-through: on a miss the caller-supplied
@@ -65,18 +72,58 @@ const TENANT: &str = "survivor-cache";
 /// Backed by the multitenant, byte-budgeted, work-conserving [`TenantCache`].
 pub struct SurvivorRangeCache {
     inner: Arc<TenantCache<Arc<[u8]>>>,
+    /// TD-CACHE-1 S2: per-tenant hot-key hit counters — the warm-set source
+    /// for the shutdown manifest. Bounded (see `HOT_KEYS_CAP`); pruned by
+    /// dropping the low-hit half when full. Keys are `(kind, path, off, len)`
+    /// tuples, exactly what replay needs to re-issue coalesced loads.
+    hot_keys: std::sync::Mutex<
+        std::collections::HashMap<String, std::collections::HashMap<WarmKey, u64>>,
+    >,
 }
+
+/// A replayable survivor-range identity (TD-CACHE-1 S2 manifest entry).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct WarmKey {
+    /// Artifact class as a stable u8 (`CacheKind::QuantizedCodes` = 0,
+    /// everything else = 1) — enough to reconstruct the cache key class.
+    pub k: u8,
+    /// Segment path (tenant-scoped by construction — DrPath layout).
+    pub p: String,
+    /// Range offset/length.
+    pub o: u64,
+    pub l: u64,
+}
+
+/// Per-tenant cap on tracked hot keys (~100 B each ⇒ ≤ ~400 KB/tenant).
+const HOT_KEYS_CAP: usize = 4096;
 
 impl SurvivorRangeCache {
     /// New cache with a `budget_bytes` byte ceiling (the shared elastic pool;
     /// also the per-tenant hard ceiling — entries beyond it bypass caching, so
     /// one collection cannot monopolize the pool).
     pub fn new(budget_bytes: u64) -> Self {
+        Self::with_resolver(budget_bytes, None)
+    }
+
+    /// TD-CACHE-3 S1: construct with an optional per-tenant tier resolver
+    /// (`TierPolicy::resolver` output) — the same seam the footer/index caches
+    /// use. With a resolver, hot-tier tenants get admission floors /
+    /// fair-share weights from the operator tier JSON; without one the pool
+    /// stays uniform elastic fair share. NOTE (TD-CACHE-3 S2): the floor is
+    /// admission-only today — eviction is TinyLFU floor-agnostic; a true
+    /// never-evict pin needs the reserved-segment restructure.
+    pub fn with_resolver(
+        budget_bytes: u64,
+        resolver: Option<Arc<proximadb_cache::LimitsResolver>>,
+    ) -> Self {
+        let budget = CacheBudget::new(budget_bytes, budget_bytes).with_high_watermark(0.9);
+        let cache = match resolver {
+            Some(r) => TenantCache::new(budget).with_limits_resolver(r),
+            None => TenantCache::new(budget),
+        };
         Self {
-            inner: Arc::new(TenantCache::new(CacheBudget::new(
-                budget_bytes,
-                budget_bytes,
-            ))),
+            inner: Arc::new(cache),
+            hot_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -103,7 +150,35 @@ impl SurvivorRangeCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = FsResult<Vec<u8>>>,
     {
-        let key = CacheKey::new(TENANT, kind, format!("{path}:{off}:{len}"));
+        // TD-CACHE-3 S1: attribute the entry to the requesting tenant (ambient
+        // from the per-request io_trace scope; falls back to the shared pool id
+        // outside a scope). Enables per-tenant hit/miss/bytes stats and the
+        // tier-resolver fair-share floors.
+        let tenant = crate::observability::io_trace::current_tenant();
+        let tenant_str = tenant.as_deref().unwrap_or(FALLBACK_TENANT);
+        // TD-CACHE-1 S2: count this range toward the tenant's warm set (the
+        // shutdown manifest's source). Bounded map; low-hit half pruned at cap.
+        if let Ok(mut hot) = self.hot_keys.lock() {
+            let per_tenant = hot.entry(tenant_str.to_string()).or_default();
+            if per_tenant.len() >= HOT_KEYS_CAP {
+                let mut counts: Vec<u64> = per_tenant.values().copied().collect();
+                counts.sort_unstable();
+                let median = counts[counts.len() / 2];
+                per_tenant.retain(|_, hits| *hits > median);
+            }
+            *per_tenant
+                .entry(WarmKey {
+                    k: match kind {
+                        CacheKind::QuantizedCodes => 0,
+                        _ => 1,
+                    },
+                    p: path.to_string(),
+                    o: off,
+                    l: len,
+                })
+                .or_insert(0) += 1;
+        }
+        let key = CacheKey::new(tenant_str, kind, format!("{path}:{off}:{len}"));
         // Ranges are ≤ a few MiB; cap the weight at u32::MAX defensively.
         let weight: u32 = len.try_into().unwrap_or(u32::MAX);
         let result = self
@@ -117,14 +192,58 @@ impl SurvivorRangeCache {
         result
     }
 
+    /// TD-CACHE-1 S2: the top-`k` hot ranges per tenant by hit count — the
+    /// shutdown manifest payload. Cheap snapshot under the tracking lock.
+    pub fn warm_set(&self, top_k: usize) -> Vec<(String, Vec<WarmKey>)> {
+        let Ok(hot) = self.hot_keys.lock() else {
+            return Vec::new();
+        };
+        hot.iter()
+            .map(|(tenant, keys)| {
+                let mut ranked: Vec<(&WarmKey, u64)> = keys.iter().map(|(k, h)| (k, *h)).collect();
+                ranked.sort_by_key(|(_, hits)| std::cmp::Reverse(*hits));
+                (
+                    tenant.clone(),
+                    ranked
+                        .into_iter()
+                        .take(top_k)
+                        .map(|(k, _)| k.clone())
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// TD-CACHE-1 S2: replay a warm entry — a coalesced read-through load of
+    /// the range so post-restart queries hit DRAM. The caller supplies the
+    /// loader (a ranged GET); a missing/compacted-away segment simply errors
+    /// into a skip. Returns whether the entry loaded.
+    pub async fn replay_entry<F, Fut>(&self, entry: &WarmKey, loader: F) -> bool
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = FsResult<Vec<u8>>>,
+    {
+        let kind = if entry.k == 0 {
+            CacheKind::QuantizedCodes
+        } else {
+            CacheKind::Other
+        };
+        self.get_or_fetch(kind, &entry.p, entry.o, entry.l, loader)
+            .await
+            .is_ok()
+    }
+
     /// TD-METRICS-1: mirror the `TenantCache` hit/miss/bytes atomics into the
     /// prometheus gauges after each lookup. `tenant_stats()` iterates a
     /// handful of (tenant, kind) rows — negligible next to the ranged GET the
     /// cache exists to avoid. Gauges (not counters) because the source is a
     /// running total we sample.
     fn sync_prometheus(&self) {
+        /// Cardinality bound for per-tenant series (top by resident bytes).
+        const SURVIVOR_TENANT_SERIES_CAP: usize = 50;
+        let mut stats = self.inner.tenant_stats();
         let (mut hits, mut misses, mut bytes) = (0i64, 0i64, 0i64);
-        for stat in self.inner.tenant_stats() {
+        for stat in &stats {
             hits += stat.hits as i64;
             misses += stat.misses as i64;
             bytes += stat.bytes as i64;
@@ -132,12 +251,90 @@ impl SurvivorRangeCache {
         crate::metrics::operational_metrics::SURVIVOR_CACHE_HITS.set(hits);
         crate::metrics::operational_metrics::SURVIVOR_CACHE_MISSES.set(misses);
         crate::metrics::operational_metrics::SURVIVOR_CACHE_BYTES.set(bytes);
+        // TD-CACHE-3 S1: per-tenant series, bounded to the top tenants by
+        // resident bytes (noisy-neighbor + hot-tier entitlement signal).
+        stats.sort_by_key(|s| std::cmp::Reverse(s.bytes));
+        for stat in stats.iter().take(SURVIVOR_TENANT_SERIES_CAP) {
+            use crate::metrics::operational_metrics as om;
+            om::SURVIVOR_CACHE_TENANT_BYTES
+                .with_label_values(&[&*stat.tenant])
+                .set(stat.bytes as i64);
+            om::SURVIVOR_CACHE_TENANT_HITS
+                .with_label_values(&[&*stat.tenant])
+                .set(stat.hits as i64);
+            om::SURVIVOR_CACHE_TENANT_MISSES
+                .with_label_values(&[&*stat.tenant])
+                .set(stat.misses as i64);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-CACHE-1 S2: warm_set ranks by hit count, caps at top_k, and
+    /// replay_entry re-loads a range through the read-through path.
+    #[tokio::test]
+    async fn warm_set_ranks_and_replays() {
+        let cache = SurvivorRangeCache::new(1024 * 1024);
+        // Touch range A three times, range B once.
+        for _ in 0..3 {
+            cache
+                .get_or_fetch(CacheKind::QuantizedCodes, "seg1.pax", 0, 8, || async {
+                    Ok(vec![1u8; 8])
+                })
+                .await
+                .unwrap();
+        }
+        cache
+            .get_or_fetch(CacheKind::Other, "seg1.pax", 100, 4, || async {
+                Ok(vec![2u8; 4])
+            })
+            .await
+            .unwrap();
+
+        let ws = cache.warm_set(10);
+        assert_eq!(ws.len(), 1, "one (fallback) tenant tracked");
+        let (_tenant, keys) = &ws[0];
+        assert_eq!(keys.len(), 2);
+        assert_eq!(
+            (&keys[0].p[..], keys[0].o, keys[0].l, keys[0].k),
+            ("seg1.pax", 0, 8, 0),
+            "hottest range first"
+        );
+        // top_k=1 truncates to the hottest.
+        let ws1 = cache.warm_set(1);
+        assert_eq!(ws1[0].1.len(), 1);
+
+        // Replay into a FRESH cache: loader runs once, then the range is hot
+        // (second replay's loader must not run).
+        let fresh = SurvivorRangeCache::new(1024 * 1024);
+        let entry = keys[0].clone();
+        assert!(
+            fresh
+                .replay_entry(&entry, || async { Ok(vec![9u8; 8]) })
+                .await
+        );
+        let loaded = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let l2 = loaded.clone();
+        assert!(
+            fresh
+                .replay_entry(&entry, move || {
+                    let l = l2.clone();
+                    async move {
+                        l.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(vec![9u8; 8])
+                    }
+                })
+                .await
+        );
+        assert_eq!(
+            loaded.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "replayed range must be served from cache"
+        );
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// A hit does not re-run the loader (the GET is billed at most once per

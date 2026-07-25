@@ -392,6 +392,14 @@ impl StorageQueryContext {
         }
     }
 
+    /// TD-CACHE-3 S1: attach the requesting tenant so engine-side consumers
+    /// (per-tenant cache fair-share, RLS, billing labels) receive the real
+    /// tenant instead of `None`. Builder-style; absent ⇒ legacy behavior.
+    pub fn with_tenant_context(mut self, tenant_context: Option<TenantContext>) -> Self {
+        self.tenant_context = tenant_context;
+        self
+    }
+
     /// Get the query vector (convenience method).
     pub fn query_vector(&self) -> Option<&[f32]> {
         if let Some(ref vector) = self.search_params.vector {

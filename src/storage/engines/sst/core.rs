@@ -60,6 +60,32 @@ pub fn get_sst_axis_manager() -> Option<Arc<dyn IndexEngine>> {
     GLOBAL_SST_AXIS_MANAGER.get().cloned()
 }
 
+/// TD-CACHE-1: process-global handles to the warm-tier caches, registered at
+/// engine arming so the boot warm task and the shutdown manifest emitter
+/// (database.rs) can reach them without threading engine handles. Same
+/// OnceLock pattern as the AXIS registry above; None until an engine arms.
+static GLOBAL_WARM_TIER_CACHES: std::sync::OnceLock<(
+    Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+)> = std::sync::OnceLock::new();
+
+/// Register the armed warm-tier caches (first engine wins — the server builds
+/// one SST engine; tests building more are no-ops here).
+pub fn set_warm_tier_caches(
+    invariants: Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    survivor: Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+) {
+    let _ = GLOBAL_WARM_TIER_CACHES.set((invariants, survivor));
+}
+
+/// The registered warm-tier caches, if any engine has armed them.
+pub fn get_warm_tier_caches() -> Option<(
+    Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+)> {
+    GLOBAL_WARM_TIER_CACHES.get().cloned()
+}
+
 // Global PCA model cache for Z-Order spatial encoding
 // Uses lazy_static for thread-safe initialization
 lazy_static::lazy_static! {
@@ -436,38 +462,76 @@ impl SstEngine {
         // 256 MB / `survivor_cache_mb` = 1024 MB — the 2026-07-24 sizing
         // decision that also updated ADR-065's survivor default-OFF), env
         // override wins, 0 disables either.
-        let segment_invariants_cache = {
-            let mb = std::env::var("PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(config.segment_invariants_cache_mb);
-            (mb > 0).then(|| {
-                Arc::new(
-                    crate::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
-                        (mb as usize) * 1024 * 1024,
-                    ),
-                )
+        // PROCESS-GLOBAL singletons: the engine is constructed once per
+        // collection/location, but the warm tier is one budget pool per
+        // process — N instances would multiply the configured budget by N and
+        // leave the boot-warm/shutdown-emit hooks (which see one registered
+        // pair) pointed at a cache no query ever touches.
+        static SHARED_INVARIANTS_CACHE: std::sync::OnceLock<
+            Option<Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>>,
+        > = std::sync::OnceLock::new();
+        let segment_invariants_cache = SHARED_INVARIANTS_CACHE
+            .get_or_init(|| {
+                let mb = std::env::var("PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(config.segment_invariants_cache_mb);
+                (mb > 0).then(|| {
+                    Arc::new(
+                        crate::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
+                            (mb as usize) * 1024 * 1024,
+                        ),
+                    )
+                })
             })
-        };
-        let survivor_cache = {
+            .clone();
+        static SHARED_SURVIVOR_CACHE: std::sync::OnceLock<
+            Option<Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>>,
+        > = std::sync::OnceLock::new();
+        let survivor_cache = SHARED_SURVIVOR_CACHE.get_or_init(|| {
             let mb = std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(config.survivor_cache_mb);
             (mb > 0).then(|| {
+                // TD-CACHE-3 S1: per-tenant tier floors/weights via the same
+                // PROXIMADB_CACHE_TIERS_PATH policy the footer/index caches use
+                // (tenant→tier resolved live through the auth-stamped registry).
+                let budget_bytes = mb * 1024 * 1024;
+                let resolver = std::env::var("PROXIMADB_CACHE_TIERS_PATH")
+                    .ok()
+                    .and_then(|path| std::fs::read_to_string(&path).ok())
+                    .and_then(|json| proximadb_cache::TierPolicy::from_json(&json).ok())
+                    .map(|policy| {
+                        let policy = std::sync::Arc::new(policy);
+                        let default_tier = policy.default_tier.clone();
+                        let tenant_to_tier: std::sync::Arc<
+                            dyn Fn(&str) -> String + Send + Sync,
+                        > = std::sync::Arc::new(move |t: &str| {
+                            crate::services::record_store::tenant_tier(t)
+                                .unwrap_or_else(|| default_tier.clone())
+                        });
+                        policy.resolver(budget_bytes, tenant_to_tier)
+                    });
                 Arc::new(
-                    crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::new(
-                        mb * 1024 * 1024,
+                    crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::with_resolver(
+                        budget_bytes,
+                        resolver,
                     ),
                 )
             })
-        };
+        }).clone();
         if segment_invariants_cache.is_some() || survivor_cache.is_some() {
             info!(
                 "🧠 SST warm-tier caches armed: invariants={} survivor={}",
                 segment_invariants_cache.is_some(),
                 survivor_cache.is_some()
             );
+            // TD-CACHE-1: publish the handles for the boot warm task + the
+            // shutdown manifest emitter.
+            if let (Some(inv), Some(surv)) = (&segment_invariants_cache, &survivor_cache) {
+                set_warm_tier_caches(inv.clone(), surv.clone());
+            }
         }
 
         Ok(Self {

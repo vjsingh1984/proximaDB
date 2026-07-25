@@ -131,7 +131,16 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .thread_stack_size(32 * 1024 * 1024)
         .build()?;
-    runtime.block_on(run())
+    let result = runtime.block_on(run());
+    // TD-LIFECYCLE-1: several always-on background loops leak their shutdown
+    // senders by design (discovery executor, recall observer — see
+    // shared_services.rs), so a plain Runtime drop can block forever on an
+    // in-flight blocking pass and the process never exits after a clean
+    // SIGTERM shutdown. All durable state is already persisted by
+    // `ProximaDB::shutdown` before we get here; bound the teardown instead of
+    // inheriting drop's wait-for-everything semantics.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(5));
+    result
 }
 
 async fn run() -> anyhow::Result<()> {
