@@ -967,9 +967,15 @@ impl MultiServer {
 
         // Internal addresses for REST and gRPC servers
         // These are only accessible via the TCP multiplexer
-        let internal_rest_addr: std::net::SocketAddr = "127.0.0.1:15678"
-            .parse()
-            .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 15678)));
+        // TD-NET-1 S2: the internal REST port is derived per-instance from
+        // `unified_port + 10000` (5678 → 15678 = historical constant; 5679 →
+        // 15679), mirroring the gRPC derivation below, so co-hosted instances
+        // with distinct unified ports never bind the same internal REST listener
+        // (the foreign-server hijack landmine surfaced by the recall
+        // adjudication — a second server's mux forwarded queries to the first
+        // server's internal REST at the shared 15678 port).
+        let internal_rest_port = self.config.unified_port.saturating_add(10000);
+        let internal_rest_addr = SocketAddr::from(([127, 0, 0, 1], internal_rest_port));
         // TD-NET-1 S1: the internal gRPC/Arrow-Flight upstream port is resolved
         // per-instance (config `[api] internal_mux_port` > env
         // `PROXIMADB_INTERNAL_MUX_PORT` > derived `unified_port + 10001`,
