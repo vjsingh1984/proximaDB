@@ -149,7 +149,9 @@ impl SearchCoordinator {
             match strategy {
                 SearchStrategy::Direct { reason, .. } => {
                     info!("🔍 Executing direct search: {}", reason);
-                    self.engine.search_vectors_unified(ctx).await
+                    std::sync::Arc::clone(&self.engine)
+                        .search_vectors_unified_arc(ctx)
+                        .await
                 }
                 SearchStrategy::Orchestrated {
                     reason,
@@ -164,7 +166,9 @@ impl SearchCoordinator {
                     warn!(
                         "🔄 Orchestrated search not fully implemented, falling back to unified search"
                     );
-                    self.engine.search_vectors_unified(ctx).await
+                    std::sync::Arc::clone(&self.engine)
+                        .search_vectors_unified_arc(ctx)
+                        .await
                 }
                 SearchStrategy::Hybrid { strategies, .. } => {
                     info!(
@@ -175,7 +179,9 @@ impl SearchCoordinator {
                     if let Some(first_strategy) = strategies.into_iter().next() {
                         self.execute_search_strategy(ctx, first_strategy).await
                     } else {
-                        self.engine.search_vectors_unified(ctx).await
+                        std::sync::Arc::clone(&self.engine)
+                            .search_vectors_unified_arc(ctx)
+                            .await
                     }
                 }
             }

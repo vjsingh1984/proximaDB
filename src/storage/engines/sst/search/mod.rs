@@ -421,30 +421,9 @@ impl SstEngine {
         // wins outright; the default `Adaptive` arm defers to the collection
         // `index_policy` (mode=exact pin, or a byte_budget override) and then the
         // cost-derived auto-default.
-        let want_exact = {
-            use crate::core::search::SearchMode;
-            match &ctx.search_params.search_mode {
-                SearchMode::Approximate { .. } => false,
-                SearchMode::Exact => true,
-                SearchMode::Adaptive { threshold } => {
-                    let policy = ctx
-                        .collection
-                        .config
-                        .as_ref()
-                        .and_then(|c| c.index_policy.as_ref());
-                    let (byte_budget, pin_exact) = resolve_exact_budget(policy);
-                    if pin_exact {
-                        // Owner pinned exact — always brute-force, any N.
-                        true
-                    } else {
-                        let count = self.segment_vector_count(&storage_url).await;
-                        let dim = query_vector.len().max(1);
-                        let scan_bytes = count.saturating_mul(dim).saturating_mul(4);
-                        count > 0 && scan_bytes <= byte_budget && count <= *threshold
-                    }
-                }
-            }
-        };
+        let want_exact = self
+            .want_exact_search(ctx, query_vector, &storage_url)
+            .await;
         if want_exact {
             info!(
                 "🎯 SST: exact segment scan for collection {} (SearchMode honored; cost-gated) — guaranteed recall (TD-165)",
@@ -475,8 +454,7 @@ impl SstEngine {
         // force AXIS on collections that didn't ask for it — that was the pre-fix
         // bug (OR logic → AXIS intercepted every collection → 8.6GB RSS + 1.76%
         // recall for co-design collections whose PAX scan was never exercised).
-        let has_axis_manager = self.axis_manager().is_some();
-        let use_orchestration = ctx.metadata.use_axis_indexes && has_axis_manager;
+        let use_orchestration = self.use_orchestrated_search(ctx);
 
         if use_orchestration {
             debug!("🔍 SST: AXIS manager is available for HNSW/IVF search");
@@ -1442,6 +1420,412 @@ impl SstEngine {
         Ok(all_candidates)
     }
 
+    /// TD-SEARCH-2 S2: the exact-vs-approximate routing decision, extracted
+    /// from `search_vectors_unified` so the multi-core `_arc` entry reuses the
+    /// identical logic (no behavior drift between the two entry points).
+    async fn want_exact_search(
+        &self,
+        ctx: &StorageQueryContext,
+        query_vector: &[f32],
+        storage_url: &str,
+    ) -> bool {
+        use crate::core::search::SearchMode;
+        match &ctx.search_params.search_mode {
+            SearchMode::Approximate { .. } => false,
+            SearchMode::Exact => true,
+            SearchMode::Adaptive { threshold } => {
+                let policy = ctx
+                    .collection
+                    .config
+                    .as_ref()
+                    .and_then(|c| c.index_policy.as_ref());
+                let (byte_budget, pin_exact) = resolve_exact_budget(policy);
+                if pin_exact {
+                    // Owner pinned exact — always brute-force, any N.
+                    true
+                } else {
+                    let count = self.segment_vector_count(storage_url).await;
+                    let dim = query_vector.len().max(1);
+                    let scan_bytes = count.saturating_mul(dim).saturating_mul(4);
+                    count > 0 && scan_bytes <= byte_budget && count <= *threshold
+                }
+            }
+        }
+    }
+
+    /// TD-SEARCH-2 S2: whether to use the AXIS in-memory orchestration path
+    /// (extracted; reused by `_arc`). `use_axis_indexes` is authoritative — a
+    /// registered global AXIS manager does NOT force AXIS on co-designed
+    /// collections (ADR-070).
+    fn use_orchestrated_search(&self, ctx: &StorageQueryContext) -> bool {
+        ctx.metadata.use_axis_indexes && self.axis_manager().is_some()
+    }
+
+    /// TD-SEARCH-2 S2: per-file scan with the full format dispatch (PAX
+    /// cascade → Arrow → exact-PAX → ProximaBlocks reader with
+    /// pipeline/morsel/vectorized/scalar). A `&self` helper so the multi-core
+    /// `tokio::spawn` path can call it via a cloned `Arc<SstEngine>` (`&*arc`)
+    /// — `tokio::spawn` needs `'static`, which a borrowing `&self` closure is not.
+    async fn scan_single_file(
+        &self,
+        sstable_path: &str,
+        collection: &proximadb_proto::proximadb_v1::Collection,
+        query_vector: &[f32],
+        filter_expression: Option<&FilterExpression>,
+        k: usize,
+        distance_metric: DistanceMetric,
+        collection_id: &str,
+        storage_url: &str,
+        prune_config: &crate::core::search::BlockPruneConfig,
+        use_pipeline: bool,
+        use_parallel_morsels: bool,
+        use_vectorized: bool,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        // PAX RaBitQ→SQ8 cascade first for `.pax` under a validated metric.
+        let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path.ends_with(".pax")
+            && matches!(
+                distance_metric,
+                DistanceMetric::Euclidean | DistanceMetric::Cosine | DistanceMetric::DotProduct
+            ) {
+            match self
+                .try_pax_cascade(
+                    sstable_path,
+                    query_vector,
+                    filter_expression,
+                    k,
+                    distance_metric,
+                    collection_id,
+                    storage_url,
+                )
+                .await
+            {
+                Ok(Some(records)) => Some(records),
+                Ok(None) => None,
+                Err(e) => {
+                    warn!(
+                        file = sstable_path,
+                        error = %e,
+                        "PAX cascade unavailable; falling back to generic scan"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(records) = pax_cascade {
+            return Ok(records);
+        }
+
+        // Generic dispatch by extension / execution flag.
+        if sstable_path.ends_with(".arrow") {
+            self.search_arrow_file(
+                sstable_path,
+                query_vector,
+                filter_expression.cloned(),
+                k,
+                distance_metric,
+            )
+            .await
+        } else if sstable_path.ends_with(".pax") {
+            self.search_pax_file_exact(
+                sstable_path,
+                query_vector,
+                filter_expression.cloned(),
+                k,
+                distance_metric,
+            )
+            .await
+        } else if use_pipeline {
+            self.sstable_reader()
+                .search_with_pipeline_execution(
+                    sstable_path,
+                    query_vector,
+                    filter_expression.cloned(),
+                    k,
+                    distance_metric,
+                    Some(collection),
+                    prune_config,
+                )
+                .await
+        } else if use_parallel_morsels {
+            self.sstable_reader()
+                .search_with_filter_parallel_morsels(
+                    sstable_path,
+                    query_vector,
+                    filter_expression.cloned(),
+                    k,
+                    distance_metric,
+                    Some(collection),
+                    prune_config,
+                    None,
+                )
+                .await
+        } else if use_vectorized {
+            self.sstable_reader()
+                .search_with_filter_vectorized(
+                    sstable_path,
+                    query_vector,
+                    filter_expression.cloned(),
+                    k,
+                    distance_metric,
+                    Some(collection),
+                    prune_config,
+                )
+                .await
+        } else {
+            self.sstable_reader()
+                .search_with_filter_and_pruning(
+                    sstable_path,
+                    query_vector,
+                    filter_expression.cloned(),
+                    k,
+                    distance_metric,
+                    Some(collection),
+                    prune_config,
+                )
+                .await
+        }
+    }
+
+    /// TD-SEARCH-2 S2: multi-core direct search. Same semantics as
+    /// `fallback_to_direct_search` but each per-file scan runs on its own tokio
+    /// worker via `tokio::spawn`, gated by a per-query `Semaphore(degree)`, so a
+    /// single query uses `degree` cores for the CPU-bound per-file work. Arc
+    /// receiver: each task clones `Arc<SstEngine>` + owned inputs and calls
+    /// `scan_single_file` via `&*arc`. Recall-neutral (independent per-file
+    /// scans + order-independent `BoundedPriorityQueue` merge). `degree == 1` /
+    /// single file stays sequential (no spawn overhead).
+    pub async fn fallback_to_direct_search_arc(
+        self: std::sync::Arc<Self>,
+        ctx: &StorageQueryContext,
+        collection_id: &str,
+        storage_url: &str,
+        query_vector: &[f32],
+        k: usize,
+        distance_metric: DistanceMetric,
+        filter_expression: Option<&FilterExpression>,
+        include_vectors: bool,
+        include_metadata: bool,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        // --- discover (mirrors fallback_to_direct_search) ---
+        let search_mode = &ctx.search_params.search_mode;
+        let prune_config_owned;
+        let prune_config: &crate::core::search::BlockPruneConfig =
+            if matches!(search_mode, crate::core::search::SearchMode::Exact)
+                && !ctx.search_params.block_prune.force_exact
+            {
+                prune_config_owned = crate::core::search::BlockPruneConfig {
+                    force_exact: true,
+                    ..ctx.search_params.block_prune.clone()
+                };
+                &prune_config_owned
+            } else {
+                &ctx.search_params.block_prune
+            };
+        let sstable_files = self
+            .discover_sstable_files_with_centroid_pruning(
+                storage_url,
+                query_vector,
+                distance_metric,
+                search_mode,
+                prune_config,
+            )
+            .await?;
+
+        let file_count = u16::try_from(sstable_files.len()).unwrap_or(u16::MAX);
+        let degree = resolve_search_parallelism(self.config().search_parallel_files)
+            .min(file_count)
+            .max(1);
+
+        let use_pipeline = ctx.search_params.enable_pipeline_execution.unwrap_or(false);
+        let use_parallel_morsels = ctx.search_params.enable_parallel_morsels.unwrap_or(false);
+        let use_vectorized = ctx
+            .search_params
+            .enable_vectorized_execution
+            .unwrap_or(false);
+
+        // One clone per query; Arc::clone per task.
+        let query_arc: std::sync::Arc<[f32]> = std::sync::Arc::from(query_vector);
+        let collection = std::sync::Arc::clone(&ctx.collection);
+        let filter_owned = filter_expression.cloned();
+
+        let mut all_candidates = Vec::new();
+
+        if degree > 1 {
+            tracing::info!(
+                file_count = sstable_files.len(),
+                parallel_degree = degree,
+                "TD-SEARCH-2 S2: multi-core (tokio::spawn) inter-file scan"
+            );
+            // Cap in-flight scans at `degree` so file_count >> cores does not
+            // oversubscribe; the runtime worker pool backpressures cross-query.
+            let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(degree as usize));
+            let mut handles: Vec<tokio::task::JoinHandle<Result<Vec<OptimizedSearchRecord>>>> =
+                Vec::with_capacity(sstable_files.len());
+            for path in sstable_files {
+                // Gate concurrency: await a permit before spawning (bound at degree).
+                let permit = std::sync::Arc::clone(&sem).acquire_owned().await?;
+                let engine = std::sync::Arc::clone(&self);
+                let collection = std::sync::Arc::clone(&collection);
+                let query = std::sync::Arc::clone(&query_arc);
+                let filter = filter_owned.clone();
+                let cid = collection_id.to_string();
+                let url = storage_url.to_string();
+                let prune = prune_config.clone();
+                handles.push(tokio::spawn(async move {
+                    let _permit = permit; // released on task drop
+                    (&*engine)
+                        .scan_single_file(
+                            &path,
+                            &collection,
+                            &query[..],
+                            filter.as_ref(),
+                            k,
+                            distance_metric,
+                            &cid,
+                            &url,
+                            &prune,
+                            use_pipeline,
+                            use_parallel_morsels,
+                            use_vectorized,
+                        )
+                        .await
+                }));
+            }
+            // Collect: best-effort on per-file I/O errors (warn + continue, as
+            // S1 does), fail-closed on JoinError (a panic is a logic bug, not
+            // transient I/O — silently dropping its file would degrade recall).
+            for h in handles {
+                match h.await {
+                    Ok(Ok(recs)) => all_candidates.extend(recs),
+                    Ok(Err(e)) => warn!(error = %e, "SST S2: per-file scan failed (best-effort)"),
+                    Err(join_err) => {
+                        return Err(anyhow::anyhow!(
+                            "SST S2: per-file scan task panicked: {join_err}"
+                        ));
+                    }
+                }
+            }
+        } else {
+            // degree == 1 / single file: sequential, no spawn overhead.
+            for path in &sstable_files {
+                match self
+                    .scan_single_file(
+                        path,
+                        &collection,
+                        &query_arc[..],
+                        filter_owned.as_ref(),
+                        k,
+                        distance_metric,
+                        collection_id,
+                        storage_url,
+                        prune_config,
+                        use_pipeline,
+                        use_parallel_morsels,
+                        use_vectorized,
+                    )
+                    .await
+                {
+                    Ok(recs) => all_candidates.extend(recs),
+                    Err(e) => {
+                        warn!(file = %path, error = %e, "SST S2: per-file scan failed (best-effort)")
+                    }
+                }
+            }
+        }
+
+        // --- merge + finalize (mirrors fallback_to_direct_search) ---
+        let mut priority_queue = BoundedPriorityQueue::new(k);
+        for candidate in all_candidates {
+            priority_queue.try_insert(candidate);
+        }
+        let mut all_candidates = priority_queue.into_sorted_vec();
+        self.filter_search_results(&mut all_candidates, include_vectors, include_metadata);
+        Ok(all_candidates)
+    }
+
+    /// TD-SEARCH-2 S2: Arc-receiver production entry. Same routing as
+    /// `search_vectors_unified` (reuses `want_exact_search` +
+    /// `use_orchestrated_search`), but the direct-search branch dispatches to
+    /// the multi-core `fallback_to_direct_search_arc`. Exact + orchestrated
+    /// branches delegate to the existing `&self` methods (no spawn needed:
+    /// exact is a single segment; orchestrated is in-memory AXIS).
+    pub async fn search_vectors_unified_arc(
+        self: std::sync::Arc<Self>,
+        ctx: &StorageQueryContext,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        let _compute_guard = ComputeMsGuard::new("sst");
+
+        if let Some(orch) = self.orchestrator() {
+            (**orch).pattern_tracker().track_access_async(
+                format!("{}::sst::metadata", ctx.collection_id()),
+                crate::storage::cache::orchestrator::CacheType::Metadata,
+            );
+        }
+
+        let collection_id = ctx.collection_id();
+        let storage_url = ctx
+            .collection_storage_path()
+            .ok_or_else(|| SstError::InvalidArgument("No storage URL in context".into()))?;
+        let query_vector = ctx
+            .query_vector()
+            .ok_or_else(|| SstError::InvalidArgument("No query vector in context".into()))?;
+        let k = ctx.top_k();
+        let distance_metric = ctx.distance_metric();
+        let filter_expression = ctx.search_params.filter_expression.as_ref();
+
+        if self
+            .want_exact_search(ctx, query_vector, &storage_url)
+            .await
+        {
+            return self
+                .execute_exact_segment_scan(
+                    ctx,
+                    collection_id,
+                    &storage_url,
+                    query_vector,
+                    k,
+                    distance_metric,
+                    filter_expression,
+                )
+                .await;
+        }
+
+        let use_orchestration = self.use_orchestrated_search(ctx);
+        if use_orchestration {
+            self.ensure_axis_index_from_sst(collection_id, &storage_url)
+                .await;
+        }
+        if use_orchestration {
+            self.execute_orchestrated_search(
+                ctx,
+                collection_id,
+                &storage_url,
+                query_vector,
+                k,
+                distance_metric,
+                filter_expression,
+            )
+            .await
+        } else {
+            // Multi-core direct search (S2).
+            self.fallback_to_direct_search_arc(
+                ctx,
+                collection_id,
+                &storage_url,
+                query_vector,
+                k,
+                distance_metric,
+                filter_expression,
+                true,
+                true,
+            )
+            .await
+        }
+    }
+
     /// Discover SSTable files with optional centroid-based pruning (LanceDB-inspired IVF optimization)
     ///
     /// When `search_mode` is Approximate, this method:
@@ -1978,6 +2362,147 @@ mod tests {
     use proximadb_data_model::ProximaValue;
     use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use std::sync::Arc;
+
+    /// TD-SEARCH-2 S2: multi-core (`tokio::spawn`) inter-file search is
+    /// recall-neutral vs sequential. Flushes 3 batches → 3 files (no compaction),
+    /// then runs the SAME query through `search_vectors_unified_arc` at degree=1
+    /// (sequential) and degree=4 (multi-core spawn) and asserts the returned
+    /// id-sets agree. Process-per-test isolation (nextest) makes the env-set safe.
+    #[tokio::test]
+    async fn s2_multicore_arc_matches_sequential() {
+        use crate::core::search::SearchParams;
+        use crate::proto::proximadb_v1::{
+            Collection, CollectionConfig, StorageAssignment, StorageConfig,
+        };
+        use crate::storage::persistence::filesystem::FilesystemConfig;
+        use crate::storage::traits::{FlushParameters, StorageQueryContext, StorageQueryMetadata};
+        use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let base = temp_dir.path().to_str().unwrap().to_string();
+        std::mem::forget(temp_dir); // keep dir for the engine's lifetime
+        let mut fs_config = FilesystemConfig::default();
+        fs_config.default_fs = Some(format!("file://{}", base));
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+
+        let mut sst_config = SstConfig::default();
+        sst_config.block_format = "ArrowBlock".to_string();
+        sst_config.compaction_threshold = 100; // keep 3 files (no compaction) → degree > 1
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let engine = SstEngine::new_with_config(sst_config, filesystem, distance_compute)
+            .await
+            .unwrap();
+
+        let dim = 64usize;
+        let cid = "s2_multicore_test";
+        let collection = Collection {
+            id: cid.to_string(),
+            config: Some(CollectionConfig {
+                name: cid.to_string(),
+                dimension: dim as u32,
+                storage_config: Some(StorageConfig::default()),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                primary_path: base.clone(),
+                base_location: base.clone(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let mk_rec = |idx: usize| {
+            let id = format!("b_{}", idx);
+            let ts_ns = (idx as i64).saturating_mul(1_000_000);
+            ProximaRecord {
+                oid: id.clone(),
+                local_id: Some(id),
+                created_at_ns: ts_ns,
+                updated_at_ns: ts_ns,
+                record_version: 1,
+                embeddings: vec![EmbeddingCell {
+                    model_id: "test".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim: dim as u32,
+                    values: EmbeddingValues::Fp32(
+                        (0..dim)
+                            .map(|j| ((idx as f32) * 0.1 + (j as f32) * 0.01).sin())
+                            .collect(),
+                    ),
+                    ..Default::default()
+                }],
+                ..ProximaRecord::default()
+            }
+        };
+
+        // Flush 3 batches → 3 files.
+        for b in 0..3u32 {
+            let start = (b as usize) * 25;
+            let recs: Vec<ProximaRecord> = (start..start + 25).map(mk_rec).collect();
+            let params = FlushParameters {
+                collection_id: Some(cid.to_string()),
+                vector_records: recs,
+                force: true,
+                synchronous: true,
+                collection_config: Some(collection.clone()),
+                ..Default::default()
+            };
+            let r = engine.do_flush(&params).await.unwrap();
+            assert!(r.success, "flush batch {} failed", b);
+        }
+
+        // Query vector = idx 0's pattern (guaranteed present); SearchParams.vector is Vec<f32>.
+        let query: Vec<f32> = (0..dim).map(|j| ((j as f32) * 0.01).sin()).collect();
+        let mk_ctx = || StorageQueryContext {
+            search_params: Arc::new(SearchParams {
+                vector: Some(query.clone()),
+                top_k: Some(10),
+                filters: None,
+                filter_expression: None,
+                ..Default::default()
+            }),
+            collection: Arc::new(collection.clone()),
+            metadata: StorageQueryMetadata {
+                collection_id: cid.to_string(),
+                ..Default::default()
+            },
+            user_context: None,
+            tenant_context: None,
+        };
+
+        let engine_arc = Arc::new(engine);
+
+        // degree=1 (sequential — exercises fallback_to_direct_search_arc's else branch).
+        // SAFETY: nextest runs each test in its own process; no other thread is
+        // reading this env var concurrently. Sets the inter-file parallel degree.
+        unsafe { std::env::set_var("PROXIMADB_SEARCH_PARALLEL_FILES", "1") };
+        let ids_seq: std::collections::HashSet<String> = engine_arc
+            .clone()
+            .search_vectors_unified_arc(&mk_ctx())
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| r.id.clone())
+            .collect();
+
+        // degree=4 (multi-core — exercises the tokio::spawn + Semaphore path).
+        // SAFETY: same as above — process-per-test isolation.
+        unsafe { std::env::set_var("PROXIMADB_SEARCH_PARALLEL_FILES", "4") };
+        let ids_par: std::collections::HashSet<String> = engine_arc
+            .search_vectors_unified_arc(&mk_ctx())
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| r.id.clone())
+            .collect();
+
+        assert!(!ids_seq.is_empty(), "should find the query's own vector");
+        assert_eq!(
+            ids_seq, ids_par,
+            "multi-core (degree=4) must return the same id-set as sequential (degree=1)"
+        );
+    }
 
     /// ADR-030 / TD-158: the SST `ComputeMsGuard` records elapsed compute to the
     /// active per-query I/O trace on drop, under the engine label — so the
