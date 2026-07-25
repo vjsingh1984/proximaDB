@@ -61,7 +61,9 @@ asserted_in = [
 bench_source = "scripts/bench/restart_under_load_verify.py"
 bench_command = "python3 scripts/bench/restart_under_load_verify.py target/release/proximadb-server /tmp/restart-bed.toml /tmp/pdb-restart-bed 5678  # PROXIMADB_PAX_COALESCED_RABITQ=1 PROXIMADB_PAX_VECTOR_QUANT=rabitq set by harness"
 artifact = "docs/_internal/status/RESTART_RESILIENCE_VERIFICATION_2026_07_24.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release run, no competing workload"
 date = "2026-07-24"
+version = "feat/restart-resilience -> develop (#1187)"
 
 [[claims]]
 id = "io_trace_sink_hotpath_p95"
