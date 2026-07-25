@@ -100,6 +100,17 @@ def search(vec, k=10):
 def sweep(queries, conc):
     import threading
 
+def bench_conc(default_factor=1.6):
+    """Hot-phase concurrency: BENCH_HOT_CONC env override, else
+    round(default_factor x cores) — 16 on the 10-core protocol box, portable
+    elsewhere. Keep overrides recorded next to any published numbers."""
+    import os
+    v = os.environ.get("BENCH_HOT_CONC")
+    if v and v.isdigit() and int(v) > 0:
+        return int(v)
+    return max(4, round((os.cpu_count() or 8) * default_factor))
+
+
     lat, errs = [], [0]
     lock = threading.Lock()
     idx = [0]
@@ -176,7 +187,15 @@ def main():
     qs = read_fvecs(QUERY, 10_000)
     off = 0
     print(f"== mode {MODE} ==", flush=True)
-    for conc, count in [(1, 60), (4, 120), (8, 200), (16, 320)]:
+    ladder_env = os.environ.get("BENCH_CONC_LADDER", "")
+    ladder = [int(x) for x in ladder_env.split(",") if x.strip().isdigit()] or [
+        1,
+        4,
+        max(4, (os.cpu_count() or 8) // 2 * 2),
+        bench_conc(),
+    ]
+    for conc in ladder:
+        count = max(60, conc * 20)
         r = sweep(qs[off : off + count], conc)
         off += count
         print(
