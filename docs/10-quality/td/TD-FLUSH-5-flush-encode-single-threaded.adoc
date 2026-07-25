@@ -1,0 +1,26 @@
+= TD-FLUSH-5: flush materialization is encode-bound single-threaded (43.9 s / 884k entries)
+:status: Open
+:filed: 2026-07-25
+:priority: P2 (latency of durability, not correctness — shutdown-await covers the lifecycle)
+
+== The finding (TD-FLUSH-4 diagnosis runs)
+
+`materialize_collection` for an 884k-entry / 235 MB memtable takes **43.9 s**
+(~20k entries/s) — RaBitQ+SQ8 quantization on one core. With the TD-FLUSH-3
+floor, the first flush fires near the 884k predicted crossing, so segment
+visibility lags ingest end by ~45 s and shutdown must await it (fixed:
+`drain_inline_flushes`). Concurrent all-core query CPU (lone-query morsels)
+starves the encode further.
+
+== Direction
+
+Chunk the encode across `spawn_blocking` workers (the TD-SEARCH-2 S2 morsel
+pattern — rank and encode are both embarrassingly parallel over rows),
+bounded by the adaptive degree so queries are not starved in reverse. Target:
+<10 s for 884k on the 10-core box. Gate: byte-identical segments vs the
+sequential encoder (determinism), recall ratchet unchanged.
+
+== Related
+
+TD-FLUSH-4 (lifecycle fixes + the measurement), TD-SEARCH-2 S2 (the
+parallelism pattern + INFLIGHT_SCANS counter to share cores).

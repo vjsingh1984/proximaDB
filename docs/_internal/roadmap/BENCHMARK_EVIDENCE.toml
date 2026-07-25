@@ -80,6 +80,23 @@ hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build; NOTE
 date = "2026-07-25"
 version = "feat/search-multicore -> develop"
 
+[[claims]]
+id = "training_compaction_cold_ladder_1m"
+claim = "TD-COMPACT-5 + TD-FLUSH-4 fixes, SIFT-1M REST e2e cold ladder (novel queries, file:// bed): untrained 179.7 GETs / 104.3 MB / ~140ms -> trained-unprobed 108.5 / 88.0 / 144ms -> probe-armed (PROXIMADB_IVF2_PROBE=1) 82.9 / 77.5 / 76ms mean, 90ms p95, probe 16 cells/q with zero whole-region fallbacks. Recall@10: 0.9840 trained-unprobed (ratchet held); 0.9780 probe-armed at default nprobe (below ratchet -> reader gate stays default-OFF pending nprobe tuning). Flush lifecycle: inline trigger at the 884k floor crossing, 43.9s materialize (TD-FLUSH-5), drain-at-shutdown leaves zero __flush stragglers."
+metric = "cold GETs/query + bytes/query + latency across training states; recall@10; probe telemetry"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-COMPACT-5-training-compaction-trigger.adoc",
+  "docs/10-quality/td/TD-FLUSH-4-ingest-flush-triggers-dead-timer-only.adoc",
+  "docs/10-quality/td/TD-FLUSH-5-flush-encode-single-threaded.adoc",
+]
+bench_source = "scripts/bench/recall_adjudicate.py"
+bench_command = "flush_e2e_verify + trained_band probes (session scratchpad, promoted protocol in scripts/bench/recall_adjudicate.py); PROXIMADB_L0_COMPACTION_ENABLED=1 PROXIMADB_IVF2=1 [PROXIMADB_IVF2_PROBE=1]"
+artifact = "docs/10-quality/td/TD-COMPACT-5-training-compaction-trigger.adoc"
+hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build, serialized runs"
+date = "2026-07-25"
+version = "feat/flush-triggers -> develop (#1207)"
+
 
 [[claims]]
 id = "io_trace_sink_hotpath_p95"

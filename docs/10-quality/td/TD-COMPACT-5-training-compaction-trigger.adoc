@@ -55,6 +55,18 @@ armed. NOTE: the arm requires the A0 trainer (`PROXIMADB_IVF2`) — without it
 compaction outputs stay v1 and the arm would loop, so the gate checks
 `ivf_probe_enabled()` first.
 
+== Probe-armed follow-up measurement (same bed, all-trained, `PROXIMADB_IVF2_PROBE=1`)
+
+The read-side coarse probe is a SEPARATE default-OFF gate. Armed on the
+all-trained bed: **82.9 GETs / 77.5 MB per query, mean 76 ms / p95 90 ms**
+(vs 108.5/88.0/144 ms trained-unprobed; 179.7/104.3/~140 ms untrained) —
+probe firing cleanly (16 cells/query, zero whole-region fallbacks). BUT
+recall@10 = **0.9780 < the 0.984 ratchet** at the default nprobe — exactly
+why the reader gate ships OFF. Follow-up: nprobe/fetch-round tuning to
+re-enter the ratchet before flipping the reader gate; the historical
+20–51 GET band also assumed single-file beds (two files ≈ 2× per-file probe
+overhead).
+
 == Verification
 
 E2E (this PR's evidence run): 1M ingest with `PROXIMADB_L0_COMPACTION_ENABLED=1`
