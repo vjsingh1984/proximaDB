@@ -33,10 +33,14 @@ hot-tier floor (`TierSpec.floor_frac` via the tiers.json entitlement) is now a
 unpinned tenants share the remaining elastic pool, work-conserving. Default-OFF
 (`PROXIMADB_SURVIVOR_PIN_RESERVE_FRAC`), mandate #8.
 
-S3 — **Enforcement metering**: emit per-tenant pinned-bytes vs entitled-bytes
-so billing can true-up (charge for what is entitled, alert when residency
-cannot be honored — that is a capacity signal to move B4ms → E-series, per the
-2026-07-24 instance-family analysis).
+S3 — **Enforcement metering** ✅ SHIPPED (2026-07-25):
+`proximadb_survivor_cache_tenant_pinned_bytes` vs
+`proximadb_survivor_cache_tenant_entitled_bytes` per-tenant gauges (top-50 by
+resident bytes; entitlement via the new public `TenantCache::entitlement`).
+Billing true-up charges what is entitled; a sustained pinned < entitled gap
+under pressure = residency cannot be honored (capacity signal to move
+B4ms → E-series, per the 2026-07-24 instance-family analysis). Remaining
+before the hot tier is SOLD: a cloud-latency two-tenant bed run.
 
 == Verification
 - Two-tenant test: tenant A pinned (floor = its working set), tenant B churning

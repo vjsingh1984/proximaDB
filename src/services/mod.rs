@@ -196,6 +196,7 @@ pub mod record_store;
 pub mod scan_cursor;
 pub mod schema;
 pub mod search;
+pub mod shutdown_registry;
 pub mod snapshot;
 pub mod system_catalog;
 pub mod system_catalog_state;

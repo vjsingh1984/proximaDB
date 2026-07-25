@@ -196,6 +196,12 @@ pub struct CacheBudget {
     pub per_tenant: HashMap<String, TenantLimits>,
     /// Optional time-to-live for entries (None = no expiry; rely on size).
     pub ttl: Option<Duration>,
+    /// TD-CACHE-2 S2c: optional per-[`CacheKind`] admission ceilings as
+    /// fractions of `total_bytes` — e.g. `Other ≤ 0.3` stops OID-range churn
+    /// from flushing SQ8 survivor ranges without partitioning the pool into
+    /// static budgets. A kind at/over its ceiling bypasses caching (the value
+    /// is still returned); kinds without an entry stay unbounded (elastic).
+    pub kind_ceilings: HashMap<CacheKind, f64>,
     /// TD-CACHE-3 S2: fraction of `total_bytes` carved out as the **pin
     /// reserve** — a side pool holding tenants' floor bytes OUTSIDE the shared
     /// moka pool, so TinyLFU (which is floor-agnostic) can never evict another
@@ -217,8 +223,16 @@ impl CacheBudget {
             high_watermark_frac: 0.9,
             per_tenant: HashMap::new(),
             ttl: None,
+            kind_ceilings: HashMap::new(),
             pin_reserve_frac: 0.0,
         }
+    }
+
+    /// TD-CACHE-2 S2c: cap one artifact class at `frac` of the pool (see
+    /// [`CacheBudget::kind_ceilings`]).
+    pub fn with_kind_ceiling(mut self, kind: CacheKind, frac: f64) -> Self {
+        self.kind_ceilings.insert(kind, frac.clamp(0.0, 1.0));
+        self
     }
 
     /// TD-CACHE-3 S2: enable true-pinning by reserving `frac` of the pool for
@@ -300,7 +314,7 @@ struct PinnedStore<V> {
 /// entries recycled to make room (caller reconciles the byte gauges).
 struct PinOutcome {
     pinned: bool,
-    recycled: Vec<(Arc<str>, u32)>,
+    recycled: Vec<(Arc<str>, CacheKind, u32)>,
 }
 
 impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
@@ -356,7 +370,7 @@ impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
     /// tenants; never exceeds the global reserve.
     fn try_pin(&self, key: CacheKey, weight: u32, value: V, floor_bytes: u64) -> PinOutcome {
         let w = weight as u64;
-        let mut recycled = Vec::new();
+        let mut recycled: Vec<(Arc<str>, CacheKind, u32)> = Vec::new();
         if w == 0 || w > floor_bytes {
             return PinOutcome {
                 pinned: false,
@@ -365,7 +379,7 @@ impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
         }
         // Replacing an existing pin of the same key: drop the old copy first.
         if let Some(old_w) = self.remove(&key) {
-            recycled.push((key.tenant.clone(), old_w));
+            recycled.push((key.tenant.clone(), key.kind, old_w));
         }
         // Within-tenant LRU recycling until the floor fits the new entry.
         while self.tenant_pinned(&key.tenant).saturating_add(w) > floor_bytes {
@@ -373,7 +387,7 @@ impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
                 break;
             };
             if let Some(old_w) = self.remove(&lru) {
-                recycled.push((lru.tenant.clone(), old_w));
+                recycled.push((lru.tenant.clone(), lru.kind, old_w));
             } else {
                 break;
             }
@@ -429,6 +443,10 @@ pub struct TenantCache<V: Clone + Send + Sync + 'static> {
     limits_resolver: Option<Arc<LimitsResolver>>,
     /// TD-CACHE-3 S2: true-pin side store (None = admission-only floors).
     pinned: Option<Arc<PinnedStore<V>>>,
+    /// TD-CACHE-2 S2c: per-kind admission ceilings (bytes, pre-multiplied).
+    kind_ceiling_bytes: Arc<HashMap<CacheKind, u64>>,
+    /// Live per-kind admitted bytes (reconciled by the eviction listener).
+    kind_bytes: Arc<DashMap<CacheKind, AtomicU64>>,
 }
 
 impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
@@ -439,6 +457,8 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         let global_bytes = Arc::new(AtomicU64::new(0));
         let listener_usage = usage.clone();
         let listener_global = global_bytes.clone();
+        let kind_bytes: Arc<DashMap<CacheKind, AtomicU64>> = Arc::new(DashMap::new());
+        let listener_kind = kind_bytes.clone();
 
         // TD-CACHE-3 S2: the pin reserve is carved OUT of the total so the
         // budget invariant holds: shared moka pool + pinned reserve = total.
@@ -451,6 +471,9 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
             .eviction_listener(
                 move |k: Arc<CacheKey>, v: CachedValue<V>, cause: RemovalCause| {
                     listener_global.fetch_sub(v.weight as u64, Ordering::Relaxed);
+                    if let Some(b) = listener_kind.get(&k.kind) {
+                        b.fetch_sub(v.weight as u64, Ordering::Relaxed);
+                    }
                     if let Some(u) = listener_usage.get(&k.tenant) {
                         u.bytes.fetch_sub(v.weight as u64, Ordering::Relaxed);
                         // Count true capacity/expiry evictions (not explicit removals).
@@ -478,6 +501,14 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
             per_tenant: Arc::new(budget.per_tenant),
             limits_resolver: None,
             pinned: (pin_reserve > 0).then(|| Arc::new(PinnedStore::new(pin_reserve))),
+            kind_ceiling_bytes: Arc::new(
+                budget
+                    .kind_ceilings
+                    .iter()
+                    .map(|(k, f)| (*k, ((budget.total_bytes as f64) * f) as u64))
+                    .collect(),
+            ),
+            kind_bytes,
         }
     }
 
@@ -495,6 +526,13 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         }
         self.usage.entry(tenant.clone()).or_default();
         self.usage.get(tenant).expect("just inserted")
+    }
+
+    /// TD-CACHE-3 S3: the effective limits (entitlement) for a tenant —
+    /// resolver-driven when set, static map/defaults otherwise. Public so the
+    /// host can meter pinned-vs-entitled bytes for billing true-up.
+    pub fn entitlement(&self, tenant: &str) -> TenantLimits {
+        self.limits_for(tenant)
     }
 
     fn limits_for(&self, tenant: &str) -> TenantLimits {
@@ -525,6 +563,20 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
     /// `weight` bytes: absolute hard-ceiling cap always; below the high watermark
     /// borrow freely from the idle pool; above it, enforce the weighted fair
     /// share (`total * w_t / Σ active w`) clamped to `[floor, hard_ceiling]`.
+    /// TD-CACHE-2 S2c: kind-ceiling admission — a class at/over its share of
+    /// the pool bypasses caching so it cannot flush higher-value classes.
+    fn kind_admits(&self, kind: CacheKind, weight: u64) -> bool {
+        let Some(ceiling) = self.kind_ceiling_bytes.get(&kind) else {
+            return true;
+        };
+        let used = self
+            .kind_bytes
+            .get(&kind)
+            .map(|b| b.load(Ordering::Relaxed))
+            .unwrap_or(0);
+        used.saturating_add(weight) <= *ceiling
+    }
+
     fn should_admit(&self, tenant: &Arc<str>, weight: u64) -> bool {
         let limits = self.limits_for(tenant);
         let u = self.usage_for(tenant).bytes.load(Ordering::Relaxed);
@@ -594,8 +646,10 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         // `get` already recorded the miss.
         let value = loader().await?;
 
-        if self.should_admit(&key.tenant, weight as u64) {
-            self.account_insert(&key.tenant, weight);
+        if self.should_admit(&key.tenant, weight as u64)
+            && self.kind_admits(key.kind, weight as u64)
+        {
+            self.account_insert(&key.tenant, key.kind, weight);
             if !self.try_pin_admitted(&key, weight, &value) {
                 self.inner
                     .insert(
@@ -625,8 +679,11 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
             return false;
         }
         let outcome = pinned.try_pin(key.clone(), weight, value.clone(), floor);
-        for (tenant, w) in outcome.recycled {
+        for (tenant, kind, w) in outcome.recycled {
             self.global_bytes.fetch_sub(w as u64, Ordering::Relaxed);
+            if let Some(b) = self.kind_bytes.get(&kind) {
+                b.fetch_sub(w as u64, Ordering::Relaxed);
+            }
             if let Some(u) = self.usage.get(&tenant) {
                 u.bytes.fetch_sub(w as u64, Ordering::Relaxed);
                 u.evictions.fetch_add(1, Ordering::Relaxed);
@@ -637,21 +694,66 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
 
     /// Explicitly insert/replace a value, subject to the elastic admission policy.
     pub async fn insert(&self, key: CacheKey, weight: u32, value: V) {
-        if !self.should_admit(&key.tenant, weight as u64) {
+        if !self.should_admit(&key.tenant, weight as u64)
+            || !self.kind_admits(key.kind, weight as u64)
+        {
             return;
         }
-        self.account_insert(&key.tenant, weight);
+        self.account_insert(&key.tenant, key.kind, weight);
         if !self.try_pin_admitted(&key, weight, &value) {
             self.inner.insert(key, CachedValue { weight, value }).await;
         }
     }
 
-    fn account_insert(&self, tenant: &Arc<str>, weight: u32) {
+    fn account_insert(&self, tenant: &Arc<str>, kind: CacheKind, weight: u32) {
         let u = self.usage_for(tenant);
         u.bytes.fetch_add(weight as u64, Ordering::Relaxed);
         u.inserts.fetch_add(1, Ordering::Relaxed);
         self.global_bytes
             .fetch_add(weight as u64, Ordering::Relaxed);
+        self.kind_bytes
+            .entry(kind)
+            .or_default()
+            .fetch_add(weight as u64, Ordering::Relaxed);
+    }
+
+    /// TD-CACHE-2 S2d: remove every entry (shared pool AND pinned floor)
+    /// whose key matches `pred`. Used by compaction to evict entries for
+    /// deleted segment files — without this, dead-file entries squat in the
+    /// budget until recency ages them out. Gauges are reconciled (moka via
+    /// the eviction listener; pinned explicitly here).
+    pub async fn purge_where(&self, pred: impl Fn(&CacheKey) -> bool) -> usize {
+        let victims: Vec<CacheKey> = self
+            .inner
+            .iter()
+            .filter(|(k, _)| pred(k))
+            .map(|(k, _)| (*k).clone())
+            .collect();
+        let mut removed = victims.len();
+        for k in &victims {
+            self.inner.invalidate(k).await;
+        }
+        if let Some(p) = &self.pinned {
+            let pinned_victims: Vec<CacheKey> = p
+                .entries
+                .iter()
+                .filter(|e| pred(e.key()))
+                .map(|e| e.key().clone())
+                .collect();
+            for k in pinned_victims {
+                if let Some(w) = p.remove(&k) {
+                    removed += 1;
+                    self.global_bytes.fetch_sub(w as u64, Ordering::Relaxed);
+                    if let Some(b) = self.kind_bytes.get(&k.kind) {
+                        b.fetch_sub(w as u64, Ordering::Relaxed);
+                    }
+                    if let Some(u) = self.usage.get(&k.tenant) {
+                        u.bytes.fetch_sub(w as u64, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+        removed
     }
 
     /// Drain moka's pending maintenance (eviction listener, etc.). Call before
@@ -812,6 +914,62 @@ mod tests {
             "pinned {} must not exceed the 1 KB reserve",
             a.pinned_bytes
         );
+    }
+
+    /// TD-CACHE-2 S2c: a kind at its ceiling bypasses caching (values still
+    /// returned) while other kinds admit freely — OID churn cannot flush the
+    /// recall-critical class.
+    #[tokio::test]
+    async fn kind_ceiling_caps_one_class() {
+        let budget = CacheBudget::new(10_000, 10_000).with_kind_ceiling(CacheKind::Other, 0.2);
+        let c: TenantCache<u64> = TenantCache::new(budget);
+        // Other floods: only ~2 KB (20%) admits.
+        for i in 0..50u64 {
+            c.insert(
+                CacheKey::new("A", CacheKind::Other, format!("o{i}")),
+                500,
+                i,
+            )
+            .await;
+        }
+        // QuantizedCodes admits unhindered.
+        for i in 0..8u64 {
+            c.insert(
+                CacheKey::new("A", CacheKind::QuantizedCodes, format!("q{i}")),
+                500,
+                i,
+            )
+            .await;
+        }
+        c.sync().await;
+        let other_hits = {
+            let mut n = 0;
+            for i in 0..50u64 {
+                if c.get(&CacheKey::new("A", CacheKind::Other, format!("o{i}")))
+                    .await
+                    .is_some()
+                {
+                    n += 1;
+                }
+            }
+            n
+        };
+        assert!(
+            other_hits <= 4,
+            "Other capped at 20% of 10KB = 4 x 500B entries, saw {other_hits}"
+        );
+        for i in 0..8u64 {
+            assert_eq!(
+                c.get(&CacheKey::new(
+                    "A",
+                    CacheKind::QuantizedCodes,
+                    format!("q{i}")
+                ))
+                .await,
+                Some(i),
+                "QuantizedCodes must be unaffected by the Other flood"
+            );
+        }
     }
 
     #[tokio::test]

@@ -107,6 +107,20 @@ lazy_static! {
         "Cumulative survivor-cache hits per tenant (top tenants only)",
         &["tenant_id"],
     );
+    /// TD-CACHE-3 S3: bytes held in the tenant's PINNED floor segment (true-pin).
+    pub static ref SURVIVOR_CACHE_TENANT_PINNED_BYTES: prometheus::IntGaugeVec = gauge_vec(
+        "proximadb_survivor_cache_tenant_pinned_bytes",
+        "Survivor-cache bytes pinned in the tenant's floor segment (never evictable by other tenants)",
+        &["tenant_id"]
+    );
+    /// TD-CACHE-3 S3: the tenant's ENTITLED floor bytes (tier contract). Billing
+    /// true-up = pinned vs entitled; a sustained gap under pressure means
+    /// residency cannot be honored (capacity signal).
+    pub static ref SURVIVOR_CACHE_TENANT_ENTITLED_BYTES: prometheus::IntGaugeVec = gauge_vec(
+        "proximadb_survivor_cache_tenant_entitled_bytes",
+        "Survivor-cache floor bytes the tenant's tier entitles it to (0 = no floor)",
+        &["tenant_id"]
+    );
     pub static ref SURVIVOR_CACHE_TENANT_MISSES: prometheus::IntGaugeVec = gauge_vec(
         "proximadb_survivor_cache_tenant_misses",
         "Cumulative survivor-cache misses per tenant (top tenants only)",

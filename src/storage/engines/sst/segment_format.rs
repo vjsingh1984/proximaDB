@@ -992,10 +992,42 @@ impl SegmentInvariantsCache {
             });
     }
 
-    /// On hit, return the cached invariants (Arc clone — refcount bump only)
-    /// and stamp the entry's recency tick. Takes only the shard READ lock —
-    /// the recency store is a relaxed atomic (TD-CACHE-2 S2a).
+    /// TD-CACHE-2 S2b: internal key of the Region-A companion entry for
+    /// `path` (`\u{1}` cannot occur in a segment path). Control bytes and the
+    /// Region-A body are stored as SEPARATE entries so budget pressure can
+    /// shed a 24 MB region while keeping the few-KB control plane that saves
+    /// 3 GETs per cold query — per-class eviction without changing the read
+    /// contract (`get` recomposes).
+    fn region_entry_key(path: &str) -> String {
+        format!("{path}\u{1}A")
+    }
+
+    /// On hit, return the cached invariants (recomposed from the control
+    /// entry + optional Region-A companion) and stamp recency. Takes only
+    /// shard READ locks (TD-CACHE-2 S2a).
     pub fn get(&self, path: &str) -> Option<Arc<SegmentInvariants>> {
+        let Some(control) = self.get_entry(path) else {
+            // Control anchor gone: a resident Region-A companion is an orphan
+            // (nothing can recompose it) — self-heal by freeing its bytes.
+            self.invalidate_entry(&Self::region_entry_key(path));
+            return None;
+        };
+        if control.region_bytes.is_some() {
+            return Some(control); // legacy merged entry (pre-split put)
+        }
+        match self.get_entry(&Self::region_entry_key(path)) {
+            Some(region) if region.region_bytes.is_some() => Some(Arc::new(SegmentInvariants {
+                header_bytes: control.header_bytes.clone(),
+                region_bytes: region.region_bytes.clone(),
+                footer_bytes: control.footer_bytes.clone(),
+                a0_bytes: control.a0_bytes.clone(),
+                rabitq_header_bytes: control.rabitq_header_bytes.clone(),
+            })),
+            _ => Some(control),
+        }
+    }
+
+    fn get_entry(&self, path: &str) -> Option<Arc<SegmentInvariants>> {
         let shard = self.shard_for(path).read().ok()?;
         let entry = shard.get(path)?;
         entry
@@ -1015,6 +1047,34 @@ impl SegmentInvariantsCache {
     /// minimum, then confirms-and-removes under that shard's WRITE lock — no
     /// lock is held across shards, and a racing removal simply retries.
     pub fn put(&self, path: String, inv: Arc<SegmentInvariants>) {
+        // TD-CACHE-2 S2b: split Region A into its own entry (tier
+        // InvariantIndex) so eviction operates per class; the control entry
+        // (tier SearchControl/InvariantMeta) keeps everything else.
+        if let Some(region) = inv.region_bytes.clone() {
+            let control = Arc::new(SegmentInvariants {
+                header_bytes: inv.header_bytes.clone(),
+                region_bytes: None,
+                footer_bytes: inv.footer_bytes.clone(),
+                a0_bytes: inv.a0_bytes.clone(),
+                rabitq_header_bytes: inv.rabitq_header_bytes.clone(),
+            });
+            self.put_entry(
+                Self::region_entry_key(&path),
+                Arc::new(SegmentInvariants {
+                    header_bytes: Vec::new(),
+                    region_bytes: Some(region),
+                    footer_bytes: Vec::new(),
+                    a0_bytes: None,
+                    rabitq_header_bytes: None,
+                }),
+            );
+            self.put_entry(path, control);
+        } else {
+            self.put_entry(path, inv);
+        }
+    }
+
+    fn put_entry(&self, path: String, inv: Arc<SegmentInvariants>) {
         use std::sync::atomic::Ordering;
         let entry_bytes = inv_bytes(&inv);
         // Replacing an existing path: credit the old entry's bytes back.
@@ -1033,6 +1093,11 @@ impl SegmentInvariantsCache {
             for (idx, shard) in self.shards.iter().enumerate() {
                 if let Ok(guard) = shard.read() {
                     for (key, entry) in guard.iter() {
+                        // S2b: zero-byte entries (e.g. an anchor whose bytes
+                        // live in the companion) free nothing — skip them.
+                        if inv_bytes(&entry.inv) == 0 {
+                            continue;
+                        }
                         let prio = entry_tier(&entry.inv).evict_priority();
                         let hit = entry.last_hit.load(Ordering::Relaxed);
                         if victim.as_ref().is_none_or(|v| (prio, hit) < (v.0, v.1)) {
@@ -1068,9 +1133,15 @@ impl SegmentInvariantsCache {
     }
 
     /// Remove a path (call from flush/compaction when a segment is rewritten).
+    /// Removes both the control entry and the Region-A companion (S2b).
     pub fn invalidate(&self, path: &str) {
-        if let Ok(mut shard) = self.shard_for(path).write()
-            && let Some(removed) = shard.remove(path)
+        self.invalidate_entry(path);
+        self.invalidate_entry(&Self::region_entry_key(path));
+    }
+
+    fn invalidate_entry(&self, key: &str) {
+        if let Ok(mut shard) = self.shard_for(key).write()
+            && let Some(removed) = shard.remove(key)
         {
             self.sub_bytes(inv_bytes(&removed.inv));
         }
@@ -1973,6 +2044,55 @@ pub async fn rabitq_search_segment_coalesced(
 mod tests {
     use super::*;
 
+    /// TD-CACHE-2 S2b: Region A and control bytes are separate eviction
+    /// units — a put with a region splits into two entries; invalidate
+    /// removes both; a region-only shed leaves control serving (recomposed
+    /// get degrades to control-only, never a full miss).
+    #[test]
+    fn invariants_split_region_from_control() {
+        let cache = SegmentInvariantsCache::new(1024 * 1024);
+        let region: Arc<[u8]> = Arc::from(vec![7u8; 64 * 1024].as_slice());
+        cache.put(
+            "seg.pax".to_string(),
+            Arc::new(SegmentInvariants {
+                header_bytes: vec![1; 72],
+                region_bytes: Some(region),
+                footer_bytes: vec![2; 128],
+                a0_bytes: None,
+                rabitq_header_bytes: None,
+            }),
+        );
+        // Recomposed hit carries the region.
+        let inv = cache.get("seg.pax").expect("hit");
+        assert!(
+            inv.region_bytes.is_some(),
+            "recomposed get carries Region A"
+        );
+        assert_eq!(inv.header_bytes.len(), 72);
+        // Shed ONLY the region companion (simulating per-class eviction).
+        cache.invalidate(&SegmentInvariantsCache::region_entry_key("seg.pax"));
+        let inv = cache.get("seg.pax").expect("control must still serve");
+        assert!(
+            inv.region_bytes.is_none(),
+            "region shed, control-only hit (3 control GETs still saved)"
+        );
+        assert_eq!(inv.footer_bytes.len(), 128);
+        // Full invalidate removes both and frees all bytes.
+        cache.put(
+            "seg.pax".to_string(),
+            Arc::new(SegmentInvariants {
+                header_bytes: vec![1; 72],
+                region_bytes: Some(Arc::from(vec![7u8; 1024].as_slice())),
+                footer_bytes: vec![2; 128],
+                a0_bytes: None,
+                rabitq_header_bytes: None,
+            }),
+        );
+        cache.invalidate("seg.pax");
+        assert!(cache.get("seg.pax").is_none());
+        assert_eq!(cache.bytes_used(), 0, "all bytes credited back");
+    }
+
     /// TD-CACHE-2 S1 verification: over-budget insertion mixing tiers must
     /// shed meta-only entries before Region-A-bearing ones, ties by recency —
     /// never an arbitrary victim.
@@ -2026,15 +2146,25 @@ mod tests {
             cache.get("meta2").is_none(),
             "meta evicted before any region"
         );
+        // S2b per-class semantics: the least-recent Region A COMPANION is the
+        // victim — its control anchor still hits (control-only, region shed).
         assert!(
-            cache.get("regionA2").is_none(),
-            "least-recent Region A evicted on priority tie"
+            cache
+                .get("regionA2")
+                .is_none_or(|inv| inv.region_bytes.is_none()),
+            "least-recent Region A shed on priority tie"
         );
         assert!(
-            cache.get("regionA1").is_some(),
-            "recency-protected survivor"
+            cache
+                .get("regionA1")
+                .is_some_and(|inv| inv.region_bytes.is_some()),
+            "recency-protected survivor keeps its region"
         );
-        assert!(cache.get("regionA3").is_some());
+        assert!(
+            cache
+                .get("regionA3")
+                .is_some_and(|inv| inv.region_bytes.is_some())
+        );
         assert!(cache.bytes_used() <= 1000);
     }
 

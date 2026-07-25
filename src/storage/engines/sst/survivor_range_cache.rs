@@ -126,9 +126,17 @@ impl SurvivorRangeCache {
             .and_then(|v| v.parse::<f64>().ok())
             .filter(|f| *f > 0.0 && resolver.is_some())
             .unwrap_or(0.0);
+        // TD-CACHE-2 S2c: cap OID/uncategorized ranges (CacheKind::Other) at a
+        // fraction of the pool so OID churn cannot flush SQ8 survivor ranges
+        // (QuantizedCodes — the recall-critical class — keeps ≥ the rest).
+        let oid_ceiling = std::env::var("PROXIMADB_SURVIVOR_OID_CEILING_FRAC")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.3);
         let budget = CacheBudget::new(budget_bytes, budget_bytes)
             .with_high_watermark(0.9)
-            .with_pin_reserve(pin_frac);
+            .with_pin_reserve(pin_frac)
+            .with_kind_ceiling(CacheKind::Other, oid_ceiling);
         let cache = match resolver {
             Some(r) => TenantCache::new(budget).with_limits_resolver(r),
             None => TenantCache::new(budget),
@@ -137,6 +145,16 @@ impl SurvivorRangeCache {
             inner: Arc::new(cache),
             hot_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
+    }
+
+    /// TD-CACHE-2 S2d: evict every cached range of a segment file (all
+    /// tenants, all kinds — the file is gone). Called by compaction after it
+    /// deletes an input file; keys are `{path}:{off}:{len}`.
+    pub async fn purge_path(&self, path: &str) -> usize {
+        let prefix = format!("{path}:");
+        self.inner
+            .purge_where(|k| k.key.starts_with(prefix.as_str()))
+            .await
     }
 
     /// Look up the byte range `[off, off+len)` of `path`; on a miss run `loader`
@@ -277,6 +295,16 @@ impl SurvivorRangeCache {
             om::SURVIVOR_CACHE_TENANT_MISSES
                 .with_label_values(&[&*stat.tenant])
                 .set(stat.misses as i64);
+            // TD-CACHE-3 S3: enforcement metering — pinned vs entitled. The
+            // billing true-up charges what is entitled; a sustained
+            // pinned < entitled gap under pressure is the capacity signal to
+            // move the tenant/node (residency cannot be honored).
+            om::SURVIVOR_CACHE_TENANT_PINNED_BYTES
+                .with_label_values(&[&*stat.tenant])
+                .set(stat.pinned_bytes as i64);
+            om::SURVIVOR_CACHE_TENANT_ENTITLED_BYTES
+                .with_label_values(&[&*stat.tenant])
+                .set(self.inner.entitlement(&stat.tenant).floor_bytes as i64);
         }
     }
 }
