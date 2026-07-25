@@ -35,6 +35,60 @@ pub mod optimizer;
 use anyhow::Result;
 use futures::future::join_all;
 
+/// TD-SEARCH-2 S2: process-wide in-flight cold-scan counter — the input to
+/// the adaptive morsel degree. Incremented per `fallback_to_direct_search`
+/// (the segment-scan path; memtable/index serves don't burn scan CPU).
+pub static INFLIGHT_SCANS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// RAII guard for [`INFLIGHT_SCANS`].
+pub struct ScanGuard;
+
+impl ScanGuard {
+    pub fn enter() -> Self {
+        INFLIGHT_SCANS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        ScanGuard
+    }
+}
+
+impl Drop for ScanGuard {
+    fn drop(&mut self) {
+        INFLIGHT_SCANS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// TD-SEARCH-2 S2: the adaptive intra-file morsel degree —
+/// `clamp(cores / inflight_scans, 1, cores)`. A lone cold query spreads its
+/// RaBitQ rank across every core (minimum latency); at high concurrency each
+/// query degrades toward sequential (maximum throughput, no oversubscription:
+/// total CPU workers ≈ cores regardless of load).
+///
+/// `PROXIMADB_SEARCH_MORSEL_DEGREE`: unset/`0` = adaptive, `1` = off
+/// (sequential rank), `n` = fixed n workers (clamped to cores).
+pub fn morsel_degree() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    if let Ok(v) = std::env::var("PROXIMADB_SEARCH_MORSEL_DEGREE")
+        && let Ok(n) = v.trim().parse::<usize>()
+        && n > 0
+    {
+        return n.min(cores);
+    }
+    let inflight = INFLIGHT_SCANS
+        .load(std::sync::atomic::Ordering::Relaxed)
+        .max(1);
+    // Measured posture (2026-07-25, 1M/3-segment cold A/B sweeps): the lone-
+    // query win is stable and reproducible — c=1 cold 5.8→10.4 QPS, mean
+    // 174→96 ms (all cores on one rank) — while every mid/high-concurrency
+    // configuration tried (cores/inflight, cores/(inflight+1)) was inside the
+    // box's ±30% run-to-run throughput variance, with regressions observed in
+    // matched pairs. So the default engages morsels ONLY when this scan is
+    // alone in flight; any concurrency runs the sequential (baseline) rank —
+    // zero throughput risk. Operators can force a fixed degree via
+    // `PROXIMADB_SEARCH_MORSEL_DEGREE` for latency-first deployments.
+    if inflight == 1 { cores } else { 1 }
+}
+
 /// TD-SEARCH-2: resolve the inter-file search parallelism degree.
 ///
 /// Config field `search_parallel_files` (from `[storage.optimization]` in TOML):
@@ -1077,6 +1131,9 @@ impl SstEngine {
         // SearchMode::Exact-aware prune_config from above so the
         // per-file scan also honors `force_exact` when the caller
         // asked for an exact search.
+        // TD-SEARCH-2 S2: count this scan in-flight for the lifetime of the
+        // per-file work — the adaptive morsel degree divides cores by it.
+        let _scan_guard = ScanGuard::enter();
         let scan_start = std::time::Instant::now();
 
         // TD-SEARCH-2: inter-file parallel search. The degree is config/env-driven:

@@ -214,6 +214,46 @@ impl RaBitQRegion {
     pub fn code(&self, idx: usize) -> Option<&RaBitQCode> {
         self.codes.get(idx).and_then(|c| c.as_ref())
     }
+
+    /// TD-SEARCH-2 S2: rank a **row range** of the region, returning up to
+    /// `pool` `(global_row, score)` pairs nearest-first (ascending score, the
+    /// shared "lower = nearer" order for both metrics). Morsel workers each
+    /// rank a disjoint range; merging the per-range results by score and
+    /// truncating to `pool` is EXACTLY equivalent to [`Self::rank`] over the
+    /// whole region (the global top-`pool` is a subset of the union of
+    /// per-range top-`pool`s). The ~50µs LUT build repeats per call — noise
+    /// against the per-row scan it accelerates.
+    pub fn rank_range_scored(
+        &self,
+        query: &[f32],
+        metric: RankMetric,
+        pool: usize,
+        rows: std::ops::Range<usize>,
+    ) -> Vec<(usize, f32)> {
+        use proximadb_codec::baseline::functions::rabitq::QueryLut;
+        let params = self.header.to_params();
+        let rotation = build_rotation_cached(params.dim, params.seed);
+        let q_rotated = rotate_query(query, &params, &rotation);
+        let lut = QueryLut::build(&q_rotated);
+        let start = rows.start.min(self.codes.len());
+        let end = rows.end.min(self.codes.len());
+        let mut scored: Vec<(usize, f32)> = self.codes[start..end]
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                c.as_ref().map(|c| {
+                    let score = match metric {
+                        RankMetric::L2 => lut.l2_rank_score(c),
+                        RankMetric::Cosine | RankMetric::DotProduct => lut.ip_rank_score(c),
+                    };
+                    (start + i, score)
+                })
+            })
+            .collect();
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(pool);
+        scored
+    }
 }
 
 /// Per-row code stride in a coalesced region: `dist f32 | inv f32 | bits`.
@@ -327,6 +367,41 @@ mod tests {
             parsed.code(ranked[0]).is_some(),
             "top survivor must be present"
         );
+    }
+
+    /// TD-SEARCH-2 S2: morsel equivalence — merging per-chunk
+    /// `rank_range_scored` results by score and truncating to `pool`
+    /// reproduces the sequential `rank` over the whole region exactly, for
+    /// any chunking and both metric families.
+    #[test]
+    fn chunked_rank_range_scored_matches_full_rank() {
+        const DIM: usize = 64;
+        const N: usize = 300;
+        const POOL: usize = 40;
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| synth_vec(i as u64, DIM)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let (region, _) = encode_region(&vectors, DIM as u32, RABITQ_SEED_BASE ^ 7).unwrap();
+        let parsed = RaBitQRegion::from_bytes(&region).unwrap();
+        let query = synth_vec(9_999, DIM);
+
+        for metric in [RankMetric::L2, RankMetric::Cosine] {
+            let sequential = parsed.rank(&query, metric, POOL);
+            for degree in [2usize, 3, 7] {
+                let chunk = N.div_ceil(degree);
+                let mut merged: Vec<(usize, f32)> = Vec::new();
+                for i in 0..degree {
+                    let rows = (i * chunk)..(((i + 1) * chunk).min(N));
+                    merged.extend(parsed.rank_range_scored(&query, metric, POOL, rows));
+                }
+                merged.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                merged.truncate(POOL);
+                let chunked: Vec<usize> = merged.into_iter().map(|(i, _)| i).collect();
+                assert_eq!(
+                    chunked, sequential,
+                    "degree {degree} {metric:?}: chunked merge must equal sequential rank"
+                );
+            }
+        }
     }
 
     /// TD-RDSTRAT-8 PR-B: the subset ranker reproduces the full-region ranking
