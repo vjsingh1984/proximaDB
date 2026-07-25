@@ -7061,6 +7061,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-cks-objectstore"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "object_store",
+ "proximadb-kernel",
+ "proximadb-object-store",
+ "proximadb-storage-ports",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "proximadb-clustering-kernel"
 version = "0.2.0"
 dependencies = [
