@@ -92,6 +92,7 @@ members = [
     "crates/storage/proximadb-raptor-engine",
     "crates/storage/proximadb-storage-common",
     "crates/storage/proximadb-storage-ports",
+    "crates/storage/proximadb-cks-local",
     "crates/storage/proximadb-storage-traits",
     "crates/storage/proximadb-storage-encryption",
     "crates/storage/proximadb-block-format",
