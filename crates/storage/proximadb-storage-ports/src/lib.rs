@@ -21,6 +21,11 @@ use std::sync::Arc;
 
 pub mod capabilities;
 pub use capabilities::*;
+/// The fenced atomic OLTP uniqueness primitive (ADR-072 D3/D11/D14).
+pub mod conditional_key_store;
+pub use conditional_key_store::{
+    AtomicScope, ConditionalKeyStore, Generation, Identity, Oid, PutOutcome,
+};
 pub mod scan_strategy;
 pub use scan_strategy::{ScanCostEstimate, ScanIterator, ScanStatistics, ScanStrategy};
 pub mod path_resolver;

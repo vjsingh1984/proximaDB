@@ -46,5 +46,9 @@ proximadb-storage-filesystem-types.workspace = true
 # write-op model) — pure-data leaf types (downward dep, facade-free).
 proximadb-graph-model.workspace = true
 
+[dev-dependencies]
+# `#[tokio::test]` for the ConditionalKeyStore contract's in-memory reference test.
+tokio = { workspace = true, features = ["macros", "rt"] }
+
 [lints]
 workspace = true
