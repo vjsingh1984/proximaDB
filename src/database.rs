@@ -983,6 +983,21 @@ impl ProximaDB {
             }
         }
 
+        // TD-FLUSH-4: await in-flight inline size-flushes FIRST — a triggered
+        // materialize takes tens of seconds (measured 43.9s at 884k entries)
+        // and must complete + rename into place before teardown; killing it
+        // strands a __flush/ staging file that startup cleanup deletes.
+        let stragglers = crate::storage::persistence::write_ahead_log::drain_inline_flushes(
+            std::time::Duration::from_secs(90),
+        )
+        .await;
+        if stragglers > 0 {
+            tracing::warn!(
+                stragglers,
+                "in-flight flush(es) did not finish before shutdown"
+            );
+        }
+
         // TD-CACHE-1 S2: persist per-tenant warm-set manifests so the next
         // boot (Spot replacement) replays the measured hot set instead of
         // paying the cold herd. Best-effort with a hard timeout — shutdown

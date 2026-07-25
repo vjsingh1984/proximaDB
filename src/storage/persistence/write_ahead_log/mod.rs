@@ -1160,12 +1160,58 @@ static INLINE_FLUSH_GUARDS: std::sync::LazyLock<
 /// `flush_plan_from_collection_meta`) — ONE materialization path; the inline trigger
 /// only adds *when* to fire (a size crossing on the live write path, vs. the driver's
 /// periodic tick).
+/// TD-FLUSH-4: count of inline size-flush materializations currently in
+/// flight. Shutdown MUST await these — a large-memtable materialize takes
+/// tens of seconds (measured 43.9s for 884k entries) and killing it at
+/// teardown leaves a `__flush/` staging straggler that startup cleanup
+/// deletes, so the next boot comes up segment-less (WAL-safe but cold).
+static INLINE_FLUSHES_IN_FLIGHT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// TD-FLUSH-4: await in-flight inline flushes (bounded). Called from
+/// `ProximaDB::shutdown` BEFORE the storage engine stops, so triggered
+/// materializations complete and rename into place instead of dying mid-
+/// staging. Returns the number still in flight at timeout (0 = clean).
+pub async fn drain_inline_flushes(timeout: std::time::Duration) -> usize {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let inflight = INLINE_FLUSHES_IN_FLIGHT.load(std::sync::atomic::Ordering::Acquire);
+        if inflight == 0 {
+            return 0;
+        }
+        if std::time::Instant::now() >= deadline {
+            tracing::warn!(
+                inflight,
+                "shutdown: inline flush(es) still in flight at drain timeout"
+            );
+            return inflight;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+struct InlineFlushTicket;
+
+impl InlineFlushTicket {
+    fn new() -> Self {
+        INLINE_FLUSHES_IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        InlineFlushTicket
+    }
+}
+
+impl Drop for InlineFlushTicket {
+    fn drop(&mut self) {
+        INLINE_FLUSHES_IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 fn spawn_inline_flush(collection_id: String) {
     use crate::storage::flush_materializer::{
         flush_plan_from_collection_meta, materialize_collection,
     };
 
     tokio::spawn(async move {
+        let _ticket = InlineFlushTicket::new();
         // per-collection guard: skip if a flush is already in flight for this collection
         let guard = INLINE_FLUSH_GUARDS
             .entry(collection_id.clone())
@@ -1196,6 +1242,14 @@ fn spawn_inline_flush(collection_id: String) {
         };
         let plan = flush_plan_from_collection_meta(meta);
 
+        // TD-FLUSH-4: announce the start — a large-memtable materialize runs
+        // tens of seconds and segments only become visible on completion
+        // (staged under `__flush/` then renamed); without this line the flush
+        // is invisible until it lands and "no segments yet" is unreadable.
+        tracing::info!(
+            collection_id,
+            "🚿 inline size-flush starting (segments appear on completion)"
+        );
         let start = std::time::Instant::now();
         match materialize_collection(&write_buffer, &plan, None, None, true, axis.as_deref()).await
         {
@@ -3593,6 +3647,39 @@ mod wal_manager_infra_tests {
         assert_eq!(
             WriteBufferStrategyType::default(),
             WriteBufferStrategyType::BincodeBatch
+        );
+    }
+}
+
+#[cfg(test)]
+mod inline_flush_drain_tests {
+    use super::*;
+
+    /// TD-FLUSH-4: drain_inline_flushes returns 0 immediately when idle,
+    /// blocks while a ticket is held, and reports stragglers at timeout —
+    /// the shutdown-await contract that keeps a 40s materialize from being
+    /// killed mid-staging.
+    #[tokio::test]
+    async fn drain_awaits_inflight_tickets_and_times_out() {
+        assert_eq!(
+            drain_inline_flushes(std::time::Duration::from_millis(50)).await,
+            0,
+            "idle drain is immediate"
+        );
+        let ticket = InlineFlushTicket::new();
+        assert_eq!(
+            drain_inline_flushes(std::time::Duration::from_millis(300)).await,
+            1,
+            "held ticket reported as straggler at timeout"
+        );
+        let waiter =
+            tokio::spawn(async { drain_inline_flushes(std::time::Duration::from_secs(5)).await });
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        drop(ticket);
+        assert_eq!(
+            waiter.await.unwrap(),
+            0,
+            "drain completes when ticket drops"
         );
     }
 }

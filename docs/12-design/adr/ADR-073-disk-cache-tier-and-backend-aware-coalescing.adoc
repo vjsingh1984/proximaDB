@@ -90,6 +90,6 @@ hot QPS ≈ free (measured 0 GETs, 2,602 QPS/node).
 
 ADR-065 (regions), ADR-069 D1 (reattachable-disk WAL — this ADR extends the
 principle to the cache), TD-CACHE-1 S1–S4 (warming), TD-CACHE-3 (hot-tier
-entitlement), TD-FLUSH-4 + TD-COMPACT-2 candidate (training compaction —
+entitlement), TD-FLUSH-4 + TD-COMPACT-5 (training compaction —
 upstream of all cold-path economics), `scripts/bench/coalesce_sweep.py`
 (reproducer).
