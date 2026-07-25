@@ -2,7 +2,8 @@
 :author: Vijaykumar Singh
 :email: vjdsingh@icloud.com
 :date: 2026-07-24
-:status: Draft
+:status: Draft (P3 research-calibrated)
+:revremark: P2 — reconciled against a three-model adversarial review (Kimi, GLM-5.2, DeepSeek). P3 — calibrated against 10 research papers: reclaim is append-only MVCC; contract returns-holder-on-conflict + capability-typed; graph edges first-class; logical/physical metamodel split. P4 — per-modality calibration (§Modality calibration): shared record-store substrate is columnar/PAX (pgvector 55–85% row-heap tax); vector identity is a surrogate; TS is ordering; vector RLS must be pre-filter not post-filter.
 :toc: left
 :toclevels: 3
 
@@ -23,9 +24,10 @@ stacks on**. Where a modality's access pattern genuinely diverges (the ledger's 
 queue's offsets, observability's time-partitioned ingest), it keeps its **own implementation behind
 the same contract** — cohesion and performance preserved — instead of a bespoke off-contract silo. The
 flagship new contract, `ConditionalKeyStore` (atomic insert-if-absent on composite-key bytes), is
-extracted from the just-shipped ledger's proven CAS core and immediately reused by the relational OLTP
-insert path for composite-natural-key `PRIMARY KEY`/`UNIQUE` — replacing a coarse table lock with a
-storage-level, serverless-capable atomic write.
+extracted from the just-shipped ledger's proven **version-fenced** CAS core and reused by the relational
+OLTP insert path to move composite-natural **`PRIMARY KEY`** uniqueness into a storage-level, fenced
+atomic write (`oid == primary_key_string`, so it is one row-keyed-by-PK write). The coarse table lock is
+**retained** for secondary `UNIQUE`/FK and cascade ordering — see §Design-gate review reconciliation.
 
 The outcome: **foundational consistency + reduced code (one contract, many impls), cohesion per
 modality, decoupling via contracts (storage and compute swap at ease), and enterprise security carried
@@ -71,12 +73,18 @@ atomic write the store lacks (confirmed: no atomic conditional write in `write_m
 === The minimum bar: serverless, low-cost, composite natural keys
 
 - **Serverless / scale-to-zero** forbids relying on an in-process single writer: the serialization
-  point must live in the **storage layer**. ProximaDB already ships the serverless-correct primitive —
-  object-store `put_if_absent` (create-only conditional put; today backing Iceberg manifest commits +
-  partition leases). Keyed on the composite-key bytes it is an atomic, durable, **coordination-node-free**
-  unique index that works at zero scale.
-- **Composite natural keys are a hard requirement:** the key is an encoded byte-tuple
-  (`encode_primary_key_tuple` already exists), never a surrogate.
+  point must live in the **storage layer**. _(Revised P2.)_ The codebase's storage-layer serialization
+  authority is the **object-store generation fence** / per-partition lease (`partition_lease.rs`), which
+  attains atomicity by claiming *fresh monotonically-versioned successor slots* — an **append-only**
+  pattern. That pattern does **not** transfer to a *reclaimable fixed PK slot*: a bare create-only
+  `put_if_absent` plus the unconditional `delete` cannot reclaim a key race-free, so it is **not** a
+  coordination-node-free unique index for a mutable PK. The serverless-correct construction is a
+  **generation-fenced** conditional write; object-store is the scale-to-zero *escape hatch*, and the
+  generation-fenced local-WAL path is the correctness-carrying default (see ADR-072 D5 and §reconciliation).
+- **Composite natural keys are a hard requirement:** the key is a **typed** byte-tuple — length-delimited,
+  order-preserving, NULL-explicit, type-tagged. _(Revised P2: the existing `encode_primary_key_tuple` is
+  **not** reused — its own docstring documents an unescaped-separator collision and it is neither
+  order-preserving nor type-safe. A typed `Identity` codec replaces it; ADR-072 D9.)_ Never a surrogate.
 - **Low cost to operate + use:** one substrate to run (fewer moving parts), scale-to-zero pay-per-use,
   object-store cold tier, and compile-time-lean profiles (link only the modalities you deploy, RFC-0001
   §4 / the modality-composition handoff).
@@ -137,29 +145,42 @@ constraint/index declarations **uniformly**. Only the *vocabulary and index shap
 So DDL, RBAC, schema evolution, tenancy, and constraint/index enforcement are written **once** against
 the metamodel; a modality plugs in its vocabulary (`namespace/collection/field` vs
 `database/table/column`) and its index kinds (ANN/axis vs btree/bitmap vs CSR-adjacency vs
-path/fulltext). Crucially, this is *why* `ConditionalKeyStore` (below) is modality-agnostic:
-**"uniqueness on the entity's identity key" is a metamodel concept** — relational PK, vector `oid`,
-document `_id`, and a graph edge's `(src,dst,type)` all resolve to *"the identity key of an entity"*,
-encoded as bytes and guarded by one atomic primitive. One governance model; one uniqueness primitive; N
-projections.
+path/fulltext). This **naming + governance** unification is real and is the seam the consolidation banks.
+
+_(Scope narrowed, P2.)_ The metamodel unifies *naming and governance* — **not** a universal uniqueness
+primitive. "Uniqueness on the identity key" is procrustean beyond relational + document: a vector `oid`
+is a **system surrogate** (not the mandated natural key); a graph edge is identified by an **`edge_id`**
+and is multigraph-capable, so `(src,dst,type)` is *not* its identity and is itself an FK-pair; a
+time-series identity `(series, ts)` is **monotonic-append, not a uniqueness constraint**. The fenced
+`ConditionalKeyStore` therefore applies to **relational PK/UNIQUE and document `_id`**; other modalities
+enforce identity via their own operators. This is a *documentation* narrowing only — `ProximaRecord`
+already models `edge` (`EdgeShape`) and `sequence` (`TokenSequence`) as first-class fields, so no record
+change is implied (see §reconciliation).
 
 === `ConditionalKeyStore` — the flagship, and its two impls (storage⊥compute, swappable)
 
 [source,rust]
 ----
-trait ConditionalKeyStore {                                   // the storage plane's OLTP primitive
-    fn put_if_absent(&self, t: &TenantContext, keyspace: KeyspaceId, key: &[u8], oid: Oid)
-        -> Result<(), Conflict>;                              // PRIMARY KEY / UNIQUE
-    fn get(&self, t: &TenantContext, keyspace: KeyspaceId, key: &[u8]) -> Option<Oid>; // FK (phase 2)
-    fn delete(&self, t: &TenantContext, keyspace: KeyspaceId, key: &[u8]);
+trait ConditionalKeyStore {                                   // the storage plane's OLTP primitive (fenced)
+    fn put_if_absent(&self, t: &TenantContext, keyspace: KeyspaceId,
+                     key: &Identity, oid: Oid, fence: Generation)   // typed key (D9) + fence (D3)
+        -> Result<Committed, Conflict>;                       // PRIMARY KEY / UNIQUE
+    fn get(&self, t: &TenantContext, keyspace: KeyspaceId, key: &Identity) -> Option<Oid>; // FK (phase 2)
+    fn delete(&self, t: &TenantContext, keyspace: KeyspaceId,
+              key: &Identity, fence: Generation);             // fenced tombstone, not unconditional
 }
 ----
+
+_(Revised P2.)_ The primitive is **generation-fenced** — modeled on the ledger's `compare_and_swap`,
+which returns a `Version` (the token a bare `PutMode::Create` drops). For a composite natural `PRIMARY
+KEY`, `oid == primary_key_string`, so uniqueness is a **single row-keyed-by-PK** fenced write — no
+separate index write. Default and escape-hatch are reversed from the original draft:
 
 [cols="1,2,1,2", options="header"]
 |===
 | Impl | Serialization point | Latency | Fit
-| *object-store `put_if_absent`* | the object store itself | tens of ms | **serverless, scale-to-zero, low-cost (default)**
-| *local-WAL CAS* (the ledger core, generalized `bytes→oid`) | in-process single-writer + WAL | sub-ms | hot single-node opt-in
+| *generation-fenced local-WAL CAS* (the ledger core, generalized `Identity→oid`) | in-process writer + WAL, fenced | sub-ms | **the hot, correctness-carrying default**
+| *object-store `put_if_absent`* | object-store generation fence (successor-slot discipline) | tens of ms + per-op cost | **scale-to-zero escape hatch** — not for the mutable-PK hot path (successor-slot proof does not transfer to a reclaimable fixed key)
 |===
 
 Compute (the insert executor; the Volcano/DataFusion readers) calls the contract and never learns
@@ -191,6 +212,132 @@ contracts.
 boundary for *every* modality (not re-implemented per silo). Per-tenant physical paths (`DrPathBuilder`),
 at-rest tier control (`ObjectAccessTier`), and block-format RLS tenant-hash skipping are foundation
 facilities every modality inherits. Neutral units only; no pricing crosses any contract.
+
+== Design-gate review reconciliation (P2)
+
+Before acceptance the design was pressure-tested by three independent adversarial reviews — Kimi, GLM-5.2,
+and DeepSeek — each grounding its critique in the source. Their load-bearing claims were re-verified
+against the code; the confirmed ones are reflected in the revisions above. Summary:
+
+[cols="2,1,3", options="header"]
+|===
+| Finding (unanimous unless noted) | Verified? | Resolution
+| Bare `put_if_absent` ≠ atomic insert; it drops the version/fence the ledger CAS carries | yes (`ledger/src/lib.rs:77` vs `object-store/src/lib.rs:247`) | primitive is fenced (D3)
+| Existing object-store proof (manifest/lease) uses *fresh successor slots*, not reclaimable fixed keys | yes (`manifest.rs`, `partition_lease.rs`) | object-store → escape hatch; local-WAL default (D5)
+| `delete` is unconditional → PK-`UPDATE`/reclaim races, orphaned slots | yes (`object-store/src/lib.rs:372`) | fenced tombstone delete (D3)
+| Op-lock must not be demoted (it orders `ON DELETE CASCADE`) | yes (`catalog/src/manager.rs`, `dml/mod.rs:3332`) | op-lock retained; UNIQUE/FK stay in it (D3)
+| Composite-key codec (`encode_primary_key_tuple`) collides / non-order-preserving / type-lossy | yes (`relational.rs:864`, self-documented) | typed `Identity` codec (D9)
+| Metamodel "uniqueness on identity" procrustean for graph/TS/vector | yes (`orion .../memory_pool.rs`; surrogate `oid`) | metamodel narrowed to naming; primitive scoped to relational/document
+| *(reviewers' shared premise)* a row insert is two durable writes (index + row) | **refuted for the PK** (`relational.rs:282`, `oid == PK`) | PK = one row-keyed-by-PK write; two-write case only for secondary UNIQUE
+|===
+
+**Also surfaced at the gate (record shape).** `ProximaRecord` is already the multi-modal meta-record
+(`props` NF² tree + `edge` + `embeddings` + `sequence` + `refs` + identity/tenancy/temporal) — so no
+`MultiModalMetaRecord` overhaul is needed; the record-shape consolidation is already banked. The real
+tension is that it is a **fat union**; a composed `RecordCore` + `#[cfg]` modality-extensions refactor is
+routed to the compile-time modality-composition track (#1180), **not** this MVP (ADR-072 D10). Scope
+chosen at the gate: **typed identity now, composition deferred.**
+
+**Verdicts reconciled:** Kimi (b, proceed-with-changes) and GLM/DeepSeek (c, rethink the MVP mechanism)
+converge — all three keep the contract-consolidation thesis and reject the original MVP mechanism. Net:
+proceed with the amended (fenced, local-default, op-lock-retained, typed-identity) MVP.
+
+== Research calibration (P3)
+
+After the P2 review, the design was calibrated against **10 full-text research papers** (systems + DB
+theory) plus Google's Spanner columnar-engine disclosure. The papers **confirm the consolidation thesis
+and the P2 reversals**, and drive two new decisions (ADR-072 D11/D12) and several refinements. Per-paper
+briefs and section citations are archived with this RFC; the bibliography is below.
+
+=== Consensus that binds the design
+
+- **Uniqueness is the one operation that cannot be blind-written / made commutative — it always needs
+  coordination.** Aurora DSQL's blind-write optimization skips the conflict check for *non-unique*
+  indexes but **explicitly excludes unique indexes** <<biblio-dsql>>. This is the load-bearing reason
+  `ConditionalKeyStore` must exist. *Corollary adopted:* non-unique secondary indexes become blind-writes
+  keyed by the PK; only `UNIQUE` takes the coordinated path.
+- **CAS + a version token is the universal uniqueness substrate, cleanly separable from each modality's
+  engine** (Cornus <<biblio-cornus>>, ScalarDB <<biblio-scalardb>>, CCaaS <<biblio-ccaas>>, BatchWeave
+  <<biblio-batchweave>>, DSQL <<biblio-dsql>>). Two refinements adopted: the conditional op **returns the
+  current holder on conflict** (Cornus `LogOnce`), and the contract is **capability-typed** — each impl
+  *declares* its atomic scope (ScalarDB *Atomicity Unit*), never a boolean.
+- **Never reuse/overwrite a durable key slot; append + version-order + tombstone + reclaim behind an
+  oldest-active-reader watermark** — unanimous (cMVBT <<biblio-cmvbt>>, BatchWeave <<biblio-batchweave>>,
+  DSQL <<biblio-dsql>>). This **supersedes the P2 "fenced reclaim delete"**: the reclaim race dissolves by
+  construction and MVCC version-ordering largely subsumes the explicit fence (ADR-072 D11). cMVBT flags
+  in-place slot reuse as needing "more sophisticated synchronization" — a direct caution against reclaim.
+- **Keep divergent implementations; unify the contract, not the engines.** Native per-modality storage is
+  worth up to 188× vs non-native layouts (M2 <<biblio-m2>>); polystore keeps N *semantics* and pays with
+  no cross-engine transactions (BigDAWG <<biblio-bigdawg>>). Validates "one contract, many impls."
+
+=== Forks the research surfaced (and how we resolve them)
+
+[cols="1,3", options="header"]
+|===
+| Fork | Resolution
+| **Fence placement** — in-storage CAS vs. a separate coordinating tier + log-append | **Map to our two impls.** Local-WAL default = fence-in-storage; serverless escape hatch = per-key coordinating step + batched successor-slot log append (Aurora DSQL adjudicator+journal <<biblio-dsql>>; BatchWeave batch-manifest <<biblio-batchweave>>). One contract, two placements.
+| **Reclaim discipline** — reclaim a slot + fence vs. append-only MVCC + tombstone | **Append-only MVCC** (ADR-072 D11) — unanimous across cMVBT/BatchWeave/DSQL.
+| **Catalog metamodel** — one `…→Identity→Index→Constraint` chain vs. split logical/physical | **Split** governance-logical from physical-index; make the identity slot family-parameterized; **graph edges become a first-class relationship type, not an identity key** (U-Schema <<biblio-uschema>>, ADR-072 D12).
+| **Storage⊥compute grain** — full decouple vs. layout-coupled for perf | Decouple *lifecycle* contracts; expose *physical layout as negotiable* (M2's 188× came from layout-coupling <<biblio-m2>>).
+| **HTAP format** — one unified format vs. dual row+column | **Dual**, async-materialized columnar, analytical compute offloaded so OLTP never pays (Spanner <<biblio-spanner>>) — calibrates the F5 HTAP step.
+|===
+
+=== Modality calibration (P4) — vector, graph, time-series (ADR-072 D13)
+
+A second research pass deep-read the per-modality literature (vector ×3, graph, the Cambridge
+field-direction report) + time-series systems, to close the TS/vector residual risk. It **confirms the
+thesis across every modality** and adds one architectural refinement.
+
+[cols="1,3", options="header"]
+|===
+| Modality | Calibration (identity · shared vs specialized)
+| *Relational / document* | natural composite PK / `_id` = **uniqueness** — the *only* modalities the fenced `ConditionalKeyStore` applies to.
+| *Vector* | identity is a **surrogate** row-id (confirmed 3×: Compass <<biblio-compass>>, policy-aware <<biblio-vecpolicy>>, pgvector <<biblio-pgvector>>). Modality behind a shared columnar store + its **own ANN operator**, filter-agnostic; avoid fused per-attribute indices (n× storage).
+| *Graph* | edge = **first-class relationship type**, stored identity **cardinality-dependent/optional** (GraphflowDB <<biblio-graphcol>>). Reuse columnar storage+codecs; specialize CSR + list-join (SAP-HANA-without-CSR is the documented failure).
+| *Time-series* | `(series, ts)` = **ordering + high-cardinality**, not uniqueness. LSM+chunk+tiered+WAL; **IOx moved to columnar**; specialize retention/downsampling.
+|===
+
+**Net-new refinement — the shared record-store substrate is columnar/PAX, not a row heap.** The pgvector
+teardown <<biblio-pgvector>> shows a *row* heap makes the store's page / TID-indirection / ACID machinery
+dominate **55–85% of CPU cycles** (not distance math); columnar storage is also the reusable half of a
+graph engine and the fix InfluxDB IOx adopted for TS. proximaDB's existing **PAX layout route** is promoted
+to the standardized record-store substrate — that is what makes multi-modal-behind-one-contract perform.
+
+**Enforcement refinements:** vector RLS must be **pre-filter/index-integrated, never naïve post-filter**
+(authorization stays correct but recall silently collapses under selective tenant predicates); authorization
+is a hard invariant decoupled from recall as QoS (<<biblio-vecpolicy>>). Graph positional offsets are
+**stable materialized addresses** (gap-and-recycle) → a write-optimized delta merged lazily into CSR
+(<<biblio-graphcol>>). Framing: the Cambridge report <<biblio-cambridge>> blesses disaggregation +
+composable components but cautions "**interoperability, not unification**" and "a data lake ≠ integrated
+data" — so the catalog metamodel is an *interoperability substrate*, not a universal language.
+
+=== Residual risk (honestly flagged)
+
+- **Time-series and vector identity: now calibrated (P4)** as surrogate/ordering (not uniqueness) — but no
+  *unified-metamodel* paper covers them, so their fit in the D1 catalog metamodel still rests on the
+  per-modality engineering evidence above, not a single unifying formalism. Pressure-test before D1 is final.
+- **Order-preserving key encoding** and **secondary-index maintenance** are thin in the research corpus —
+  calibrate F0/F1 against system engineering (FoundationDB tuple layer, CockroachDB key encoding).
+- **Vector-valued access predicates** (policy expressed as a vector, not metadata) are unsolved in the
+  literature — out of scope for the MVP; needs a dedicated operator if required later.
+
+=== Research bibliography
+
+- [[biblio-cornus]] **Cornus** — Atomic Commit for a Cloud DBMS with Storage Disaggregation. https://arxiv.org/abs/2102.10185
+- [[biblio-batchweave]] **BatchWeave** — A Consistent Object-Store-Native Data Plane. https://arxiv.org/abs/2605.09994
+- [[biblio-m2]] **M2** — An Analytic System with Specialized Storage Engines for Multi-Model Workloads. https://arxiv.org/abs/2508.02508
+- [[biblio-bigdawg]] **BigDAWG** — The BigDAWG Polystore System and Architecture. https://arxiv.org/abs/1609.07548
+- [[biblio-scalardb]] **ScalarDB** — Breaking the Barriers of Database-Agnostic Transactions. https://arxiv.org/abs/2602.19440
+- [[biblio-ccaas]] **CCaaS** — Concurrency Control as a Service. https://arxiv.org/abs/2603.13897
+- [[biblio-dsql]] **Aurora DSQL** — Scalable, Multi-Region OLTP. https://arxiv.org/abs/2607.13276
+- [[biblio-cmvbt]] **cMVBT** — Multiversion Concurrency Control for Multiversion B-Trees. https://arxiv.org/abs/2606.09133
+- [[biblio-uschema]] **U-Schema** — A Unified Metamodel for NoSQL and Relational Databases. https://arxiv.org/abs/2105.06494
+- [[biblio-spanner]] **Spanner columnar engine** — uniting OLTP and analytics. https://cloud.google.com/blog/products/databases/spanners-columnar-engine-unites-oltp-and-analytics
+- [[biblio-cambridge]] **The Cambridge Report on Database Research** — field-direction report. https://arxiv.org/abs/2504.11259
+- [[biblio-graphcol]] **GraphflowDB** — Columnar Storage and List-based Processing for Graph DBMSs. https://arxiv.org/abs/2103.02284
+- [[biblio-compass]] **Compass** — General Filtered Search across Vector and Structured Data. https://arxiv.org/abs/2510.27141
+- [[biblio-vecpolicy]] **Policy-aware Vector Search** — Fine-Grained Access Control. https://arxiv.org/abs/2606.19803
+- [[biblio-pgvector]] **Filter-Agnostic Vector Search on a PostgreSQL Database** (SIGMOD 2026). https://arxiv.org/abs/2603.23710
 
 == Migration Path
 
@@ -229,12 +376,15 @@ bespoke tier code.
 
 == Unresolved Questions
 
-- Exact `KeyspaceId` + composite-key byte encoding shared by ledger CAS and relational PK (reuse
-  `encode_primary_key_tuple`?).
-- Whether the object-store `put_if_absent` impl is the *sole* default or co-equal with local-WAL behind
-  the contract (lean: object-store-primary for the serverless minimum).
+- _(Resolved P2)_ Composite-key encoding is a **new typed `Identity` codec**, not a reuse of
+  `encode_primary_key_tuple` (documented-defective). Open: the per-`ProximaType` type-tag/collation table.
+- _(Resolved P2)_ Default is the **generation-fenced local-WAL** impl; object-store is the escape hatch
+  (reverses the earlier lean).
+- The `Generation`/fence source for the local-WAL default (partition-lease generation vs a WAL-sequence
+  epoch).
 - How far to widen `RecordStore` adoption into observability/timeseries vs. keeping them contract-impl
   silos.
+- The `ProximaRecord` union → composed `RecordCore` refactor (ADR-072 D10) — sequenced under #1180.
 
 == Future Possibilities
 
