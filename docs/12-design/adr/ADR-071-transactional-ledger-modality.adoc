@@ -5,11 +5,11 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Accepted** (2026-07-23). Formalizes link:../../rfcs/0001-transactional-ledger-modality.adoc[RFC-0001] (merged #1165). Implementation tracked under link:../../10-quality/td/TD-LEDGER-1-transactional-ledger-modality.adoc[TD-LEDGER-1]; ships **Experimental**, feature-gated, until the conformance suite is green with filed benchmark evidence.
+| Status | **Accepted** (2026-07-23); **amended 2026-07-24**. Formalizes link:../../rfcs/0001-transactional-ledger-modality.adoc[RFC-0001] (merged #1165). Implementation tracked under link:../../10-quality/td/TD-LEDGER-1-transactional-ledger-modality.adoc[TD-LEDGER-1]; ships **Experimental**, feature-gated. S1–S3 + the v1 gaps (tenant-verified settle, background TTL sweeper, Total/Daily windows) shipped (#1170/#1171/#1174/#1177/#1178/#1182/#1183/#1185). **Amendment (2026-07-24):** Decisions 2–3 originally routed durability through the *shared* ADR-069 record WAL; that is superseded — the ledger keeps a **dedicated** ADR-069-style local-disk WAL (the `DurableLedger` built in S2), per the queue-modality precedent (divergent access patterns). See the revised decisions; the "S4 shared-WAL splice" is closed as a decision, not surgery.
 | Decider | Vijaykumar Singh (2026-07-23)
 | Date | 2026-07-23
 | Relates to | link:ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069] (the local-disk WAL durability substrate the ledger's per-op durability rides), link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (co-design spine — meter every dimension, design against the dominant cost term), link:ADR-027-unified-storage-and-metering-substrate.adoc[ADR-027] (the WAL→memtable→object-store spine), link:ADR-036-azure-objectstore-orientation.adoc[ADR-036] (object-store access tiers), link:ADR-067-consume-ai-usage-gateway-egress-metering.adoc[ADR-067] (the Sandhi neutral-usage contract — the anchor external consumer).
-| Refines | RFC-0001 — ratifies the modality and pins the two load-bearing decisions the RFC left as design: (a) durability rides ADR-069, not a new engine; (b) the modality is both *stacked* on the shared substrate and *independently launchable*.
+| Refines | RFC-0001 — ratifies the modality and pins the two load-bearing decisions the RFC left as design: (a) durability on a **dedicated** ADR-069-style local-disk WAL (amended 2026-07-24 — *not* the shared record WAL), not a new engine; (b) the modality is both *stacked* on the shared substrate and *independently launchable*.
 | Non-goals | A from-scratch storage engine (explicitly rejected — see Decision 2); distributed multi-key / cross-modal ledger transactions in v1 (deferred to wiring `MultiModelTransactionManager`); a pgwire SQL surface in v1 (gRPC/REST only); changing any existing modality's format or behavior.
 |===
 
@@ -38,21 +38,26 @@ operations: `Reserve(scope, ceiling, ttl) → Admitted(lease)|Denied` (condition
 `Settle(lease_id, actual)` (idempotent), and `CompareAndSwap(key, expected_version, new)` (generic
 conditional write) — plus TTL leases and store-owned windows. Details in RFC-0001 / TD-LEDGER-1.
 
-**2. Stack on the shared substrate; do NOT build a parallel engine.** The ledger's durability rides
-the **ADR-069 local-disk WAL** (flat-cost, sub-ms fsync, single-writer-per-collection); its
-authoritative counter lives in the **existing memtable** (O(1), rebuilt by WAL replay on failover);
-HA/linearizability comes from the **existing fenced partition-lease single-writer**; isolation and
-billing from `TenantContext` + `DrPathBuilder`; at-rest tiering from `ObjectAccessTier`; discovery and
-metrics from the catalog/observability spine. This is the co-design economy (ADR-052): **one
-durability path, one HA path, one tenancy path, amortized across all modalities** — a new modality
-harvests the platform instead of re-paying for it. A from-scratch OLTP engine is rejected: it would
-duplicate the WAL/HA/tenancy investment and fracture the operational surface.
+**2. Stack on the shared substrate; do NOT build a parallel engine — but keep a DEDICATED WAL**
+*(amended 2026-07-24)*. The ledger's durability rides a **dedicated ADR-069-style local-disk WAL**
+(flat-cost, sub-ms fsync, single-writer) — *not* the shared record WAL. This matches the **queue
+modality's precedent**, which keeps its own WAL "because the access patterns and stability
+requirements diverge": a ledger is millions of tiny hot counter mutations, categorically unlike bulk
+`ProximaRecord` ingest, and (as Redis/etcd show with a dedicated AOF/log) an OLTP counter log wants
+its own sync cadence and failure isolation. The **shared-substrate economy (ADR-052) is still real —
+just not through the log**: it comes from the shared *memtable model*, `TenantContext` +
+`DrPathBuilder` isolation/billing, `ObjectAccessTier` at-rest tiering, and the catalog/observability
+spine. A from-scratch OLTP *engine* is still rejected (that would duplicate HA/tenancy); a dedicated
+*log* is the right grain. Splicing ledger ops into the record WAL (`RecordStore::write_mutations` +
+a `CanonicalOperation::Ledger*` variant) is therefore **explicitly not pursued** — it is high-risk
+core-engine surgery for an optimization the divergent access patterns argue against.
 
-**3. Durability model (OLTP) = memtable-authoritative counter + WAL log + configurable sync.** The
-counter is in-memory for memcache/memsql-class read/write latency; every `Reserve`/`Settle`/`CAS`
-appends to the ADR-069 WAL for durability; the sync policy is a **per-scope knob** — per-op fsync for
-hard (`Block`) scopes (strict, a cap that must never be overshot), group-commit/interval for soft
-(`Warn`) scopes (throughput). The knob maps directly onto the consumer's fail-open/closed tiers
+**3. Durability model (OLTP) = memtable-authoritative counter + dedicated WAL + configurable sync**
+*(amended 2026-07-24)*. The counter is in-memory for memcache/memsql-class read/write latency; every
+`Reserve`/`Settle`/`CAS` appends to the ledger's **own** ADR-069-style local-disk WAL (CRC-framed,
+torn-tail-tolerant, replayed on open — the S2 `DurableLedger`); the sync policy is a knob — per-op
+fsync for hard (`Block`) scopes (strict, a cap that must never be overshot), deferred/group-commit for
+soft (`Warn`) scopes (throughput). The knob maps directly onto the consumer's fail-open/closed tiers
 (Sandhi C6). Rationale and the sqlite/redis/memsql/memcache derivation are in TD-LEDGER-1.
 
 **4. Launch-selectable: the modality is independently deployable.** A cargo feature
