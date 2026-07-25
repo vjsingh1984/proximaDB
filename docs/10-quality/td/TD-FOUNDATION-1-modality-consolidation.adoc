@@ -9,7 +9,7 @@ toc::[]
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Draft / design gate — P3 research-calibrated** (2026-07-24). No implementation yet. Additive + feature-gated; graduates per `docs/SUPPORTED_SURFACE.adoc` with filed benchmark evidence. Revised after the three-model review reconciliation (P2) and calibration against 10 research papers (P3) — see link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072 §Design-gate revision (P2)/(P3)] and RFC-0002 §_Research calibration_.
+| Status | **Draft / design gate — P4 research-calibrated** (2026-07-24). No implementation yet. Additive + feature-gated; graduates per `docs/SUPPORTED_SURFACE.adoc` with filed benchmark evidence. Revised after the three-model review reconciliation (P2), calibration against 10 research papers (P3), and per-modality vector/graph/TS calibration (P4, D13) — see link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072 §Design-gate revision (P2)/(P3)] and RFC-0002 §_Research calibration_ / §_Modality calibration_.
 | Implements | link:../../12-design/adr/ADR-072-foundational-contract-consolidation.adoc[ADR-072] / link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]
 | Acceptance bar | the composite-natural-PK MVP passes **fenced** atomic-uniqueness under concurrency + serverless restart (exactly-one winner, idempotent retry distinguished from real conflict); PK-`UPDATE`/`DELETE`-reclaim leaves no orphaned slot; the typed-identity codec passes collision / order-preserving / NULL property tests; no modality regresses; reclaimed-footprint/latency evidence filed
 |===
@@ -26,7 +26,7 @@ stack on one foundation, with modality-specific impls behind the contracts where
 [cols="1,1,3", options="header"]
 |===
 | Contract | Action | Notes
-| `RecordStore` (`record_store.rs:500`) | widen | already used by relational (full), vector (durability); onboard document (finish the canonical-store migration) then others.
+| `RecordStore` (`record_store.rs:500`) | widen | already used by relational (full), vector (durability); onboard document (finish the canonical-store migration) then others. **Substrate is columnar/PAX (P4/D13):** a row heap makes the store's page/TID/ACID machinery dominate 55–85% of vector-search cycles (pgvector teardown); columnar is also graph's reusable half and TS's IOx fix. Standardize on the existing PAX layout route.
 | WAL / durability (`canonical_wal.rs`) | re-express | ledger/queue/TS dedicated WALs become *impls of this contract*, not off-contract silos (ratifies ADR-071).
 | **`ConditionalKeyStore`** | **NEW** | the atomic OLTP primitive; extraction plan §below.
 | Read IR (`LogicalNode`, ADR-039) | reuse | compute stays swappable; modality reads project in or extend.

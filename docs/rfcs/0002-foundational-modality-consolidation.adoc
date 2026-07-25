@@ -3,7 +3,7 @@
 :email: vjdsingh@icloud.com
 :date: 2026-07-24
 :status: Draft (P3 research-calibrated)
-:revremark: P2 — reconciled against a three-model adversarial review (Kimi, GLM-5.2, DeepSeek). P3 — calibrated against 10 research papers (see §Research calibration + bibliography): reclaim is append-only MVCC (not slot-reclaim); the contract returns-holder-on-conflict + is capability-typed; graph edges are first-class (not identity keys); logical/physical metamodel split. TS/vector identity flagged as uncalibrated risk.
+:revremark: P2 — reconciled against a three-model adversarial review (Kimi, GLM-5.2, DeepSeek). P3 — calibrated against 10 research papers: reclaim is append-only MVCC; contract returns-holder-on-conflict + capability-typed; graph edges first-class; logical/physical metamodel split. P4 — per-modality calibration (§Modality calibration): shared record-store substrate is columnar/PAX (pgvector 55–85% row-heap tax); vector identity is a surrogate; TS is ordering; vector RLS must be pre-filter not post-filter.
 :toc: left
 :toclevels: 3
 
@@ -282,13 +282,44 @@ briefs and section citations are archived with this RFC; the bibliography is bel
 | **HTAP format** — one unified format vs. dual row+column | **Dual**, async-materialized columnar, analytical compute offloaded so OLTP never pays (Spanner <<biblio-spanner>>) — calibrates the F5 HTAP step.
 |===
 
+=== Modality calibration (P4) — vector, graph, time-series (ADR-072 D13)
+
+A second research pass deep-read the per-modality literature (vector ×3, graph, the Cambridge
+field-direction report) + time-series systems, to close the TS/vector residual risk. It **confirms the
+thesis across every modality** and adds one architectural refinement.
+
+[cols="1,3", options="header"]
+|===
+| Modality | Calibration (identity · shared vs specialized)
+| *Relational / document* | natural composite PK / `_id` = **uniqueness** — the *only* modalities the fenced `ConditionalKeyStore` applies to.
+| *Vector* | identity is a **surrogate** row-id (confirmed 3×: Compass <<biblio-compass>>, policy-aware <<biblio-vecpolicy>>, pgvector <<biblio-pgvector>>). Modality behind a shared columnar store + its **own ANN operator**, filter-agnostic; avoid fused per-attribute indices (n× storage).
+| *Graph* | edge = **first-class relationship type**, stored identity **cardinality-dependent/optional** (GraphflowDB <<biblio-graphcol>>). Reuse columnar storage+codecs; specialize CSR + list-join (SAP-HANA-without-CSR is the documented failure).
+| *Time-series* | `(series, ts)` = **ordering + high-cardinality**, not uniqueness. LSM+chunk+tiered+WAL; **IOx moved to columnar**; specialize retention/downsampling.
+|===
+
+**Net-new refinement — the shared record-store substrate is columnar/PAX, not a row heap.** The pgvector
+teardown <<biblio-pgvector>> shows a *row* heap makes the store's page / TID-indirection / ACID machinery
+dominate **55–85% of CPU cycles** (not distance math); columnar storage is also the reusable half of a
+graph engine and the fix InfluxDB IOx adopted for TS. proximaDB's existing **PAX layout route** is promoted
+to the standardized record-store substrate — that is what makes multi-modal-behind-one-contract perform.
+
+**Enforcement refinements:** vector RLS must be **pre-filter/index-integrated, never naïve post-filter**
+(authorization stays correct but recall silently collapses under selective tenant predicates); authorization
+is a hard invariant decoupled from recall as QoS (<<biblio-vecpolicy>>). Graph positional offsets are
+**stable materialized addresses** (gap-and-recycle) → a write-optimized delta merged lazily into CSR
+(<<biblio-graphcol>>). Framing: the Cambridge report <<biblio-cambridge>> blesses disaggregation +
+composable components but cautions "**interoperability, not unification**" and "a data lake ≠ integrated
+data" — so the catalog metamodel is an *interoperability substrate*, not a universal language.
+
 === Residual risk (honestly flagged)
 
-- **Time-series and vector identity are uncalibrated** — no unified-metamodel paper (U-Schema included)
-  covers them; they are the highest-risk element of the catalog metamodel and must be pressure-tested
-  before D1 is finalized.
+- **Time-series and vector identity: now calibrated (P4)** as surrogate/ordering (not uniqueness) — but no
+  *unified-metamodel* paper covers them, so their fit in the D1 catalog metamodel still rests on the
+  per-modality engineering evidence above, not a single unifying formalism. Pressure-test before D1 is final.
 - **Order-preserving key encoding** and **secondary-index maintenance** are thin in the research corpus —
   calibrate F0/F1 against system engineering (FoundationDB tuple layer, CockroachDB key encoding).
+- **Vector-valued access predicates** (policy expressed as a vector, not metadata) are unsolved in the
+  literature — out of scope for the MVP; needs a dedicated operator if required later.
 
 === Research bibliography
 
@@ -302,6 +333,11 @@ briefs and section citations are archived with this RFC; the bibliography is bel
 - [[biblio-cmvbt]] **cMVBT** — Multiversion Concurrency Control for Multiversion B-Trees. https://arxiv.org/abs/2606.09133
 - [[biblio-uschema]] **U-Schema** — A Unified Metamodel for NoSQL and Relational Databases. https://arxiv.org/abs/2105.06494
 - [[biblio-spanner]] **Spanner columnar engine** — uniting OLTP and analytics. https://cloud.google.com/blog/products/databases/spanners-columnar-engine-unites-oltp-and-analytics
+- [[biblio-cambridge]] **The Cambridge Report on Database Research** — field-direction report. https://arxiv.org/abs/2504.11259
+- [[biblio-graphcol]] **GraphflowDB** — Columnar Storage and List-based Processing for Graph DBMSs. https://arxiv.org/abs/2103.02284
+- [[biblio-compass]] **Compass** — General Filtered Search across Vector and Structured Data. https://arxiv.org/abs/2510.27141
+- [[biblio-vecpolicy]] **Policy-aware Vector Search** — Fine-Grained Access Control. https://arxiv.org/abs/2606.19803
+- [[biblio-pgvector]] **Filter-Agnostic Vector Search on a PostgreSQL Database** (SIGMOD 2026). https://arxiv.org/abs/2603.23710
 
 == Migration Path
 

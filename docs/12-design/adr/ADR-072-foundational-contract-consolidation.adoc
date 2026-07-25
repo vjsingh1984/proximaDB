@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Proposed — P3 research-calibrated** (2026-07-24). Formalizes link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]; build plan in link:../../10-quality/td/TD-FOUNDATION-1-modality-consolidation.adoc[TD-FOUNDATION-1]. Additive + feature-gated; `default` behavior unchanged until each modality opts in. **P2: D3/D5 amended + D9/D10 added after a three-model adversarial review (Kimi, GLM-5.2, DeepSeek) reconciled against the code. P3: D11/D12 added + D3/D5/D1 refined after calibrating against 10 research papers (see _Design-gate revision (P3)_ and _Research bibliography_).**
+| Status | **Proposed — P3 research-calibrated** (2026-07-24). Formalizes link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]; build plan in link:../../10-quality/td/TD-FOUNDATION-1-modality-consolidation.adoc[TD-FOUNDATION-1]. Additive + feature-gated; `default` behavior unchanged until each modality opts in. **P2: D3/D5 amended + D9/D10 added after a three-model adversarial review (Kimi, GLM-5.2, DeepSeek) reconciled against the code. P3: D11/D12 added + D3/D5/D1 refined after calibrating against 10 research papers. P4: D13 added — per-modality calibration (columnar/PAX substrate, per-modality identity, vector-RLS, graph-address WAL) from 5 vector/graph/field-report papers + TS systems. See _Design-gate revision (P3)_ and _Research bibliography_.**
 | Decider | Vijaykumar Singh (2026-07-24)
 | Date | 2026-07-24
 | Relates to | link:ADR-039-olap-engine-boundary-swappable-physical-backend.adoc[ADR-039] (DataFusion swappable behind the read IR — the compute half of the storage⊥compute decoupling), link:ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069] (local-disk WAL substrate), link:ADR-071-transactional-ledger-modality.adoc[ADR-071] (ledger dedicated WAL — the "divergent access ⇒ own impl behind the contract" precedent), link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (co-design spine).
@@ -221,6 +221,41 @@ deterministic applier**. This is a valid alternative to fence-in-storage; the tw
 rates sane; **monotonic composite keys hot-shard** under range partitioning (mitigate with hybrid
 range/hash); bounded transaction runtime/size are *consequences* of coordination-free serverless.
 
+**D13 — Per-modality calibration: columnar/PAX substrate, per-modality identity, modality-specific
+enforcement.** (Refines D1/D4/D6.) Deep-reads of the vector, graph, and time-series literature (5 papers +
+TS systems) confirm D12 with primary sources and add one architectural refinement:
+
+* **The shared record-store substrate is columnar/PAX, not a row heap — this is what makes multi-modal
+  behind one contract *perform*.** The pgvector teardown <<biblio-pgvector>> shows that once vector search
+  runs over a *row* heap, the store's own page / TID-indirection / ACID machinery dominates **55–85% of
+  CPU cycles** (not distance math), and its prescribed fix is "columnar + explicit metadata decoupling."
+  Columnar storage + codecs are also the *reusable* half of a graph engine (GraphflowDB <<biblio-graphcol>>),
+  and InfluxDB IOx moved time-series to columnar to solve cardinality. proximaDB's existing **PAX layout
+  route** is therefore promoted to the standardized substrate of the record-store contract (D4), not an
+  aside.
+* **Identity is per-modality; the fenced uniqueness primitive applies to relational PK/UNIQUE + document
+  `_id` only** — now confirmed with sources: vector identity is a **surrogate** row-id (Compass
+  <<biblio-compass>>, policy-aware <<biblio-vecpolicy>>, pgvector <<biblio-pgvector>>); a **graph edge is a
+  first-class relationship type whose stored identity is cardinality-dependent/optional** (GraphflowDB
+  omits it for property-less/single-cardinality edges as its headline compression win — a mandatory
+  universal edge surrogate would forfeit that); **time-series identity is `(series, ts)` — ordering +
+  high-cardinality, not uniqueness** (TS systems: InfluxDB/IOx/Prometheus). This is D12, research-backed.
+* **Vector tenancy (D6 refinement):** authorization is a **hard correctness invariant, decoupled from
+  recall (a QoS knob)**; the RLS predicate must be **pre-filter or index-integrated, never naïve
+  post-filter** (post-filter is authorization-correct but *silently collapses recall* under selective
+  tenant predicates — the RLS worst case). `deny` needs complement semantics; vector-valued access
+  predicates are unsolved (<<biblio-vecpolicy>>).
+* **Graph WAL note:** graph positional offsets are **explicit, materialized, stable addresses** (unlike
+  opaque relational row-ids) — deletes gap-and-recycle; the shared WAL/compaction contract should carry a
+  **write-optimized delta merged lazily into CSR** (<<biblio-graphcol>>).
+* **Framing (Cambridge DB Research Report <<biblio-cambridge>>):** the field blesses disaggregated
+  storage/compute + composable-components-with-standard-interfaces (our exact approach; it even calls for
+  an open-source cloud-native entrant), but **cautions against a unified data *model/language* —
+  "interoperability, not unification"**, and "a data lake ≠ integrated data." So the catalog metamodel is
+  positioned as an **interoperability substrate**, not a universal language, with semantic reconciliation
+  in scope. Vector/TS-as-first-class-modalities have no field-consensus cover — justified here on the
+  engineering evidence above.
+
 == Research bibliography
 
 Full-text briefs and section citations live in RFC-0002 §_Research calibration_. arXiv links:
@@ -235,6 +270,12 @@ Full-text briefs and section citations live in RFC-0002 §_Research calibration_
 * [[biblio-cmvbt]] **cMVBT** — Multiversion Concurrency Control for Multiversion B-Trees. arXiv:2606.09133. https://arxiv.org/abs/2606.09133
 * [[biblio-uschema]] **U-Schema** — A Unified Metamodel for NoSQL and Relational Databases. arXiv:2105.06494. https://arxiv.org/abs/2105.06494
 * [[biblio-spanner]] **Spanner columnar engine** — uniting OLTP and analytics (Google Cloud). https://cloud.google.com/blog/products/databases/spanners-columnar-engine-unites-oltp-and-analytics
+* [[biblio-cambridge]] **The Cambridge Report on Database Research** — field-direction report. arXiv:2504.11259. https://arxiv.org/abs/2504.11259
+* [[biblio-graphcol]] **GraphflowDB** — Columnar Storage and List-based Processing for Graph DBMSs. arXiv:2103.02284. https://arxiv.org/abs/2103.02284
+* [[biblio-compass]] **Compass** — General Filtered Search across Vector and Structured Data. arXiv:2510.27141. https://arxiv.org/abs/2510.27141
+* [[biblio-vecpolicy]] **Policy-aware Vector Search** — Fine-Grained Access Control. arXiv:2606.19803. https://arxiv.org/abs/2606.19803
+* [[biblio-pgvector]] **Filter-Agnostic Vector Search on a PostgreSQL Database** (SIGMOD 2026). arXiv:2603.23710. https://arxiv.org/abs/2603.23710
+* Time-series identity/storage calibrated against InfluxDB/IOx, Prometheus, TimescaleDB (systems, no single arXiv anchor — corpus-thin axis).
 
 == Consequences
 
