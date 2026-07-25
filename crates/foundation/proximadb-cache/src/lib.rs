@@ -196,6 +196,13 @@ pub struct CacheBudget {
     pub per_tenant: HashMap<String, TenantLimits>,
     /// Optional time-to-live for entries (None = no expiry; rely on size).
     pub ttl: Option<Duration>,
+    /// TD-CACHE-3 S2: fraction of `total_bytes` carved out as the **pin
+    /// reserve** — a side pool holding tenants' floor bytes OUTSIDE the shared
+    /// moka pool, so TinyLFU (which is floor-agnostic) can never evict another
+    /// tenant's guaranteed working set. 0.0 (default) disables true-pinning:
+    /// floors stay admission-only. Clamped to [0.0, 0.5] so the shared pool
+    /// keeps majority capacity.
+    pub pin_reserve_frac: f64,
 }
 
 impl CacheBudget {
@@ -210,7 +217,15 @@ impl CacheBudget {
             high_watermark_frac: 0.9,
             per_tenant: HashMap::new(),
             ttl: None,
+            pin_reserve_frac: 0.0,
         }
+    }
+
+    /// TD-CACHE-3 S2: enable true-pinning by reserving `frac` of the pool for
+    /// per-tenant floor segments (see [`CacheBudget::pin_reserve_frac`]).
+    pub fn with_pin_reserve(mut self, frac: f64) -> Self {
+        self.pin_reserve_frac = frac.clamp(0.0, 0.5);
+        self
     }
 
     pub fn with_ttl(mut self, ttl: Duration) -> Self {
@@ -251,11 +266,151 @@ struct TenantUsage {
 pub struct TenantCacheStat {
     pub tenant: String,
     pub bytes: u64,
+    /// Bytes held in this tenant's pinned floor segment (subset of `bytes`).
+    pub pinned_bytes: u64,
     pub hits: u64,
     pub misses: u64,
     pub inserts: u64,
     pub evictions: u64,
     pub hit_ratio: f64,
+}
+
+/// TD-CACHE-3 S2 — the true-pin side store. Entries here live OUTSIDE the
+/// shared moka pool: cross-tenant pressure cannot evict them (moka's TinyLFU
+/// never sees them). Capacity discipline is two-level: a tenant may pin at
+/// most its `floor_bytes` (within-tenant LRU recycling once full), and the
+/// store as a whole never exceeds `reserve_bytes` (oversubscribed floors
+/// degrade to admission-only — the S1 behavior — rather than stealing from
+/// the shared pool).
+struct PinnedEntry<V> {
+    value: V,
+    weight: u32,
+    touch: AtomicU64,
+}
+
+struct PinnedStore<V> {
+    entries: DashMap<CacheKey, PinnedEntry<V>>,
+    tenant_bytes: DashMap<Arc<str>, AtomicU64>,
+    reserve_bytes: u64,
+    used_bytes: AtomicU64,
+    clock: AtomicU64,
+}
+
+/// Outcome of a pin attempt: whether the entry was pinned, and any same-tenant
+/// entries recycled to make room (caller reconciles the byte gauges).
+struct PinOutcome {
+    pinned: bool,
+    recycled: Vec<(Arc<str>, u32)>,
+}
+
+impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
+    fn new(reserve_bytes: u64) -> Self {
+        Self {
+            entries: DashMap::new(),
+            tenant_bytes: DashMap::new(),
+            reserve_bytes,
+            used_bytes: AtomicU64::new(0),
+            clock: AtomicU64::new(0),
+        }
+    }
+
+    fn get(&self, key: &CacheKey) -> Option<V> {
+        let e = self.entries.get(key)?;
+        e.touch.store(
+            self.clock.fetch_add(1, Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        Some(e.value.clone())
+    }
+
+    fn tenant_pinned(&self, tenant: &Arc<str>) -> u64 {
+        self.tenant_bytes
+            .get(tenant)
+            .map(|b| b.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
+    /// Remove one entry, reconciling internal gauges. Returns its weight.
+    fn remove(&self, key: &CacheKey) -> Option<u32> {
+        let (_, e) = self.entries.remove(key)?;
+        self.used_bytes
+            .fetch_sub(e.weight as u64, Ordering::Relaxed);
+        if let Some(b) = self.tenant_bytes.get(&key.tenant) {
+            b.fetch_sub(e.weight as u64, Ordering::Relaxed);
+        }
+        Some(e.weight)
+    }
+
+    /// The tenant's least-recently-touched pinned key (O(tenant entries); pin
+    /// attempts are rare relative to gets, and a floor holds a bounded set).
+    fn tenant_lru(&self, tenant: &Arc<str>) -> Option<CacheKey> {
+        self.entries
+            .iter()
+            .filter(|e| e.key().tenant == *tenant)
+            .min_by_key(|e| e.value().touch.load(Ordering::Relaxed))
+            .map(|e| e.key().clone())
+    }
+
+    /// Try to pin `key` within the tenant's `floor_bytes`. Recycles the
+    /// tenant's own LRU entries when the floor is full; never touches other
+    /// tenants; never exceeds the global reserve.
+    fn try_pin(&self, key: CacheKey, weight: u32, value: V, floor_bytes: u64) -> PinOutcome {
+        let w = weight as u64;
+        let mut recycled = Vec::new();
+        if w == 0 || w > floor_bytes {
+            return PinOutcome {
+                pinned: false,
+                recycled,
+            };
+        }
+        // Replacing an existing pin of the same key: drop the old copy first.
+        if let Some(old_w) = self.remove(&key) {
+            recycled.push((key.tenant.clone(), old_w));
+        }
+        // Within-tenant LRU recycling until the floor fits the new entry.
+        while self.tenant_pinned(&key.tenant).saturating_add(w) > floor_bytes {
+            let Some(lru) = self.tenant_lru(&key.tenant) else {
+                break;
+            };
+            if let Some(old_w) = self.remove(&lru) {
+                recycled.push((lru.tenant.clone(), old_w));
+            } else {
+                break;
+            }
+        }
+        if self.tenant_pinned(&key.tenant).saturating_add(w) > floor_bytes {
+            return PinOutcome {
+                pinned: false,
+                recycled,
+            };
+        }
+        // Global reserve check with rollback (tolerates racing pins).
+        let prev = self.used_bytes.fetch_add(w, Ordering::Relaxed);
+        if prev.saturating_add(w) > self.reserve_bytes {
+            self.used_bytes.fetch_sub(w, Ordering::Relaxed);
+            return PinOutcome {
+                pinned: false,
+                recycled,
+            };
+        }
+        self.tenant_bytes
+            .entry(key.tenant.clone())
+            .or_default()
+            .fetch_add(w, Ordering::Relaxed);
+        let touch = self.clock.fetch_add(1, Ordering::Relaxed);
+        self.entries.insert(
+            key,
+            PinnedEntry {
+                value,
+                weight,
+                touch: AtomicU64::new(touch),
+            },
+        );
+        PinOutcome {
+            pinned: true,
+            recycled,
+        }
+    }
 }
 
 /// A multitenant, byte-budgeted, **work-conserving elastic** cache over `V`.
@@ -272,6 +427,8 @@ pub struct TenantCache<V: Clone + Send + Sync + 'static> {
     /// Optional tier-driven limits policy (Strategy seam); overrides the static
     /// per-tenant map when set.
     limits_resolver: Option<Arc<LimitsResolver>>,
+    /// TD-CACHE-3 S2: true-pin side store (None = admission-only floors).
+    pinned: Option<Arc<PinnedStore<V>>>,
 }
 
 impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
@@ -283,8 +440,13 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         let listener_usage = usage.clone();
         let listener_global = global_bytes.clone();
 
+        // TD-CACHE-3 S2: the pin reserve is carved OUT of the total so the
+        // budget invariant holds: shared moka pool + pinned reserve = total.
+        let pin_reserve =
+            ((budget.total_bytes as f64) * budget.pin_reserve_frac.clamp(0.0, 0.5)) as u64;
+        let shared_capacity = budget.total_bytes - pin_reserve;
         let mut builder = Cache::builder()
-            .max_capacity(budget.total_bytes)
+            .max_capacity(shared_capacity)
             .weigher(|_k: &CacheKey, v: &CachedValue<V>| v.weight)
             .eviction_listener(
                 move |k: Arc<CacheKey>, v: CachedValue<V>, cause: RemovalCause| {
@@ -315,6 +477,7 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
             default_hard_ceiling: budget.default_hard_ceiling_bytes,
             per_tenant: Arc::new(budget.per_tenant),
             limits_resolver: None,
+            pinned: (pin_reserve > 0).then(|| Arc::new(PinnedStore::new(pin_reserve))),
         }
     }
 
@@ -386,8 +549,17 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         u.saturating_add(weight) <= fair
     }
 
-    /// Look up a value, recording a per-tenant hit or miss.
+    /// Look up a value, recording a per-tenant hit or miss. Pinned entries
+    /// (the tenant's floor working set) are checked before the shared pool.
     pub async fn get(&self, key: &CacheKey) -> Option<V> {
+        if let Some(pinned) = &self.pinned
+            && let Some(v) = pinned.get(key)
+        {
+            self.usage_for(&key.tenant)
+                .hits
+                .fetch_add(1, Ordering::Relaxed);
+            return Some(v);
+        }
         let result = self.inner.get(key).await;
         let u = self.usage_for(&key.tenant);
         match result {
@@ -424,17 +596,43 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
 
         if self.should_admit(&key.tenant, weight as u64) {
             self.account_insert(&key.tenant, weight);
-            self.inner
-                .insert(
-                    key,
-                    CachedValue {
-                        weight,
-                        value: value.clone(),
-                    },
-                )
-                .await;
+            if !self.try_pin_admitted(&key, weight, &value) {
+                self.inner
+                    .insert(
+                        key,
+                        CachedValue {
+                            weight,
+                            value: value.clone(),
+                        },
+                    )
+                    .await;
+            }
         }
         Ok(value)
+    }
+
+    /// TD-CACHE-3 S2: route an admitted insert into the tenant's pinned floor
+    /// segment when true-pinning is on and the tenant has a floor. Returns
+    /// true when the entry was pinned (shared-pool insert must be skipped).
+    /// Recycled same-tenant entries are reconciled into the byte gauges here
+    /// (they were accounted at their own admission).
+    fn try_pin_admitted(&self, key: &CacheKey, weight: u32, value: &V) -> bool {
+        let Some(pinned) = &self.pinned else {
+            return false;
+        };
+        let floor = self.limits_for(&key.tenant).floor_bytes;
+        if floor == 0 {
+            return false;
+        }
+        let outcome = pinned.try_pin(key.clone(), weight, value.clone(), floor);
+        for (tenant, w) in outcome.recycled {
+            self.global_bytes.fetch_sub(w as u64, Ordering::Relaxed);
+            if let Some(u) = self.usage.get(&tenant) {
+                u.bytes.fetch_sub(w as u64, Ordering::Relaxed);
+                u.evictions.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        outcome.pinned
     }
 
     /// Explicitly insert/replace a value, subject to the elastic admission policy.
@@ -443,7 +641,9 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
             return;
         }
         self.account_insert(&key.tenant, weight);
-        self.inner.insert(key, CachedValue { weight, value }).await;
+        if !self.try_pin_admitted(&key, weight, &value) {
+            self.inner.insert(key, CachedValue { weight, value }).await;
+        }
     }
 
     fn account_insert(&self, tenant: &Arc<str>, weight: u32) {
@@ -472,6 +672,11 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
                 TenantCacheStat {
                     tenant: e.key().to_string(),
                     bytes: u.bytes.load(Ordering::Relaxed),
+                    pinned_bytes: self
+                        .pinned
+                        .as_ref()
+                        .map(|p| p.tenant_pinned(e.key()))
+                        .unwrap_or(0),
                     hits,
                     misses,
                     inserts: u.inserts.load(Ordering::Relaxed),
@@ -501,6 +706,112 @@ mod tests {
 
     fn key(tenant: &str, k: &str) -> CacheKey {
         CacheKey::new(tenant, CacheKind::Footer, k)
+    }
+
+    /// TD-CACHE-3 S2: a churning tenant CANNOT evict another tenant's pinned
+    /// floor. Tiny shared pool + pin reserve; A pins its floor working set;
+    /// B floods far past total capacity; every one of A's floor entries is
+    /// still served (with admission-only floors, moka's TinyLFU would have
+    /// reclaimed them under B's pressure).
+    #[tokio::test]
+    async fn pinned_floor_survives_cross_tenant_flood() {
+        // total 10 KB, pin reserve 50% = 5 KB; A floor 4 KB, huge ceilings.
+        let budget = CacheBudget::new(10_000, 10_000)
+            .with_pin_reserve(0.5)
+            .with_tenant_limits(
+                "A",
+                TenantLimits {
+                    floor_bytes: 4_000,
+                    hard_ceiling_bytes: 10_000,
+                    weight: 4,
+                },
+            );
+        let c: TenantCache<u64> = TenantCache::new(budget);
+        for i in 0..4u64 {
+            c.insert(key("A", &format!("hot{i}")), 1_000, i).await;
+        }
+        // B floods 100 KB through a 5 KB shared pool.
+        for i in 0..100u64 {
+            c.insert(key("B", &format!("churn{i}")), 1_000, i).await;
+        }
+        c.sync().await;
+        for i in 0..4u64 {
+            assert_eq!(
+                c.get(&key("A", &format!("hot{i}"))).await,
+                Some(i),
+                "A's pinned floor entry hot{i} must survive B's flood"
+            );
+        }
+        let stats = c.tenant_stats();
+        let a = stats.iter().find(|s| s.tenant == "A").unwrap();
+        assert_eq!(a.pinned_bytes, 4_000, "A's whole floor is pinned");
+    }
+
+    /// TD-CACHE-3 S2: a full floor recycles WITHIN the tenant (own LRU out,
+    /// new entry in) — the floor is a working set, not a write-once set.
+    #[tokio::test]
+    async fn full_floor_recycles_within_tenant_by_lru() {
+        let budget = CacheBudget::new(10_000, 10_000)
+            .with_pin_reserve(0.5)
+            .with_tenant_limits(
+                "A",
+                TenantLimits {
+                    floor_bytes: 2_000,
+                    hard_ceiling_bytes: 10_000,
+                    weight: 1,
+                },
+            );
+        let c: TenantCache<u64> = TenantCache::new(budget);
+        c.insert(key("A", "old"), 1_000, 1).await;
+        c.insert(key("A", "warm"), 1_000, 2).await;
+        // Touch "warm" so "old" is the LRU pin.
+        assert_eq!(c.get(&key("A", "warm")).await, Some(2));
+        // Floor full (2 KB): the next pin must recycle "old", not "warm".
+        c.insert(key("A", "new"), 1_000, 3).await;
+        c.sync().await;
+        assert_eq!(c.get(&key("A", "new")).await, Some(3), "new entry pinned");
+        assert_eq!(
+            c.get(&key("A", "warm")).await,
+            Some(2),
+            "recently-touched pin kept"
+        );
+        let stats = c.tenant_stats();
+        let a = stats.iter().find(|s| s.tenant == "A").unwrap();
+        assert_eq!(a.pinned_bytes, 2_000, "floor stays exactly full");
+    }
+
+    /// TD-CACHE-3 S2: oversubscribed floors degrade to admission-only (the
+    /// entry still lands in the shared pool) — the reserve is never exceeded
+    /// and no panic/starvation occurs.
+    #[tokio::test]
+    async fn oversubscribed_reserve_degrades_to_shared_pool() {
+        // Reserve = 1 KB but the floor claims 4 KB: only 1 KB can pin.
+        let budget = CacheBudget::new(10_000, 10_000)
+            .with_pin_reserve(0.1)
+            .with_tenant_limits(
+                "A",
+                TenantLimits {
+                    floor_bytes: 4_000,
+                    hard_ceiling_bytes: 10_000,
+                    weight: 1,
+                },
+            );
+        let c: TenantCache<u64> = TenantCache::new(budget);
+        for i in 0..4u64 {
+            c.insert(key("A", &format!("k{i}")), 1_000, i).await;
+        }
+        c.sync().await;
+        // All 4 entries retrievable (pinned or shared) — nothing lost.
+        for i in 0..4u64 {
+            assert_eq!(c.get(&key("A", &format!("k{i}"))).await, Some(i));
+        }
+        let stats = c.tenant_stats();
+        let a = stats.iter().find(|s| s.tenant == "A").unwrap();
+        assert!(
+            a.pinned_bytes <= 1_000,
+            "pinned {} must not exceed the 1 KB reserve",
+            a.pinned_bytes
+        );
     }
 
     #[tokio::test]
