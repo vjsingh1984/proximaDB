@@ -23,21 +23,27 @@ fn counter(name: &str, help: &str) -> IntCounter {
     })
 }
 
+// NOTE: unlabeled AGGREGATE operator surface. The per-tenant billing versions
+// in metrics/consumption_metrics.rs own the canonical
+// `proximadb_ivf_*_total{tenant_id}` names (sum over tenant = this aggregate);
+// these carry `_agg_` to avoid a duplicate-registration crash when both init
+// on a probe-armed search (default-ON since #1210). In-process readers use the
+// Rust statics below, unaffected by the prometheus name.
 lazy_static! {
     pub static ref IVF_CELLS_TOTAL: IntCounter = counter(
-        "proximadb_ivf_cells_total",
+        "proximadb_ivf_cells_agg_total",
         "Persisted coarse centroids seen by the TD-RDSTRAT-8 two-level IVF coarse probe",
     );
     pub static ref IVF_CELLS_PROBED: IntCounter = counter(
-        "proximadb_ivf_cells_probed_total",
+        "proximadb_ivf_cells_probed_agg_total",
         "Coarse centroids ranked in RAM by the nprobe-scoped TD-RDSTRAT-8 probe",
     );
     pub static ref IVF_PROBED_ROWS: IntCounter = counter(
-        "proximadb_ivf_probed_rows_total",
+        "proximadb_ivf_probed_rows_agg_total",
         "Rows ranged-read from the probed cells' Region-A extents (TD-RDSTRAT-8)",
     );
     pub static ref IVF_FETCH_ROUNDS: IntCounter = counter(
-        "proximadb_ivf_fetch_rounds_total",
+        "proximadb_ivf_fetch_rounds_agg_total",
         "Coalesced Region-A ranged-read runs issued by the TD-RDSTRAT-8 probe (the GET round-trip budget it pays)",
     );
     pub static ref IVF_WHOLE_REGION_FALLBACK: IntCounter = counter(

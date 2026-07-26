@@ -24,15 +24,21 @@ use tracing::error;
 // sanctioned panic site per vec type instead of repeating it at every metric.
 fn registered_counter_vec(name: &'static str, help: &'static str, labels: &[&str]) -> CounterVec {
     register_counter_vec!(Opts::new(name, help), labels).unwrap_or_else(|err| {
-        error!("failed to register {}: {}", name, err);
-        CounterVec::new(Opts::new(name, ""), labels).unwrap()
+        // No-panic mandate #4: registration can fail (e.g. a duplicate name).
+        // The fallback MUST NOT reuse an empty help — prometheus rejects that
+        // too, so the old `""` here panicked the tokio worker on the first
+        // search (an unregistered-but-usable vec is the correct degradation).
+        error!("failed to register {name} (using unregistered fallback): {err}");
+        CounterVec::new(Opts::new(name, help), labels)
+            .expect("counter descriptor with non-empty help is always valid")
     })
 }
 
 fn registered_gauge_vec(name: &'static str, help: &'static str, labels: &[&str]) -> GaugeVec {
     register_gauge_vec!(Opts::new(name, help), labels).unwrap_or_else(|err| {
-        error!("failed to register {}: {}", name, err);
-        GaugeVec::new(Opts::new(name, ""), labels).unwrap()
+        error!("failed to register {name} (using unregistered fallback): {err}");
+        GaugeVec::new(Opts::new(name, help), labels)
+            .expect("gauge descriptor with non-empty help is always valid")
     })
 }
 

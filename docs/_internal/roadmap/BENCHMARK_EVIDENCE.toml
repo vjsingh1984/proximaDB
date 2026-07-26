@@ -688,3 +688,19 @@ hardware = "Local macOS arm64, Azurite 3.36 blob emulator on localhost:11000"
 date = "2026-07-26"
 version = "fix/warm-manifest-azure-path -> develop"
 
+[[claims]]
+id = "hot_tier_diverse_query_getcost"
+claim = "TD-CACHE-8: under REALISTIC diverse (never-repeated) query load — 1,200 unique SIFT queries, 200k trained collection, probe-armed, 256MB survivor budget — GETs/query stays FLAT at ~18 and survivor-cache hit-rate PLATEAUS at ~33%, NOT converging toward 0-GET. The prior 'hot ~0 GETs / 2,602 QPS' headline was a query-RESULT-cache (vector_hash-keyed) artifact of identical-query testing. Corrected hot economics: ~18 GETs/query ~= $0.7/M queries (Azure GET rate), an order below cold but NOT free. Root cause: query-specific coalesced SQ8 ranges do not reuse (cells do, ~33% floor); whole-region SQ8 caching is the lever (region fits budget). Also confirmed TD-METRICS-3 fix: 1,200 searches, zero panics."
+metric = "GETs/query + survivor hit% across a diverse (unique) query stream"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-CACHE-8-hot-tier-value-diverse-queries.adoc",
+  "docs/10-quality/td/TD-METRICS-3-duplicate-ivf-metric-registration-panic.adoc",
+]
+bench_source = "scripts/bench/diverse_query_bed.py"
+bench_command = "python3 scripts/bench/diverse_query_bed.py <bin> <cfg> <bed> 5879  # probe+train env set by harness"
+artifact = "docs/10-quality/td/TD-CACHE-8-hot-tier-value-diverse-queries.adoc"
+hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build"
+date = "2026-07-26"
+version = "fix/td-metrics-2-ivf-dup-panic -> develop"
+
