@@ -209,7 +209,9 @@ untouched. **No policy predicate references a physical path or index.**
 
 D12 wants first-class edges; D6 wants a hard tenant boundary. A
 `RelationshipType` whose `from`/`to` cross a tenant boundary is the collision.
-**Recommended resolution (for adversarial review):**
+**Committed cut (2026-07-25; the default the implementation targets, still open
+to red-team challenge):** forbidden-by-default with a brokered half-edge escape
+hatch —
 
 * **Forbidden by default.** `RelationshipTenancy::Intra` — both endpoints must
   resolve to the same `tenant_id`; the CKS/catalog rejects a cross-tenant edge
@@ -223,8 +225,8 @@ D12 wants first-class edges; D6 wants a hard tenant boundary. A
 * **Federated** is out of scope for FC (defer to the consistency-floor work).
 
 This keeps D6 fail-closed as the default while leaving D12's expressiveness
-reachable under explicit, audited capability. *Flagged as the top decision for
-the external review.*
+reachable under explicit, audited capability. *Decision recorded; the red-team
+target (§6.1) is now "attack this cut," not "choose among three."*
 
 == 3. Access-control plane (D6 / D15)
 
@@ -366,9 +368,12 @@ property-tested (§5).
 
 Ranked for the external red-team pass:
 
-1. **Cross-tenant edges (D12-d).** Is forbidden-default + brokered-half-edge the
-   right cut, or does it cripple legitimate multi-tenant graph use? Alternative:
-   federated references with capability tokens. *Highest-priority fork.*
+1. **Cross-tenant edges (D12-d) — cut chosen, now attack it.** The committed cut
+   is forbidden-default + brokered half-edge. Red-team target: does the
+   half-edge materialization actually close the traversal hole (can tenant A ever
+   observe a tenant-B row the far-side filter denies?), and does forbidding
+   raw cross-tenant edges cripple a legitimate use we'll regret? Federated
+   references remain the named fallback if the brokered model fails review.
 2. **Vector identity slot (D12-b).** No prior art covers vector/TS identity.
    Is `Surrogate`/`Ordering` the right parameterization, or does vector need a
    distinct family? (ADR-072's own flagged highest-risk item.)
