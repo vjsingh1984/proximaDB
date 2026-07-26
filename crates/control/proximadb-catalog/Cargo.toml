@@ -14,6 +14,8 @@ name = "proximadb_catalog"
 path = "src/lib.rs"
 
 [features]
+# FC metamodel (TD-FOUNDATION-2 D12): first-class relationships + identity slot + policy model. Additive, inert.
+fc-metamodel = []
 # OLTP catalog backends — bring in sqlx. Enable the matching backend feature too.
 oltp-catalog-postgres = ["oltp-catalog", "sqlx/postgres"]
 oltp-catalog-mysql    = ["oltp-catalog", "sqlx/mysql"]

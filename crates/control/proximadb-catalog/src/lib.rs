@@ -28,6 +28,8 @@ pub mod cache;
 // so existing `crate::catalog::*` import paths are unchanged.
 pub mod canonical_precision;
 pub mod corpus_version_fs_store;
+#[cfg(feature = "fc-metamodel")]
+pub mod fc_metamodel;
 pub mod internal;
 pub mod partition_pruning;
 pub mod recall_probe;
