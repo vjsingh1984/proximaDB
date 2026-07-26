@@ -450,6 +450,101 @@ pub fn identity_slot_from_table_schema(schema: &CatalogTableSchema) -> IdentityS
     }
 }
 
+// ===========================================================================
+// Hierarchical policy resolver (the policy *model* — inert, no enforcement)
+// ===========================================================================
+
+/// The container a read targets, addressed by stable ids (ADR-075). A policy
+/// binding at a broader scope (namespace ⊇ table ⊇ column) applies to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Target {
+    /// The namespace the target lives in.
+    pub namespace: NamespaceId,
+    /// The table/collection.
+    pub table: CollectionId,
+    /// A specific column, when resolving column scope (else `None`).
+    pub column: Option<u32>,
+}
+
+/// The composed policy for a [`Target`] — the **model** output. It records the
+/// effect-level decision (assuming every predicate holds), the row-predicate refs
+/// to AND, and the field masks. It does **not** evaluate predicates against a
+/// subject — that is FA's enforcement job (TD-FOUNDATION-3). Default is
+/// [`Effect::Deny`] (fail-closed) when no binding applies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectivePolicy {
+    /// The effect-level decision after deny-bias composition (a `Deny` binding
+    /// at any applicable scope wins). `Deny` with `applicable == 0` is the
+    /// fail-closed default (no binding).
+    pub decision: Effect,
+    /// Whether any binding actually applied (distinguishes an explicit `Deny`
+    /// from the fail-closed default).
+    pub applicable: usize,
+    /// Row-predicate object refs to AND together (from applicable `Permit`
+    /// bindings). Empty = no row restriction *at the model level*; FA still
+    /// resolves them against the subject.
+    pub predicate_refs: Vec<ObjectId>,
+    /// Field masks to apply, keyed by column ordinal (from column-scoped bindings).
+    pub field_masks: Vec<(u32, FieldMask)>,
+}
+
+/// Does a binding's [`Scope`] cover the [`Target`] (broader-or-equal in the
+/// namespace ⊇ table ⊇ column hierarchy)?
+fn scope_covers(scope: &Scope, target: &Target) -> bool {
+    match *scope {
+        Scope::Namespace(ns) => ns == target.namespace,
+        Scope::Table(t) => t == target.table,
+        Scope::Column { table, column } => table == target.table && target.column == Some(column),
+    }
+}
+
+/// Resolve the effective policy for a `target` from the given bindings (TF-2
+/// §3.2). **Deny-biased and hierarchical**: any applicable `Deny` wins; otherwise
+/// the applicable `Permit`s contribute their row-predicate refs (ANDed) and any
+/// column-scoped bindings contribute field masks. Fail-closed: no applicable
+/// binding ⇒ `Deny` with `applicable == 0`.
+///
+/// This is the policy **model** — it composes structure, not a subject decision.
+/// FA (TD-FOUNDATION-3) evaluates `predicate_refs` against the subject to admit or
+/// deny individual rows.
+pub fn resolve_effective_policy(bindings: &[PolicyBinding], target: &Target) -> EffectivePolicy {
+    let mut applicable = 0usize;
+    let mut has_deny = false;
+    let mut predicate_refs = Vec::new();
+    let mut field_masks = Vec::new();
+
+    for b in bindings {
+        if !scope_covers(&b.scope, target) {
+            continue;
+        }
+        applicable += 1;
+        match b.effect {
+            Effect::Deny => has_deny = true,
+            Effect::Permit => {
+                if let Some(p) = b.predicate_ref {
+                    predicate_refs.push(p);
+                }
+            }
+        }
+        if let (Scope::Column { column, .. }, Some(mask)) = (&b.scope, b.field_mask) {
+            field_masks.push((*column, mask));
+        }
+    }
+
+    let decision = if applicable == 0 || has_deny {
+        Effect::Deny // fail-closed default, or an explicit deny wins
+    } else {
+        Effect::Permit
+    };
+
+    EffectivePolicy {
+        decision,
+        applicable,
+        predicate_refs,
+        field_masks,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -716,5 +811,90 @@ mod tests {
                 .iter()
                 .any(|g| g.contains("no natural primary key"))
         );
+    }
+
+    // --- hierarchical policy resolver ---
+
+    fn binding(object_id: ObjectId, scope: Scope, effect: Effect) -> PolicyBinding {
+        PolicyBinding {
+            object_id,
+            tenant_stable_id: 7,
+            scope,
+            effect,
+            predicate_ref: None,
+            field_mask: None,
+        }
+    }
+
+    fn target(ns: NamespaceId, table: CollectionId, column: Option<u32>) -> Target {
+        Target {
+            namespace: ns,
+            table,
+            column,
+        }
+    }
+
+    #[test]
+    fn no_binding_is_fail_closed_deny() {
+        let eff = resolve_effective_policy(&[], &target(1, 200, None));
+        assert_eq!(eff.decision, Effect::Deny);
+        assert_eq!(eff.applicable, 0); // the fail-closed default, not an explicit deny
+    }
+
+    #[test]
+    fn namespace_deny_masks_a_table_permit() {
+        let bindings = vec![
+            binding(1, Scope::Table(200), Effect::Permit),
+            binding(2, Scope::Namespace(1), Effect::Deny),
+        ];
+        let eff = resolve_effective_policy(&bindings, &target(1, 200, None));
+        // Deny at the broader namespace scope wins over the table permit.
+        assert_eq!(eff.decision, Effect::Deny);
+        assert_eq!(eff.applicable, 2);
+    }
+
+    #[test]
+    fn permits_and_their_row_predicates_together() {
+        let mut b1 = binding(1, Scope::Namespace(1), Effect::Permit);
+        b1.predicate_ref = Some(900);
+        let mut b2 = binding(2, Scope::Table(200), Effect::Permit);
+        b2.predicate_ref = Some(901);
+        let eff = resolve_effective_policy(&[b1, b2], &target(1, 200, None));
+        assert_eq!(eff.decision, Effect::Permit);
+        // both row predicates are collected to be ANDed by FA
+        assert_eq!(eff.predicate_refs, vec![900, 901]);
+    }
+
+    #[test]
+    fn column_scope_only_applies_when_targeting_that_column() {
+        let mut b = binding(
+            1,
+            Scope::Column {
+                table: 200,
+                column: 3,
+            },
+            Effect::Permit,
+        );
+        b.field_mask = Some(FieldMask::Redact);
+        // targeting the whole table (column None): the column binding does not apply
+        let table_eff = resolve_effective_policy(std::slice::from_ref(&b), &target(1, 200, None));
+        assert_eq!(table_eff.applicable, 0);
+        assert_eq!(table_eff.decision, Effect::Deny); // fail-closed
+        // targeting column 3: it applies and contributes the mask
+        let col_eff = resolve_effective_policy(&[b], &target(1, 200, Some(3)));
+        assert_eq!(col_eff.applicable, 1);
+        assert_eq!(col_eff.decision, Effect::Permit);
+        assert_eq!(col_eff.field_masks, vec![(3, FieldMask::Redact)]);
+    }
+
+    #[test]
+    fn unrelated_namespace_or_table_does_not_apply() {
+        let bindings = vec![
+            binding(1, Scope::Namespace(2), Effect::Permit), // different ns
+            binding(2, Scope::Table(999), Effect::Permit),   // different table
+        ];
+        let eff = resolve_effective_policy(&bindings, &target(1, 200, None));
+        assert_eq!(eff.applicable, 0);
+        assert_eq!(eff.decision, Effect::Deny);
     }
 }
