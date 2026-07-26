@@ -4879,20 +4879,43 @@ impl DmlService {
                 // Encode with the same encoder that built the parent oids so the
                 // point lookup matches exactly (single- or multi-column).
                 let key = encode_primary_key_tuple(&values)?;
-                let referenced_exists = self
-                    .record_store
-                    .get_by_key(
-                        &parent_schema,
-                        TableRecordGetRequest {
-                            table_id: parent_table_id.name.clone(),
-                            key: key.clone(),
-                            include_vector: false,
-                            include_props: false,
-                        },
-                        tenant_context,
-                    )
-                    .await?
-                    .is_some();
+                // F5 (ADR-072): when the fenced ConditionalKeyStore is wired,
+                // resolve FK existence against the SAME store that fences the
+                // parent's PK uniqueness (its `get` was designed for exactly this
+                // — "foreign-key existence checks (phase 2) ride this method"),
+                // instead of a check-then-act probe on the record store. This
+                // makes the child-insert see the authoritative uniqueness index
+                // and closes the TOCTOU with a concurrent parent delete. Only the
+                // single-column case is CKS-fenced today (F2 registers one PK
+                // value), so multi-column FKs keep the record-store probe.
+                let referenced_exists = if let Some(cks) = self
+                    .conditional_key_store
+                    .as_ref()
+                    .filter(|_| values.len() == 1)
+                {
+                    let id = proximadb_storage_ports::Identity::from_bytes(
+                        proximadb_data_model::key_codec::encode_identity(
+                            &record.tenant_id,
+                            &parent_schema.name,
+                            &values,
+                        )?,
+                    );
+                    cks.get(&id).await?.is_some()
+                } else {
+                    self.record_store
+                        .get_by_key(
+                            &parent_schema,
+                            TableRecordGetRequest {
+                                table_id: parent_table_id.name.clone(),
+                                key: key.clone(),
+                                include_vector: false,
+                                include_props: false,
+                            },
+                            tenant_context,
+                        )
+                        .await?
+                        .is_some()
+                };
                 if !referenced_exists {
                     return Err(anyhow!(
                         "FOREIGN KEY ({}) on table '{}' violates reference: '{}' is not present in {}({})",
