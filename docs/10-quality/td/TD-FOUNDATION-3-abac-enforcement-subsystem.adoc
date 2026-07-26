@@ -1,0 +1,91 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-FOUNDATION-3: ABAC enforcement subsystem (FA)
+:status: Draft — blocked on preconditions (not startable)
+:date: 2026-07-26
+:authors: co-design session 2026-07-26
+:realizes: ADR-072 D6 (structural tenancy), D15 (RLS-as-global-filter)
+:design-of-record: TD-FOUNDATION-2 §3.4 (enforcement), §8 (S1–S10), §1.4 (bridge)
+:supersedes-label: formerly work package "F7r"
+
+[cols="1,3"]
+|===
+| Status | Draft — **blocked**; do not start until §2 preconditions are met
+| Scope | The runtime ABAC **enforcement** subsystem split out of FC (TD-FOUNDATION-2 §0.1) after three red-team rounds proved it is a multi-package subsystem, not a wiring job.
+| Design of record | **TD-FOUNDATION-2** — the enforcement architecture (§3.4), the S1–S10 acceptance criteria (§8), and the fail-closed bridge (§1.4) live there, attacked across three rounds. This doc is the **build track**: preconditions, package split, and gate.
+| Consumes | FC's policy model (`PolicyBinding`, resolver, `SubjectAttributes`, `filterable_columns`), the F0 codec, the F1b/F1d store.
+| Depends on | ADR-074 (namespace/tenant seam), a live JWT-verification fix (external, §2)
+|===
+
+== 0. Why this is its own track
+
+TD-FOUNDATION-2 set out to "wire an always-ANDed ABAC filter into the scan." Three
+adversarial red-team rounds (TF-2 §6.1) showed the real surface is far larger:
+
+* enforcement must cover **four surfaces**, not one — reads (3 primitives),
+  the **write path** (uniqueness-conflict disclosure, S9), the **cache tier**
+  above the read seam (subject-blind result/vector/LLM caches, S10), and
+  **egress** (CDC / replication, S5);
+* the substrate defaults **fail-open** in ~six ways (S1–S3: `Ok(None)`=unfiltered,
+  boolean `Not`, type-widening compares; S4: `Option`-shaped context);
+* two **subsystems that do not exist today** are hard preconditions (§2);
+* **cross-tenant** enforcement additionally needs a real graph executor (deferred).
+
+Bundling that with the additive, low-risk D12 metamodel would have blocked the
+metamodel behind a security subsystem. FC ships the metamodel; FA is this track.
+
+== 1. What FA delivers (feature `abac-policy`)
+
+The enforcement design is TF-2 §3.4. FA implements it as work items:
+
+[cols="1,4"]
+|===
+| WI | Item
+
+| FA-1 | `AuthorizedReadContext` as a **required, non-`Option`** parameter of the three read primitives — `TableRecordStore` (`get_by_key`/`scan_records`), `unified_search_native` (allow-list non-optional; `None`=deny-empty), graph executor per-hop (S4, S7). `SystemReadContext` for audited internal-only unfiltered reads.
+| FA-2 | The **total-or-fail-closed bridge** (TF-2 §1.4 / S1–S3): `build_filter → Result` (no `Ok(None)`); null-safe `Not`; type-gated literals; deny-biased subset property test.
+| FA-3 | **Write-path disclosure gating** (S9): value-free constraint errors when the holder is not ABAC-readable.
+| FA-4 | **Cache subject-binding** (S10): result/vector/LLM cache keys fold the effective-attribute + policy-epoch digest, or bypass under `abac-policy`.
+| FA-5 | **Egress coverage** (S5): default-deny reconstruction audit; client-fed CDC sinks carry a client context and mask the event envelope.
+| FA-6 | Two-layer wiring (TF-2 §3.0/§3.1): operation authz (Layer A) unchanged; ABAC row/field visibility (Layer B) at the primitives; the **attribute-trust boundary** (S6).
+|===
+
+== 2. Preconditions — FA is NOT startable until these exist
+
+[cols="1,3,1"]
+|===
+| P | Precondition | Owner
+
+| **P1**
+| **Attribute-authority store** — a first-class `(subject_id, tenant_id) → {roles, attrs}` binding store. The current `user_role_assignments` is `user_id`-keyed, single-assignment, permission-only (round 3); ABAC attributes (`dept`/`clearance`/`region`) have **no** server-side authority today. `resolve_effective_attributes` is a new subsystem, not a one-liner over `validate_admin_access`.
+| FA design
+
+| **P2**
+| **Live JWT signature verification** — `oidc.rs:106` decodes tokens **without** signature verification (round 3). Until real verification ships, every claim (incl. `iss`) is forgeable and S6 is void. **This is an independent security defect** affecting the whole auth boundary, not just ABAC — must be verified against the live path and fixed on its own security TD **before** FA can trust any claim.
+| **separate security TD** (urgent)
+
+| **P3**
+| **Subject-keyed cache substrate** — the result/vector/LLM caches must accept a subject+policy-epoch key component and an epoch-invalidation hook (S10).
+| FA design
+
+| **P4**
+| **Non-`Option` context plumbing** — the three read primitives (and the graph read trait) must carry a required context (S4/S7). This is a signature change across `record_store.rs`, `unified_search_native`, and the graph traits.
+| FA design
+|===
+
+== 3. Deferred (not in FA's first slice)
+
+* **Cross-tenant `Reference`/`Brokered`** (TF-2 §2 D12-d) — `Brokered` needs a
+  tenant-aware graph executor (the current one is a stub returning `Ok(vec![])` /
+  `Count(0)`); `Reference` needs P1 **plus** a cross-tenant attribute-federation
+  model (how tenant O holds a binding for visitor A). Both are their own package,
+  blocked on a real graph executor and a federation design.
+
+== 4. Gate
+
+FA promotes from `Draft` and begins code only when **P1–P4 are satisfied** (or
+each explicitly waived with a recorded risk) and the TF-2 §8 acceptance criteria
+**S1–S10** have green tests. Until then this track is a **hold** — the design of
+record is complete and attacked (TF-2), but the substrate and preconditions are
+not there. FA is **off the OLTP critical path**; there is no schedule pressure to
+start it before its preconditions land.

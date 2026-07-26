@@ -4,14 +4,14 @@
 :status: Draft — design-gate (pre-implementation)
 :date: 2026-07-25
 :authors: co-design session 2026-07-25
-:realizes: ADR-072 D12 (metamodel), D6 (tenancy), D15 (hybrid/filter planner + RLS)
+:realizes: ADR-072 D12 (metamodel) — FC; the D6/D15 enforcement plane splits to TD-FOUNDATION-3
 :sits-on: ADR-074 (namespace isolation boundary), ADR-031 (stable object_id)
-:tracks: FC (work package) + F7r (ABAC/RLS runtime filter)
+:tracks: FC = D12 metamodel + policy model. Enforcement (FA) → TD-FOUNDATION-3. Cross-tenant → deferred.
 
 [cols="1,3"]
 |===
-| Status | Draft — design-gate, no code yet
-| **Blocked-on** | **HARD STOP — no FC/F7r code until this doc is promoted out of `Draft`. Status (2026-07-26): TWO adversarial red-team rounds have run — round 1 broke all 5 §6 targets, round 2 broke all 5 *fixes* (see §6.1 log). Both are folded. The design has now CONVERGED: the architecture is sound, and the residual failures are concrete substrate defects captured as acceptance criteria in §8. Promotion is now MECHANICAL — it requires (a) §8 S1–S8 satisfied or each explicitly waived, and (b) a green WI-5/WI-7 test suite. A round-3 attack is optional (recommended only on the newly-introduced CDC 4th surface, the capability-revalidating re-plan, and `resolve_effective_attributes`). F5 is the only critical-path item open; FC/F7r are off-critical-path.**
+| Status | Draft — **scope re-cut after 3 red-team rounds** (see §0.1)
+| **Blocked-on** | **THREE adversarial red-team rounds have run (§6.1 log): round 1 broke all 5 §6 targets; round 2 broke all 5 fixes; round 3 broke the round-2 fixes AND proved the ABAC *enforcement* plane is a multi-package subsystem, not a wiring job (subject-blind cache tier above the seam; write-path disclosure; `Brokered` unbuildable against a stub graph executor; `resolve_effective_attributes`/`Reference` need an absent attribute-authority + federation subsystem; JWT signature verification is not live). DECISION (2026-07-26): SPLIT — this doc (FC) ships the D12 **metamodel + policy model** (additive, low-risk, survived the attacks); the **ABAC enforcement subsystem** (AuthorizedReadContext, 4 surfaces, S1–S10, preconditions) moves to a new track **TD-FOUNDATION-3 (FA)**; **cross-tenant `Reference`/`Brokered` are deferred** (blocked on a real graph executor + attribute federation). A separate security TD must verify/fix **unsigned-JWT decode** independently. No FC code until this doc promotes out of Draft; no FA code until TF-3's preconditions are met.**
 | Realizes | ADR-072 **D12** (family-parameterized identity, first-class edges, logical/physical split), **D6** (structural tenancy), **D15** (cost-based hybrid/filter planner, RLS-as-global-filter)
 | Sits on | **ADR-074** (namespace = isolation boundary; alias→`namespace_id`, authz-gated) — FC supplies the *authz gate* ADR-074 defers
 | Predecessors | TD-FOUNDATION-1 (modality consolidation), F0/F1a/F1b/F1d/F2 (merged: typed key + fenced CKS + MVCC + composite-PK MVP)
@@ -63,6 +63,57 @@ The organizing principle — the correction that motivated this design — is th
 prefix; it is a runtime filter evaluated against subject attributes. This is why
 FC is **off the OLTP critical path** — the correctness spine
 (R2→F0→F1a→F1b→F1d→F2→F5) never waits on access control.
+
+=== 0.1 Scope re-cut (post-red-team, 2026-07-26)
+
+Three adversarial red-team rounds (§6.1) established that plane 3 (access control)
+is **not a wiring job** — it is a multi-package subsystem that touches four
+enforcement surfaces, needs two subsystems that do not exist today (a
+`(subject, tenant)→attributes` authority store; live JWT signature verification),
+requires subject-fingerprinted result caches, and — for cross-tenant edges —
+depends on a graph query executor that is currently a stub. Conflating that with
+the metamodel would sink the low-risk, additive part under the high-risk one.
+So the work is **split into three tranches**:
+
+[cols="1,2,2"]
+|===
+| Tranche | Scope | Status / gate
+
+| **FC — this doc**
+| The **D12 metamodel** (first-class `RelationshipType`, the two-axis identity
+  slot, logical/physical split) **+ the policy _model_** (`PolicyBinding` objects
+  in a system namespace, the hierarchical resolver, `SubjectAttributes` shape).
+  All **additive, feature-gated, inert** — data structures + a resolver, no
+  enforcement. This tranche largely **survived** the red-teams.
+| Buildable now. Ships when this doc promotes out of Draft. §2, §3.1–§3.3.
+
+| **FA — TD-FOUNDATION-3 (new)**
+| The **ABAC enforcement subsystem**: the `AuthorizedReadContext` across all four
+  surfaces (reads / write-path / cache tier / egress), the substrate hardening
+  S1–S10, plus its **hard preconditions** — the attribute-authority store, live
+  JWT verification, subject-keyed caches. This is where every round-1/2/3
+  enforcement finding lives.
+| Blocked on preconditions. Design of record: this doc §3.4 + §8, carried into
+  TF-3. Formerly "F7r".
+
+| **Deferred — cross-tenant edges**
+| `RelationshipTenancy::{Reference, Brokered}`. `Brokered` needs a tenant-aware
+  graph executor (a rewrite far larger than FC); `Reference` needs the
+  attribute-authority + a cross-tenant federation model.
+| Out of FC and FA first slices. FC ships **`Intra` only**. §2 D12-d.
+
+| **Prerequisite — separate security TD**
+| JWT tokens are decoded **without signature verification** today
+  (`oidc.rs:106`, round 3) — if that is the live auth path, the entire trust
+  boundary is forgeable, independent of ABAC. Must be verified and fixed on its
+  own track before FA can trust any claim.
+| Not FC/FA scope. Flagged for immediate independent verification.
+|===
+
+Everything below is the **full design of record** (metamodel + the complete ABAC
+enforcement design + all three red-team rounds). The tranche table above governs
+*what ships as FC* vs *what TF-3/FA carries* vs *what defers* — the sections
+themselves are not deleted, so the reasoning and the attacks stay in one place.
 
 == 1. What already exists (grounding)
 
@@ -323,6 +374,15 @@ forces O(N×M) half-edges, pushing users to copy the corpus or collapse to one
 tenant (discarding D6).
 
 **Revised cut (post-red-team):**
+
+[NOTE]
+====
+**Scope (§0.1):** FC ships **`Intra` only**. `Reference` and `Brokered` are
+**DEFERRED** — round 3 proved `Brokered` is unbuildable against the stub graph
+executor and `Reference` needs the (absent) attribute-authority + cross-tenant
+federation. Their design stays here as the record; neither is in FC or FA's first
+slice.
+====
 
 * **Forbidden by default.** `RelationshipTenancy::Intra` — both endpoints resolve
   to the same `tenant_id`; the CKS/catalog rejects a cross-tenant edge at write
@@ -682,18 +742,29 @@ modalities. §3.4 now attaches below the ingress dialects.
   substrate* (the design asserted fail-closed at the wrapper over primitives that
   default open). Fixes folded (rev 2): §1.4, §2 D12-b/d, §3.1 (attribute-trust
   IMPORTANT box), §3.4 (4th surface + non-`Option` context), and the new **§8**.
+
+| 2026-07-26
+| internal red-team, round 3 — *attack the round-2 fixes* (4 agents, scoped)
+| **Not nits — 4 structural findings that re-scoped FC.** (a) §8 INCOMPLETE →
+  **write-path uniqueness disclosure** (S9, critical); (b) STILL-BROKEN → a
+  **subject-blind cache tier _above_ the read seam** serves A's rows to B (S10,
+  critical), not behind `abac-policy` so enabling it gives false coverage;
+  (c) `Brokered` **UNBUILDABLE** — the graph executor is a total stub, "re-plan in
+  the far tenant's context" needs an engine rewrite far larger than FC;
+  (d) `resolve_effective_attributes`/`Reference` RESIDUAL — **no attribute-authority
+  store exists** (the one store is `user_id`-keyed, single-assignment) and the
+  issuer-tag fallback is void because **JWTs are decoded unsigned**. Consequence:
+  the enforcement plane is a multi-package subsystem → **scope re-cut (§0.1)**.
 |===
 
-**Gate status after rev 2.** Two adversarial rounds have converged: the
-**architecture is now sound** (right enforcement altitude, two-layer authz, facets,
-attribute-trust boundary), and the remaining failures are **concrete, code-level
-substrate defects** — which are captured as **acceptance criteria in §8**, not open
-design questions. The doc **stays `Draft`**, but the gate to promotion is now
-mechanical: **§8 must be satisfied (or each item explicitly waived) and a WI-5/WI-7
-test suite must be green.** A round-3 design attack is optional — recommended only
-on the *newly introduced* structures (the CDC 4th surface, the capability-revalidating
-re-plan, `resolve_effective_attributes`); everything else has converged to testable
-criteria.
+**Gate status after 3 rounds (rev 3 — scope re-cut).** The rounds did *not* prove
+convergence; they proved the enforcement plane is far larger than the metamodel it
+was bundled with. So (per §0.1) the doc is **split**: **FC** (metamodel + policy
+model) is additive and largely survived — it promotes out of Draft on its own
+merits once the metamodel sections are settled; **FA** (enforcement, →
+TD-FOUNDATION-3) carries §3.4 + §8's S1–S10 + the two precondition subsystems and
+is gated on them; **cross-tenant** defers. The metamodel is the buildable win; the
+ABAC subsystem is honest future work with a complete, attacked design of record.
 
 == 7. What FC does *not* do
 
@@ -749,11 +820,18 @@ pinned test.
   context. `record_store.rs:506/514/526/543`.
 
 | S5
-| **Egress/replication coverage.** No `RecordState`/`ProximaRecord` is
-  reconstructed for outbound CDC/webhook/replication without an
-  `AuthorizedReadContext` (or an explicit deny under `abac-policy`).
-| CI grep: `RecordState`/`ProximaRecord` construction sites in `src/cdc/`,
-  `src/cluster/replication.rs` are context-gated. §6.5 round 2.
+| **Egress/replication coverage — default-deny reconstruction audit.** [round 3
+  amended] The CI check is **not** a two-directory grep allow-list (which passes
+  green while records egress via `flush_materializer.rs:164`,
+  `operations/backup/mod.rs:470`, and ~19 WAL reconstruction sites). It is: **any**
+  `RecordState`/`ProximaRecord` construction anywhere in `src/` not statically
+  inside an `AuthorizedReadContext`/`SystemReadContext` scope **fails CI**; each
+  site is classified internal-storage vs client-egress. And a `SystemReadContext`
+  (unfiltered) must **never** feed a client-servable sink — client-fed CDC sinks
+  carry a *client* `AuthorizedReadContext`, and the change-feed masks the **event
+  envelope** (key/existence/timing), not just `before`/`after` bodies.
+| CI: default-deny reconstruction audit; assert no `SystemReadContext` reaches a
+  client sink. §6.5 rounds 2+3.
 
 | S6
 | **Attribute-trust boundary.** Any attribute/role a predicate reads to admit/deny
@@ -764,19 +842,49 @@ pinned test.
   §3.1 IMPORTANT box.
 
 | S7
-| **Graph-seam interlock.** `Brokered`-edge creation and any cross-tenant traversal
-  fail closed unless a runtime probe confirms the per-hop graph filter is live
-  (the graph `QueryContext`/`evaluate_property_filter` are stubs today).
-| Creating a `Brokered` edge with the graph filter absent is rejected.
-  `graph/query/operators/mod.rs`.
+| **Graph primitive is type-enforced, not probed.** [round 3 rewritten] A runtime
+  probe cannot prove the negative "no hop calls `get_node` directly" (two
+  uninstrumented deref paths exist). Extend S4's discipline: `get_node`/
+  `get_outgoing_edges`/`neighbors` take a **required non-`Option`
+  `AuthorizedReadContext`** — an unfiltered graph deref **won't compile**. (Cross-
+  tenant `Brokered` is deferred regardless; this hardens the intra-tenant graph
+  read path FA needs.)
+| CI: graph read-trait signatures carry a non-optional context.
+  `graph/query/operators/mod.rs:131`, `traversal.rs:103`.
 
 | S8
 | **Mask/predicate isolation.** A `redact`/`forbid` column cannot be referenced by
   a row predicate (else its value leaks through admit/deny). `forbid` =
   query-rejection.
 | A visibility predicate over a masked column is rejected at policy-compile.
+
+| S9
+| **Write-path uniqueness disclosure.** [round 3, critical] A PK/UNIQUE conflict
+  (`put_if_absent`→`Conflict{holder}`, `check_unique_conflict`→`UniqueConflict{tuple}`)
+  must not disclose the existence or values of a row the inserting subject cannot
+  ABAC-read. When the holder is not readable, the write returns a **value-free**
+  constraint error (no key, no tuple, no holder oid). `holder`/`tuple` are
+  read-gated data. The CKS gains no context param — the gate is in the DML
+  insert-path error construction (`dml/mod.rs:~3050`).
+| Denied subject `INSERT`s a colliding PK/UNIQUE ⇒ error body contains neither the
+  key nor the conflicting values. `conditional_key_store.rs:114`, `record_store.rs:689`.
+
+| S10
+| **Cache/materialization subject-binding.** [round 3, critical] No cached
+  client-servable result may be returned to a subject whose effective ABAC
+  attribute+policy fingerprint differs from the one it was produced under.
+  Result/vector/LLM-semantic cache keys include a `resolve_effective_attributes`
+  digest + policy epoch (not just `(tenant, ns, query)`); a policy change
+  invalidates dependent entries. Caches not so keyed are **bypassed when
+  `abac-policy` is on** (a subject-blind cache above the seam defeats the plane).
+| Subject-A warms `SELECT *`; subject-B (same tenant, `dept≠A`) issues the
+  identical query/vector/question ⇒ **cache miss**. `query/cache/query_result_cache.rs:178`,
+  `core/search/integrated_search_optimization.rs:585`, `llm/semantic_cache.rs:322`.
 |===
 
-S1–S3 and S6 are **security-critical** (fail-open inversion / claims escalation);
-S4–S5 are the completeness spine; S7–S8 close the residual side channels. None is
-on the OLTP critical path — they gate `abac-policy` enforcement only.
+S1–S3, S6, S9, S10 are **security-critical** (fail-open inversion / claims
+escalation / cross-subject disclosure); S4–S5 are the completeness spine; S7–S8
+close side channels. None is on the OLTP critical path — they gate the **FA**
+enforcement track only, and FA additionally requires the two **precondition
+subsystems** named in §0.1 (attribute authority + live JWT verification) before
+any S-item can even be evaluated.
