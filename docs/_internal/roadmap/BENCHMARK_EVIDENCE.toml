@@ -674,3 +674,17 @@ hardware = "WSL2 Linux 5.15, 32 cores, 78 GB RAM, in-process memory:// object-st
 date = "2026-07-07"
 version = "v0.2"
 notes = "P-Trace (ADR-055 first phase; trace before you tune). 500-doc corpus, one PAX segment: point_get.bytes_read = filtered_scan.bytes_read = 329,111 B (get_ops=1, range_gets=0), write.bytes_written=329,111 (put_ops=1). A document read fetches the ENTIRE segment whether it wants 1 or 500 records — no block/zone-map pruning, no ranged reads. Wired the write-side put_pax hook (record_bytes_written at the object-store PUT in record_store.rs; shared with vectors); reads already record fetch_pax+bytes_read. range_gets is io-trace-feature-gated but legitimately 0 (whole-segment fetch path). Target for P-Pushdown: a filtered query reads strictly < 329,111 B with range_gets>0, results identical."
+
+[[claims]]
+id = "warm_manifest_object_store_roundtrip"
+claim = "TD-CACHE-7: restart-warming manifest write+read round-trips correctly on object storage (Azurite azure:// via the production FilesystemFactory path): manifest_url builds a well-formed cloud URL (container preserved, no // run, tenant-scoped _cache/ prefix, not the legacy manifests/), and factory.write(create_dirs)->read->deserialize succeeds. Empirically confirms current develop is CORRECT on cloud (the 2026-07-26 two-tenant bed failure was a stale binary), and locks the boundary that silently regressed 3x (TD-FLUSH-6 container-strip, TD-CACHE-5 malformed prefix, bed) with an always-on URL guard + a cloud-emulator-tier round-trip."
+metric = "well-formed cloud manifest URL + write/read/deserialize round-trip on object storage"
+status = "measured"
+asserted_in = ["docs/10-quality/td/TD-CACHE-7-restart-warming-object-store-coverage.adoc"]
+bench_source = "src/storage/engines/sst/warming.rs"
+bench_command = "PROXIMADB_AZURE_EMULATOR=1 AZURITE_BLOB_STORAGE_URL=http://127.0.0.1:11000 AZURE_STORAGE_ACCOUNT=devstoreaccount1 PROXIMADB_OBJECT_STORE_URL=azure://benchbucket/objtier cargo test -p proximadb --features azure --lib warm_manifest_round_trips_on_object_store -- --ignored"
+artifact = "docs/10-quality/td/TD-CACHE-7-restart-warming-object-store-coverage.adoc"
+hardware = "Local macOS arm64, Azurite 3.36 blob emulator on localhost:11000"
+date = "2026-07-26"
+version = "fix/warm-manifest-azure-path -> develop"
+
