@@ -1456,6 +1456,88 @@ async fn insert_rejects_duplicate_primary_key() {
     .expect("distinct key insert");
 }
 
+/// F2 (ADR-072 D3/D5): with a fenced `ConditionalKeyStore` wired via
+/// `with_conditional_key_store`, a duplicate PK is rejected by the store's
+/// `put_if_absent` (a live holder) rather than the `get_by_key` probe.
+#[cfg(feature = "oltp-integrity")]
+#[tokio::test]
+async fn insert_rejects_duplicate_primary_key_via_fenced_store() {
+    use crate::services::record_store::DirectWalTableRecordStore;
+    use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+    use proximadb_cks_local::{LocalWalKeyStore, SyncPolicy};
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let manager = Arc::new(CatalogManager::new());
+    manager
+        .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+        .await
+        .expect("native catalog");
+    let ddl = DdlService::new(manager.clone());
+    ddl.execute(DdlStatement::CreateNamespace {
+        namespace: vec!["default".to_string()],
+        if_not_exists: true,
+        properties: HashMap::new(),
+    })
+    .await
+    .expect("create namespace");
+    let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+    let ddl_stmt = parser
+        .parse_ddl("CREATE TABLE users (id TEXT NOT NULL, email TEXT NOT NULL, PRIMARY KEY (id));")
+        .expect("parse create")
+        .expect("ddl");
+    ddl.execute(ddl_stmt).await.expect("create table");
+
+    let wal_appender = Arc::new(
+        FramedTableWalAppender::open(temp_dir.path().join("pk.wal"))
+            .await
+            .expect("open WAL"),
+    );
+    let record_store = Arc::new(DirectWalTableRecordStore::new(
+        Arc::new(MemtableRecordStorage::new()),
+        wal_appender,
+    ));
+    let cks = Arc::new(
+        LocalWalKeyStore::open(temp_dir.path().join("cks.wal"), SyncPolicy::PerOp)
+            .expect("open cks"),
+    );
+    let dml = DmlService::with_record_store_and_table_write_executor(
+        manager.clone(),
+        record_store,
+        Arc::new(PlannedOnlyTableWriteExecutor::new()),
+    )
+    .with_conditional_key_store(cks);
+
+    let insert = |sql: &'static str| {
+        let p = &parser;
+        p.parse_dml(sql).expect("parse dml").expect("dml")
+    };
+
+    dml.execute(insert(
+        "INSERT INTO users (id, email) VALUES ('u1', 'a@x.com');",
+    ))
+    .await
+    .expect("first insert");
+
+    let err = dml
+        .execute(insert(
+            "INSERT INTO users (id, email) VALUES ('u1', 'b@x.com');",
+        ))
+        .await
+        .expect_err("duplicate PK must be rejected by the fenced store");
+    assert!(
+        err.to_string()
+            .contains("duplicate key value violates primary key"),
+        "unexpected error: {err}"
+    );
+
+    // A distinct key still inserts through the fenced path.
+    dml.execute(insert(
+        "INSERT INTO users (id, email) VALUES ('u3', 'e@x.com');",
+    ))
+    .await
+    .expect("distinct key insert");
+}
+
 #[tokio::test]
 async fn insert_rejects_duplicate_unique_constraint() {
     // TD-110: a non-PK UNIQUE column rejects a duplicate value against a

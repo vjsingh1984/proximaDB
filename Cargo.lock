@@ -6747,6 +6747,7 @@ dependencies = [
  "proximadb-cache",
  "proximadb-catalog",
  "proximadb-catalog-introspection",
+ "proximadb-cks-local",
  "proximadb-clustering-kernel",
  "proximadb-codec",
  "proximadb-compression",

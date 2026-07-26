@@ -397,6 +397,10 @@ proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-observability-engine = { path = "crates/modalities/proximadb-observability-engine" }
 # Optional: the experimental transactional Ledger modality (gated by `experimental-ledger`).
 proximadb-ledger = { path = "crates/modalities/proximadb-ledger", optional = true }
+# F2 (ADR-072 D3/D5): the generation-fenced local-WAL ConditionalKeyStore impl,
+# wired into the relational insert path for atomic composite-PK uniqueness under
+# the `oltp-integrity` feature. Optional → default builds are byte-for-byte unchanged.
+proximadb-cks-local = { path = "crates/storage/proximadb-cks-local", optional = true }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
 proximadb-queue = { path = "crates/modalities/proximadb-queue" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
@@ -697,6 +701,10 @@ experimental-engines = ["proximadb-raptor-engine/experimental-engines"]
 # Experimental transactional Ledger modality (ADR-071 / TD-LEDGER-1): the durable atomic-CAS
 # KV + TTL-lease OLTP surface. Off by default; enables the durable backend + its gRPC service.
 experimental-ledger = ["dep:proximadb-ledger", "proximadb-ledger/durable"]
+# F2 (ADR-072 D3/D5): enable the fenced ConditionalKeyStore in the relational insert
+# path. Off by default → the existing check-then-act PK-uniqueness probe runs unchanged;
+# on, a LocalWalKeyStore is wired in and enforces composite-PK uniqueness atomically.
+oltp-integrity = ["dep:proximadb-cks-local"]
 # Experimental SIMD path; not enabled by default
 simd-experimental = ["proximadb-codec/simd-experimental"]
 # TD-160 / ADR-027 / ADR-030: gate the PERF-CLASS I/O-trace *emission* (the

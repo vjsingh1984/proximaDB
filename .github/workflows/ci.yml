@@ -824,6 +824,10 @@ jobs:
           # Ledger modality gRPC service (S3, ADR-071) — the ProximaLedgerService + its port wiring
           # are behind the non-default `experimental-ledger` feature on the root crate.
           - { label: "experimental-ledger", pkg: proximadb,        args: "--features experimental-ledger" }
+          # F2 (ADR-072 D3/D5): the fenced ConditionalKeyStore in the relational insert
+          # path is behind the non-default `oltp-integrity` feature; check it compiles so
+          # cfg drift in that path is caught (the feature-gated test executes locally).
+          - { label: "oltp-integrity",       pkg: proximadb,        args: "--features oltp-integrity" }
           # Refactor/move coverage: these configurations catch cfg drift hidden
           # by the default build. Keep them in the same mandatory matrix rather
           # than relying on a PR being correctly labelled as mechanical.
