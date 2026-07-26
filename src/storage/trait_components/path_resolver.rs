@@ -1014,6 +1014,15 @@ impl DrPathBuilder {
     /// `None` account keeps the legacy flat `data/…` render instead.
     pub const DEFAULT_ACCOUNT_ID: &'static str = "default";
 
+    /// Default `namespace_id` for single-tenant / OSS deployments that have
+    /// not provisioned an explicit namespace (ADR-074 S1). The canonical,
+    /// rename-stable id mirroring [`DEFAULT_ACCOUNT_ID`]; resolved at the
+    /// identity boundary via
+    /// [`MiddlewareTenantContext::namespace_or_default`](crate::network::middleware::tenant::MiddlewareTenantContext::namespace_or_default).
+    /// Paths stay byte-identical to the prior storage-layer constant
+    /// (`DEFAULT_NAMESPACE_ID = "ns_default"` in `services/dml`).
+    pub const DEFAULT_NAMESPACE_ID: &'static str = "ns_default";
+
     /// Reserved subpath under [`OPERATOR_ROOT`](Self::OPERATOR_ROOT) that holds
     /// the deployment's system catalog (WAL + snapshot). Single canonical
     /// constant so boot and any tooling agree on the location.
