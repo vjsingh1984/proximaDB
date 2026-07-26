@@ -1,0 +1,394 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-FOUNDATION-2: Catalog metamodel + ABAC access-control plane (FC)
+:status: Draft — design-gate (pre-implementation)
+:date: 2026-07-25
+:authors: co-design session 2026-07-25
+:realizes: ADR-072 D12 (metamodel), D6 (tenancy), D15 (hybrid/filter planner + RLS)
+:sits-on: ADR-074 (namespace isolation boundary), ADR-031 (stable object_id)
+:tracks: FC (work package) + F7r (ABAC/RLS runtime filter)
+
+[cols="1,3"]
+|===
+| Status | Draft — design-gate, no code yet
+| Realizes | ADR-072 **D12** (family-parameterized identity, first-class edges, logical/physical split), **D6** (structural tenancy), **D15** (cost-based hybrid/filter planner, RLS-as-global-filter)
+| Sits on | **ADR-074** (namespace = isolation boundary; alias→`namespace_id`, authz-gated) — FC supplies the *authz gate* ADR-074 defers
+| Predecessors | TD-FOUNDATION-1 (modality consolidation), F0/F1a/F1b/F1d/F2 (merged: typed key + fenced CKS + MVCC + composite-PK MVP)
+| Related | TD-OSS-1 (tenant mechanism-vs-policy), TD-TENANT-1 (header trust), TD-DOC/ENTITY/GRAPH-TENANT-1 (structural isolation)
+|===
+
+== 0. Thesis
+
+FC builds the **governance and access-control plane** on top of the storage
+contract F0–F2 already delivered. It does two coupled things:
+
+1. **Metamodel (D12).** Make graph edges a **first-class `RelationshipType`**
+   (peer of the entity), make the identity/uniqueness slot
+   **family-parameterized**, and finish the **logical↔physical split** — so the
+   catalog stops modeling relationships through the FK/identity slot (the anti-
+   pattern the unified-metamodel literature refuses).
+
+2. **Access-control plane (D6/D15).** Enforce access control as **ABAC runtime
+   filters** — attribute-based row/field policies, **compiled to a predicate
+   that is _always ANDed_ into every scan**, resolved against the authenticated
+   subject's attributes, governed by the catalog **container hierarchy**
+   (namespace/db → collection/table → column/field), with subject↔permission
+   **bindings stored as objects in a reserved system namespace**.
+
+The organizing principle — the correction that motivated this design — is the
+**three-plane disentanglement**:
+
+[cols="1,2,3"]
+|===
+| Plane | What it is | Where it lives
+
+| **1. Uniqueness-scoping key**
+| Partitions the keyspace so a PK cannot collide across containers.
+| The `Identity` tenant/keyspace prefix (F0 codec). *It does not authorize.*
+
+| **2. Order-preserving storage/index key**
+| Where the typed, order-preserving encoding earns its keep: range scans on
+  index-organized rows.
+| The same F0 `Identity`, reused by the CKS (order-preservation incidental to
+  uniqueness).
+
+| **3. Access control (RLS)**
+| Who may see which rows/fields. ABAC predicate, **always ANDed** into the scan.
+| **This document.** Runtime filter (D15) over the catalog hierarchy (D12),
+  bindings in a system namespace.
+|===
+
+**A key never authorizes.** Enforcement is never a property of a key or a path
+prefix; it is a runtime filter evaluated against subject attributes. This is why
+FC is **off the OLTP critical path** — the correctness spine
+(R2→F0→F1a→F1b→F1d→F2→F5) never waits on access control.
+
+== 1. What already exists (grounding)
+
+This design is a *wiring + generalization* job far more than a greenfield build.
+The audit (2026-07-25) found:
+
+=== 1.1 Catalog metamodel — two coexisting models, edges not first-class
+
+* **Model A (control-plane schema):** `Catalog` trait
+  (`crates/control/proximadb-catalog/src/lib.rs:4425`), container hierarchy
+  `CatalogNamespace` (`:184`, carries `levels: Vec<String>`, `owner`, stable
+  `u64 object_id`, `tenant_id`) → `CatalogTableSchema` (`:620`) →
+  `CatalogColumn` (`:352`). **Logical/physical split already exists**: logical
+  `CatalogIndex` (`:1463`) vs physical `CatalogStorageLayout` (`:1848`),
+  `CatalogProjection` (`:2018`). ANN filter policy: `AnnFilteringMode`
+  (`:2193`, Pre/Inline/Post), `AnnFilteringPolicy` (`:2245`).
+* **Model B (internal unified):** `CatalogObject`
+  (`crates/control/proximadb-catalog/src/internal/mod.rs:611`), `ObjectType`
+  (`:55`, 14 variants incl. `GraphNodeLabel`/`GraphEdgeType`), `ObjectSchema`
+  (`:184`), `SchemaEnforcementMode` (`:128`).
+* **Edges are NOT first-class.** They are represented (a) at object granularity
+  via `ObjectType::GraphEdgeType`, and (b) as cross-model
+  `ForeignKeyReference` (`internal/mod.rs:408`). There is **no
+  `RelationshipType` peer-of-entity** with its own attributes/direction/
+  multiplicity. This is precisely the pattern D12 critiques.
+* Parallel legacy models still coexist (`core::service_types::Collection`
+  `src/core/service_types.rs:163`; `MetadataStoreInterface`
+  `src/storage/metadata/mod.rs:179`; proto `Collection`). Collapsing them is
+  TD-FOUNDATION-1/CATALOG_OBJECT_MODEL roadmap, **not** in FC's first slice.
+
+=== 1.2 Object identity — already solved
+
+Every catalog object holds a stable, never-reused `u64 object_id` from a
+system-wide sequence (ADR-031). Namespace `levels` carry the tenant
+(`[tenant, ...levels]`), so identical names across tenants stay distinct.
+`_syscat/objects/{object_id}.json` is authority; `_syscat` is a **reserved
+segment the data plane cannot address**
+(`path_resolver.rs::RESERVED_SYSTEM_SEGMENTS`). **FC reuses this** — the system
+namespace for policy bindings (§3.3) is a `_syscat`-class reserved container, not
+a new mechanism.
+
+=== 1.3 Access control — a large surface, mostly *dead-wired*
+
+[cols="1,2,1"]
+|===
+| Surface | Location | Status
+
+| Authn (SSO/OIDC/SAML/mTLS) | `src/auth/sso/*`, `src/security/auth/*`, `src/network/*/auth*` | **Live** at boundary
+| Coarse RBAC | `ConsolidatedRBACManager`, `UnifiedRole`/`UnifiedPermission` (`src/security/rbac_service.rs:44`), `CollectionPermissions` (`:105`), `FieldLevelPermissions` (`:117`) | **Live** — checked at gRPC boundary (`security_service.rs:104/201`)
+| Tenant isolation | `TenantContext`, `DrPathBuilder` per-tenant paths, namespace prefixing | **Live** (structural)
+| **RLS policy model** | `RLSPolicy`, `SecurityPredicate` (`src/security/rls/policy.rs:31/154`) — `OwnerOnly`/`RoleBased`/`TenantIsolation`/`ClassificationBased`/`CustomFilter{UserAttribute}`/`And`/`Or`/`Not`/`AlwaysDeny` | **Dead** — model exists, not wired
+| **RLS→filter compiler** | `CollectionRLS` → `core::search::FilterExpression` (`src/security/rls/service.rs:93`), `combine_filters` AND-combine (`src/services/operations/secure_operations.rs:412`) | **Dead** — no serving-path construction site
+| ABAC | — | **Absent** — no `ABAC`/`Principal`/`Subject` symbol anywhere
+|===
+
+**Consequence:** no row-level or attribute-level predicate is ANDed into any
+scan today. RBAC gates *operations* at the boundary; nothing filters *rows*.
+
+=== 1.4 The scan seam — where RLS must attach
+
+* **Relational/columnar (primary D15 seam):** `TableProvider::scan()`
+  (`src/datafusion/table_provider.rs:198`) AND-combines pushed filters at
+  **`:223–233`** into one `combined_filter`, passed to
+  `ProximaDBScanExec::try_new` (`:236`). **This is the always-ANDed injection
+  point.**
+* **Vector/ANN (D15 selectivity routing, partly present):** `AnnFilteringMode` /
+  `AnnFilteringPolicy` consumed by `query_optimizer.rs`,
+  `core::search::hybrid/builder.rs`, `index/axis/management/manager.rs`.
+* **Hazard — three incompatible `FilterExpression` types:**
+  `storage::formats::FilterExpression` (scan path),
+  `core::search::FilterExpression` (what `CollectionRLS` emits),
+  `foundation/proximadb-filter-expression::FilterExpression`. The RLS output
+  type does **not** match the scan input type. Bridging them is a named
+  work-item (§4, WI-5).
+
+=== 1.5 The namespace boundary — ADR-074 (just landed)
+
+ADR-074 makes the **namespace an isolation boundary**: client-facing **alias** →
+opaque immutable **`namespace_id`** (the path segment + metering key), resolved
+**server-side, authz-gated, per-tenant**, uniqueness enforced by **conditional
+write** (our CKS). ADR-074 states plainly: *"what is missing is the **authz
+gate**, the default binding, and the wire surface."*
+
+**FC supplies that authz gate.** ADR-074 owns the *mechanism* (two-layer naming,
+resolution at the identity seam); FC owns the *policy* (who may resolve/enter a
+namespace, and what they see once inside). This is the TD-OSS-1 mechanism-vs-
+policy split, made concrete.
+
+== 2. Metamodel decisions (D12)
+
+=== D12-a — `RelationshipType` becomes first-class
+
+Introduce a relationship as a **peer of the entity** in Model B, not a value in
+the identity slot:
+
+[source]
+----
+ObjectType::Relationship            // new peer variant (edges, FKs, references)
+RelationshipType {
+    object_id: u64,                 // stable, ADR-031
+    from: EntityRef,  to: EntityRef,// typed endpoints (Table/Graph/Doc/Vector)
+    direction: Directed | Undirected,
+    multiplicity: OneToOne | OneToMany | ManyToMany,
+    attributes: Vec<CatalogColumn>, // edges carry their own properties
+    tenancy: RelationshipTenancy,   // see D12-d
+}
+----
+
+`ForeignKeyReference` (`internal/mod.rs:408`) and `GraphEdgeType` become
+**projections of** `RelationshipType`, not parallel encodings. A graph edge and
+a relational FK are the same metamodel object with different physical layouts —
+the D1 unification, made real.
+
+=== D12-b — Identity/uniqueness is a family-parameterized slot
+
+The identity slot is **not uniform** across families (graph omits it; key-value
+detaches it; time-series is *ordering*, not *uniqueness*; vector is *neither* —
+identity is the row surrogate, similarity is the access path). Model it as:
+
+[source]
+----
+IdentitySlot {
+    kind: Uniqueness | Ordering | Surrogate | None,
+    key: Option<CompositeKeySpec>,   // encoded by the F0 codec when present
+    completeness_gaps: Vec<GapNote>, // U-Schema discipline: what this family omits
+}
+----
+
+This directly consumes F0 (the typed codec) and the CKS: `kind == Uniqueness`
+means the composite key is registered in the ConditionalKeyStore;
+`kind == Ordering` (time-series) means the key is order-preserving but **not**
+uniqueness-fenced. **Open risk (carried from D12):** no unified-metamodel paper
+covers vector/time-series identity — this slot's vector/TS parameterization is
+the highest-risk element and the primary pressure-test target (§6).
+
+=== D12-c — Logical governance splits from physical index
+
+The split already exists structurally (§1.1). FC's job is to make the
+**governance-logical** layer the seam ABAC attaches to, distinct from the
+physical `CatalogStorageLayout`/index. Policy is expressed over logical
+containers/columns; it must survive re-layout, re-index, and tier movement
+untouched. **No policy predicate references a physical path or index.**
+
+=== D12-d — Cross-tenant edges: the tension ADR-072 flags "resolve before FC"
+
+D12 wants first-class edges; D6 wants a hard tenant boundary. A
+`RelationshipType` whose `from`/`to` cross a tenant boundary is the collision.
+**Recommended resolution (for adversarial review):**
+
+* **Forbidden by default.** `RelationshipTenancy::Intra` — both endpoints must
+  resolve to the same `tenant_id`; the CKS/catalog rejects a cross-tenant edge
+  at write time (fail-closed, matches Weaviate's ban).
+* **Brokered escape hatch.** `RelationshipTenancy::Brokered { capability }` — a
+  cross-tenant edge is admissible **only** when an explicit capability object
+  (in the system namespace) grants it, and the edge is **materialized as two
+  half-edges**, each owned by and filtered within its own tenant. No scan ever
+  traverses a raw cross-tenant pointer; traversal re-enters through the ABAC
+  filter on the far side.
+* **Federated** is out of scope for FC (defer to the consistency-floor work).
+
+This keeps D6 fail-closed as the default while leaving D12's expressiveness
+reachable under explicit, audited capability. *Flagged as the top decision for
+the external review.*
+
+== 3. Access-control plane (D6 / D15)
+
+=== 3.1 Subject model
+
+The subject is the authenticated principal already carried by
+`UnifiedUserContext` (`src/security/rbac_service.rs`) + `TenantContext`.
+FC adds an **attribute bag** (ABAC's "A"):
+
+[source]
+----
+SubjectAttributes {
+    subject_id: SubjectId,           // stable principal id
+    tenant_id: TenantId,             // from ADR-074 identity seam
+    roles: Vec<RoleId>,              // existing RBAC roles, reused as attributes
+    attrs: Map<AttrKey, AttrValue>,  // dept, clearance, region, ... (from SSO claims)
+}
+----
+
+Attributes are **populated at the identity seam** (same place ADR-074 resolves
+`namespace_id`) from SSO/OIDC claims + tenant defaults, and **travel in the
+request context** — never re-derived downstream. RBAC roles are *not replaced*;
+they become one attribute source among several (a `RoleBased` predicate is an
+ABAC predicate over the `roles` attribute).
+
+=== 3.2 Policy model — ABAC over the container hierarchy
+
+Reuse the existing `SecurityPredicate` (`src/security/rls/policy.rs:154`) — it
+already covers the ABAC shape (`CustomFilter{ ValueSource::UserAttribute }`,
+`ClassificationBased`, `And/Or/Not`, `AlwaysDeny`). FC **generalizes its scope**
+from per-collection to the full container hierarchy and **adds field scope**:
+
+[source]
+----
+PolicyBinding {
+    object_id: u64,
+    scope: Scope,                    // Namespace(id) | Table(id) | Column(id)
+    subject_selector: SubjectSelector, // which subjects this binds (role/attr match)
+    effect: Permit | Deny,           // deny wins; default deny (fail-closed)
+    predicate: SecurityPredicate,    // ABAC row filter, resolved vs SubjectAttributes
+    field_mask: Option<FieldMask>,   // column-level: null-out / redact / forbid
+}
+----
+
+**Resolution is hierarchical and deny-biased:** a subject's effective policy at a
+table is the composition of bindings at namespace ⊕ table ⊕ column scope; any
+`Deny` at any level removes access; row predicates compose by AND. This mirrors
+the ADR-074 resolution order (explicit → principal → tenant → reserved default)
+so the two planes read consistently.
+
+=== 3.3 Where policy lives — a reserved system namespace
+
+Policy bindings are **catalog objects** in a reserved, `_syscat`-class system
+namespace (`_sysauth` or `_syscat/policy`), addressable only by the control
+plane, never by the data plane (reusing the `RESERVED_SYSTEM_SEGMENTS` guard).
+Consequences:
+
+* Bindings get object identity, MVCC, and durability **for free** — they are
+  ordinary catalog objects under the F1b/F1d store.
+* "Who has what permission on which container" is itself a queryable catalog
+  relation (auditability).
+* No new persistence mechanism; no secrets in the binding (secrets stay in the
+  existing vault surface).
+
+=== 3.4 Enforcement — compile to an always-ANDed pre-filter (D15)
+
+The enforcement path, per D15, is **not** a post-filter and **not** a separate
+gate:
+
+1. At query planning, resolve the subject's effective `PolicyBinding` set for
+   the target table (§3.2).
+2. Compile the composed `SecurityPredicate` → a scan-native predicate via the
+   existing `CollectionRLS` compiler (`src/security/rls/service.rs`), **bridged**
+   to `storage::formats::FilterExpression` (§4 WI-5).
+3. **AND it into `combined_filter` at `table_provider.rs:223`** — the same seam
+   ordinary pushed predicates use. The RLS predicate is indistinguishable from a
+   user `WHERE` clause to the executor, so it inherits pushdown, statistics, and
+   the D15 selectivity router for free.
+4. For the **vector/ANN** path, the compiled predicate feeds the
+   `AnnFilteringPolicy` router (`:2245`) as a **global allow-list woven into the
+   traversal** — pre-filter or index-integrated, **never naïve post-filter**
+   (D13 vector-tenancy invariant: authorization is a hard correctness invariant
+   decoupled from recall; `Deny` needs complement semantics).
+5. **Field masks** apply as a projection rewrite (null-out/redact) after row
+   admission.
+
+**Fail-closed:** if policy resolution errors, the scan is denied (empty
+allow-list), never opened. This is the D6 structural guarantee.
+
+=== 3.5 This is F7r
+
+The enforcement wiring (steps 1–5) is work package **F7r**, dependent on FC (the
+policy model + subject attributes) and F4 (the planner substrate), running
+**parallel to F7** on the same filter machinery — off the critical path.
+
+== 4. Work breakdown (FC increment)
+
+FC first slice is **additive and feature-gated** (`abac-policy`), mirroring the
+`oltp-integrity` discipline. Order:
+
+[cols="1,4,1"]
+|===
+| WI | Item | Gated
+
+| WI-1 | `RelationshipType` as first-class `ObjectType::Relationship` peer; `ForeignKeyReference`/`GraphEdgeType` re-expressed as projections (D12-a) | `abac-policy` off ⇒ no behavior change
+| WI-2 | `IdentitySlot` family-parameterization; bind `kind == Uniqueness` to the CKS registration path (D12-b) | additive
+| WI-3 | `SubjectAttributes` populated at the identity seam from SSO claims + tenant defaults; travels in context (§3.1) | additive
+| WI-4 | `PolicyBinding` objects in the reserved system namespace; hierarchical deny-biased resolver (§3.2/3.3) | additive
+| WI-5 | **`FilterExpression` bridge** — one canonical conversion `core::search` ⇄ `storage::formats` (§1.4 hazard); the single riskiest integration point | additive
+| WI-6 | Cross-tenant edge policy: `RelationshipTenancy::{Intra, Brokered}`, fail-closed default, half-edge materialization (D12-d) | additive
+| **F7r** | Enforcement: compile → AND into `combined_filter` (`table_provider.rs:223`) + ANN allow-list; field-mask projection; fail-closed (§3.4) | `abac-policy`
+|===
+
+WI-1..WI-6 are FC; F7r is its own package (§3.5). WI-5 is called out because a
+wrong bridge silently drops or widens a security predicate — it must be
+property-tested (§5).
+
+== 5. Test & gate plan
+
+* **Metamodel:** round-trip a relational FK and a graph edge through the single
+  `RelationshipType`; assert the two physical projections agree on endpoints.
+* **Policy resolution:** table-driven — namespace-Deny masks a table-Permit;
+  column field-mask redacts; AND-composition of two row predicates; default-deny
+  on missing binding.
+* **Enforcement (F7r):** a subject with a `dept=eng` attribute sees only
+  `dept=eng` rows through `SELECT *` **and** through a vector search — the
+  predicate must ride *both* seams identically (the D15 unification claim).
+* **Fail-closed:** policy-resolver error ⇒ zero rows, never full-table.
+* **Bridge (WI-5):** property test — for random `SecurityPredicate`, the bridged
+  `storage::formats` predicate admits exactly the same row set as the
+  `core::search` one. No silent widening.
+* **Cross-tenant (D12-d):** a cross-tenant edge write is rejected without a
+  capability; with one, traversal from tenant A cannot observe tenant B rows the
+  far-side ABAC filter denies.
+* Coverage ≥75% (repo gate); evidence to `BENCHMARK_EVIDENCE.toml` where
+  enforcement touches the scan hot path (selectivity-router overhead).
+
+== 6. Adversarial-review targets (design gate — resolve before code)
+
+Ranked for the external red-team pass:
+
+1. **Cross-tenant edges (D12-d).** Is forbidden-default + brokered-half-edge the
+   right cut, or does it cripple legitimate multi-tenant graph use? Alternative:
+   federated references with capability tokens. *Highest-priority fork.*
+2. **Vector identity slot (D12-b).** No prior art covers vector/TS identity.
+   Is `Surrogate`/`Ordering` the right parameterization, or does vector need a
+   distinct family? (ADR-072's own flagged highest-risk item.)
+3. **The `FilterExpression` bridge (WI-5).** Is unifying three predicate types a
+   prerequisite, or does bridging two of them at the seam suffice for FC?
+   Silent-widening is a security bug, not a correctness nicety.
+4. **RBAC-as-attributes (§3.1).** Does folding existing `UnifiedRole` into the
+   ABAC attribute bag preserve every current coarse-RBAC guarantee, or does it
+   regress an operation-level check into a weaker row-level one?
+5. **Enforcement completeness.** `table_provider.rs:223` covers the DataFusion
+   relational path. Which ingress paths (pgwire, gRPC vector, graph traversal,
+   cross-modal UDTF) bypass it, and must each grow the same always-ANDed seam?
+   An unenforced path is a silent hole.
+
+== 7. What FC does *not* do
+
+* Does not collapse the parallel legacy object models (Model A/B/proto) — that
+  is TD-FOUNDATION-1 roadmap; FC adds the relationship/identity slots to Model B
+  only.
+* Does not replace RBAC or authn — it consumes them.
+* Does not enforce (that is F7r); FC delivers the metamodel + policy model +
+  subject attributes + the resolver, all inert until F7r wires the seam.
+* Does not emit dollars/tiers/SKUs — neutral governance only (ADR-060 boundary).
