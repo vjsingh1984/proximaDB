@@ -5,7 +5,7 @@
 //!
 //! ADR-027 decided the differentiator: per-tenant billing meters are not just
 //! scraped from Prometheus (pull-only, ephemeral) but **persisted durably to the
-//! tenant's own object-store subtree** under [`DrResolvedPath::metering_subprefix`]
+//! tenant's own object-store subtree** under [`DrTenantSystemPath::metering_subprefix`]
 //! (`data/{tenant}/_metering/…`), where the control plane (AnvaiOps) reads them
 //! and applies its rate card. This module is the OSS-native half of that sink:
 //! it serializes the per-tenant resident-storage (KSU) snapshot the
@@ -86,7 +86,7 @@ impl MeteringRecord {
 /// `s3://bucket/prefix`). The returned URL is
 /// `{base}/data/{tenant}/_metering/storage/snapshot-{secs}.json` — the
 /// `data/{tenant}/_metering/` portion comes verbatim from
-/// [`DrResolvedPath::metering_subprefix`], so the metering sink stays under the
+/// [`DrTenantSystemPath::metering_subprefix`], so the metering sink stays under the
 /// same `DrPathBuilder` isolation prefix as the tenant's data. Returns `Err` if
 /// the tenant id fails path validation (fail-closed — never write to an
 /// unvalidated key).

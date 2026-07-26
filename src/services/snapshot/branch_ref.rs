@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::storage::trait_components::path_resolver::DrResolvedPath;
+use crate::storage::trait_components::path_resolver::DrCollectionPath;
 
 /// An immutable, object-store-persisted pointer to a point in a collection's
 /// (and its tables') history, forming the root of a copy-on-write branch.
@@ -79,7 +79,7 @@ impl BranchRef {
 
     /// Object-store key for this ref under a resolved collection path,
     /// `data/<tenant>/<ns>/<collection>/_branches/<branch_id>.json`.
-    pub fn object_key(&self, resolved: &DrResolvedPath) -> String {
+    pub fn object_key(&self, resolved: &DrCollectionPath) -> String {
         format!("{}{}.json", resolved.branches_subprefix(), self.branch_id)
     }
 }
