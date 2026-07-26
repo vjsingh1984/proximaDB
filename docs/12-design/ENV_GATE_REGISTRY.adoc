@@ -168,7 +168,7 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_PAX_RABITQ_POOL_MULT` | Per-k multiplier for the RaBitQ survivor pool (M ≥ k·mult). | `100` | eval; — | src/storage/engines/sst/segment_format.rs:857
 | `PROXIMADB_PAX_RABITQ_POOL_RATE` | Corpus-fraction term for the pool (M ≥ ceil(n·rate)). | `0.01` (1%) | eval; — | src/storage/engines/sst/segment_format.rs:865
 | `PROXIMADB_PAX_READ_COARSE_NPROBE` | READ knob: coarse-probe cell count (nprobe) | adaptive default | TD-RDSTRAT-8 PR-B; retired alias name: `PROXIMADB_IVF2_NPROBE` | `src/storage/engines/sst/segment_format.rs`
-| `PROXIMADB_PAX_READ_COARSE_PROBE` | READ gate: search probes via A0 on v3 segments (semantic name) | OFF (recall-ratchet gated) | TD-RDSTRAT-8 PR-B | `src/storage/engines/sst/segment_format.rs`
+| `PROXIMADB_PAX_READ_COARSE_PROBE` | READ kill-switch: coarse probe via A0 on trained v3 segments (`0/off/false/no` disables) | **ON** (flipped 2026-07-26; sweep: recall 0.986-0.987 ≥ ratchet at default nprobe, 81 GETs/92ms vs 108/144ms unprobed) | kill-switch; TD-RDSTRAT-8 PR-B | `src/storage/engines/sst/segment_format.rs`
 | `PROXIMADB_PAX_RERANK_QUANT` | Tier-2 rerank quant strategy when tier-1 is RaBitQ (fp16/f32/sq8). | `Sq8` (after per-collection tag) | opt-in; TD-123 | src/storage/engines/sst/flush/mod.rs:1239
 | `PROXIMADB_PAX_SPLIT_PROBE_META_CACHE` | Enables caching of split-probe segment metadata. | OFF | opt-in; — | src/storage/engines/sst/segment_format.rs:1402
 | `PROXIMADB_PAX_VECTOR_COALESCE_GAP` | Max byte gap to bridge when coalescing adjacent A-region (vector-stripe) probe-cell ranged GETs | 0 (no gap coalescing) | eval; — | `src/storage/engines/sst/segment_format.rs`

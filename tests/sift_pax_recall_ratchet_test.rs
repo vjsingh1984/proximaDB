@@ -1065,7 +1065,7 @@ async fn sift_ivf2_probe_release_bakeoff_eval() {
         let v3 = write_ivf2_geometry(dir.path(), &base, file_count, true);
 
         unsafe {
-            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
             std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
             set_ivf2_layout_proof_arm(None, None, false);
             std::env::set_var("PROXIMADB_TRACE_PAX_STAGES", "1");
@@ -1184,7 +1184,7 @@ async fn sift_ivf2_probe_release_bakeoff_eval() {
 
     unsafe {
         std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
-        std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+        std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
         std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
         std::env::remove_var("PROXIMADB_TRACE_PAX_STAGES");
         set_ivf2_layout_proof_arm(None, None, false);
@@ -1316,7 +1316,7 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
             if probe_on {
                 std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
             } else {
-                std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
             }
         }
         let _ = proximadb::storage::engines::sst::segment_format::drain_get_trace();
@@ -1399,7 +1399,7 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
     );
     unsafe {
         std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
-        std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+        std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
         std::env::remove_var("PROXIMADB_TRACE_GETS");
     }
 }
