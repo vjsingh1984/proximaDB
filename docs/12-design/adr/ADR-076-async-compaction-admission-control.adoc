@@ -1,0 +1,157 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-076: Async compaction + L0 admission control for streaming ingest on object storage
+:status: Proposed
+:date: 2026-07-26
+:authors: co-design session 2026-07-26
+
+[cols="1,3"]
+|===
+| Status | Proposed
+| Date | 2026-07-26
+| Deciders | Vijaykumar Singh
+| Relates to | ADR-027 (DrPath / storage layout — compaction writes under the path contract), ADR-036 (flat keys + per-object access tier — compaction I/O cost), ADR-052 (co-design cost spine — object-store round-trips dominate), TD-COMPACT-5 (training compaction trigger — the arm that fires per-flush), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (the dominant cost term is I/O round-trips, not CPU)
+| Tracked by | TD-COMPACT-6 (async compaction), TD-COMPACT-7 (admission control watermarks), TD-COMPACT-8 (training-arm debounce)
+| Supersedes | —
+|===
+
+== Context
+
+ProximaDB's SST compaction is **inline synchronous**: every flush awaits the
+full compaction cycle (read all L0 → merge → train PCA/IVF → write new segment
+→ delete inputs) before continuing (`flush/mod.rs:747-781`). This is the
+opposite of every production LSM system:
+
+[cols="1,2,2,2"]
+|===
+| System | Compaction model | Admission control | Write blocking?
+| RocksDB | Async (separate compaction thread pool) | `slowdown_trigger` + `stop_trigger` L0 watermarks | No
+| HBase | Async (background compaction threads) | Compaction throttling + pressure mode | No
+| Cassandra | Async (`concurrent_compactors`) | IO throughput throttle + backpressure | No
+| Delta / Iceberg | Batch maintenance (OPTIMIZE / rewrite_data_files) | N/A (append-only, no flush) | No
+| **ProximaDB (today)** | **Inline synchronous** (blocks flush) | **None** | **Yes — full compaction duration**
+|===
+
+=== The measured pathology
+
+The 2026-07-26 verification (1M SIFT ingest, Azurite) showed the TD-COMPACT-5
+training arm firing **every ~35s during ingest** — 5-7 redundant cycles, each
+re-reading + re-training growing L0 segments. Each cycle: N object-store GETs
+(read inputs) + PCA training (~35s CPU) + 1 PUT (write output) + N DELETEs
+(remove inputs). On cloud (50 ms/GET), the 7 redundant cycles waste
+**7× the object-store I/O** of a single post-ingest training pass.
+
+The root cause is the intersection of three gaps:
+
+1. **Inline blocking**: flush awaits compaction → ingest throughput is gated by
+   compaction speed (~1 flush/35 s, not ~1 flush/1 s).
+2. **No admission control**: writes proceed at full speed regardless of L0
+   backlog → compaction falls behind → more untrained segments → more triggers.
+3. **No debounce**: the training arm (`should_trigger_compaction`, TD-COMPACT-5)
+   fires on every flush whenever ANY untrained L0 ≥ 32 MB exists — no
+   "recently-trained" or "segment-is-stable" guard. A segment that is still
+   growing (receiving new flushes) is re-trained on every cycle.
+
+== Decision
+
+Decouple the **write path** (flush → L0, fast, non-blocking) from the
+**maintenance path** (compaction → train → promote, scheduled, overlaps
+writes), gated by **L0 admission control watermarks**.
+
+=== D1 — Async compaction (background workers, not inline)
+
+Move `run_due_compaction` from inline-synchronous (blocking the flush at
+`flush/mod.rs:756`) to the **existing background compaction workers** (2
+daemon threads spawned at `engine.rs:212`, currently idle because the inline
+path bypasses them). Flush creates L0 files and returns immediately; compaction
+runs concurrently on the worker pool.
+
+The existing `schedule_compaction` + `task_queue` + `worker_loop`
+(`compaction.rs:589-902`) provide the machinery — they are built, tested, and
+idle. This decision wires them into the production path.
+
+=== D2 — L0 admission control (RocksDB-style watermarks)
+
+Add two L0-file-count watermarks to `SstConfig` (TOML-controllable):
+
+- **`l0_slowdown_trigger`** (default 8): when L0 file count ≥ this, delay each
+  write by a small amount (~1 ms) to give compaction breathing room.
+- **`l0_stop_trigger`** (default 12): when L0 file count ≥ this, **stall
+  writes** (reject with a BACKPRESSURE error, same as the existing memtable
+  backpressure) until compaction reduces L0 below the watermark.
+
+This is the proven RocksDB model: writes naturally slow down when compaction
+can't keep up, preventing unbounded L0 backlog + compaction storms.
+
+=== D3 — Training-arm debounce (wait for segment stability)
+
+The TD-COMPACT-5 training arm (`should_trigger_compaction` arm 2) should NOT
+fire on a segment that received new writes recently. Add a **stability guard**:
+track the last-flush timestamp per collection; only arm the training compaction
+if no new flush has arrived in the last `training_debounce_secs` (default 120 s).
+This ensures training happens ONCE after ingest settles, not N times during
+ingest.
+
+=== D4 — Separation of concerns (the boundary contract)
+
+Each surface has a single, well-integrated responsibility:
+
+[cols="2,4"]
+|===
+| Surface | Responsibility + boundary
+| **Flush** | Memtable → L0 `.pax` file (atomic, non-blocking). Never awaits compaction. Returns in ~1 s. Owns: L0 file creation, filename, WAL append.
+| **Compaction worker** | Reads L0 inputs → merge + dedup → train PCA/IVF → write L(n+1) output → delete L0 inputs. Runs on the background pool, concurrent with flushes. Owns: level promotion, segment training, input cleanup.
+| **Admission control** | Monitors L0 file count per collection. Throttles (slowdown) or stalls (stop) writes when the backlog exceeds watermarks. Owns: the write-rate ↔ compaction-rate feedback loop.
+| **Training debounce** | Guards the training arm: skip if the collection is actively receiving flushes. Owns: the "when to train" decision (post-ingest, not per-flush).
+|===
+
+The boundaries prevent the current pathology: flush never blocks on
+compaction; compaction never re-trains an actively-growing segment; admission
+control prevents backlog from outpacing compaction.
+
+== Consequences
+
+* **Ingest throughput**: ~30× faster (1 flush/1 s vs 1 flush/35 s) — flush
+  is no longer gated by compaction/training wall time.
+* **Object-store I/O**: ~7× less compaction I/O during ingest (1 training
+  pass post-ingest vs 7 redundant cycles during ingest). Each saved cycle =
+  N GETs + 1 PUT + N DELETEs avoided.
+* **Latency**: query latency during ingest drops (no compaction CPU contention
+  on the query path — compaction runs on separate worker threads).
+* **Complexity**: introduces background-thread coordination (the worker pool
+  already exists; the `schedule_compaction` + `worker_loop` are built). The
+  inline path remains as a test-only synchronous option.
+* **Correctness**: compaction is idempotent (read-merge-write-delete); running
+  it async doesn't change the output. The atomic coordinator serializes the
+  publish (`finalize_atomic_operation`), so concurrent flushes + compaction
+  don't corrupt. The segment-header `layout_version` is the mixed-read-safe
+  marker (v1 + v3 coexist).
+
+== Co-design cost analysis
+
+On object storage, each compaction cycle costs N GETs (read inputs) + 1 PUT
+(write output) + N DELETEs (remove inputs). The dominant cost term is the GET
+round-trips (50 ms each on cloud). The 7 redundant training cycles during
+ingest waste 7 × N × 50 ms of pure object-store I/O. The async + debounced
+model reduces this to 1 × N × 50 ms (one post-ingest pass) — a **7× I/O cost
+reduction** in the compaction path, the single largest waste in the current
+system during streaming ingest.
+
+The admission control watermarks prevent the L0 backlog from growing unbounded
+(which would increase the per-query GET count — each un-compacted L0 file adds
+footer + data GETs). By keeping L0 bounded, the watermarks protect query
+latency during heavy ingest.
+
+== Explicitly out of scope
+
+* **Compaction strategy tuning** (leveled vs tiered vs FIFO): unchanged — the
+  Cx L(n-1) → 1x Ln ratio and the `level_multiplier` stay as-is.
+* **Compaction priority / scheduling policy**: the existing FIFO queue +
+  `schedule_compaction` dedup suffice for the first cut. Priority-based
+  scheduling (e.g., compact the largest L0 first) is a follow-up.
+* **Per-collection compaction locks**: the atomic coordinator's operation-ID
+  serialization suffices; a per-collection mutex is a follow-up if contention
+  is observed.
+* **Iceberg/Delta-style scheduled-batch maintenance**: the async-background
+  model (D1) is the right first step; the scheduled-batch model (decouple
+  compaction from the engine entirely, run as a job) is a larger follow-up.
