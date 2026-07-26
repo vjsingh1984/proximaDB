@@ -11,6 +11,7 @@
 [cols="1,3"]
 |===
 | Status | Draft — design-gate, no code yet
+| **Blocked-on** | **HARD STOP — no FC/F7r code until the §6 red-team findings are folded in AND this doc is promoted out of `Draft`. The external reviews to date (2026-07-26) verified develop state and endorsed this gate, but did _not_ attack the §6 design targets — so the design red-team is still owed. F5 is the only critical-path item currently open; FC/F7r are off-critical-path, so there is no schedule pressure to release the gate early.**
 | Realizes | ADR-072 **D12** (family-parameterized identity, first-class edges, logical/physical split), **D6** (structural tenancy), **D15** (cost-based hybrid/filter planner, RLS-as-global-filter)
 | Sits on | **ADR-074** (namespace = isolation boundary; alias→`namespace_id`, authz-gated) — FC supplies the *authz gate* ADR-074 defers
 | Predecessors | TD-FOUNDATION-1 (modality consolidation), F0/F1a/F1b/F1d/F2 (merged: typed key + fenced CKS + MVCC + composite-PK MVP)
@@ -387,6 +388,27 @@ Ranked for the external red-team pass:
    relational path. Which ingress paths (pgwire, gRPC vector, graph traversal,
    cross-modal UDTF) bypass it, and must each grow the same always-ANDed seam?
    An unenforced path is a silent hole.
+
+=== 6.1 Review log
+
+[cols="1,1,3"]
+|===
+| Date | Reviewers | Outcome
+
+| 2026-07-26
+| kimi, deepseek, glm (independent)
+| **Verification + gate, not design.** All three independently confirmed the
+  merged develop state (tip `1f874f00c`; F2b enforcement at
+  `dml/mod.rs:827/1011/3048/3067`; both PRs merged) and unanimously endorsed
+  holding FC/F7r code behind this doc's gate (folded into **Blocked-on**, above).
+  **None attacked the §6 design targets** — the substantive red-team (esp. §6.1
+  cross-tenant edges, §6.2 vector/TS identity slot, §6.3 the `FilterExpression`
+  widening risk) is **still outstanding.** Presence-on-develop and clean
+  verification are *not* design approval.
+|===
+
+The gate lifts only when a review actually engages §6.1–§6.5 and its findings are
+folded here — at which point `:status:` promotes out of `Draft`.
 
 == 7. What FC does *not* do
 
