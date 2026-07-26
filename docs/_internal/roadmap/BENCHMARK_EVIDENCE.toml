@@ -97,6 +97,22 @@ hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build, seri
 date = "2026-07-25"
 version = "feat/flush-triggers -> develop (#1207)"
 
+[[claims]]
+id = "nprobe_sweep_trained_1m"
+claim = "TD-RDSTRAT-8 nprobe sweep on the all-trained 1M bed (fixed 100-query recall slice, 60 novel cold queries/point): nprobe=8 (default) 81.4 GETs / 75.3 MB / 92 ms mean, recall@10 0.9860; nprobe=12 103.3 / 94.5 / 86 ms mean / 104 ms p95, 0.9870; recall plateaus 0.986-0.987 from nprobe>=8; nprobe=4 drops to 0.9780. The earlier probe-armed 0.9780 reading was 50-query slice noise. Probe-on dominates unprobed (108.5 GETs / 144 ms / 0.9840) on every axis -> reader gate PROXIMADB_PAX_READ_COARSE_PROBE flipped DEFAULT-ON (kill-switch semantics); mixed-safe (A0-less segments never probe)."
+metric = "GETs/query + bytes/query + latency + recall@10 across nprobe; flip evidence"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc",
+  "docs/10-quality/td/TD-COMPACT-5-training-compaction-trigger.adoc",
+]
+bench_source = "scripts/bench/nprobe_sweep.py"
+bench_command = "python3 scripts/bench/nprobe_sweep.py <bin> <cfg> <bed> 5879 1 4,8,12,16,24,32,48  # PROXIMADB_PAX_WRITE_A0_TRAIN=1 PROXIMADB_L0_COMPACTION_ENABLED=1 set by harness"
+artifact = "docs/10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc"
+hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build, serialized runs"
+date = "2026-07-26"
+version = "feat/nprobe-tuning -> develop"
+
 
 [[claims]]
 id = "io_trace_sink_hotpath_p95"

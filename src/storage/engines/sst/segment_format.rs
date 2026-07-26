@@ -1349,13 +1349,23 @@ pub fn drain_probe_trace() -> Vec<(u64, u64, u64, u64)> {
 }
 
 /// TD-RDSTRAT-8 PR-B gate: engage the Region-A0 coarse probe on v3 segments.
-/// Default **OFF** (`PROXIMADB_PAX_READ_COARSE_PROBE=1` to enable) — v3 segments read via
-/// the single-level whole-region scan until this flips (recall/GET-ratchet
-/// gated, mirroring the PR-A writer gate). v1 segments never probe.
+/// Default **ON** since 2026-07-26 — the flip precondition was met by the
+/// nprobe sweep (fixed-slice recall@10 0.9860–0.9870 ≥ the 0.984 ratchet at
+/// the default nprobe, with 81 GETs / 92 ms vs 108 GETs / 144 ms unprobed:
+/// strictly better on every axis; ledger claim `nprobe_sweep_trained_1m`).
+/// `PROXIMADB_PAX_READ_COARSE_PROBE=0|off|false|no` is the kill-switch.
+/// Mixed-safe: v1 / A0-less segments never probe regardless.
+/// (Retired alias name: `PROXIMADB_IVF2_PROBE` — TD-ENVGATE-1.)
 pub fn coarse_probe_enabled() -> bool {
-    // ENV_GATE_REGISTRY rule 2: the READ half — search probes via A0.
-    // Pre-GA clean rename (TD-ENVGATE-1): PROXIMADB_PAX_READ_COARSE_PROBE is RETIRED.
-    crate::storage::engines::sst::block_cluster::env_gate_on("PROXIMADB_PAX_READ_COARSE_PROBE")
+    !matches!(
+        std::env::var("PROXIMADB_PAX_READ_COARSE_PROBE")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("0" | "off" | "false" | "no")
+    )
 }
 
 /// Number of coarse cells to probe. `PROXIMADB_PAX_READ_COARSE_NPROBE` overrides (the
@@ -1367,8 +1377,12 @@ fn coarse_probe_nprobe(k_c: usize) -> usize {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n > 0)
-        .unwrap_or_else(|| k_c.div_ceil(4).clamp(8, k_c.max(1)))
-        .min(k_c)
+        // ~25% of cells, floored at 8, but NEVER above the cell count —
+        // ordered max-then-min because `clamp(8, k_c)` PANICS when k_c < 8
+        // (min > max), a latent crash exposed when the probe went default-ON
+        // (tiny trained segments have < 8 cells; no-panic mandate #4).
+        .unwrap_or_else(|| k_c.div_ceil(4).max(8))
+        .min(k_c.max(1))
 }
 
 /// Outcome of a coarse probe: the global survivor rows plus the io_trace
@@ -3321,7 +3335,7 @@ mod tests {
 
         // Baseline: probe OFF → whole-region single-level scan over the v3 segment.
         unsafe {
-            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
         }
         let _ = drain_get_trace();
         let _ = drain_probe_trace();
@@ -3545,7 +3559,7 @@ mod tests {
         assert_eq!(fallback_snapshot.ivf_cells_probed, 0);
         assert_eq!(fallback_snapshot.ivf_whole_region_fallback, 1);
         unsafe {
-            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
             std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
             std::env::remove_var("PROXIMADB_TRACE_GETS");
             std::env::remove_var("PROXIMADB_IVF_K");

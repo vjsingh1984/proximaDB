@@ -62,8 +62,7 @@ all-trained bed: **82.9 GETs / 77.5 MB per query, mean 76 ms / p95 90 ms**
 (vs 108.5/88.0/144 ms trained-unprobed; 179.7/104.3/~140 ms untrained) —
 probe firing cleanly (16 cells/query, zero whole-region fallbacks). BUT
 recall@10 = **0.9780 < the 0.984 ratchet** at the default nprobe — exactly
-why the reader gate ships OFF. Follow-up: nprobe/fetch-round tuning to
-re-enter the ratchet before flipping the reader gate; the historical
+why the reader gate ships OFF. RESOLVED 2026-07-26: the nprobe sweep showed the 0.9780 was slice noise — default nprobe=8 measures 0.9860 on a fixed 100-query slice, and the reader gate is now DEFAULT-ON; the historical
 20–51 GET band also assumed single-file beds (two files ≈ 2× per-file probe
 overhead).
 
