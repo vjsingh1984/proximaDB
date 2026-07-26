@@ -1439,6 +1439,7 @@ async fn coarse_probe_survivors(
     trace_on: bool,
     cached: Option<&SegmentInvariants>,
     prefix: &[u8],
+    survivor_cache: Option<&SurvivorRangeCache>,
 ) -> Result<Option<CoarseProbeResult>> {
     use proximadb_storage_common::coarse_directory::{CoarseDirectory, project_with_model};
 
@@ -1558,13 +1559,34 @@ async fn coarse_probe_survivors(
         .sum();
     for fetch in fetches {
         let len = fetch.end - fetch.start;
-        let bytes = fs
-            .read_range(path, fetch.start, len)
+        // TD-CACHE-6: probed-cell ranges MUST flow through the tenant-keyed
+        // survivor-cache seam — identical repeat queries probe identical
+        // cells, and a direct read made the hot path pay these GETs every
+        // time (the probe-armed default bypassed the warm tier entirely).
+        let bytes: Vec<u8> = if let Some(sc) = survivor_cache {
+            sc.get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
+                let b = fs
+                    .read_range(path, fetch.start, len)
+                    .await
+                    .map_err(std::io::Error::other)?;
+                if trace_on {
+                    record_get(CacheTier::ProbeIndex, len);
+                }
+                Ok(b)
+            })
             .await
-            .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?;
-        if trace_on {
-            record_get(CacheTier::ProbeIndex, len);
-        }
+            .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?
+            .to_vec()
+        } else {
+            let b = fs
+                .read_range(path, fetch.start, len)
+                .await
+                .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?;
+            if trace_on {
+                record_get(CacheTier::ProbeIndex, len);
+            }
+            b
+        };
         fetched.push((fetch, bytes));
     }
     let mut runs: Vec<(usize, &[u8])> = Vec::with_capacity(selected.len());
@@ -1741,6 +1763,7 @@ pub async fn rabitq_search_segment_coalesced(
             trace_on,
             cached.as_deref(),
             &header_bytes,
+            survivor_cache,
         )
         .await
         .ok()
@@ -1881,14 +1904,39 @@ pub async fn rabitq_search_segment_coalesced(
         // over-read >= the whole Region B — fetch it in one GET instead (fewer GETs,
         // no more bytes). decode_row extracts only the survivors. (Tight survivor
         // ranges — the full ~5x bytes win — need IVF/Hilbert locality: follow-up.)
-        let region_bytes = fs
-            .read_range(path, header.sq8_off, header.sq8_len)
+        // TD-CACHE-6: the whole-Region-B fallback is ONE well-known range —
+        // cache it through the seam so hot repeats stop re-paying the
+        // largest GET on the path (admission/floors decide residency).
+        let region_arc: Arc<[u8]> = if let Some(sc) = survivor_cache {
+            sc.get_or_fetch(
+                CacheKind::QuantizedCodes,
+                path,
+                header.sq8_off,
+                header.sq8_len,
+                || async {
+                    let b = fs
+                        .read_range(path, header.sq8_off, header.sq8_len)
+                        .await
+                        .map_err(std::io::Error::other)?;
+                    if trace_on {
+                        record_get(CacheTier::SurvivorPayload, header.sq8_len);
+                    }
+                    Ok(b)
+                },
+            )
             .await
-            .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?;
-        if trace_on {
-            record_get(CacheTier::SurvivorPayload, header.sq8_len);
-        }
-        let region = coalesced_sq8::Sq8Region::from_bytes(&region_bytes)?;
+            .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?
+        } else {
+            let b = fs
+                .read_range(path, header.sq8_off, header.sq8_len)
+                .await
+                .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?;
+            if trace_on {
+                record_get(CacheTier::SurvivorPayload, header.sq8_len);
+            }
+            Arc::from(b)
+        };
+        let region = coalesced_sq8::Sq8Region::from_bytes(&region_arc)?;
         for &g in &survivors {
             if let Some(v) = region.decode_row(g) {
                 scored.push((g, rerank_distance(metric, query, &v)));
@@ -3110,6 +3158,114 @@ mod tests {
     /// probe reader lands): search recall holds, and `read_segment_records`
     /// reconstructs every row WITH its Region-B vectors (the compaction/recovery
     /// inverse — a v3 segment must never silently drop vectors when re-compacted).
+    /// TD-CACHE-6: the PROBE-ARMED path must serve hot repeats from the
+    /// survivor-cache seam — an identical second search issues strictly
+    /// fewer ranged GETs (probed cells + any Region-B fetch cached) and
+    /// returns identical results. Before the fix, probe fetches read the fs
+    /// directly and every repeat re-paid the full GET chain.
+    #[tokio::test]
+    async fn probe_path_hot_repeat_served_from_cache_seam() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        const DIM: usize = 64;
+        const N: usize = 400;
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+            std::env::set_var("PROXIMADB_IVF_K", "4");
+        }
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("v3probe.pax");
+        write_pax_segment_compacted(
+            &seg,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+        let counters = global_counters();
+        let counting = CountingFileSystem::new(
+            std::sync::Arc::new(LocalFileSystem::new(LocalConfig::default()).await.unwrap()),
+            counters.clone(),
+        );
+        let survivor = SurvivorRangeCache::new(64 * 1024 * 1024);
+        let path = seg.to_string_lossy().to_string();
+        let query = corpus[7].clone();
+
+        let before = counters
+            .range_reads
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let first = rabitq_search_segment_coalesced(
+            &counting,
+            &path,
+            &query,
+            5,
+            RankMetric::L2,
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap()
+        .expect("probe search hits");
+        let cold_gets = counters
+            .range_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
+            - before;
+
+        let mid = counters
+            .range_reads
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let second = rabitq_search_segment_coalesced(
+            &counting,
+            &path,
+            &query,
+            5,
+            RankMetric::L2,
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap()
+        .expect("repeat search hits");
+        let hot_gets = counters
+            .range_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
+            - mid;
+
+        assert_eq!(
+            first.iter().map(|h| &h.oid).collect::<Vec<_>>(),
+            second.iter().map(|h| &h.oid).collect::<Vec<_>>(),
+            "repeat must return identical results"
+        );
+        assert!(
+            hot_gets < cold_gets,
+            "hot repeat must be served from the cache seam (cold={cold_gets}, hot={hot_gets})"
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_IVF_K");
+        }
+    }
+
     #[tokio::test]
     async fn ivf_probe_compaction_gate_and_v3_read_compat() {
         enable_coalesced_rabitq();
