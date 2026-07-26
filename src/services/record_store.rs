@@ -300,9 +300,20 @@ pub(crate) fn object_store_write_base_path(
     let tenant_id = tenant_context
         .map(|tc| tc.tenant_id.as_str())
         .unwrap_or("default_tenant");
+    // ADR-074 S1 (C.2): source the namespace id from the identity context
+    // (threaded via the `From<&MiddlewareTenantContext>` bridge), not a hardcoded
+    // storage-layer constant. `None` (single-tenant / not yet threaded) falls
+    // back to the path contract's DEFAULT_NAMESPACE_ID — byte-identical to the
+    // prior "ns_default", so paths are unchanged (mixed-read-safe).
+    let namespace_id = tenant_context
+        .and_then(|tc| tc.namespace_id.clone())
+        .unwrap_or_else(|| {
+            crate::storage::trait_components::path_resolver::DrPathBuilder::DEFAULT_NAMESPACE_ID
+                .to_string()
+        });
     let mock_namespace = proximadb_catalog::CatalogNamespace::new(vec!["default".into()])
         .with_tenant(tenant_id)
-        .with_namespace_id("ns_default");
+        .with_namespace_id(namespace_id);
 
     let dr_path = crate::storage::trait_components::path_resolver::DrPathBuilder::build(
         &mock_namespace,
