@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Proposed — P3 research-calibrated** (2026-07-24). Formalizes link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]; build plan in link:../../10-quality/td/TD-FOUNDATION-1-modality-consolidation.adoc[TD-FOUNDATION-1]. Additive + feature-gated; `default` behavior unchanged until each modality opts in. **P2: D3/D5 amended + D9/D10 added after a three-model adversarial review (Kimi, GLM-5.2, DeepSeek) reconciled against the code. P3: D11/D12 added + D3/D5/D1 refined after calibrating against 10 research papers. P4: D13 added — per-modality calibration (columnar/PAX substrate, per-modality identity, vector-RLS, graph-address WAL) from 5 vector/graph/field-report papers + TS systems. P5: D14 added — delete representation is tier-split (MVCC visibility model + deletion vectors in the immutable cold tier). P6: D15/D16/D17 added — production-systems calibration (LanceDB, Vespa, Weaviate): cost-based hybrid/filter planner, tiered compute placement, first-class background plane, + adaptive-encoding/deletion/tenant-lifecycle refinements. See _Design-gate revision (P3)/(P6)_ and _Research bibliography_.**
+| Status | **Proposed — P3 research-calibrated** (2026-07-24). Formalizes link:../../rfcs/0002-foundational-modality-consolidation.adoc[RFC-0002]; build plan in link:../../10-quality/td/TD-FOUNDATION-1-modality-consolidation.adoc[TD-FOUNDATION-1]. Additive + feature-gated; `default` behavior unchanged until each modality opts in. **P2: D3/D5 amended + D9/D10 added after a three-model adversarial review (Kimi, GLM-5.2, DeepSeek) reconciled against the code. P3: D11/D12 added + D3/D5/D1 refined after calibrating against 10 research papers. P4: D13 added — per-modality calibration (columnar/PAX substrate, per-modality identity, vector-RLS, graph-address WAL) from 5 vector/graph/field-report papers + TS systems. P5: D14 added — delete representation is tier-split (MVCC visibility model + deletion vectors in the immutable cold tier). P6: D15/D16/D17 added — production-systems calibration (LanceDB, Vespa, Weaviate): cost-based hybrid/filter planner, tiered compute placement, first-class background plane, + adaptive-encoding/deletion/tenant-lifecycle refinements. P7: D6 clarified — three planes disentangled (uniqueness-**scoping** key / order-preserving **storage-index** key / **ABAC-runtime-filter** access control), correcting any "fail-closed via the key prefix" phrasing. See _Design-gate revision (P3)/(P6)_ and _Research bibliography_.**
 | Decider | Vijaykumar Singh (2026-07-24)
 | Date | 2026-07-24
 | Relates to | link:ADR-039-olap-engine-boundary-swappable-physical-backend.adoc[ADR-039] (DataFusion swappable behind the read IR — the compute half of the storage⊥compute decoupling), link:ADR-069-wal-local-disk-tiered-flush.adoc[ADR-069] (local-disk WAL substrate), link:ADR-071-transactional-ledger-modality.adoc[ADR-071] (ledger dedicated WAL — the "divergent access ⇒ own impl behind the contract" precedent), link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (co-design spine).
@@ -92,6 +92,16 @@ One contract, two placements.)_
 **D6 — Tenancy in every contract signature; enterprise security is structural.** `TenantContext`
 (fail-closed), `DrPathBuilder` per-tenant paths, and `ObjectAccessTier` are foundation facilities every
 modality inherits at the contract boundary — never re-implemented per silo. Neutral units only.
+_(Clarified P7 — three distinct planes, do not conflate: (1) the **uniqueness key** (`Identity`, D9) —
+its tenant/keyspace prefix is uniqueness **scoping** (so a PK does not collide across containers), *not*
+an access-control boundary; (2) the **storage/index key** — where the *order-preserving* typed encoding
+earns its keep (range scans on index-organized rows); the uniqueness store **reuses** the same
+`Identity`, but order-preservation is incidental to uniqueness. (3) **Access control (RLS)** — enforced
+at **runtime by ABAC filters** (D15), always-ANDed into the scan, over the catalog metamodel's
+container hierarchy (namespace/db → collection/table → column/field, D12), resolved against the
+authenticated subject's attributes, with subject↔permission bindings in a **system namespace**. A key
+never authorizes; row-/field-/attribute-level policy cannot live in a key. Supersedes any earlier
+"tenant isolation is fail-closed *by construction via the key prefix*" phrasing.)_
 
 **D7 — Compile-time modality composition.** Every modality + its contract impls are `#[cfg]`-gated
 features, so a deployment links only what it runs (lean profiles) — per the modality-composition

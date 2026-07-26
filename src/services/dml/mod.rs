@@ -3047,7 +3047,28 @@ impl DmlService {
                 // as dead.
                 let is_duplicate = if let Some(cks) = &self.conditional_key_store {
                     use proximadb_storage_ports::{Generation, Identity, Oid, PutOutcome};
-                    let id = Identity::from_bytes(key.clone().into_bytes());
+                    // Key on the F0 typed, order-preserving codec (length-delimited,
+                    // NULL-explicit, no separator collision) built from the row's typed
+                    // PK value and its tenant/keyspace scope — not the legacy oid string
+                    // (ADR-072 D9). Single-column PK matches this block's scope; the oid
+                    // it maps to stays the row's PK-string identity.
+                    let pk_value = match record.props.get(&pk_column) {
+                        Some(ProximaTreeNode::Value(v)) => v.clone(),
+                        _ => {
+                            return Err(anyhow!(
+                                "primary key column '{}' missing from record for '{}' on table '{}'",
+                                pk_column,
+                                key,
+                                table_schema.name
+                            ));
+                        }
+                    };
+                    let id =
+                        Identity::from_bytes(proximadb_data_model::key_codec::encode_identity(
+                            &record.tenant_id,
+                            &table_schema.name,
+                            std::slice::from_ref(&pk_value),
+                        )?);
                     matches!(
                         cks.put_if_absent(&id, &Oid(key.clone()), Generation(0))
                             .await?,
