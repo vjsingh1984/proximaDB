@@ -118,6 +118,13 @@ if [ "$SCOPE" = "restart" ]; then
   CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features azure \
     --test object_store_restart_recovery \
     -- --ignored --nocapture --test-threads=1
+  # TD-CACHE-7: restart-warming manifest write/read round-trip on object storage
+  # — the boundary that repeatedly regressed with zero coverage (container-strip
+  # / malformed prefix). Reuses the exported PROXIMADB_OBJECT_STORE_URL.
+  echo "==> TD-CACHE-7: warm-manifest round-trip over Azurite (adls://)"
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features azure --lib \
+    warm_manifest_round_trips_on_object_store \
+    -- --ignored --nocapture --test-threads=1
   # TD-OBJSTORE-5 S2: per-primitive contract tests against the PRODUCTION root
   # FileSystem backends (PUT->prefix-LIST, prefix-exists-false, multi-page LIST).
   # Azure + S3 strict; GCS best-effort (skips if the backend does not register).

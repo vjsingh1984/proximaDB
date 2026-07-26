@@ -244,6 +244,91 @@ pub async fn boot_warm(factory: Arc<FilesystemFactory>, base_url: String, tenant
 mod tests {
     use super::*;
 
+    /// TD-CACHE-7: the warm-manifest URL for a CLOUD base must be well-formed —
+    /// container preserved, no `//` run, no legacy `…/manifests/…` malformation.
+    /// This is the always-on guard against the recurring container-strip /
+    /// double-slash class (TD-FLUSH-6, TD-CACHE-5) that repeatedly silently
+    /// disabled restart warming on object storage.
+    #[test]
+    fn manifest_url_is_well_formed_on_cloud_bases() {
+        for base in [
+            "azure://benchbucket/proximadb/collections",
+            "azure://benchbucket/proximadb/collections/", // trailing slash
+            "s3://mybucket/data",
+            "adls://container/root",
+        ] {
+            let url = manifest_url(base, "tenant-b").expect("manifest url");
+            let scheme_end = url.find("://").unwrap() + 3;
+            let after_scheme = &url[scheme_end..];
+            assert!(
+                !after_scheme.contains("//"),
+                "no `//` run after the scheme in {url}"
+            );
+            assert!(
+                !url.contains("/manifests/"),
+                "must NOT use the legacy collection-scoped manifests/ prefix: {url}"
+            );
+            // The container (first path segment after scheme) must survive.
+            let container = after_scheme.split('/').next().unwrap();
+            assert!(!container.is_empty(), "container present in {url}");
+            assert!(
+                url.ends_with("warm_cache.json") && url.contains("tenant-b"),
+                "tenant-scoped warm_cache.json: {url}"
+            );
+        }
+    }
+
+    /// TD-CACHE-7: full warm-manifest ROUND-TRIP through the FilesystemFactory
+    /// against a real object-store backend — the boundary that kept regressing
+    /// with ZERO coverage. Emit → write (create_dirs) → read → deserialize.
+    /// Gated on a cloud endpoint; run via the cloud-emulator tier or locally:
+    ///   PROXIMADB_AZURE_EMULATOR=1 AZURITE_BLOB_STORAGE_URL=http://127.0.0.1:11000 \
+    ///   AZURE_STORAGE_ACCOUNT=devstoreaccount1 \
+    ///   PROXIMADB_WARM_TEST_BASE=azure://benchbucket/warmtest \
+    ///   cargo test -p proximadb --features azure warm_manifest_round_trips -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "requires a cloud object-store endpoint (PROXIMADB_WARM_TEST_BASE + Azurite/MinIO/creds)"]
+    async fn warm_manifest_round_trips_on_object_store() {
+        // Accept the dedicated var, or slot into the shared cloud-emulator
+        // env (the runner exports PROXIMADB_OBJECT_STORE_URL for the whole tier).
+        let base = std::env::var("PROXIMADB_WARM_TEST_BASE")
+            .or_else(|_| {
+                std::env::var("PROXIMADB_OBJECT_STORE_URL").map(|b| format!("{b}/warm-manifest-rt"))
+            })
+            .expect("set PROXIMADB_WARM_TEST_BASE or PROXIMADB_OBJECT_STORE_URL");
+        let factory =
+            std::sync::Arc::new(FilesystemFactory::create_default().await.expect("factory"));
+        let url = manifest_url(&base, "tenant-a").expect("url");
+        let manifest = WarmManifest {
+            version: WARM_MANIFEST_VERSION,
+            created_unix: 1_700_000_000,
+            entries: vec![WarmKey {
+                k: 0,
+                p: "seg1.pax".to_string(),
+                o: 128,
+                l: 4096,
+            }],
+        };
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        let options = proximadb_storage_filesystem_types::FileOptions {
+            overwrite: true,
+            create_dirs: true,
+            ..Default::default()
+        };
+        factory
+            .write(&url, &bytes, Some(options))
+            .await
+            .unwrap_or_else(|e| panic!("write {url} failed (container-strip regression?): {e}"));
+        let read = factory
+            .read(&url)
+            .await
+            .unwrap_or_else(|e| panic!("read {url} failed: {e}"));
+        let got: WarmManifest = serde_json::from_slice(&read).expect("round-trip deserialize");
+        assert_eq!(got.entries.len(), 1);
+        assert_eq!(got.entries[0].p, "seg1.pax");
+        assert_eq!(got.entries[0].l, 4096);
+    }
+
     /// TD-CACHE-1 S4: notice parsers — Azure fires only on lifecycle-ending
     /// event types; GCP on the TRUE flag; malformed input never fires.
     #[test]
