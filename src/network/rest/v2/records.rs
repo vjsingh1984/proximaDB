@@ -1619,13 +1619,13 @@ pub async fn search_with_typed_filters(
     // below this — but small enough that a single bad request can't
     // exhaust memory. Operators can raise it via an env var if they
     // need a wider window for benchmark or batch-export shapes.
-    let max_top_k: usize = std::env::var("PROXIMADB_MAX_SEARCH_TOP_K")
+    let max_top_k: usize = std::env::var("PROXIMADB_SEARCH_MAX_TOP_K")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(10_000);
     if request.top_k > max_top_k {
         return Err(ApiError::InvalidArgument(format!(
-            "top_k={} exceeds server cap {} (set PROXIMADB_MAX_SEARCH_TOP_K to override)",
+            "top_k={} exceeds server cap {} (set PROXIMADB_SEARCH_MAX_TOP_K to override)",
             request.top_k, max_top_k
         )));
     }

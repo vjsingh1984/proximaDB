@@ -1,7 +1,7 @@
 //! Bridge between the pgwire surface and the new relational
 //! pipeline (algebra → planner → executor → engine). This is the
 //! S5c integration point — when
-//! `PROXIMADB_NEW_RELATIONAL_PIPELINE=1` is set in the
+//! `PROXIMADB_PGWIRE_RELATIONAL_PIPELINE=1` is set in the
 //! environment, SELECT statements on tables that exist in the
 //! global [`InMemoryRelationalEngine`] route through this module
 //! instead of the legacy `QueryLowering` → vector-collection
@@ -245,7 +245,7 @@ fn populate_olap_result_cache(
 /// ADR-018 Phase 2: New pipeline is enabled by default for SELECT queries
 /// that can be lowered by the relational frontend. This provides proper
 /// multi-column ORDER BY support and other relational features.
-/// Set PROXIMADB_NEW_RELATIONAL_PIPELINE=0 to disable and force legacy path.
+/// Set PROXIMADB_PGWIRE_RELATIONAL_PIPELINE=0 to disable and force legacy path.
 pub async fn try_run_select(
     sql: &str,
     dml: Option<&Arc<DmlService>>,
@@ -279,14 +279,14 @@ pub async fn try_run_select(
         .filter(|t| !t.is_empty())
         .map(TenantContext::for_tenant_id);
     // ADR-018 Phase 2: Allow opting out with explicit "0" value
-    if std::env::var("PROXIMADB_NEW_RELATIONAL_PIPELINE")
+    if std::env::var("PROXIMADB_PGWIRE_RELATIONAL_PIPELINE")
         .ok()
         .as_deref()
         == Some("0")
     {
         tracing::debug!(
             target: "proximadb::pgwire::new_pipeline",
-            "PROXIMADB_NEW_RELATIONAL_PIPELINE=0; skipping new pipeline"
+            "PROXIMADB_PGWIRE_RELATIONAL_PIPELINE=0; skipping new pipeline"
         );
         return None;
     }

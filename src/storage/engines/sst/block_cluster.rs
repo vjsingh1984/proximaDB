@@ -467,20 +467,25 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
 
 /// TD-RDSTRAT-8 (rev 3): opt-in gate for the persisted-IVF-probe v3 compaction
 /// layout (the IOP-derived plan written into Region A0). Default **OFF**
-/// (`PROXIMADB_IVF2=1` to enable) until the recall/GET eval gates pass;
-/// mixed-read-safe beside single-level segments either way. The env keeps its
-/// shipped `IVF2` name (the successor IVF layout), though rev 3 dropped the
-/// second `sqrt(N)` level the name originally implied.
+/// (`PROXIMADB_PAX_WRITE_A0_TRAIN=1` to enable) until the recall/GET eval
+/// gates pass; mixed-read-safe beside single-level segments either way.
+/// Pre-GA clean rename (TD-ENVGATE-1): the former `PROXIMADB_IVF2` name is
+/// RETIRED (ENV_GATE_REGISTRY "Retired names" — reserved, never repurposed).
 pub fn ivf_probe_enabled() -> bool {
-    matches!(
-        std::env::var("PROXIMADB_IVF2")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-            .map(|v| v.to_ascii_lowercase())
-            .as_deref(),
-        Some("1") | Some("true") | Some("on") | Some("yes")
-    )
+    env_gate_on("PROXIMADB_PAX_WRITE_A0_TRAIN")
+}
+
+/// Boolean gate read: truthy = `1|true|on|yes`.
+pub(crate) fn env_gate_on(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            )
+        })
+        .unwrap_or(false)
 }
 
 /// The persisted IVF probe directory compaction plan (rev 3): the physical row

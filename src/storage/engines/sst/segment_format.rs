@@ -144,7 +144,7 @@ pub fn read_segment_records(
 ///
 /// `embedding_count` is the collection's embedding-modality count (≥1). `quant` selects
 /// the vector quantization strategy (P3 Phase D): `VectorQuant::Auto` keeps the env
-/// default (SQ8 unless `PROXIMADB_VECTOR_RABITQ`), `RaBitQ` writes ~30× binary codes.
+/// default (SQ8 unless `PROXIMADB_VECTOR_RABITQ_ENABLE`), `RaBitQ` writes ~30× binary codes.
 ///
 /// `target_block` is the optional target block size in bytes (TD-156 / ADR-026
 /// configurable geometry). `None` keeps the writer default; a larger value (e.g.
@@ -284,7 +284,7 @@ pub fn write_pax_segment_compacted(
 ) -> Result<SegmentMeta> {
     use crate::storage::engines::sst::block_cluster;
     let cluster = block_cluster::block_cluster_enabled();
-    // TD-RDSTRAT-8 rev 3 (default OFF, `PROXIMADB_IVF2=1`): compaction is the ONLY
+    // TD-RDSTRAT-8 rev 3 (default OFF, `PROXIMADB_PAX_WRITE_A0_TRAIN=1`): compaction is the ONLY
     // write path that emits the persisted-IVF-probe (v3) layout — production flush
     // stays sign-bit L0 (IVF-at-flush measured ~80× flush cost, dropped), and large
     // corpora reach v3 on their normal compaction cadence with no migration event.
@@ -1349,27 +1349,21 @@ pub fn drain_probe_trace() -> Vec<(u64, u64, u64, u64)> {
 }
 
 /// TD-RDSTRAT-8 PR-B gate: engage the Region-A0 coarse probe on v3 segments.
-/// Default **OFF** (`PROXIMADB_IVF2_PROBE=1` to enable) — v3 segments read via
+/// Default **OFF** (`PROXIMADB_PAX_READ_COARSE_PROBE=1` to enable) — v3 segments read via
 /// the single-level whole-region scan until this flips (recall/GET-ratchet
 /// gated, mirroring the PR-A writer gate). v1 segments never probe.
 pub fn coarse_probe_enabled() -> bool {
-    matches!(
-        std::env::var("PROXIMADB_IVF2_PROBE")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-            .map(|v| v.to_ascii_lowercase())
-            .as_deref(),
-        Some("1") | Some("true") | Some("on") | Some("yes")
-    )
+    // ENV_GATE_REGISTRY rule 2: the READ half — search probes via A0.
+    // Pre-GA clean rename (TD-ENVGATE-1): PROXIMADB_PAX_READ_COARSE_PROBE is RETIRED.
+    crate::storage::engines::sst::block_cluster::env_gate_on("PROXIMADB_PAX_READ_COARSE_PROBE")
 }
 
-/// Number of coarse cells to probe. `PROXIMADB_IVF2_NPROBE` overrides (the
+/// Number of coarse cells to probe. `PROXIMADB_PAX_READ_COARSE_NPROBE` overrides (the
 /// eval-profile knob, per rev 3 — `nprobe` is fixed by metric/dim/distribution,
 /// not an adaptive radius). Default probes ~25% of cells (min 8), capped at
 /// `k_c`; `>= k_c` is exact mode (every cell).
 fn coarse_probe_nprobe(k_c: usize) -> usize {
-    std::env::var("PROXIMADB_IVF2_NPROBE")
+    std::env::var("PROXIMADB_PAX_READ_COARSE_NPROBE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n > 0)
@@ -1531,8 +1525,8 @@ async fn coarse_probe_survivors(
             }
         })
         .collect();
-    let max_gap_bytes = env_u64_or("PROXIMADB_PAX_A_COALESCE_GAP", 0);
-    let max_range_bytes = std::env::var("PROXIMADB_PAX_A_COALESCE_RANGE")
+    let max_gap_bytes = env_u64_or("PROXIMADB_PAX_VECTOR_COALESCE_GAP", 0);
+    let max_range_bytes = std::env::var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
@@ -3096,7 +3090,7 @@ mod tests {
     }
 
     /// TD-RDSTRAT-8 PR-A (rev 3): `write_pax_segment_compacted` emits the
-    /// persisted-IVF-probe (v3) layout ONLY under `PROXIMADB_IVF2=1` (default-OFF,
+    /// persisted-IVF-probe (v3) layout ONLY under `PROXIMADB_PAX_WRITE_A0_TRAIN=1` (default-OFF,
     /// compaction-only), and the current binary reads a v3 segment through the
     /// SAME single-level scan path with full parity (correctness before the PR-B
     /// probe reader lands): search recall holds, and `read_segment_records`
@@ -3117,7 +3111,7 @@ mod tests {
         // Small k (the shared IOP-derived override) so the tiny fixture still
         // forms multiple cells — the natural N·dim/IOP count would be ~2 here.
         unsafe {
-            std::env::set_var("PROXIMADB_IVF2", "1");
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
             std::env::set_var("PROXIMADB_IVF_K", "4");
         }
 
@@ -3152,7 +3146,7 @@ mod tests {
         let h = SegmentHeaderPrefix::parse(&v3_bytes).unwrap();
         assert_eq!(
             h.layout_version, SEG_LAYOUT_VERSION_TWO_LEVEL,
-            "PROXIMADB_IVF2=1 compaction must emit the v3 layout"
+            "PROXIMADB_PAX_WRITE_A0_TRAIN=1 compaction must emit the v3 layout"
         );
         let a0 =
             CoarseDirectory::parse(&v3_bytes[h.a0_off as usize..(h.a0_off + h.a0_len) as usize])
@@ -3162,7 +3156,7 @@ mod tests {
 
         // Flag OFF ⇒ same records compact to the v1 (single-level) layout.
         unsafe {
-            std::env::remove_var("PROXIMADB_IVF2");
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
         }
         let v1_path = dir.path().join("v1.pax");
         write_pax_segment_compacted(
@@ -3179,7 +3173,7 @@ mod tests {
         let h1 = SegmentHeaderPrefix::parse(&std::fs::read(&v1_path).unwrap()).unwrap();
         assert_eq!(
             h1.layout_version, SEG_LAYOUT_VERSION,
-            "without PROXIMADB_IVF2 the compaction layout is unchanged (v1)"
+            "without PROXIMADB_PAX_WRITE_A0_TRAIN the compaction layout is unchanged (v1)"
         );
 
         // v3 read-compat: the coalesced cascade searches the v3 segment with
@@ -3232,7 +3226,7 @@ mod tests {
     }
 
     /// TD-RDSTRAT-8 PR-B (the deferred PR-A recall/GET gate): the coarse probe
-    /// (`PROXIMADB_IVF2_PROBE=1`) ranks the persisted centroids in RAM and reads
+    /// (`PROXIMADB_PAX_READ_COARSE_PROBE=1`) ranks the persisted centroids in RAM and reads
     /// only the nprobe nearest cells — holding recall on clustered data while
     /// reading materially fewer bytes than the whole-region single-level scan.
     #[tokio::test]
@@ -3278,7 +3272,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("probe.pax");
         unsafe {
-            std::env::set_var("PROXIMADB_IVF2", "1");
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
             std::env::set_var("PROXIMADB_IVF_K", "16");
         }
         write_pax_segment_compacted(
@@ -3293,7 +3287,7 @@ mod tests {
         )
         .unwrap();
         unsafe {
-            std::env::remove_var("PROXIMADB_IVF2");
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
         }
 
         let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
@@ -3327,7 +3321,7 @@ mod tests {
 
         // Baseline: probe OFF → whole-region single-level scan over the v3 segment.
         unsafe {
-            std::env::remove_var("PROXIMADB_IVF2_PROBE");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
         }
         let _ = drain_get_trace();
         let _ = drain_probe_trace();
@@ -3345,8 +3339,8 @@ mod tests {
 
         // Probe ON: nprobe=6 of 16 cells.
         unsafe {
-            std::env::set_var("PROXIMADB_IVF2_PROBE", "1");
-            std::env::set_var("PROXIMADB_IVF2_NPROBE", "6");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_NPROBE", "6");
         }
         let _ = drain_get_trace();
         let _ = drain_probe_trace();
@@ -3402,8 +3396,8 @@ mod tests {
         // PR-C2 proof: bounded Region-A gap over-read may reduce physical
         // ranges, but it must rank exactly the same selected cells and rows.
         unsafe {
-            std::env::set_var("PROXIMADB_PAX_A_COALESCE_GAP", "1048576");
-            std::env::set_var("PROXIMADB_PAX_A_COALESCE_RANGE", "4194304");
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP", "1048576");
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE", "4194304");
         }
         let _ = drain_get_trace();
         let _ = drain_probe_trace();
@@ -3432,8 +3426,8 @@ mod tests {
             "cost coalescing cannot add Region-A reads"
         );
         unsafe {
-            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_GAP");
-            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_RANGE");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
         }
 
         // PR-C2 proof: a bounded prefix read must replace the separate header,
@@ -3551,13 +3545,13 @@ mod tests {
         assert_eq!(fallback_snapshot.ivf_cells_probed, 0);
         assert_eq!(fallback_snapshot.ivf_whole_region_fallback, 1);
         unsafe {
-            std::env::remove_var("PROXIMADB_IVF2_PROBE");
-            std::env::remove_var("PROXIMADB_IVF2_NPROBE");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
             std::env::remove_var("PROXIMADB_TRACE_GETS");
             std::env::remove_var("PROXIMADB_IVF_K");
             std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
-            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_GAP");
-            std::env::remove_var("PROXIMADB_PAX_A_COALESCE_RANGE");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
             std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
         }
     }

@@ -952,7 +952,7 @@ impl ModularBlockReader {
             Vec::new();
 
         // Source all data blocks. Precedence: kill-switch (PROXIMADB_DISABLE_SST_SCAN_COALESCE) →
-        // per-block; cost-driven chooser (PROXIMADB_READ_STRATEGY_CHOOSER) → choose_read_strategy;
+        // per-block; cost-driven chooser (PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER) → choose_read_strategy;
         // default → always-coalesce (slice 2). All paths produce byte-identical ProximaDataBlocks
         // (both parse [4-byte len][ProximaDataBlock::deserialize]). (TD-RDSTRAT-1 slice 3b wiring.)
         let kill = std::env::var_os("PROXIMADB_DISABLE_SST_SCAN_COALESCE").is_some();

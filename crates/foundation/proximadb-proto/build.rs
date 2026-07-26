@@ -4,7 +4,7 @@
 //! is a no-op). To regenerate after editing `proto/proximadb/v2/record.proto`:
 //!
 //! ```sh
-//! PROXIMADB_REGEN_PROTO=1 cargo build -p proximadb-proto
+//! PROXIMADB_PROTO_REGEN=1 cargo build -p proximadb-proto
 //! ```
 //!
 //! Only the self-contained `proximadb.v2` package is regenerated here, so the
@@ -12,7 +12,7 @@
 //! touched. Requires `protoc` on PATH.
 
 fn main() {
-    if std::env::var_os("PROXIMADB_REGEN_PROTO").is_none() {
+    if std::env::var_os("PROXIMADB_PROTO_REGEN").is_none() {
         return;
     }
 

@@ -80,10 +80,10 @@ pub fn is_cloud_path(path: &str) -> bool {
 }
 
 /// TD-RDSTRAT-1 slice 3: opt-in for the cost-driven chooser. Default OFF — the always-coalesce
-/// baseline (slices 1+2) runs; set `PROXIMADB_READ_STRATEGY_CHOOSER=1` to engage (observe mode:
+/// baseline (slices 1+2) runs; set `PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER=1` to engage (observe mode:
 /// the chosen strategy + scores are logged before the ADR-052 observe→flip gate).
 pub fn read_strategy_chooser_enabled() -> bool {
-    match std::env::var("PROXIMADB_READ_STRATEGY_CHOOSER")
+    match std::env::var("PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER")
         .ok()
         .as_deref()
         .map(str::trim)

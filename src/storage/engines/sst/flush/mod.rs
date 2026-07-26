@@ -176,7 +176,7 @@ impl SstEngine {
         // M1-3 (ADR-049): PAX is the ONLY vector write format — the legacy v1
         // streaming path (`write_sorted_proxima_records` → ProximaBlocks `.sst`) is
         // retired from flush. A non-Arrow collection ALWAYS writes a `.pax`
-        // segment; the global kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE`
+        // segment; the global kill-switch `PROXIMADB_PAX_QUANT_DISABLE`
         // and the per-collection `pax_vector_format:off` tag no longer force
         // legacy `.sst` — they select the recall-exact RawF32 quant instead (see
         // `resolve_pax_vector_quant`), so such a segment is exact-scan searchable
@@ -720,8 +720,8 @@ impl SstEngine {
             .get("suppress_compaction_until_wal_retired")
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
-        let should_trigger_compaction = if suppress_recovery_compaction {
-            false
+        let compaction_due_threshold = if suppress_recovery_compaction {
+            None
         } else {
             self.should_trigger_compaction(storage_url, collection_tags)
                 .await?
@@ -739,17 +739,15 @@ impl SstEngine {
         // failure is recorded on the result but never fails the flush.
         let mut compaction_error: Option<String> = None;
         let mut compaction_ran = false;
-        if should_trigger_compaction
+        if let Some(due_threshold) = compaction_due_threshold
             && let Some(cid) = params.collection_id.as_deref()
             && let Some(compaction) = self.compaction_manager()
         {
             let collection_dir = std::path::Path::new(storage_url);
-            // Same per-collection L0 threshold the arming gate used, so the
-            // executor doesn't re-gate on the deployment default and decline.
-            let l0_threshold = proximadb_storage_common::resolve_l0_threshold(
-                collection_tags,
-                L0_COMPACTION_THRESHOLD,
-            );
+            // The gate's effective threshold: the per-collection count value,
+            // or 1 when the TD-COMPACT-5 training arm fired (so the executor
+            // compacts the few large untrained L0s instead of declining).
+            let l0_threshold = due_threshold;
             match compaction
                 .run_due_compaction(
                     cid,
@@ -828,7 +826,7 @@ impl SstEngine {
                 );
                 metrics
             },
-            compaction_triggered: should_trigger_compaction,
+            compaction_triggered: compaction_due_threshold.is_some(),
             compaction_error,
             flushed_batch_ids: params.batch_ids.clone(),
         })
@@ -845,18 +843,85 @@ impl SstEngine {
     /// armed, it reuses the existing segment discovery to count L0 segments and
     /// arms once the effective threshold is reached. Discovery errors are
     /// treated as "not yet" (best-effort, never fails flush).
-    async fn should_trigger_compaction(&self, storage_url: &str, tags: &[String]) -> Result<bool> {
+    /// Returns the effective L0 threshold to compact with, or `None` when
+    /// nothing is due. Two arms:
+    /// - COUNT (original): `l0_count >= per-collection threshold` → compact at
+    ///   that threshold.
+    /// - TRAINING (TD-COMPACT-5): any L0 segment is UNTRAINED (header
+    ///   `layout_version != 3 || a0_len == 0` — no A0 coarse directory) and at
+    ///   least `PROXIMADB_TRAINING_COMPACTION_MIN_MB` (default 32) on disk →
+    ///   compact at threshold 1, so the flush-floor's few-large-segments
+    ///   layout still receives its IVF training pass (`
+    ///   write_pax_segment_compacted` emits the trained v3/A0 layout; the
+    ///   condition self-clears because the output is trained). Measured
+    ///   stake: untrained cold queries pay ~180 GETs/104 MB vs 20–51
+    ///   GETs/24–30 MB trained (TD-FLUSH-4 adjudication evals).
+    async fn should_trigger_compaction(
+        &self,
+        storage_url: &str,
+        tags: &[String],
+    ) -> Result<Option<usize>> {
         if !proximadb_storage_common::resolve_compaction_armed(tags) {
-            return Ok(false);
+            return Ok(None);
         }
         let threshold =
             proximadb_storage_common::resolve_l0_threshold(tags, L0_COMPACTION_THRESHOLD);
-        let l0_count = self
+        let files = self
             .discover_sstable_files(storage_url)
             .await
-            .map(|files| files.len())
-            .unwrap_or(0);
-        Ok(l0_count >= threshold)
+            .unwrap_or_default();
+        if files.len() >= threshold {
+            return Ok(Some(threshold));
+        }
+        // TD-COMPACT-5 training arm — only meaningful when the A0-emitting
+        // trainer is armed (`PROXIMADB_PAX_WRITE_A0_TRAIN`; retired name: `PROXIMADB_IVF2`); without it compaction outputs
+        // stay layout v1, the untrained condition never self-clears, and the
+        // arm would fire on every flush (compaction loop).
+        if !crate::storage::engines::sst::block_cluster::ivf_probe_enabled() {
+            return Ok(None);
+        }
+        // Best-effort header sniffing (72 bytes/file); any error means "not
+        // yet", never fails the flush.
+        let min_bytes = std::env::var("PROXIMADB_TRAINING_COMPACTION_MIN_MB")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(32)
+            .saturating_mul(1024 * 1024);
+        for path in &files {
+            if !path.ends_with(".pax") {
+                continue;
+            }
+            if let Ok(true) = self.segment_is_untrained(path, min_bytes).await {
+                tracing::info!(
+                    segment = %path,
+                    "TD-COMPACT-5: untrained L0 segment above size floor — arming training compaction"
+                );
+                return Ok(Some(1));
+            }
+        }
+        Ok(None)
+    }
+
+    /// TD-COMPACT-5: is this segment untrained (no A0 coarse directory) and
+    /// big enough to be worth a training pass? One stat + one 72-byte read.
+    async fn segment_is_untrained(&self, path: &str, min_bytes: u64) -> Result<bool> {
+        use proximadb_storage_common::segment_layout::{
+            SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentHeaderPrefix,
+        };
+        let fs = self.filesystem().get_filesystem(path)?;
+        let meta = fs.metadata(path).await?;
+        if meta.size < min_bytes {
+            return Ok(false);
+        }
+        let header_bytes = fs
+            .read_range(path, 0, (SEG_HEADER_PREFIX_V3_LEN as u64).min(meta.size))
+            .await?;
+        Ok(match SegmentHeaderPrefix::parse(&header_bytes) {
+            Ok(h) => h.layout_version != SEG_LAYOUT_VERSION_TWO_LEVEL || h.a0_len == 0,
+            // Not a coalesced segment (legacy layout) — training does not
+            // apply; leave it to the count arm.
+            Err(_) => false,
+        })
     }
 }
 
@@ -1012,7 +1077,7 @@ const PAX_VECTOR_SEGMENTS_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS";
 /// write path retired it now means RawF32-PAX, exact-scan searchable via
 /// `search_pax_file_exact`). Follows the `PROXIMADB_DISABLE_*` convention
 /// (`PROXIMADB_DISABLE_SYSTEM_CATALOG`, `PROXIMADB_DISABLE_WAL`).
-const PAX_VECTOR_SEGMENTS_DISABLE_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE";
+const PAX_VECTOR_SEGMENTS_DISABLE_ENV: &str = "PROXIMADB_PAX_QUANT_DISABLE";
 
 /// Tag key prefix encoding the per-collection PAX-format override on
 /// `CollectionConfig.tags` — mirrors the `recall_target:` convention
@@ -1060,7 +1125,7 @@ fn collection_pax_format_tag(
 }
 
 /// Resolve the PAX vector-quantization strategy. M1-3 (ADR-049): the global
-/// kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE` and the per-collection
+/// kill-switch `PROXIMADB_PAX_QUANT_DISABLE` and the per-collection
 /// `pax_vector_format:off` tag are no longer FORMAT escapes (flush always writes
 /// PAX) — they select the recall-exact `RawF32` quant instead, so such a segment
 /// is exact-scan searchable (`search_pax_file_exact`) rather than

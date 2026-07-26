@@ -34,7 +34,7 @@ impl Default for WalEncryptionConfig {
     fn default() -> Self {
         Self {
             enabled: false, // Disabled by default for backward compatibility
-            master_key_env_var: "PROXIMADB_MASTER_KEY".to_string(),
+            master_key_env_var: "PROXIMADB_CRYPTO_MASTER_KEY".to_string(),
             key_rotation_interval_secs: 30 * 24 * 3600, // 30 days
             chunk_size: 4096,                           // 4KB
         }

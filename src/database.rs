@@ -266,11 +266,11 @@ impl ProximaDB {
         //
         //   1. **Prometheus level gauge** — in-memory `.set()` of the resident level
         //      that Prometheus integrates downstream. Default 5min (env
-        //      `PROXIMADB_KSU_GAUGE_INTERVAL_SECS`); storage doesn't move faster, so
+        //      `PROXIMADB_METERING_KSU_GAUGE_INTERVAL_SECS`); storage doesn't move faster, so
         //      a per-minute poll only multiplied the list-collections work.
         {
             let cs = collection_service.clone();
-            let interval_secs = std::env::var("PROXIMADB_KSU_GAUGE_INTERVAL_SECS")
+            let interval_secs = std::env::var("PROXIMADB_METERING_KSU_GAUGE_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .filter(|s| *s > 0)
@@ -981,6 +981,21 @@ impl ProximaDB {
                 Ok(Err(e)) => tracing::warn!("Graph WAL flush error: {}", e),
                 Err(_) => tracing::warn!("Graph WAL flush timeout - forcing continuation"),
             }
+        }
+
+        // TD-FLUSH-4: await in-flight inline size-flushes FIRST — a triggered
+        // materialize takes tens of seconds (measured 43.9s at 884k entries)
+        // and must complete + rename into place before teardown; killing it
+        // strands a __flush/ staging file that startup cleanup deletes.
+        let stragglers = crate::storage::persistence::write_ahead_log::drain_inline_flushes(
+            std::time::Duration::from_secs(90),
+        )
+        .await;
+        if stragglers > 0 {
+            tracing::warn!(
+                stragglers,
+                "in-flight flush(es) did not finish before shutdown"
+            );
         }
 
         // TD-CACHE-1 S2: persist per-tenant warm-set manifests so the next

@@ -252,13 +252,13 @@ mod tests {
         // Set test master key
         unsafe {
             std::env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
         let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY")
+            KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY")
                 .expect("failed to create key manager from env"),
         );
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
@@ -288,13 +288,13 @@ mod tests {
     fn test_wal_encryption_disabled() {
         unsafe {
             std::env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
         let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY")
+            KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY")
                 .expect("failed to create key manager from env"),
         );
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
@@ -324,12 +324,12 @@ mod tests {
     fn envelope_nonce_and_aad_are_authenticated() {
         unsafe {
             std::env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
         let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY")
+            KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY")
                 .expect("failed to create key manager"),
         );
         let layer = WALEncryptionLayer::new(
@@ -358,13 +358,13 @@ mod tests {
     fn test_reencryption_needed() {
         unsafe {
             std::env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
         let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY")
+            KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY")
                 .expect("failed to create key manager from env"),
         );
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));

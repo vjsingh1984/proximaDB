@@ -465,7 +465,7 @@ pub trait FilesystemFile: Send + Sync + std::fmt::Debug {
 
 /// Bounded-concurrent, order-preserving, short-circuit-on-error ranged read.
 ///
-/// Used by [`FileSystem::read_ranges`] when `PROXIMADB_READ_RANGES_PARALLEL > 1`
+/// Used by [`FileSystem::read_ranges`] when `PROXIMADB_FS_READ_RANGES_PARALLEL > 1`
 /// (TD-RDSTRAT-8 rev-2.1). Extracted as a free fn so the concurrency contract is
 /// unit-testable without a full `FileSystem` implementation: `buffered` preserves
 /// result order; `try_collect` short-circuits on the first error (identical to a
@@ -531,7 +531,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     ///
     /// Default implementation issues one `read_range` per range. By default these
     /// are **sequential** (identical to a loop, one at a time); set
-    /// `PROXIMADB_READ_RANGES_PARALLEL=N` (N > 1) to issue up to N concurrently —
+    /// `PROXIMADB_FS_READ_RANGES_PARALLEL=N` (N > 1) to issue up to N concurrently —
     /// order-preserving and short-circuit-on-error, so results + error semantics
     /// are identical to the sequential path. The coalesced read path issues many
     /// ranged GETs per query (e.g. 51 @ SIFT1M); bounded concurrency turns cold
@@ -543,12 +543,12 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
         path: &str,
         ranges: Vec<std::ops::Range<u64>>,
     ) -> FsResult<Vec<Vec<u8>>> {
-        // `PROXIMADB_READ_RANGES_PARALLEL`: bounded concurrent ranged reads.
+        // `PROXIMADB_FS_READ_RANGES_PARALLEL`: bounded concurrent ranged reads.
         // Parsed once + cached (fn-local `static` = persists across calls, read
         // on the hot path without re-parsing env each call).
         static PARALLEL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
         let parallel = *PARALLEL.get_or_init(|| {
-            std::env::var("PROXIMADB_READ_RANGES_PARALLEL")
+            std::env::var("PROXIMADB_FS_READ_RANGES_PARALLEL")
                 .ok()
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(0)

@@ -937,7 +937,7 @@ impl SharedSstFormatReader {
                 .collect();
 
             // Resolve each block's bytes. Precedence: kill-switch (PROXIMADB_DISABLE_PAX_RANGE_COALESCE)
-            // → per-block; cost-driven chooser (PROXIMADB_READ_STRATEGY_CHOOSER) → choose_read_strategy;
+            // → per-block; cost-driven chooser (PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER) → choose_read_strategy;
             // default → always-coalesce. All paths produce byte-identical bytes; only the GET count
             // differs. (TD-RDSTRAT-1 slice 3b wiring.)
             let strategy = if !pax_range_coalescing_enabled() {

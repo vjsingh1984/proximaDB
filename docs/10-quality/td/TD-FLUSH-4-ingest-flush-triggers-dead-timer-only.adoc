@@ -1,5 +1,5 @@
 = TD-FLUSH-4: ingest-time flush triggers are dead — only the 300 s RPO timer materializes segments (masked until #1199's bounded teardown)
-:status: Open
+:status: Corrected + fixed (2026-07-25): triggers were NEVER dead — see the S0 correction; lifecycle fixes shipped in this PR
 :filed: 2026-07-25
 :priority: P0/P1 (durability + recall: unflushed serving measured 1 pt below the cascade ratchet)
 
@@ -28,7 +28,35 @@ shared-cwd launches. Repeated 3×.
    unflushed serving sits ~1 pt BELOW the 0.984 ratchet. Durability exposure:
    until the timer fires, everything rides the WAL alone.
 
-== Root-cause pointers
+== S0 CORRECTION (2026-07-25, instrumented 100k/1M diagnosis runs)
+
+The original mechanics below are WRONG in an important way. With debug
+logging on: the inline size trigger fired 38× at 100k (floor=1MB; first
+segment at t=1s) and fired at exactly the 884k floor crossing at 1M
+(production floor), then materialized 884k entries / 235 MB in **43.9 s** —
+completing AFTER every earlier observation window, because segments stage
+under `__flush/` and become visible only on rename-at-completion. The
+"2 ms shutdown no-op" was the SIGTERM racing an in-flight materialize;
+`runtime.shutdown_timeout(5s)` (#1199) could kill it, stranding a `__flush/`
+straggler that `cleanup_temp_on_startup` deletes — hence "segment-less after
+restart" (WAL-safe but cold, and memtable-only recall 0.974 < the 0.984
+cascade ratchet). Concurrent all-core query CPU (lone-query morsels) starves
+the encode further. The REAL defects, fixed in this PR:
+
+1. **Shutdown-await**: `drain_inline_flushes(timeout)` (write_ahead_log/
+   mod.rs — in-flight ticket counter around `spawn_inline_flush`) is called
+   at the top of `ProximaDB::shutdown` (90 s bound) so triggered
+   materializations complete and rename before teardown.
+2. **Observability**: an info-level start line ("segments appear on
+   completion") pairs the existing completion line, making a long-running
+   flush readable instead of invisible.
+3. The `flush_threshold_bytes = global_memory_limit/2` finding below is the
+   BACKPRESSURE guard (wal_behavior.rs:525), not the flush trigger — three
+   separate knobs: size trigger (works), backpressure (2 GB), RPO timer
+   (works). Flush-encode SPEED (43.9 s for 884k — single-threaded quantize)
+   is follow-up work, not filed here.
+
+== Root-cause pointers (original filing — superseded by S0 above)
 
 * The parallel session's finding stands: `MemtableManager` runs with
   `flush_threshold_bytes = config.memtable.global_memory_limit / 2`
