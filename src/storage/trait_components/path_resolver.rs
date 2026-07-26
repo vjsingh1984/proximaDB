@@ -1053,7 +1053,7 @@ impl DrPathBuilder {
     /// authority). Structural base; the `PartitionLeaseStore` nests per-partition
     /// manifest logs beneath it. Used at boot by `SharedServices` to construct the
     /// lease store. NOTE: exact co-location (vs the system catalog) is a design
-    /// TBD when `PROXIMADB_PARTITION_LEASE_ON` ships default-on.
+    /// TBD when the partition-lease gate ships default-on (no env gate exists yet).
     pub fn partition_lease_prefix() -> String {
         "_catalog/leases/".to_string()
     }

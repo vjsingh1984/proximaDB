@@ -597,7 +597,7 @@ impl SharedServices {
                 // operator control-plane prefix (`_operator/catalog/…`) so
                 // catalog I/O honours the structural-isolation mandate instead
                 // of a raw `{base}/system-catalog.wal`. Flag-gated + inert by
-                // default (mirrors `PROXIMADB_WAREHOUSE_DRPATH`): the local path
+                // default (mirrors the warehouse DrPath opt-in pattern): the local path
                 // is unchanged until a deployment opts in, keeping existing
                 // on-disk catalog state in place. The catalog is `Operator`-roled.
                 let wal_path = if std::env::var("PROXIMADB_CATALOG_DRPATH").is_ok() {

@@ -1707,7 +1707,7 @@ impl AxisManager {
                 // this site built `AxisHnswConfig { distance_metric,
                 // ..Default::default() }`, ignoring the strategy spec's
                 // m / ef_construction / ef_search entirely. Customers
-                // (and the bench) had to use the PROXIMADB_BENCH_HNSW_EF
+                // (and the bench) had to use the (un-prefixed) BENCH_HNSW_EF
                 // env override to influence search behaviour because
                 // the `IndexAlgorithm::HNSW { m, ef_construction,
                 // ef_search, max_elements }` fields they put in their

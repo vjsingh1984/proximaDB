@@ -6968,6 +6968,7 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-filter-expression",
  "proximadb-records",
+ "rayon",
  "rmp-serde",
  "serde",
  "serde_json",

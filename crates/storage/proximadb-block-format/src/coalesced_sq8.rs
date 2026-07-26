@@ -165,14 +165,40 @@ pub fn encode_region(vectors: &[Option<&[f32]>], dim: u32) -> Result<(Vec<u8>, S
             buf[bitmap_off + (i >> 3)] |= 1u8 << (i & 7);
         }
     }
-    for v in vectors {
-        match v {
-            Some(vec) => {
-                for &f in *vec {
-                    buf.push(quantize_one(f, &params));
+    // TD-FLUSH-5: pass 2 is per-row independent (row bytes = quantize of
+    // vectors[i] against the pass-1 global params, which stay sequential for
+    // bit-stable min/max). Ordered par_iter + in-order concat = byte-identical
+    // (unit-pinned). Small regions keep the sequential loop.
+    const PAR_ENCODE_MIN_ROWS: usize = 4096;
+    if n >= PAR_ENCODE_MIN_ROWS && crate::coalesced_rabitq::encode_pool_threads() > 1 {
+        use rayon::prelude::*;
+        // Bounded scoped pool — query-headroom rule; see encode_pool_threads.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(crate::coalesced_rabitq::encode_pool_threads())
+            .build()
+            .map_err(|e| anyhow::anyhow!("encode pool: {e}"))?;
+        let rows: Vec<Vec<u8>> = pool.install(|| {
+            vectors
+                .par_iter()
+                .map(|v| match v {
+                    Some(vec) => vec.iter().map(|&f| quantize_one(f, &params)).collect(),
+                    None => vec![0u8; dim_us],
+                })
+                .collect()
+        });
+        for row in rows {
+            buf.extend_from_slice(&row);
+        }
+    } else {
+        for v in vectors {
+            match v {
+                Some(vec) => {
+                    for &f in *vec {
+                        buf.push(quantize_one(f, &params));
+                    }
                 }
+                None => buf.extend(std::iter::repeat_n(0u8, dim_us)),
             }
-            None => buf.extend(std::iter::repeat_n(0u8, dim_us)),
         }
     }
     Ok((buf, params))
@@ -230,6 +256,46 @@ impl<'a> Sq8Region<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-FLUSH-5: parallel pass-2 SQ8 encode is byte-identical to the
+    /// sequential reference at n above the rayon threshold.
+    #[test]
+    fn parallel_sq8_encode_region_is_byte_identical() {
+        const DIM: usize = 16;
+        const N: usize = 5000;
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|j| ((i * 31 + j * 7) % 997) as f32 * 0.01 - 4.0)
+                    .collect()
+            })
+            .collect();
+        let vectors: Vec<Option<&[f32]>> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                if i % 89 == 7 {
+                    None
+                } else {
+                    Some(v.as_slice())
+                }
+            })
+            .collect();
+        let (region, params) = encode_region(&vectors, DIM as u32).unwrap();
+        // sequential reference for the code area only (header+bitmap are
+        // sequential in both paths): recompute row bytes and compare.
+        let code_off = region.len() - N * DIM;
+        for (i, v) in vectors.iter().enumerate() {
+            let got = &region[code_off + i * DIM..code_off + (i + 1) * DIM];
+            match v {
+                Some(vec) => {
+                    let want: Vec<u8> = vec.iter().map(|&f| quantize_one(f, &params)).collect();
+                    assert_eq!(got, want.as_slice(), "row {i} bytes differ");
+                }
+                None => assert!(got.iter().all(|&b| b == 0), "null row {i} must be zeros"),
+            }
+        }
+    }
 
     fn synth_vec(seed: u64, dim: usize) -> Vec<f32> {
         let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);

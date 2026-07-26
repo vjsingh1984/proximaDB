@@ -117,6 +117,24 @@ impl CoalescedRaBitQHeader {
 ///
 /// Reuses the canonical codec ([`fit_params`] → [`build_rotation`] → [`encode`])
 /// — no hand-rolled quantizer.
+/// TD-FLUSH-5: encode-pool width. Default HALF the cores (min 2) so a flush
+/// never starves concurrent queries (the search morsels own the other half —
+/// co-design headroom, mirroring TD-SEARCH-2's adaptive degree).
+/// `PROXIMADB_PAX_ENCODE_THREADS` overrides (1 = sequential).
+pub(crate) fn encode_pool_threads() -> usize {
+    if let Ok(v) = std::env::var("PROXIMADB_PAX_ENCODE_THREADS")
+        && let Ok(n) = v.trim().parse::<usize>()
+        && n > 0
+    {
+        return n;
+    }
+    (std::thread::available_parallelism()
+        .map(|c| c.get())
+        .unwrap_or(2)
+        / 2)
+    .max(2)
+}
+
 pub fn encode_region(
     vectors: &[Option<&[f32]>],
     dim: u32,
@@ -156,15 +174,53 @@ pub fn encode_region(
             buf[bitmap_off + (i >> 3)] |= 1u8 << (i & 7);
         }
     }
-    for v in vectors {
-        match v {
-            Some(vec) => {
-                let code = encode(vec, &params, &rotation);
-                buf.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
-                buf.extend_from_slice(&code.inv_factor.to_le_bytes());
-                buf.extend_from_slice(&code.bits);
+    // TD-FLUSH-5: pass 2 (per-row encode) is embarrassingly parallel — row
+    // i's bytes depend only on vectors[i] + the shared immutable
+    // params/rotation fit in pass 1 (which stays sequential so the float
+    // reductions are bit-stable). Ordered par_iter + in-order concat is
+    // byte-identical to the sequential loop (pinned by the unit test). The
+    // rotation apply is O(dim²)/row — the measured 43.9 s / 884k-row flush
+    // hotspot. Small regions keep the sequential loop (no pool overhead).
+    const PAR_ENCODE_MIN_ROWS: usize = 4096;
+    if n >= PAR_ENCODE_MIN_ROWS && encode_pool_threads() > 1 {
+        use rayon::prelude::*;
+        // BOUNDED scoped pool (not the global pool): flush encode must leave
+        // headroom for concurrent queries — the same co-design rule as the
+        // TD-SEARCH-2 search morsels. Default cores/2 (min 2), env-tunable.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(encode_pool_threads())
+            .build()
+            .map_err(|e| anyhow::anyhow!("encode pool: {e}"))?;
+        let rows: Vec<Vec<u8>> = pool.install(|| {
+            vectors
+                .par_iter()
+                .map(|v| match v {
+                    Some(vec) => {
+                        let code = encode(vec, &params, &rotation);
+                        let mut row = Vec::with_capacity(stride);
+                        row.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
+                        row.extend_from_slice(&code.inv_factor.to_le_bytes());
+                        row.extend_from_slice(&code.bits);
+                        row
+                    }
+                    None => vec![0u8; stride],
+                })
+                .collect()
+        });
+        for row in rows {
+            buf.extend_from_slice(&row);
+        }
+    } else {
+        for v in vectors {
+            match v {
+                Some(vec) => {
+                    let code = encode(vec, &params, &rotation);
+                    buf.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
+                    buf.extend_from_slice(&code.inv_factor.to_le_bytes());
+                    buf.extend_from_slice(&code.bits);
+                }
+                None => buf.extend(std::iter::repeat_n(0u8, stride)),
             }
-            None => buf.extend(std::iter::repeat_n(0u8, stride)),
         }
     }
     Ok((buf, params.centroid))
@@ -367,6 +423,62 @@ mod tests {
             parsed.code(ranked[0]).is_some(),
             "top survivor must be present"
         );
+    }
+
+    /// TD-FLUSH-5: the parallel pass-2 encode (n >= 4096 -> rayon) must be
+    /// BYTE-IDENTICAL to the sequential reference — same header, bitmap, and
+    /// per-row codes in row order. The reference is built inline with the
+    /// same pass-1 params + per-row `encode` calls.
+    #[test]
+    fn parallel_encode_region_is_byte_identical() {
+        const DIM: usize = 32;
+        const N: usize = 5000; // above PAR_ENCODE_MIN_ROWS
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| synth_vec(i as u64, DIM)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                if i % 97 == 13 {
+                    None
+                } else {
+                    Some(v.as_slice())
+                }
+            })
+            .collect();
+        let seed = RABITQ_SEED_BASE ^ 99;
+        let (region, _) = encode_region(&vectors, DIM as u32, seed).unwrap();
+
+        // sequential reference
+        let present: Vec<&[f32]> = vectors.iter().filter_map(|o| *o).collect();
+        let params = fit_params(&present, DIM, seed);
+        let rotation = build_rotation(DIM, seed);
+        let stride = 8 + DIM.div_ceil(8);
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&(N as u32).to_le_bytes());
+        expected.extend_from_slice(&(DIM as u32).to_le_bytes());
+        expected.extend_from_slice(&seed.to_le_bytes());
+        for &c in &params.centroid {
+            expected.extend_from_slice(&c.to_le_bytes());
+        }
+        let bitmap_off = expected.len();
+        expected.resize(expected.len() + N.div_ceil(8), 0u8);
+        for (i, v) in vectors.iter().enumerate() {
+            if v.is_some() {
+                expected[bitmap_off + (i >> 3)] |= 1u8 << (i & 7);
+            }
+        }
+        for v in &vectors {
+            match v {
+                Some(vec) => {
+                    let code = encode(vec, &params, &rotation);
+                    expected.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
+                    expected.extend_from_slice(&code.inv_factor.to_le_bytes());
+                    expected.extend_from_slice(&code.bits);
+                }
+                None => expected.extend(std::iter::repeat_n(0u8, stride)),
+            }
+        }
+        assert_eq!(region, expected, "parallel encode must be byte-identical");
     }
 
     /// TD-SEARCH-2 S2: morsel equivalence — merging per-chunk

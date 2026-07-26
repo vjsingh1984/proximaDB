@@ -1066,12 +1066,6 @@ fn tokenize_into(text: &str, out: &mut Vec<String>) {
 // retired legacy `.sst` streaming format.
 // ---------------------------------------------------------------------------
 
-/// Explicit per-deployment PAX opt-in env. M1-3: vestigial — PAX is always the
-/// write format now, so this no longer gates anything. Retained for back-compat
-/// (a deployment that still sets it is a no-op, not an error); tests reference it
-/// to keep the process env clean.
-const PAX_VECTOR_SEGMENTS_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS";
-
 /// Global kill-switch. Any truthy value selects the recall-exact `RawF32` quant
 /// for EVERY collection (M1-3: it used to force legacy `.sst`; with the streaming
 /// write path retired it now means RawF32-PAX, exact-scan searchable via
@@ -1734,7 +1728,6 @@ mod tests {
         // nextest isolates each test in its own process; `set_var`/`remove_var`
         // are `unsafe` (edition 2024).
         unsafe {
-            std::env::remove_var(PAX_VECTOR_SEGMENTS_ENV);
             std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
         }
         let engine = create_test_engine().await;
