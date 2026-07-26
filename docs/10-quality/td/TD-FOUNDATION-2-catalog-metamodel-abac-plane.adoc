@@ -11,7 +11,7 @@
 [cols="1,3"]
 |===
 | Status | Draft — design-gate, no code yet
-| **Blocked-on** | **HARD STOP — no FC/F7r code until this doc is promoted out of `Draft`. Status (2026-07-26): the §6 adversarial red-team has now RUN — all 5 targets returned BROKEN/REGRESSION and their fixes are folded into this revision (§1.4/§2/§3/§4/§5). Because those fixes are *new* structures (`AuthorizedReadContext`, two-axis identity slot, two-layer authz, fail-closed bridge) the red-team has not yet re-attacked, one confirmation pass over the revised §3.4/§1.4/§2 is owed before promotion. F5 is the only critical-path item open; FC/F7r are off-critical-path, so there is no pressure to release early.**
+| **Blocked-on** | **HARD STOP — no FC/F7r code until this doc is promoted out of `Draft`. Status (2026-07-26): TWO adversarial red-team rounds have run — round 1 broke all 5 §6 targets, round 2 broke all 5 *fixes* (see §6.1 log). Both are folded. The design has now CONVERGED: the architecture is sound, and the residual failures are concrete substrate defects captured as acceptance criteria in §8. Promotion is now MECHANICAL — it requires (a) §8 S1–S8 satisfied or each explicitly waived, and (b) a green WI-5/WI-7 test suite. A round-3 attack is optional (recommended only on the newly-introduced CDC 4th surface, the capability-revalidating re-plan, and `resolve_effective_attributes`). F5 is the only critical-path item open; FC/F7r are off-critical-path.**
 | Realizes | ADR-072 **D12** (family-parameterized identity, first-class edges, logical/physical split), **D6** (structural tenancy), **D15** (cost-based hybrid/filter planner, RLS-as-global-filter)
 | Sits on | **ADR-074** (namespace = isolation boundary; alias→`namespace_id`, authz-gated) — FC supplies the *authz gate* ADR-074 defers
 | Predecessors | TD-FOUNDATION-1 (modality consolidation), F0/F1a/F1b/F1d/F2 (merged: typed key + fenced CKS + MVCC + composite-PK MVP)
@@ -157,6 +157,35 @@ DataFusion residual net** (it bypasses `supports_filters_pushdown`), so a drop i
 permanent. WI-5 is therefore not "one canonical conversion" but a
 **total-or-fail-closed** bridge (see §4).
 
+[red-team round 2, §6.3 STILL-BROKEN] "Total-or-fail-closed" as first written
+closes only the **`Err` axis**. Two silent-widening axes survive, and neither
+raises an error (so fail-closed never fires):
+
+* **`Ok(None)` = "no restriction" is an inversion channel.** `build_filter` has a
+  third outcome besides `Ok(filter)`/`Err`: `Ok(None)`, wired everywhere to mean
+  *unfiltered* (`service.rs:415/432/444`, `secure_operations.rs:414`,
+  `no_filters()` on empty). `Not(AlwaysAllow)` — semantically *deny-all* —
+  compiles `AlwaysAllow`→`Ok(None)`, then the `Not` arm returns `Ok(None)` → **full
+  table**. Deny-all silently inverts to admit-all. → Fix: `build_filter` returns
+  `Result<FilterExpression>` (**no `Ok(None)`**); "no restriction" is producible
+  *only* by the top-level "no binding exists" path, and every deny-derived/empty
+  node lowers to an explicit **unsatisfiable** filter.
+* **"SQL-3VL `Not`" is prose with no substrate.** The evaluator does bare boolean
+  `!` (`sql_value_filter.rs:348`); a comparison over a NULL/absent field returns
+  `false`, so `Not(false)=true` **admits** the row. The fix's own prescribed
+  `NotEquals→Not(Eq)` lowering therefore *re-creates* the NULL-leak verbatim. →
+  Fix: lower every `Not(P)` as `And(Not(P), IS_NOT_NULL(f)…)` over each field `f`
+  in `P` (so `NOT UNKNOWN` excludes), or evaluate on a genuine 3-valued substrate;
+  until then `Not` over any nullable field fails closed.
+* **Cross-type compare widens** (`compare_json_values` total-orders by type
+  precedence; numeric `clearance>=3` vs string `"2"` → always true). → Fix:
+  type-gate every literal against the column's declared type at compile; a
+  mismatch denies.
+
+These are **substrate defects** in the existing (dead) RLS/filter code, not just
+doc wording — see the §8 hardening preconditions. The bridge is not "total" until
+`build_filter` is total (no `Option`) and `Not` is null-guarded.
+
 === 1.5 The namespace boundary — ADR-074 (just landed)
 
 ADR-074 makes the **namespace an isolation boundary**: client-facing **alias** →
@@ -217,34 +246,54 @@ Root cause: the enum fused two independent axes — the **identity role** (what 
 key guarantees) and the **access path** (how rows are reached). They are
 uncorrelated. Split them, and make identity a **vector of facets**:
 
+[red-team round 2, §6.2 STILL-BROKEN] The first fix added an `access_path` axis
+to the facet — but `access_path` (`Ann`/`RangeScan`/`Hash`) is a **physical**
+access-method fact that flips when an index is dropped or a collection is
+re-laid-out, so embedding it in `IdentitySlot` **directly contradicts D12-c**
+(the logical governance object must survive re-index untouched). It also
+re-opened F2's single-PK invariant (two `Uniqueness` facets, no primary/secondary
+discriminator — the CKS `Oid` contract distinguishes `oid==key` for a natural PK
+from `oid==owning-row` for a secondary UNIQUE), left `RelationshipType`'s own
+identity orphaned, and made `Hash` point at a read primitive that does not exist.
+Corrected — the facet holds **only logical facts**, access method moves to the
+physical layer, and the uniqueness role gains a primary discriminator:
+
 [source]
 ----
 IdentitySlot {
     facets: Vec<IdentityFacet>,      // >1 for multi-vector rows and TS composites
+    filterable_columns: Vec<ColumnRef>, // the ABAC allow-list source (see below)
     completeness_gaps: Vec<GapNote>, // U-Schema discipline: what this family omits
 }
 IdentityFacet {
-    role: Uniqueness | Ordering | Surrogate,     // axis 1: the guarantee
-    key: CompositeKeySpec,                        // F0-encoded; CKS-fenced iff role==Uniqueness
-    access_path: PkLookup | RangeScan | Ann | Hash | None,  // axis 2: how rows are reached
+    role: Uniqueness(Primary) | Uniqueness(Secondary { owning_primary: KeyRef })
+        | Ordering { axis: AxisLabel } | Surrogate,   // logical guarantee only
+    key: CompositeKeySpec,           // F0-encoded; CKS-fenced iff role is Uniqueness(_)
+    // NO access_path — physical reachability lives in CatalogStorageLayout/CatalogIndex (D12-c)
 }
 ----
 
-Each modality states its truth without a lossy choice: relational/document →
-`{Uniqueness, pk, PkLookup}`; time-series → `{Uniqueness, (series,ts), RangeScan}`
-(ts flagged order-preserving); single vector → `{Uniqueness, external_id, Ann}`
-(matches `IdMapIndex`'s dedup + upsert); multi-vector row → `{Uniqueness, pk,
-PkLookup}` + N × `{Surrogate, row_surrogate, Ann}`; key-value / graph node →
-empty `facets`. `role == Uniqueness` still drives CKS registration; the F0 codec
-still encodes `key`; `completeness_gaps` still carries the U-Schema discipline.
+Rules: **at most one `Uniqueness(Primary)`** per slot (`oid == key`, drives the
+natural-PK CKS registration — restores F2's invariant); zero-or-more
+`Uniqueness(Secondary { owning_primary })` (CKS `oid == owning row`, matching the
+store's `Oid` contract verbatim); `Ordering { axis }` names *which* time axis
+(event-time vs ingest-time) it binds. Access method is *not* here — a column
+reachable by PK-lookup and range-scan and ANN simultaneously is one facet, and
+the physical index set records how it is reached. Each modality:
+relational/document → `{Uniqueness(Primary), pk}`; time-series →
+`{Uniqueness(Primary), (series,ts)}` + `{Ordering{ts}}`; single vector →
+`{Uniqueness(Primary), external_id}` (matches `IdMapIndex` dedup + upsert);
+multi-vector row → `{Uniqueness(Primary), pk}` + N × `{Surrogate}`; key-value →
+empty; **`RelationshipType` gets its own `IdentitySlot`** (edge PK), so first-class
+edges are not identity-orphaned.
 
-**Why this is load-bearing for ABAC (not cosmetic):** a `Surrogate`-typed vector
-collection signals the planner "no uniqueness/attribute column to filter on" —
-but F7r's allow-list is *built from* those columns. The mis-typing is a
-**fail-open hazard**: the identity slot would tell the enforcement plane that
-row-level authorization is not constructible on a vector collection that in fact
-carries a fenced external id and filterable metadata. The `access_path` axis
-gives the planner an honest signal instead.
+**The ABAC signal is `filterable_columns`, not the access path** [§6.2 attack 4]:
+F7r's allow-list is built from the schema's *attribute* columns, and knowing a row
+is ANN-addressed says nothing about *which* columns are filterable. So the slot
+carries an explicit `filterable_columns` list (sourced from the attribute
+`CatalogColumn`s, surfaced via `AnnFilteringPolicy`) — this, not `access_path`,
+is what tells the enforcement plane a vector collection *does* carry filterable,
+fenced columns, closing the fail-open hazard honestly.
 
 === D12-c — Logical governance splits from physical index
 
@@ -278,25 +327,38 @@ tenant (discarding D6).
 * **Forbidden by default.** `RelationshipTenancy::Intra` — both endpoints resolve
   to the same `tenant_id`; the CKS/catalog rejects a cross-tenant edge at write
   time (fail-closed, matches Weaviate's ban).
-* **`Reference` (new) — read-only fan-in to a designated shared corpus.** For the
-  common legitimate case, a tenant may point *into* a nominated read-only shared
-  namespace without minting per-edge capabilities. Traversal into it is still
-  ABAC-filtered on the shared side; no write-back, no O(N×M) blowup.
-* **`Brokered` — bilateral, object-scoped, seam-gated.** A cross-tenant *writeable*
-  edge is admissible only when: (1) the enforcement seam actually covers the
-  **graph traversal path** (a **precondition, not a promise** — no brokered edge
-  ships before F7r wires the per-hop graph filter, §3.4); (2) the near half-edge
-  stores **only an opaque broker handle, never the far `object_id`** — crossing it
-  **re-plans as a fresh ABAC-scoped scan executed in the far tenant's context**
-  through the read seam, so the far filter genuinely runs; (3) the capability
-  requires **far-tenant countersignature scoped to a specific far `object_id`**,
-  is minted only through an ABAC-gated write path, and its revocation (or far-row
-  delete) **tombstones the near half-edge**.
+* **`Reference` (new) — read-only fan-in to a designated shared corpus.** A tenant
+  may point *into* a nominated read-only shared namespace without per-edge
+  capabilities; traversal into it is ABAC-filtered on the shared side; no
+  write-back, no O(N×M) blowup. [red-team round 2, §6.1 STILL-BROKEN] **Cross-tenant
+  attribute trust must be explicit** — the shared corpus's policy may evaluate
+  **only attributes issued by an authority the shared tenant trusts**, never the
+  visiting tenant's self-asserted claims (else A forges `clearance=TOP_SECRET` and
+  reads the whole corpus). Enforced per the §3.1 *attribute-trust boundary*: a
+  foreign policy resolves the subject's attributes **server-side against the
+  foreign tenant's authority**, or matches on issuer-tagged `(issuer, key, value)`
+  so a near-tenant IdP's `clearance` cannot satisfy a far-tenant `clearance`
+  predicate.
+* **`Brokered` — bilateral, object-scoped, interlocked.** A cross-tenant *writeable*
+  edge is admissible only when: (1) [round 2] a **runtime interlock** confirms the
+  per-hop graph filter primitive is live — Brokered-edge *creation* fail-closes
+  unless F7r's graph seam asserts capability (not merely the `abac-policy` flag;
+  "precondition" must be a probe, not prose — the graph seam is currently a stub,
+  `QueryContext` is empty, `evaluate_property_filter` returns `Ok(true)`); (2) the
+  near half-edge stores **only an opaque broker handle** — crossing **re-plans as a
+  fresh ABAC-scoped scan in the far tenant's context** (with far-trusted
+  attributes, per (Reference) above), never a direct `get_node`; (3) the
+  capability is bound to **`(near_half_edge_id, far_object_id, near_tenant)` with a
+  nonce + expiry**, minted through an ABAC-gated path, and the **far-side re-plan
+  re-validates the capability itself** on every crossing (not just ABAC row
+  visibility) — so revocation is a read-time guarantee and the near-side tombstone
+  is a cheap fast-path, not the sole (racy) guard.
 * **Federated** remains out of scope for FC (defer to the consistency-floor work).
 
 This preserves D6 fail-closed as the default, serves the shared-reference case
-without a workaround, and makes "re-enters the far-side filter" a *wired
-mechanism* (opaque handle + re-plan) rather than an assertion.
+without a workaround, and makes "re-enters the far-side filter" a *wired,
+interlocked mechanism* (opaque handle + capability-revalidating re-plan +
+far-trusted attributes) rather than an assertion.
 
 == 3. Access-control plane (D6 / D15)
 
@@ -342,17 +404,34 @@ SubjectAttributes {
 }
 ----
 
-Non-privilege attributes (dept, clearance, region) are **populated at the
-identity seam** from SSO/OIDC claims + tenant defaults and **travel in the request
-context**. [red-team, §6.4] **Privilege-granting roles (`SystemAdmin`,
-`TenantAdmin`, and any role that authorizes an operation) are NOT trusted from
-context claims** — they are **re-resolved server-side at decision time** against
-the authoritative binding store keyed by `subject_id`, exactly as
-`validate_admin_access` does today (it deliberately ignores context roles). The
-first draft's "roles come from SSO claims, never re-derived downstream" is
-**reversed for privilege roles** — that property is precisely what would let a
-tenant-controlled IdP self-grant admin (a claims-injection escalation). SSO
-claims seed *attributes*, never *privileges*.
+[red-team round 2, §6.3+§6.1 STILL-BROKEN] The first fix re-resolved only
+*privilege roles* server-side and left *attributes* (and `RoleBased`'s roles)
+trusted from tenant-controlled claims. The confirmation pass showed that single
+gap re-opens the escalation in two places: `SecurityPredicate::RoleBased` reads
+`user_context.roles` (`service.rs:317`) which the fix left empty or claims-fed —
+**read-all-by-claims**; and a `Reference` cross-tenant traversal evaluates the far
+policy against the *visiting* tenant's self-asserted `clearance` — **cross-tenant
+corpus read**. The correct boundary is one rule:
+
+[IMPORTANT]
+====
+**The attribute-trust boundary.** *Anything an authorization predicate consumes to
+make an admit/deny decision — privilege roles, `RoleBased` roles, and ordinary
+ABAC attributes alike — must be resolved server-side against the authority of the
+tenant whose policy is being evaluated. SSO/OIDC claims may carry identity, but
+are **never load-bearing inside an authz predicate**, and never across a tenant
+boundary.*
+====
+
+Concretely: attributes used only to *label* a subject may ride the context, but
+the moment a policy predicate reads an attribute to admit/deny, that value is
+**re-resolved server-side** (generalize `validate_admin_access` into
+`resolve_effective_attributes(subject_id, tenant_id)`) against the **policy's
+tenant** — the *far* tenant for `Reference`/`Brokered`. `RoleBased` predicates get
+their roles from this path, tenant-scoped (`UnifiedRole.tenant_id` must equal the
+target namespace's resolved tenant). This closes admin-by-claims (operations),
+read-all-by-claims (Layer B), and the `Reference` forgeable-attribute leak with
+the same mechanism.
 
 === 3.2 Policy model — ABAC over the container hierarchy
 
@@ -434,16 +513,38 @@ subject attributes; **`None` means deny-empty, never unfiltered.**
 4. **Direct-file export is gated off.** Arrow-Flight raw `.arrow`/`.parquet`/`.sst`
    egress (`network/arrow_ipc/file_export.rs`) cannot be row-filtered as a byte
    stream — under `abac-policy` it is **denied by default** or force-rerouted
-   through the filtered scan primitive. Direct-file egress and row-level ABAC are
-   mutually exclusive.
-5. **Field masks:** `null-out`/`redact` apply as a projection rewrite after row
-   admission; [red-team, §6.4] **`forbid` is query-rejection, not a null
-   projection** — a forbidden column must refuse the read, so column
-   existence/schema does not leak.
+   through the filtered scan primitive.
+5. **The egress/replication plane is a fourth surface** [red-team round 2, §6.5
+   STILL-BROKEN]. The CDC change-feed (`WalSubscriber`, `src/cdc/outbound/`), the
+   Kafka/webhook sinks (`CdcSink::send`), and node-to-node replication
+   (`src/cluster/replication.rs`) reconstruct full row state (`RecordState`:
+   vector + metadata + `raw`) **directly from the WAL — below `record_store`** —
+   with no subject context today. These are **not "reads"** but they exfiltrate
+   rows all the same, defeating field masks and row policies wholesale. Under
+   `abac-policy` they are **denied by default**, or each `ChangeEvent` must pass a
+   per-subscription `AuthorizedReadContext` (predicate + field mask applied to
+   `before`/`after`) before `send`, fail-closed. The WI-7 audit must therefore
+   grep for **`RecordState`/`ProximaRecord` reconstruction anywhere outside an
+   `AuthorizedReadContext`** — not just reachability of the three read traits.
+6. **Mutation WHERE-scans go through the same context** [round 2, §6.4]. A
+   `DELETE/UPDATE ... WHERE` locates rows by scanning; that scan takes the
+   `AuthorizedReadContext` too, or a subject deletes rows it cannot `SELECT`.
+7. **Field masks:** `null-out`/`redact` apply as a projection rewrite after row
+   admission; **`forbid` is query-rejection, not a null projection**. A masked
+   column **must not be usable inside a row predicate** [round 2, §6.3] — else its
+   value leaks through the admit/deny channel despite the output mask.
 
-**Fail-closed everywhere:** policy-resolution error, bridge failure (§1.4), or a
-`None` context all deny (zero rows), never open. This is the D6 structural
-guarantee, now enforced at the layer every read actually traverses.
+**The context is type-enforced, not `Option`** [round 2, §6.5]: today's
+`tenant_context: Option<&TenantContext>` and the permissive `scan_records` default
+body are exactly the bypass shape. `AuthorizedReadContext` is a **required,
+non-optional** parameter of every primitive; there is no `None`-means-unfiltered
+path and no `_unfiltered` sibling. Internal callers (compaction, index build, FK
+resolver, MV refresh, replication) that legitimately need unfiltered access use an
+**explicit, audited `SystemReadContext`** that can never serve a client.
+
+**Fail-closed everywhere, in the substrate not just the wrapper** (§8): policy
+error, bridge failure, a no-policy default, or an unresolved context all deny
+(zero rows), never open.
 
 === 3.5 This is F7r
 
@@ -528,7 +629,9 @@ in the code). **All five returned BROKEN/REGRESSION.** Their fixes are folded in
    role × access path and assumed one slot/object; refuted by multi-vector rows
    (N facets) and TS composites (Uniqueness∧Ordering); vector mis-typed as
    `Surrogate` (it is Uniqueness+ANN) — a fail-open signal to the ABAC planner. →
-   Fixed: `facets: Vec<IdentityFacet>` with an explicit `access_path` axis.
+   Fixed: `facets: Vec<IdentityFacet>` (round 2 removed the `access_path` axis —
+   it is physical, contradicted D12-c — and added `Uniqueness(Primary|Secondary)`
+   + `filterable_columns`; see §6.2 round-2 log).
 3. **`FilterExpression` bridge (WI-5) — BROKEN (critical).** The conversion
    silently drops/widens security predicates (clearance filter evaporates →
    `TOP_SECRET` to `UNCLASSIFIED`; `NotEquals`→admit; `Not`→NULL-leak), with no
@@ -561,22 +664,36 @@ modalities. §3.4 now attaches below the ingress dialects.
   attacked the §6 design targets — verification is not design approval.
 
 | 2026-07-26
-| internal adversarial red-team (5 agents, one per §6 target)
-| **Design attack — all 5 targets BROKEN/REGRESSION** (2 security-critical, 1
-  critical, 1 high, 1 broken-metamodel). Concrete, code-grounded exploits
-  (unfiltered graph traversal; clearance-filter drop; 13/13 read-path bypass on a
-  dead provider; admin-by-claims; identity-slot fail-open). All fixes folded into
-  §1.4/§2/§3/§4/§5 this revision. Detailed verdicts above.
+| internal red-team, round 1 (5 agents, one per §6 target)
+| **Design attack — all 5 BROKEN/REGRESSION.** Unfiltered graph traversal;
+  clearance-filter drop; 13/13 read-path bypass on a dead provider; admin-by-claims;
+  identity-slot fail-open. Fixes folded (rev 1).
+
+| 2026-07-26
+| internal red-team, round 2 — *attack the fixes* (5 agents)
+| **All 5 fixes STILL-BROKEN/RESIDUAL.** (a) read context missed the **CDC/
+  replication egress plane** (rows leave below `record_store`) and used `Option`
+  signatures; (b) bridge closed only the `Err` axis — **`Ok(None)`→admit-all** and
+  **boolean-`Not`→NULL-leak** survive; (c) `access_path` **contradicted D12-c**;
+  two-Uniqueness voided F2; edge orphaned; (d) `Reference` re-opened a
+  **forgeable-attribute cross-tenant read**; (e) `RoleBased` had no trusted role
+  source → **read-all-by-claims**. **Two unifying causes:** the *attribute-trust
+  boundary* (claims must never be load-bearing in a predicate) and a *fail-open
+  substrate* (the design asserted fail-closed at the wrapper over primitives that
+  default open). Fixes folded (rev 2): §1.4, §2 D12-b/d, §3.1 (attribute-trust
+  IMPORTANT box), §3.4 (4th surface + non-`Option` context), and the new **§8**.
 |===
 
-**Gate status after this revision.** The design substance is now materially
-changed — a new enforcement architecture (`AuthorizedReadContext`), a two-axis
-identity slot, a two-layer authz model, a hardened cross-tenant cut, and a
-fail-closed bridge. Because these are *new* structures the red-team has not yet
-seen, the doc **stays `Draft`**: one confirmation pass over the *revised* §3.4 /
-§1.4 / §2 (does `AuthorizedReadContext` actually close all 13 paths; is the
-fail-closed bridge total) is owed before `:status:` promotes and FC/F7r code
-begins.
+**Gate status after rev 2.** Two adversarial rounds have converged: the
+**architecture is now sound** (right enforcement altitude, two-layer authz, facets,
+attribute-trust boundary), and the remaining failures are **concrete, code-level
+substrate defects** — which are captured as **acceptance criteria in §8**, not open
+design questions. The doc **stays `Draft`**, but the gate to promotion is now
+mechanical: **§8 must be satisfied (or each item explicitly waived) and a WI-5/WI-7
+test suite must be green.** A round-3 design attack is optional — recommended only
+on the *newly introduced* structures (the CDC 4th surface, the capability-revalidating
+re-plan, `resolve_effective_attributes`); everything else has converged to testable
+criteria.
 
 == 7. What FC does *not* do
 
@@ -589,3 +706,77 @@ begins.
   subject attributes + the resolver, all inert until F7r wires the three read
   primitives (§3.4).
 * Does not emit dollars/tiers/SKUs — neutral governance only (ADR-060 boundary).
+
+== 8. Substrate-hardening preconditions (acceptance criteria)
+
+Round 2 showed the ABAC plane cannot be asserted fail-closed while riding a
+substrate that defaults fail-open. These are the concrete, testable preconditions
+F7r must satisfy (or explicitly waive per item) before `abac-policy` may enforce.
+Each is a code-level defect in the existing (dead) RLS/filter substrate, with a
+pinned test.
+
+[cols="1,3,2"]
+|===
+| # | Precondition (fail-closed the substrate) | Test / evidence
+
+| S1
+| `CollectionRLS::build_filter` returns `Result<FilterExpression>` — **no
+  `Ok(None)`**. "No restriction" is producible only by the top-level "no binding
+  exists" path; every deny-derived/empty-`And`/`Or`/`Not(None)` node lowers to an
+  explicit **unsatisfiable** filter. `combine_filters`/`no_filters()` stop
+  equating `None` with unfiltered.
+| Property: `Not(AlwaysAllow)` ⇒ zero rows (not full table). `service.rs:415/432/444`.
+
+| S2
+| `Not(P)` is null-safe: lowered as `And(Not(P), IS_NOT_NULL(f)…)` over each field
+  `f` in `P`, or evaluated on a 3-valued substrate. Until then `Not` over a
+  nullable field **fails closed**.
+| `Not(Eq(classification,"TS"))` over a NULL-classification row ⇒ **excluded**.
+  `sql_value_filter.rs:348`.
+
+| S3
+| Literals are **type-gated** against the column's declared type at compile; a
+  mismatch **denies**, never falls through to `compare_json_values` precedence
+  ordering.
+| Numeric `clearance>=3` vs string column ⇒ deny, not admit-all. `json_comparison.rs:90+`.
+
+| S4
+| The read context is a **required, non-`Option`** parameter of every read
+  primitive (`record_store` trait, `unified_search_native`, graph executor). No
+  `None`-means-unfiltered path, no `_unfiltered` sibling. Internal unfiltered
+  access uses an explicit audited `SystemReadContext`.
+| CI: `scan_records`/`get_by_key`/kernel/graph signatures carry a non-optional
+  context. `record_store.rs:506/514/526/543`.
+
+| S5
+| **Egress/replication coverage.** No `RecordState`/`ProximaRecord` is
+  reconstructed for outbound CDC/webhook/replication without an
+  `AuthorizedReadContext` (or an explicit deny under `abac-policy`).
+| CI grep: `RecordState`/`ProximaRecord` construction sites in `src/cdc/`,
+  `src/cluster/replication.rs` are context-gated. §6.5 round 2.
+
+| S6
+| **Attribute-trust boundary.** Any attribute/role a predicate reads to admit/deny
+  is re-resolved server-side against the **policy's tenant** authority
+  (`resolve_effective_attributes(subject_id, tenant_id)`); claims are never
+  load-bearing. `RoleBased` roles come from this path, tenant-scoped.
+| SSO claim `role=system_admin` / `clearance=TS` does not change any admit/deny.
+  §3.1 IMPORTANT box.
+
+| S7
+| **Graph-seam interlock.** `Brokered`-edge creation and any cross-tenant traversal
+  fail closed unless a runtime probe confirms the per-hop graph filter is live
+  (the graph `QueryContext`/`evaluate_property_filter` are stubs today).
+| Creating a `Brokered` edge with the graph filter absent is rejected.
+  `graph/query/operators/mod.rs`.
+
+| S8
+| **Mask/predicate isolation.** A `redact`/`forbid` column cannot be referenced by
+  a row predicate (else its value leaks through admit/deny). `forbid` =
+  query-rejection.
+| A visibility predicate over a masked column is rejected at policy-compile.
+|===
+
+S1–S3 and S6 are **security-critical** (fail-open inversion / claims escalation);
+S4–S5 are the completeness spine; S7–S8 close the residual side channels. None is
+on the OLTP critical path — they gate `abac-policy` enforcement only.
