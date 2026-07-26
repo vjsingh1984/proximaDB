@@ -86,12 +86,9 @@ use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 /// centralized so the gap is greppable and the eventual fix has one call site.
 pub(crate) const DEFAULT_TENANT_PLACEHOLDER: &str = "default_tenant";
 
-/// Well-known, rename-stable `namespace_id` for the embedded / single-tenant path
-/// (no catalog namespace with its own id). Single-tenant is a degenerate
-/// multi-tenant: it resolves the same canonical DrPath layout as any real
-/// namespace, just under this fixed id. Matches the record-store write path, which
-/// already addresses the default namespace as `ns_default`.
-pub(crate) const DEFAULT_NAMESPACE_ID: &str = "ns_default";
+// The single-tenant default namespace id now lives on the path contract
+// (DrPathBuilder, ADR-074 S1) — the local const duplicate was removed so the
+// default has ONE source.
 
 /// Resolve the tenant-isolated object prefix (no trailing `/`) for a warehouse
 /// snapshot: the single canonical **DrPath** layout
@@ -101,7 +98,7 @@ pub(crate) const DEFAULT_NAMESPACE_ID: &str = "ns_default";
 ///
 /// There is exactly one layout. Every namespace carries a `namespace_id` — real
 /// namespaces get one at create (`NativeCatalog`), and the embedded / single-tenant
-/// path uses the well-known [`DEFAULT_NAMESPACE_ID`] (`ns_default`), the same id the
+/// path uses the well-known [`DrPathBuilder::DEFAULT_NAMESPACE_ID`] (`ns_default`), the same id the
 /// record-store write path already uses. The caller resolves `namespace_id`
 /// (real-or-`ns_default`) and passes it here, so single-tenant is just a degenerate
 /// multi-tenant — no legacy `data/{tenant}/{ns.join}/{table}` fork, no special case.
@@ -1189,7 +1186,7 @@ impl DmlService {
         };
 
         if namespace.is_empty() {
-            DEFAULT_NAMESPACE_ID.to_string()
+            DrPathBuilder::DEFAULT_NAMESPACE_ID.to_string()
         } else {
             namespace.join(".")
         }
@@ -1571,7 +1568,7 @@ impl DmlService {
             ns_meta
                 .as_ref()
                 .and_then(|n| n.namespace_id.as_deref())
-                .unwrap_or(DEFAULT_NAMESPACE_ID),
+                .unwrap_or(DrPathBuilder::DEFAULT_NAMESPACE_ID),
             ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
             ns_meta
                 .as_ref()
@@ -2405,7 +2402,7 @@ impl DmlService {
             ns_meta
                 .as_ref()
                 .and_then(|n| n.namespace_id.as_deref())
-                .unwrap_or(DEFAULT_NAMESPACE_ID),
+                .unwrap_or(DrPathBuilder::DEFAULT_NAMESPACE_ID),
             ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
             ns_meta
                 .as_ref()

@@ -190,7 +190,7 @@ fn resolve_materialize_prefix_drpath_and_cross_tenant() {
     // Embedded / single-tenant uses the well-known ns_default — same layout, no
     // legacy fork (single-tenant is a degenerate multi-tenant).
     assert_eq!(
-        resolve(DEFAULT_NAMESPACE_ID, None).unwrap(),
+        resolve(DrPathBuilder::DEFAULT_NAMESPACE_ID, None).unwrap(),
         "data/tnt_acme/ns_default/orders"
     );
     // Cross-tenant (namespace owned by another tenant) → refused.

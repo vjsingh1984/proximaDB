@@ -82,6 +82,19 @@ pub struct MiddlewareTenantContext {
     /// optimization for catalog/storage keying, never a second source of
     /// truth (the string `tenant_id` remains authoritative).
     pub tenant_stable_id: Option<u64>,
+    /// ADR-074 S1: the resolved namespace id — the legacy string form of the
+    /// `data/{tenant}/{namespace_id}/...` path tier. `None` = single-tenant /
+    /// default (resolve via [`namespace_or_default`](Self::namespace_or_default)).
+    /// Threaded to `StorageTenantContext` via the `From` bridge; populated from
+    /// the alias→id resolution seam in S2/S3. NOTE: the stable numeric
+    /// [`namespace_stable_id`](Self::namespace_stable_id) is the AUTHORITATIVE
+    /// identity (rename-safe); this string is the derived legacy-compat form
+    /// carried so the legacy string-resolved path can read existing data
+    /// (mixed-read-safe, deprecated once typed paths go default-on).
+    pub namespace_id: Option<String>,
+    /// ADR-031 stable numeric namespace id (`NamespaceId = u16`). Threaded but
+    /// unused until `PROXIMADB_TYPED_PATHS`; `None` = legacy string-resolved path.
+    pub namespace_stable_id: Option<u16>,
 }
 
 impl MiddlewareTenantContext {
@@ -95,6 +108,8 @@ impl MiddlewareTenantContext {
             source,
             is_system_tenant,
             tenant_stable_id: None,
+            namespace_id: None,
+            namespace_stable_id: None,
         }
     }
 
@@ -121,9 +136,61 @@ impl MiddlewareTenantContext {
         )
     }
 
+    /// Set the resolved namespace (ADR-074 S1). `namespace_stable_id` is the
+    /// AUTHORITATIVE identity (rename-safe); `namespace_id` is the derived
+    /// string form carried for the legacy string-resolved path (mixed-read-safe;
+    /// deprecated when typed paths go default-on). Both are populated by the
+    /// alias→id resolution seam in S2/S3.
+    pub fn with_namespace(
+        mut self,
+        namespace_id: impl Into<String>,
+        namespace_stable_id: u16,
+    ) -> Self {
+        self.namespace_id = Some(namespace_id.into());
+        self.namespace_stable_id = Some(namespace_stable_id);
+        self
+    }
+
+    /// The namespace id, falling back to the reserved default-namespace id when
+    /// none was resolved (single-tenant / OSS). Use at I/O boundaries that render
+    /// the legacy string path `data/{tenant}/{namespace_id}/…`.
+    pub fn namespace_or_default(&self) -> &str {
+        self.namespace_id.as_deref().unwrap_or(
+            crate::storage::trait_components::path_resolver::DrPathBuilder::DEFAULT_NAMESPACE_ID,
+        )
+    }
+
     /// Check if this is a valid tenant (not empty)
     pub fn is_valid(&self) -> bool {
         !self.tenant_id.is_empty()
+    }
+}
+
+/// ADR-074 S1: the **single identity-boundary seam**. Converts the network-layer
+/// [`MiddlewareTenantContext`] into the storage-layer
+/// [`StorageTenantContext`], carrying ALL identity tiers (tenant, account,
+/// `tenant_stable_id`, `namespace_id`, `namespace_stable_id`) — replacing the
+/// ad-hoc `StorageTenantContext::for_tenant_id(string)` re-derivation scattered
+/// across ~18 protocol boundaries, which dropped account/stable/namespace on
+/// the floor. Protocol boundaries should call `StorageTenantContext::from(ctx)`
+/// (or `ctx.into()`) instead of `for_tenant_id`; S2/S3 populate the namespace
+/// fields from the alias→stable-id resolution seam.
+///
+/// NOTE on authority (ADR-074): the stable numeric ids (`tenant_stable_id`,
+/// `namespace_stable_id`) are the rename-safe source of truth; the string
+/// `tenant_id`/`namespace_id` are derived legacy-compat forms carried so the
+/// legacy string-resolved path can read existing data (mixed-read-safe). They
+/// are deprecated for new code once typed paths go default-on.
+///
+/// [`StorageTenantContext`]: crate::storage::tenant::context::StorageTenantContext
+impl From<&MiddlewareTenantContext> for crate::storage::tenant::context::StorageTenantContext {
+    fn from(ctx: &MiddlewareTenantContext) -> Self {
+        let mut s = Self::for_tenant_id(ctx.tenant_id.clone());
+        s.account_id = ctx.account_id.clone();
+        s.tenant_stable_id = ctx.tenant_stable_id;
+        s.namespace_id = ctx.namespace_id.clone();
+        s.namespace_stable_id = ctx.namespace_stable_id;
+        s
     }
 }
 
