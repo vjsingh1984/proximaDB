@@ -232,8 +232,12 @@ impl AutoFlushDriver {
                         dur,
                         0,
                     );
+                    // TD-FLUSH-6: `{:#}` prints the full anyhow source chain, not
+                    // just the outer "Failed to commit atomic flush operation"
+                    // wrapper — the proximate object-store cause lives 1-2 .context
+                    // layers down and was previously dropped.
                     tracing::warn!(
-                        "❌ ADR-069 auto-flush [{}] '{}' failed: {}",
+                        "❌ ADR-069 auto-flush [{}] '{}' failed: {:#}",
                         reason.as_str(),
                         collection_id,
                         e

@@ -598,7 +598,12 @@ impl SstEngine {
                 .finalize_atomic_operation(&atomic_op.operation_id)
                 .await
             {
-                tracing::warn!(%error, "failed to finalize recovery publication tracking");
+                // TD-FLUSH-6: print the full source chain (`{:#}`) so the inner
+                // object-store cause is visible, not just the outer wrapper.
+                tracing::warn!(
+                    "failed to finalize recovery publication tracking: {:#}",
+                    error
+                );
             }
         } else {
             tracing::debug!(operation_id = %atomic_op.operation_id, "Committing atomic operation");

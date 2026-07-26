@@ -604,13 +604,16 @@ impl UnifiedTransactionCoordinator {
                         // File existence verification removed - move_atomic already guarantees this
                     }
                     Err(e) => {
-                        error!("Failed to move file {}: {}", entry.name, e);
-                        return Err(anyhow::anyhow!(
-                            "Failed to move {} to {}: {}",
-                            staging_file_url,
-                            final_file_url,
-                            e
-                        ));
+                        // TD-FLUSH-6: preserve the full error chain. The prior
+                        // `anyhow::anyhow!("…{e}")` consumed `e` via Display and
+                        // dropped its `.source()`, hiding the real object-store
+                        // cause under the generic outer wrapper. `Error::from(e)
+                        // .context(..)` keeps the inner error traversable so it
+                        // surfaces in `{:#}` / Debug log output.
+                        error!("Failed to move file {}: {:#}", entry.name, e);
+                        return Err(anyhow::Error::from(e).context(format!(
+                            "Failed to move {staging_file_url} to {final_file_url}"
+                        )));
                     }
                 }
 
@@ -618,13 +621,24 @@ impl UnifiedTransactionCoordinator {
             }
         }
 
-        // Clean up staging directory
+        // Clean up staging directory. Best-effort (TD-FLUSH-6): every staged
+        // segment has already been moved to the final prefix above — the move
+        // loop returns `Err` on the first failure, so reaching here means the
+        // commit is already durable. On object stores the staging "directory"
+        // is a *prefix* with no blob of its own, so once the move loop drains
+        // it the delete returns NotFound (404); that is the expected end state,
+        // not a failure. Never fail the commit on cleanup — orphaned staging
+        // objects are reaped by the staging config's `auto_cleanup` /
+        // `max_orphaned_age_hours` sweep.
         if metadata.operation_type != TransactionStageType::Custom("preserve_staging".to_string()) {
-            self.filesystem
-                .delete(&metadata.staging_url)
-                .await
-                .context("Failed to cleanup staging directory")?;
-            debug!("🧹 Cleaned up staging directory");
+            if let Err(e) = self.filesystem.delete(&metadata.staging_url).await {
+                warn!(
+                    staging_url = %metadata.staging_url,
+                    "staging cleanup failed (non-fatal — segments already committed to final prefix): {e:#}"
+                );
+            } else {
+                debug!("🧹 Cleaned up staging directory");
+            }
         }
 
         // Update status to completed

@@ -991,15 +991,25 @@ impl FilesystemFactory {
                 Ok(after_file.to_string())
             }
         } else {
-            // Case 3: Non-file schemes still need URL parsing (s3://, azure://, etc.)
-            let parsed_url = Url::parse(url)
+            // Case 3: Cloud schemes (s3://, az://, adls://, abfs://, gs://, ...).
+            // The cloud backends parse the FULL url themselves to recover the
+            // container/bucket + blob key — e.g. `AzureBlobFileSystem::parse`
+            // strips the `az://` scheme and split_once('/')s the container off
+            // the blob. Returning only `parsed_url.path()` here drops the host
+            // (the container), so the backend rejects it: TD-FLUSH-6 root cause
+            // was the staging-dir `list` failing with
+            // `Invalid path: not an azure path: /1/data/__flush` (container
+            // `proximadb-bench` stripped). Pass the url through verbatim and let
+            // the backend parse it; only `file://` (Case 2 above) and scheme-less
+            // paths (Case 1) are reduced to a local path. Url::parse is kept as
+            // a fail-fast validity check; its `.path()` is intentionally unused.
+            let _parsed = Url::parse(url)
                 .map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL: {}", e)))?;
-            let path = parsed_url.path();
             trace!(
-                "🔍 [FILESYSTEM] resolve_path: Non-file scheme path: '{}'",
-                path
+                "🔍 [FILESYSTEM] resolve_path: cloud scheme — full url passed to backend: '{}'",
+                url
             );
-            Ok(path.to_string())
+            Ok(url.to_string())
         }
     }
 
@@ -1506,13 +1516,41 @@ mod inline_tests {
             "/tmp/test.txt"
         );
         assert_eq!(
-            FilesystemFactory::resolve_path("s3://bucket/key")
-                .expect("Failed to resolve path from s3:// URL"),
-            "/key"
-        );
-        assert_eq!(
             FilesystemFactory::resolve_path("/local/path").expect("Failed to resolve local path"),
             "/local/path"
+        );
+    }
+
+    /// TD-FLUSH-6 regression: cloud-scheme URLs must be passed through VERBATIM
+    /// to the backend. The cloud backends (`AzureBlobFileSystem::parse`,
+    /// `AwsS3FileSystem`, ...) recover the container/bucket + blob key from the
+    /// full url themselves; stripping to `Url::path()` here dropped the host
+    /// (container) and made `list`/`copy`/`delete` fail with
+    /// `Invalid path: not an azure path: /1/data/__flush` on a clean object
+    /// store, blocking flush. `file://` (above) and scheme-less paths are still
+    /// reduced to a local path.
+    #[tokio::test]
+    async fn test_resolve_path_cloud_urls_pass_through_verbatim() {
+        // exact shape that broke the SST flush staging-dir list on Azurite
+        assert_eq!(
+            FilesystemFactory::resolve_path("az://proximadb-bench/1/data/__flush")
+                .expect("az:// staging url must resolve"),
+            "az://proximadb-bench/1/data/__flush"
+        );
+        // s3 / gs likewise — backend parses container+blob from the full url
+        assert_eq!(
+            FilesystemFactory::resolve_path("s3://bucket/key").expect("s3:// url must resolve"),
+            "s3://bucket/key"
+        );
+        assert_eq!(
+            FilesystemFactory::resolve_path("gs://bucket/a/b/c.pax")
+                .expect("gs:// url must resolve"),
+            "gs://bucket/a/b/c.pax"
+        );
+        // malformed url is still rejected (Url::parse validity check retained)
+        assert!(
+            FilesystemFactory::resolve_path("az://[bad").is_err(),
+            "malformed cloud url must be rejected"
         );
     }
 
