@@ -13,14 +13,19 @@
 //! conflict **returns the current holder** (Cornus `LogOnce` returns the settled
 //! state).
 //!
-//! ## Tenancy is fail-closed by construction
+//! ## The key prefix is uniqueness *scoping*, not access control
 //!
-//! ADR-072 D3's signature named `tenant` + `keyspace` explicitly. They are
-//! **folded into the [`Identity`]'s leading prefix** by the F0 key codec
-//! (`proximadb_data_model::key_codec::encode_identity`, D9): a caller for tenant
-//! *A* literally cannot form tenant *B*'s key, so cross-tenant access is
-//! structurally impossible rather than checked. `get`/`tombstone` likewise key on
-//! the full `Identity`.
+//! The [`Identity`]'s leading tenant/keyspace prefix (from the F0 codec,
+//! `key_codec::encode_identity`, D9) exists so the same PK value in different
+//! tenants/tables is a **distinct uniqueness domain** — it *partitions the
+//! keyspace*, it does not authorize anyone. The prefix is *derived from* the
+//! caller's already-authenticated tenant, so uniqueness is scoped correctly; but
+//! the security boundary is the **authenticated subject + ABAC row-level filters
+//! applied at runtime** (ADR-072 D15/D6), governed by the catalog metamodel (D12)
+//! with subject↔permission bindings in a system namespace. Row-, field-, and
+//! attribute-level policies cannot live in a key — they are runtime filters,
+//! never this store's concern. `get`/`tombstone` likewise key on the full
+//! `Identity`.
 //!
 //! ## Two implementations, one contract (ADR-072 D5)
 //!
