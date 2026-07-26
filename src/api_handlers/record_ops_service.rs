@@ -409,6 +409,40 @@ impl RecordOpsService {
         }
     }
 
+    /// Resolve BOTH the canonical collection id AND its display name from a
+    /// client identifier (which may be either). The name is what the catalog
+    /// table key (`default.{config.name}`), the storage URL, and the row-count
+    /// stats resolve against — using the raw `request.collection_id` here (which
+    /// a client may send as the numeric id, e.g. `"1"`) misses the table and
+    /// leaves `record_count` stuck at 0 (the name-vs-id defect). Tenant path
+    /// fetches the real `config.name`; the cached/non-tenant path falls back to
+    /// the identifier (best-effort — the tenant path is the production one).
+    pub(crate) async fn resolve_collection_id_and_name(
+        &self,
+        collection_identifier: &str,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+    ) -> Result<Option<(String, String)>> {
+        if let Some(tenant_ctx) = tenant_context {
+            Ok(self
+                .collection_service
+                .get_collection_with_tenant_context(collection_identifier, Some(tenant_ctx))
+                .await?
+                .map(|collection| {
+                    let name = collection
+                        .config
+                        .as_ref()
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| collection_identifier.to_string());
+                    (collection.id, name)
+                }))
+        } else {
+            Ok(self
+                .resolve_collection_id_cached(collection_identifier)
+                .await?
+                .map(|id| (id, collection_identifier.to_string())))
+        }
+    }
+
     // ---- precision coercion (TD-080/TD-082) ----
 
     /// Mirror of `CollectionManager::collection_table_identifier` so the resolver
@@ -487,17 +521,15 @@ impl RecordOpsService {
         tenant_id: Option<&str>,
     ) -> Result<BatchOperationResult> {
         let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let collection_id = match self
-            .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
+        let (collection_id, collection_name) = match self
+            .resolve_collection_id_and_name(&request.collection_id, tenant_context.as_ref())
             .await?
         {
-            Some(id) => id,
+            Some((id, name)) => (id, name),
             None => {
                 return Err(anyhow!("Collection '{}' not found", request.collection_id));
             }
         };
-
-        let collection_name = request.collection_id.clone();
         if let Err(e) = enforce_wal_lane_for_record_batch(
             &collection_name,
             WriteOperationKind::Delete,
@@ -544,11 +576,11 @@ impl RecordOpsService {
         tenant_id: Option<&str>,
     ) -> Result<BatchOperationResult> {
         let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let collection_id = match self
-            .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
+        let (collection_id, collection_name) = match self
+            .resolve_collection_id_and_name(&request.collection_id, tenant_context.as_ref())
             .await?
         {
-            Some(id) => id,
+            Some((id, name)) => (id, name),
             None => {
                 return Ok(BatchOperationResult::failure(
                     format!("Collection '{}' not found", request.collection_id),
@@ -556,8 +588,6 @@ impl RecordOpsService {
                 ));
             }
         };
-
-        let collection_name = request.collection_id.clone();
         if let Some(dml_svc) = self.get_dml_service()
             && let Err(e) = dml_svc
                 .validate_record_batch_against_schema(&collection_name, &request.records)
@@ -590,7 +620,7 @@ impl RecordOpsService {
         }
 
         let mut records = request.records;
-        self.coerce_records_to_canonical_precision(&mut records, &request.collection_id)
+        self.coerce_records_to_canonical_precision(&mut records, &collection_name)
             .await;
 
         match self
@@ -629,11 +659,11 @@ impl RecordOpsService {
         tenant_id: Option<&str>,
     ) -> Result<BatchOperationResult> {
         let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let collection_id = match self
-            .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
+        let (collection_id, collection_name) = match self
+            .resolve_collection_id_and_name(&request.collection_id, tenant_context.as_ref())
             .await?
         {
-            Some(id) => id,
+            Some((id, name)) => (id, name),
             None => {
                 return Ok(BatchOperationResult::failure(
                     format!("Collection '{}' not found", request.collection_id),
@@ -641,8 +671,6 @@ impl RecordOpsService {
                 ));
             }
         };
-
-        let collection_name = request.collection_id.clone();
         if let Some(dml_svc) = self.get_dml_service()
             && let Err(e) = dml_svc
                 .validate_record_batch_against_schema(&collection_name, &request.records)
@@ -674,7 +702,7 @@ impl RecordOpsService {
             ));
         }
         let mut records = request.records;
-        self.coerce_records_to_canonical_precision(&mut records, &request.collection_id)
+        self.coerce_records_to_canonical_precision(&mut records, &collection_name)
             .await;
         match self
             .vector_operations_service
