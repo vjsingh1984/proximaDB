@@ -1348,40 +1348,103 @@ pub fn drain_probe_trace() -> Vec<(u64, u64, u64, u64)> {
         .unwrap_or_default()
 }
 
+// ── Coarse-probe (IVF) settings: TOML (`SstConfig.coarse_probe`) → OnceLock ──
+// The env-only free fns below consult this static as the FALLBACK default; env
+// vars still win (read at call time). Initialized once at SstEngine boot from
+// the parsed TOML (src/storage/engines/sst/core.rs), mirroring
+// SHARED_INVARIANTS_CACHE. COGS arc: IVF is the master cost lever (~4× per-tenant
+// COGS cut vs full-scan, recall ~0.98).
+
+/// Resolved coarse-probe settings (TOML-derived; env overrides applied at call
+/// sites, not here). Defaults replicate `CoarseProbeConfig::default()`.
+#[derive(Debug, Clone, Copy)]
+pub struct CoarseProbeSettings {
+    pub enable_read_probe: bool,
+    pub enable_write_train: bool,
+    pub nprobe_multiplier: f32,
+    pub nprobe_min: usize,
+    pub nprobe_max: usize,
+}
+
+static SHARED_COARSE_PROBE: std::sync::OnceLock<CoarseProbeSettings> = std::sync::OnceLock::new();
+
+/// Initialize the coarse-probe settings from the parsed TOML config (called once
+/// at SstEngine boot). Subsequent calls are no-ops (first wins, matching
+/// SHARED_INVARIANTS_CACHE). `None` ⇒ `CoarseProbeConfig::default()`.
+pub fn init_coarse_probe_settings(cfg: Option<&crate::core::config::CoarseProbeConfig>) {
+    let _ = SHARED_COARSE_PROBE.set(cfg.cloned().unwrap_or_default().into());
+}
+
+impl Default for CoarseProbeSettings {
+    fn default() -> Self {
+        crate::core::config::CoarseProbeConfig::default().into()
+    }
+}
+
+impl From<crate::core::config::CoarseProbeConfig> for CoarseProbeSettings {
+    fn from(c: crate::core::config::CoarseProbeConfig) -> Self {
+        Self {
+            enable_read_probe: c.enable_read_probe,
+            enable_write_train: c.enable_write_train,
+            nprobe_multiplier: c.nprobe_multiplier,
+            nprobe_min: c.nprobe_min,
+            nprobe_max: c.nprobe_max,
+        }
+    }
+}
+
+pub(crate) fn coarse_probe_settings() -> &'static CoarseProbeSettings {
+    SHARED_COARSE_PROBE.get_or_init(CoarseProbeSettings::default)
+}
+
+/// Geometric nprobe: `ceil(sqrt(k_c) × multiplier)`, clamped to `[min, max]`
+/// then to `k_c`. Sub-linear in corpus (V^0.25): ~56× fewer ranks than full-scan
+/// at 1M, recall ~0.98 at multiplier 1.0. Bump `nprobe_multiplier` (TOML) for
+/// higher recall. The max-then-min ordering avoids the `clamp(min, k_c)` panic
+/// when `k_c < min` (no-panic mandate #4).
+fn geometric_nprobe(k_c: usize, s: &CoarseProbeSettings) -> usize {
+    let raw = ((k_c as f32).sqrt() * s.nprobe_multiplier).ceil() as usize;
+    let floored = raw.max(s.nprobe_min);
+    let bounded = if s.nprobe_max > 0 {
+        floored.min(s.nprobe_max)
+    } else {
+        floored
+    };
+    bounded.min(k_c.max(1))
+}
+
 /// TD-RDSTRAT-8 PR-B gate: engage the Region-A0 coarse probe on v3 segments.
 /// Default **ON** since 2026-07-26 — the flip precondition was met by the
 /// nprobe sweep (fixed-slice recall@10 0.9860–0.9870 ≥ the 0.984 ratchet at
 /// the default nprobe, with 81 GETs / 92 ms vs 108 GETs / 144 ms unprobed:
 /// strictly better on every axis; ledger claim `nprobe_sweep_trained_1m`).
-/// `PROXIMADB_PAX_READ_COARSE_PROBE=0|off|false|no` is the kill-switch.
+/// Precedence: env kill-switch (`PROXIMADB_PAX_READ_COARSE_PROBE=0|off|false|no`)
+/// → else TOML `[storage.sst_config.coarse_probe] enable_read_probe`.
 /// Mixed-safe: v1 / A0-less segments never probe regardless.
 /// (Retired alias name: `PROXIMADB_IVF2_PROBE` — TD-ENVGATE-1.)
 pub fn coarse_probe_enabled() -> bool {
-    !matches!(
-        std::env::var("PROXIMADB_PAX_READ_COARSE_PROBE")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("0" | "off" | "false" | "no")
-    )
+    match std::env::var("PROXIMADB_PAX_READ_COARSE_PROBE") {
+        // Env set: ON unless it's an explicit kill-switch value.
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "no"
+        ),
+        // Env unset: fall back to the TOML/config default.
+        Err(_) => coarse_probe_settings().enable_read_probe,
+    }
 }
 
-/// Number of coarse cells to probe. `PROXIMADB_PAX_READ_COARSE_NPROBE` overrides (the
-/// eval-profile knob, per rev 3 — `nprobe` is fixed by metric/dim/distribution,
-/// not an adaptive radius). Default probes ~25% of cells (min 8), capped at
-/// `k_c`; `>= k_c` is exact mode (every cell).
+/// Number of coarse cells to probe. Precedence: env
+/// `PROXIMADB_PAX_READ_COARSE_NPROBE` (explicit) → else the geometric default
+/// `ceil(sqrt(k_c) × multiplier)` from the TOML config
+/// (`[storage.sst_config.coarse_probe] nprobe_multiplier/min/max`), clamped to
+/// `k_c`. `>= k_c` is exact mode (every cell).
 fn coarse_probe_nprobe(k_c: usize) -> usize {
     std::env::var("PROXIMADB_PAX_READ_COARSE_NPROBE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n > 0)
-        // ~25% of cells, floored at 8, but NEVER above the cell count —
-        // ordered max-then-min because `clamp(8, k_c)` PANICS when k_c < 8
-        // (min > max), a latent crash exposed when the probe went default-ON
-        // (tiny trained segments have < 8 cells; no-panic mandate #4).
-        .unwrap_or_else(|| k_c.div_ceil(4).max(8))
+        .unwrap_or_else(|| geometric_nprobe(k_c, coarse_probe_settings()))
         .min(k_c.max(1))
 }
 
