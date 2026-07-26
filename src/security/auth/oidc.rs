@@ -78,10 +78,28 @@ struct JwtClaims {
 /// 2. Validating claims (issuer, audience, expiration)
 /// 3. Extracting user identity and roles from standard claims
 ///
-/// NOTE: Full cryptographic signature verification requires an RSA/EC
-/// library (e.g., `jsonwebtoken` crate).  This implementation validates
-/// claims and structure.  For production deployments, enable the
-/// `jsonwebtoken` feature for full signature verification.
+/// ⚠️ **DEAD / UNWIRED — DO NOT WIRE INTO ANY INGRESS.**
+///
+/// This provider decodes a JWT payload **without verifying its signature**
+/// ([`Self::decode_jwt_claims`]), so its `iss`/`aud`/`exp` checks run on
+/// attacker-controlled data. It is not constructed anywhere outside this file's
+/// tests and is retained only as a reference stub.
+///
+/// The **live** ingress JWT path is [`crate::network::auth::jwt`]'s
+/// `JwtService::verify_token`, which uses `jsonwebtoken::decode` + `Validation`
+/// (real signature/issuer/audience/exp verification). There is **no**
+/// `jsonwebtoken` cargo feature to "enable" — the crate is already a hard
+/// dependency; this code was simply never finished.
+///
+/// Wiring this type (or `sso::oidc`'s `simulate_oidc_validation`) into the
+/// `IdentityProvider` dispatch would be an instant critical SSO-forgery
+/// vulnerability. If it is ever revived, verify against the provider's JWKS
+/// (fetch `n`/`e` by `kid`, `jsonwebtoken::decode` + `Validation`, reject
+/// `alg:none` and HS/RSA key-confusion) first. Hence `#[deprecated]`: any live
+/// use trips `-D warnings` in CI.
+#[deprecated(
+    note = "unwired + signature-blind; use JwtService (network::auth::jwt). Wiring this is an SSO-forgery footgun — verify against JWKS first."
+)]
 pub struct OidcProvider {
     issuer: String,
     client_id: String,
@@ -92,6 +110,7 @@ pub struct OidcProvider {
     default_roles: Vec<String>,
 }
 
+#[allow(deprecated)]
 impl OidcProvider {
     pub fn new(issuer: String, client_id: String) -> Self {
         Self {
@@ -168,6 +187,7 @@ impl OidcProvider {
 }
 
 #[async_trait]
+#[allow(deprecated)]
 impl IdentityProvider for OidcProvider {
     async fn authenticate(&self, credentials: &AuthCredentials) -> Result<UnifiedUserContext> {
         match credentials {
@@ -239,6 +259,7 @@ impl IdentityProvider for OidcProvider {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 
