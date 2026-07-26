@@ -208,7 +208,15 @@ impl OIDCIntegration {
         })
     }
 
-    /// Simulate OIDC validation (placeholder)
+    /// ⚠️ **DEAD / UNWIRED placeholder — DO NOT WIRE INTO ANY INGRESS.**
+    ///
+    /// This *fabricates* an authenticated user from an ID token **without any
+    /// verification** (no signature, no JWKS, no issuer trust) — it does not even
+    /// decode the token. `OIDCIntegration` is not constructed in live code (only
+    /// referenced via `type_name` in a test), so this is unreachable today.
+    /// Wiring it would be an instant critical SSO-forgery vulnerability. The live,
+    /// verifying JWT path is `crate::network::auth::jwt`'s `JwtService`; a real
+    /// OIDC path must verify against the provider's JWKS before trusting a claim.
     async fn simulate_oidc_validation(&self, id_token: &str) -> Result<EnterpriseUserContext> {
         if id_token.is_empty() {
             return Err(anyhow!("Empty OIDC ID token"));
