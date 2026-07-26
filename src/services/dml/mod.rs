@@ -819,6 +819,12 @@ pub struct DmlService {
     /// Optional tenant-scoped DML lock service. When absent, DML executes with
     /// the legacy local behavior.
     dml_lock_service: Option<Arc<DmlLockService>>,
+    /// F2 (ADR-072 D3/D5): when present, composite-PK uniqueness is enforced by a
+    /// fenced `put_if_absent` at write time instead of the check-then-act
+    /// `get_by_key` probe. `None` (the default) keeps the legacy probe path;
+    /// a store is wired only at the composition root under the `oltp-integrity`
+    /// feature, so default builds are behaviorally unchanged.
+    conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
 }
 
 /// ADR-025: `DmlService` is the authoritative post-snapshot delta source for the
@@ -994,7 +1000,20 @@ impl DmlService {
             record_store,
             table_write_executor,
             dml_lock_service: None,
+            conditional_key_store: None,
         }
+    }
+
+    /// F2 (ADR-072 D3/D5): wire a fenced `ConditionalKeyStore` so composite-PK
+    /// uniqueness is enforced atomically at write time rather than by the
+    /// check-then-act probe. Injected at the composition root under the
+    /// `oltp-integrity` feature; absent by default.
+    pub fn with_conditional_key_store(
+        mut self,
+        store: Arc<dyn proximadb_storage_ports::ConditionalKeyStore>,
+    ) -> Self {
+        self.conditional_key_store = Some(store);
+        self
     }
 
     /// T4.1: Get the canonical table-record store.
@@ -3018,20 +3037,38 @@ impl DmlService {
                         key
                     ));
                 }
-                let existing = self
-                    .record_store
-                    .get_by_key(
-                        &table_schema,
-                        TableRecordGetRequest {
-                            table_id: table_id.name.clone(),
-                            key: key.clone(),
-                            include_vector: false,
-                            include_props: false,
-                        },
-                        None,
+                // F2 (ADR-072 D3): when a fenced ConditionalKeyStore is wired, claim
+                // the PK atomically (oid == primary_key_string, so the row is keyed by
+                // its own PK) — a live holder is a duplicate. Otherwise fall back to the
+                // legacy check-then-act `get_by_key` probe. The op-lock is still held for
+                // cascade ordering (D3). NB: the claim and the later `write_mutations`
+                // row write are not yet a single atomic apply — that is the D11
+                // append-only-MVCC follow-up; recovery treats a claimed-but-rowless key
+                // as dead.
+                let is_duplicate = if let Some(cks) = &self.conditional_key_store {
+                    use proximadb_storage_ports::{Generation, Identity, Oid, PutOutcome};
+                    let id = Identity::from_bytes(key.clone().into_bytes());
+                    matches!(
+                        cks.put_if_absent(&id, &Oid(key.clone()), Generation(0))
+                            .await?,
+                        PutOutcome::Conflict { .. }
                     )
-                    .await?;
-                if existing.is_some() {
+                } else {
+                    self.record_store
+                        .get_by_key(
+                            &table_schema,
+                            TableRecordGetRequest {
+                                table_id: table_id.name.clone(),
+                                key: key.clone(),
+                                include_vector: false,
+                                include_props: false,
+                            },
+                            None,
+                        )
+                        .await?
+                        .is_some()
+                };
+                if is_duplicate {
                     return Err(anyhow!(
                         "duplicate key value violates primary key '{}' on table '{}': '{}' already exists",
                         pk_column,
