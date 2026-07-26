@@ -1830,6 +1830,90 @@ async fn update_rejects_duplicate_unique_value() {
         .expect("UPDATE to a free unique value must be allowed");
 }
 
+/// F5 (ADR-072): with the fenced `ConditionalKeyStore` wired, a FOREIGN KEY
+/// existence check resolves against the SAME store that fences the parent's PK
+/// uniqueness (its `get` — "foreign-key existence checks (phase 2) ride this
+/// method"), not the record-store probe. A child whose FK matches a live parent
+/// PK inserts; a child referencing an absent parent is rejected by the store.
+#[cfg(feature = "oltp-integrity")]
+#[tokio::test]
+async fn insert_enforces_foreign_key_via_fenced_store() {
+    use crate::services::record_store::DirectWalTableRecordStore;
+    use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+    use proximadb_cks_local::{LocalWalKeyStore, SyncPolicy};
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let manager = Arc::new(CatalogManager::new());
+    manager
+        .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+        .await
+        .expect("native catalog");
+    let ddl = DdlService::new(manager.clone());
+    ddl.execute(DdlStatement::CreateNamespace {
+        namespace: vec!["default".to_string()],
+        if_not_exists: true,
+        properties: HashMap::new(),
+    })
+    .await
+    .expect("create namespace");
+    let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+    for create in [
+        "CREATE TABLE customers (id TEXT NOT NULL, name TEXT, PRIMARY KEY (id));",
+        "CREATE TABLE orders (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id));",
+    ] {
+        let stmt = parser
+            .parse_ddl(create)
+            .expect("parse create")
+            .expect("ddl");
+        ddl.execute(stmt).await.expect("create table");
+    }
+
+    let wal_appender = Arc::new(
+        FramedTableWalAppender::open(temp_dir.path().join("fk.wal"))
+            .await
+            .expect("open WAL"),
+    );
+    let record_store = Arc::new(DirectWalTableRecordStore::new(
+        Arc::new(MemtableRecordStorage::new()),
+        wal_appender,
+    ));
+    let cks = Arc::new(
+        LocalWalKeyStore::open(temp_dir.path().join("cks.wal"), SyncPolicy::PerOp)
+            .expect("open cks"),
+    );
+    let dml = DmlService::with_record_store_and_table_write_executor(
+        manager.clone(),
+        record_store,
+        Arc::new(PlannedOnlyTableWriteExecutor::new()),
+    )
+    .with_conditional_key_store(cks);
+    let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
+
+    // Parent PK 'c1' is registered in the fenced store by execute_insert.
+    dml.execute(run(
+        "INSERT INTO customers (id, name) VALUES ('c1', 'Alice');",
+    ))
+    .await
+    .expect("insert parent customer");
+    // Child FK resolves via the CKS `get` → parent present → allowed.
+    dml.execute(run(
+        "INSERT INTO orders (id, customer_id) VALUES ('o1', 'c1');",
+    ))
+    .await
+    .expect("child referencing a live parent must insert (via the fenced store)");
+    // Child FK to an absent parent → CKS `get` returns None → rejected.
+    let err = dml
+        .execute(run(
+            "INSERT INTO orders (id, customer_id) VALUES ('o2', 'c99');",
+        ))
+        .await
+        .expect_err("FK to a missing parent must be rejected via the fenced store");
+    assert!(
+        err.to_string().contains("FOREIGN KEY"),
+        "unexpected error: {err}"
+    );
+}
+
 #[tokio::test]
 async fn insert_enforces_foreign_key_reference() {
     // TD-110: a FOREIGN KEY referencing the parent PK is enforced on INSERT —
