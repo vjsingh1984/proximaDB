@@ -1,5 +1,5 @@
 = TD-FLUSH-5: flush materialization is encode-bound single-threaded (43.9 s / 884k entries)
-:status: S1 shipped (2026-07-26) — pass-2 rayon parallelization: MEASURED 884k entries / 235 MB in 8.962 s (was 43.9 s — 4.9×, beats the <10 s target); byte-identical (unit-pinned); clean shutdown, zero __flush stragglers
+:status: S1 shipped (2026-07-26) — pass-2 rayon parallelization: MEASURED (884k entries / 235 MB, was 43.9 s): 8.962 s at full width (all 10 cores) and 26.2 s at the SHIPPED bounded default (cores/2 scoped pool — the query-headroom co-design rule, mirroring TD-SEARCH-2's morsel budget; `PROXIMADB_PAX_ENCODE_THREADS` tunes, 10 = latency-first). Byte-identical either way (unit-pinned; pool width cannot affect output); clean shutdown, zero __flush stragglers
 :filed: 2026-07-25
 :priority: P2 (latency of durability, not correctness — shutdown-await covers the lifecycle)
 

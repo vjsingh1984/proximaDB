@@ -170,15 +170,22 @@ pub fn encode_region(vectors: &[Option<&[f32]>], dim: u32) -> Result<(Vec<u8>, S
     // bit-stable min/max). Ordered par_iter + in-order concat = byte-identical
     // (unit-pinned). Small regions keep the sequential loop.
     const PAR_ENCODE_MIN_ROWS: usize = 4096;
-    if n >= PAR_ENCODE_MIN_ROWS {
+    if n >= PAR_ENCODE_MIN_ROWS && crate::coalesced_rabitq::encode_pool_threads() > 1 {
         use rayon::prelude::*;
-        let rows: Vec<Vec<u8>> = vectors
-            .par_iter()
-            .map(|v| match v {
-                Some(vec) => vec.iter().map(|&f| quantize_one(f, &params)).collect(),
-                None => vec![0u8; dim_us],
-            })
-            .collect();
+        // Bounded scoped pool — query-headroom rule; see encode_pool_threads.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(crate::coalesced_rabitq::encode_pool_threads())
+            .build()
+            .map_err(|e| anyhow::anyhow!("encode pool: {e}"))?;
+        let rows: Vec<Vec<u8>> = pool.install(|| {
+            vectors
+                .par_iter()
+                .map(|v| match v {
+                    Some(vec) => vec.iter().map(|&f| quantize_one(f, &params)).collect(),
+                    None => vec![0u8; dim_us],
+                })
+                .collect()
+        });
         for row in rows {
             buf.extend_from_slice(&row);
         }

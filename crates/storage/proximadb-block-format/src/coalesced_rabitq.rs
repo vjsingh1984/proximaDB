@@ -117,6 +117,24 @@ impl CoalescedRaBitQHeader {
 ///
 /// Reuses the canonical codec ([`fit_params`] → [`build_rotation`] → [`encode`])
 /// — no hand-rolled quantizer.
+/// TD-FLUSH-5: encode-pool width. Default HALF the cores (min 2) so a flush
+/// never starves concurrent queries (the search morsels own the other half —
+/// co-design headroom, mirroring TD-SEARCH-2's adaptive degree).
+/// `PROXIMADB_PAX_ENCODE_THREADS` overrides (1 = sequential).
+pub(crate) fn encode_pool_threads() -> usize {
+    if let Ok(v) = std::env::var("PROXIMADB_PAX_ENCODE_THREADS")
+        && let Ok(n) = v.trim().parse::<usize>()
+        && n > 0
+    {
+        return n;
+    }
+    (std::thread::available_parallelism()
+        .map(|c| c.get())
+        .unwrap_or(2)
+        / 2)
+    .max(2)
+}
+
 pub fn encode_region(
     vectors: &[Option<&[f32]>],
     dim: u32,
@@ -164,22 +182,31 @@ pub fn encode_region(
     // rotation apply is O(dim²)/row — the measured 43.9 s / 884k-row flush
     // hotspot. Small regions keep the sequential loop (no pool overhead).
     const PAR_ENCODE_MIN_ROWS: usize = 4096;
-    if n >= PAR_ENCODE_MIN_ROWS {
+    if n >= PAR_ENCODE_MIN_ROWS && encode_pool_threads() > 1 {
         use rayon::prelude::*;
-        let rows: Vec<Vec<u8>> = vectors
-            .par_iter()
-            .map(|v| match v {
-                Some(vec) => {
-                    let code = encode(vec, &params, &rotation);
-                    let mut row = Vec::with_capacity(stride);
-                    row.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
-                    row.extend_from_slice(&code.inv_factor.to_le_bytes());
-                    row.extend_from_slice(&code.bits);
-                    row
-                }
-                None => vec![0u8; stride],
-            })
-            .collect();
+        // BOUNDED scoped pool (not the global pool): flush encode must leave
+        // headroom for concurrent queries — the same co-design rule as the
+        // TD-SEARCH-2 search morsels. Default cores/2 (min 2), env-tunable.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(encode_pool_threads())
+            .build()
+            .map_err(|e| anyhow::anyhow!("encode pool: {e}"))?;
+        let rows: Vec<Vec<u8>> = pool.install(|| {
+            vectors
+                .par_iter()
+                .map(|v| match v {
+                    Some(vec) => {
+                        let code = encode(vec, &params, &rotation);
+                        let mut row = Vec::with_capacity(stride);
+                        row.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
+                        row.extend_from_slice(&code.inv_factor.to_le_bytes());
+                        row.extend_from_slice(&code.bits);
+                        row
+                    }
+                    None => vec![0u8; stride],
+                })
+                .collect()
+        });
         for row in rows {
             buf.extend_from_slice(&row);
         }
