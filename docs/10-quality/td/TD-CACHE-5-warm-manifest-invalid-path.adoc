@@ -1,14 +1,14 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-CACHE-5: The restart warm-cache manifest is written to a structurally invalid path — TD-CACHE-1 S2 has never warmed anything on object storage
-:status: Open
+:status: Fixed (2026-07-26)
 :dim: D3
 :pillar: PERF
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open.** Root cause identified by code reading (2026-07-26); one call site, one-line class of fix, plus a type-level fix that closes the class.
+| Status | **Fixed (2026-07-26)** by the `DrResolvedPath` type split (Slice B / ADR-074 S1). `build_tenant_system` now returns a `DrTenantSystemPath` that **structurally lacks** the collection-scoped `manifests_subprefix()`; `warming.rs` uses the new `cache_subprefix()` (`<tenant_root>_cache/`, alongside `_metering/`/`_trace/`). The misuse can no longer compile — the class is closed, not just the one call site. `_cache` added to `RESERVED_SYSTEM_SEGMENTS`.
 | Priority | **P2** — silent, non-fatal, but TD-CACHE-1 S2 (the whole restart-warming slice, shipped 2026-07-24) is inert on any object-store backend that validates paths. The cold-herd it was built to defuse is undefused.
 | Component | `src/storage/engines/sst/warming.rs:44-49` (`manifest_url`); `src/storage/trait_components/path_resolver.rs:883-912` (`DrPathBuilder::build_tenant_system`).
 | Evidence | Azurite SIFT-1M bench log: `Read failed from az://{bucket}/data/default///manifests/warm_cache.json: Invalid path: not an azure path`. Reproduced by inspection — see mechanism below.

@@ -2413,7 +2413,7 @@ impl CollectionService {
         // ADR-031: the collection ID is the stable object_id (u64) as a decimal
         // string — NOT a UUID. The monotonic allocator guarantees uniqueness by
         // construction (no retry loop needed). base62 is reserved for path
-        // segments only (DrResolvedPath), not the collection.id variable.
+        // segments only (DrCollectionPath), not the collection.id variable.
         Ok(generate_numeric_collection_id())
     }
 }
@@ -2430,7 +2430,7 @@ static COLLECTION_ID_ALLOCATOR: std::sync::OnceLock<proximadb_catalog::id_alloca
 /// the canonical identity, never stringified for keying/lookup). Its
 /// client-facing string form (the `collection.id` API field) is the **decimal**
 /// `object_id` — numeric, opaque, JSON-safe. The **base62** encoding is reserved
-/// strictly for object-store *path segments* (`DrResolvedPath`), where
+/// strictly for object-store *path segments* (`DrCollectionPath`), where
 /// zero-padded base62 gives lexicographic S3 LIST order; it is NOT used for the
 /// `collection.id` variable.
 fn generate_numeric_collection_id() -> String {

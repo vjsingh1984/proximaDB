@@ -543,7 +543,7 @@ impl AxisManager {
     /// `index_persist_url`/`index_persist_dir` conventions in
     /// [`index_fs_and_path`](Self::index_fs_and_path), so the index path is
     /// authoritative-from-catalog (relocatable/tierable per projection). The boot
-    /// adapter computes this via `DrResolvedPath::resolve_index_location`
+    /// adapter computes this via `DrCollectionPath::resolve_index_location`
     /// (projection `location`, else the derived `indexes/<projection>/` default).
     ///
     /// `&self` + async because the location memo is interior-mutable (filled at

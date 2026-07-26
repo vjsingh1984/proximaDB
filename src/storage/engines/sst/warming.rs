@@ -42,9 +42,14 @@ struct WarmManifest {
 /// fail-closed on an invalid tenant id (same recipe as
 /// `metrics::metering_writer::ksu_snapshot_object_url`).
 fn manifest_url(base_url: &str, tenant_id: &str) -> anyhow::Result<String> {
+    // TD-CACHE-5: build_tenant_system returns a DrTenantSystemPath, whose only
+    // subprefixes are the tenant-system ones (_metering/_trace/_cache). The warm
+    // manifest is a tenant-system object, so it lives under cache_subprefix()
+    // (<tenant_root>_cache/) — NOT the collection-scoped manifests_subprefix(),
+    // which previously rendered the malformed `data/default///manifests/…`.
     let resolved = DrPathBuilder::build_tenant_system(None, tenant_id)
         .map_err(|e| anyhow::anyhow!("invalid tenant id for warm manifest: {e}"))?;
-    let prefix = resolved.manifests_subprefix();
+    let prefix = resolved.cache_subprefix();
     let base = base_url.trim_end_matches('/');
     Ok(format!("{base}/{prefix}warm_cache.json"))
 }
