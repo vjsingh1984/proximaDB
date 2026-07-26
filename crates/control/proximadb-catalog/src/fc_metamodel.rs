@@ -545,6 +545,137 @@ pub fn resolve_effective_policy(bindings: &[PolicyBinding], target: &Target) -> 
     }
 }
 
+// ===========================================================================
+// Subject attributes (ABAC's "A") — with the attribute-trust boundary as a type
+// ===========================================================================
+
+use std::collections::BTreeMap;
+
+/// An opaque authenticated principal id, resolved at the identity seam (ADR-074).
+/// A subject is a *principal*, not a catalog object — hence a string, not a
+/// stable catalog id.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SubjectId(pub String);
+
+/// An ABAC attribute value. `Int` supports ordered comparisons (e.g. clearance
+/// levels); `List` supports membership (e.g. group/role sets).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttrValue {
+    /// A string attribute (dept, region, …).
+    Str(String),
+    /// An integer attribute (clearance level, …).
+    Int(i64),
+    /// A boolean attribute.
+    Bool(bool),
+    /// A list attribute (groups, roles, …).
+    List(Vec<String>),
+}
+
+/// Where an attribute value came from — **the attribute-trust boundary as a
+/// type** (round-2/3 red-team fix). Only [`AttrSource::ServerResolved`] values
+/// may be *load-bearing* in an authz predicate; [`AttrSource::Claim`] values are
+/// advisory labels a tenant-controlled IdP asserted and must **never** decide an
+/// admit/deny (else a forged `clearance`/`role` claim escalates).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttrSource {
+    /// Asserted by the subject's IdP claims — advisory only, not load-bearing.
+    Claim,
+    /// Re-resolved server-side against the policy's tenant authority — load-bearing.
+    ServerResolved,
+}
+
+/// One attribute: its value plus its provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attr {
+    /// The value.
+    pub value: AttrValue,
+    /// Where it came from (governs whether it is load-bearing).
+    pub source: AttrSource,
+}
+
+/// The subject's attribute bag (ABAC's "A"). Carries dept/clearance/region/etc.,
+/// each tagged with its [`AttrSource`]. **Privilege-granting roles are not a
+/// special field** — a role is just an attribute, and like every attribute it is
+/// load-bearing only when `ServerResolved`. This is how the model closes
+/// admin-by-claims and the `Reference` forged-attribute leak: FA reads attributes
+/// via [`SubjectAttributes::load_bearing`], which returns `None` for a claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubjectAttributes {
+    /// The authenticated principal.
+    pub subject_id: SubjectId,
+    /// The tenant the subject is scoped to (ADR-075 stable id, from the seam).
+    pub tenant_stable_id: TenantStableId,
+    attrs: BTreeMap<String, Attr>,
+}
+
+impl SubjectAttributes {
+    /// A subject with no attributes yet.
+    pub fn new(subject_id: impl Into<String>, tenant_stable_id: TenantStableId) -> Self {
+        Self {
+            subject_id: SubjectId(subject_id.into()),
+            tenant_stable_id,
+            attrs: BTreeMap::new(),
+        }
+    }
+
+    /// Add a **claim-sourced** attribute (advisory; never load-bearing). Use this
+    /// for values that arrive in an SSO/OIDC token.
+    pub fn with_claim(mut self, key: impl Into<String>, value: AttrValue) -> Self {
+        self.attrs.insert(
+            key.into(),
+            Attr {
+                value,
+                source: AttrSource::Claim,
+            },
+        );
+        self
+    }
+
+    /// Add a **server-resolved** attribute (authoritative; load-bearing). Use this
+    /// for values `resolve_effective_attributes` produced against the tenant's
+    /// authority.
+    pub fn with_resolved(mut self, key: impl Into<String>, value: AttrValue) -> Self {
+        self.attrs.insert(
+            key.into(),
+            Attr {
+                value,
+                source: AttrSource::ServerResolved,
+            },
+        );
+        self
+    }
+
+    /// The attribute (value + provenance) for `key`, regardless of source —
+    /// suitable for display/audit, **not** for an authz decision.
+    pub fn get(&self, key: &str) -> Option<&Attr> {
+        self.attrs.get(key)
+    }
+
+    /// The **load-bearing** value for `key` — `Some` only when the attribute is
+    /// `ServerResolved`. This is the accessor FA uses inside a predicate; a
+    /// claim-sourced value returns `None`, so a forged claim cannot satisfy a
+    /// policy (the attribute-trust boundary, enforced by the type).
+    pub fn load_bearing(&self, key: &str) -> Option<&AttrValue> {
+        match self.attrs.get(key) {
+            Some(Attr {
+                value,
+                source: AttrSource::ServerResolved,
+            }) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The number of attributes carried (any source).
+    pub fn len(&self) -> usize {
+        self.attrs.len()
+    }
+
+    /// Whether the bag is empty.
+    pub fn is_empty(&self) -> bool {
+        self.attrs.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -896,5 +1027,54 @@ mod tests {
         let eff = resolve_effective_policy(&bindings, &target(1, 200, None));
         assert_eq!(eff.applicable, 0);
         assert_eq!(eff.decision, Effect::Deny);
+    }
+
+    // --- subject attributes + the attribute-trust boundary ---
+
+    #[test]
+    fn claim_sourced_attribute_is_not_load_bearing() {
+        // A tenant-controlled IdP forges clearance=TOP_SECRET as a CLAIM.
+        let s = SubjectAttributes::new("alice", 7)
+            .with_claim("clearance", AttrValue::Int(9))
+            .with_claim("role", AttrValue::List(vec!["system_admin".into()]));
+        // It is visible for display/audit...
+        assert!(s.get("clearance").is_some());
+        // ...but NOT load-bearing: a predicate reading it gets None, so the forged
+        // clearance/role cannot satisfy any policy (closes admin-by-claims + the
+        // Reference forged-attribute leak at the type level).
+        assert_eq!(s.load_bearing("clearance"), None);
+        assert_eq!(s.load_bearing("role"), None);
+    }
+
+    #[test]
+    fn server_resolved_attribute_is_load_bearing() {
+        let s = SubjectAttributes::new("bob", 7)
+            .with_resolved("clearance", AttrValue::Int(3))
+            .with_resolved("dept", AttrValue::Str("eng".into()));
+        assert_eq!(s.load_bearing("clearance"), Some(&AttrValue::Int(3)));
+        assert_eq!(s.load_bearing("dept"), Some(&AttrValue::Str("eng".into())));
+    }
+
+    #[test]
+    fn a_claim_cannot_be_upgraded_by_coexisting_resolved_key() {
+        // Same key: the last write wins per the bag; a claim overwriting a resolved
+        // value (or vice-versa) carries its own source. Here the resolved value is
+        // authoritative and load-bearing.
+        let s = SubjectAttributes::new("carol", 7)
+            .with_claim("region", AttrValue::Str("us".into()))
+            .with_resolved("region", AttrValue::Str("eu".into()));
+        assert_eq!(s.load_bearing("region"), Some(&AttrValue::Str("eu".into())));
+        assert_eq!(s.get("region").unwrap().source, AttrSource::ServerResolved);
+    }
+
+    #[test]
+    fn subject_is_tenant_scoped_and_bag_reports_size() {
+        let s =
+            SubjectAttributes::new("dan", 42).with_resolved("dept", AttrValue::Str("hr".into()));
+        assert_eq!(s.subject_id, SubjectId("dan".into()));
+        assert_eq!(s.tenant_stable_id, 42);
+        assert_eq!(s.len(), 1);
+        assert!(!s.is_empty());
+        assert!(s.load_bearing("missing").is_none());
     }
 }
