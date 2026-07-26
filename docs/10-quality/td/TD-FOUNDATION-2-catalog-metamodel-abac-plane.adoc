@@ -11,7 +11,7 @@
 [cols="1,3"]
 |===
 | Status | Draft — design-gate, no code yet
-| **Blocked-on** | **HARD STOP — no FC/F7r code until the §6 red-team findings are folded in AND this doc is promoted out of `Draft`. The external reviews to date (2026-07-26) verified develop state and endorsed this gate, but did _not_ attack the §6 design targets — so the design red-team is still owed. F5 is the only critical-path item currently open; FC/F7r are off-critical-path, so there is no schedule pressure to release the gate early.**
+| **Blocked-on** | **HARD STOP — no FC/F7r code until this doc is promoted out of `Draft`. Status (2026-07-26): the §6 adversarial red-team has now RUN — all 5 targets returned BROKEN/REGRESSION and their fixes are folded into this revision (§1.4/§2/§3/§4/§5). Because those fixes are *new* structures (`AuthorizedReadContext`, two-axis identity slot, two-layer authz, fail-closed bridge) the red-team has not yet re-attacked, one confirmation pass over the revised §3.4/§1.4/§2 is owed before promotion. F5 is the only critical-path item open; FC/F7r are off-critical-path, so there is no pressure to release early.**
 | Realizes | ADR-072 **D12** (family-parameterized identity, first-class edges, logical/physical split), **D6** (structural tenancy), **D15** (cost-based hybrid/filter planner, RLS-as-global-filter)
 | Sits on | **ADR-074** (namespace = isolation boundary; alias→`namespace_id`, authz-gated) — FC supplies the *authz gate* ADR-074 defers
 | Predecessors | TD-FOUNDATION-1 (modality consolidation), F0/F1a/F1b/F1d/F2 (merged: typed key + fenced CKS + MVCC + composite-PK MVP)
@@ -121,22 +121,41 @@ a new mechanism.
 **Consequence:** no row-level or attribute-level predicate is ANDed into any
 scan today. RBAC gates *operations* at the boundary; nothing filters *rows*.
 
-=== 1.4 The scan seam — where RLS must attach
+=== 1.4 The read primitives — where ABAC must attach (corrected)
 
-* **Relational/columnar (primary D15 seam):** `TableProvider::scan()`
-  (`src/datafusion/table_provider.rs:198`) AND-combines pushed filters at
-  **`:223–233`** into one `combined_filter`, passed to
-  `ProximaDBScanExec::try_new` (`:236`). **This is the always-ANDed injection
-  point.**
-* **Vector/ANN (D15 selectivity routing, partly present):** `AnnFilteringMode` /
-  `AnnFilteringPolicy` consumed by `query_optimizer.rs`,
-  `core::search::hybrid/builder.rs`, `index/axis/management/manager.rs`.
-* **Hazard — three incompatible `FilterExpression` types:**
-  `storage::formats::FilterExpression` (scan path),
-  `core::search::FilterExpression` (what `CollectionRLS` emits),
-  `foundation/proximadb-filter-expression::FilterExpression`. The RLS output
-  type does **not** match the scan input type. Bridging them is a named
-  work-item (§4, WI-5).
+[red-team, §6.5] The first draft named `table_provider.rs:223` as *the* seam.
+That is wrong twice over: (a) 13 read paths bypass it, and (b) the provider
+holding it is **dead** (never wired into a live ingress). The real choke points —
+the ones every read actually traverses — are three storage-read primitives, and
+enforcement attaches there (§3.4):
+
+* **`TableRecordStore` read trait** (`record_store.rs:510+`, `get_by_key` /
+  `scan_records`) — under both the native Volcano path and the DataFusion floor;
+  the OLTP point-get/scan choke point.
+* **`unified_search_native`** (`operations/vectors/legacy.rs:2663`) — the one
+  canonical vector/ANN kernel; the allow-list must become a *non-optional*
+  argument routed through `AnnFilteringPolicy`.
+* **`GraphQueryExecutorBackend`** (`graph/query/executor.rs:85`) — per-hop node/
+  edge reads.
+
+The DataFusion `combined_filter` at `table_provider.rs:223` remains a *consumer*
+of the compiled predicate for the OLAP arm — necessary, far from sufficient.
+
+**Bridge hazard — three incompatible `FilterExpression` types, and the current
+conversions silently WIDEN** [red-team, §6.3 BROKEN]:
+`storage::formats::FilterExpression` (scan path) has a strictly *smaller*
+operator set than `core::search::FilterExpression` (what `CollectionRLS` emits;
+== `foundation/proximadb-filter-expression`). `NotIn`/`Contains`/`StartsWith`/
+`EndsWith`/`Between` and `In(Array)` have **no faithful target** — the existing
+lowering (`filter_pushdown_engine.rs:342–414`) drops them to `Err`, and the
+injection seam's `.filter_map(|e| …ok())` **silently discards the failed
+conjunct**, returning the full table. A `ClassificationBased` clearance filter
+literally evaporates → a `TOP_SECRET` row reaches an `UNCLASSIFIED` subject; a
+`NotEquals` deny lowers to an inclusive range (deny→admit); `Not(col=v)` leaks
+every `NULL`-column row (SQL three-valued logic). **The RLS predicate has no
+DataFusion residual net** (it bypasses `supports_filters_pushdown`), so a drop is
+permanent. WI-5 is therefore not "one canonical conversion" but a
+**total-or-fail-closed** bridge (see §4).
 
 === 1.5 The namespace boundary — ADR-074 (just landed)
 
@@ -176,27 +195,56 @@ RelationshipType {
 a relational FK are the same metamodel object with different physical layouts —
 the D1 unification, made real.
 
-=== D12-b — Identity/uniqueness is a family-parameterized slot
+=== D12-b — Identity is a *set of facets* over two orthogonal axes
 
-The identity slot is **not uniform** across families (graph omits it; key-value
-detaches it; time-series is *ordering*, not *uniqueness*; vector is *neither* —
-identity is the row surrogate, similarity is the access path). Model it as:
+[red-team, §6.2 BROKEN] The first draft modeled identity as one `kind` enum, one
+slot per object. The red-team refuted both assumptions against records that
+already exist in this tree:
+
+* **Multi-vector rows** (`ProximaRecord = Vec<EmbeddingCell>`, TD-TBL-2) need
+  **one** Uniqueness facet (relational PK, CKS-fenced) **plus N** vector facets,
+  each with its own ANN access path — a single slot cannot hold N.
+* **Vector identity was mis-typed as `Surrogate`.** `IdMapIndex`
+  (`crates/modalities/proximadb-vector/.../id_map.rs`) *rejects duplicate external
+  ids* (a uniqueness fence) and vectors are *upserted by external id*
+  (`agent_memory.rs:597`). A vector's real identity is **Uniqueness(external id)
+  + a similarity access path** — `Surrogate` erases both.
+* **Time-series needs Uniqueness *and* Ordering at once:** a sample is unique per
+  `(series, ts)` *and* range-scannable by `ts`. A single `kind: Ordering` would
+  admit duplicate samples (a correctness regression).
+
+Root cause: the enum fused two independent axes — the **identity role** (what the
+key guarantees) and the **access path** (how rows are reached). They are
+uncorrelated. Split them, and make identity a **vector of facets**:
 
 [source]
 ----
 IdentitySlot {
-    kind: Uniqueness | Ordering | Surrogate | None,
-    key: Option<CompositeKeySpec>,   // encoded by the F0 codec when present
+    facets: Vec<IdentityFacet>,      // >1 for multi-vector rows and TS composites
     completeness_gaps: Vec<GapNote>, // U-Schema discipline: what this family omits
+}
+IdentityFacet {
+    role: Uniqueness | Ordering | Surrogate,     // axis 1: the guarantee
+    key: CompositeKeySpec,                        // F0-encoded; CKS-fenced iff role==Uniqueness
+    access_path: PkLookup | RangeScan | Ann | Hash | None,  // axis 2: how rows are reached
 }
 ----
 
-This directly consumes F0 (the typed codec) and the CKS: `kind == Uniqueness`
-means the composite key is registered in the ConditionalKeyStore;
-`kind == Ordering` (time-series) means the key is order-preserving but **not**
-uniqueness-fenced. **Open risk (carried from D12):** no unified-metamodel paper
-covers vector/time-series identity — this slot's vector/TS parameterization is
-the highest-risk element and the primary pressure-test target (§6).
+Each modality states its truth without a lossy choice: relational/document →
+`{Uniqueness, pk, PkLookup}`; time-series → `{Uniqueness, (series,ts), RangeScan}`
+(ts flagged order-preserving); single vector → `{Uniqueness, external_id, Ann}`
+(matches `IdMapIndex`'s dedup + upsert); multi-vector row → `{Uniqueness, pk,
+PkLookup}` + N × `{Surrogate, row_surrogate, Ann}`; key-value / graph node →
+empty `facets`. `role == Uniqueness` still drives CKS registration; the F0 codec
+still encodes `key`; `completeness_gaps` still carries the U-Schema discipline.
+
+**Why this is load-bearing for ABAC (not cosmetic):** a `Surrogate`-typed vector
+collection signals the planner "no uniqueness/attribute column to filter on" —
+but F7r's allow-list is *built from* those columns. The mis-typing is a
+**fail-open hazard**: the identity slot would tell the enforcement plane that
+row-level authorization is not constructible on a vector collection that in fact
+carries a fenced external id and filterable metadata. The `access_path` axis
+gives the planner an honest signal instead.
 
 === D12-c — Logical governance splits from physical index
 
@@ -210,26 +258,73 @@ untouched. **No policy predicate references a physical path or index.**
 
 D12 wants first-class edges; D6 wants a hard tenant boundary. A
 `RelationshipType` whose `from`/`to` cross a tenant boundary is the collision.
-**Committed cut (2026-07-25; the default the implementation targets, still open
-to red-team challenge):** forbidden-by-default with a brokered half-edge escape
-hatch —
 
-* **Forbidden by default.** `RelationshipTenancy::Intra` — both endpoints must
-  resolve to the same `tenant_id`; the CKS/catalog rejects a cross-tenant edge
-  at write time (fail-closed, matches Weaviate's ban).
-* **Brokered escape hatch.** `RelationshipTenancy::Brokered { capability }` — a
-  cross-tenant edge is admissible **only** when an explicit capability object
-  (in the system namespace) grants it, and the edge is **materialized as two
-  half-edges**, each owned by and filtered within its own tenant. No scan ever
-  traverses a raw cross-tenant pointer; traversal re-enters through the ABAC
-  filter on the far side.
-* **Federated** is out of scope for FC (defer to the consistency-floor work).
+[red-team, §6.1 BROKEN] The first-draft cut (forbidden-default + brokered
+half-edge) was **broken as written**: it asserted "traversal re-enters the ABAC
+filter on the far side," but graph traversal (`get_node`/`get_outgoing_edges`,
+`src/graph/query/operators/mod.rs:132–176`) returns nodes with **zero filter
+injection** — the half-edge *is* a raw cross-tenant pointer to the traversal
+engine (tenant A dereferences B's node unfiltered). Additional breaks: capability
+was an A-side object B never countersigns, scoped to `(tenant, kind)` not a
+specific far `object_id`, so it was **replayable across the enumerable id
+sequence** (confused deputy); the two half-edges are independent MVCC objects
+with **no 2PC** (permanent skew / dangling on revoke). The cut was also **too
+strict** — read-only fan-in to shared reference data (N tenants → 1 corpus)
+forces O(N×M) half-edges, pushing users to copy the corpus or collapse to one
+tenant (discarding D6).
 
-This keeps D6 fail-closed as the default while leaving D12's expressiveness
-reachable under explicit, audited capability. *Decision recorded; the red-team
-target (§6.1) is now "attack this cut," not "choose among three."*
+**Revised cut (post-red-team):**
+
+* **Forbidden by default.** `RelationshipTenancy::Intra` — both endpoints resolve
+  to the same `tenant_id`; the CKS/catalog rejects a cross-tenant edge at write
+  time (fail-closed, matches Weaviate's ban).
+* **`Reference` (new) — read-only fan-in to a designated shared corpus.** For the
+  common legitimate case, a tenant may point *into* a nominated read-only shared
+  namespace without minting per-edge capabilities. Traversal into it is still
+  ABAC-filtered on the shared side; no write-back, no O(N×M) blowup.
+* **`Brokered` — bilateral, object-scoped, seam-gated.** A cross-tenant *writeable*
+  edge is admissible only when: (1) the enforcement seam actually covers the
+  **graph traversal path** (a **precondition, not a promise** — no brokered edge
+  ships before F7r wires the per-hop graph filter, §3.4); (2) the near half-edge
+  stores **only an opaque broker handle, never the far `object_id`** — crossing it
+  **re-plans as a fresh ABAC-scoped scan executed in the far tenant's context**
+  through the read seam, so the far filter genuinely runs; (3) the capability
+  requires **far-tenant countersignature scoped to a specific far `object_id`**,
+  is minted only through an ABAC-gated write path, and its revocation (or far-row
+  delete) **tombstones the near half-edge**.
+* **Federated** remains out of scope for FC (defer to the consistency-floor work).
+
+This preserves D6 fail-closed as the default, serves the shared-reference case
+without a workaround, and makes "re-enters the far-side filter" a *wired
+mechanism* (opaque handle + re-plan) rather than an assertion.
 
 == 3. Access-control plane (D6 / D15)
+
+=== 3.0 Two enforcement layers, not one folded model
+
+[red-team, §6.4 REGRESSION] The first draft claimed ABAC "folds" RBAC — that a
+`RoleBased` predicate is just an ABAC predicate over a `roles` attribute, so one
+always-ANDed row filter covers everything. This is false: operation-level authz
+(DDL, `assign_role`/GRANT, `set_tenant_security_policy`, `SystemAdmin`,
+`ConfigureSystem`) gates **verbs that perform no scan** — there is no row for a
+filter to remove, and `PolicyBinding.scope` has no verb dimension. Enforcement is
+therefore **two distinct layers**:
+
+[cols="1,3"]
+|===
+| **Layer A — operation authz (unchanged, retained as-is)**
+| Verb×resource permissions gated at the API boundary *before any scan is
+  planned*, via the existing `check_permission_cached`
+  (`security_service.rs:104`). This layer is **out of ABAC scope** — FC does not
+  touch it. It is what authorizes DROP/GRANT/admin.
+| **Layer B — ABAC row/field READ visibility (this section)**
+| The always-ANDed predicate over the container hierarchy. Governs *what rows and
+  fields a read returns*, nothing else.
+|===
+
+A read passes Layer A (may I run this operation at all?) then Layer B (which rows
+may I see?). The doc's earlier "not a separate gate" wording is retracted for
+mutating/admin operations.
 
 === 3.1 Subject model
 
@@ -242,16 +337,22 @@ FC adds an **attribute bag** (ABAC's "A"):
 SubjectAttributes {
     subject_id: SubjectId,           // stable principal id
     tenant_id: TenantId,             // from ADR-074 identity seam
-    roles: Vec<RoleId>,              // existing RBAC roles, reused as attributes
     attrs: Map<AttrKey, AttrValue>,  // dept, clearance, region, ... (from SSO claims)
+    // NOTE: privilege-granting roles are NOT carried here — see below.
 }
 ----
 
-Attributes are **populated at the identity seam** (same place ADR-074 resolves
-`namespace_id`) from SSO/OIDC claims + tenant defaults, and **travel in the
-request context** — never re-derived downstream. RBAC roles are *not replaced*;
-they become one attribute source among several (a `RoleBased` predicate is an
-ABAC predicate over the `roles` attribute).
+Non-privilege attributes (dept, clearance, region) are **populated at the
+identity seam** from SSO/OIDC claims + tenant defaults and **travel in the request
+context**. [red-team, §6.4] **Privilege-granting roles (`SystemAdmin`,
+`TenantAdmin`, and any role that authorizes an operation) are NOT trusted from
+context claims** — they are **re-resolved server-side at decision time** against
+the authoritative binding store keyed by `subject_id`, exactly as
+`validate_admin_access` does today (it deliberately ignores context roles). The
+first draft's "roles come from SSO claims, never re-derived downstream" is
+**reversed for privilege roles** — that property is precisely what would let a
+tenant-controlled IdP self-grant admin (a claims-injection escalation). SSO
+claims seed *attributes*, never *privileges*.
 
 === 3.2 Policy model — ABAC over the container hierarchy
 
@@ -292,36 +393,66 @@ Consequences:
 * No new persistence mechanism; no secrets in the binding (secrets stay in the
   existing vault surface).
 
-=== 3.4 Enforcement — compile to an always-ANDed pre-filter (D15)
+=== 3.4 Enforcement — an `AuthorizedReadContext` at the storage-read primitives
 
-The enforcement path, per D15, is **not** a post-filter and **not** a separate
-gate:
+[red-team, §6.5 BROKEN] The first draft attached enforcement at a single seam,
+`table_provider.rs:223`. The audit found **13 independent client read paths, all
+13 bypass it** — and worse, `ProximaDBTableProvider` (which *contains* that line)
+is **not wired into any live ingress path**: it is a dead provider guarding zero
+production reads. OLTP point-gets/scans, all vector ANN, all graph traversal, and
+raw Arrow-Flight file export never enter that DataFusion provider. A single
+relational-provider seam is at the **wrong altitude** — it can only cover
+relational-over-DataFusion queries registered through that exact (unused)
+provider.
 
-1. At query planning, resolve the subject's effective `PolicyBinding` set for
-   the target table (§3.2).
-2. Compile the composed `SecurityPredicate` → a scan-native predicate via the
-   existing `CollectionRLS` compiler (`src/security/rls/service.rs`), **bridged**
-   to `storage::formats::FilterExpression` (§4 WI-5).
-3. **AND it into `combined_filter` at `table_provider.rs:223`** — the same seam
-   ordinary pushed predicates use. The RLS predicate is indistinguishable from a
-   user `WHERE` clause to the executor, so it inherits pushdown, statistics, and
-   the D15 selectivity router for free.
-4. For the **vector/ANN** path, the compiled predicate feeds the
-   `AnnFilteringPolicy` router (`:2245`) as a **global allow-list woven into the
-   traversal** — pre-filter or index-integrated, **never naïve post-filter**
-   (D13 vector-tenancy invariant: authorization is a hard correctness invariant
-   decoupled from recall; `Deny` needs complement semantics).
-5. **Field masks** apply as a projection rewrite (null-out/redact) after row
-   admission.
+**Corrected model: enforcement lives *below* the ingress dialects, at the shared
+storage-read primitives, threaded as a mandatory `AuthorizedReadContext`.** Every
+dialect inherits it by construction because every read passes through one of
+three choke points, and the context carries the compiled, bridged predicate +
+subject attributes; **`None` means deny-empty, never unfiltered.**
 
-**Fail-closed:** if policy resolution errors, the scan is denied (empty
-allow-list), never opened. This is the D6 structural guarantee.
+1. **Resolve** the subject's effective `PolicyBinding` set for the target
+   container (§3.2), and the field mask (§3.2).
+2. **Compile + bridge** the composed `SecurityPredicate` via `CollectionRLS`
+   (`src/security/rls/service.rs`) through the **total-or-fail-closed** bridge
+   (§1.4 / WI-5) — any node it cannot represent *exactly* denies the whole read.
+3. **Attach at the three primitives** (this replaces "AND at
+   `table_provider.rs:223`"; the DataFusion seam becomes *one consumer* of the
+   context for the OLAP arm):
+   * **Relational + document + point-gets** — the `TableRecordStore` read trait
+     (`get_by_key`, `scan_records`, `record_store.rs:510+`). A PK match is **not**
+     an authorization: point-gets resolve the row, then apply the predicate.
+   * **Vector / ANN** — make the allow-list a **non-optional** argument of the
+     canonical kernel `unified_search_native`
+     (`operations/vectors/legacy.rs:2663`), routed through `AnnFilteringPolicy`
+     (pre-filter / index-integrated, **never naïve post-filter** — D13
+     vector-tenancy invariant, `Deny` needs complement semantics).
+   * **Graph** — per-hop at the `GraphQueryExecutorBackend`
+     (`graph/query/executor.rs:85`, `query_nodes`/`query_edges`), so traversal
+     re-enters the filter on **every hop** (this is also the mechanism D12-d's
+     brokered re-plan depends on).
+4. **Direct-file export is gated off.** Arrow-Flight raw `.arrow`/`.parquet`/`.sst`
+   egress (`network/arrow_ipc/file_export.rs`) cannot be row-filtered as a byte
+   stream — under `abac-policy` it is **denied by default** or force-rerouted
+   through the filtered scan primitive. Direct-file egress and row-level ABAC are
+   mutually exclusive.
+5. **Field masks:** `null-out`/`redact` apply as a projection rewrite after row
+   admission; [red-team, §6.4] **`forbid` is query-rejection, not a null
+   projection** — a forbidden column must refuse the read, so column
+   existence/schema does not leak.
+
+**Fail-closed everywhere:** policy-resolution error, bridge failure (§1.4), or a
+`None` context all deny (zero rows), never open. This is the D6 structural
+guarantee, now enforced at the layer every read actually traverses.
 
 === 3.5 This is F7r
 
-The enforcement wiring (steps 1–5) is work package **F7r**, dependent on FC (the
-policy model + subject attributes) and F4 (the planner substrate), running
-**parallel to F7** on the same filter machinery — off the critical path.
+The enforcement wiring (steps 1–5, across all three read primitives) is work
+package **F7r**, dependent on FC (the policy model + subject attributes) and F4
+(the planner substrate), running **parallel to F7** — off the critical path.
+Note F7r now spans the record-store, ANN-kernel, and graph-executor primitives
+(not one provider), and the graph-executor seam is a **hard dependency of D12-d's
+brokered edges** — brokered cross-tenant edges cannot ship before it exists.
 
 == 4. Work breakdown (FC increment)
 
@@ -333,17 +464,19 @@ FC first slice is **additive and feature-gated** (`abac-policy`), mirroring the
 | WI | Item | Gated
 
 | WI-1 | `RelationshipType` as first-class `ObjectType::Relationship` peer; `ForeignKeyReference`/`GraphEdgeType` re-expressed as projections (D12-a) | `abac-policy` off ⇒ no behavior change
-| WI-2 | `IdentitySlot` family-parameterization; bind `kind == Uniqueness` to the CKS registration path (D12-b) | additive
-| WI-3 | `SubjectAttributes` populated at the identity seam from SSO claims + tenant defaults; travels in context (§3.1) | additive
-| WI-4 | `PolicyBinding` objects in the reserved system namespace; hierarchical deny-biased resolver (§3.2/3.3) | additive
-| WI-5 | **`FilterExpression` bridge** — one canonical conversion `core::search` ⇄ `storage::formats` (§1.4 hazard); the single riskiest integration point | additive
-| WI-6 | Cross-tenant edge policy: `RelationshipTenancy::{Intra, Brokered}`, fail-closed default, half-edge materialization (D12-d) | additive
-| **F7r** | Enforcement: compile → AND into `combined_filter` (`table_provider.rs:223`) + ANN allow-list; field-mask projection; fail-closed (§3.4) | `abac-policy`
+| WI-2 | `IdentitySlot { facets: Vec<IdentityFacet> }` with the two-axis `role` × `access_path` split (§6.2 fix); bind `role == Uniqueness` to CKS registration (D12-b) | additive
+| WI-3 | `SubjectAttributes` (attrs only) at the identity seam; **privilege roles re-resolved server-side, never from claims** (§3.1, §6.4) | additive
+| WI-4 | `PolicyBinding` objects in the reserved system namespace; hierarchical deny-biased resolver; `field_mask::forbid` = query-rejection (§3.2/3.3, §6.4) | additive
+| WI-5 | **`FilterExpression` bridge — total-or-fail-closed** (§1.4, §6.3): any unrepresentable/semantically-divergent node denies the whole read (unsatisfiable filter, never a dropped conjunct); explicit `NotIn→Not(In)`, `NotEquals→Not(Eq)`, `Between→And(Ge,Le)`, SQL-3VL `Not`; **deny-biased subset** property test | additive
+| WI-6 | Cross-tenant edge policy: `RelationshipTenancy::{Intra, Reference, Brokered}` (§6.1 fix) — bilateral object-scoped capability, opaque broker handle + far-side re-plan, near-side tombstone on revoke; **`Brokered` gated on the graph seam existing** | additive
+| WI-7 | **`AuthorizedReadContext`** threaded into the three read primitives — `TableRecordStore` read trait, `unified_search_native` (allow-list non-optional), graph executor (per-hop); direct-file export gated off (§3.4, §6.5) | additive
+| **F7r** | Enforcement: resolve + compile + bridge → attach the `AuthorizedReadContext` at all three primitives; ANN allow-list; per-hop graph filter; field masks; fail-closed everywhere (§3.4). *Layer-A operation authz is unchanged/out of scope.* | `abac-policy`
 |===
 
-WI-1..WI-6 are FC; F7r is its own package (§3.5). WI-5 is called out because a
-wrong bridge silently drops or widens a security predicate — it must be
-property-tested (§5).
+WI-1..WI-7 are FC; F7r is its own package (§3.5). WI-5 and WI-7 are the
+load-bearing security items — a wrong bridge silently widens a predicate (§6.3),
+and a missing read-primitive is a silent bypass (§6.5); both must be
+property-/audit-tested (§5).
 
 == 5. Test & gate plan
 
@@ -356,38 +489,64 @@ property-tested (§5).
   `dept=eng` rows through `SELECT *` **and** through a vector search — the
   predicate must ride *both* seams identically (the D15 unification claim).
 * **Fail-closed:** policy-resolver error ⇒ zero rows, never full-table.
-* **Bridge (WI-5):** property test — for random `SecurityPredicate`, the bridged
-  `storage::formats` predicate admits exactly the same row set as the
-  `core::search` one. No silent widening.
-* **Cross-tenant (D12-d):** a cross-tenant edge write is rejected without a
-  capability; with one, traversal from tenant A cannot observe tenant B rows the
-  far-side ABAC filter denies.
+* **Bridge (WI-5) — deny-biased oracle:** property test — for random
+  `SecurityPredicate`, the bridged predicate admits a **subset** (never a
+  superset) of the source's row set, and a non-convertible node yields **zero**
+  admitted rows (not a dropped conjunct). Regression cases pinned from §6.3:
+  `ClassificationBased`/`In(Array)`, `NotEquals`, `NotIn`, `GreaterThan`
+  boundary, `Not(col=v)` over a `NULL` column.
+* **Enforcement completeness (WI-7) — path audit as a test:** every read path in
+  the §6.5 table (13 enumerated) must route through an `AuthorizedReadContext`;
+  a CI check fails if any read primitive is reachable without one. Direct-file
+  export must be denied under `abac-policy`.
+* **Cross-tenant (D12-d):** `Intra` write across tenants is rejected; `Reference`
+  fan-in is read-only and far-side-filtered; a `Brokered` edge without
+  countersignature is rejected, and with one, a **graph traversal** (not just a
+  relational scan) from tenant A cannot observe a tenant-B row/node the far-side
+  filter denies — and cannot ship at all until the per-hop graph seam exists.
+* **Privilege re-resolution (§3.1/§6.4):** an SSO claim asserting
+  `role=system_admin` does **not** grant admin — the operation is denied unless
+  the server-side binding store authorizes `subject_id`.
 * Coverage ≥75% (repo gate); evidence to `BENCHMARK_EVIDENCE.toml` where
-  enforcement touches the scan hot path (selectivity-router overhead).
+  enforcement touches the read hot path (per-primitive predicate overhead).
 
-== 6. Adversarial-review targets (design gate — resolve before code)
+== 6. Adversarial-review targets — executed, all five broke
 
-Ranked for the external red-team pass:
+The five targets below were attacked by an internal adversarial red-team
+(2026-07-26, one agent per target, each prompted to *break* not verify, grounded
+in the code). **All five returned BROKEN/REGRESSION.** Their fixes are folded into
+§1.4 / §2 / §3 above. Verdicts:
 
-1. **Cross-tenant edges (D12-d) — cut chosen, now attack it.** The committed cut
-   is forbidden-default + brokered half-edge. Red-team target: does the
-   half-edge materialization actually close the traversal hole (can tenant A ever
-   observe a tenant-B row the far-side filter denies?), and does forbidding
-   raw cross-tenant edges cripple a legitimate use we'll regret? Federated
-   references remain the named fallback if the brokered model fails review.
-2. **Vector identity slot (D12-b).** No prior art covers vector/TS identity.
-   Is `Surrogate`/`Ordering` the right parameterization, or does vector need a
-   distinct family? (ADR-072's own flagged highest-risk item.)
-3. **The `FilterExpression` bridge (WI-5).** Is unifying three predicate types a
-   prerequisite, or does bridging two of them at the seam suffice for FC?
-   Silent-widening is a security bug, not a correctness nicety.
-4. **RBAC-as-attributes (§3.1).** Does folding existing `UnifiedRole` into the
-   ABAC attribute bag preserve every current coarse-RBAC guarantee, or does it
-   regress an operation-level check into a weaker row-level one?
-5. **Enforcement completeness.** `table_provider.rs:223` covers the DataFusion
-   relational path. Which ingress paths (pgwire, gRPC vector, graph traversal,
-   cross-modal UDTF) bypass it, and must each grow the same always-ANDed seam?
-   An unenforced path is a silent hole.
+1. **Cross-tenant edges (D12-d) — BROKEN (security-critical).** The half-edge
+   "re-enters the far-side filter" was an assertion, not a wiring: graph traversal
+   returns nodes with zero filter injection, so the half-edge was a raw
+   cross-tenant pointer. Plus confused-deputy capabilities and MVCC skew, and the
+   cut was too strict for shared-reference fan-in. → Fixed in D12-d: opaque broker
+   handle + far-side re-plan, bilateral object-scoped capability, new `Reference`
+   variant, `Brokered` gated on the graph seam.
+2. **Vector/TS identity slot (D12-b) — BROKEN.** Single enum conflated identity
+   role × access path and assumed one slot/object; refuted by multi-vector rows
+   (N facets) and TS composites (Uniqueness∧Ordering); vector mis-typed as
+   `Surrogate` (it is Uniqueness+ANN) — a fail-open signal to the ABAC planner. →
+   Fixed: `facets: Vec<IdentityFacet>` with an explicit `access_path` axis.
+3. **`FilterExpression` bridge (WI-5) — BROKEN (critical).** The conversion
+   silently drops/widens security predicates (clearance filter evaporates →
+   `TOP_SECRET` to `UNCLASSIFIED`; `NotEquals`→admit; `Not`→NULL-leak), with no
+   residual net. → Fixed: **total-or-fail-closed** bridge, deny-biased subset
+   property test.
+4. **RBAC-as-attributes (§3.1) — REGRESSION (high).** Operation authz has no row
+   to filter; admin-by-SSO-claims escalation; hard field-forbid downgraded to a
+   nullable mask. → Fixed: two enforcement layers (§3.0), server-side privilege
+   re-resolution, `forbid` = query-rejection.
+5. **Enforcement completeness (§6.5) — BROKEN (critical).** 13/13 read paths
+   bypass the named seam, which is itself a **dead provider** guarding zero
+   reads. → Fixed: `AuthorizedReadContext` at the three storage-read primitives
+   (§3.4), direct-file export gated off.
+
+**Unifying root cause:** targets 1/4/5 reduce to one architectural error — the
+first draft placed enforcement at a single DataFusion relational provider, the
+wrong altitude for a system whose reads fan out across 13 paths and multiple
+modalities. §3.4 now attaches below the ingress dialects.
 
 === 6.1 Review log
 
@@ -396,26 +555,37 @@ Ranked for the external red-team pass:
 | Date | Reviewers | Outcome
 
 | 2026-07-26
-| kimi, deepseek, glm (independent)
-| **Verification + gate, not design.** All three independently confirmed the
-  merged develop state (tip `1f874f00c`; F2b enforcement at
-  `dml/mod.rs:827/1011/3048/3067`; both PRs merged) and unanimously endorsed
-  holding FC/F7r code behind this doc's gate (folded into **Blocked-on**, above).
-  **None attacked the §6 design targets** — the substantive red-team (esp. §6.1
-  cross-tenant edges, §6.2 vector/TS identity slot, §6.3 the `FilterExpression`
-  widening risk) is **still outstanding.** Presence-on-develop and clean
-  verification are *not* design approval.
+| kimi, deepseek, glm (independent, external)
+| **Verification + gate, not design.** All three confirmed the merged develop
+  state and unanimously endorsed the code-gate (folded into **Blocked-on**). None
+  attacked the §6 design targets — verification is not design approval.
+
+| 2026-07-26
+| internal adversarial red-team (5 agents, one per §6 target)
+| **Design attack — all 5 targets BROKEN/REGRESSION** (2 security-critical, 1
+  critical, 1 high, 1 broken-metamodel). Concrete, code-grounded exploits
+  (unfiltered graph traversal; clearance-filter drop; 13/13 read-path bypass on a
+  dead provider; admin-by-claims; identity-slot fail-open). All fixes folded into
+  §1.4/§2/§3/§4/§5 this revision. Detailed verdicts above.
 |===
 
-The gate lifts only when a review actually engages §6.1–§6.5 and its findings are
-folded here — at which point `:status:` promotes out of `Draft`.
+**Gate status after this revision.** The design substance is now materially
+changed — a new enforcement architecture (`AuthorizedReadContext`), a two-axis
+identity slot, a two-layer authz model, a hardened cross-tenant cut, and a
+fail-closed bridge. Because these are *new* structures the red-team has not yet
+seen, the doc **stays `Draft`**: one confirmation pass over the *revised* §3.4 /
+§1.4 / §2 (does `AuthorizedReadContext` actually close all 13 paths; is the
+fail-closed bridge total) is owed before `:status:` promotes and FC/F7r code
+begins.
 
 == 7. What FC does *not* do
 
 * Does not collapse the parallel legacy object models (Model A/B/proto) — that
   is TD-FOUNDATION-1 roadmap; FC adds the relationship/identity slots to Model B
   only.
-* Does not replace RBAC or authn — it consumes them.
+* Does not replace RBAC or authn — it consumes them. Operation-level authz
+  (Layer A, §3.0) stays exactly as-is; ABAC is read visibility only.
 * Does not enforce (that is F7r); FC delivers the metamodel + policy model +
-  subject attributes + the resolver, all inert until F7r wires the seam.
+  subject attributes + the resolver, all inert until F7r wires the three read
+  primitives (§3.4).
 * Does not emit dollars/tiers/SKUs — neutral governance only (ADR-060 boundary).
