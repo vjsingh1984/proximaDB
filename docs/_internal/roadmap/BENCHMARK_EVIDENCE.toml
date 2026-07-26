@@ -113,6 +113,19 @@ hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build, seri
 date = "2026-07-26"
 version = "feat/nprobe-tuning -> develop"
 
+[[claims]]
+id = "flush_encode_parallel_1m"
+claim = "TD-FLUSH-5 S1: rayon-parallel pass-2 encode (RaBitQ O(dim^2)/row rotation + SQ8) cuts the 1M flush materialize from 43.9s to 8.962s (884k entries / 235MB, 4.9x, 10-core box) with BYTE-IDENTICAL output (full-region equality unit tests vs sequential reference, nulls included; pass-1 param fits stay sequential for bit-stable floats). Flush now completes ~4s after ingest end; clean shutdown, zero __flush stragglers; recall unchanged (0.9820 untrained cold)."
+metric = "1M flush materialize wall time; byte-identity; recall"
+status = "measured"
+asserted_in = ["docs/10-quality/td/TD-FLUSH-5-flush-encode-single-threaded.adoc"]
+bench_source = "scripts/bench/recall_adjudicate.py"
+bench_command = "flush_e2e_verify protocol (1M REST ingest, floor config); flush time from the 'inline size-flush ... in Xs' completion line"
+artifact = "docs/10-quality/td/TD-FLUSH-5-flush-encode-single-threaded.adoc"
+hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build"
+date = "2026-07-26"
+version = "feat/overnight-followups -> develop"
+
 
 [[claims]]
 id = "io_trace_sink_hotpath_p95"

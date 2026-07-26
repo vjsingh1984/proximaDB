@@ -538,7 +538,7 @@ impl DdlService {
     }
 
     /// Attach the partition-lease manager for per-collection write authority.
-    /// When the lease system is on (`PROXIMADB_PARTITION_LEASE_ON`), the
+    /// When the lease system is on (a future registered gate; none exists yet), the
     /// `SharedServices` composition root attaches this so collection/table-scoped
     /// DDL consults the lease before executing. Inert by default.
     pub fn with_partition_lease_manager(

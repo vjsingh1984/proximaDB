@@ -250,32 +250,33 @@ source; each S3 prune PR deletes the source reference AND its row here.
 | Name | Detail
 
 | `PROXIMADB_API_GRPC_PORT` | DEAD (no rust reader): only set in a test that asserts it is IGNORED; no production override wiring exists. | intended config-mirror of `api.grpc_port` (5679) but not wired | config-mirror; — | src/core/config_loader_tests.rs
-| `PROXIMADB_BENCH_HNSW_EF` | DEAD (no rust reader): only a stale comment; the bench actually reads the un-prefixed `BENCH_HNSW_EF`. | n/a (real var `BENCH_HNSW_EF` defaults 100) | test-only; — | src/index/axis/management/manager.rs
 | `PROXIMADB_DESCRIPTION` | DEAD (no runtime env reader): a Rust `const` bound to `env!("CARGO_PKG_DESCRIPTION")` at compile time, not a runtime env var. | n/a (build constant) | config-mirror; — | src/version.rs
-| `PROXIMADB_DISABLE_` | DEAD (no rust reader): a naming-convention prefix stub, not an actual variable. | n/a | config-mirror; — | src/storage/engines/sst/flush/mod.rs (comment)
 | `PROXIMADB_ENABLE_AI` | DEAD (no rust reader): emitted as a literal into the generated docker-compose YAML in the provisioner; no code reads it back. | n/a (deployment template) | config-mirror; — | src/deployment/automation/provisioner.rs
 | `PROXIMADB_ENABLE_MONITORING` | DEAD (no rust reader): emitted into generated docker-compose YAML; no code reads it back. | n/a (deployment template) | config-mirror; — | src/deployment/automation/provisioner.rs
 | `PROXIMADB_FS_COPY_KEY` | DEAD (no rust reader for this name): the actual test env var is `TEST_PROXIMADB_FS_COPY_KEY`, an encryption master-key holder used only in a copy-fallback test. | n/a (real var TEST_-prefixed) | test-only; — | src/storage/persistence/filesystem/mod.rs
 | `PROXIMADB_FS_FACTORY_KEY` | DEAD (no rust reader for this name): the actual test env var is `TEST_PROXIMADB_FS_FACTORY_KEY`, an encryption master-key holder used only in a factory test. | n/a (real var TEST_-prefixed) | test-only; — | src/storage/persistence/filesystem/mod.rs
-| `PROXIMADB_GCS_` | DEAD (no rust reader): a `PROXIMADB_GCS_*` convention prefix stub, not an actual variable. | n/a | config-mirror; — | src/storage/persistence/filesystem/mod.rs (comment)
-| `PROXIMADB_IO_TRACE_SINK_` | DEAD (no rust reader) — spurious registry entry harvested from the `PROXIMADB_IO_TRACE_SINK_*` doc prefix; not read anywhere | n/a | prune candidate; — | —
 | `PROXIMADB_MEMORY_MB` | DEAD (no rust reader) — only emitted into generated deployment manifests by the provisioner; nothing reads it back | n/a | prune candidate; — | `src/deployment/automation/provisioner.rs`
 | `PROXIMADB_NAME` | DEAD (not an env var) — a compile-time Rust const = `CARGO_PKG_NAME`, never read from env | n/a | prune candidate; — | `src/version.rs`
-| `PROXIMADB_NATIVE_MORSEL_NUMA` | DEAD (no rust reader) — Phase 4.1 NUMA morsel binding referenced in doc comment only, "not built here" | n/a | prune candidate; TD-OLAP-12 | `src/query/execution/morsel_scheduler.rs`
 | `PROXIMADB_OPERATION` | DEAD (not an env var) — only a substring of the secret-detection regex `SSO_AUTH_APP_TOKEN_PROXIMADB_OPERATION`, never read from env | n/a | prune candidate; — | `src/audit/correlation.rs`
-| `PROXIMADB_PARTITION_LEASE_ON` | DEAD (no rust reader) — referenced only in doc comments ("TBD when it ships default-on"); no `env::var` reader exists | n/a | prune candidate; — | `src/services/ddl/mod.rs`
-| `PROXIMADB_PAX_VECTOR_SEGMENTS` | Legacy write-format opt-in — retained as a no-op for back-compat, gates nothing now. | no-op (DEAD: no functional reader; tests-only) | eval; ADR-049 M1-3 | src/storage/engines/sst/flush/mod.rs:1073
 | `PROXIMADB_PSEUDO_QUERY_FIELD` | NOT an env var — a Rust `pub const` holding the metadata key `"proximadb.pseudo_query"`. | n/a | DEAD (no rust reader; misregistered constant, not env) | src/services/operations/vectors/validation/metadata.rs:10
 | `PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD` | NOT an env var — Rust `pub const` = `"proximadb.pseudo_query_source_fields"` metadata key. | n/a | DEAD (no rust reader; misregistered constant) | src/services/operations/vectors/validation/metadata.rs:11
-| `PROXIMADB_QUEUE_` | Registry prefix stub for the `PROXIMADB_QUEUE_*` family, not a variable itself. | n/a | DEAD (prefix entry) | src/core/config.rs:330
-| `PROXIMADB_S3_` | Registry prefix stub for the `PROXIMADB_S3_*` family, not a variable itself. | n/a | DEAD (prefix entry) | src/storage/persistence/filesystem/mod.rs:477
 | `PROXIMADB_SERVER_PORT` | Intended server-port override — but the test proves env is NOT applied to config. | DEAD (test asserts default `5678` used; no wiring) | test-only; — | src/core/config_loader_tests.rs:794
 | `PROXIMADB_STORAGE_CACHE_SIZE_MB` | Intended storage cache-size override — test proves env is NOT applied. | DEAD (test asserts default `512` used; no wiring) | test-only; — | src/core/config_loader_tests.rs:796
 | `PROXIMADB_STORAGE_ENGINE` | Emitted into a generated k8s manifest template; no reader in this codebase. | DEAD (no rust reader; manifest output only) | config-mirror; — | src/deployment/automation/provisioner.rs:756
 | `PROXIMADB_TENANT_ID` | Emitted into a generated k8s manifest template; no reader in this codebase. | DEAD (no rust reader; manifest output only) | config-mirror; — | src/deployment/automation/provisioner.rs:758
 | `PROXIMADB_VERSION` | NOT an env var — Rust `pub const` = `env!("CARGO_PKG_VERSION")` (compile-time crate version). | n/a | DEAD (no runtime env reader; misregistered) | src/version.rs:10
-| `PROXIMADB_WAREHOUSE_DRPATH` | Referenced only in a comment (as the pattern `PROXIMADB_CATALOG_DRPATH` mirrors); no reader. | DEAD (no rust reader) | opt-in; — | src/network/shared_services.rs:600
 |===
+
+== Pruned (S3, 2026-07-26 first pass)
+
+Deleted from source + registry: `PROXIMADB_PAX_VECTOR_SEGMENTS` (vestigial
+no-op reader), 4 stale doc-comment-only names (`PARTITION_LEASE_ON`,
+`NATIVE_MORSEL_NUMA`, `WAREHOUSE_DRPATH`, `BENCH_HNSW_EF` mention), and 5
+prefix-stub harvest artifacts (guard now ignores names ending in `_`).
+Intentionally KEPT in the dead section: template-emitted names (deployment
+manifests may feed container entrypoints), test-asserted-unwired vars (the
+tests deliberately prove env does NOT leak into config), and compile-time
+consts that merely share the prefix.
 
 == Retired names (reserved — never repurpose)
 

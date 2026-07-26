@@ -28,7 +28,11 @@ def rust_vars():
             except OSError:
                 continue
             for m in VAR_RE.finditer(text):
-                seen.add(m.group(0))
+                name = m.group(0)
+                # names ending in '_' are prose prefix mentions
+                # ("PROXIMADB_QUEUE_* vars"), not variables
+                if not name.endswith("_"):
+                    seen.add(name)
     return seen
 
 
