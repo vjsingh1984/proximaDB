@@ -315,6 +315,141 @@ pub enum FieldMask {
     Forbid,
 }
 
+// ===========================================================================
+// Derivation from the catalog schema (attaches the metamodel to Model A)
+// ===========================================================================
+
+use crate::{CatalogColumn, CatalogTableSchema};
+
+/// Whether a column's logical type is a vector modality — such a column gets a
+/// `Surrogate` facet (its similarity access path is physical, not in the slot).
+fn is_vector_column(col: &CatalogColumn) -> bool {
+    use proximadb_data_model::ProximaType;
+    matches!(
+        col.data_type,
+        ProximaType::DenseVector { .. }
+            | ProximaType::SparseVector { .. }
+            | ProximaType::BinaryVector { .. }
+    )
+}
+
+/// Resolve a column name to a [`ColumnRef`] against the schema, using the stable
+/// physical field id (`CatalogColumn::id`) as the ordinal; falls back to the
+/// positional index for a name not found in the schema.
+fn column_ref(schema: &CatalogTableSchema, name: &str) -> ColumnRef {
+    match schema
+        .columns
+        .iter()
+        .enumerate()
+        .find(|(_, c)| c.name == name)
+    {
+        Some((_, c)) => ColumnRef {
+            ordinal: c.id.max(0) as u32,
+            name: name.to_string(),
+        },
+        None => ColumnRef {
+            ordinal: schema.columns.len() as u32,
+            name: name.to_string(),
+        },
+    }
+}
+
+/// Derive the [`IdentitySlot`] for a table from its catalog schema (D12-b).
+///
+/// This is the seam by which F2's CKS registration reads its natural key **from
+/// the metamodel**: the `UniquenessPrimary` facet's `key` is exactly the PK the
+/// ConditionalKeyStore fences. Derivation rules:
+///
+/// - `primary_key` (non-empty) → one `UniquenessPrimary` facet.
+/// - each **unique index** whose columns differ from the PK → a
+///   `UniquenessSecondary` facet referencing the PK as `owning_primary`
+///   (skipped, with a gap noted, when there is no PK to own it).
+/// - each **vector column** → a `Surrogate` facet.
+/// - non-vector, non-deleted columns → `filterable_columns` (the ABAC allow-list
+///   source — the round-2 fix; this, not an access path, is the honest signal).
+/// - no PK → a `completeness_gaps` note.
+///
+/// Physical access path is deliberately **not** derived (D12-c: it lives in the
+/// storage layout / index set, never the logical identity slot).
+pub fn identity_slot_from_table_schema(schema: &CatalogTableSchema) -> IdentitySlot {
+    let keyspace = schema.name.clone();
+    let mut facets = Vec::new();
+    let mut gaps = Vec::new();
+
+    // 1. Primary key → UniquenessPrimary (the CKS-fenced natural key).
+    let primary_spec = if schema.primary_key.is_empty() {
+        gaps.push("no natural primary key declared".to_string());
+        None
+    } else {
+        let spec = CompositeKeySpec {
+            keyspace: keyspace.clone(),
+            columns: schema
+                .primary_key
+                .iter()
+                .map(|n| column_ref(schema, n))
+                .collect(),
+        };
+        facets.push(IdentityFacet {
+            role: IdentityRole::UniquenessPrimary,
+            key: spec.clone(),
+        });
+        Some(spec)
+    };
+
+    // 2. Unique indexes → UniquenessSecondary (only when a PK owns the row).
+    for idx in &schema.indexes {
+        if !idx.is_unique || idx.columns == schema.primary_key {
+            continue;
+        }
+        let key = CompositeKeySpec {
+            keyspace: keyspace.clone(),
+            columns: idx.columns.iter().map(|n| column_ref(schema, n)).collect(),
+        };
+        match &primary_spec {
+            Some(pk) => facets.push(IdentityFacet {
+                role: IdentityRole::UniquenessSecondary {
+                    owning_primary: pk.clone(),
+                },
+                key,
+            }),
+            None => gaps.push(format!(
+                "unique index '{}' has no primary key to own it",
+                idx.name
+            )),
+        }
+    }
+
+    // 3. Vector columns → Surrogate facets.
+    for col in &schema.columns {
+        if !col.is_deleted && is_vector_column(col) {
+            facets.push(IdentityFacet {
+                role: IdentityRole::Surrogate,
+                key: CompositeKeySpec {
+                    keyspace: keyspace.clone(),
+                    columns: vec![column_ref(schema, &col.name)],
+                },
+            });
+        }
+    }
+
+    // 4. filterable_columns = non-vector, non-deleted columns (ABAC allow-list).
+    let filterable_columns = schema
+        .columns
+        .iter()
+        .filter(|c| !c.is_deleted && !is_vector_column(c))
+        .map(|c| ColumnRef {
+            ordinal: c.id.max(0) as u32,
+            name: c.name.clone(),
+        })
+        .collect();
+
+    IdentitySlot {
+        facets,
+        filterable_columns,
+        completeness_gaps: gaps,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,5 +615,106 @@ mod tests {
             }
         ));
         assert_eq!(b.effect, Effect::Deny);
+    }
+
+    // --- derivation from the catalog schema ---
+
+    fn dense_vec(dim: usize) -> proximadb_data_model::ProximaType {
+        proximadb_data_model::ProximaType::DenseVector {
+            element: proximadb_data_model::VectorElement::Float32,
+            dim,
+        }
+    }
+
+    #[test]
+    fn derives_primary_secondary_surrogate_from_schema() {
+        // users(id PK, email UNIQUE, dept scalar, body_vec vector)
+        let schema = CatalogTableSchema::new("users")
+            .with_column(CatalogColumn::new(
+                0,
+                "id",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(CatalogColumn::new(
+                1,
+                "email",
+                proximadb_data_model::ProximaType::String,
+            ))
+            .with_column(CatalogColumn::new(
+                2,
+                "dept",
+                proximadb_data_model::ProximaType::String,
+            ))
+            .with_column(CatalogColumn::new(3, "body_vec", dense_vec(384)))
+            .with_primary_key(vec!["id".to_string()])
+            .with_index(
+                crate::CatalogIndex::new(
+                    "uq_email",
+                    vec!["email".to_string()],
+                    crate::CatalogIndexType::BTree,
+                )
+                .unique(),
+            );
+
+        let slot = identity_slot_from_table_schema(&schema);
+        assert!(slot.validate().is_ok());
+        assert_eq!(slot.primary_count(), 1);
+
+        // one primary (id), one secondary UNIQUE (email → owns id), one surrogate (body_vec)
+        let primary: Vec<_> = slot
+            .facets
+            .iter()
+            .filter(|f| matches!(f.role, IdentityRole::UniquenessPrimary))
+            .collect();
+        assert_eq!(primary.len(), 1);
+        assert_eq!(primary[0].key.columns[0].name, "id");
+
+        let secondary: Vec<_> = slot
+            .facets
+            .iter()
+            .filter(|f| matches!(f.role, IdentityRole::UniquenessSecondary { .. }))
+            .collect();
+        assert_eq!(secondary.len(), 1);
+        assert_eq!(secondary[0].key.columns[0].name, "email");
+        match &secondary[0].role {
+            IdentityRole::UniquenessSecondary { owning_primary } => {
+                assert_eq!(owning_primary.columns[0].name, "id"); // owns the PK
+            }
+            _ => unreachable!(),
+        }
+
+        let surrogates: Vec<_> = slot
+            .facets
+            .iter()
+            .filter(|f| matches!(f.role, IdentityRole::Surrogate))
+            .collect();
+        assert_eq!(surrogates.len(), 1);
+        assert_eq!(surrogates[0].key.columns[0].name, "body_vec");
+
+        // filterable_columns excludes the vector, includes the scalars.
+        let filt: Vec<&str> = slot
+            .filterable_columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert!(filt.contains(&"dept"));
+        assert!(filt.contains(&"email"));
+        assert!(!filt.contains(&"body_vec"));
+    }
+
+    #[test]
+    fn derives_gap_when_no_primary_key() {
+        let schema = CatalogTableSchema::new("events").with_column(CatalogColumn::new(
+            0,
+            "payload",
+            proximadb_data_model::ProximaType::String,
+        ));
+        let slot = identity_slot_from_table_schema(&schema);
+        assert_eq!(slot.primary_count(), 0);
+        assert!(
+            slot.completeness_gaps
+                .iter()
+                .any(|g| g.contains("no natural primary key"))
+        );
     }
 }
