@@ -10,7 +10,7 @@
 
 [cols="1,3"]
 |===
-| Status | Draft — design gate, no code
+| Status | Draft — **hardened after a 3-agent red-team (2026-07-27); the naïve §2 design is NOT shippable — see §7**. Buildable on this substrate (positions are derivable, D5 holds), but §7 supersedes D1/D2/D3/D4 and adds two new sub-components. **Re-scoped: ~4–5w (not the 2w plan estimate)** — several pieces are new subsystems.
 | Problem | The cold tier deletes via **LSM tombstones** (delete-marker records that cascade through levels and are physically removed only at compaction) — every cold delete implies an eventual **segment rewrite**. D14 wants **deletion vectors**: a position bitmap overlaying the *immutable* segment, applied **merge-on-read**, purged at compaction behind the reader watermark — no rewrite on delete.
 | Feature | `cold-deletion-vectors` (additive, feature-gated; default path = today's tombstone+compaction, byte-for-byte unchanged).
 |===
@@ -119,3 +119,85 @@ the storage layer — the logical identity stays the F0 `Identity`/oid.
   *immutable cold* representation only.
 * The uniqueness-fence CKS tombstone (F5) — orthogonal, untouched.
 * Cross-format DV interchange (Iceberg-v3 wire compat) — a later interop item.
+
+== 7. Red-team findings + hardened design (rev 2, 2026-07-27)
+
+Three adversarial agents attacked §2/§5 against the code. **§2's naïve design is not
+shippable**; this section supersedes it. The substrate *does* support the feature
+(footer block table gives derivable dense positions — `segment_layout.rs:209/315/345`;
+no in-place row mutation exists, so D5's position-stability claim HOLDS), but four
+concrete corrections and two new sub-components are required.
+
+=== 7.1 Verdicts
+[cols="1,1,3"]
+|===
+| Target | Verdict | Finding
+
+| DV ⇄ delta-merge (§5.1)
+| RESIDUAL-GAP
+| The WAL suppress-set (in the catalog `snapshot_lsn` manifest) and the DV bit (in
+  the segment manifest) are unordered. If the flush retires the WAL entry (frees it
+  / advances `snapshot_lsn`) **before** the DV bit is reader-visible, a concurrent
+  OLAP read sees the row in **neither** suppressor → **resurface**
+  (`datafusion_engine.rs:794–841`, `flush_materializer.rs:159–168/305–316`).
+
+| Watermark + purge (§5.3)
+| **UNBUILDABLE-AS-SPEC + BROKEN**
+| (a) The SST compactor reclaims on **wall-clock age** (`compaction.rs:1178`, 1h) and
+  has **no reader watermark**. The F1d watermark D4 cites is the **CKS key→oid
+  uniqueness subsystem** (`oltp-integrity`-gated), which F3v explicitly doesn't touch
+  — there is **no oldest-active-reader watermark over cold data reads**. (b) A **plain
+  bitmap** DV drops a live reader's rows: `OlapDeltaMerge.snapshot_lsn` is the
+  *base-materialization* LSN, not a reader as-of; the cold scan carries no reader
+  LSN, so a reader at T applying a DV that includes a post-T delete loses a row it
+  must still see.
+
+| Position stability (§5.2)
+| RESIDUAL-GAP
+| Positions are derivable and stable (D5 holds — no in-place drift), but there is
+  **no OID→position resolver** (WI-2 has nothing to call), and the **compactor is
+  DV-blind with no interlock**: a delete that sets a DV bit after the compactor
+  streamed the row but before it deletes the input is **silently lost**
+  (`compactor_impl.rs:272–390`, esp. `:306–316` stream, `:369–377` unlocked delete;
+  `atomic_coordinator` is `None` on the simple path).
+|===
+
+=== 7.2 The hardened design (supersedes D1–D4)
+1. **MVCC-versioned DV, not a plain bitmap (fixes the BROKEN snapshot core).**
+   Each set position carries the **delete generation/LSN** (layered `(gen, roaring)`
+   runs, or a `position→gen` map). The cold-segment scan **must carry the reader
+   snapshot LSN** (it carries none today) and apply only bits with `gen ≤ snapshot`.
+   This makes merge-on-read snapshot-correct **independently of reclaim**.
+2. **OID→position resolver (new sub-component, unblocks WI-2).** Canonical DV
+   position = the footer-block-order stream ordinal (frozen at write). Persist a
+   dense `OID→ordinal` resolver in the footer/sidecar at write, or resolve-and-record
+   at delete time. Additive to the existing footer; no new mutation path.
+3. **Publish-before-retire hand-off (fixes resurface).** The flush durably publishes
+   the DV bit (fsync the DV manifest bump) **strictly before** retiring the delete
+   from the change-feed (freeing the WAL entry / advancing `snapshot_lsn`). DV publish
+   is the commit point; WAL-free / `snapshot_lsn`-advance is post-commit GC. Readers
+   pin one `(snapshot_lsn, DV-version)` tuple (suppress-first) so the union of
+   suppressors is monotone; tag the DV version with the `lsn` it discharges so a
+   straddle is detectable → re-read.
+4. **Compaction DV-awareness + interlock (new work).** The k-way merge must consult
+   the DV; at commit, re-read every input's DV under **one atomic step**
+   (manifest-CAS / per-segment lease — the currently-`None` `TransactionCoordinator`),
+   translate surviving deleted-OIDs into the **re-clustered** output (position-keyed
+   DVs cannot be carried across a re-cluster — reduce to an OID set and re-apply),
+   then delete inputs + clear DVs. Closes the lost-bit race.
+5. **Reclaim watermark — descope, don't build a new subsystem (recommended).**
+   Building a cold-data oldest-active-reader watermark for the SST compactor is a new
+   data-plane subsystem *larger than the DV itself*. Instead: DV purge is
+   **conservative** — never drop a DV'd row below a global static low-watermark (or
+   `age ≫ max_query_duration`), **unified with the existing 1h tombstone reclaim** so
+   the two mechanisms share one liveness rule — and the TD **explicitly documents that
+   long-lived snapshots are not pinned** (matching today's tombstone behavior). A real
+   watermark is a later, separately-scoped item.
+
+=== 7.3 Consequence for the plan
+F3v is **buildable but is not a 2-week overlay** — it is ~4–5w: a versioned-DV format,
+an OID→position resolver, the reader-LSN scan plumbing, the compaction interlock, and
+the publish-before-retire ordering, plus the conservative-purge unification. WI-1..WI-5
+in §3 are superseded by §7.2. The design **stays Draft** until §7.2 is folded into
+numbered WIs and a confirmation pass runs over the *versioned-DV + interlock* pieces
+(the newly-introduced structures). None of this is on the OLTP critical path (closed).
