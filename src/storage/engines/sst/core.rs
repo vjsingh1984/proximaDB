@@ -168,6 +168,15 @@ pub struct SstEngine {
     /// None during initialization, Some after start_compaction() called
     compaction_manager: Option<Arc<Compaction>>,
 
+    /// TD-COMPACT-8: per-collection `training_in_flight` guard. When a TD-COMPACT-5
+    /// training compaction is running for a collection, its `storage_url` is inserted
+    /// here. `should_trigger_compaction` arm 2 checks this set and skips re-arming
+    /// while a training pass is in-flight — eliminating the redundant re-training loop
+    /// (up to N-1 wasted cycles per ingest batch, each costing N GETs + PCA + PUT +
+    /// DELETEs on object storage). The flag is set by the flush caller before
+    /// `run_due_compaction` and cleared after (Ok, no-op, or Err — always cleared).
+    pub(crate) training_in_flight: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+
     /// **Filesystem Factory**
     ///
     /// Creates filesystem instances for different storage backends:
@@ -563,6 +572,7 @@ impl SstEngine {
         Ok(Self {
             config,
             compaction_manager,
+            training_in_flight: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             filesystem,
             unified_fs: None, // Created per collection
             atomic_coordinator,
