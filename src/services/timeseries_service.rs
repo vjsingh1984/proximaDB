@@ -120,8 +120,25 @@ impl TimeSeriesService {
             base_path: self.base_path.join(tenant),
             ..Default::default()
         };
-        let engine = TimeSeriesEngine::with_config(config)
+        let mut engine = TimeSeriesEngine::with_config(config)
             .map_err(|e| anyhow!("failed to init TimeSeriesEngine for tenant '{tenant}': {e}"))?;
+        // F3 / TD-WAL-2 (durability parity): make timeseries writes crash-durable.
+        // The WAL writer (`TstWalWriter`) and the replay handler (`TstWalRecovery`)
+        // already exist and are engine-tested; only this service wiring was missing
+        // — `engine_for` never enabled the WAL, so inserts landed only in in-memory
+        // partitions and were LOST on a crash before partition rotation. Enable the
+        // append writer (creates the file on first run), then replay any pre-crash
+        // entries into this fresh engine's partitions before it serves. The WAL is
+        // rooted per-tenant next to the partitions.
+        let wal_path = self.base_path.join(tenant).join("wal");
+        engine
+            .enable_wal(&wal_path)
+            .await
+            .map_err(|e| anyhow!("failed to enable TimeSeries WAL for tenant '{tenant}': {e}"))?;
+        engine
+            .recover_from_wal(&wal_path)
+            .await
+            .map_err(|e| anyhow!("failed to recover TimeSeries WAL for tenant '{tenant}': {e}"))?;
         let handle = Arc::new(RwLock::new(engine));
         engines.insert(tenant.to_string(), handle.clone());
         Ok(handle)
@@ -204,6 +221,12 @@ impl TimeSeriesService {
                 .map_err(|e| anyhow!("insert_record failed: {e}"))?;
             inserted += 1;
         }
+        // F3 / TD-WAL-2: fsync the WAL once per ingest batch so the points are
+        // crash-durable before we return success (the append only buffers).
+        engine
+            .flush_wal()
+            .await
+            .map_err(|e| anyhow!("failed to flush TimeSeries WAL: {e}"))?;
         Ok(inserted)
     }
 
@@ -380,6 +403,40 @@ mod tests {
             .await
             .expect("stranger query");
         assert!(stranger.is_empty(), "unrelated tenant sees no data");
+    }
+
+    /// F3 / TD-WAL-2 (durability parity): a timeseries write survives a simulated
+    /// restart via the WAL. Before the service-level WAL wiring, `engine_for` never
+    /// enabled the WAL, so an unflushed point was lost the moment the in-memory
+    /// engine dropped — this test failed (recovered 0). With the wiring, `ingest`
+    /// appends to the per-tenant WAL and a fresh service on the same base path
+    /// replays it.
+    #[tokio::test]
+    async fn timeseries_write_survives_restart_via_wal() {
+        let tmp = TempDir::new().expect("tempdir");
+        let base = tmp.path().to_path_buf();
+
+        // First "process": ingest a point, then drop the service (simulated crash —
+        // in-memory partitions are gone; the WAL persists under base/<tenant>/wal).
+        {
+            let svc = TimeSeriesService::new(base.clone()).expect("service");
+            svc.ingest("acme", "sensor", vec![point(1_000, "v", 42.0)])
+                .await
+                .expect("ingest");
+        } // svc dropped here → engine + WAL writer dropped (WAL flushed to disk)
+
+        // Second "process": a fresh service on the SAME base path recovers from WAL.
+        let svc2 = TimeSeriesService::new(base).expect("service restart");
+        let recovered = svc2
+            .query("acme", "sensor", 0, 10_000, None)
+            .await
+            .expect("query after restart");
+        assert_eq!(
+            recovered.len(),
+            1,
+            "the pre-restart point must be recovered from the WAL"
+        );
+        assert_eq!(recovered[0].values.get("v"), Some(&42.0));
     }
 
     /// `list_collections` is tenant-scoped — the former cross-tenant leak is gone.
