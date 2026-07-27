@@ -245,7 +245,7 @@ gate is mechanical. Every S-item is a merge-blocking test, not a review note.
 
 | **S3**
 | Literals are type-gated against the column's declared type at compile; a mismatch **denies** rather than falling through to precedence ordering.
-| `json_comparison` / bridge unit: `numeric_predicate_against_string_column_denies`. Asserts deny, **not** admit-all.
+| `json_comparison` / bridge unit: `numeric_predicate_against_string_column_denies`. Asserts deny, **not** admit-all. **Slice FA-a2** — needs a schema at the bridge seam or a type-strict comparison mode; `compare_json_values` is live under metadata search, so it cannot simply be made strict.
 
 | **S1–S3 (joint)**
 | **Deny-biased subset property.** For a random `SecurityPredicate`, the bridged predicate admits a **subset** of the source's row set; a non-convertible node admits **zero** rows (not a dropped conjunct).
@@ -296,8 +296,12 @@ while silently widening.
 | Slice | Content | Gates
 
 | **FA-a**
-| The bridge (FA-2): `build_filter → Result`, null-safe `Not`, type-gated literals, the deny-biased subset property test. Touches only the currently-dead RLS/filter code, so no live path changes behavior.
-| S1, S2, S3
+| The bridge, part 1 (FA-2): the total deny-biased lattice replacing `Ok(None)`, null-safe `Not` lowering, and the deny-biased subset property test. Touches only the dead RLS/filter code, so no live path changes behavior.
+| S1, S2
+
+| **FA-a2**
+| The bridge, part 2: **type-gated literals**. Split out because it needs input FA-a does not have — the column's declared type. `build_filter` sees only a `SecurityPredicate` and a subject; there is no schema at that seam, and the alternative (making `compare_json_values` type-strict) would change **live** user-query semantics, since `sql_value_filter` serves metadata search, document filtering and pushdown. So FA-a2 is either a schema seam into the bridge or a type-strict comparison *mode* the security path opts into — a design choice, not a patch.
+| S3
 
 | **FA-b**
 | Signature change at the three read primitives (FA-1) + the CI signature check. Behavior-neutral while every caller passes a `SystemReadContext`; the point is that the *shape* becomes non-optional.
