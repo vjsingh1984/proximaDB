@@ -1589,6 +1589,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-objstore-restart"
+          # This job is compile-bound and sits at the edge of its 90-minute
+          # budget: a WARM run finishes in ~75 min, a COLD one does not finish at
+          # all (observed: 72 min in, still emitting compile warnings, then
+          # killed). rust-cache saves `target/` only on success by default, so a
+          # single failure starts a loop it cannot leave — the run fails, saves
+          # nothing, and the next run is cold again and fails for the same
+          # reason. Caching on failure persists the partial `target/` so the next
+          # attempt starts warm and completes. (`CARGO_BUILD_JOBS=1` is already
+          # set inside run_cloud_emulator_tests.sh for the memory cliff; this is
+          # the other half.)
+          cache-on-failure: true
       - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: actions/cache@v4
         with:
