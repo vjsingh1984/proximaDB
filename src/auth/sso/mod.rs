@@ -3,14 +3,12 @@
 pub mod aws_iam;
 pub mod azure_ad;
 pub mod google_cloud;
-pub mod oidc;
 pub mod saml;
 pub mod types;
 
 pub use aws_iam::AWSIAMIntegration;
 pub use azure_ad::AzureADIntegration;
 pub use google_cloud::GoogleCloudIntegration;
-pub use oidc::OIDCIntegration;
 pub use saml::SAMLIntegration;
 pub use types::{EnterpriseUserContext, SSOProvider, SSOToken, SSOValidationResult};
 
@@ -558,14 +556,12 @@ mod tests {
         use super::aws_iam::AWSIAMIntegration;
         use super::azure_ad::AzureADIntegration;
         use super::google_cloud::GoogleCloudIntegration;
-        use super::oidc::OIDCIntegration;
         use super::saml::SAMLIntegration;
 
         // These should all compile successfully
         let _ = std::any::type_name::<AWSIAMIntegration>();
         let _ = std::any::type_name::<AzureADIntegration>();
         let _ = std::any::type_name::<GoogleCloudIntegration>();
-        let _ = std::any::type_name::<OIDCIntegration>();
         let _ = std::any::type_name::<SAMLIntegration>();
 
         assert!(true);
