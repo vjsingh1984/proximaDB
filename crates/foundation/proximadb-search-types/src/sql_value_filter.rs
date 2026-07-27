@@ -1095,3 +1095,277 @@ mod tests {
         }
     }
 }
+
+// ===========================================================================
+// Type-strict operator evaluation (TD-FOUNDATION-3 slice FA-a2 / TF-2 S3)
+// ===========================================================================
+
+/// [`compare_json_op`], but **deny-biased on a type mismatch**.
+///
+/// The permissive dispatch answers every comparison, falling back to JSON type
+/// precedence when the operands are of different classes. For a *user* filter
+/// that is a defensible total order. For an *authorization* predicate it is a
+/// fail-open channel, in two directions:
+///
+/// * **Ordered operators widen.** `String` outranks `Number` by precedence, so a
+///   `clearance >= 3` policy returns `true` for every record whose `clearance`
+///   holds a string — regardless of the string's content. A clearance gate
+///   admits the corpus it exists to withhold.
+/// * **Negative operators widen.** `dept != 5` is `true` for a string-valued
+///   `dept`, because "not equal" is trivially satisfied by "not comparable".
+///
+/// The rule here is one line: **if the operands are not comparable, the
+/// predicate does not admit.** Operators that are already type-exact
+/// (`Equals`/`In` via `json_eq`, the string operators via `as_str`, the null
+/// tests via presence) delegate unchanged — this only tightens the cases that
+/// could widen.
+///
+/// Additive: [`compare_json_op`] is untouched, so the live metadata-search,
+/// document-filter and pushdown paths keep their current semantics. The security
+/// path opts in.
+pub fn compare_json_op_type_strict(
+    operator: &ComparisonOperator,
+    json_val: &serde_json::Value,
+    value: &serde_json::Value,
+) -> bool {
+    use crate::json_comparison::comparable_class;
+
+    let same_class =
+        |other: &serde_json::Value| comparable_class(json_val) == comparable_class(other);
+
+    match operator {
+        // Ordered comparisons are meaningless across classes — deny rather than
+        // fall through to precedence ordering.
+        ComparisonOperator::LessThan
+        | ComparisonOperator::LessThanOrEqual
+        | ComparisonOperator::GreaterThan
+        | ComparisonOperator::GreaterThanOrEqual => {
+            same_class(value) && compare_json_op(operator, json_val, value)
+        }
+
+        // Both bounds must be comparable with the field, or the range is
+        // meaningless.
+        ComparisonOperator::Between => value.as_array().is_some_and(|bounds| {
+            bounds.len() == 2
+                && same_class(&bounds[0])
+                && same_class(&bounds[1])
+                && compare_json_op(operator, json_val, value)
+        }),
+
+        // "Not equal" must not be satisfied merely by being incomparable.
+        ComparisonOperator::NotEquals => {
+            same_class(value) && compare_json_op(operator, json_val, value)
+        }
+
+        // Likewise "not in": require at least one list element the field could
+        // actually have equalled, else the exclusion is vacuous.
+        ComparisonOperator::NotIn => value.as_array().is_some_and(|values| {
+            values.iter().any(same_class) && compare_json_op(operator, json_val, value)
+        }),
+
+        // Already type-exact: Equals/In compare via `json_eq`, the string
+        // operators require `as_str` on both sides, and the null tests are
+        // decided by presence.
+        _ => compare_json_op(operator, json_val, value),
+    }
+}
+
+#[cfg(test)]
+mod type_strict_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn permissive(
+        op: ComparisonOperator,
+        field: serde_json::Value,
+        lit: serde_json::Value,
+    ) -> bool {
+        compare_json_op(&op, &field, &lit)
+    }
+    fn strict(op: ComparisonOperator, field: serde_json::Value, lit: serde_json::Value) -> bool {
+        compare_json_op_type_strict(&op, &field, &lit)
+    }
+
+    #[test]
+    fn a_numeric_threshold_no_longer_admits_a_string_clearance() {
+        // TF-2 §1.4's case, end to end: `clearance >= 3` against a record whose
+        // clearance is a string.
+        assert!(
+            permissive(
+                ComparisonOperator::GreaterThanOrEqual,
+                json!("TOP_SECRET"),
+                json!(3)
+            ),
+            "characterizing the defect: the permissive dispatch admits"
+        );
+        assert!(!strict(
+            ComparisonOperator::GreaterThanOrEqual,
+            json!("TOP_SECRET"),
+            json!(3)
+        ));
+        // …including the string that merely looks like a smaller number.
+        assert!(!strict(
+            ComparisonOperator::GreaterThanOrEqual,
+            json!("2"),
+            json!(3)
+        ));
+    }
+
+    #[test]
+    fn ordered_operators_still_work_within_a_class() {
+        assert!(strict(ComparisonOperator::GreaterThan, json!(5), json!(3)));
+        assert!(!strict(ComparisonOperator::GreaterThan, json!(2), json!(3)));
+        assert!(strict(ComparisonOperator::LessThan, json!("a"), json!("b")));
+        // Integer field against a float literal must keep working.
+        assert!(strict(
+            ComparisonOperator::GreaterThan,
+            json!(1),
+            json!(0.8)
+        ));
+    }
+
+    #[test]
+    fn not_equals_is_not_satisfied_by_being_incomparable() {
+        assert!(
+            permissive(ComparisonOperator::NotEquals, json!("eng"), json!(5)),
+            "characterizing the defect: incomparable satisfies !="
+        );
+        assert!(!strict(
+            ComparisonOperator::NotEquals,
+            json!("eng"),
+            json!(5)
+        ));
+        // Same-class inequality is unaffected.
+        assert!(strict(
+            ComparisonOperator::NotEquals,
+            json!("eng"),
+            json!("hr")
+        ));
+        assert!(!strict(
+            ComparisonOperator::NotEquals,
+            json!("eng"),
+            json!("eng")
+        ));
+    }
+
+    #[test]
+    fn not_in_requires_a_comparable_list_element() {
+        assert!(
+            permissive(ComparisonOperator::NotIn, json!("eng"), json!([1, 2])),
+            "characterizing the defect: a wholly incomparable list excludes nothing"
+        );
+        assert!(!strict(
+            ComparisonOperator::NotIn,
+            json!("eng"),
+            json!([1, 2])
+        ));
+        // A same-class list behaves normally.
+        assert!(strict(
+            ComparisonOperator::NotIn,
+            json!("eng"),
+            json!(["hr", "legal"])
+        ));
+        assert!(!strict(
+            ComparisonOperator::NotIn,
+            json!("eng"),
+            json!(["eng", "hr"])
+        ));
+    }
+
+    #[test]
+    fn between_requires_both_bounds_to_be_comparable() {
+        assert!(strict(
+            ComparisonOperator::Between,
+            json!(5),
+            json!([1, 10])
+        ));
+        assert!(!strict(
+            ComparisonOperator::Between,
+            json!(5),
+            json!([1, "10"])
+        ));
+        assert!(!strict(
+            ComparisonOperator::Between,
+            json!("5"),
+            json!([1, 10])
+        ));
+    }
+
+    #[test]
+    fn already_exact_operators_are_unchanged() {
+        // Equals, In, the string operators and the null tests are type-exact
+        // already; strict mode must not alter them.
+        for (op, field, lit) in [
+            (ComparisonOperator::Equals, json!("eng"), json!("eng")),
+            (ComparisonOperator::Equals, json!("eng"), json!(5)),
+            (ComparisonOperator::In, json!("eng"), json!(["eng", "hr"])),
+            (ComparisonOperator::In, json!("eng"), json!([1, 2])),
+            (
+                ComparisonOperator::StartsWith,
+                json!("engineering"),
+                json!("eng"),
+            ),
+            (ComparisonOperator::StartsWith, json!(5), json!("eng")),
+            (
+                ComparisonOperator::Contains,
+                json!("engineering"),
+                json!("gin"),
+            ),
+            (
+                ComparisonOperator::Like,
+                json!("engineering"),
+                json!("eng%"),
+            ),
+            (ComparisonOperator::IsNull, json!(null), json!(null)),
+            (ComparisonOperator::IsNotNull, json!("eng"), json!(null)),
+        ] {
+            assert_eq!(
+                compare_json_op_type_strict(&op, &field, &lit),
+                compare_json_op(&op, &field, &lit),
+                "strict mode changed an already-exact operator: {op:?} {field} {lit}"
+            );
+        }
+    }
+
+    #[test]
+    fn strict_never_admits_more_than_permissive() {
+        // The deny-biased property, over the operator × value grid: strict mode
+        // may only ever tighten.
+        let values = [
+            json!(3),
+            json!(3.5),
+            json!("3"),
+            json!("eng"),
+            json!(true),
+            json!(null),
+            json!([1, 2]),
+        ];
+        let ops = [
+            ComparisonOperator::Equals,
+            ComparisonOperator::NotEquals,
+            ComparisonOperator::LessThan,
+            ComparisonOperator::LessThanOrEqual,
+            ComparisonOperator::GreaterThan,
+            ComparisonOperator::GreaterThanOrEqual,
+            ComparisonOperator::In,
+            ComparisonOperator::NotIn,
+            ComparisonOperator::Between,
+            ComparisonOperator::Contains,
+            ComparisonOperator::StartsWith,
+            ComparisonOperator::EndsWith,
+            ComparisonOperator::Like,
+        ];
+        for op in &ops {
+            for field in &values {
+                for lit in &values {
+                    if compare_json_op_type_strict(op, field, lit) {
+                        assert!(
+                            compare_json_op(op, field, lit),
+                            "strict admitted what permissive denies: {op:?} {field} {lit}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
