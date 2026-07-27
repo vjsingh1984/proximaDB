@@ -3425,6 +3425,35 @@ impl DmlService {
             .iter()
             .map(|id| Self::build_delete_tombstone_record(id, &table_schema, now_ns))
             .collect::<Result<Vec<_>>>()?;
+        // F5: capture the fenced-store PK identities from these tombstone records
+        // (same insert-path builder → matching tenant_id + typed PK), applied
+        // after the record store confirms the delete. Single-column PKs only.
+        let cks_tombstone_ids: Vec<proximadb_storage_ports::Identity> =
+            if self.conditional_key_store.is_some() {
+                let pk_cols = Self::primary_key_columns(&table_schema);
+                if pk_cols.len() == 1 {
+                    tombstones
+                        .iter()
+                        .filter_map(|rec| {
+                            let pk_value = match rec.props.get(&pk_cols[0]) {
+                                Some(ProximaTreeNode::Value(v)) => v.clone(),
+                                _ => return None,
+                            };
+                            proximadb_data_model::key_codec::encode_identity(
+                                &rec.tenant_id,
+                                &table_schema.name,
+                                std::slice::from_ref(&pk_value),
+                            )
+                            .ok()
+                            .map(proximadb_storage_ports::Identity::from_bytes)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
         let deleted_count = ids_to_delete.len();
         let mutations = tombstones
             .into_iter()
@@ -3443,6 +3472,22 @@ impl DmlService {
                     .cloned()
                     .unwrap_or_else(|| "unknown error".to_string())
             ));
+        }
+
+        // F5 (ADR-072): keep the fenced ConditionalKeyStore consistent with the
+        // delete — tombstone each removed row's PK Identity so FK existence
+        // (`cks.get`, the insert-path slice) and PK re-insert (`put_if_absent`)
+        // reflect the deletion. Without it a deleted parent stays "live": a child
+        // FK to it would wrongly succeed, and re-inserting the same PK would
+        // wrongly conflict. The identities are derived from the SAME tombstone
+        // records above (which go through the insert-path record builder), so the
+        // `tenant_id` + typed PK match the CKS registration exactly. Single-column
+        // PKs only (F2's fencing scope).
+        if let Some(cks) = &self.conditional_key_store {
+            for id in &cks_tombstone_ids {
+                cks.tombstone(id, proximadb_storage_ports::Generation(0))
+                    .await?;
+            }
         }
 
         info!(
