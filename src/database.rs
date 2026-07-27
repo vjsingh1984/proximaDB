@@ -748,6 +748,21 @@ impl ProximaDB {
     pub async fn start(&mut self) -> anyhow::Result<()> {
         tracing::info!("🚀 ProximaDB::start - Starting database services...");
 
+        // TD-COMPACT-9: seed the coarse-probe (IVF) settings AUTHORITATIVELY from
+        // the loaded server config. Production `SstEngine::new()` uses
+        // `SstConfig::default()` (coarse_probe = None), so without this the
+        // `[storage.sst_config.coarse_probe]` TOML surface (nprobe_multiplier,
+        // enable_read_probe/write_train) was silently ignored. The overwritable
+        // seed (a `Some` config always wins) makes the TOML effective regardless
+        // of engine-construction order; env vars still override at call time.
+        crate::storage::engines::sst::segment_format::init_coarse_probe_settings(
+            self._config
+                .storage
+                .sst_config
+                .as_ref()
+                .and_then(|sst| sst.coarse_probe.as_ref()),
+        );
+
         // Step 1: Start the storage engine. It restores the catalog, registers
         // collection storage engines, and replays WAL in that dependency order.
         tracing::info!(

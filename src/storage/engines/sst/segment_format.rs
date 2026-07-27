@@ -1366,13 +1366,29 @@ pub struct CoarseProbeSettings {
     pub nprobe_max: usize,
 }
 
-static SHARED_COARSE_PROBE: std::sync::OnceLock<CoarseProbeSettings> = std::sync::OnceLock::new();
+// TD-COMPACT-9: overwritable, NOT first-wins. Every production `SstEngine::new()`
+// (shared_services.rs, factory.rs, legacy.rs) is built with `SstConfig::default()`
+// (coarse_probe = None), so an OnceLock first-wins seeded the DEFAULT and the
+// real `[storage.sst_config.coarse_probe]` TOML was silently ignored (measured:
+// nprobe_multiplier=1.5 had no effect while env nprobe DID). An RwLock lets a
+// REAL (Some) config — set authoritatively from the loaded server Config in
+// `ProximaDB::start` — override the default regardless of construction order.
+static SHARED_COARSE_PROBE: std::sync::RwLock<Option<CoarseProbeSettings>> =
+    std::sync::RwLock::new(None);
 
-/// Initialize the coarse-probe settings from the parsed TOML config (called once
-/// at SstEngine boot). Subsequent calls are no-ops (first wins, matching
-/// SHARED_INVARIANTS_CACHE). `None` ⇒ `CoarseProbeConfig::default()`.
+/// Seed the coarse-probe settings. A real (`Some`) config ALWAYS wins (the
+/// authoritative call from server startup); a `None` call (a default-config
+/// `SstEngine::new()`) only fills the default if nothing real was set yet.
+/// Poison-safe (no-panic mandate #4).
 pub fn init_coarse_probe_settings(cfg: Option<&crate::core::config::CoarseProbeConfig>) {
-    let _ = SHARED_COARSE_PROBE.set(cfg.cloned().unwrap_or_default().into());
+    if let Ok(mut g) = SHARED_COARSE_PROBE.write() {
+        match cfg {
+            Some(c) => *g = Some(c.clone().into()),
+            None => {
+                g.get_or_insert_with(CoarseProbeSettings::default);
+            }
+        }
+    }
 }
 
 impl Default for CoarseProbeSettings {
@@ -1393,8 +1409,12 @@ impl From<crate::core::config::CoarseProbeConfig> for CoarseProbeSettings {
     }
 }
 
-pub(crate) fn coarse_probe_settings() -> &'static CoarseProbeSettings {
-    SHARED_COARSE_PROBE.get_or_init(CoarseProbeSettings::default)
+pub(crate) fn coarse_probe_settings() -> CoarseProbeSettings {
+    SHARED_COARSE_PROBE
+        .read()
+        .ok()
+        .and_then(|g| *g)
+        .unwrap_or_default()
 }
 
 /// Geometric nprobe: `ceil(sqrt(k_c) × multiplier)`, clamped to `[min, max]`
@@ -1402,7 +1422,7 @@ pub(crate) fn coarse_probe_settings() -> &'static CoarseProbeSettings {
 /// at 1M, recall ~0.98 at multiplier 1.0. Bump `nprobe_multiplier` (TOML) for
 /// higher recall. The max-then-min ordering avoids the `clamp(min, k_c)` panic
 /// when `k_c < min` (no-panic mandate #4).
-fn geometric_nprobe(k_c: usize, s: &CoarseProbeSettings) -> usize {
+fn geometric_nprobe(k_c: usize, s: CoarseProbeSettings) -> usize {
     let raw = ((k_c as f32).sqrt() * s.nprobe_multiplier).ceil() as usize;
     let floored = raw.max(s.nprobe_min);
     let bounded = if s.nprobe_max > 0 {
@@ -2162,6 +2182,36 @@ pub async fn rabitq_search_segment_coalesced(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cp_cfg(mult: f32) -> crate::core::config::CoarseProbeConfig {
+        crate::core::config::CoarseProbeConfig {
+            enable_read_probe: true,
+            enable_write_train: true,
+            nprobe_multiplier: mult,
+            nprobe_min: 3,
+            nprobe_max: 0,
+        }
+    }
+
+    /// TD-COMPACT-9: a REAL (Some) coarse-probe config must WIN and must NOT be
+    /// clobbered by a later default-config `SstEngine::new()` init(None) — the
+    /// bug that made `[storage.sst_config.coarse_probe] nprobe_multiplier`
+    /// silently dead in production. Also verifies the multiplier reaches
+    /// geometric_nprobe. (nextest = process isolation; the static won't leak.)
+    #[test]
+    fn toml_coarse_probe_config_wins_over_default_init() {
+        // Simulate a default-config engine seeding first...
+        init_coarse_probe_settings(None);
+        // ...then the authoritative TOML config (server startup) — must override.
+        init_coarse_probe_settings(Some(&cp_cfg(1.5)));
+        assert!((coarse_probe_settings().nprobe_multiplier - 1.5).abs() < 1e-6);
+        // A later default-config engine init(None) must NOT clobber it.
+        init_coarse_probe_settings(None);
+        assert!((coarse_probe_settings().nprobe_multiplier - 1.5).abs() < 1e-6);
+        // The multiplier actually reaches nprobe: sqrt(64)*1.5 = 12 vs *1.0 = 8.
+        assert_eq!(geometric_nprobe(64, coarse_probe_settings()), 12);
+        assert_eq!(geometric_nprobe(64, cp_cfg(1.0).into()), 8);
+    }
 
     /// TD-CACHE-2 S2b: Region A and control bytes are separate eviction
     /// units — a put with a region splits into two entries; invalidate
