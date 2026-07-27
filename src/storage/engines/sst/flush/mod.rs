@@ -753,6 +753,15 @@ impl SstEngine {
             // or 1 when the TD-COMPACT-5 training arm fired (so the executor
             // compacts the few large untrained L0s instead of declining).
             let l0_threshold = due_threshold;
+            // TD-COMPACT-8: mark training in-flight (prevents re-arming on the
+            // next flush while this training pass runs). Only for the training
+            // arm (threshold <= 1). Always cleared below (Ok, no-op, or Err).
+            let is_training = due_threshold <= 1;
+            if is_training {
+                if let Ok(mut guard) = self.training_in_flight.lock() {
+                    guard.insert(storage_url.to_string());
+                }
+            }
             match compaction
                 .run_due_compaction(
                     cid,
@@ -776,6 +785,13 @@ impl SstEngine {
                          flush succeeded): {e}"
                     );
                     compaction_error = Some(e.to_string());
+                }
+            }
+            // TD-COMPACT-8: always clear the training flag after compaction
+            // (Ok, no-op, or Err — the guard is set above only for training).
+            if is_training {
+                if let Ok(mut guard) = self.training_in_flight.lock() {
+                    guard.remove(storage_url);
                 }
             }
         }
@@ -884,6 +900,20 @@ impl SstEngine {
         // arm would fire on every flush (compaction loop).
         if !crate::storage::engines::sst::block_cluster::ivf_probe_enabled() {
             return Ok(None);
+        }
+        // TD-COMPACT-8: skip re-arming while a training compaction is in-flight
+        // for this collection (prevents the redundant re-training loop — up to
+        // N-1 wasted cycles per ingest batch, each costing N GETs + PCA + PUT +
+        // DELETEs). The flag is set by the flush caller before run_due_compaction
+        // and cleared after.
+        if let Ok(guard) = self.training_in_flight.lock() {
+            if guard.contains(storage_url) {
+                tracing::debug!(
+                    "TD-COMPACT-8: training compaction already in-flight for \
+                     {storage_url} — skipping arm"
+                );
+                return Ok(None);
+            }
         }
         // Best-effort header sniffing (72 bytes/file); any error means "not
         // yet", never fails the flush.
