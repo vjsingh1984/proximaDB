@@ -443,6 +443,30 @@ pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> 
     })
 }
 
+/// Evaluate an **authorization** filter against a `ProximaTree` (canonical v2 path).
+///
+/// The type-strict twin of [`evaluate_filter_proxima`], and the adapter a
+/// security predicate should be evaluated with: it resolves on the
+/// `ProximaValue`/`ProximaTree` seam (ADR-024) — never the deprecated v1
+/// `SqlValue` envelope — and compares via [`compare_json_op_type_strict`], so a
+/// numeric policy threshold cannot be satisfied by a string-valued field
+/// (TD-FOUNDATION-3 slice FA-a2 / TF-2 S3).
+///
+/// Note the two independent `strict` axes on this path, which are easy to
+/// conflate:
+///
+/// * [`evaluate_filter_proxima_strict`] is **fail-loud on an unresolved field**
+///   (TD-FILT-1) — it surfaces a missing field as an error instead of dropping
+///   the row.
+/// * this function is **type-strict** — it refuses cross-class comparisons.
+///   Absence is handled exactly as the default walker handles it.
+pub fn evaluate_filter_proxima_type_strict(expr: &FilterExpression, props: &ProximaTree) -> bool {
+    evaluate_filter_resolved_type_strict(expr, &|field| match props.get(field) {
+        Some(ProximaTreeNode::Value(pv)) => Some(proxima_value_to_json(pv)),
+        _ => None,
+    })
+}
+
 /// Native, allocation-free ordering for the filter's common scalar types, matching
 /// [`crate::json_comparison::compare_json_values`] over the JSON-lowered value. Returns `None`
 /// (→ JSON-path fallback) for numbers, `Decimal`, and exotic types: `compare_json_numbers` uses an
@@ -1366,6 +1390,274 @@ mod type_strict_tests {
                     }
                 }
             }
+        }
+    }
+}
+
+/// [`evaluate_filter_resolved`], but evaluating every comparison through
+/// [`compare_json_op_type_strict`] — the walker an **authorization** expression
+/// is evaluated with (TD-FOUNDATION-3 slice FA-a2 / TF-2 S3).
+///
+/// # Why a separate walker rather than a strict mode on the shared one
+///
+/// A security predicate and a user's own filter end up ANDed together, but they
+/// do not want the same semantics: the user's `clearance >= 3` may legitimately
+/// use the permissive total order, while the policy's must not, or a
+/// string-valued `clearance` walks through the gate. A single tree evaluated by a
+/// single walker cannot give two subtrees two semantics without a marker node in
+/// `FilterExpression` — a foundation type used everywhere.
+///
+/// `AND` associativity makes that unnecessary. Evaluating the two expressions
+/// **separately** and requiring both is exactly equivalent to evaluating their
+/// conjunction, so the security expression can be walked strictly here while the
+/// user's is walked by [`evaluate_filter_resolved`] as before. No shared type
+/// changes, and no live query changes meaning.
+///
+/// Absence handling is identical to the permissive walker (an absent field IS
+/// NULL for the null tests, and fails every other comparison), because that axis
+/// is already deny-biased. This adds only the type axis.
+pub fn evaluate_filter_resolved_type_strict<F>(expr: &FilterExpression, resolve: &F) -> bool
+where
+    F: Fn(&str) -> Option<serde_json::Value>,
+{
+    match expr {
+        FilterExpression::And(exprs) => exprs
+            .iter()
+            .all(|e| evaluate_filter_resolved_type_strict(e, resolve)),
+        FilterExpression::Or(exprs) => exprs
+            .iter()
+            .any(|e| evaluate_filter_resolved_type_strict(e, resolve)),
+        FilterExpression::Not(e) => !evaluate_filter_resolved_type_strict(e, resolve),
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } => match operator {
+            // Decided by presence, exactly as in the permissive walker.
+            ComparisonOperator::IsNull => resolve(field).is_none_or(|json_val| json_val.is_null()),
+            ComparisonOperator::IsNotNull => {
+                resolve(field).is_some_and(|json_val| !json_val.is_null())
+            }
+            _ => match resolve(field) {
+                Some(json_val) => compare_json_op_type_strict(operator, &json_val, value),
+                None => false,
+            },
+        },
+    }
+}
+
+#[cfg(test)]
+mod type_strict_walker_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn cmp(
+        field: &str,
+        operator: ComparisonOperator,
+        value: serde_json::Value,
+    ) -> FilterExpression {
+        FilterExpression::Comparison {
+            field: field.to_string(),
+            operator,
+            value,
+        }
+    }
+
+    fn admits(expr: &FilterExpression, row: &serde_json::Value) -> bool {
+        evaluate_filter_resolved_type_strict(expr, &|f| row.get(f).cloned())
+    }
+    fn admits_permissive(expr: &FilterExpression, row: &serde_json::Value) -> bool {
+        evaluate_filter_resolved(expr, &|f| row.get(f).cloned())
+    }
+
+    #[test]
+    fn a_clearance_gate_no_longer_admits_a_string_valued_record() {
+        // The end-to-end shape of TF-2 §1.4's ClassificationBased case.
+        let policy = cmp(
+            "clearance",
+            ComparisonOperator::GreaterThanOrEqual,
+            json!(3),
+        );
+        let row = json!({ "clearance": "TOP_SECRET" });
+
+        assert!(
+            admits_permissive(&policy, &row),
+            "characterizing the defect: the permissive walker admits"
+        );
+        assert!(!admits(&policy, &row));
+        // A genuinely-cleared record still passes.
+        assert!(admits(&policy, &json!({ "clearance": 5 })));
+        assert!(!admits(&policy, &json!({ "clearance": 1 })));
+    }
+
+    #[test]
+    fn absence_is_handled_exactly_as_in_the_permissive_walker() {
+        let row = json!({ "other": 1 });
+        for expr in [
+            cmp("dept", ComparisonOperator::Equals, json!("eng")),
+            cmp("dept", ComparisonOperator::GreaterThan, json!(3)),
+            cmp("dept", ComparisonOperator::IsNull, json!(null)),
+            cmp("dept", ComparisonOperator::IsNotNull, json!(null)),
+        ] {
+            assert_eq!(
+                admits(&expr, &row),
+                admits_permissive(&expr, &row),
+                "absence handling diverged for {expr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_null_guard_from_fa_a_composes_with_type_strictness() {
+        // FA-a lowers `Not(P)` as `And([Not(P), IsNotNull(f)])`. Together with
+        // strict comparison that closes both the absence axis and the type axis.
+        let guarded = FilterExpression::And(vec![
+            FilterExpression::Not(Box::new(cmp(
+                "clearance",
+                ComparisonOperator::Equals,
+                json!(3),
+            ))),
+            cmp("clearance", ComparisonOperator::IsNotNull, json!(null)),
+        ]);
+
+        assert!(!admits(&guarded, &json!({})), "absent field excluded");
+        assert!(
+            !admits(&guarded, &json!({ "clearance": null })),
+            "null field excluded"
+        );
+        assert!(admits(&guarded, &json!({ "clearance": 5 })));
+        assert!(!admits(&guarded, &json!({ "clearance": 3 })));
+    }
+
+    #[test]
+    fn and_associativity_makes_separate_evaluation_equivalent_to_conjunction() {
+        // The property the two-walker design rests on: evaluating a conjunction
+        // is the same as evaluating each conjunct and requiring both. Verified
+        // over a grid so the design note is not just prose.
+        let security = cmp("dept", ComparisonOperator::Equals, json!("eng"));
+        let user = cmp("score", ComparisonOperator::GreaterThan, json!(0.5));
+        let conjunction = FilterExpression::And(vec![security.clone(), user.clone()]);
+
+        for row in [
+            json!({ "dept": "eng", "score": 0.9 }),
+            json!({ "dept": "eng", "score": 0.1 }),
+            json!({ "dept": "hr", "score": 0.9 }),
+            json!({}),
+            json!({ "dept": "eng" }),
+            json!({ "score": 0.9 }),
+        ] {
+            assert_eq!(
+                admits(&conjunction, &row),
+                admits(&security, &row) && admits(&user, &row),
+                "separate evaluation diverged from the conjunction for {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_strict_walker_never_admits_more_than_the_permissive_one() {
+        // Deny-biased over a grid of expression shapes × rows.
+        let exprs = vec![
+            cmp("a", ComparisonOperator::GreaterThanOrEqual, json!(3)),
+            cmp("a", ComparisonOperator::NotEquals, json!(3)),
+            cmp("a", ComparisonOperator::NotIn, json!([1, 2])),
+            cmp("a", ComparisonOperator::Between, json!([1, 10])),
+            FilterExpression::Not(Box::new(cmp("a", ComparisonOperator::Equals, json!(3)))),
+            FilterExpression::And(vec![
+                cmp("a", ComparisonOperator::GreaterThan, json!(1)),
+                cmp("b", ComparisonOperator::Equals, json!("x")),
+            ]),
+            FilterExpression::Or(vec![
+                cmp("a", ComparisonOperator::LessThan, json!(1)),
+                cmp("b", ComparisonOperator::NotEquals, json!("x")),
+            ]),
+        ];
+        let rows = vec![
+            json!({}),
+            json!({ "a": 5 }),
+            json!({ "a": "5" }),
+            json!({ "a": null }),
+            json!({ "a": true }),
+            json!({ "a": 5, "b": "x" }),
+            json!({ "a": "5", "b": 7 }),
+        ];
+        for e in &exprs {
+            for row in &rows {
+                if admits(e, row) {
+                    assert!(
+                        admits_permissive(e, row),
+                        "strict walker admitted what permissive denies: {e:?} {row}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod type_strict_proxima_tests {
+    use super::*;
+    use proximadb_data_model::ProximaValue;
+    use serde_json::json;
+
+    fn tree(pairs: Vec<(&str, ProximaValue)>) -> ProximaTree {
+        let mut t = ProximaTree::new();
+        for (k, v) in pairs {
+            t.insert(k.to_string(), ProximaTreeNode::Value(v));
+        }
+        t
+    }
+
+    #[test]
+    fn the_canonical_seam_denies_a_string_clearance_against_a_numeric_gate() {
+        let policy = FilterExpression::Comparison {
+            field: "clearance".to_string(),
+            operator: ComparisonOperator::GreaterThanOrEqual,
+            value: json!(3),
+        };
+
+        // ProximaValue path — no SqlValue envelope anywhere.
+        let string_clearance = tree(vec![(
+            "clearance",
+            ProximaValue::String("TOP_SECRET".to_string()),
+        )]);
+        assert!(
+            evaluate_filter_proxima(&policy, &string_clearance),
+            "characterizing the defect on the canonical seam"
+        );
+        assert!(!evaluate_filter_proxima_type_strict(
+            &policy,
+            &string_clearance
+        ));
+
+        // A genuinely-cleared record still passes.
+        assert!(evaluate_filter_proxima_type_strict(
+            &policy,
+            &tree(vec![("clearance", ProximaValue::Int64(5))])
+        ));
+        assert!(!evaluate_filter_proxima_type_strict(
+            &policy,
+            &tree(vec![("clearance", ProximaValue::Int64(1))])
+        ));
+    }
+
+    #[test]
+    fn the_canonical_seam_matches_the_default_walker_within_a_class() {
+        let policy = FilterExpression::Comparison {
+            field: "dept".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!("eng"),
+        };
+        for props in [
+            tree(vec![("dept", ProximaValue::String("eng".to_string()))]),
+            tree(vec![("dept", ProximaValue::String("hr".to_string()))]),
+            tree(vec![]),
+        ] {
+            assert_eq!(
+                evaluate_filter_proxima_type_strict(&policy, &props),
+                evaluate_filter_proxima(&policy, &props),
+                "type strictness changed a same-class comparison"
+            );
         }
     }
 }
