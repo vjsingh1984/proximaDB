@@ -55,6 +55,7 @@ members = [
     "crates/foundation/proximadb-tenant",
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
+    "crates/control/proximadb-abac",
     "crates/control/proximadb-catalog",
     "crates/control/proximadb-metrics",
     "crates/horizontal/proximadb-codec",
@@ -213,6 +214,7 @@ proximadb-relational-planner = { path = "crates/query/proximadb-relational-plann
 proximadb-relational-executor = { path = "crates/query/proximadb-relational-executor" }
 proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
+proximadb-abac = { path = "crates/control/proximadb-abac" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 arc-swap = "1.7"

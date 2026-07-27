@@ -1,7 +1,7 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-FOUNDATION-3: ABAC enforcement subsystem (FA)
-:status: Draft — blocked on preconditions (not startable)
+:status: Draft — P1/P3/P4 substrate landed; P2 in flight (#1243)
 :date: 2026-07-26
 :authors: co-design session 2026-07-26
 :realizes: ADR-072 D6 (structural tenancy), D15 (RLS-as-global-filter)
@@ -10,17 +10,21 @@
 
 [cols="1,3"]
 |===
-| Status | Draft — **blocked**; do not start until §2 preconditions are met
+| Status | Draft — **P2 in flight** (#1243); P1/P3/P4 substrate has landed (§2), the S-items are specified (§4), and the slices are startable in order once P2 clears
 | Scope | The runtime ABAC **enforcement** subsystem split out of FC (TD-FOUNDATION-2 §0.1) after three red-team rounds proved it is a multi-package subsystem, not a wiring job.
-| Design of record | **TD-FOUNDATION-2** — the enforcement architecture (§3.4), the S1–S10 acceptance criteria (§8), and the fail-closed bridge (§1.4) live there, attacked across three rounds. This doc is the **build track**: preconditions, package split, and gate.
-| Consumes | FC's policy model (`PolicyBinding`, resolver, `SubjectAttributes`, `filterable_columns`), the F0 codec, the F1b/F1d store.
-| Depends on | ADR-074 (namespace/tenant seam), a live JWT-verification fix (external, §2)
+| Design of record | **TD-FOUNDATION-2** — the enforcement architecture (§3.4), the S1–S10 acceptance criteria (§8), and the fail-closed bridge (§1.4) live there, attacked across three rounds. This doc is the **build track**: preconditions, the surface-by-surface contract, the S-item test targets, and the slice order.
+| Consumes | FC's metamodel + policy model (`PolicyBinding`, `resolve_effective_policy`, `SubjectAttributes`, `filterable_columns`), the FA substrate crate `proximadb-abac`, the F0 codec, the F1b/F1d store.
+| Depends on | ADR-074 (namespace/tenant seam), ADR-075 (stable ids), a live JWT-verification fix (external, §2 P2)
 |===
+
+NOTE: Code references below are `file::symbol` with a line number **as of
+2026-07-26**. `develop` moves; trust the symbol, re-locate the line.
 
 == 0. Why this is its own track
 
-TD-FOUNDATION-2 set out to "wire an always-ANDed ABAC filter into the scan." Three
-adversarial red-team rounds (TF-2 §6.1) showed the real surface is far larger:
+TD-FOUNDATION-2 set out to "wire an always-ANDed ABAC filter into the scan."
+Three adversarial red-team rounds (TF-2 §6.1) showed the real surface is far
+larger:
 
 * enforcement must cover **four surfaces**, not one — reads (3 primitives),
   the **write path** (uniqueness-conflict disclosure, S9), the **cache tier**
@@ -50,42 +54,296 @@ The enforcement design is TF-2 §3.4. FA implements it as work items:
 | FA-6 | Two-layer wiring (TF-2 §3.0/§3.1): operation authz (Layer A) unchanged; ABAC row/field visibility (Layer B) at the primitives; the **attribute-trust boundary** (S6).
 |===
 
-== 2. Preconditions — FA is NOT startable until these exist
+== 2. Preconditions
 
-[cols="1,3,1"]
+=== 2.1 Status
+
+[cols="1,3,1,1"]
 |===
-| P | Precondition | Owner
+| P | Precondition | Owner | State
 
 | **P1**
-| **Attribute-authority store** — a first-class `(subject_id, tenant_id) → {roles, attrs}` binding store. The current `user_role_assignments` is `user_id`-keyed, single-assignment, permission-only (round 3); ABAC attributes (`dept`/`clearance`/`region`) have **no** server-side authority today. `resolve_effective_attributes` is a new subsystem, not a one-liner over `validate_admin_access`.
+| **Attribute-authority store** — a first-class `(subject_id, tenant_stable_id) → {roles, attrs}` binding store. The pre-existing `user_role_assignments` is `user_id`-keyed, single-assignment, permission-only; ABAC attributes (`dept`/`clearance`/`region`) had **no** server-side authority.
 | FA design
+| ✅ **Landed** — `proximadb-abac::authority`
 
 | **P2**
-| **Live JWT signature verification** — `oidc.rs:106` decodes tokens **without** signature verification (round 3). Until real verification ships, every claim (incl. `iss`) is forgeable and S6 is void. **This is an independent security defect** affecting the whole auth boundary, not just ABAC — must be verified against the live path and fixed on its own security TD **before** FA can trust any claim.
+| **Live JWT signature verification** — two unwired OIDC stubs decoded/fabricated identity without signature verification, so every claim (incl. `iss`) was forgeable and S6 was void. **An independent security defect** affecting the whole auth boundary, not just ABAC.
 | **separate security TD** (urgent)
+| 🟡 **In flight** — `#[deprecated]`-guarded by #1232, **deleted** by #1243 via the §2.3 alternative; flips to ✅ when #1243 merges
 
 | **P3**
 | **Subject-keyed cache substrate** — the result/vector/LLM caches must accept a subject+policy-epoch key component and an epoch-invalidation hook (S10).
 | FA design
+| ✅ **Landed** — `proximadb-abac::cache_key`
 
 | **P4**
-| **Non-`Option` context plumbing** — the three read primitives (and the graph read trait) must carry a required context (S4/S7). This is a signature change across `record_store.rs`, `unified_search_native`, and the graph traits.
+| **Non-`Option` context plumbing** — a required read context at the three read primitives (and the graph read trait) (S4/S7).
 | FA design
+| 🟡 **Type landed** (`proximadb-abac::context`); the *signature change* across the primitives is FA-1 itself
 |===
 
-== 3. Deferred (not in FA's first slice)
+=== 2.2 What the substrate crate provides
+
+`crates/control/proximadb-abac` is inert — nothing in the workspace depends on
+it — and is where FA attaches. It is deliberately **not** `#[cfg]`-gated out of
+the default build: a security substrate that never compiles is one that is never
+tested. The `abac-policy` feature gates the *wiring*, which is FA's work.
+
+[cols="1,3"]
+|===
+| Type | Contract
+
+| `AttributeAuthority` (P1)
+| `resolve_effective_attributes(&SubjectId, TenantStableId) -> Result<ResolvedSubject, AuthorityError>`. **The only mint for `AttrSource::ServerResolved`.** No success case returns an empty bag: an unbound subject and an unreachable store both `Err`, because an empty bag satisfies any `Permit`-with-no-predicate policy.
+
+| `AttributeDigest` (P1→P3)
+| SHA-256/128 over the *tenant + ordered load-bearing attribute set*, length-framed and type-tagged. Minted by the authority that resolved the set, so it cannot drift from what it summarizes. A collision here is a cross-subject disclosure, hence cryptographic rather than fast.
+
+| `PolicyEpoch` / `PolicyEpochSource` (P3)
+| Monotonic per `(tenant, namespace)`; `bump()` after a policy write is the invalidation hook. Saturating, never wrapping — a wrapped epoch resurrects a key that cached results already live under.
+
+| `SubjectCacheKey` (P3)
+| `(tenant, namespace, policy_epoch, attribute_digest)`. A key *component*, not a whole key: each cache keeps its own key type and folds this in, so "does this cache's key contain a `SubjectCacheKey`?" stays mechanically checkable. Keys on the **world**, not the principal — subjects with identical load-bearing attributes legitimately share entries, which is where hit rate comes back.
+
+| `AuthorizedReadContext` (P4)
+| No `Default`, no `unfiltered()`, no field-wise public constructor. The only constructor is `resolve(...) -> ReadDecision`, whose `Deny` arm carries **no context**, so a denied read has nothing to hand a primitive. Exposes `row_predicate_refs()`, `column_decision()`, `project()` (forbid ⇒ query rejection), `subject_cache_key()`.
+
+| `SystemReadContext` + `ClientServable` (P4/S5)
+| `SystemReadContext::audited(reason, origin)` names *why* an internal read is unfiltered. It does **not** implement `ClientServable`; a client-facing sink written against `impl ClientServable` therefore rejects it **at compile time**. Pinned by a `compile_fail` doctest.
+|===
+
+=== 2.3 P2 — what "satisfied" means
+
+P2 is not FA's to build, but FA's gate needs a testable definition. P2 is
+satisfied when, for the live token path:
+
+. Signatures are verified against the issuer's JWKS, keyed by `kid`, with the key
+  set cached and refreshed on unknown-`kid` (not a per-request fetch).
+. `alg` is validated against an **allow-list** of asymmetric algorithms; `none`
+  and HMAC-with-public-key confusion are rejected.
+. `iss` / `aud` / `exp` / `nbf` are validated, and `iss` is matched against the
+  tenant's *registered* issuer — not merely parsed out of the token.
+. A token failing any check yields no principal at all — not an anonymous or
+  partially-populated one.
+
+Alternatively P2 is satisfied by **deleting** the unwired stubs, provided no live
+path can reach a signature-blind decode. Either way the gate needs the negative
+test: a token with a valid body and a garbage signature authenticates **nobody**.
+
+**This is the route taken (#1243).** Both stubs were dead — `OidcProvider`
+decoded the payload with `split('.')` + base64 and no signature check (and its
+own tests forged tokens and asserted they authenticated), and
+`OIDCIntegration::validate_id_token` fabricated a user from a random UUID without
+decoding anything. An audit found `security/auth/oidc.rs:126` was the **only**
+signature-blind JWT decode in `src/`, so with both removed the sole JWT path is
+`network::auth::jwt`'s `JwtService::verify_token` (`jsonwebtoken::decode` with a
+real `DecodingKey` + `Validation`, plus an explicit `exp`/`nbf` recheck).
+
+Note what that does and does not buy. It closes the *forgeable* path: there is no
+longer any code that trusts an unverified token. It does **not** deliver external
+IdP federation — there is now no OIDC/JWKS path at all. That is the safe state
+(no consumer, no attack surface), and building a real one is the separate
+security TD's job, with its own design for a per-tenant issuer registry, key
+cache, and rotation.
+
+Even with P2 open, S6 holds structurally for the *attribute* channel: FA reads
+values via `SubjectAttributes::load_bearing`, which returns `None` for anything
+claim-sourced. P2 governs whether the **identity** (`subject_id`) itself is
+trustworthy — which is why FA cannot ship without it, but can be *built* against
+it.
+
+== 3. The `AuthorizedReadContext` across the four surfaces
+
+One context type, four attachment surfaces. The rule that makes this tractable:
+**enforcement lives below the ingress dialects.** pgwire, REST, gRPC, Arrow
+Flight and MCP inherit it by construction because every read funnels into one of
+the primitives below — no dialect gets its own copy of the policy logic.
+
+=== Surface 1 — Storage reads (3 primitives)
+
+[cols="1,2,2"]
+|===
+| Primitive | Today | FA contract
+
+| `TableRecordStore::get_by_key` / `scan_records` +
+  (`src/services/record_store.rs:511`)
+| `tenant_context: Option<&TenantContext>`, with a permissive default body on the trait — *unfiltered is what you get by writing less code*
+| Add a required `ctx: &AuthorizedReadContext` (or a `ReadContext` enum where system reads are legitimate). **Remove the default body** — an implementor that does not filter must fail to compile. A PK match is **not** an authorization: `get_by_key` resolves the row, *then* applies the predicate, and a denied hit is reported identically to a miss.
+
+| `unified_search_native` +
+  (`src/services/operations/vectors/legacy.rs:2663`)
+| Allow-list is optional; `None` means "no restriction"
+| Allow-list becomes **non-optional**; `None` is unrepresentable, and an empty allow-list means **deny-empty**, not unfiltered. Routed through `AnnFilteringPolicy` (pre-filter / index-integrated — **never naïve post-filter**, which returns fewer than `k` admissible rows and leaks cardinality). The `_with_tenant_context` sibling (`:2633`) collapses into it rather than persisting as a second door.
+
+| `GraphQueryExecutorBackend::query_nodes` / `query_edges` +
+  (`src/graph/query/executor.rs:32`)
+| No context at all
+| Required context **per hop**, so traversal re-enters the filter at every step (S7). Type-enforced, not probed: a runtime probe cannot prove "no hop derefs a node directly", but a required parameter makes the unfiltered deref **not compile**.
+|===
+
+The DataFusion `combined_filter` (`src/datafusion/…/table_provider.rs`) remains a
+*consumer* of the compiled predicate for the OLAP arm — necessary, far from
+sufficient, and explicitly not the seam.
+
+=== Surface 2 — The write path (S9)
+
+A write discloses reads. `put_if_absent → Conflict{holder}` and
+`check_unique_conflict → UniqueConflict{tuple}` tell the inserting subject that a
+row exists and what is in it. The CKS gains **no** context parameter — it is a
+key-space primitive and should stay one. The gate is in the DML insert path's
+**error construction**: when the conflict holder is not ABAC-readable by the
+inserting subject, the error carries neither key, tuple, nor holder oid.
+
+Mutation `WHERE`-scans take the read context too (`DELETE`/`UPDATE … WHERE`
+locates rows by scanning) — otherwise a subject deletes rows it cannot `SELECT`.
+
+=== Surface 3 — The cache tier (S10)
+
+Three client-servable caches sit **above** the read seam and are subject-blind
+today: the query result cache, the vector-search optimization cache, and the LLM
+semantic cache. Each either folds a `SubjectCacheKey` into its key type, or is
+**bypassed** while `abac-policy` is on. There is no third option, and "the query
+text is the same, so the result is the same" is precisely the bug.
+
+Policy writes call `PolicyEpochSource::bump(tenant, namespace)` after commit;
+that one hook invalidates every dependent entry without walking any cache.
+
+=== Surface 4 — Egress (S5)
+
+CDC (`WalSubscriber`, `src/cdc/outbound/`), sinks (`CdcSink::send`), and
+node-to-node replication (`src/cluster/replication.rs`) reconstruct full row state
+**directly from the WAL, below `record_store`**. These are not "reads", but they
+exfiltrate rows all the same. Under `abac-policy` they are denied by default, or
+each `ChangeEvent` passes a per-subscription `AuthorizedReadContext` — and the
+mask covers the **event envelope** (key, existence, timing), not just
+`before`/`after` bodies, since existence-and-timing alone reconstructs a row set.
+
+`ClientServable` is the type-level backstop: a `SystemReadContext` cannot be
+handed to a client-fed sink.
+
+Direct-file export (`src/network/arrow_ipc/file_export.rs`) cannot be row-filtered
+as a byte stream — under `abac-policy` it is denied or force-rerouted through the
+filtered scan primitive.
+
+== 4. Acceptance criteria S1–S10, with pinned test targets
+
+TF-2 §8 defines the criteria; this table pins **where each test lives** so the
+gate is mechanical. Every S-item is a merge-blocking test, not a review note.
+
+[cols="1,3,3"]
+|===
+| # | Criterion (abbreviated — TF-2 §8 is normative) | Test target
+
+| **S1**
+| `build_filter` returns `Result<FilterExpression>` — **no `Ok(None)`**. "No restriction" is producible only by the top-level "no binding exists" path; every deny-derived / empty-`And`/`Or`/`Not(None)` node lowers to an explicit **unsatisfiable** filter.
+| `src/security/rls/service.rs` unit + property: `not_always_allow_yields_zero_rows`, `empty_and_is_unsatisfiable_not_unfiltered`. Regression-pinned from TF-2 §6.3.
+
+| **S2**
+| `Not(P)` is null-safe — lowered as `And(Not(P), IS_NOT_NULL(f)…)` over each field in `P`, or evaluated on a 3-valued substrate. Until then `Not` over a nullable field fails closed.
+| `sql_value_filter` unit: `not_eq_over_null_column_excludes_the_row`. Fixture: a row with `classification = NULL` under `Not(Eq(classification,"TS"))`.
+
+| **S3**
+| Literals are type-gated against the column's declared type at compile; a mismatch **denies** rather than falling through to precedence ordering.
+| `json_comparison` / bridge unit: `numeric_predicate_against_string_column_denies`. Asserts deny, **not** admit-all. **Slice FA-a2** — needs a schema at the bridge seam or a type-strict comparison mode; `compare_json_values` is live under metadata search, so it cannot simply be made strict.
+
+| **S1–S3 (joint)**
+| **Deny-biased subset property.** For a random `SecurityPredicate`, the bridged predicate admits a **subset** of the source's row set; a non-convertible node admits **zero** rows (not a dropped conjunct).
+| Property test over generated predicates × generated rows. This is the highest-value test in FA — it is what would have caught the evaporating clearance filter.
+
+| **S4**
+| The read context is a required, non-`Option` parameter of every read primitive; no `_unfiltered` sibling; internal unfiltered access uses `SystemReadContext`.
+| CI signature check (a script, not a runtime probe) over `TableRecordStore`, `unified_search_native`, and the graph read trait, plus `compile_fail` doctests. `proximadb-abac`'s `ClientServable` doctest is the pattern.
+
+| **S5**
+| **Default-deny reconstruction audit.** *Any* `RecordState`/`ProximaRecord` construction in `src/` not statically inside an `AuthorizedReadContext`/`SystemReadContext` scope fails CI; each site is classified internal-storage vs client-egress. No `SystemReadContext` may reach a client-servable sink.
+| New CI guard `scripts/check_record_reconstruction.py`, with a **downward-only ratchet** on the allow-list (per the repo's ratchet mandate). The round-3 finding was that a two-directory grep passes green while records egress via the flush materializer and ~19 WAL sites.
+
+| **S6**
+| **Attribute-trust boundary.** Any attribute or role a predicate reads is re-resolved server-side against the **policy's tenant** authority; claims are never load-bearing.
+| Already structural in the substrate (`SubjectAttributes::load_bearing` returns `None` for `AttrSource::Claim`; only `AttributeAuthority` mints `ServerResolved`) — pinned by `claim_sourced_attribute_is_not_load_bearing` and `an_unresolvable_subject_denies_before_policy_is_consulted`. FA adds the end-to-end case: an SSO claim `role=system_admin` / `clearance=TS` changes **no** admit/deny.
+
+| **S7**
+| Graph reads are type-enforced, not probed: `query_nodes`/`query_edges` (and the operator-level derefs) take a required context.
+| CI signature check + a traversal test asserting a denied node is unreachable **at hop 2**, not merely absent from hop 1.
+
+| **S8**
+| **Mask/predicate isolation.** A `redact`/`forbid` column cannot be referenced by a row predicate, else its value leaks through the admit/deny channel despite the output mask. `forbid` = query rejection.
+| Policy-compile rejection test taking `AuthorizedReadContext::masked_columns()` as input. The substrate half is pinned by `a_forbidden_column_rejects_the_query_rather_than_nulling_itself`.
+
+| **S9**
+| **Write-path uniqueness disclosure.** A PK/UNIQUE conflict must not disclose the existence or values of a row the inserting subject cannot ABAC-read; the error is value-free.
+| DML insert-path test: a denied subject `INSERT`s a colliding PK/UNIQUE ⇒ the error body contains neither the key nor the conflicting values. Assert on the **rendered** error string, not just the variant.
+
+| **S10**
+| **Cache/materialization subject-binding.** No cached client-servable result reaches a subject whose effective attribute + policy fingerprint differs from the one it was produced under; a policy change invalidates dependents.
+| Per-cache test: subject A warms `SELECT *` / a vector search / an LLM question; subject B (same tenant, `dept ≠ A`) issues the identical request ⇒ **cache miss**. The substrate half is pinned by `two_subjects_in_different_departments_do_not_share_a_cache_entry` and `a_policy_change_invalidates_by_changing_the_key`.
+|===
+
+S1–S3, S6, S9, S10 are **security-critical** (fail-open inversion / claims
+escalation / cross-subject disclosure); S4–S5 are the completeness spine; S7–S8
+close side channels.
+
+== 5. Slice order
+
+Each slice is independently mergeable, default-OFF, and carries its S-item tests.
+The order is chosen so the fail-open substrate is closed **before** anything is
+wired to depend on it — wiring first would ship a plane that reports enforcement
+while silently widening.
+
+[cols="1,3,2"]
+|===
+| Slice | Content | Gates
+
+| **FA-a**
+| The bridge, part 1 (FA-2): the total deny-biased lattice replacing `Ok(None)`, null-safe `Not` lowering, and the deny-biased subset property test. Touches only the dead RLS/filter code, so no live path changes behavior.
+| S1, S2
+
+| **FA-a2**
+| The bridge, part 2: **type-gated literals**. Split out because it needs input FA-a does not have — the column's declared type. `build_filter` sees only a `SecurityPredicate` and a subject; there is no schema at that seam, and the alternative (making `compare_json_values` type-strict) would change **live** user-query semantics, since `sql_value_filter` serves metadata search, document filtering and pushdown. So FA-a2 is either a schema seam into the bridge or a type-strict comparison *mode* the security path opts into — a design choice, not a patch.
+| S3
+
+| **FA-b**
+| Signature change at the three read primitives (FA-1) + the CI signature check. Behavior-neutral while every caller passes a `SystemReadContext`; the point is that the *shape* becomes non-optional.
+| S4, S7
+
+| **FA-c**
+| Policy resolution wired at the primitives behind `abac-policy` (FA-6): resolve → bridge → AND. Default-OFF.
+| End-to-end: a `dept=eng` subject sees only `dept=eng` rows through **both** `SELECT *` and a vector search — the D15 unification claim
+
+| **FA-d**
+| Cache subject-binding + bypass (FA-4), and the epoch-bump hook on policy writes.
+| S10
+
+| **FA-e**
+| Write-path disclosure gating (FA-3) and mask/predicate isolation at policy compile.
+| S8, S9
+
+| **FA-f**
+| Egress coverage (FA-5) + the reconstruction audit guard.
+| S5
+|===
+
+== 6. Deferred (not in FA's first slice)
 
 * **Cross-tenant `Reference`/`Brokered`** (TF-2 §2 D12-d) — `Brokered` needs a
   tenant-aware graph executor (the current one is a stub returning `Ok(vec![])` /
   `Count(0)`); `Reference` needs P1 **plus** a cross-tenant attribute-federation
   model (how tenant O holds a binding for visitor A). Both are their own package,
   blocked on a real graph executor and a federation design.
+* **Attribute-authority durability.** `proximadb-abac` ships an in-memory
+  reference implementation. The durable one stores bindings as catalog objects in
+  the reserved system namespace (TF-2 §3.3), which is why the in-memory type keeps
+  the same `(subject, tenant)`-keyed shape — the swap is an implementation of the
+  same trait, not a redesign.
+* **Predicate-compilation caching.** Per-read policy resolution + bridge is
+  measurable overhead on the OLTP path; it is deliberately *not* optimized before
+  it is correct. Evidence goes to `BENCHMARK_EVIDENCE.toml` when FA-c lands.
 
-== 4. Gate
+== 7. Gate
 
-FA promotes from `Draft` and begins code only when **P1–P4 are satisfied** (or
-each explicitly waived with a recorded risk) and the TF-2 §8 acceptance criteria
-**S1–S10** have green tests. Until then this track is a **hold** — the design of
-record is complete and attacked (TF-2), but the substrate and preconditions are
-not there. FA is **off the OLTP critical path**; there is no schedule pressure to
-start it before its preconditions land.
+FA promotes from `Draft` and begins code (slice FA-a onward) when **P2** is
+satisfied per §2.3 (#1243 is that route) or explicitly waived with a recorded
+risk; P1/P3/P4 are met.
+Each slice merges only with its S-item tests green (§4). FA is **off the OLTP
+critical path**; there is no schedule pressure to cut a corner on any S-item.
