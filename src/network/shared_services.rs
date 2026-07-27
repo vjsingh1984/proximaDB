@@ -369,6 +369,14 @@ pub struct SharedServices {
     pub canonical_record_store:
         Option<Arc<crate::services::record_store::DirectWalTableRecordStore>>,
 
+    /// F5 / TD-OLTP-WIRING-1: the process-shared fenced `ConditionalKeyStore`
+    /// (ADR-072). `Some` only under the `oltp-integrity` feature with a durable
+    /// `data_dir`. Held here as the single source of truth so pgwire
+    /// (`multi_server.rs`) threads the SAME instance — one uniqueness index across
+    /// every write surface (two stores would corrupt one WAL or fence
+    /// inconsistently across gRPC vs pgwire).
+    pub conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
+
     /// Process-wide recall-probe gate (TD-064 / LLD §5). The gate enables
     /// the quantized candidate route only after the recall-probe set passes
     /// the tenant's target for three consecutive builds; a single failure
@@ -475,6 +483,46 @@ impl SharedServices {
 }
 
 impl SharedServices {
+    /// Open the ONE process-shared fenced `ConditionalKeyStore`
+    /// (TD-OLTP-WIRING-1 / ADR-072). Returns `Some` only when the
+    /// `oltp-integrity` feature is compiled AND a durable `data_dir` is
+    /// configured — an in-memory store would lose uniqueness across restart. The
+    /// WAL is replayed by `open`, so PK/FK fencing state survives a restart.
+    /// `None` on default builds and embedded/ephemeral paths (unchanged behavior).
+    fn open_shared_conditional_key_store(
+        opt_config: Option<&crate::core::config::Config>,
+    ) -> Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>> {
+        #[cfg(not(feature = "oltp-integrity"))]
+        {
+            let _ = opt_config;
+            None
+        }
+        #[cfg(feature = "oltp-integrity")]
+        {
+            let data_dir = opt_config?.server.data_dir.clone();
+            let path = std::path::Path::new(&data_dir).join("oltp-cks.wal");
+            match proximadb_cks_local::LocalWalKeyStore::open(
+                &path,
+                proximadb_cks_local::SyncPolicy::PerOp,
+            ) {
+                Ok(store) => {
+                    tracing::info!(
+                        "oltp-integrity: fenced ConditionalKeyStore active at {}",
+                        path.display()
+                    );
+                    Some(Arc::new(store) as Arc<dyn proximadb_storage_ports::ConditionalKeyStore>)
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "oltp-integrity: failed to open ConditionalKeyStore at {}: {e}; fencing DISABLED",
+                        path.display()
+                    );
+                    None
+                }
+            }
+        }
+    }
+
     /// Create shared services with full business logic configuration
     /// SharedServices owns all business logic and configuration decisions
     /// Returns (SharedServices, CollectionService) - the collection service is needed by StorageEngine
@@ -2249,6 +2297,16 @@ impl SharedServices {
                 ) as Arc<dyn crate::storage::write_fence::StorageWriteFence>
             });
 
+        // F5 / TD-OLTP-WIRING-1: open the ONE process-shared fenced
+        // ConditionalKeyStore (durable at <data_dir>/oltp-cks.wal; WAL-replayed on
+        // restart), threaded into this gRPC/REST `base_dml` and into pgwire via
+        // `multi_server`. Feature-gated (`oltp-integrity`) AND requires a
+        // `data_dir` — an in-memory store would silently lose uniqueness across a
+        // restart, worse than the honest legacy probe. `None` otherwise ⇒ default
+        // builds and embedded/ephemeral paths are byte-for-byte unchanged.
+        let conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>> =
+            Self::open_shared_conditional_key_store(opt_config);
+
         let base_dml = match canonical_record_store.clone() {
             Some(store) => DmlService::with_direct_record_storage(
                 catalog_manager.clone(),
@@ -2256,6 +2314,10 @@ impl SharedServices {
                 store,
             ),
             None => DmlService::new(catalog_manager.clone(), vector_operations_service.clone()),
+        };
+        let base_dml = match &conditional_key_store {
+            Some(cks) => base_dml.with_conditional_key_store(cks.clone()),
+            None => base_dml,
         };
         let dml_service_for_grpc = Arc::new(match dml_lock_service {
             Some(lock_service) => base_dml.with_dml_lock_service(lock_service),
@@ -2620,6 +2682,7 @@ impl SharedServices {
                 // share the same next_sequence counter.
                 canonical_wal_appender,
                 canonical_record_store,
+                conditional_key_store,
                 #[cfg(feature = "experimental-ledger")]
                 ledger_store,
                 // TD-064 / LLD §5: per-collection recall-probe gate. Empty

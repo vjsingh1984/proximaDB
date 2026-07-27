@@ -325,7 +325,8 @@ impl MultiServer {
                 "🐘 pgwire reusing shared canonical record store (unified cross-surface relational state)"
             );
             return Ok(Some(
-                crate::network::postgres::DirectPgwireWriteServices::new(store),
+                crate::network::postgres::DirectPgwireWriteServices::new(store)
+                    .with_conditional_key_store(self.shared_services.conditional_key_store.clone()),
             ));
         }
 
@@ -396,7 +397,8 @@ impl MultiServer {
         );
 
         Ok(Some(
-            crate::network::postgres::DirectPgwireWriteServices::new(canonical_store),
+            crate::network::postgres::DirectPgwireWriteServices::new(canonical_store)
+                .with_conditional_key_store(self.shared_services.conditional_key_store.clone()),
         ))
     }
 
