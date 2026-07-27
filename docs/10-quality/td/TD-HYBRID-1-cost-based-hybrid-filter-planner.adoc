@@ -1,0 +1,124 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-HYBRID-1: Cost-based hybrid ANN+filter planner + always-ANDed tenancy filter — F7
+:status: Draft — design gate (pre-implementation)
+:date: 2026-07-27
+:authors: co-design session 2026-07-27
+:realizes: ADR-072 D15 (hybrid ANN+filter is a cost-based planner decision, not a fixed pipeline; tenancy/RLS rides the same always-ANDed global filter)
+:depends-on: F4 (document canonical + vector reads over the shared scan)
+:relates-to: ADR-011 (filtered-ANN pre/inline/post modes), TD-073 (per-collection policy resolution), TD-FOUNDATION-3 / FA (ABAC enforcement — supplies the *policy*; this TD supplies the *mechanism*)
+
+[cols="1,3"]
+|===
+| Status | Draft — design gate. **Verification-first finding: D15 is ~60% already built** (the selectivity→pre/post/exact selector and a full cost model exist; ADR-011, Beta). This TD is **"unify + wire + make tenancy a woven predicate,"** not greenfield. The **load-bearing net-new** piece is D15(c): tenancy/RLS as an always-ANDed global filter on the hot ANN path — **absent today** (tenancy = collection-scoping). Not on the OLTP critical path. **Not yet red-teamed** — §7 lists the adversarial targets a review must clear before code.
+| Problem | Hybrid vector+metadata queries must pick **pre-filter / post-filter / exact-brute-force** by *cost*, compile the predicate to **one** global doc-id allow-list woven **into** the ANN traversal (not shrink-then-search *or* search-then-drop), and — critically — carry **tenancy/RLS as the same always-ANDed filter, never post-filtered**. Today the selector and cost model exist, but (b) the predicate has **two** representations (an Inline closure vs a separate PreFilter exact branch) and (c) **tenancy is not a predicate on the hot ANN path at all** — it is tenant-scoped collection resolution + an access check.
+| Feature | `hybrid-global-filter` (additive, feature-gated; default path = today's ADR-011 routing, byte-for-byte unchanged when the flag is off).
+|===
+
+== 1. What exists today (verification-first)
+
+D15 has three clauses. Two are substantially **built**; one is **absent on the hot path**. Anchors from the recon (main checkout `src/`; `crates/query/*` are thin contract stubs — the engine is in the monolith):
+
+[cols="2,1,3"]
+|===
+| D15 clause | Status | Where
+
+| **(a)** per-query selectivity estimator switching pre / post / exact
+| **BUILT**
+| `AnnFilteringPolicy` (`crates/control/proximadb-catalog/src/lib.rs:2247`): `routing_mode(selectivity)` at `:2272` implements exactly `sel < pre_filter_threshold(0.05) → PreFilter / > post_filter_threshold(0.50) → PostFilter / else Inline`, plus `effective_top_k_for_post_filter` (`:2286`). Dispatch at `src/index/axis/management/manager.rs:1417–1479`. Selectivity estimation: `src/core/search/filter_pushdown_engine.rs:138`.
+
+| pre / inline / post *mechanics* + exact branch
+| **BUILT** (ADR-011, Beta)
+| `manager.rs:1448` `query_hnsw_with_predicate(..., Inline)` (ACORN-style predicate threaded into the HNSW walk); `:1459` PostFilter with oversample; `:1474` `execute_exact_filtered_query` (PreFilter = scalar filter then exact scan). `AnnFilteringMode` at `catalog/src/lib.rs:2195`.
+
+| broader cost model / optimizer
+| **BUILT** (parallel, rich)
+| `src/query/query_optimizer.rs`: `UnifiedQueryOptimizer` (`:32`), `UnifiedCostModel.calculate_cost` (`:878`), `estimate_selectivity` (`:936`), `UnifiedExecutionPlan` (`:294`). Route-level: `route_cost_model.rs`, `query_router.rs`, `read_route.rs`, `rl_planner/`, `explain.rs`.
+
+| **(b)** predicate compiled to **one** global doc-id allow-list woven into traversal
+| **PARTIAL**
+| Inline threads a predicate **closure** into HNSW (`manager.rs:1455`); PreFilter is a **separate** exact branch (`:1474`). No single compiled allow-list object shared by both. Two representations can diverge.
+
+| **(c)** tenancy/RLS as the **same always-ANDed** global filter on the ANN path
+| **ABSENT on hot path**
+| `legacy.rs:748` enforces tenancy via `validate_tenant_collection_access` (collection-scoping) and hands AXIS **only** `request.filters` (`:754`) — **no `tenant_id` predicate injected**. A predicate RLS engine exists (`src/security/rls/service.rs:194` `apply_security_filter` → `FilterExpression`; `SecurityPredicate::tenant_isolation`, `policy.rs:239`) but is **not wired** into the canonical vector search. The **only** always-ANDed tenancy predicate today is the agent-memory AQL source (`src/query/aql/sources/memory.rs:149`, fail-closed at `:250`) — modality-specific, not the generic path.
+
+| per-collection policy resolution (vs the default policy) | **DEFERRED** | TD-073; today the optimizer routes through the **default** `AnnFilteringPolicy`.
+|===
+
+**Two facts that shape this TD.** (1) The selector/cost model already satisfy D15(a) — re-designing them is wasted work and risks regressing ADR-011's Beta path. (2) Tenancy today is **physical collection-scoping** (valid isolation per ADR-032), *not* a woven predicate — so D15(c) is genuinely net-new, is the load-bearing decision, and is where the correctness/security risk concentrates.
+
+== 2. Scope — mechanism, not policy
+
+D15's line `:100` ties RLS to "**runtime ABAC filters (D15), always-ANDed into the scan**." That names a **seam**:
+
+* **This TD (F7) owns the _mechanism_:** a single compiled global filter that is (i) woven into ANN traversal, (ii) drives the exact/pre branch from the *same* object, and (iii) **always** carries a mandatory, non-post-filterable tenancy predicate — fail-closed if absent.
+* **FA / TD-FOUNDATION-3 owns the _policy_:** what ABAC predicate to AND in for a given subject. FA is blocked on P1–P4; F7 must **not** block on it. F7 ships with the **tenancy** predicate populated (always derivable from the resolved tenant) and an **empty-but-present** ABAC slot that FA fills later — the substrate is the same object either way.
+
+This keeps F7 shippable independent of the blocked ABAC track while making FA a *policy-population* change, not a re-plumb.
+
+== 3. Design
+
+=== D1 — Do not rebuild the selector; wire it fully
+Keep `AnnFilteringPolicy::routing_mode` + `UnifiedCostModel` as the cost brain. Two wiring fixes:
+
+* **Always populate selectivity on the canonical path.** Today policy-driven routing fires only when the caller supplies **both** a policy **and** a selectivity estimate (`manager.rs:1417`); otherwise it falls back to the legacy `query.ann_filtering_mode` hint. F7 makes the canonical vector path (`legacy.rs` → `run_unified_search_v1`) always estimate selectivity via `filter_pushdown_engine` and always resolve a policy (per-collection when TD-073 lands, default until then).
+* **No new cost model.** If `UnifiedQueryOptimizer` and the catalog `AnnFilteringPolicy` disagree on mode, that is a bug to reconcile, not two brains to keep — §7-T5.
+
+=== D2 — One compiled global filter, two consumers
+Introduce a single **`CompiledGlobalFilter`** produced once per query from the structured predicate:
+
+* it exposes **both** a `contains(doc_id) -> bool` membership test (the ACORN-style closure the Inline HNSW walk already wants, `manager.rs:1455`) **and** an enumerable/allow-list view for the PreFilter exact branch;
+* Inline and PreFilter consume the **same** object — eliminating the divergence risk in §1(b). The mode chooses *how* the filter is applied, never *which* filter.
+
+Layering: the **contract** (`CompiledGlobalFilter`, `GlobalFilterProvider`) lands in the query-contract crate (`crates/query/proximadb-query-filter` — today just `FilterOperator`/`FilterValue`); the **impl** lives in `src/core/search/` beside `filter_pushdown_engine`. This respects the stub-vs-monolith split the recon flagged.
+
+=== D3 — Tenancy is a mandatory, always-ANDed, never-post-filtered predicate (the load-bearing decision)
+The `CompiledGlobalFilter` is built as `tenancy_predicate AND user_predicate [AND abac_predicate]` where:
+
+* **`tenancy_predicate` is always present.** It is derived from the resolved `tenant_id` (already in hand at `legacy.rs:748`) as a `FilterExpression::Comparison(tenant_field == tenant_id)`, mirroring the memory-source pattern (`memory.rs:149`). If it cannot be constructed, the query **fails closed** — never runs ANN without it.
+* **Tenancy pins the mode away from PostFilter.** A tenancy predicate applied **post-filter** is a **correctness _and_ security bug**: PostFilter oversamples then drops non-matching rows, so the ANN would traverse, score, and count **cross-tenant** vectors before dropping them — leaking through oversample sizing, `predicate_shortfall`, and timing, and corrupting recall math. Therefore the presence of the mandatory tenancy predicate **forces** the effective mode to Inline or PreFilter for the *tenancy component*, regardless of the cost estimate for the user predicate. (The user predicate may still be post-filtered *within* the tenant slice — that is safe.) See §7-T1.
+* Collection-scoping (`validate_tenant_collection_access`) is **retained** as defense-in-depth, not replaced. F7 adds the predicate layer *on top* so cross-collection / record-level tenancy and RLS have a woven enforcement point.
+
+=== D4 — Fail-closed + explainable
+The EXPLAIN/observability surface already carries `strategy_used`, `selected_filtering_mode`, `predicate_shortfall` (`manager.rs:4290/1428/4296`; `crates/modalities/proximadb-observability-engine/src/{search_plan_trace,route_explain}.rs`). F7 extends the trace to record: which global-filter components were ANDed (tenancy / user / abac), the estimated selectivity, and the mode each component forced. The "tenant/RLS-only shortfall" the code already anticipates (`legacy.rs:788`) becomes a first-class, distinguishable trace state — a tenancy shortfall is a **fail-closed empty result**, never a silent wider scan.
+
+=== D5 — FA seam is an empty slot, not a dependency
+The `abac_predicate` slot is present in `CompiledGlobalFilter` from day one but **empty** until FA populates it. F7 does not resolve subject attributes, does not read the attribute-authority store, and does not depend on P1–P4. When FA lands, it fills the slot via `GlobalFilterProvider` — no planner change.
+
+== 4. Work items
+[cols="1,4,1"]
+|===
+| WI | Description | Gated by
+
+| WI-1 | `CompiledGlobalFilter` + `GlobalFilterProvider` contract in `proximadb-query-filter`; impl in `src/core/search/`. Membership + allow-list views from one source. | —
+| WI-2 | Build the filter as `tenancy AND user [AND abac-slot]`; derive `tenancy_predicate` from resolved `tenant_id`; fail-closed if absent. | WI-1
+| WI-3 | Mode-pinning: tenancy component never routes PostFilter; wire the always-populated selectivity + policy resolution on the canonical path (`legacy.rs`/`manager.rs:1417`). | WI-1
+| WI-4 | Point Inline (`query_hnsw_with_predicate`) **and** PreFilter (`execute_exact_filtered_query`) at the *same* `CompiledGlobalFilter`; delete the divergent closure/branch duplication. | WI-1,2
+| WI-5 | Reconcile `UnifiedQueryOptimizer` vs catalog `AnnFilteringPolicy` to a single mode decision (or document the authority order). | WI-3
+| WI-6 | EXPLAIN/trace: record ANDed components, per-component mode, tenancy-shortfall as a distinct fail-closed state. | WI-2,3
+| WI-7 | (When TD-073 lands) resolve per-collection policy instead of default. | TD-073
+|===
+
+== 5. Test plan
+* **Tenancy-never-leaks (the load-bearing test):** two tenants share a collection; a query whose *only* selective predicate is tenancy must never traverse/score/count the other tenant's vectors under *any* selectivity estimate — assert via oversample counters and `predicate_shortfall`, not just result rows. Force a mis-estimate (planted low user-predicate selectivity) and prove tenancy still pins away from PostFilter.
+* **One-filter parity:** Inline and PreFilter over the same query return identical membership (no closure/allow-list divergence).
+* **Fail-closed:** a query with no resolvable tenant → empty result + a distinct trace state, never a wide scan.
+* **No-regression:** flag off → ADR-011 byte-for-byte behavior; flag on with no user filter → same recall as plain ANN within the tenant slice.
+* **FA seam:** an empty `abac_predicate` is a no-op; a populated one ANDs correctly (fixture provider) without a planner change.
+
+== 6. Out of scope
+* **ABAC policy resolution** (subject attributes, attribute-authority store) — FA / TD-FOUNDATION-3.
+* **Per-collection policy _authoring_** — TD-073 owns resolution; F7 consumes it.
+* **The relational/pgwire planner** — DataFusion + ADR-050/056 govern that plane; F7 is the vector-ANN plane. (RLS-on-external-read for SQL is already guarded, `explain.rs:415`.)
+* **Cross-tenant edges** — deferred (needs the graph executor + federation model).
+
+== 7. Adversarial targets (red-team before code)
+Consistent with the F3v gate, this design is **not buildable until a review clears these**:
+
+* **T1 — PostFilter tenancy leak.** Can *any* path (mis-estimated selectivity, a `force_mode` policy override, an oversample that empties the tenant slice and re-widens) cause the tenancy predicate to be applied post-hoc? D3 claims mode-pinning; prove there is no bypass, including the `force_mode` field (`AnnFilteringPolicy.force_mode`).
+* **T2 — Selectivity-absent fallback.** When selectivity can't be estimated, D1 says "always populate." What actually runs if estimation returns `None` mid-flight — legacy hint (which may ignore the filter)? The fallback must be tenancy-safe (exact/inline), never plain ANN.
+* **T3 — Closure vs allow-list divergence.** D2 unifies them, but the Inline HNSW walk and the exact branch may still compile the predicate differently (e.g., null-handling, type coercion in `FilterExpression`). Prove one source of truth end-to-end.
+* **T4 — Cost-model gaming / non-convergence.** A cardinality mis-estimate → PostFilter with a tiny oversample that never fills top_k → `predicate_shortfall` loop. Is there a bounded fallback to exact?
+* **T5 — Two-brain disagreement.** `UnifiedQueryOptimizer` and catalog `AnnFilteringPolicy` can both pick a mode. WI-5 reconciles them — but if they disagree at runtime, which wins, and can the loser reintroduce a tenancy-unsafe mode?
+* **T6 — Layering leak.** Putting `CompiledGlobalFilter` in the contract crate while the impl and `FilterExpression` live in `src/` — does the contract force a dependency edge that violates the crate-boundary discipline (the reason `crates/query/*` are stubs)?
