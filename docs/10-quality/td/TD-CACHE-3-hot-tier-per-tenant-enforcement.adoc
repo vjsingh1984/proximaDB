@@ -39,8 +39,15 @@ S3 — **Enforcement metering** ✅ SHIPPED (2026-07-25):
 resident bytes; entitlement via the new public `TenantCache::entitlement`).
 Billing true-up charges what is entitled; a sustained pinned < entitled gap
 under pressure = residency cannot be honored (capacity signal to move
-B4ms → E-series, per the 2026-07-24 instance-family analysis). Remaining
-before the hot tier is SOLD: a cloud-latency two-tenant bed run.
+B4ms → E-series, per the 2026-07-24 instance-family analysis). Cloud-latency two-tenant bed RUN 2026-07-26 (Azurite, scripts/bench/
+two_tenant_bed.py): **residency contract PROVEN** — tenant A pinned 13.24 MB
+= 98.7% of entitlement, byte-identical through tenant B's 9,162-admission
+churn; B pinned 0; per-tenant pinned/entitled gauges correct. Latency
+isolation inconclusive at emulator speeds (p95 3→10 ms = co-located CPU
+contention, not eviction — gauges prove residency held); a real-cloud run
+remains for the SLA number. BLOCKER found: TD-CACHE-6 (survivor cache
+records zero hits on the probe-armed default path) must be fixed before the
+hot tier is sold — pinned bytes that never serve hits are dead capital.
 
 == Verification
 - Two-tenant test: tenant A pinned (floor = its working set), tenant B churning
