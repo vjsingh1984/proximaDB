@@ -665,13 +665,20 @@ impl PostgresProtocol {
         mut self,
         catalog_manager: Arc<CatalogManager>,
         canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
+        conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
     ) -> Self {
         self.ddl_service = Some(Arc::new(DdlService::new(catalog_manager.clone())));
-        self.dml_service = Some(Arc::new(DmlService::with_direct_record_storage(
+        // F5 / TD-OLTP-WIRING-1: fence pgwire writes on the SAME shared CKS as
+        // gRPC/REST (threaded from SharedServices via DirectPgwireWriteServices).
+        let mut dml = DmlService::with_direct_record_storage(
             catalog_manager.clone(),
             self.vector_ops.clone(),
             canonical_store,
-        )));
+        );
+        if let Some(cks) = conditional_key_store {
+            dml = dml.with_conditional_key_store(cks);
+        }
+        self.dml_service = Some(Arc::new(dml));
         self.catalog_manager = Some(catalog_manager);
         self
     }
