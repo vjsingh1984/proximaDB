@@ -1,7 +1,7 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-FOUNDATION-3: ABAC enforcement subsystem (FA)
-:status: Draft — P1/P3/P4 substrate landed; blocked on P2 (JWT verification)
+:status: Draft — P1/P3/P4 substrate landed; P2 in flight (#1243)
 :date: 2026-07-26
 :authors: co-design session 2026-07-26
 :realizes: ADR-072 D6 (structural tenancy), D15 (RLS-as-global-filter)
@@ -10,7 +10,7 @@
 
 [cols="1,3"]
 |===
-| Status | Draft — **blocked on P2**; P1/P3/P4 substrate has landed (§2), the S-items are specified (§4), and the slices are startable in order once P2 clears
+| Status | Draft — **P2 in flight** (#1243); P1/P3/P4 substrate has landed (§2), the S-items are specified (§4), and the slices are startable in order once P2 clears
 | Scope | The runtime ABAC **enforcement** subsystem split out of FC (TD-FOUNDATION-2 §0.1) after three red-team rounds proved it is a multi-package subsystem, not a wiring job.
 | Design of record | **TD-FOUNDATION-2** — the enforcement architecture (§3.4), the S1–S10 acceptance criteria (§8), and the fail-closed bridge (§1.4) live there, attacked across three rounds. This doc is the **build track**: preconditions, the surface-by-surface contract, the S-item test targets, and the slice order.
 | Consumes | FC's metamodel + policy model (`PolicyBinding`, `resolve_effective_policy`, `SubjectAttributes`, `filterable_columns`), the FA substrate crate `proximadb-abac`, the F0 codec, the F1b/F1d store.
@@ -68,9 +68,9 @@ The enforcement design is TF-2 §3.4. FA implements it as work items:
 | ✅ **Landed** — `proximadb-abac::authority`
 
 | **P2**
-| **Live JWT signature verification** — the unwired OIDC path decodes tokens **without** signature verification (`src/auth/sso/oidc.rs`). Until real verification ships, every claim (incl. `iss`) is forgeable and S6 is void. **This is an independent security defect** affecting the whole auth boundary, not just ABAC.
+| **Live JWT signature verification** — two unwired OIDC stubs decoded/fabricated identity without signature verification, so every claim (incl. `iss`) was forgeable and S6 was void. **An independent security defect** affecting the whole auth boundary, not just ABAC.
 | **separate security TD** (urgent)
-| ⛔ **Outstanding** — the stubs are `#[deprecated]`-guarded (#1232) but not fixed; see §2.3
+| 🟡 **In flight** — `#[deprecated]`-guarded by #1232, **deleted** by #1243 via the §2.3 alternative; flips to ✅ when #1243 merges
 
 | **P3**
 | **Subject-keyed cache substrate** — the result/vector/LLM caches must accept a subject+policy-epoch key component and an epoch-invalidation hook (S10).
@@ -130,6 +130,22 @@ satisfied when, for the live token path:
 Alternatively P2 is satisfied by **deleting** the unwired stubs, provided no live
 path can reach a signature-blind decode. Either way the gate needs the negative
 test: a token with a valid body and a garbage signature authenticates **nobody**.
+
+**This is the route taken (#1243).** Both stubs were dead — `OidcProvider`
+decoded the payload with `split('.')` + base64 and no signature check (and its
+own tests forged tokens and asserted they authenticated), and
+`OIDCIntegration::validate_id_token` fabricated a user from a random UUID without
+decoding anything. An audit found `security/auth/oidc.rs:126` was the **only**
+signature-blind JWT decode in `src/`, so with both removed the sole JWT path is
+`network::auth::jwt`'s `JwtService::verify_token` (`jsonwebtoken::decode` with a
+real `DecodingKey` + `Validation`, plus an explicit `exp`/`nbf` recheck).
+
+Note what that does and does not buy. It closes the *forgeable* path: there is no
+longer any code that trusts an unverified token. It does **not** deliver external
+IdP federation — there is now no OIDC/JWKS path at all. That is the safe state
+(no consumer, no attack surface), and building a real one is the separate
+security TD's job, with its own design for a per-tenant issuer registry, key
+cache, and rotation.
 
 Even with P2 open, S6 holds structurally for the *attribute* channel: FA reads
 values via `SubjectAttributes::load_bearing`, which returns `None` for anything
@@ -323,6 +339,7 @@ while silently widening.
 == 7. Gate
 
 FA promotes from `Draft` and begins code (slice FA-a onward) when **P2** is
-satisfied per §2.3 or explicitly waived with a recorded risk; P1/P3/P4 are met.
+satisfied per §2.3 (#1243 is that route) or explicitly waived with a recorded
+risk; P1/P3/P4 are met.
 Each slice merges only with its S-item tests green (§4). FA is **off the OLTP
 critical path**; there is no schedule pressure to cut a corner on any S-item.
