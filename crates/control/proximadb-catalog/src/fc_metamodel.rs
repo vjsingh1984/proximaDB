@@ -84,6 +84,11 @@ pub enum Multiplicity {
     OneToOne,
     /// One-to-many.
     OneToMany,
+    /// Many-to-one — the cardinality of a plain relational FK read in its
+    /// natural direction (many referencing rows → one referenced row). Without
+    /// it, FK derivation would have to invert `from`/`to` to reach `OneToMany`
+    /// and so lose which endpoint declared the constraint.
+    ManyToOne,
     /// Many-to-many.
     ManyToMany,
 }
@@ -120,6 +125,32 @@ pub struct RelationshipType {
     pub attributes: Vec<String>,
     /// Cross-tenant policy (FC: `Intra` only).
     pub tenancy: RelationshipTenancy,
+    /// How the relationship is materialized in the **relational** projection —
+    /// the joining columns and their referential actions (D12-a: an FK and a
+    /// graph edge are one object with different physical projections). `None`
+    /// for a relationship with no relational projection (e.g. a native graph
+    /// edge). Additive + `#[serde(default)]` so earlier persisted forms load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join: Option<RelationshipJoin>,
+}
+
+/// The relational projection of a [`RelationshipType`]: which columns join, and
+/// what happens to the referencing rows when the referenced row changes.
+///
+/// Both column lists are [`ColumnRef`]s — resolved against their **own**
+/// object's schema — so a relationship carries no name-keyed identity once it is
+/// a catalog object. Deriving `to_columns` therefore requires resolving the
+/// referenced table first (see [`DerivedRelationship::resolve`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelationshipJoin {
+    /// Referencing columns, in the `from` endpoint's object.
+    pub from_columns: Vec<ColumnRef>,
+    /// Referenced columns, in the `to` endpoint's object (same arity/order).
+    pub to_columns: Vec<ColumnRef>,
+    /// `ON DELETE` action, when the projection declares one.
+    pub on_delete: Option<ReferentialAction>,
+    /// `ON UPDATE` action, when the projection declares one.
+    pub on_update: Option<ReferentialAction>,
 }
 
 impl RelationshipType {
@@ -319,7 +350,7 @@ pub enum FieldMask {
 // Derivation from the catalog schema (attaches the metamodel to Model A)
 // ===========================================================================
 
-use crate::{CatalogColumn, CatalogTableSchema};
+use crate::{CatalogColumn, CatalogTableSchema, ColumnConstraint, ReferentialAction};
 
 /// Whether a column's logical type is a vector modality — such a column gets a
 /// `Surrogate` facet (its similarity access path is physical, not in the slot).
@@ -447,6 +478,413 @@ pub fn identity_slot_from_table_schema(schema: &CatalogTableSchema) -> IdentityS
         facets,
         filterable_columns,
         completeness_gaps: gaps,
+    }
+}
+
+// ===========================================================================
+// RelationshipType derivation from FK constraints (D12-a)
+// ===========================================================================
+
+/// One endpoint of a [`DerivedRelationship`], **before** it is a catalog object.
+///
+/// The whole point of the split: a foreign key names its target
+/// (`references_table: String`), and a display name is *not* an identity
+/// (ADR-075). Derivation therefore stops at [`Endpoint::Unresolved`] and hands
+/// the name to a [`RelationshipEndpointResolver`] — it never mints or guesses an
+/// `object_id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Endpoint {
+    /// Carries the authoritative stable id — ready to be a `RelationshipType`
+    /// endpoint.
+    Resolved(EntityRef),
+    /// Name-only. Needs a catalog lookup, scoped to the owning tenant +
+    /// namespace, to become an [`EntityRef`].
+    Unresolved {
+        /// The declared name (diagnostics + the resolver's lookup key; never an
+        /// identity).
+        name: String,
+        /// The family the endpoint is expected to be.
+        family: EntityFamily,
+    },
+}
+
+impl Endpoint {
+    /// The stable-id form, if this endpoint already has one.
+    pub fn entity_ref(&self) -> Option<&EntityRef> {
+        match self {
+            Endpoint::Resolved(r) => Some(r),
+            Endpoint::Unresolved { .. } => None,
+        }
+    }
+}
+
+/// Resolves a name-only [`Endpoint`] to its ADR-075 stable identity.
+///
+/// **Structurally tenant-scoped**: an implementation is built for exactly one
+/// tenant and only sees that tenant's objects, so a cross-tenant FK cannot
+/// resolve — it fails rather than producing a non-`Intra` relationship. Isolation
+/// is structural, never a predicate the caller has to remember.
+///
+/// Every method is deny-biased: `None` means "not resolvable", and
+/// [`DerivedRelationship::resolve`] turns that into an error — never a fabricated
+/// or defaulted id.
+pub trait RelationshipEndpointResolver {
+    /// The tenant this resolver is bound to.
+    fn tenant_stable_id(&self) -> TenantStableId;
+
+    /// Look up a table by name within `namespace`. Returns `None` when the name
+    /// is unknown, is in another namespace, or is in another tenant.
+    fn resolve_table(&self, namespace: Option<NamespaceId>, table_name: &str) -> Option<EntityRef>;
+
+    /// Look up a column's stable ordinal within an already-resolved table.
+    fn resolve_column(&self, table: ObjectId, column_name: &str) -> Option<u32>;
+}
+
+/// Why a [`DerivedRelationship`] could not become a [`RelationshipType`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelationshipResolutionError {
+    /// A name-only endpoint did not resolve in this tenant + namespace.
+    UnresolvedEndpoint {
+        /// The name that failed to resolve.
+        name: String,
+    },
+    /// A joining column did not exist in the resolved table.
+    UnresolvedColumn {
+        /// The table the column was looked up in.
+        table: ObjectId,
+        /// The column name that failed to resolve.
+        column: String,
+    },
+    /// The resolver is bound to a different tenant than the relationship.
+    TenantMismatch {
+        /// The relationship's tenant.
+        expected: TenantStableId,
+        /// The resolver's tenant.
+        actual: TenantStableId,
+    },
+}
+
+impl std::fmt::Display for RelationshipResolutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RelationshipResolutionError::UnresolvedEndpoint { name } => write!(
+                f,
+                "relationship endpoint '{name}' does not resolve to a catalog object in this tenant/namespace"
+            ),
+            RelationshipResolutionError::UnresolvedColumn { table, column } => write!(
+                f,
+                "joining column '{column}' does not exist in catalog object {table}"
+            ),
+            RelationshipResolutionError::TenantMismatch { expected, actual } => write!(
+                f,
+                "resolver is bound to tenant {actual} but the relationship belongs to tenant {expected}"
+            ),
+        }
+    }
+}
+impl std::error::Error for RelationshipResolutionError {}
+
+/// A [`RelationshipType`] derived from a schema's FK constraints, **pending**
+/// endpoint resolution and the minting of its own catalog id.
+///
+/// It holds everything the declaring schema knows and nothing it does not: the
+/// `from` endpoint resolves immediately (we hold that schema), the `to` endpoint
+/// and the referenced column ordinals do not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedRelationship {
+    /// Owning tenant (stable id).
+    pub tenant_stable_id: TenantStableId,
+    /// The namespace both endpoints must live in (ADR-074). `None` for a
+    /// pre-namespace legacy schema.
+    pub namespace: Option<NamespaceId>,
+    /// The referencing side — the table that declared the FK.
+    pub from: Endpoint,
+    /// The referenced side — named by the FK, usually unresolved.
+    pub to: Endpoint,
+    /// Always [`Direction::Directed`] for an FK (referencing → referenced).
+    pub direction: Direction,
+    /// [`Multiplicity::OneToOne`] when the FK columns are themselves unique in
+    /// the referencing table, else [`Multiplicity::ManyToOne`].
+    pub multiplicity: Multiplicity,
+    /// Referencing columns, resolved against the declaring schema.
+    pub from_columns: Vec<ColumnRef>,
+    /// Referenced column **names** — their ordinals live in the target's schema,
+    /// so they stay names until [`DerivedRelationship::resolve`] runs.
+    pub to_column_names: Vec<String>,
+    /// `ON DELETE` action declared by the FK.
+    pub on_delete: Option<ReferentialAction>,
+    /// `ON UPDATE` action declared by the FK.
+    pub on_update: Option<ReferentialAction>,
+    /// Cross-tenant policy — always [`RelationshipTenancy::Intra`]: an FK names
+    /// a table in its own catalog scope, and the resolver cannot cross tenants.
+    pub tenancy: RelationshipTenancy,
+}
+
+impl DerivedRelationship {
+    /// Complete this into a first-class [`RelationshipType`], given the
+    /// `object_id` the catalog minted for it and a tenant-scoped resolver.
+    ///
+    /// Fail-closed: any endpoint or column that does not resolve is an `Err` —
+    /// a half-resolved or id-guessing relationship is never produced.
+    pub fn resolve(
+        &self,
+        object_id: ObjectId,
+        resolver: &dyn RelationshipEndpointResolver,
+    ) -> Result<RelationshipType, RelationshipResolutionError> {
+        if resolver.tenant_stable_id() != self.tenant_stable_id {
+            return Err(RelationshipResolutionError::TenantMismatch {
+                expected: self.tenant_stable_id,
+                actual: resolver.tenant_stable_id(),
+            });
+        }
+
+        let resolve_endpoint = |e: &Endpoint| -> Result<EntityRef, RelationshipResolutionError> {
+            match e {
+                Endpoint::Resolved(r) => Ok(r.clone()),
+                // The resolver, not the declaring DDL, is authoritative for the
+                // resolved object's family — an FK's target may be projected
+                // from a non-relational family (D12-a).
+                Endpoint::Unresolved { name, .. } => {
+                    resolver.resolve_table(self.namespace, name).ok_or_else(|| {
+                        RelationshipResolutionError::UnresolvedEndpoint { name: name.clone() }
+                    })
+                }
+            }
+        };
+
+        let from = resolve_endpoint(&self.from)?;
+        let to = resolve_endpoint(&self.to)?;
+
+        let to_columns = self
+            .to_column_names
+            .iter()
+            .map(|name| {
+                resolver
+                    .resolve_column(to.object_id, name)
+                    .map(|ordinal| ColumnRef {
+                        ordinal,
+                        name: name.clone(),
+                    })
+                    .ok_or_else(|| RelationshipResolutionError::UnresolvedColumn {
+                        table: to.object_id,
+                        column: name.clone(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(RelationshipType {
+            object_id,
+            tenant_stable_id: self.tenant_stable_id,
+            from,
+            to,
+            direction: self.direction,
+            multiplicity: self.multiplicity,
+            // An FK edge carries no properties of its own; its columns are the
+            // join, recorded below rather than smuggled in as attributes.
+            attributes: Vec::new(),
+            tenancy: self.tenancy,
+            join: Some(RelationshipJoin {
+                from_columns: self.from_columns.clone(),
+                to_columns,
+                on_delete: self.on_delete,
+                on_update: self.on_update,
+            }),
+        })
+    }
+}
+
+/// The output of [`relationships_from_table_schema`] — derived relationships plus
+/// an explicit account of what could **not** be modeled, so a malformed or
+/// legacy constraint is never silently dropped (same discipline as
+/// [`IdentitySlot::completeness_gaps`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DerivedRelationships {
+    /// One per modelable FK constraint.
+    pub relationships: Vec<DerivedRelationship>,
+    /// Human-readable reasons for each constraint that was skipped.
+    pub gaps: Vec<String>,
+}
+
+/// Is this column set unique **in the declaring table** (its PK, a unique index,
+/// or a `UNIQUE` constraint)? Order-insensitive: `UNIQUE(a,b)` fences `(b,a)` too.
+fn columns_are_unique_in(schema: &CatalogTableSchema, columns: &[String]) -> bool {
+    let same = |other: &[String]| -> bool {
+        if other.len() != columns.len() {
+            return false;
+        }
+        let mut a: Vec<&str> = columns.iter().map(String::as_str).collect();
+        let mut b: Vec<&str> = other.iter().map(String::as_str).collect();
+        a.sort_unstable();
+        b.sort_unstable();
+        a == b
+    };
+
+    same(&schema.primary_key)
+        || schema
+            .indexes
+            .iter()
+            .any(|i| i.is_unique && same(&i.columns))
+        || schema
+            .relational_capabilities
+            .constraints
+            .iter()
+            .any(|c| matches!(c, ColumnConstraint::Unique { columns: u } if same(u)))
+}
+
+/// Derive a [`DerivedRelationship`] per foreign key on `schema` (D12-a).
+///
+/// A relational FK and a graph edge are the *same* metamodel object; this is the
+/// seam that proves it, by lifting `relational_capabilities.constraints` into the
+/// first-class relationship type instead of leaving edges implicit in DDL.
+///
+/// What derivation deliberately does **not** do:
+///
+/// - **Mint or guess ids.** The `to` endpoint stays [`Endpoint::Unresolved`]
+///   because an FK names its target; `resolve` turns the name into a stable id
+///   through a tenant-scoped catalog lookup, or fails.
+/// - **Assume the declaring table has an identity.** A legacy schema with no
+///   `object_id` yields an unresolved `from` endpoint too, recorded as such.
+/// - **Model `CHECK`/`UNIQUE`.** Those are not relationships; `UNIQUE` feeds
+///   [`identity_slot_from_table_schema`] instead.
+///
+/// Everything unmodelable lands in [`DerivedRelationships::gaps`].
+pub fn relationships_from_table_schema(
+    schema: &CatalogTableSchema,
+    tenant_stable_id: TenantStableId,
+) -> DerivedRelationships {
+    let mut out = DerivedRelationships::default();
+
+    let from = match schema.object_id {
+        Some(object_id) => Endpoint::Resolved(EntityRef {
+            object_id,
+            family: EntityFamily::Relational,
+        }),
+        None => Endpoint::Unresolved {
+            name: schema.name.clone(),
+            family: EntityFamily::Relational,
+        },
+    };
+
+    for constraint in &schema.relational_capabilities.constraints {
+        let ColumnConstraint::ForeignKey {
+            columns,
+            references_table,
+            references_columns,
+            on_delete,
+            on_update,
+        } = constraint
+        else {
+            continue; // Unique/Check are not relationships.
+        };
+
+        if columns.is_empty() || references_columns.is_empty() {
+            out.gaps.push(format!(
+                "foreign key to '{references_table}' declares no columns on one side; not modelable as a relationship"
+            ));
+            continue;
+        }
+        if columns.len() != references_columns.len() {
+            out.gaps.push(format!(
+                "foreign key to '{}' has mismatched arity ({} referencing vs {} referenced columns)",
+                references_table,
+                columns.len(),
+                references_columns.len()
+            ));
+            continue;
+        }
+        if references_table.is_empty() {
+            out.gaps
+                .push("foreign key names no referenced table".to_string());
+            continue;
+        }
+
+        out.relationships.push(DerivedRelationship {
+            tenant_stable_id,
+            namespace: schema.stable_namespace_id,
+            from: from.clone(),
+            to: Endpoint::Unresolved {
+                name: references_table.clone(),
+                family: EntityFamily::Relational,
+            },
+            direction: Direction::Directed,
+            multiplicity: if columns_are_unique_in(schema, columns) {
+                Multiplicity::OneToOne
+            } else {
+                Multiplicity::ManyToOne
+            },
+            from_columns: columns.iter().map(|n| column_ref(schema, n)).collect(),
+            to_column_names: references_columns.clone(),
+            on_delete: *on_delete,
+            on_update: *on_update,
+            tenancy: RelationshipTenancy::Intra,
+        });
+    }
+
+    out
+}
+
+/// A [`RelationshipEndpointResolver`] over a set of already-loaded schemas for
+/// **one** tenant — the resolution hook the catalog supplies when it has the
+/// namespace's schemas in hand.
+///
+/// Namespace matching is exact `Option<NamespaceId>` equality, with no widening
+/// or fallback: `Some(3)` never matches `Some(4)` or `None`, so a relationship
+/// cannot silently reach across the ADR-074 isolation boundary. (`None` matching
+/// `None` is the pre-namespace legacy scope, not a wildcard.)
+pub struct CatalogSchemaResolver {
+    tenant_stable_id: TenantStableId,
+    tables: BTreeMap<(Option<NamespaceId>, String), EntityRef>,
+    columns: BTreeMap<(ObjectId, String), u32>,
+}
+
+impl CatalogSchemaResolver {
+    /// Build a resolver over `schemas`, all belonging to `tenant_stable_id`.
+    /// Schemas without an `object_id` are skipped — they have no identity to
+    /// resolve *to*.
+    pub fn new<'a>(
+        tenant_stable_id: TenantStableId,
+        schemas: impl IntoIterator<Item = &'a CatalogTableSchema>,
+    ) -> Self {
+        let mut tables = BTreeMap::new();
+        let mut columns = BTreeMap::new();
+        for schema in schemas {
+            let Some(object_id) = schema.object_id else {
+                continue;
+            };
+            tables.insert(
+                (schema.stable_namespace_id, schema.name.clone()),
+                EntityRef {
+                    object_id,
+                    family: EntityFamily::Relational,
+                },
+            );
+            for col in &schema.columns {
+                if !col.is_deleted {
+                    columns.insert((object_id, col.name.clone()), col.id.max(0) as u32);
+                }
+            }
+        }
+        Self {
+            tenant_stable_id,
+            tables,
+            columns,
+        }
+    }
+}
+
+impl RelationshipEndpointResolver for CatalogSchemaResolver {
+    fn tenant_stable_id(&self) -> TenantStableId {
+        self.tenant_stable_id
+    }
+
+    fn resolve_table(&self, namespace: Option<NamespaceId>, table_name: &str) -> Option<EntityRef> {
+        self.tables
+            .get(&(namespace, table_name.to_string()))
+            .cloned()
+    }
+
+    fn resolve_column(&self, table: ObjectId, column_name: &str) -> Option<u32> {
+        self.columns.get(&(table, column_name.to_string())).copied()
     }
 }
 
@@ -707,6 +1145,7 @@ mod tests {
             multiplicity: Multiplicity::ManyToMany,
             attributes: vec!["weight".into()],
             tenancy: RelationshipTenancy::Intra,
+            join: None,
         };
         // A relational endpoint and a graph endpoint in one relationship: the D1
         // unification. And FC only admits Intra.
@@ -1076,5 +1515,282 @@ mod tests {
         assert_eq!(s.len(), 1);
         assert!(!s.is_empty());
         assert!(s.load_bearing("missing").is_none());
+    }
+
+    // --- RelationshipType derivation from FK constraints (D12-a) ---
+
+    const NS: NamespaceId = 3;
+    const TENANT: TenantStableId = 7;
+
+    fn str_col(id: i32, name: &str) -> CatalogColumn {
+        CatalogColumn::new(id, name, proximadb_data_model::ProximaType::String)
+    }
+
+    /// `customer(c_custkey PK, c_name)` — the FK target.
+    fn customer(object_id: u64) -> CatalogTableSchema {
+        let mut s = CatalogTableSchema::new("customer")
+            .with_column(CatalogColumn::new(
+                0,
+                "c_custkey",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(str_col(1, "c_name"))
+            .with_primary_key(vec!["c_custkey".to_string()]);
+        s.object_id = Some(object_id);
+        s.stable_namespace_id = Some(NS);
+        s
+    }
+
+    /// `orders(o_orderkey PK, o_custkey → customer.c_custkey)`.
+    fn orders(object_id: u64, fk_on_delete: Option<ReferentialAction>) -> CatalogTableSchema {
+        let mut s = CatalogTableSchema::new("orders")
+            .with_column(CatalogColumn::new(
+                0,
+                "o_orderkey",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(CatalogColumn::new(
+                1,
+                "o_custkey",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_primary_key(vec!["o_orderkey".to_string()])
+            .with_relational_capabilities(crate::RelationalCapabilities {
+                constraints: vec![ColumnConstraint::ForeignKey {
+                    columns: vec!["o_custkey".to_string()],
+                    references_table: "customer".to_string(),
+                    references_columns: vec!["c_custkey".to_string()],
+                    on_delete: fk_on_delete,
+                    on_update: None,
+                }],
+                ..Default::default()
+            });
+        s.object_id = Some(object_id);
+        s.stable_namespace_id = Some(NS);
+        s
+    }
+
+    #[test]
+    fn foreign_key_derives_a_many_to_one_relationship_with_an_unresolved_target() {
+        let schema = orders(200, Some(ReferentialAction::Cascade));
+        let derived = relationships_from_table_schema(&schema, TENANT);
+
+        assert_eq!(derived.relationships.len(), 1);
+        assert!(derived.gaps.is_empty());
+        let r = &derived.relationships[0];
+
+        // The declaring side has an identity; the target is NAME-only — the FK
+        // gives us a display name, and a name is never an identity (ADR-075).
+        assert_eq!(r.from.entity_ref().map(|e| e.object_id), Some(200));
+        assert!(matches!(
+            &r.to,
+            Endpoint::Unresolved { name, .. } if name == "customer"
+        ));
+
+        assert_eq!(r.direction, Direction::Directed);
+        assert_eq!(r.multiplicity, Multiplicity::ManyToOne);
+        assert_eq!(r.tenancy, RelationshipTenancy::Intra);
+        assert_eq!(r.namespace, Some(NS));
+        assert_eq!(r.from_columns[0].name, "o_custkey");
+        assert_eq!(r.from_columns[0].ordinal, 1); // the schema's stable field id
+        assert_eq!(r.to_column_names, vec!["c_custkey".to_string()]);
+        assert_eq!(r.on_delete, Some(ReferentialAction::Cascade));
+    }
+
+    #[test]
+    fn a_unique_foreign_key_column_derives_one_to_one() {
+        // Same FK, but o_custkey is itself UNIQUE in orders → at most one order
+        // per customer.
+        let mut schema = orders(200, None);
+        schema = schema.with_index(
+            crate::CatalogIndex::new(
+                "uq_o_custkey",
+                vec!["o_custkey".to_string()],
+                crate::CatalogIndexType::BTree,
+            )
+            .unique(),
+        );
+        let derived = relationships_from_table_schema(&schema, TENANT);
+        assert_eq!(
+            derived.relationships[0].multiplicity,
+            Multiplicity::OneToOne
+        );
+    }
+
+    #[test]
+    fn resolve_completes_the_endpoint_and_the_join_columns() {
+        let derived = relationships_from_table_schema(&orders(200, None), TENANT);
+        let resolver = CatalogSchemaResolver::new(TENANT, [&customer(100), &orders(200, None)]);
+
+        // 900 is the id the *catalog* mints for the relationship object; derivation
+        // never invents one.
+        let r = derived.relationships[0]
+            .resolve(900, &resolver)
+            .expect("resolves within the tenant + namespace");
+
+        assert_eq!(r.object_id, 900);
+        assert_eq!(r.tenant_stable_id, TENANT);
+        assert_eq!(r.from.object_id, 200);
+        assert_eq!(r.to.object_id, 100);
+        assert!(r.tenancy_is_admissible());
+        // An FK edge carries no properties of its own — the columns are the join.
+        assert!(r.attributes.is_empty());
+
+        let join = r.join.expect("FK relationship has a relational projection");
+        assert_eq!(join.from_columns[0].name, "o_custkey");
+        assert_eq!(join.to_columns[0].name, "c_custkey");
+        // The referenced ordinal came from customer's schema, not orders'.
+        assert_eq!(join.to_columns[0].ordinal, 0);
+    }
+
+    #[test]
+    fn resolve_denies_an_unknown_target_instead_of_fabricating_an_id() {
+        let derived = relationships_from_table_schema(&orders(200, None), TENANT);
+        // customer is absent from the resolver's world.
+        let resolver = CatalogSchemaResolver::new(TENANT, [&orders(200, None)]);
+
+        assert_eq!(
+            derived.relationships[0].resolve(900, &resolver),
+            Err(RelationshipResolutionError::UnresolvedEndpoint {
+                name: "customer".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_denies_across_the_namespace_boundary() {
+        let derived = relationships_from_table_schema(&orders(200, None), TENANT);
+        // A `customer` table exists for this tenant, but in another namespace.
+        let mut other_ns_customer = customer(100);
+        other_ns_customer.stable_namespace_id = Some(NS + 1);
+        let resolver = CatalogSchemaResolver::new(TENANT, [&other_ns_customer]);
+
+        // ADR-074 isolation is structural: the name matches, the namespace does
+        // not, so the relationship does not form.
+        assert!(matches!(
+            derived.relationships[0].resolve(900, &resolver),
+            Err(RelationshipResolutionError::UnresolvedEndpoint { .. })
+        ));
+    }
+
+    #[test]
+    fn resolve_denies_a_resolver_bound_to_another_tenant() {
+        let derived = relationships_from_table_schema(&orders(200, None), TENANT);
+        let foreign = CatalogSchemaResolver::new(TENANT + 1, [&customer(100), &orders(200, None)]);
+
+        assert_eq!(
+            derived.relationships[0].resolve(900, &foreign),
+            Err(RelationshipResolutionError::TenantMismatch {
+                expected: TENANT,
+                actual: TENANT + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_denies_when_a_referenced_column_is_missing() {
+        let derived = relationships_from_table_schema(&orders(200, None), TENANT);
+        // A `customer` whose PK column was renamed away under the FK.
+        let mut stale = CatalogTableSchema::new("customer").with_column(str_col(0, "other"));
+        stale.object_id = Some(100);
+        stale.stable_namespace_id = Some(NS);
+        let resolver = CatalogSchemaResolver::new(TENANT, [&stale]);
+
+        assert_eq!(
+            derived.relationships[0].resolve(900, &resolver),
+            Err(RelationshipResolutionError::UnresolvedColumn {
+                table: 100,
+                column: "c_custkey".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn unique_and_check_constraints_are_not_relationships() {
+        let schema = CatalogTableSchema::new("t")
+            .with_column(str_col(0, "a"))
+            .with_relational_capabilities(crate::RelationalCapabilities {
+                constraints: vec![
+                    ColumnConstraint::Unique {
+                        columns: vec!["a".to_string()],
+                    },
+                    ColumnConstraint::Check {
+                        expression: "a <> ''".to_string(),
+                    },
+                ],
+                ..Default::default()
+            });
+        let derived = relationships_from_table_schema(&schema, TENANT);
+        assert!(derived.relationships.is_empty());
+        assert!(derived.gaps.is_empty()); // not a gap — they are simply not edges
+    }
+
+    #[test]
+    fn a_malformed_foreign_key_is_recorded_as_a_gap_not_silently_dropped() {
+        let schema = CatalogTableSchema::new("t")
+            .with_column(str_col(0, "a"))
+            .with_relational_capabilities(crate::RelationalCapabilities {
+                constraints: vec![
+                    ColumnConstraint::ForeignKey {
+                        columns: vec!["a".to_string(), "b".to_string()],
+                        references_table: "u".to_string(),
+                        references_columns: vec!["x".to_string()], // arity mismatch
+                        on_delete: None,
+                        on_update: None,
+                    },
+                    ColumnConstraint::ForeignKey {
+                        columns: vec![], // no columns on the referencing side
+                        references_table: "u".to_string(),
+                        references_columns: vec!["x".to_string()],
+                        on_delete: None,
+                        on_update: None,
+                    },
+                ],
+                ..Default::default()
+            });
+        let derived = relationships_from_table_schema(&schema, TENANT);
+        assert!(derived.relationships.is_empty());
+        assert_eq!(derived.gaps.len(), 2);
+        assert!(derived.gaps.iter().any(|g| g.contains("mismatched arity")));
+        assert!(derived.gaps.iter().any(|g| g.contains("no columns")));
+    }
+
+    #[test]
+    fn a_legacy_schema_without_an_object_id_leaves_the_from_endpoint_unresolved() {
+        let mut schema = orders(200, None);
+        schema.object_id = None; // pre-ADR-031 persisted schema
+        let derived = relationships_from_table_schema(&schema, TENANT);
+
+        // No identity to stand on, so we say so rather than inventing one.
+        assert!(matches!(
+            &derived.relationships[0].from,
+            Endpoint::Unresolved { name, .. } if name == "orders"
+        ));
+        // And it stays unresolvable: a schema with no object_id is not in the
+        // resolver's table either.
+        let resolver = CatalogSchemaResolver::new(TENANT, [&customer(100), &schema]);
+        assert!(matches!(
+            derived.relationships[0].resolve(900, &resolver),
+            Err(RelationshipResolutionError::UnresolvedEndpoint { .. })
+        ));
+    }
+
+    #[test]
+    fn a_resolved_relationship_round_trips_through_serde() {
+        let derived = relationships_from_table_schema(&orders(200, None), TENANT);
+        let resolver = CatalogSchemaResolver::new(TENANT, [&customer(100), &orders(200, None)]);
+        let r = derived.relationships[0]
+            .resolve(900, &resolver)
+            .expect("resolves");
+
+        let json = serde_json::to_string(&r).expect("serializes");
+        let back: RelationshipType = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(back, r);
+
+        // `join` is additive: a form persisted before it existed still loads.
+        let older = json.replace(",\"join\":", ",\"unused\":");
+        let legacy: RelationshipType =
+            serde_json::from_str(&older).expect("legacy form without `join` deserializes");
+        assert!(legacy.join.is_none());
     }
 }
