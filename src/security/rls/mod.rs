@@ -15,9 +15,11 @@
 //! RLS integrates with the collection service to automatically apply
 //! security filters before search operations reach the storage engine.
 
+pub mod filter_lattice;
 pub mod policy;
 pub mod service;
 
+pub use filter_lattice::{SecurityFilter, unsatisfiable_expression};
 pub use policy::{
     Operation, RLSPolicy, RLSPolicyBuilder, SecurityPredicate, SecurityPredicateBuilder,
 };
