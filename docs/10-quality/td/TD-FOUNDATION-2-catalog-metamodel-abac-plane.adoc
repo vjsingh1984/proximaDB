@@ -804,14 +804,50 @@ pinned test.
 | `Not(P)` is null-safe: lowered as `And(Not(P), IS_NOT_NULL(f)…)` over each field
   `f` in `P`, or evaluated on a 3-valued substrate. Until then `Not` over a
   nullable field **fails closed**.
+
+  [FA-a implementation finding, 2026-07-27] **`Not` is not the only negation, and
+  this criterion as first written was incomplete.** `NotEquals` and `NotIn` are
+  negations *spelled as operators*, and they leak identically: the evaluator reads
+  an absent-or-null field as "not equal to" any literal, so a bare
+  `dept != "eng"` policy admits every record with no `dept` at all — without a
+  `Not` node anywhere in the tree. The null guard therefore applies to the
+  **negative-operator class**, not to `Not` alone. Found by the S1–S3 subset
+  property test, not by review; the fields to guard are exactly those a
+  sub-expression compares **by value** (null tests are excluded — they are already
+  absence-aware, and guarding them would make `Not(IsNotNull(f))`, correctly
+  `f IS NULL`, unsatisfiable).
 | `Not(Eq(classification,"TS"))` over a NULL-classification row ⇒ **excluded**.
-  `sql_value_filter.rs:348`.
+  Plus the bare-operator cases: `dept != "eng"` and `dept NOT IN [...]` over a
+  record with no `dept` ⇒ **excluded**. `security/rls/filter_lattice.rs`
+  (`negation_excludes_a_row_missing_the_compared_field`,
+  `a_bare_not_equals_excludes_a_row_missing_the_field`). **Delivered — PR #1245.**
 
 | S3
 | Literals are **type-gated** against the column's declared type at compile; a
   mismatch **denies**, never falls through to `compare_json_values` precedence
   ordering.
-| Numeric `clearance>=3` vs string column ⇒ deny, not admit-all. `json_comparison.rs:90+`.
+
+  [FA-a2 implementation finding, 2026-07-27] **The mechanism is a runtime class
+  check, not a compile-time schema gate.** "At compile, against the declared
+  type" is not buildable at this seam: the bridge sees a `SecurityPredicate` and a
+  subject, never a schema. Checking the *record value's* class at evaluation
+  reaches the same goal with no schema at all, under one rule — **if the operands
+  are not comparable, the predicate does not admit.** It also covers a case the
+  schema framing misses: the widening runs through *negative* operators too
+  (`dept != 5` is satisfied by a string-valued `dept`, because "not equal" is
+  trivially true of "not comparable"), which no literal-vs-column-type gate would
+  catch.
+
+  Ordered operators, `Between`, `NotEquals` and `NotIn` are tightened;
+  `Equals`/`In` (type-exact via `json_eq`), the string operators (via `as_str`)
+  and the null tests (by presence) are already exact and delegate unchanged.
+  Integers and floats share a class deliberately, so `score > 0.8` keeps working
+  against an integer `1`.
+| Numeric `clearance>=3` vs a string-valued field ⇒ deny, not admit-all —
+  including on the canonical `ProximaValue`/`ProximaTree` seam.
+  `json_comparison.rs` (`compare_json_values_strict`), `sql_value_filter.rs`
+  (`compare_json_op_type_strict`, `evaluate_filter_proxima_type_strict`).
+  **Delivered — PRs #1246, #1247.**
 
 | S4
 | The read context is a **required, non-`Option`** parameter of every read
