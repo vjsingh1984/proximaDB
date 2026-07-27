@@ -3388,8 +3388,11 @@ mod tests {
         assert_eq!(a0.model.dim as usize, DIM);
 
         // Flag OFF ⇒ same records compact to the v1 (single-level) layout.
+        // #1234: PROXIMADB_PAX_WRITE_A0_TRAIN is now default-ON; explicitly
+        // set "0" to test the OFF -> v1 path (remove_var would fall back to
+        // the CoarseProbeConfig default, which is ON).
         unsafe {
-            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "0");
         }
         let v1_path = dir.path().join("v1.pax");
         write_pax_segment_compacted(
