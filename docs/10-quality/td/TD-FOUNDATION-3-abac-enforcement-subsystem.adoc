@@ -1,7 +1,7 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-FOUNDATION-3: ABAC enforcement subsystem (FA)
-:status: Draft — P1/P3/P4 substrate landed; P2 in flight (#1243)
+:status: In progress — P1–P4 met; slices FA-a + FA-a2 delivered
 :date: 2026-07-26
 :authors: co-design session 2026-07-26
 :realizes: ADR-072 D6 (structural tenancy), D15 (RLS-as-global-filter)
@@ -10,7 +10,7 @@
 
 [cols="1,3"]
 |===
-| Status | Draft — **P2 in flight** (#1243); P1/P3/P4 substrate has landed (§2), the S-items are specified (§4), and the slices are startable in order once P2 clears
+| Status | **In progress** — all four preconditions met (§2); slices **FA-a** (S1, S2) and **FA-a2** (S3) are delivered (§5); FA-b is the next slice and is *lane-blocked*, see §5
 | Scope | The runtime ABAC **enforcement** subsystem split out of FC (TD-FOUNDATION-2 §0.1) after three red-team rounds proved it is a multi-package subsystem, not a wiring job.
 | Design of record | **TD-FOUNDATION-2** — the enforcement architecture (§3.4), the S1–S10 acceptance criteria (§8), and the fail-closed bridge (§1.4) live there, attacked across three rounds. This doc is the **build track**: preconditions, the surface-by-surface contract, the S-item test targets, and the slice order.
 | Consumes | FC's metamodel + policy model (`PolicyBinding`, `resolve_effective_policy`, `SubjectAttributes`, `filterable_columns`), the FA substrate crate `proximadb-abac`, the F0 codec, the F1b/F1d store.
@@ -70,7 +70,7 @@ The enforcement design is TF-2 §3.4. FA implements it as work items:
 | **P2**
 | **Live JWT signature verification** — two unwired OIDC stubs decoded/fabricated identity without signature verification, so every claim (incl. `iss`) was forgeable and S6 was void. **An independent security defect** affecting the whole auth boundary, not just ABAC.
 | **separate security TD** (urgent)
-| 🟡 **In flight** — `#[deprecated]`-guarded by #1232, **deleted** by #1243 via the §2.3 alternative; flips to ✅ when #1243 merges
+| ✅ **Met** — #1232 guarded, **#1243 deleted** both stubs via the §2.3 alternative
 
 | **P3**
 | **Subject-keyed cache substrate** — the result/vector/LLM caches must accept a subject+policy-epoch key component and an epoch-invalidation hook (S10).
@@ -236,20 +236,20 @@ gate is mechanical. Every S-item is a merge-blocking test, not a review note.
 | # | Criterion (abbreviated — TF-2 §8 is normative) | Test target
 
 | **S1**
-| `build_filter` returns `Result<FilterExpression>` — **no `Ok(None)`**. "No restriction" is producible only by the top-level "no binding exists" path; every deny-derived / empty-`And`/`Or`/`Not(None)` node lowers to an explicit **unsatisfiable** filter.
-| `src/security/rls/service.rs` unit + property: `not_always_allow_yields_zero_rows`, `empty_and_is_unsatisfiable_not_unfiltered`. Regression-pinned from TF-2 §6.3.
+| No `Ok(None)`: "no restriction" is producible only from a predicate that genuinely permits everything; every deny-derived / empty-`And`/`Or`/`Not(Unrestricted)` node lowers to an explicit **unsatisfiable** filter. **Delivered as a three-point lattice** (`Unrestricted \| Restricted \| Unsatisfiable`) rather than the literal `Result<FilterExpression>`, which would have to encode "no restriction" as a tautology every row of every scan then evaluates for nothing. The lattice carries S1's property without that cost.
+| ✅ `src/security/rls/filter_lattice.rs`: `negating_unrestricted_denies_instead_of_returning_the_full_table`, `an_empty_conjunction_denies_rather_than_being_vacuously_true`, `the_unsatisfiable_expression_admits_no_row`. **PR #1245.**
 
 | **S2**
-| `Not(P)` is null-safe — lowered as `And(Not(P), IS_NOT_NULL(f)…)` over each field in `P`, or evaluated on a 3-valued substrate. Until then `Not` over a nullable field fails closed.
-| `sql_value_filter` unit: `not_eq_over_null_column_excludes_the_row`. Fixture: a row with `classification = NULL` under `Not(Eq(classification,"TS"))`.
+| Negation is null-safe. **Amended during implementation** (TF-2 §8 S2): the guard applies to the whole **negative-operator class**, not `Not` alone — `NotEquals`/`NotIn` are negations spelled as operators and leaked identically, with no `Not` node in the tree. Guarded fields are exactly those compared **by value**; null tests are excluded (already absence-aware).
+| ✅ `filter_lattice.rs`: `negation_excludes_a_row_missing_the_compared_field`, `a_bare_not_equals_excludes_a_row_missing_the_field`, `a_negated_null_test_is_not_guarded_into_a_contradiction`. **PR #1245.**
 
 | **S3**
-| Literals are type-gated against the column's declared type at compile; a mismatch **denies** rather than falling through to precedence ordering.
-| `json_comparison` / bridge unit: `numeric_predicate_against_string_column_denies`. Asserts deny, **not** admit-all. **Slice FA-a2** — needs a schema at the bridge seam or a type-strict comparison mode; `compare_json_values` is live under metadata search, so it cannot simply be made strict.
+| A type mismatch **denies** rather than falling through to precedence ordering. **Mechanism amended** (TF-2 §8 S3): a **runtime class check**, not a compile-time schema gate — the bridge never sees a schema, and the runtime check additionally covers the negative-operator widening (`dept != 5` satisfied by a string `dept`) that a literal-vs-column gate would miss.
+| ✅ `compare_json_values_strict` / `compare_json_op_type_strict` / `evaluate_filter_resolved_type_strict` / `evaluate_filter_proxima_type_strict`, with characterization tests pinning the permissive behaviour so the defect stays documented. **PRs #1246, #1247.**
 
 | **S1–S3 (joint)**
-| **Deny-biased subset property.** For a random `SecurityPredicate`, the bridged predicate admits a **subset** of the source's row set; a non-convertible node admits **zero** rows (not a dropped conjunct).
-| Property test over generated predicates × generated rows. This is the highest-value test in FA — it is what would have caught the evaporating clearance filter.
+| **Deny-biased subset property.** The lowered predicate admits a **subset** of what a three-valued reference admits; a deny-derived node admits **zero** rows, not a dropped conjunct.
+| ✅ **Exhaustive, not randomized** — a predicate grammar × row space small enough to cover completely, so it is deterministic in CI (no seed to reproduce, no flake). It earned its keep immediately: it is what found the S2 negative-operator gap. `filter_lattice.rs::the_lowering_is_deny_biased_over_the_whole_grammar`, plus `strict_never_admits_more_than_permissive` in `sql_value_filter`. **PRs #1245, #1246, #1247.**
 
 | **S4**
 | The read context is a required, non-`Option` parameter of every read primitive; no `_unfiltered` sibling; internal unfiltered access uses `SystemReadContext`.
@@ -295,16 +295,18 @@ while silently widening.
 |===
 | Slice | Content | Gates
 
-| **FA-a**
-| The bridge, part 1 (FA-2): the total deny-biased lattice replacing `Ok(None)`, null-safe `Not` lowering, and the deny-biased subset property test. Touches only the dead RLS/filter code, so no live path changes behavior.
-| S1, S2
+| **FA-a** ✅ **PR #1245**
+| The bridge, part 1 (FA-2): the total deny-biased lattice replacing `Ok(None)`, null-safe negation lowering, and the deny-biased subset property test. Touched only the dead RLS/filter code, so no live path changed behavior.
+| S1, S2 — green
 
-| **FA-a2**
-| The bridge, part 2: **type-gated literals**. Split out because it needs input FA-a does not have — the column's declared type. `build_filter` sees only a `SecurityPredicate` and a subject; there is no schema at that seam, and the alternative (making `compare_json_values` type-strict) would change **live** user-query semantics, since `sql_value_filter` serves metadata search, document filtering and pushdown. So FA-a2 is either a schema seam into the bridge or a type-strict comparison *mode* the security path opts into — a design choice, not a patch.
-| S3
+| **FA-a2** ✅ **PRs #1246 + #1247**
+| The bridge, part 2: type strictness, delivered as an **opt-in comparison mode + a separate evaluator**, not a schema seam. `compare_json_values`/`compare_json_op`/`evaluate_filter_resolved` are untouched, so metadata search, document filtering and pushdown keep their semantics; the security path opts in via the `_type_strict` family, resolving on the `ProximaValue`/`ProximaTree` seam (ADR-024), never the deprecated v1 `SqlValue` envelope. Two walkers rather than one tree with two semantics: `AND` associativity makes evaluating the security and user expressions separately exactly equivalent to their conjunction, so no marker node in the shared `FilterExpression` type is needed.
+| S3 — green
 
-| **FA-b**
+| **FA-b** — next, but **lane-blocked**
 | Signature change at the three read primitives (FA-1) + the CI signature check. Behavior-neutral while every caller passes a `SystemReadContext`; the point is that the *shape* becomes non-optional.
+
+**Coordination note (2026-07-27):** this is a *wide* signature change across every caller of `services/record_store.rs` and `services/operations/vectors/legacy.rs` — precisely the files an FK-referential-integrity / HTAP workstream reads through. It should be taken by whoever owns those files, or sequenced after that work lands; running it in parallel guarantees conflicts. §3 specifies the target shape per primitive so it is pick-up-able.
 | S4, S7
 
 | **FA-c**
@@ -339,6 +341,31 @@ while silently widening.
 * **Predicate-compilation caching.** Per-read policy resolution + bridge is
   measurable overhead on the OLTP path; it is deliberately *not* optimized before
   it is correct. Evidence goes to `BENCHMARK_EVIDENCE.toml` when FA-c lands.
+
+== 6a. Delivered so far
+
+[cols="1,3"]
+|===
+| PR | What landed
+
+| #1239 | The FA substrate crate `proximadb-abac` (P1 attribute authority, P3 subject+epoch cache keying, P4 the non-`Option` read context + `ClientServable`), and this document as an implementable spec.
+| #1243 | P2 — both signature-blind/identity-fabricating OIDC stubs deleted (§2.3 route). Audit: that was the only signature-blind JWT decode in `src/`; the sole remaining JWT path verifies.
+| #1245 | **FA-a** — S1 + S2. The lattice, the real unsatisfiable expression (replacing a *value*-comparison sentinel a record could satisfy), null-guarded negation, and the exhaustive deny-biased property test.
+| #1246 | **FA-a2 part 1** — the type-strict comparison primitives (`ComparableClass`, `compare_json_values_strict`, `compare_json_op_type_strict`).
+| #1247 | **FA-a2 part 2** — the type-strict walker and the canonical `ProximaTree` adapter.
+|===
+
+Two findings worth carrying forward, both from **tests rather than review** — which
+is the argument for the property test being written before the wiring:
+
+. **S2 was incomplete as specified.** The null guard belongs to the negative-operator
+  *class*; `NotEquals`/`NotIn` leaked with no `Not` node present. Amended in TF-2 §8 S2.
+. **S3's mechanism was not buildable as specified.** A compile-time schema gate has no
+  schema at that seam; a runtime class check reaches the same goal and additionally
+  covers the negative-operator widening. Amended in TF-2 §8 S3.
+
+Both were fail-*open* defects in code that is currently dead-wired — which is exactly
+why closing them before FA-c wires anything is the right order.
 
 == 7. Gate
 
