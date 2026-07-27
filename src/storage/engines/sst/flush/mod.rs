@@ -757,10 +757,8 @@ impl SstEngine {
             // next flush while this training pass runs). Only for the training
             // arm (threshold <= 1). Always cleared below (Ok, no-op, or Err).
             let is_training = due_threshold <= 1;
-            if is_training {
-                if let Ok(mut guard) = self.training_in_flight.lock() {
-                    guard.insert(storage_url.to_string());
-                }
+            if is_training && let Ok(mut guard) = self.training_in_flight.lock() {
+                guard.insert(storage_url.to_string());
             }
             match compaction
                 .run_due_compaction(
@@ -789,10 +787,8 @@ impl SstEngine {
             }
             // TD-COMPACT-8: always clear the training flag after compaction
             // (Ok, no-op, or Err — the guard is set above only for training).
-            if is_training {
-                if let Ok(mut guard) = self.training_in_flight.lock() {
-                    guard.remove(storage_url);
-                }
+            if is_training && let Ok(mut guard) = self.training_in_flight.lock() {
+                guard.remove(storage_url);
             }
         }
 
@@ -906,14 +902,16 @@ impl SstEngine {
         // N-1 wasted cycles per ingest batch, each costing N GETs + PCA + PUT +
         // DELETEs). The flag is set by the flush caller before run_due_compaction
         // and cleared after.
-        if let Ok(guard) = self.training_in_flight.lock() {
-            if guard.contains(storage_url) {
-                tracing::debug!(
-                    "TD-COMPACT-8: training compaction already in-flight for \
-                     {storage_url} — skipping arm"
-                );
-                return Ok(None);
-            }
+        if self
+            .training_in_flight
+            .lock()
+            .is_ok_and(|guard| guard.contains(storage_url))
+        {
+            tracing::debug!(
+                "TD-COMPACT-8: training compaction already in-flight for \
+                 {storage_url} — skipping arm"
+            );
+            return Ok(None);
         }
         // Best-effort header sniffing (72 bytes/file); any error means "not
         // yet", never fails the flush.
