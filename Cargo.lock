@@ -6895,6 +6895,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-abac"
+version = "0.2.0"
+dependencies = [
+ "proximadb-catalog",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "proximadb-admin-ui"
 version = "0.2.0"
 dependencies = [
