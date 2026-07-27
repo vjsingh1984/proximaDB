@@ -1914,6 +1914,85 @@ async fn insert_enforces_foreign_key_via_fenced_store() {
     );
 }
 
+/// F5 (ADR-072): a DELETE tombstones the row's PK in the fenced
+/// `ConditionalKeyStore`, so the same PK re-inserts afterward. Without the
+/// tombstone, `put_if_absent` would see the lingering holder and wrongly reject —
+/// so this also proves the delete-side `Identity` matches the insert-side
+/// registration exactly (same tenant placeholder + keyspace + typed value).
+#[cfg(feature = "oltp-integrity")]
+#[tokio::test]
+async fn delete_tombstones_pk_in_fenced_store_allowing_reinsert() {
+    use crate::services::record_store::DirectWalTableRecordStore;
+    use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+    use proximadb_cks_local::{LocalWalKeyStore, SyncPolicy};
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let manager = Arc::new(CatalogManager::new());
+    manager
+        .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+        .await
+        .expect("native catalog");
+    let ddl = DdlService::new(manager.clone());
+    ddl.execute(DdlStatement::CreateNamespace {
+        namespace: vec!["default".to_string()],
+        if_not_exists: true,
+        properties: HashMap::new(),
+    })
+    .await
+    .expect("create namespace");
+    let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+    let ddl_stmt = parser
+        .parse_ddl("CREATE TABLE users (id TEXT NOT NULL, email TEXT NOT NULL, PRIMARY KEY (id));")
+        .expect("parse create")
+        .expect("ddl");
+    ddl.execute(ddl_stmt).await.expect("create table");
+
+    let wal_appender = Arc::new(
+        FramedTableWalAppender::open(temp_dir.path().join("del.wal"))
+            .await
+            .expect("open WAL"),
+    );
+    let record_store = Arc::new(DirectWalTableRecordStore::new(
+        Arc::new(MemtableRecordStorage::new()),
+        wal_appender,
+    ));
+    let cks = Arc::new(
+        LocalWalKeyStore::open(temp_dir.path().join("cks.wal"), SyncPolicy::PerOp)
+            .expect("open cks"),
+    );
+    let dml = DmlService::with_record_store_and_table_write_executor(
+        manager.clone(),
+        record_store,
+        Arc::new(PlannedOnlyTableWriteExecutor::new()),
+    )
+    .with_conditional_key_store(cks);
+    let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
+
+    // Insert u1 (registers the PK in the fenced store).
+    dml.execute(run(
+        "INSERT INTO users (id, email) VALUES ('u1', 'a@x.com');",
+    ))
+    .await
+    .expect("insert u1");
+    // A duplicate before delete is rejected (baseline: the fence is live).
+    dml.execute(run(
+        "INSERT INTO users (id, email) VALUES ('u1', 'dup@x.com');",
+    ))
+    .await
+    .expect_err("duplicate PK must be rejected while the row is live");
+    // Delete u1 — must tombstone the fenced entry.
+    dml.execute(run("DELETE FROM users WHERE id = 'u1';"))
+        .await
+        .expect("delete u1");
+    // Re-insert the same PK — must SUCCEED (the tombstone freed the fenced entry;
+    // proves the delete-side Identity matched the insert-side registration).
+    dml.execute(run(
+        "INSERT INTO users (id, email) VALUES ('u1', 'b@x.com');",
+    ))
+    .await
+    .expect("re-inserting a deleted PK must succeed after the tombstone");
+}
+
 #[tokio::test]
 async fn insert_enforces_foreign_key_reference() {
     // TD-110: a FOREIGN KEY referencing the parent PK is enforced on INSERT —
