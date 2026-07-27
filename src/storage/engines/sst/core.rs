@@ -429,10 +429,27 @@ impl SstEngine {
         // Register cache providers with orchestrator
         let orchestrator = Self::register_cache_providers(decompression_cache.clone()).await?;
 
-        // Initialize compaction manager (always enabled)
-        let compaction_manager = Some(Arc::new(Compaction::new(config.clone()).await.map_err(
-            |e| SstError::Internal(format!("Failed to create compaction manager: {}", e)),
-        )?));
+        // Initialize compaction manager (always enabled) — TD-COMPACT-6 D0: start
+        // background workers on THIS instance (the one the flush path uses via
+        // self.compaction_manager()). Without this, schedule_compaction enqueues to
+        // a workerless queue — the 2 workers at engine.rs:212 run on a DIFFERENT
+        // Compaction instance (the StorageEngine's), leaving the SstEngine's
+        // task_queue with zero consumers. Wire the worker count to the existing
+        // SstConfig.background_thread_count (was hardcoded 2 at engine.rs:212;
+        // the config field existed but was unused at the spawn site).
+        let mut compaction = Compaction::new(config.clone()).await.map_err(|e| {
+            SstError::Internal(format!("Failed to create compaction manager: {}", e))
+        })?;
+        compaction
+            .start_workers(config.background_thread_count as usize)
+            .await
+            .map_err(|e| {
+                SstError::Internal(format!(
+                    "Failed to start {} compaction workers: {}",
+                    config.background_thread_count, e
+                ))
+            })?;
+        let compaction_manager = Some(Arc::new(compaction));
 
         // Initialize universal performance optimization
         let universal_optimizer =
