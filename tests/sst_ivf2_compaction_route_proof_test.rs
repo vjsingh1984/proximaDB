@@ -268,8 +268,10 @@ async fn test_ivf2_compaction_route_emits_v3_and_searches() -> Result<()> {
 /// leaves every segment at layout v1 — v3 is strictly opt-in.
 #[tokio::test]
 async fn test_ivf2_off_compaction_route_stays_v1() -> Result<()> {
+    // #1234: PROXIMADB_PAX_WRITE_A0_TRAIN is now default-ON (enable_write_train
+    // in CoarseProbeConfig). Explicitly set "0" to test the OFF -> v1 path.
     unsafe {
-        std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+        std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "0");
     }
     let (dir, engine, coll) = flush_to_compaction("ivf2_route_off").await?;
 

@@ -299,6 +299,21 @@ collection_affinity = true
 # archive_age_threshold_days = 30            # archive after this many days
 # hot_access_threshold = 100                 # promote to Hot after N accesses
 
+# PAX coarse-probe (IVF) — the master cloud-cost lever. Compaction trains +
+# emits the A0 coarse directory; search probes the nearest `nprobe` cells
+# instead of full-scanning. Cuts GETs/query ~4x and per-tenant COGS ~4x vs
+# full-scan (COGS measurement arc), recall ~0.98. Env overrides still win:
+# PROXIMADB_PAX_READ_COARSE_PROBE, PROXIMADB_PAX_READ_COARSE_NPROBE,
+# PROXIMADB_PAX_WRITE_A0_TRAIN.
+# Default: all ON, geometric nprobe (sqrt(ncells) x multiplier).
+#
+# [storage.sst_config.coarse_probe]
+# enable_read_probe = true                   # search probes A0 (kill-switch)
+# enable_write_train = true                  # compaction emits v3/A0 (the COGS unblock)
+# nprobe_multiplier = 1.0                    # nprobe = ceil(sqrt(ncells) x mult); 1.5 = higher recall
+# nprobe_min = 3
+# nprobe_max = 0                             # 0 = unlimited (capped at ncells)
+
 # [storage.viper_config]
 # row_group_size = 100000
 # compression = "zstd"

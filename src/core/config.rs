@@ -1353,6 +1353,62 @@ pub struct SstConfig {
     /// Hot-path override: `PROXIMADB_SEARCH_PARALLEL_FILES` env var.
     #[serde(default)]
     pub search_parallel_files: u16,
+
+    /// TD-RDSTRAT-8 / COGS: the PAX coarse-probe (IVF) system — compaction
+    /// trains + emits the A0 coarse directory (`enable_write_train`) and search
+    /// probes the nearest cells (`enable_read_probe`, geometric `nprobe`).
+    /// Configure under `[storage.sst_config.coarse_probe]` in TOML. Env overrides
+    /// still win (`PROXIMADB_PAX_READ_COARSE_PROBE`, `..._NPROBE`,
+    /// `PROXIMADB_PAX_WRITE_A0_TRAIN`). Default: `None` ⇒ `CoarseProbeConfig::default()`.
+    #[serde(default)]
+    pub coarse_probe: Option<CoarseProbeConfig>,
+}
+
+/// PAX coarse-probe (IVF) configuration — the master cloud-cost lever (COGS
+/// measurement arc: IVF cuts GETs/query ~4× and per-tenant COGS ~4× vs full-scan,
+/// recall ~0.98). Compaction trains + emits the A0 coarse directory when
+/// `enable_write_train` is on; search probes the nearest `nprobe` cells when
+/// `enable_read_probe` is on. `nprobe` defaults to the geometric
+/// `ceil(sqrt(ncells) × multiplier)` (sub-linear in corpus: V^0.25; ~56× fewer
+/// ranks than full-scan at 1M), clamped to `[nprobe_min, nprobe_max]`. Env vars
+/// override per-field at call time (see `segment_format.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoarseProbeConfig {
+    /// READ kill-switch: search probes the A0 coarse directory. Default ON.
+    pub enable_read_probe: bool,
+    /// WRITE gate: compaction trains + emits the v3/A0 coarse directory. Default
+    /// ON (the unblock — was OFF; mixed-read-safe: v1/v3 coexist, the read path
+    /// probes only when `a0_len > 0`). Env: `PROXIMADB_PAX_WRITE_A0_TRAIN`.
+    pub enable_write_train: bool,
+    /// Geometric nprobe multiplier: `nprobe = ceil(sqrt(ncells) × multiplier)`.
+    /// Default 1.0 (recall ~0.98; bump to 1.5 for higher recall at more cost).
+    #[serde(default = "default_nprobe_multiplier")]
+    pub nprobe_multiplier: f32,
+    /// Minimum nprobe (floor). Default 3.
+    #[serde(default = "default_nprobe_min")]
+    pub nprobe_min: usize,
+    /// Maximum nprobe (0 = unlimited; capped at ncells anyway). Default 0.
+    #[serde(default)]
+    pub nprobe_max: usize,
+}
+
+fn default_nprobe_multiplier() -> f32 {
+    1.0
+}
+fn default_nprobe_min() -> usize {
+    3
+}
+
+impl Default for CoarseProbeConfig {
+    fn default() -> Self {
+        Self {
+            enable_read_probe: true,
+            enable_write_train: true, // FLIP: emit A0 at compaction by default (COGS lever)
+            nprobe_multiplier: default_nprobe_multiplier(),
+            nprobe_min: default_nprobe_min(),
+            nprobe_max: 0,
+        }
+    }
 }
 
 fn default_block_format() -> String {
@@ -1454,6 +1510,7 @@ impl Default for SstConfig {
             block_format: default_block_format(),
             tiering: None,            // Default: tier-migration disabled
             search_parallel_files: 0, // TD-SEARCH-2: 0 = 50% of CPU cores
+            coarse_probe: None,       // CoarseProbeConfig::default() applied at SstEngine init
         }
     }
 }

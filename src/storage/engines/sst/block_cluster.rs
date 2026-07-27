@@ -465,14 +465,24 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
     Some(ClusterPlan { order, runs })
 }
 
-/// TD-RDSTRAT-8 (rev 3): opt-in gate for the persisted-IVF-probe v3 compaction
-/// layout (the IOP-derived plan written into Region A0). Default **OFF**
-/// (`PROXIMADB_PAX_WRITE_A0_TRAIN=1` to enable) until the recall/GET eval
-/// gates pass; mixed-read-safe beside single-level segments either way.
+/// TD-RDSTRAT-8 (rev 3): gate for the persisted-IVF-probe v3 compaction layout
+/// (the IOP-derived plan written into Region A0). Default **ON** (the COGS-arc
+/// flip — IVF cuts GETs/query ~4× and per-tenant COGS ~4× vs full-scan; the
+/// recall/GET eval gates passed: ledger `nprobe_sweep_trained_1m`). Precedence:
+/// env `PROXIMADB_PAX_WRITE_A0_TRAIN` (truthy `1|true|on|yes` ⇒ on; set to
+/// anything else ⇒ off) → else TOML `[storage.sst_config.coarse_probe]
+/// enable_write_train`. Mixed-read-safe beside single-level segments either way.
 /// Pre-GA clean rename (TD-ENVGATE-1): the former `PROXIMADB_IVF2` name is
 /// RETIRED (ENV_GATE_REGISTRY "Retired names" — reserved, never repurposed).
 pub fn ivf_probe_enabled() -> bool {
-    env_gate_on("PROXIMADB_PAX_WRITE_A0_TRAIN")
+    match std::env::var("PROXIMADB_PAX_WRITE_A0_TRAIN") {
+        // Env set: honor the truthy/non-truthy value.
+        Ok(_) => env_gate_on("PROXIMADB_PAX_WRITE_A0_TRAIN"),
+        // Env unset: fall back to the TOML/config default.
+        Err(_) => {
+            crate::storage::engines::sst::segment_format::coarse_probe_settings().enable_write_train
+        }
+    }
 }
 
 /// Boolean gate read: truthy = `1|true|on|yes`.

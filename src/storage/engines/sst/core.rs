@@ -484,6 +484,15 @@ impl SstEngine {
         // process — N instances would multiply the configured budget by N and
         // leave the boot-warm/shutdown-emit hooks (which see one registered
         // pair) pointed at a cache no query ever touches.
+
+        // TD-RDSTRAT-8 / COGS: initialize the coarse-probe (IVF) settings ONCE
+        // from the TOML config (`SstConfig.coarse_probe` →
+        // `[storage.sst_config.coarse_probe]`). Env overrides apply at the call
+        // sites in segment_format.rs (probe/nprobe) + block_cluster.rs (write-train).
+        crate::storage::engines::sst::segment_format::init_coarse_probe_settings(
+            config.coarse_probe.as_ref(),
+        );
+
         static SHARED_INVARIANTS_CACHE: std::sync::OnceLock<
             Option<Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>>,
         > = std::sync::OnceLock::new();
