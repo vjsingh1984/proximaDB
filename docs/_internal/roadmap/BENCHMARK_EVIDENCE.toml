@@ -704,3 +704,18 @@ hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build"
 date = "2026-07-26"
 version = "fix/td-metrics-2-ivf-dup-panic -> develop"
 
+[[claims]]
+id = "two_tenant_fairness_azurite"
+claim = "TD-CACHE-3 sale-gate bed (Azurite, two tenants, 32MB survivor pool, pin reserve 0.4): tenant A (enterprise) pinned 13.24MB = 98.7% of its 13.42MB entitlement and the floor stayed BYTE-IDENTICAL through tenant B's churn (9,162 admissions, 16.9MB shared-pool, 0 pinned) — residency contract PROVEN with the S3 pinned-vs-entitled gauges as evidence. Latency isolation inconclusive at emulator speed (p95 3->10ms = co-located CPU contention; nothing evicted). BLOCKER: A recorded 12,554 misses / 0 hits on identical repeat queries -> TD-CACHE-6 (probe-armed default path appears to bypass the survivor cache)."
+metric = "pinned vs entitled bytes through churn; per-tenant hit/miss; p95 ratio"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-CACHE-3-hot-tier-per-tenant-enforcement.adoc",
+  "docs/10-quality/td/TD-CACHE-6-survivor-cache-bypassed-on-probe-path.adoc",
+]
+bench_source = "scripts/bench/two_tenant_bed.py"
+bench_command = "python3 scripts/bench/two_tenant_bed.py <bin --features azure> /tmp/tt-server.toml <bed> 5891  # azurite on 11000; env in harness"
+artifact = "docs/10-quality/td/TD-CACHE-6-survivor-cache-bypassed-on-probe-path.adoc"
+hardware = "Local macOS arm64, Azurite 3.36 blob emulator on localhost:11000"
+date = "2026-07-26"
+version = "feat/tt-bed-evidence -> develop"
