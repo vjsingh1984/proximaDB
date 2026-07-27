@@ -170,3 +170,124 @@ pub fn evaluate_filter(
     // remain the shared comparison source that the seam calls into.
     crate::sql_value_filter::evaluate_filter_resolved(expr, &|field| metadata.get(field).cloned())
 }
+
+// ===========================================================================
+// Type-strict comparison (TD-FOUNDATION-3 slice FA-a2 / TF-2 S3)
+// ===========================================================================
+
+/// The class of JSON value an ordered comparison is meaningful *within*.
+///
+/// [`compare_json_values`] deliberately total-orders across classes
+/// (`Null < Bool < Number < String < Array < Object`) so it can sort a mixed
+/// column. That is right for sorting and wrong for authorization: it makes
+/// `clearance >= 3` answer `true` for **every** record whose `clearance` holds a
+/// string, because `String` outranks `Number` by precedence alone, whatever the
+/// string says. See [`compare_json_values_strict`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComparableClass {
+    /// JSON `null`.
+    Null,
+    /// `true` / `false`.
+    Bool,
+    /// Any JSON number (integers and floats share a class — cross-numeric
+    /// comparison is exact and meaningful).
+    Number,
+    /// A JSON string.
+    String,
+    /// A JSON array.
+    Array,
+    /// A JSON object.
+    Object,
+}
+
+/// The [`ComparableClass`] of a value.
+pub fn comparable_class(v: &Value) -> ComparableClass {
+    match v {
+        Value::Null => ComparableClass::Null,
+        Value::Bool(_) => ComparableClass::Bool,
+        Value::Number(_) => ComparableClass::Number,
+        Value::String(_) => ComparableClass::String,
+        Value::Array(_) => ComparableClass::Array,
+        Value::Object(_) => ComparableClass::Object,
+    }
+}
+
+/// Ordered comparison that **refuses to answer across classes**.
+///
+/// Returns `None` when the two operands are of different [`ComparableClass`]es,
+/// so the caller must decide what an incomparable pair means. An authorization
+/// evaluator decides *deny*; that is the whole point — the alternative is the
+/// type-precedence fallthrough, under which a numeric threshold silently admits
+/// every string-valued record.
+///
+/// This is additive: [`compare_json_values`] is unchanged, so sorting and the
+/// live user-facing filter paths keep their existing total order.
+pub fn compare_json_values_strict(a: &Value, b: &Value) -> Option<Ordering> {
+    if comparable_class(a) != comparable_class(b) {
+        return None;
+    }
+    Some(compare_json_values(a, b))
+}
+
+#[cfg(test)]
+mod type_strict_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn the_permissive_order_admits_a_string_against_a_numeric_threshold() {
+        // Characterizing the defect this exists to fix, not endorsing it: under
+        // the total order a string outranks any number by precedence, so
+        // `clearance >= 3` is true for a record whose clearance is *any* string.
+        assert_eq!(
+            compare_json_values(&json!("TOP_SECRET"), &json!(3)),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare_json_values(&json!("2"), &json!(3)),
+            Ordering::Greater,
+            "even a string that looks like a smaller number outranks it"
+        );
+    }
+
+    #[test]
+    fn the_strict_order_refuses_to_compare_across_classes() {
+        assert_eq!(
+            compare_json_values_strict(&json!("TOP_SECRET"), &json!(3)),
+            None
+        );
+        assert_eq!(compare_json_values_strict(&json!("2"), &json!(3)), None);
+        assert_eq!(compare_json_values_strict(&json!(true), &json!(1)), None);
+        assert_eq!(compare_json_values_strict(&json!(null), &json!(0)), None);
+        assert_eq!(compare_json_values_strict(&json!([1]), &json!("a")), None);
+    }
+
+    #[test]
+    fn the_strict_order_agrees_with_the_total_order_within_a_class() {
+        for (a, b) in [
+            (json!(1), json!(2)),
+            (json!(2.5), json!(2.5)),
+            (json!("a"), json!("b")),
+            (json!(false), json!(true)),
+            (json!([1, 2]), json!([1, 3])),
+            (json!(null), json!(null)),
+        ] {
+            assert_eq!(
+                compare_json_values_strict(&a, &b),
+                Some(compare_json_values(&a, &b)),
+                "strict and total order disagree within a class for {a} vs {b}"
+            );
+        }
+    }
+
+    #[test]
+    fn integers_and_floats_share_a_class() {
+        // Cross-numeric comparison is exact and meaningful, so it must not be
+        // refused — a `score > 0.8` policy has to work against an integer 1.
+        assert_eq!(
+            compare_json_values_strict(&json!(1), &json!(0.8)),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(comparable_class(&json!(1)), comparable_class(&json!(1.5)));
+    }
+}
