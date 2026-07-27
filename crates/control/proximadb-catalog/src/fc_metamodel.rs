@@ -315,6 +315,367 @@ pub enum FieldMask {
     Forbid,
 }
 
+// ===========================================================================
+// Derivation from the catalog schema (attaches the metamodel to Model A)
+// ===========================================================================
+
+use crate::{CatalogColumn, CatalogTableSchema};
+
+/// Whether a column's logical type is a vector modality — such a column gets a
+/// `Surrogate` facet (its similarity access path is physical, not in the slot).
+fn is_vector_column(col: &CatalogColumn) -> bool {
+    use proximadb_data_model::ProximaType;
+    matches!(
+        col.data_type,
+        ProximaType::DenseVector { .. }
+            | ProximaType::SparseVector { .. }
+            | ProximaType::BinaryVector { .. }
+    )
+}
+
+/// Resolve a column name to a [`ColumnRef`] against the schema, using the stable
+/// physical field id (`CatalogColumn::id`) as the ordinal; falls back to the
+/// positional index for a name not found in the schema.
+fn column_ref(schema: &CatalogTableSchema, name: &str) -> ColumnRef {
+    match schema
+        .columns
+        .iter()
+        .enumerate()
+        .find(|(_, c)| c.name == name)
+    {
+        Some((_, c)) => ColumnRef {
+            ordinal: c.id.max(0) as u32,
+            name: name.to_string(),
+        },
+        None => ColumnRef {
+            ordinal: schema.columns.len() as u32,
+            name: name.to_string(),
+        },
+    }
+}
+
+/// Derive the [`IdentitySlot`] for a table from its catalog schema (D12-b).
+///
+/// This is the seam by which F2's CKS registration reads its natural key **from
+/// the metamodel**: the `UniquenessPrimary` facet's `key` is exactly the PK the
+/// ConditionalKeyStore fences. Derivation rules:
+///
+/// - `primary_key` (non-empty) → one `UniquenessPrimary` facet.
+/// - each **unique index** whose columns differ from the PK → a
+///   `UniquenessSecondary` facet referencing the PK as `owning_primary`
+///   (skipped, with a gap noted, when there is no PK to own it).
+/// - each **vector column** → a `Surrogate` facet.
+/// - non-vector, non-deleted columns → `filterable_columns` (the ABAC allow-list
+///   source — the round-2 fix; this, not an access path, is the honest signal).
+/// - no PK → a `completeness_gaps` note.
+///
+/// Physical access path is deliberately **not** derived (D12-c: it lives in the
+/// storage layout / index set, never the logical identity slot).
+pub fn identity_slot_from_table_schema(schema: &CatalogTableSchema) -> IdentitySlot {
+    let keyspace = schema.name.clone();
+    let mut facets = Vec::new();
+    let mut gaps = Vec::new();
+
+    // 1. Primary key → UniquenessPrimary (the CKS-fenced natural key).
+    let primary_spec = if schema.primary_key.is_empty() {
+        gaps.push("no natural primary key declared".to_string());
+        None
+    } else {
+        let spec = CompositeKeySpec {
+            keyspace: keyspace.clone(),
+            columns: schema
+                .primary_key
+                .iter()
+                .map(|n| column_ref(schema, n))
+                .collect(),
+        };
+        facets.push(IdentityFacet {
+            role: IdentityRole::UniquenessPrimary,
+            key: spec.clone(),
+        });
+        Some(spec)
+    };
+
+    // 2. Unique indexes → UniquenessSecondary (only when a PK owns the row).
+    for idx in &schema.indexes {
+        if !idx.is_unique || idx.columns == schema.primary_key {
+            continue;
+        }
+        let key = CompositeKeySpec {
+            keyspace: keyspace.clone(),
+            columns: idx.columns.iter().map(|n| column_ref(schema, n)).collect(),
+        };
+        match &primary_spec {
+            Some(pk) => facets.push(IdentityFacet {
+                role: IdentityRole::UniquenessSecondary {
+                    owning_primary: pk.clone(),
+                },
+                key,
+            }),
+            None => gaps.push(format!(
+                "unique index '{}' has no primary key to own it",
+                idx.name
+            )),
+        }
+    }
+
+    // 3. Vector columns → Surrogate facets.
+    for col in &schema.columns {
+        if !col.is_deleted && is_vector_column(col) {
+            facets.push(IdentityFacet {
+                role: IdentityRole::Surrogate,
+                key: CompositeKeySpec {
+                    keyspace: keyspace.clone(),
+                    columns: vec![column_ref(schema, &col.name)],
+                },
+            });
+        }
+    }
+
+    // 4. filterable_columns = non-vector, non-deleted columns (ABAC allow-list).
+    let filterable_columns = schema
+        .columns
+        .iter()
+        .filter(|c| !c.is_deleted && !is_vector_column(c))
+        .map(|c| ColumnRef {
+            ordinal: c.id.max(0) as u32,
+            name: c.name.clone(),
+        })
+        .collect();
+
+    IdentitySlot {
+        facets,
+        filterable_columns,
+        completeness_gaps: gaps,
+    }
+}
+
+// ===========================================================================
+// Hierarchical policy resolver (the policy *model* — inert, no enforcement)
+// ===========================================================================
+
+/// The container a read targets, addressed by stable ids (ADR-075). A policy
+/// binding at a broader scope (namespace ⊇ table ⊇ column) applies to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Target {
+    /// The namespace the target lives in.
+    pub namespace: NamespaceId,
+    /// The table/collection.
+    pub table: CollectionId,
+    /// A specific column, when resolving column scope (else `None`).
+    pub column: Option<u32>,
+}
+
+/// The composed policy for a [`Target`] — the **model** output. It records the
+/// effect-level decision (assuming every predicate holds), the row-predicate refs
+/// to AND, and the field masks. It does **not** evaluate predicates against a
+/// subject — that is FA's enforcement job (TD-FOUNDATION-3). Default is
+/// [`Effect::Deny`] (fail-closed) when no binding applies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectivePolicy {
+    /// The effect-level decision after deny-bias composition (a `Deny` binding
+    /// at any applicable scope wins). `Deny` with `applicable == 0` is the
+    /// fail-closed default (no binding).
+    pub decision: Effect,
+    /// Whether any binding actually applied (distinguishes an explicit `Deny`
+    /// from the fail-closed default).
+    pub applicable: usize,
+    /// Row-predicate object refs to AND together (from applicable `Permit`
+    /// bindings). Empty = no row restriction *at the model level*; FA still
+    /// resolves them against the subject.
+    pub predicate_refs: Vec<ObjectId>,
+    /// Field masks to apply, keyed by column ordinal (from column-scoped bindings).
+    pub field_masks: Vec<(u32, FieldMask)>,
+}
+
+/// Does a binding's [`Scope`] cover the [`Target`] (broader-or-equal in the
+/// namespace ⊇ table ⊇ column hierarchy)?
+fn scope_covers(scope: &Scope, target: &Target) -> bool {
+    match *scope {
+        Scope::Namespace(ns) => ns == target.namespace,
+        Scope::Table(t) => t == target.table,
+        Scope::Column { table, column } => table == target.table && target.column == Some(column),
+    }
+}
+
+/// Resolve the effective policy for a `target` from the given bindings (TF-2
+/// §3.2). **Deny-biased and hierarchical**: any applicable `Deny` wins; otherwise
+/// the applicable `Permit`s contribute their row-predicate refs (ANDed) and any
+/// column-scoped bindings contribute field masks. Fail-closed: no applicable
+/// binding ⇒ `Deny` with `applicable == 0`.
+///
+/// This is the policy **model** — it composes structure, not a subject decision.
+/// FA (TD-FOUNDATION-3) evaluates `predicate_refs` against the subject to admit or
+/// deny individual rows.
+pub fn resolve_effective_policy(bindings: &[PolicyBinding], target: &Target) -> EffectivePolicy {
+    let mut applicable = 0usize;
+    let mut has_deny = false;
+    let mut predicate_refs = Vec::new();
+    let mut field_masks = Vec::new();
+
+    for b in bindings {
+        if !scope_covers(&b.scope, target) {
+            continue;
+        }
+        applicable += 1;
+        match b.effect {
+            Effect::Deny => has_deny = true,
+            Effect::Permit => {
+                if let Some(p) = b.predicate_ref {
+                    predicate_refs.push(p);
+                }
+            }
+        }
+        if let (Scope::Column { column, .. }, Some(mask)) = (&b.scope, b.field_mask) {
+            field_masks.push((*column, mask));
+        }
+    }
+
+    let decision = if applicable == 0 || has_deny {
+        Effect::Deny // fail-closed default, or an explicit deny wins
+    } else {
+        Effect::Permit
+    };
+
+    EffectivePolicy {
+        decision,
+        applicable,
+        predicate_refs,
+        field_masks,
+    }
+}
+
+// ===========================================================================
+// Subject attributes (ABAC's "A") — with the attribute-trust boundary as a type
+// ===========================================================================
+
+use std::collections::BTreeMap;
+
+/// An opaque authenticated principal id, resolved at the identity seam (ADR-074).
+/// A subject is a *principal*, not a catalog object — hence a string, not a
+/// stable catalog id.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SubjectId(pub String);
+
+/// An ABAC attribute value. `Int` supports ordered comparisons (e.g. clearance
+/// levels); `List` supports membership (e.g. group/role sets).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttrValue {
+    /// A string attribute (dept, region, …).
+    Str(String),
+    /// An integer attribute (clearance level, …).
+    Int(i64),
+    /// A boolean attribute.
+    Bool(bool),
+    /// A list attribute (groups, roles, …).
+    List(Vec<String>),
+}
+
+/// Where an attribute value came from — **the attribute-trust boundary as a
+/// type** (round-2/3 red-team fix). Only [`AttrSource::ServerResolved`] values
+/// may be *load-bearing* in an authz predicate; [`AttrSource::Claim`] values are
+/// advisory labels a tenant-controlled IdP asserted and must **never** decide an
+/// admit/deny (else a forged `clearance`/`role` claim escalates).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttrSource {
+    /// Asserted by the subject's IdP claims — advisory only, not load-bearing.
+    Claim,
+    /// Re-resolved server-side against the policy's tenant authority — load-bearing.
+    ServerResolved,
+}
+
+/// One attribute: its value plus its provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attr {
+    /// The value.
+    pub value: AttrValue,
+    /// Where it came from (governs whether it is load-bearing).
+    pub source: AttrSource,
+}
+
+/// The subject's attribute bag (ABAC's "A"). Carries dept/clearance/region/etc.,
+/// each tagged with its [`AttrSource`]. **Privilege-granting roles are not a
+/// special field** — a role is just an attribute, and like every attribute it is
+/// load-bearing only when `ServerResolved`. This is how the model closes
+/// admin-by-claims and the `Reference` forged-attribute leak: FA reads attributes
+/// via [`SubjectAttributes::load_bearing`], which returns `None` for a claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubjectAttributes {
+    /// The authenticated principal.
+    pub subject_id: SubjectId,
+    /// The tenant the subject is scoped to (ADR-075 stable id, from the seam).
+    pub tenant_stable_id: TenantStableId,
+    attrs: BTreeMap<String, Attr>,
+}
+
+impl SubjectAttributes {
+    /// A subject with no attributes yet.
+    pub fn new(subject_id: impl Into<String>, tenant_stable_id: TenantStableId) -> Self {
+        Self {
+            subject_id: SubjectId(subject_id.into()),
+            tenant_stable_id,
+            attrs: BTreeMap::new(),
+        }
+    }
+
+    /// Add a **claim-sourced** attribute (advisory; never load-bearing). Use this
+    /// for values that arrive in an SSO/OIDC token.
+    pub fn with_claim(mut self, key: impl Into<String>, value: AttrValue) -> Self {
+        self.attrs.insert(
+            key.into(),
+            Attr {
+                value,
+                source: AttrSource::Claim,
+            },
+        );
+        self
+    }
+
+    /// Add a **server-resolved** attribute (authoritative; load-bearing). Use this
+    /// for values `resolve_effective_attributes` produced against the tenant's
+    /// authority.
+    pub fn with_resolved(mut self, key: impl Into<String>, value: AttrValue) -> Self {
+        self.attrs.insert(
+            key.into(),
+            Attr {
+                value,
+                source: AttrSource::ServerResolved,
+            },
+        );
+        self
+    }
+
+    /// The attribute (value + provenance) for `key`, regardless of source —
+    /// suitable for display/audit, **not** for an authz decision.
+    pub fn get(&self, key: &str) -> Option<&Attr> {
+        self.attrs.get(key)
+    }
+
+    /// The **load-bearing** value for `key` — `Some` only when the attribute is
+    /// `ServerResolved`. This is the accessor FA uses inside a predicate; a
+    /// claim-sourced value returns `None`, so a forged claim cannot satisfy a
+    /// policy (the attribute-trust boundary, enforced by the type).
+    pub fn load_bearing(&self, key: &str) -> Option<&AttrValue> {
+        match self.attrs.get(key) {
+            Some(Attr {
+                value,
+                source: AttrSource::ServerResolved,
+            }) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The number of attributes carried (any source).
+    pub fn len(&self) -> usize {
+        self.attrs.len()
+    }
+
+    /// Whether the bag is empty.
+    pub fn is_empty(&self) -> bool {
+        self.attrs.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,5 +841,240 @@ mod tests {
             }
         ));
         assert_eq!(b.effect, Effect::Deny);
+    }
+
+    // --- derivation from the catalog schema ---
+
+    fn dense_vec(dim: usize) -> proximadb_data_model::ProximaType {
+        proximadb_data_model::ProximaType::DenseVector {
+            element: proximadb_data_model::VectorElement::Float32,
+            dim,
+        }
+    }
+
+    #[test]
+    fn derives_primary_secondary_surrogate_from_schema() {
+        // users(id PK, email UNIQUE, dept scalar, body_vec vector)
+        let schema = CatalogTableSchema::new("users")
+            .with_column(CatalogColumn::new(
+                0,
+                "id",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(CatalogColumn::new(
+                1,
+                "email",
+                proximadb_data_model::ProximaType::String,
+            ))
+            .with_column(CatalogColumn::new(
+                2,
+                "dept",
+                proximadb_data_model::ProximaType::String,
+            ))
+            .with_column(CatalogColumn::new(3, "body_vec", dense_vec(384)))
+            .with_primary_key(vec!["id".to_string()])
+            .with_index(
+                crate::CatalogIndex::new(
+                    "uq_email",
+                    vec!["email".to_string()],
+                    crate::CatalogIndexType::BTree,
+                )
+                .unique(),
+            );
+
+        let slot = identity_slot_from_table_schema(&schema);
+        assert!(slot.validate().is_ok());
+        assert_eq!(slot.primary_count(), 1);
+
+        // one primary (id), one secondary UNIQUE (email → owns id), one surrogate (body_vec)
+        let primary: Vec<_> = slot
+            .facets
+            .iter()
+            .filter(|f| matches!(f.role, IdentityRole::UniquenessPrimary))
+            .collect();
+        assert_eq!(primary.len(), 1);
+        assert_eq!(primary[0].key.columns[0].name, "id");
+
+        let secondary: Vec<_> = slot
+            .facets
+            .iter()
+            .filter(|f| matches!(f.role, IdentityRole::UniquenessSecondary { .. }))
+            .collect();
+        assert_eq!(secondary.len(), 1);
+        assert_eq!(secondary[0].key.columns[0].name, "email");
+        match &secondary[0].role {
+            IdentityRole::UniquenessSecondary { owning_primary } => {
+                assert_eq!(owning_primary.columns[0].name, "id"); // owns the PK
+            }
+            _ => unreachable!(),
+        }
+
+        let surrogates: Vec<_> = slot
+            .facets
+            .iter()
+            .filter(|f| matches!(f.role, IdentityRole::Surrogate))
+            .collect();
+        assert_eq!(surrogates.len(), 1);
+        assert_eq!(surrogates[0].key.columns[0].name, "body_vec");
+
+        // filterable_columns excludes the vector, includes the scalars.
+        let filt: Vec<&str> = slot
+            .filterable_columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert!(filt.contains(&"dept"));
+        assert!(filt.contains(&"email"));
+        assert!(!filt.contains(&"body_vec"));
+    }
+
+    #[test]
+    fn derives_gap_when_no_primary_key() {
+        let schema = CatalogTableSchema::new("events").with_column(CatalogColumn::new(
+            0,
+            "payload",
+            proximadb_data_model::ProximaType::String,
+        ));
+        let slot = identity_slot_from_table_schema(&schema);
+        assert_eq!(slot.primary_count(), 0);
+        assert!(
+            slot.completeness_gaps
+                .iter()
+                .any(|g| g.contains("no natural primary key"))
+        );
+    }
+
+    // --- hierarchical policy resolver ---
+
+    fn binding(object_id: ObjectId, scope: Scope, effect: Effect) -> PolicyBinding {
+        PolicyBinding {
+            object_id,
+            tenant_stable_id: 7,
+            scope,
+            effect,
+            predicate_ref: None,
+            field_mask: None,
+        }
+    }
+
+    fn target(ns: NamespaceId, table: CollectionId, column: Option<u32>) -> Target {
+        Target {
+            namespace: ns,
+            table,
+            column,
+        }
+    }
+
+    #[test]
+    fn no_binding_is_fail_closed_deny() {
+        let eff = resolve_effective_policy(&[], &target(1, 200, None));
+        assert_eq!(eff.decision, Effect::Deny);
+        assert_eq!(eff.applicable, 0); // the fail-closed default, not an explicit deny
+    }
+
+    #[test]
+    fn namespace_deny_masks_a_table_permit() {
+        let bindings = vec![
+            binding(1, Scope::Table(200), Effect::Permit),
+            binding(2, Scope::Namespace(1), Effect::Deny),
+        ];
+        let eff = resolve_effective_policy(&bindings, &target(1, 200, None));
+        // Deny at the broader namespace scope wins over the table permit.
+        assert_eq!(eff.decision, Effect::Deny);
+        assert_eq!(eff.applicable, 2);
+    }
+
+    #[test]
+    fn permits_and_their_row_predicates_together() {
+        let mut b1 = binding(1, Scope::Namespace(1), Effect::Permit);
+        b1.predicate_ref = Some(900);
+        let mut b2 = binding(2, Scope::Table(200), Effect::Permit);
+        b2.predicate_ref = Some(901);
+        let eff = resolve_effective_policy(&[b1, b2], &target(1, 200, None));
+        assert_eq!(eff.decision, Effect::Permit);
+        // both row predicates are collected to be ANDed by FA
+        assert_eq!(eff.predicate_refs, vec![900, 901]);
+    }
+
+    #[test]
+    fn column_scope_only_applies_when_targeting_that_column() {
+        let mut b = binding(
+            1,
+            Scope::Column {
+                table: 200,
+                column: 3,
+            },
+            Effect::Permit,
+        );
+        b.field_mask = Some(FieldMask::Redact);
+        // targeting the whole table (column None): the column binding does not apply
+        let table_eff = resolve_effective_policy(std::slice::from_ref(&b), &target(1, 200, None));
+        assert_eq!(table_eff.applicable, 0);
+        assert_eq!(table_eff.decision, Effect::Deny); // fail-closed
+        // targeting column 3: it applies and contributes the mask
+        let col_eff = resolve_effective_policy(&[b], &target(1, 200, Some(3)));
+        assert_eq!(col_eff.applicable, 1);
+        assert_eq!(col_eff.decision, Effect::Permit);
+        assert_eq!(col_eff.field_masks, vec![(3, FieldMask::Redact)]);
+    }
+
+    #[test]
+    fn unrelated_namespace_or_table_does_not_apply() {
+        let bindings = vec![
+            binding(1, Scope::Namespace(2), Effect::Permit), // different ns
+            binding(2, Scope::Table(999), Effect::Permit),   // different table
+        ];
+        let eff = resolve_effective_policy(&bindings, &target(1, 200, None));
+        assert_eq!(eff.applicable, 0);
+        assert_eq!(eff.decision, Effect::Deny);
+    }
+
+    // --- subject attributes + the attribute-trust boundary ---
+
+    #[test]
+    fn claim_sourced_attribute_is_not_load_bearing() {
+        // A tenant-controlled IdP forges clearance=TOP_SECRET as a CLAIM.
+        let s = SubjectAttributes::new("alice", 7)
+            .with_claim("clearance", AttrValue::Int(9))
+            .with_claim("role", AttrValue::List(vec!["system_admin".into()]));
+        // It is visible for display/audit...
+        assert!(s.get("clearance").is_some());
+        // ...but NOT load-bearing: a predicate reading it gets None, so the forged
+        // clearance/role cannot satisfy any policy (closes admin-by-claims + the
+        // Reference forged-attribute leak at the type level).
+        assert_eq!(s.load_bearing("clearance"), None);
+        assert_eq!(s.load_bearing("role"), None);
+    }
+
+    #[test]
+    fn server_resolved_attribute_is_load_bearing() {
+        let s = SubjectAttributes::new("bob", 7)
+            .with_resolved("clearance", AttrValue::Int(3))
+            .with_resolved("dept", AttrValue::Str("eng".into()));
+        assert_eq!(s.load_bearing("clearance"), Some(&AttrValue::Int(3)));
+        assert_eq!(s.load_bearing("dept"), Some(&AttrValue::Str("eng".into())));
+    }
+
+    #[test]
+    fn a_claim_cannot_be_upgraded_by_coexisting_resolved_key() {
+        // Same key: the last write wins per the bag; a claim overwriting a resolved
+        // value (or vice-versa) carries its own source. Here the resolved value is
+        // authoritative and load-bearing.
+        let s = SubjectAttributes::new("carol", 7)
+            .with_claim("region", AttrValue::Str("us".into()))
+            .with_resolved("region", AttrValue::Str("eu".into()));
+        assert_eq!(s.load_bearing("region"), Some(&AttrValue::Str("eu".into())));
+        assert_eq!(s.get("region").unwrap().source, AttrSource::ServerResolved);
+    }
+
+    #[test]
+    fn subject_is_tenant_scoped_and_bag_reports_size() {
+        let s =
+            SubjectAttributes::new("dan", 42).with_resolved("dept", AttrValue::Str("hr".into()));
+        assert_eq!(s.subject_id, SubjectId("dan".into()));
+        assert_eq!(s.tenant_stable_id, 42);
+        assert_eq!(s.len(), 1);
+        assert!(!s.is_empty());
+        assert!(s.load_bearing("missing").is_none());
     }
 }
