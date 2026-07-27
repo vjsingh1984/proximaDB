@@ -1,0 +1,51 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-COMPACT-7: L0 admission control watermarks (slowdown + stop triggers)
+:status: Open
+:dim: D1
+:pillar: REL
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open.** Design decided in ADR-076 (Proposed). Depends on TD-COMPACT-6 (async compaction — watermarks are only meaningful when compaction runs in the background).
+| Priority | **P1** — prevents compaction storms + unbounded L0 backlog once compaction is async.
+| Component | `src/storage/engines/sst/flush/mod.rs` (flush trigger); `src/storage/auto_flush_driver.rs` (the write gate); new fields on `SstConfig`.
+| Evidence | 2026-07-26: no admission control exists — writes proceed at full speed regardless of L0 backlog. The only backpressure is memtable-level (`BACKPRESSURE: collection over memtable threshold`). RocksDB/HBase/Cassandra all have L0 watermarks; ProximaDB does not.
+|===
+
+== Mechanism
+
+Add two L0-file-count watermarks to `SstConfig` (TOML-controllable under
+`[storage.sst_config]`):
+
+- `l0_slowdown_trigger` (default 8): when L0 file count ≥ this, delay each
+  write/flush by ~1 ms (gives the async compaction workers breathing room).
+- `l0_stop_trigger` (default 12): when L0 file count ≥ this, reject writes
+  with BACKPRESSURE (same mechanism as the existing memtable backpressure)
+  until compaction reduces L0 below the watermark.
+
+The watermarks are per-collection (each collection tracks its own L0 count).
+They are read at the auto-flush driver's flush-decision point
+(`auto_flush_driver.rs`), not at every individual write (amortized).
+
+== Fix
+
+1. Add `l0_slowdown_trigger: u32` + `l0_stop_trigger: u32` to `SstConfig`
+   with `#[serde(default)]`.
+2. Add an L0-count check in the flush path: before flushing, count L0 files;
+   if ≥ slowdown → sleep ~1 ms; if ≥ stop → return backpressure.
+3. The check is in the auto-flush driver (not the per-write hot path) to
+   amortize cost.
+
+== Verification
+
+* During a sustained ingest that outpaces compaction: writes slow down (not
+  crash/stall indefinitely); L0 count stays bounded (< stop_trigger).
+* After compaction catches up: writes resume full speed.
+
+== Related
+
+link:ADR-076-async-compaction-admission-control.adoc[ADR-076],
+link:TD-COMPACT-6-async-compaction.adoc[TD-COMPACT-6],
+link:TD-COMPACT-8-training-arm-debounce.adoc[TD-COMPACT-8].
