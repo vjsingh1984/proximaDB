@@ -1098,21 +1098,12 @@ impl SharedServices {
         // Phase 5 freshness LSN source.
         debug!("🔧 SharedServices::new - Creating WAL manager for two-stage search...");
         let wal_manager = {
-            use crate::storage::persistence::write_ahead_log::{
-                WALBatchFactory, WriteAheadLogManager,
-            };
+            use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
-            // Create WAL batch strategy
-            let strategy_type = crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
-            let strategy = WALBatchFactory::create_batch_serialization_strategy(
-                strategy_type,
-                &wal_config,
-                filesystem_factory.clone(),
-            )
-            .await?;
-
-            // Create WAL manager directly
-            Arc::new(WriteAheadLogManager::new(strategy, wal_config.clone()).await?)
+            // Create WAL manager directly. The batch-serialization strategy
+            // stack was removed — the manager routes on `config.strategy_type`
+            // plus the global write buffer, never a `WALBatchStrategy` object.
+            Arc::new(WriteAheadLogManager::new(wal_config.clone()).await?)
         };
         debug!("✅ SharedServices::new - WAL manager created successfully");
 

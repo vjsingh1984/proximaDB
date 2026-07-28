@@ -34,9 +34,7 @@ use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::metadata::store::MetadataCacheConfig;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::config::WriteBufferStrategyType;
-use proximadb::storage::persistence::write_ahead_log::{
-    WALBatchFactory, WALConfig, WriteAheadLogManager,
-};
+use proximadb::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 use proximadb_data_model::ProximaValue;
 use proximadb_records::ProximaRecord;
@@ -177,13 +175,7 @@ impl UnifiedTestEnvironment {
         let sst_engine = Arc::new(SstEngine::new().await?);
 
         let wal_config = WALConfig::default();
-        let strategy = WALBatchFactory::create_batch_serialization_strategy(
-            WriteBufferStrategyType::BincodeBatch,
-            &wal_config,
-            self.filesystem.clone(),
-        )
-        .await?;
-        let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
+        let wal_manager = Arc::new(WriteAheadLogManager::new(wal_config).await?);
 
         let axis_manager = Arc::new(AxisManager::new(AxisConfig::default()).await?);
 
