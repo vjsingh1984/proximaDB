@@ -1,7 +1,7 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-HYBRID-1: Cost-based hybrid ANN+filter planner + woven RLS/ABAC filter — F7
-:status: Draft — hardened after a 2-agent red-team (2026-07-27); §2/§3 reframed, §8 supersedes the naïve tenancy design
+:status: Draft — mechanism (D2) built + merged (#1260, #1264); rev-4 §9 records the verified scope (WI-2 already done, per-collection policy deferred to TD-073). Hardened after a 2-agent red-team (2026-07-27); §2/§3 reframed, §8 supersedes the naïve tenancy design
 :date: 2026-07-27
 :authors: co-design session 2026-07-27
 :realizes: ADR-072 D15 (hybrid ANN+filter is a cost-based planner decision; RLS/ABAC rides the same always-ANDed global filter)
@@ -151,3 +151,40 @@ Two adversarial agents attacked the draft against the code; a third verification
 5. **Added the single-brain + `unwrap_or(1.0)` fix (D1)** from the two-brain finding.
 
 **Re-scope:** the *planner* mechanism is **smaller than the 2w estimate** (much is extraction + wiring). The isolation concerns (§4) turned out to be **hardening, not a live vuln**. TD stays **Draft** until D3's RLS-reuse-vs-delete call is made with FA; there is no longer a blocking security item.
+
+== 9. Build outcome + verified scope (rev 4, 2026-07-28)
+
+D2 (the mechanism) was built and shipped as two PRs:
+
+* **#1260 (WI-1a) — `CompiledGlobalFilter`** in `proximadb-search-types::compiled_filter`: the single
+  id + metadata predicate, co-located with `evaluate_filter` (foundation leaf — no layering inversion,
+  no operator-enum duplication). 6 parity unit tests. **Merged.**
+* **#1264 (WI-1b) — rewire** the three `AxisManager` sites (Inline closure, residual re-filter, exact
+  PreFilter) through it. Behaviour-preserving; verified by the 6 unit tests + the 2 direct parity tests
+  (`test_predicate_search_all_pass_matches_unfiltered`, `test_bloom_filter_prefiltering`) + 364 axis
+  lib tests.
+
+**WI-2/WI-3 verification changed the remaining scope (this is the load-bearing rev-4 finding):**
+
+* **WI-2 ("thread policy + selectivity") is ALREADY DONE.** The canonical path builds the query via
+  `build_axis_hybrid_query_with_policy` (`services/operations/vectors/hybrid/axis_builder.rs`, called at
+  `legacy.rs:3599`), which threads `estimated_selectivity` + `ann_filtering_mode` + a policy into AXIS;
+  the policy-driven Pre/Inline/Post branches (`manager.rs:1448/1459/1474`) are reachable. The recon's
+  "`contract.rs:113` drops the fields via `..default()`" was the **storage-DTO boundary**, not the
+  service path — a conflation.
+* **The real gap is a DORMANT feature, not missing wiring.** The per-collection `AnnFilteringPolicy`
+  (`CollectionRecord.ann_filtering_policy`, catalog `lib.rs:674`; builder `with_ann_filtering_policy`
+  `:940`) is **settable nowhere and read nowhere** — `legacy.rs:3610` hardcodes
+  `AnnFilteringPolicy::default()`, and the builder has zero callers. Activating it (proto/config surface
+  to *set* a policy + read-side resolution) is a **multi-layer feature = TD-073**, deferred. Wiring only
+  the read side would be inert (every collection has the default).
+* **WI-3 (two-brain) is live but deterministic.** `UnifiedQueryOptimizer` runs on the vector path
+  (`legacy.rs:2580` et al.) and computes `plan.ann_filtering_mode`, but for filtered queries the catalog
+  policy's `routing_mode` at `manager.rs:1421` **always overrides** it (a policy is always present via the
+  hardcoded default). Per D15 the catalog policy is authoritative, so this is correct-by-design — the
+  optimizer's mode is advisory/EXPLAIN for filtered ANN. No live bug; a clarity/dead-value cleanup at most.
+
+**Decision (2026-07-28):** F7's shippable code = the D2 unification (#1260 + #1264). The per-collection
+policy activation is folded into **TD-073** (dormant-feature, multi-layer). WI-4 (the `access_predicate`
+FA seam) and WI-5 (EXPLAIN trace) remain available but are additive/speculative until FA unblocks. TD
+stays **Draft**; no further F7 code is queued pending a TD-073 or FA decision.
