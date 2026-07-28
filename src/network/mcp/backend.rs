@@ -9,13 +9,15 @@
 //! already returns `serde_json::Value`). The `event` tool appends to the ADR-022
 //! auditable `EventLogEngine`, and `memory` runs a scoped semantic search (read)
 //! over agent memory via a `VectorMemoryStore` — both shared from
-//! `SharedServices`. Memory *store*/put is LLM-gated (TD-101), and `checkpoint`
-//! needs a wired production backend (TD-MCP-1) — those return an explicit "not
-//! yet wired in-process" rather than fabricate.
+//! `SharedServices`. `checkpoint` is event-sourced over the same `EventLogEngine`
+//! via `AgentCheckpointStore` (TD-MCP-1 phase MCP-1d). Memory *store*/put remains
+//! LLM-gated (TD-101) and is not offered on this surface — the tool description
+//! says so rather than fabricating.
 
 use crate::core::statistics::{StatisticsSummary, statistics_registry};
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::services::VectorOperationsService;
+use crate::services::agent_checkpoint::{AgentCheckpointStore, CheckpointPut, CheckpointScope};
 use crate::services::agent_memory::{
     EmbeddingServiceEmbedder, ExtractedFact, MemoryStore, MemoryWriteScope, VectorMemoryStore,
 };
@@ -97,13 +99,6 @@ fn query_string(args: &Value) -> Result<String, BackendError> {
             "missing required `query` (a query string)".to_string(),
         )),
     }
-}
-
-fn not_wired(tool: &str) -> BackendError {
-    BackendError::internal(format!(
-        "`{tool}` (ADR-022 agent state) is not yet wired in-process — it needs a server-composed \
-         backend/store (see TD-MCP-1; the checkpoint store is embedded-only today)"
-    ))
 }
 
 #[async_trait]
@@ -250,8 +245,101 @@ impl ReferenceBackend for EngineBackend {
             .collect();
         Ok(json!({ "hits": items }))
     }
-    async fn checkpoint(&self, _args: &Value) -> Result<Value, BackendError> {
-        Err(not_wired("checkpoint"))
+    /// MCP-1d: agent checkpoint save/get/list, event-sourced over the ADR-022
+    /// event log (`AgentCheckpointStore`). Tenant scope is fail-closed, matching
+    /// the `memory` tool.
+    async fn checkpoint(&self, args: &Value) -> Result<Value, BackendError> {
+        let log = self.event_log.as_ref().ok_or_else(|| {
+            BackendError::internal(
+                "checkpoint unavailable (EventLogEngine failed to initialize)".to_string(),
+            )
+        })?;
+        let tenant_id = args
+            .get("tenant_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| self.tenant.clone())
+            .filter(|t| !t.trim().is_empty())
+            .ok_or_else(|| {
+                BackendError::not_found(
+                    "checkpoint requires a non-empty `tenant_id` (fail-closed isolation)"
+                        .to_string(),
+                )
+            })?;
+        let thread_id = require_str(args, "thread_id")?;
+        let checkpoint_ns = args
+            .get("checkpoint_ns")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let scope = CheckpointScope::new(tenant_id, checkpoint_ns, thread_id);
+        let store = AgentCheckpointStore::new(log.clone());
+        let op = args.get("op").and_then(Value::as_str).unwrap_or("save");
+
+        let bad = |e: anyhow::Error| BackendError::not_found(e.to_string());
+        match op {
+            "save" | "put" => {
+                let checkpoint = args.get("checkpoint").cloned().ok_or_else(|| {
+                    BackendError::not_found("`save` requires a `checkpoint` payload".to_string())
+                })?;
+                let put = CheckpointPut {
+                    checkpoint_id: args
+                        .get("checkpoint_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    parent_checkpoint_id: args
+                        .get("parent_checkpoint_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    checkpoint,
+                    metadata: args.get("metadata").cloned().unwrap_or(Value::Null),
+                    writes: args
+                        .get("writes")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default(),
+                };
+                let saved = store.save(&scope, put).await.map_err(bad)?;
+                Ok(json!({
+                    "checkpoint_id": saved.checkpoint_id,
+                    "config": saved.config(&scope),
+                }))
+            }
+            "get" | "restore" => {
+                let id = args.get("checkpoint_id").and_then(Value::as_str);
+                match store.get(&scope, id).await.map_err(bad)? {
+                    Some(c) => Ok(json!({
+                        "found": true,
+                        "checkpoint_id": c.checkpoint_id,
+                        "parent_checkpoint_id": c.parent_checkpoint_id,
+                        "checkpoint": c.checkpoint,
+                        "metadata": c.metadata,
+                        "writes": c.writes,
+                        "config": c.config(&scope),
+                    })),
+                    None => Ok(json!({ "found": false })),
+                }
+            }
+            "list" => {
+                let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+                let items: Vec<Value> = store
+                    .list(&scope, limit)
+                    .await
+                    .map_err(bad)?
+                    .into_iter()
+                    .map(|c| {
+                        json!({
+                            "checkpoint_id": c.checkpoint_id,
+                            "parent_checkpoint_id": c.parent_checkpoint_id,
+                            "sequence": c.sequence,
+                        })
+                    })
+                    .collect();
+                Ok(json!({ "checkpoints": items }))
+            }
+            other => Err(BackendError::not_found(format!(
+                "unknown checkpoint op `{other}` (expected save|get|list)"
+            ))),
+        }
     }
     async fn event(&self, args: &Value) -> Result<Value, BackendError> {
         let log = self.event_log.as_ref().ok_or_else(|| {

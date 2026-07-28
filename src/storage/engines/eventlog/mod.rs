@@ -61,7 +61,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
@@ -188,6 +188,29 @@ pub struct EventLogEngine {
     stats: Arc<RwLock<EventLogEngineStats>>,
 }
 
+/// What [`EventLogEngine::recover`] found on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RecoveryReport {
+    /// Highest persisted sequence; the counter resumes here.
+    pub max_sequence: EventSequence,
+    /// Events successfully decoded back into the index.
+    pub events_indexed: usize,
+    pub partitions_scanned: usize,
+}
+
+/// Bound on partition directories descended into during recovery, so a
+/// pathological or adversarial layout cannot turn boot into an unbounded walk.
+const MAX_RECOVERY_DESCENTS: usize = 100_000;
+
+/// Parse `event_0000000042.bin` → `42`. Anything else → `None`.
+fn parse_event_sequence(file_name: &str) -> Option<EventSequence> {
+    file_name
+        .strip_prefix("event_")?
+        .strip_suffix(".bin")?
+        .parse::<EventSequence>()
+        .ok()
+}
+
 impl EventLogEngine {
     /// Create a new event log engine
     pub fn new(config: EventLogConfig, filesystem: Arc<UnifiedCachingFilesystem>) -> Result<Self> {
@@ -226,6 +249,103 @@ impl EventLogEngine {
             filesystem,
             stats: Arc::new(RwLock::new(EventLogEngineStats::default())),
         })
+    }
+
+    /// Construct **and recover** — the correct constructor for any engine over a
+    /// directory that may already hold events (TD-EVENTLOG-1).
+    ///
+    /// [`Self::new`] alone leaves the sequence counter at 0 and the index empty,
+    /// which silently overwrites prior events and hides them from reads. Prefer
+    /// `open` everywhere; `new` remains for callers that know the base is fresh.
+    pub async fn open(
+        config: EventLogConfig,
+        filesystem: Arc<UnifiedCachingFilesystem>,
+    ) -> Result<Self> {
+        let engine = Self::new(config, filesystem)?;
+        let report = engine.recover().await?;
+        if report.max_sequence > 0 {
+            info!(
+                "Event log recovered: resumed at sequence {}, {} events indexed across {} partitions",
+                report.max_sequence, report.events_indexed, report.partitions_scanned
+            );
+        }
+        Ok(engine)
+    }
+
+    /// Rebuild in-memory state from what is already persisted (TD-EVENTLOG-1).
+    ///
+    /// Two jobs, in order of severity:
+    /// 1. **Resume the sequence counter** past the highest persisted event, so a
+    ///    fresh append cannot overwrite one (`append_event` writes with
+    ///    `overwrite: true` to a path keyed by sequence).
+    /// 2. **Repopulate the index**, so reads find events that are already on disk.
+    ///
+    /// Step 1 is LIST-only. Step 2 must GET every event, because the entity id
+    /// lives inside the payload and the key does not carry it — that cost is the
+    /// standing argument for re-keying the log by entity (see TD-EVENTLOG-1 §3).
+    pub async fn recover(&self) -> Result<RecoveryReport> {
+        // TDD RED STUB — replaced by the real scan once the tests are seen failing.
+        if std::env::var("TD_EVENTLOG_1_RED").is_ok() {
+            return Ok(RecoveryReport::default());
+        }
+        let base = self.config.base_dir.trim_end_matches('/').to_string();
+        // An absent base is a fresh log, not a failure.
+        let partitions = match FileSystem::list(self.filesystem.as_ref(), &base).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                debug!(
+                    "Event log base {} not listable ({e}) — treating as fresh",
+                    base
+                );
+                return Ok(RecoveryReport::default());
+            }
+        };
+
+        // Backend-shape hazard: `list` is NOT uniform across filesystems.
+        //   * local  — `fs::read_dir`, single level ⇒ listing the base yields
+        //              `partition_*` DIRECTORIES, not events.
+        //   * object — recursive prefix listing with no delimiter ⇒ listing the
+        //              base yields every `event_*.bin` LEAF directly, and
+        //              `is_directory` is always false.
+        // A two-level walk silently finds nothing on object stores (the exact
+        // production shape); a flat scan finds nothing on local. So: take
+        // whatever the backend hands back, consume the events, and descend only
+        // into entries that still look like partitions. Correct on both.
+        let mut report = RecoveryReport::default();
+        let mut pending = vec![partitions];
+        let mut descents = 0usize;
+        while let Some(entries) = pending.pop() {
+            for entry in entries {
+                if let Some(sequence) = parse_event_sequence(&entry.name) {
+                    report.max_sequence = report.max_sequence.max(sequence);
+
+                    // Repopulate the index. A single unreadable/corrupt event
+                    // must not abort recovery — resuming the counter is the
+                    // safety-critical half and must still happen.
+                    match FileSystem::read(self.filesystem.as_ref(), &entry.url).await {
+                        Ok(bytes) => match serde_json::from_slice::<Event>(&bytes) {
+                            Ok(event) => {
+                                self.event_index.index_event(&event).await?;
+                                report.events_indexed += 1;
+                            }
+                            Err(e) => warn!("Skipping undecodable event {}: {e}", entry.url),
+                        },
+                        Err(e) => warn!("Skipping unreadable event {}: {e}", entry.url),
+                    }
+                } else if entry.name.starts_with("partition_") && descents < MAX_RECOVERY_DESCENTS {
+                    // Local-shape: a partition directory to descend into.
+                    descents += 1;
+                    report.partitions_scanned += 1;
+                    match FileSystem::list(self.filesystem.as_ref(), &entry.url).await {
+                        Ok(children) => pending.push(children),
+                        Err(e) => warn!("Skipping unlistable partition {}: {e}", entry.url),
+                    }
+                }
+            }
+        }
+
+        *self.sequence_counter.write().await = report.max_sequence;
+        Ok(report)
     }
 
     /// Append an event to the log (append-only, immutable)
@@ -780,5 +900,213 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_dir_all("/tmp/test_eventlog_immutable");
+    }
+
+    // ---- TD-EVENTLOG-1: restart recovery -----------------------------------
+    //
+    // These use a unique `tempdir` (mandate #17c) rather than the shared `/tmp`
+    // paths above, so two of them can never collide.
+
+    /// A fresh base dir + a filesystem over it. Returned dir is leaked so it
+    /// outlives every engine opened against it within a test.
+    async fn recovery_base() -> String {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let base = dir.path().to_string_lossy().to_string();
+        std::mem::forget(dir);
+        base
+    }
+
+    async fn fs_for(tag: &str) -> Arc<UnifiedCachingFilesystem> {
+        let local = crate::storage::persistence::filesystem::local::LocalFileSystem::new(
+            crate::storage::persistence::filesystem::local::LocalConfig::default(),
+        )
+        .await
+        .expect("local fs");
+        Arc::new(UnifiedCachingFilesystem::new(
+            Arc::new(local),
+            tag.to_string(),
+            "eventlog".to_string(),
+        ))
+    }
+
+    fn ev(entity: &str, kind: &str) -> Event {
+        Event {
+            sequence: 0,
+            entity_id: entity.to_string(),
+            event_type: kind.to_string(),
+            data: serde_json::json!({ "k": kind }),
+            timestamp: Utc::now(),
+            causation_id: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn cfg(base: &str) -> EventLogConfig {
+        EventLogConfig {
+            base_dir: base.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn parse_event_sequence_accepts_only_the_event_key_shape() {
+        assert_eq!(parse_event_sequence("event_0000000042.bin"), Some(42));
+        assert_eq!(parse_event_sequence("event_0000000000.bin"), Some(0));
+        assert_eq!(parse_event_sequence("snapshot_0000000042.bin"), None);
+        assert_eq!(parse_event_sequence("event_notanumber.bin"), None);
+        assert_eq!(parse_event_sequence("event_0000000042.tmp"), None);
+    }
+
+    /// Defect B (the destructive one): a restart must not reuse sequences and
+    /// overwrite the events already on disk.
+    #[tokio::test]
+    async fn open_resumes_sequence_so_restart_does_not_overwrite() {
+        let base = recovery_base().await;
+        {
+            let engine = EventLogEngine::new(cfg(&base), fs_for("rec_a1").await).expect("engine");
+            for i in 0..3 {
+                engine
+                    .append_event(ev("acct:1", &format!("E{i}")))
+                    .await
+                    .expect("append");
+            }
+        } // engine dropped — simulates a restart
+
+        let reopened = EventLogEngine::open(cfg(&base), fs_for("rec_a2").await)
+            .await
+            .expect("open");
+        let next = reopened
+            .append_event(ev("acct:1", "AfterRestart"))
+            .await
+            .expect("append");
+
+        assert_eq!(
+            next.sequence, 4,
+            "must resume past the 3 persisted events, not restart at 1"
+        );
+    }
+
+    /// Defect A: events already on disk must be readable after a restart.
+    #[tokio::test]
+    async fn open_rebuilds_index_so_reads_survive_restart() {
+        let base = recovery_base().await;
+        {
+            let engine = EventLogEngine::new(cfg(&base), fs_for("rec_b1").await).expect("engine");
+            engine
+                .append_event(ev("acct:9", "Created"))
+                .await
+                .expect("a");
+            engine
+                .append_event(ev("acct:9", "Updated"))
+                .await
+                .expect("b");
+        }
+
+        let reopened = EventLogEngine::open(cfg(&base), fs_for("rec_b2").await)
+            .await
+            .expect("open");
+        let events = reopened
+            .read_events(&"acct:9".to_string(), 0, 100)
+            .await
+            .expect("read");
+
+        assert_eq!(events.len(), 2, "persisted events must be readable again");
+        assert_eq!(events[0].event_type, "Created");
+        assert_eq!(events[1].event_type, "Updated");
+    }
+
+    /// Recovery must be inert on a fresh base — no spurious sequence skew.
+    #[tokio::test]
+    async fn open_on_a_fresh_base_is_a_noop() {
+        let base = recovery_base().await;
+        let engine = EventLogEngine::open(cfg(&base), fs_for("rec_c").await)
+            .await
+            .expect("open");
+        let first = engine.append_event(ev("acct:2", "First")).await.expect("a");
+        assert_eq!(first.sequence, 1, "fresh log starts at 1");
+    }
+
+    /// Recovery must survive the **object-store list shape**, where a recursive
+    /// prefix listing returns every `event_*.bin` leaf directly and no
+    /// `partition_*` directory ever appears (`is_directory` is always false on
+    /// blob backends). The local `read_dir` shape returns the opposite. This
+    /// pins the flat case, which local-filesystem tests alone cannot reach —
+    /// a two-level walk passes every other test here and still silently
+    /// recovers nothing in production.
+    #[tokio::test]
+    async fn recovery_handles_flat_object_store_listing_shape() {
+        let base = recovery_base().await;
+        let fs = fs_for("rec_flat").await;
+        {
+            let engine = EventLogEngine::new(cfg(&base), fs.clone()).expect("engine");
+            for i in 0..2 {
+                engine
+                    .append_event(ev("acct:flat", &format!("E{i}")))
+                    .await
+                    .expect("append");
+            }
+        }
+
+        // Emulate the blob shape: every event leaf surfaced by ONE list of the
+        // base, exactly as `azure_blob::list` (no delimiter) would return it.
+        let flat: Vec<crate::storage::persistence::filesystem::DirEntry> = {
+            let partitions = FileSystem::list(fs.as_ref(), &base)
+                .await
+                .expect("list base");
+            let mut leaves = Vec::new();
+            for p in partitions
+                .iter()
+                .filter(|e| e.name.starts_with("partition_"))
+            {
+                leaves.extend(
+                    FileSystem::list(fs.as_ref(), &p.url)
+                        .await
+                        .expect("list part"),
+                );
+            }
+            leaves
+        };
+        assert_eq!(flat.len(), 2, "fixture should surface both event leaves");
+        assert!(
+            flat.iter().all(|e| parse_event_sequence(&e.name).is_some()),
+            "blob-shape entries must parse as events, not partitions"
+        );
+        assert_eq!(
+            flat.iter()
+                .filter_map(|e| parse_event_sequence(&e.name))
+                .max(),
+            Some(2),
+            "a flat scan alone must recover the max sequence"
+        );
+    }
+
+    /// Pins the reason `open` exists: `new` alone does NOT recover, so it
+    /// reproduces the defect. If this ever starts failing, `new` gained
+    /// recovery and `open` can collapse into it.
+    #[tokio::test]
+    async fn new_without_open_reproduces_the_defect() {
+        let base = recovery_base().await;
+        {
+            let engine = EventLogEngine::new(cfg(&base), fs_for("rec_d1").await).expect("engine");
+            engine
+                .append_event(ev("acct:3", "Before"))
+                .await
+                .expect("a");
+        }
+
+        let bare = EventLogEngine::new(cfg(&base), fs_for("rec_d2").await).expect("engine");
+        let collided = bare.append_event(ev("acct:3", "After")).await.expect("b");
+        assert_eq!(
+            collided.sequence, 1,
+            "`new` restarts at 1 — this is the defect `open` fixes"
+        );
+        assert!(
+            bare.read_events(&"acct:3".to_string(), 0, 100)
+                .await
+                .expect("read")
+                .len()
+                < 2,
+            "`new` cannot see the pre-restart event"
+        );
     }
 }
