@@ -446,6 +446,13 @@ impl Catalog for HiveCatalog {
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,
     ) -> Result<CatalogTableSchema> {
+        // ADR-077 M1: normalize BEFORE validating. A creation path may legitimately
+        // hand us a UNIQUE recorded only in the projection — `CREATE TABLE … UNIQUE(x)`
+        // lowers to `relational_capabilities.unique_indexes` — and rejecting that would
+        // break table creation. Folding it into the canonical field first is what makes
+        // the invariant hold by construction rather than by rejecting real schemas.
+        let mut schema = schema;
+        crate::schema::normalize_identity(&mut schema);
         validate_schema(&schema)?;
 
         let db_name = self.database_name(&identifier.namespace);
