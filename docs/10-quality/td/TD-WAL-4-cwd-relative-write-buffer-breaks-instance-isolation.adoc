@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Proposed.** Found 2026-07-23 during the restart/recovery pressure tests: two servers with fully disjoint `data_dir`, `metadata_url`, and `storage_locations` cross-contaminated through a shared WAL write buffer.
+| Status | **S1 shipped (2026-07-28); S2 pending.** Found 2026-07-23 during the restart/recovery pressure tests: two servers with fully disjoint `data_dir`, `metadata_url`, and `storage_locations` cross-contaminated through a shared WAL write buffer. **S1 fix:** `ConfigLoader::resolve_path_under` anchors `write_buffer_directory` + SST/VIPER `data_directory` under the resolved `server.data_dir` (not cwd) — `config_loader.rs`. S2 (startup flock/pid guard against a still-shared buffer) remains a follow-up.
 | Priority | **P1** — silent cross-instance WAL sharing corrupts recovery: each instance lists and replays the other's collections. Any host running two proximadb-server processes from the same working directory (CI, side-by-side test/prod, blue-green) hits this. Data-path config that ignores the configured storage roots also violates the DrPathBuilder/tenant-isolation posture (co-design mandate #3: isolation is structural).
 | Component | `WriteBufferUserConfig.write_buffer_directory` default (cwd-relative `data/write_buffer`); `SstConfig.data_directory` default (`sst_data`); `ViperConfig.data_directory` default (`data/viper_data`) — see the resolved-config dump in the server startup log.
 | Evidence | Server A: `-c config.toml` (all paths under `…/pdb/`). Server B: `-c config2.toml` (all paths under `…/pdb2/`, distinct ports). Both resolved `write_buffer_directory: "<cwd>/data/write_buffer"` because the TOMLs did not set the key. Result: `GET /api/v2/collections` on **each** server listed **both** servers' collections (`sift1m` from A, `sweep` from B); B's ingested records went into the shared global memtable/WAL; B's flush produced no files under B's own storage locations. Fixed for the test run only by explicitly setting `[storage.wal_config] write_buffer_directory` under the instance root.
@@ -28,9 +28,13 @@ resolved-config dump and proceeds.
 
 == Direction
 
-S1 — Derive the defaults from `server.data_dir` (e.g.
+S1 — **✅ DONE (2026-07-28).** Derive the defaults from `server.data_dir` (e.g.
 `<data_dir>/write_buffer`, `<data_dir>/sst`, `<data_dir>/viper`) instead of
 cwd, so instance isolation follows the one knob operators actually set.
+Implemented as `ConfigLoader::resolve_path_under(&server.data_dir, …)` applied to
+`write_buffer_directory` + SST/VIPER `data_directory` in `resolve_config_paths`
+(`src/core/config_loader.rs`); object-store URLs and explicit absolute paths pass
+through unchanged. Unit-tested: distinct `data_dir` → distinct write-buffer paths.
 
 S2 — At startup, fail (or at minimum `warn!`) when the write buffer directory
 is already locked by another live process (flock/pid file) — silent sharing is
