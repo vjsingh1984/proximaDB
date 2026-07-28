@@ -268,7 +268,9 @@ pub mod warming; // ADR-065 Q3: ranged RAM cache for survivor/OID byte ranges //
 pub use bloom_filter::{
     BloomFilterStats, HierarchicalBloomConfig, SerializedSstableBloomFilter, SstableBloomFilter,
 };
-pub use compaction::{Compaction, CompactionPriority, CompactionStats, CompactionTask};
+pub use compaction::{
+    Compaction, CompactionPriority, CompactionStats, CompactionTask, set_global_precision_resolver,
+};
 pub use compactor_impl::{CompactionSortStrategy, SstCompactor, ZeroCopyCompactionStats};
 pub use readers::UnifiedSstableReader;
 
