@@ -1385,39 +1385,18 @@ impl UnifiedStorageFormat for NovaEngine {
         // Delegate to modularized flush operations
         let result = self.flush_ops.flush(params).await?;
 
-        // Notify EventLog so the AXIS consumer can build indexes asynchronously.
-        // This lives in each engine's `do_flush` (not the trait default) so the
-        // traits layer stays a pure consumer with no root-service dependency
-        // (root-crate decomposition gap 4). Best-effort: an error is logged, never
-        // propagated — the flush itself already succeeded.
-        if result.success
-            && let Some(collection_id) = params.collection_id.as_ref()
-            && let Some(event_log) = crate::services::events::log::event_log_service()
-        {
-            let vector_count = result.entries_flushed.unwrap_or(0) as usize;
-            if let Err(e) = event_log
-                .notify_flush(
-                    collection_id,
-                    result.file_paths.clone(),
-                    vector_count,
-                    false, // has_quantized
-                    true,  // has_fp32
-                    crate::core::types::StorageEngineType::NOVA,
-                )
-                .await
-            {
-                tracing::warn!(
-                    "⚠️ NOVA: Failed to notify EventLog about flush for '{}': {}",
-                    collection_id,
-                    e
-                );
-            } else {
-                tracing::info!(
-                    "📢 NOVA: Notified EventLog for AXIS indexing: '{}' ({} vectors)",
-                    collection_id,
-                    vector_count
-                );
-            }
+        // Index the just-flushed vectors into AXIS directly (ADR-078). This lives
+        // in each engine's `do_flush` (not the trait default) so the traits layer
+        // stays a pure consumer with no root-service dependency (root-crate
+        // decomposition gap 4). Best-effort: errors are logged inside the hook,
+        // never propagated — the flush itself already succeeded.
+        if result.success {
+            crate::storage::common::axis_flush_hook::index_flushed_into_axis(
+                self.axis_manager().cloned(),
+                params,
+                result.file_paths.clone(),
+            )
+            .await;
         }
 
         Ok(result)
