@@ -18,16 +18,18 @@
 //! already declared in `proximadb-api` (`CheckpointServiceRequest`):
 //! `thread_id` / `checkpoint_ns` / `checkpoint_id` / `parent_checkpoint_id`.
 //!
-//! # Durability caveat (TD-EVENTLOG-1)
+//! # Durability (TD-EVENTLOG-1)
 //!
-//! **Checkpoints are process-lifetime durable only.** The underlying
-//! `EventLogEngine` rebuilds neither its in-memory index nor its sequence
-//! counter on construction, so after a restart prior checkpoints are unreadable
-//! (the index is empty) and new appends can overwrite pre-restart event files
-//! (the sequence counter resets to 0). This is a **pre-existing engine defect**,
-//! not a property of this store — but it bounds what this surface may claim.
-//! Do not document or market checkpoints as restart-durable until
-//! TD-EVENTLOG-1 lands.
+//! Checkpoints survive a restart **provided the engine was built with
+//! [`EventLogEngine::open`]**, which recovers the sequence counter and rebuilds
+//! the index. `EventLogEngine::new` does neither, so a store constructed over a
+//! `new` engine silently loses prior checkpoints and can overwrite persisted
+//! events. `SharedServices` uses `open`; anything else composing this store must
+//! do the same.
+//!
+//! Concurrency is *not* yet safe: the engine still derives immutable object keys
+//! from a process-local counter, so two writers over one base can collide. Until
+//! the TD-EVENTLOG-1 re-key lands, treat a checkpoint stream as single-writer.
 
 use std::sync::Arc;
 

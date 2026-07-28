@@ -13,7 +13,10 @@
 | Field | Value
 
 | Status
-| **Open** — found 2026-07-28 while wiring the MCP `checkpoint` tool (TD-MCP-1 MCP-1d). **Pre-existing**; not introduced by that work.
+| **Partial** — found 2026-07-28 while wiring the MCP `checkpoint` tool (TD-MCP-1 MCP-1d); **pre-existing**, not introduced by that work. **Recovery landed 2026-07-28** (`EventLogEngine::open` = `new` + `recover`; `SharedServices` switched to it). **Still owed: the re-key** (§3.4) — recovery is a patch, not the end state.
+
+| Scope note
+| This is the **audit** event log (`src/storage/engines/eventlog/`, MiFID II framing, backing MCP `event`/`checkpoint`). It is *not* the AXIS flush/compact coordination queue (`src/index/axis/eventlog/`), which is a separate component that happens to share the name. Do not conflate them — that collision already mis-targeted one investigation.
 
 | Priority
 | P1 — two independent silent-data-loss modes on a durability-claiming engine.
@@ -107,9 +110,40 @@ populated directory.
   object-store-native design would rather not keep in memory (ADR-072
   `ConditionalKeyStore` / `put_if_absent` is the adjacent primitive).
 
-== 4. Interim posture
+== 4. Posture (updated 2026-07-28)
 
-Until this lands, treat `EventLogEngine` as **process-lifetime durable only**.
-Surfaces built on it (MCP `event`, MCP `checkpoint`) must not be documented or
-marketed as restart-durable — see the caveat in
-`src/services/agent_checkpoint.rs` and TD-DBX-1 §S2.
+**Landed:** `EventLogEngine::open` recovers the sequence counter (defect B) and
+rebuilds the index (defect A); `SharedServices` uses it. Events now survive a
+restart, so `EventLogEngine` is no longer process-lifetime-only.
+
+A **backend-shape hazard** surfaced while fixing this and is worth recording,
+because a local-only test suite cannot reach it: `FileSystem::list` is not
+uniform. Local is `fs::read_dir` (single level ⇒ the base yields `partition_*`
+directories); object stores do a recursive prefix listing with no delimiter
+(⇒ the base yields `event_*.bin` leaves, and `is_directory` is *always* false).
+A two-level walk passes every local test and silently recovers **nothing** on
+blob storage — the production shape. The scan therefore consumes event leaves
+wherever they appear and descends only into partition-looking entries. Pinned by
+`recovery_handles_flat_object_store_listing_shape`. Any future traversal in this
+repo must handle both shapes.
+
+**Still owed — the re-key (§3.4).** Recovery is a patch on a design whose root
+problem stands: an immutable object's key is derived from mutable, process-local
+state. That yields three failure modes, of which restart was only one; the other
+two survive this fix:
+
+* **Concurrency** — two processes over one base both resume from their own view
+  and can still collide. (Unverified whether multi-node shares `metadata_url`;
+  flagged, not asserted.)
+* **Read amplification** — the key is a *global* counter carrying no entity, so
+  reads need the secondary index, and rebuilding it costs a GET per event. On
+  object storage that boot scan is O(N) round-trips — the dominant cost term per
+  `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`. The fix is itself a
+  co-design violation at scale.
+
+End state: key by entity (`{base}/{entity}/{seq}`) so reads are one prefix LIST
+and the index degrades to a pure cache, and replace `overwrite: true` with
+`put_if_absent` — the correct primitive for immutable append, already in-repo as
+ADR-072's `ConditionalKeyStore` (F1c). Then there is nothing to recover and
+collisions are structurally impossible. Storage-format change ⇒ mandate #8
+(mixed-read-safe, marker-detected, default-OFF until baked).
