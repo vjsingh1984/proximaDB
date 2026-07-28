@@ -390,16 +390,17 @@ impl ProximaDB {
                         resolver_cache,
                     ),
                 );
-                if storage_engine
-                    .compaction_manager()
-                    .set_precision_resolver(resolver.clone())
-                    .is_ok()
-                {
-                    tracing::info!(
-                        "✅ Compaction wired with CanonicalPrecisionResolver — \
-                         fp16 collections will preserve precision through compaction"
-                    );
-                }
+                // TD-PRECISE-GLOBAL: arm the process-global resolver so EVERY
+                // Compaction stamps precision_hint — including the per-collection
+                // SstEngines the boot path can't individually wire. The former
+                // `storage_engine.compaction_manager().set_precision_resolver(..)`
+                // targeted the StorageEngine's idle instance, so fp16/bf16/int8
+                // collections silently degraded to fp32 at compaction.
+                crate::storage::engines::sst::set_global_precision_resolver(resolver.clone());
+                tracing::info!(
+                    "✅ Global compaction precision resolver armed — fp16/bf16/int8 \
+                     collections preserve precision through compaction"
+                );
                 // Also wire the resolver into the REST/gRPC vector
                 // batch path so direct inserts coerce to the
                 // collection's canonical precision (matches what the

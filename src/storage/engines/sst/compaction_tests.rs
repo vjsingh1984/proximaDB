@@ -381,6 +381,68 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
     drop(manager);
 }
 
+/// TD-PRECISE-GLOBAL: the precision resolver must reach a `Compaction` that was
+/// NEVER per-instance-wired. This is the production case — the SST engine mints
+/// a fresh `Compaction` per collection (each with its own empty resolver), and
+/// the boot-time wiring used to target the StorageEngine's idle instance, so
+/// fp16/bf16/int8 collections silently degraded to fp32 at compaction. The fix:
+/// a process-global resolver (set once at boot) consulted as the fallback.
+///
+/// Asserts `resolve_precision_hint` returns `Some(Fp16)` for a Compaction with
+/// NO per-instance resolver, after the global is armed — proving the global
+/// fallback reaches unwired instances. (nextest runs each test in its own
+/// process, so the set-once global is fresh here.)
+#[tokio::test]
+async fn td_global_precision_resolver_stamps_hint_without_per_instance_wiring() {
+    use crate::storage::engines::sst::compaction::set_global_precision_resolver;
+    use proximadb_catalog::cache::CatalogCache;
+    use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
+    use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
+    use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::Arc;
+
+    let cache = Arc::new(CatalogCache::new(1000, 60));
+    let cat: Arc<OltpCatalog> = Arc::new(
+        OltpCatalog::new(
+            "compaction-test-global",
+            OltpCatalogConfig::sqlite("sqlite::memory:"),
+            cache.clone(),
+        )
+        .await
+        .unwrap(),
+    );
+    cat.create_namespace(&["default".to_string()], StdHashMap::new())
+        .await
+        .unwrap();
+    let table_id = TableIdentifier::new(vec!["default".to_string()], "fp16_global_coll");
+    let mut schema = CatalogTableSchema {
+        name: "fp16_global_coll".to_string(),
+        ..Default::default()
+    };
+    schema.canonical_embedding_precision = proximadb_records::EmbeddingScalarType::Fp16;
+    cat.create_table(&table_id, schema).await.unwrap();
+    let resolver = Arc::new(CanonicalPrecisionResolver::new(
+        cat.clone() as Arc<dyn Catalog>,
+        cache,
+    ));
+
+    // Arm the GLOBAL resolver (mirrors database.rs boot wiring). Idempotent.
+    set_global_precision_resolver(resolver);
+
+    // A Compaction with NO per-instance resolver — the production case for a
+    // per-collection SstEngine that the boot path never individually wires.
+    let manager = Compaction::new(SstConfig::default()).await.unwrap();
+
+    let hint = manager.resolve_precision_hint("fp16_global_coll").await;
+    assert_eq!(
+        hint,
+        Some(proximadb_records::EmbeddingScalarType::Fp16),
+        "the global precision resolver must stamp precision_hint on a Compaction \
+         that was never per-instance-wired (the per-collection-SstEngine case)"
+    );
+}
+
 /// INT-3-followup-d wiring: with `CompactionTask.precision_hint =
 /// Some(Fp16)`, the rewritten block recovers fp16 bit-exact from
 /// the fp32-flattened VectorRecord intermediate. Exercises the

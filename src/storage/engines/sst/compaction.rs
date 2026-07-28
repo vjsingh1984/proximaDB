@@ -62,6 +62,35 @@ use tracing::{debug, error, info, warn};
 /// Backwards-compat alias for [`SstCompactionTask`].
 pub type CompactionTask = SstCompactionTask;
 
+/// TD-PRECISE-GLOBAL: process-global `CanonicalPrecisionResolver`, set ONCE at
+/// boot (database.rs) and consulted by EVERY `Compaction` as the fallback when
+/// its per-instance resolver is unset. This closes the "wrong instance" wiring
+/// defect: the SST engine creates a fresh `Compaction` per collection (each with
+/// its own empty resolver), and the boot-time `storage_engine
+/// .compaction_manager().set_precision_resolver(..)` targeted the StorageEngine's
+/// idle instance — so fp16/bf16/int8 collections silently degraded to fp32 at
+/// compaction. A global (same pattern as `GLOBAL_SST_AXIS_MANAGER` /
+/// `GLOBAL_WARM_TIER_CACHES` in core.rs) reaches every per-collection Compaction
+/// without per-instance wiring. Per-instance wiring (`set_precision_resolver` /
+/// `with_precision_resolver`) still takes precedence for tests/overrides.
+static GLOBAL_PRECISION_RESOLVER: std::sync::OnceLock<
+    Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
+> = std::sync::OnceLock::new();
+
+/// Set the process-global precision resolver (first writer wins; idempotent
+/// thereafter — mirrors the OnceLock registry pattern). Called once at boot.
+pub fn set_global_precision_resolver(
+    resolver: Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
+) {
+    let _ = GLOBAL_PRECISION_RESOLVER.set(resolver);
+}
+
+/// The process-global precision resolver, if boot armed one.
+pub fn get_global_precision_resolver()
+-> Option<&'static Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>> {
+    GLOBAL_PRECISION_RESOLVER.get()
+}
+
 /// Stage-boundary process-RSS checkpoints for the unified compaction pipeline
 /// (memory-holder triage: the PAX writer's own peak buffer is ~65 MB while the
 /// process grows by tens of GB at N=120k, so the holder is an intermediate
@@ -658,6 +687,43 @@ impl Compaction {
         Ok(true)
     }
 
+    /// Resolve the canonical embedding precision for a collection, to stamp on
+    /// a produced `SstCompactionTask.precision_hint`. Consults the per-instance
+    /// resolver first (test/override), then falls back to the process-global
+    /// resolver (TD-PRECISE-GLOBAL: set once at boot, reaches every
+    /// per-collection `Compaction` that the boot path can't individually wire).
+    /// Returns `None` when no resolver is armed (records keep fp32) or the
+    /// resolver errors (best-effort — a precision failure must never break
+    /// compaction).
+    pub async fn resolve_precision_hint(
+        &self,
+        collection_id: &str,
+    ) -> Option<proximadb_records::EmbeddingScalarType> {
+        // Per-instance resolver first (test/override), then the process-global
+        // fallback (TD-PRECISE-GLOBAL). Clone the Arc out so no borrow from
+        // `self` is held across the `.await` below.
+        let resolver: Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver> =
+            if let Some(r) = self.precision_resolver.get() {
+                Arc::clone(r)
+            } else if let Some(g) = get_global_precision_resolver() {
+                Arc::clone(g)
+            } else {
+                return None;
+            };
+        let table_id = Self::collection_to_table_identifier(collection_id);
+        match resolver.resolve(&table_id).await {
+            Ok(precision) => Some(precision),
+            Err(e) => {
+                warn!(
+                    collection = %collection_id,
+                    error = %e,
+                    "compaction: precision resolver failed; falling back to fp32"
+                );
+                None
+            }
+        }
+    }
+
     /// Check if compaction is needed for the given collection and level.
     ///
     /// `l0_threshold_override` (TD-WLP-7 / TD-WLP-2): when `Some`, the L0
@@ -747,23 +813,7 @@ impl Compaction {
                 CompactionPriority::Medium
             };
 
-            let precision_hint = match self.precision_resolver.get() {
-                None => None,
-                Some(resolver) => {
-                    let table_id = Self::collection_to_table_identifier(collection_id);
-                    match resolver.resolve(&table_id).await {
-                        Ok(precision) => Some(precision),
-                        Err(e) => {
-                            warn!(
-                                collection = %collection_id,
-                                error = %e,
-                                "compaction: precision resolver failed; falling back to fp32"
-                            );
-                            None
-                        }
-                    }
-                }
-            };
+            let precision_hint = self.resolve_precision_hint(collection_id).await;
 
             return Ok(Some(SstCompactionTask {
                 level: task.level as u8,
