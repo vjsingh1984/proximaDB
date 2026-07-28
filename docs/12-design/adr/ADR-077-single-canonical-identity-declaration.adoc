@@ -79,23 +79,87 @@ removed, so an inconsistent schema becomes unrepresentable.**
 It exists to read the pre-migration shapes; once the collapse lands, it reads one field
 and its four-route fallback logic is deletable.
 
-== Migration (mixed-read-safe, per CLAUDE.md §8)
+== Migration (amended 2026-07-28 — the original five phases were mis-specified)
 
-`CatalogTableSchema` is **persisted** and read by 14+ files, so this is a storage-format
-change and follows the phased pattern — no flag day:
+[IMPORTANT]
+====
+**The first draft of this section applied the wrong pattern.** It treated the collapse as
+a *storage-format* change and prescribed CLAUDE.md §8's five-phase dance. That pattern
+exists for changes where old and new bytes are **mutually unreadable** — a block format, a
+codec, a magic byte. This is not one of those, and the phasing bought nothing.
+====
 
-. **Read-union, write-both** *(TD-CAT-6 S1 already ships the read half.)* Readers use
-  `table_identity`; writers keep populating the legacy fields.
-. **Write-canonical, read-union.** New writes go only to the canonical field; readers
-  still accept the legacy shapes, so old persisted schemas keep working.
-. **Backfill on touch.** Any schema passing through evolution is normalized to the
-  canonical shape. No offline migration pass.
-. **Read-canonical.** Legacy fields deserialize (so old data loads) but are no longer
-  consulted. `table_identity`'s fallbacks are deleted.
-. **Remove** the legacy fields from the write surface.
+=== Why there is no byte-level incompatibility
 
-Each phase is independently revertible, and a schema written at phase N is readable at
-phase N+1 — the property the mandate requires.
+`CatalogTableSchema` is JSON (`serde_json`), derives plain `Deserialize` with **no
+`deny_unknown_fields`**, and carries `#[serde(default)]` on `relational_capabilities`
+(`lib.rs:662`). Therefore, as long as the legacy fields remain declared on the struct:
+
+* **old bytes → new code**: the legacy fields still exist, so they deserialize;
+* **new bytes → old code**: `#[serde(default)]` fills whatever is absent.
+
+The repo already relies on exactly this and pins it: `lib.rs:4262` deserializes a minimal
+legacy schema and asserts *"legacy schema must deserialize"*. Mixed-read-safety for this
+type is **already structural** — serde provides it, at no cost, permanently.
+
+A flag day is therefore not reachable. Phasing to avoid one is ceremony.
+
+=== The real risk is semantic, and phasing does not address it
+
+The genuine hazard is **silent semantic loss**, not a parse failure: a schema whose UNIQUE
+lives only in `relational_capabilities.unique_indexes`, read by code that consults only
+`relational_capabilities.constraints`, loses the constraint — quietly, exactly as
+`ALTER … ADD CONSTRAINT … UNIQUE` did before TD-CAT-6 S0.
+
+Deploy phasing does nothing about that: every phase still has *some* reader consulting a
+subset of locations. The correct mitigation is **normalize on load** — fold every legacy
+location into the canonical one at the deserialization boundary, which is
+`schema::table_identity` applied once where schemas enter memory (`native.rs:708/723`,
+`oltp.rs:369`). After that point no reader can see a pre-canonical shape, so no reader can
+miss a declaration.
+
+=== The one thing pre-release genuinely changes
+
+Not read-compat — **rollback**. Once normalized schemas are written, an *older* binary
+reading them would find the legacy fields empty and the canonical field unrecognized, and
+would lose the declaration. That is the only scenario the five phases actually protected,
+and it is a rollback scenario, not an upgrade one.
+
+Pre-release (v0.2, no supported downgrade path) makes that acceptable. But it need not be
+relied on, because the mitigation is nearly free:
+
+**Keep writing the projections.** Decision 3 already routes all identity writes through
+one constructor that maintains every projection together. Having it keep populating
+`unique_indexes` / `indexes[].is_unique` costs one function body and is wanted anyway —
+the pg/JDBC introspection surfaces legitimately need an *index* view of a UNIQUE
+(`catalog-introspection/src/lib.rs:538/807/1100`). Write-both is not a migration phase
+here; it is the steady state.
+
+=== Amended plan
+
+[cols="1,3"]
+|===
+| Step | Content
+
+| **M1** (one PR)
+| Normalize on load (`table_identity` at the deserialize boundary); route all identity writes through the single constructor, which writes the canonical field **and** maintains the projections; `validate_schema` rejects a projection that disagrees with its canonical source.
+
+| **M2** (optional, GA or never)
+| Remove the legacy fields from the struct. Only worth doing if the projections stop being useful to introspection — which today they are not, so **the honest expectation is that M2 never happens**.
+|===
+
+Net: **one PR, not five**, with *better* safety than the original plan — normalize-on-load
+closes the semantic-loss hole that phasing left open, and write-both removes the rollback
+exposure that phasing was actually there to manage.
+
+=== What this means for CLAUDE.md §8
+
+§8's mixed-read-safe mandate is not waived; it is **satisfied by construction** here
+(serde defaults + retained fields + normalize-on-load) rather than by a version/magic-byte
+handshake. The lesson worth carrying: §8's phased pattern is the right tool for *encoding*
+changes; for a change that only redistributes *which field holds a fact*, the right tools
+are normalize-on-load and a single write constructor. Reaching for the heavier pattern by
+reflex cost this ADR a 5× overestimate of the work.
 
 == Consequences
 
@@ -108,10 +172,12 @@ coordination* (secondary UNIQUE) — a distinction a flat column-name list canno
 which the current code encodes in control flow that admits it only handles single-column
 PKs.
 
-**Negative.** It touches a persisted type with many readers, so the migration is five
-phases rather than one commit. Introspection surfaces that legitimately want an *index*
-view of a UNIQUE keep needing a projection, so "one location" means one **source of
-truth**, not literally one field.
+**Negative.** "One location" means one **source of truth**, not literally one field:
+introspection surfaces legitimately want an *index* view of a UNIQUE, so the projections
+stay and must be kept in sync by the write constructor. That is a standing obligation, not
+a one-off migration — a future writer that sets a field directly rather than through the
+constructor can still desynchronize them, which is why `validate_schema` must reject a
+disagreeing projection rather than trusting discipline.
 
 **Risk if deferred.** Every new consumer must rediscover six locations; the census already
 found five disagreeing PK rules and one dead code path. The cost compounds with each
@@ -126,8 +192,12 @@ modality that stacks on the catalog — which is precisely the surface D1 exists
   into loud failure, which is better, but pushes the burden onto every writer forever and
   makes legitimate partial writes (most creation paths leave `relational_capabilities`
   empty) hard to distinguish from bugs.
-* **Collapse in one commit.** Rejected: the type is persisted, so a flag day would make
-  schemas written by the previous version unreadable.
+* **Collapse in one commit.** Originally rejected on the grounds that "the type is
+  persisted, so a flag day would make schemas written by the previous version unreadable."
+  **That reasoning was wrong** — serde defaults plus retained fields mean old schemas stay
+  readable regardless (see the amended Migration section). With normalize-on-load and
+  write-both, a single-PR collapse is both feasible and safer than the phased plan. This
+  is now the chosen approach (M1).
 
 == References
 

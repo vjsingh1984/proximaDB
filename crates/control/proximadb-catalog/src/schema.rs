@@ -925,6 +925,70 @@ mod tests {
     // ---- TD-CAT-6 slice 1: canonical discovery across all four routes ----
 
     #[test]
+    fn adr077_legacy_and_canonical_schemas_are_mutually_readable() {
+        // ADR-077's amended migration rests on this: the collapse needs no
+        // phased format migration because neither direction can fail to parse.
+
+        // (a) A schema written by a PRE-collapse binary — UNIQUE recorded only in
+        // `unique_indexes`, plus a populated `relational_capabilities.primary_key`
+        // — deserializes under the current struct.
+        let legacy = r#"{
+            "name": "t", "columns": [], "primary_key": ["id"], "indexes": [],
+            "schema_version": 1, "properties": {}, "location": null,
+            "created_at_ms": 0, "updated_at_ms": 0,
+            "relational_capabilities": {
+                "primary_key": ["id"],
+                "unique_indexes": [{"name":"uq","columns":["email"],
+                                    "index_type":"BTree","is_unique":false,"properties":{}}],
+                "secondary_indexes": [], "constraints": [],
+                "materialized_views": [], "transaction_profile": null,
+                "schema_evolution_policy": null
+            }
+        }"#;
+        let parsed: CatalogTableSchema =
+            serde_json::from_str(legacy).expect("a pre-collapse schema must still deserialize");
+        assert_eq!(parsed.relational_capabilities.unique_indexes.len(), 1);
+
+        // …and the canonical accessor recovers the declaration from that legacy
+        // shape — which is what normalize-on-load will do at the load boundary.
+        assert_eq!(
+            crate::schema::table_identity(&parsed).unique_sets,
+            vec![vec!["email".to_string()]]
+        );
+
+        // (b) A schema written by a POST-collapse binary — the fact recorded only
+        // in `constraints`, legacy locations absent entirely — also deserializes.
+        let canonical = r#"{
+            "name": "t", "columns": [], "primary_key": ["id"], "indexes": [],
+            "schema_version": 1, "properties": {}, "location": null,
+            "created_at_ms": 0, "updated_at_ms": 0,
+            "relational_capabilities": {
+                "primary_key": [], "unique_indexes": [], "secondary_indexes": [],
+                "constraints": [{"Unique":{"columns":["email"]}}],
+                "materialized_views": [], "transaction_profile": null,
+                "schema_evolution_policy": null
+            }
+        }"#;
+        let parsed: CatalogTableSchema =
+            serde_json::from_str(canonical).expect("a post-collapse schema must deserialize");
+        assert_eq!(
+            crate::schema::table_identity(&parsed).unique_sets,
+            vec![vec!["email".to_string()]]
+        );
+
+        // (c) The struct tolerates an entirely absent relational_capabilities —
+        // #[serde(default)] — which is how most creation paths leave it.
+        let minimal = r#"{
+            "name": "t", "columns": [], "primary_key": [], "indexes": [],
+            "schema_version": 1, "properties": {}, "location": null,
+            "created_at_ms": 0, "updated_at_ms": 0
+        }"#;
+        let parsed: CatalogTableSchema =
+            serde_json::from_str(minimal).expect("absent capabilities must default");
+        assert!(parsed.relational_capabilities.unique_indexes.is_empty());
+    }
+
+    #[test]
     fn table_identity_finds_a_unique_from_every_route() {
         let mut schema = base_schema()
             .with_column(CatalogColumn::new(3, "email", ProximaType::String))
