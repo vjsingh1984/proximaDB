@@ -7,8 +7,8 @@
 // path resolves unchanged. The non-extractable orchestration types
 // (`UnifiedSearchParams`, the search engines) remain in this module.
 pub use proximadb_search_types::{
-    block_prune::BlockPruneMode, bounded_queue, json_comparison, json_value_serde, results,
-    sql_value_filter,
+    block_prune::BlockPruneMode, bounded_queue, compiled_filter::CompiledGlobalFilter,
+    json_comparison, json_value_serde, results, sql_value_filter,
 };
 
 pub mod cross_modal_fusion;
