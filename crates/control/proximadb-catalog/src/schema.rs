@@ -113,6 +113,50 @@ pub fn validate_schema(schema: &CatalogTableSchema) -> Result<()> {
         }
     }
 
+    // ADR-077: `relational_capabilities.constraints` is CANONICAL for uniqueness;
+    // `unique_indexes` and `indexes[].is_unique` are projections kept for the
+    // pg/JDBC introspection surfaces. A projection holding a UNIQUE the canonical
+    // field lacks is the exact shape of the defect this ADR exists to make
+    // unrepresentable — enforcement reads canonical, so such a constraint would be
+    // cataloged and silently never enforced.
+    //
+    // Only the dangerous direction is rejected. The reverse (canonical holding
+    // something no projection mirrors) is fine: an unnamed UNIQUE has no index
+    // form to project into.
+    let canonical_unique: Vec<&Vec<String>> = rc
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            ColumnConstraint::Unique { columns } => Some(columns),
+            _ => None,
+        })
+        .collect();
+    let mut projected = rc
+        .unique_indexes
+        .iter()
+        .map(|i| (&i.name, &i.columns))
+        .chain(
+            schema
+                .indexes
+                .iter()
+                .filter(|i| i.is_unique)
+                .map(|i| (&i.name, &i.columns)),
+        );
+    if let Some((name, columns)) = projected.find(|(_, columns)| {
+        !columns.is_empty()
+            && !canonical_unique
+                .iter()
+                .any(|canonical| same_column_set(canonical, columns))
+    }) {
+        return Err(anyhow!(
+            "UNIQUE index '{}' on ({}) is not present in the canonical \
+             relational_capabilities.constraints — it would be cataloged but never \
+             enforced. Call schema::normalize_identity first (ADR-077)",
+            name,
+            columns.join(", ")
+        ));
+    }
+
     for col in &schema.columns {
         if matches!(
             col.data_type,
@@ -397,6 +441,40 @@ pub fn unique_column_sets(schema: &CatalogTableSchema) -> Vec<Vec<String>> {
 /// No conventional-name (`id`/`record_id`) inference — that is a caller policy.
 pub fn primary_key_columns(schema: &CatalogTableSchema) -> Vec<String> {
     table_identity(schema).primary_key
+}
+
+/// Fold every identity declaration into its **canonical** location (ADR-077 M1).
+///
+/// `relational_capabilities.constraints` is canonical for uniqueness. A UNIQUE may
+/// still *arrive* by any of the legacy routes — a pre-ADR-077 persisted schema, an
+/// external-catalog adapter, `CREATE INDEX` — so this folds whatever
+/// [`table_identity`] discovers into the canonical field.
+///
+/// **Additive and lossless.** The projections are left exactly as they are:
+/// `relational_capabilities.unique_indexes` and `schema.indexes` carry index
+/// *names* and *types* that the canonical `ColumnConstraint::Unique` form cannot
+/// represent, and the pg/JDBC introspection surfaces need them. Normalizing means
+/// "canonical contains everything", not "rewrite everything".
+///
+/// Idempotent: running it twice changes nothing, because the fold deduplicates
+/// order-insensitively against what is already canonical.
+///
+/// This is the *backfill on touch* ADR-077 relies on instead of an offline
+/// migration pass — it runs inside [`apply_evolution`], so any schema that is
+/// modified converges on the canonical shape.
+pub fn normalize_identity(schema: &mut CatalogTableSchema) {
+    for columns in table_identity(schema).unique_sets {
+        let already_canonical = schema.relational_capabilities.constraints.iter().any(|c| {
+            matches!(c, ColumnConstraint::Unique { columns: existing }
+                              if same_column_set(existing, &columns))
+        });
+        if !already_canonical {
+            schema
+                .relational_capabilities
+                .constraints
+                .push(ColumnConstraint::Unique { columns });
+        }
+    }
 }
 
 /// Apply schema evolution changes and return a new schema.
@@ -752,6 +830,11 @@ pub fn apply_evolution(
         }
     }
 
+    // Backfill on touch (ADR-077 M1): converge the evolved schema on the canonical
+    // shape BEFORE validating, so a legacy schema being modified is normalized
+    // rather than rejected by the projection-agreement check below.
+    normalize_identity(&mut new_schema);
+
     validate_schema(&new_schema)?;
     Ok(new_schema)
 }
@@ -923,6 +1006,159 @@ mod tests {
     }
 
     // ---- TD-CAT-6 slice 1: canonical discovery across all four routes ----
+
+    // ---- ADR-077 M1: canonical + projection, kept in sync by construction ----
+
+    #[test]
+    fn normalize_folds_a_legacy_unique_into_the_canonical_field() {
+        // A pre-ADR-077 schema: the UNIQUE lives only in the projection.
+        let mut schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        schema.relational_capabilities.unique_indexes = vec![CatalogIndex::new(
+            "uq_name",
+            vec!["name".to_string()],
+            CatalogIndexType::BTree,
+        )];
+        assert!(schema.relational_capabilities.constraints.is_empty());
+
+        normalize_identity(&mut schema);
+
+        assert_eq!(
+            enforceable_unique_sets(&schema),
+            vec![vec!["name".to_string()], vec!["name".to_string()]],
+            "canonical now carries it (and the projection is preserved)"
+        );
+        assert!(
+            schema
+                .relational_capabilities
+                .constraints
+                .iter()
+                .any(|c| matches!(c, ColumnConstraint::Unique { columns } if columns == &vec!["name".to_string()])),
+            "the canonical field must hold the declaration"
+        );
+        // Lossless: the projection keeps its index name and type.
+        assert_eq!(
+            schema.relational_capabilities.unique_indexes[0].name,
+            "uq_name"
+        );
+    }
+
+    #[test]
+    fn normalize_is_idempotent() {
+        let mut schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        schema.relational_capabilities.unique_indexes = vec![CatalogIndex::new(
+            "uq_name",
+            vec!["name".to_string()],
+            CatalogIndexType::BTree,
+        )];
+        normalize_identity(&mut schema);
+        let once = schema.clone();
+        normalize_identity(&mut schema);
+        assert_eq!(
+            schema.relational_capabilities.constraints.len(),
+            once.relational_capabilities.constraints.len(),
+            "running normalize twice must not duplicate the canonical entry"
+        );
+    }
+
+    #[test]
+    fn evolution_backfills_a_legacy_schema_on_touch() {
+        // The migration story: a legacy schema converges on canonical simply by
+        // being modified — no offline pass.
+        let mut legacy = base_schema().with_primary_key(vec!["id".to_string()]);
+        legacy.relational_capabilities.unique_indexes = vec![CatalogIndex::new(
+            "uq_name",
+            vec!["name".to_string()],
+            CatalogIndexType::BTree,
+        )];
+
+        let evolved = apply_evolution(
+            &legacy,
+            &CatalogSchemaEvolution {
+                changes: vec![SchemaChange::AddColumn {
+                    name: "extra".to_string(),
+                    data_type: ProximaType::String,
+                    nullable: true,
+                    default_value: None,
+                    comment: None,
+                    after: None,
+                }],
+            },
+        )
+        .expect("an unrelated evolution still normalizes identity");
+
+        assert!(
+            evolved
+                .relational_capabilities
+                .constraints
+                .iter()
+                .any(|c| matches!(c, ColumnConstraint::Unique { .. })),
+            "touching the schema backfills the canonical field"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_a_unique_the_canonical_field_does_not_carry() {
+        // The defect ADR-077 makes unrepresentable: a UNIQUE in the projection
+        // only would be cataloged and never enforced.
+        let mut schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        schema.relational_capabilities.unique_indexes = vec![CatalogIndex::new(
+            "uq_name",
+            vec!["name".to_string()],
+            CatalogIndexType::BTree,
+        )];
+        let err = validate_schema(&schema).expect_err("a projection-only UNIQUE must be rejected");
+        assert!(err.to_string().contains("never enforced"));
+
+        // …and normalizing makes it valid.
+        normalize_identity(&mut schema);
+        validate_schema(&schema).expect("normalized schema validates");
+    }
+
+    #[test]
+    fn validate_allows_canonical_without_a_projection() {
+        // The reverse direction is legal: an UNNAMED UNIQUE has no index form to
+        // project into, and enforcement reads canonical anyway.
+        let mut schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        schema.relational_capabilities.constraints = vec![ColumnConstraint::Unique {
+            columns: vec!["name".to_string()],
+        }];
+        validate_schema(&schema).expect("canonical-only is the target shape");
+    }
+
+    #[test]
+    fn with_unique_maintains_canonical_and_projection_together() {
+        let schema = base_schema()
+            .with_primary_key(vec!["id".to_string()])
+            .with_unique("uq_name", vec!["name".to_string()]);
+
+        // Canonical carries it (so it is enforced)…
+        assert!(
+            schema
+                .relational_capabilities
+                .constraints
+                .iter()
+                .any(|c| matches!(c, ColumnConstraint::Unique { .. }))
+        );
+        // …and the projection carries it (so introspection renders an index)…
+        assert_eq!(schema.relational_capabilities.unique_indexes.len(), 1);
+        // …and the result is valid by construction.
+        validate_schema(&schema).expect("the builder cannot produce a drifted schema");
+    }
+
+    #[test]
+    fn with_unique_is_idempotent_and_order_insensitive() {
+        let schema = base_schema()
+            .with_column(CatalogColumn::new(3, "email", ProximaType::String))
+            .with_primary_key(vec!["id".to_string()])
+            .with_unique("uq_a", vec!["name".to_string(), "email".to_string()])
+            .with_unique("uq_b", vec!["email".to_string(), "name".to_string()]);
+        assert_eq!(
+            schema.relational_capabilities.constraints.len(),
+            1,
+            "the same tuple in a different order is one key, not two"
+        );
+        assert_eq!(schema.relational_capabilities.unique_indexes.len(), 1);
+    }
 
     #[test]
     fn adr077_legacy_and_canonical_schemas_are_mutually_readable() {
