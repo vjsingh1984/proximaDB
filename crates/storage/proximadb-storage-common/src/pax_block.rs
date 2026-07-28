@@ -621,6 +621,17 @@ pub struct PaxSegmentWriter {
     /// dim + the quant/f32_tier/embedding_count config). Replaces the flat 1024
     /// that overestimated SQ8 blocks by ~4.5×. 0 = not yet computed.
     per_row_estimate: usize,
+    /// TD-DELVEC-1 WI-2b: when true, capture each record's canonical oid in
+    /// add_record (stream) order into `oids`, and expose it via
+    /// [`PaxSegmentWriter::oid_resolver_bytes`] as a serialized
+    /// `OidPositionResolver` (the flush path writes a `.opr` sidecar in WI-2c).
+    /// Default OFF — zero cost; the default flush path is byte-for-byte unchanged.
+    compute_oid_resolver: bool,
+    /// Captured canonical oids in add_record (stream) order, one per record,
+    /// populated only when `compute_oid_resolver` is on. Position `i` here is the
+    /// segment's footer-block position `i` (verified: `add_record` call-order is
+    /// the on-disk order; TD-DELVEC-1 §9.2).
+    oids: Vec<String>,
     /// TD-COMPACT-1 S2: `Some` iff `PROXIMADB_TRACE_PAX_WRITE` was set when the
     /// writer was constructed (read ONCE, here) — cumulative sub-phase timers.
     write_trace: Option<Box<WriteTraceStats>>,
@@ -683,6 +694,8 @@ impl PaxSegmentWriter {
             rabitq_vectors: Vec::new(),
             two_level: None,
             per_row_estimate: 0,
+            compute_oid_resolver: false,
+            oids: Vec::new(),
             write_trace: std::env::var_os("PROXIMADB_TRACE_PAX_WRITE")
                 .is_some()
                 .then(|| Box::new(WriteTraceStats::default())),
@@ -698,6 +711,32 @@ impl PaxSegmentWriter {
     pub fn with_block_centroids(mut self, enabled: bool) -> Self {
         self.compute_centroids = enabled;
         self
+    }
+
+    /// TD-DELVEC-1 WI-2b: opt in to capturing the segment's oid→footer-block
+    /// position resolver. When on, `add_record` records each canonical oid in
+    /// stream order; [`PaxSegmentWriter::oid_resolver_bytes`] then serializes a
+    /// CRC32'd `ORP1` resolver (the flush path writes it as a `.opr` sidecar in
+    /// WI-2c). Default OFF — pre-existing callers pay nothing. Builder form
+    /// mirroring [`with_block_centroids`]; no block-writer rebuild needed.
+    pub fn with_oid_resolver(mut self, enabled: bool) -> Self {
+        self.compute_oid_resolver = enabled;
+        self
+    }
+
+    /// TD-DELVEC-1 WI-2b: serialize the captured oid→footer-block-position
+    /// resolver (CRC32'd `ORP1`), or `Ok(None)` if `with_oid_resolver` was not
+    /// enabled. The oids are complete once every record is added, so call this
+    /// BEFORE [`finish`](Self::finish) consumes the writer; the flush path
+    /// (WI-2c) writes the bytes as a `.opr` sidecar beside the segment.
+    pub fn oid_resolver_bytes(&self) -> Result<Option<Vec<u8>>, crate::bitmap::BitmapError> {
+        if !self.compute_oid_resolver {
+            return Ok(None);
+        }
+        let bytes =
+            crate::oid_position_resolver::OidPositionResolver::from_stream_order(self.oids.clone())
+                .serialize()?;
+        Ok(Some(bytes))
     }
 
     /// Set the vector quantization strategy for this segment (P3 Phase D). Builder form
@@ -886,6 +925,13 @@ impl PaxSegmentWriter {
             if let Some(t) = t {
                 d_cluster = t.elapsed();
             }
+        }
+        // TD-DELVEC-1 WI-2b: capture the canonical oid in add_record (stream)
+        // order — the only point that sees post-cluster-reorder footer-block
+        // order (verified: call-order == on-disk position; §9.2). Default off;
+        // mirrors the centroid opt-in above.
+        if self.compute_oid_resolver {
+            self.oids.push(record.oid.clone());
         }
         // ADR-062: buffer the embedding-0 f32 vector (in cluster/add order) for
         // the segment-level RaBitQ region. The caller has already reordered
@@ -2031,6 +2077,84 @@ mod tests {
             vec![11.0, 11.0],
             "mean of [10,10],[12,12]"
         );
+    }
+
+    /// TD-DELVEC-1 WI-2b: with `with_oid_resolver(true)`, the writer captures
+    /// each record's canonical oid in add_record (stream) order and exposes a
+    /// CRC32'd `ORP1` resolver whose positions match that order. Default OFF ⇒
+    /// `oid_resolver_bytes()` is `Ok(None)` (the default flush path is unchanged).
+    /// The footer-block-order property (capture order == on-disk scan order) is
+    /// verified by code read (§9.2) + a WI-2c scan integration test.
+    #[test]
+    fn oid_resolver_captures_stream_order_and_is_off_by_default() {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        let rec = |oid: &str| {
+            let mut r = ProximaRecord {
+                oid: oid.into(),
+                tenant_id: "t".into(),
+                created_at_ns: 1,
+                updated_at_ns: 1,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: 1,
+                values: EmbeddingValues::Fp32(vec![0.0]),
+                ..Default::default()
+            });
+            r
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+
+        // Default OFF: no resolver captured.
+        let mut w0 = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RawF32);
+        w0.add_record(&rec("x")).unwrap();
+        assert!(
+            w0.oid_resolver_bytes().unwrap().is_none(),
+            "default off ⇒ no resolver bytes"
+        );
+
+        // Opt in: capture oids in add_record order, round-trip through ORP1+CRC.
+        let mut w = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RawF32)
+        .with_oid_resolver(true);
+        for oid in ["a", "b", "", "d"] {
+            w.add_record(&rec(oid)).unwrap();
+        }
+        let bytes = w
+            .oid_resolver_bytes()
+            .unwrap()
+            .expect("captured when enabled");
+        let resolver =
+            crate::oid_position_resolver::OidPositionResolver::deserialize(&bytes).unwrap();
+        assert_eq!(resolver.len(), 4);
+        assert_eq!(resolver.position_of("a"), Some(0));
+        assert_eq!(resolver.position_of("b"), Some(1));
+        assert_eq!(
+            resolver.position_of(""),
+            Some(2),
+            "an empty oid is kept at its position (append-only rows are non-addressable, harmless)"
+        );
+        assert_eq!(resolver.position_of("d"), Some(3));
+        assert_eq!(resolver.oid_at(1), Some("b"));
     }
 
     /// TD-WLP-3 (TD-RDSTRAT-5 lever-3): the writer emits one RMS radius per
