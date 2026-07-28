@@ -1,14 +1,14 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-COMPACT-6: Move compaction from inline-synchronous to async-background
-:status: Open
+:status: Implemented
 :dim: D1
 :pillar: REL
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open.** Design decided in ADR-076 (Proposed). First slice — the highest-impact change (ingest throughput ~30×).
+| Status | **Implemented** (this PR). The flush path now calls `enqueue_due_compaction` (non-blocking) instead of the inline `run_due_compaction`. `run_due_compaction` is retained as the inline/test primitive.
 | Priority | **P0** — the inline-blocking pathology gates ingest throughput on object storage (measured: 1 flush/35 s during training compaction).
 | Component | `src/storage/engines/sst/flush/mod.rs:747-781` (inline call); `src/storage/engines/sst/compaction.rs:589-902` (`schedule_compaction` + `worker_loop`, currently idle); `src/storage/engine.rs:208-213` (2 workers, hardcoded).
 | Evidence | 2026-07-26 verification: TD-COMPACT-5 training arm fires every ~35 s during ingest (5-7 cycles). Each cycle: N object-store GETs + PCA (~35 s CPU) + 1 PUT + N DELETEs. Flush blocks for the full duration.
@@ -41,6 +41,34 @@ awaited). The existing `schedule_compaction` (`compaction.rs:589-628`) +
 * No compaction contention on the query path (idle-server queries ~1 ms during
   ingest, not ~400 ms).
 * Compaction completes post-ingest (poll: L0 count drops, L1 appears).
+
+== Resolution (implementation)
+
+Shipped alongside TD-COMPACT-7 (watermarks) + TD-COMPACT-8 (debounce) in the
+producer/consumer rate-control loop (ADR-076 D1). Concretely:
+
+* `Compaction::enqueue_due_compaction` mirrors `run_due_compaction` but calls
+  `schedule_compaction` (enqueue) instead of `perform_compaction_enhanced`
+  (inline). The flush caller (`flush/mod.rs`) sets the TD-COMPACT-8
+  `training_in_flight` guard, enqueues, and returns — it no longer clears the
+  guard (the worker does).
+* **Race fix (cross-model review):** the `active_compactions` insert moved from
+  worker-time (`worker_loop`) to enqueue-time (`schedule_compaction`), under one
+  write lock with the dedup check — closing the TOCTOU where two rapid schedules
+  for the same output both passed the read check before either worker inserted.
+* **Atomic-coordinator preservation:** the `SstEngine`'s `Compaction` is now
+  constructed via `with_atomic_coordinator(Some(coordinator))` so the background
+  workers carry the same ADR-046 atomic-swap coordinator the inline path had
+  (without this, `Compaction::new` passes `None` and the worker would publish the
+  compacted segment non-atomically).
+* **Worker state release:** `worker_loop` runs `release_task_state` on every
+  exit path (Ok, Err, manager-construction failure), clearing the per-output
+  active marker and the per-collection `training_in_flight` guard (collection dir
+  derived from `task.output_file.parent()`, so no new task field is needed).
+* Tests: `td_compact6_schedule_dedups_same_output_at_enqueue` (dedup, no workers)
+  + `td_compact6_worker_clears_training_in_flight_after_completion` (async
+  release via `await_compaction_quiescence`). `background_thread_count` is now
+  wired to the worker spawn at both Compaction instances (was hardcoded 2).
 
 == Related
 

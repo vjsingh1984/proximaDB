@@ -174,7 +174,9 @@ pub struct SstEngine {
     /// while a training pass is in-flight — eliminating the redundant re-training loop
     /// (up to N-1 wasted cycles per ingest batch, each costing N GETs + PCA + PUT +
     /// DELETEs on object storage). The flag is set by the flush caller before
-    /// `run_due_compaction` and cleared after (Ok, no-op, or Err — always cleared).
+    /// `enqueue_due_compaction` and cleared by the background worker once the
+    /// compaction completes (the flush caller also clears it on the no-worker
+    /// paths: nothing-due `Ok(false)`, or enqueue `Err`).
     pub(crate) training_in_flight: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 
     /// **Filesystem Factory**
@@ -446,9 +448,30 @@ impl SstEngine {
         // task_queue with zero consumers. Wire the worker count to the existing
         // SstConfig.background_thread_count (was hardcoded 2 at engine.rs:212;
         // the config field existed but was unused at the spawn site).
-        let mut compaction = Compaction::new(config.clone()).await.map_err(|e| {
-            SstError::Internal(format!("Failed to create compaction manager: {}", e))
-        })?;
+        //
+        // TD-COMPACT-6 D1: the training_in_flight guard is created HERE and
+        // shared (same Arc) between this SstEngine and its Compaction, so the
+        // background workers can clear a collection's entry once the async
+        // compaction completes (re-arming the flush path's training trigger).
+        // It MUST be linked before start_workers, which clones the handle into
+        // each worker task.
+        let training_in_flight: Arc<std::sync::Mutex<std::collections::HashSet<String>>> =
+            Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        // TD-COMPACT-6 D1: construct via with_atomic_coordinator so the
+        // background workers carry the SAME atomic coordinator the flush path
+        // uses — preserving the ADR-046 LSN-coherent atomic-swap publish.
+        let mut compaction =
+            Compaction::with_atomic_coordinator(config.clone(), Some(atomic_coordinator.clone()))
+                .await
+                .map_err(|e| {
+                    SstError::Internal(format!("Failed to create compaction manager: {}", e))
+                })?;
+        compaction.set_training_in_flight(training_in_flight.clone());
+        // Wrap in Arc BEFORE start_workers: start_workers takes `self: &Arc<Self>`
+        // so each worker can clone the Arc and reuse THIS persistent instance
+        // (warmed reader/compactor/factory) instead of building a cold
+        // `temp_manager` per task.
+        let compaction: Arc<Compaction> = Arc::new(compaction);
         compaction
             .start_workers(config.background_thread_count as usize)
             .await
@@ -458,7 +481,7 @@ impl SstEngine {
                     config.background_thread_count, e
                 ))
             })?;
-        let compaction_manager = Some(Arc::new(compaction));
+        let compaction_manager = Some(compaction);
 
         // Initialize universal performance optimization
         let universal_optimizer =
@@ -572,7 +595,9 @@ impl SstEngine {
         Ok(Self {
             config,
             compaction_manager,
-            training_in_flight: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            // TD-COMPACT-6 D1: the same Arc linked into the Compaction above —
+            // the flush path sets/reads it, the workers clear it on completion.
+            training_in_flight,
             filesystem,
             unified_fs: None, // Created per collection
             atomic_coordinator,
