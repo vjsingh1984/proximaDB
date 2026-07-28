@@ -1422,17 +1422,14 @@ mod type_strict_tests {
 /// user's is walked by [`evaluate_filter_resolved`] as before. No shared type
 /// changes, and no live query changes meaning.
 ///
-/// Absence handling is identical to the permissive walker (an absent field IS
-/// NULL for the null tests, and fails every other comparison), because that axis
-/// is already deny-biased. This adds only the type axis.
 /// 3-valued evaluation of an expression under type-strict comparison.
 ///
 /// `None` is SQL UNKNOWN — produced by an incomparable comparison (different
-/// JSON classes; see [`compare_json_op_type_strict`]). It propagates through the
-/// logical connectives by Kleene semantics and through `Not` as itself, so a
-/// negated incomparable comparison stays UNKNOWN (→ deny) rather than flipping to
-/// admit. An **absent** field is `Some(false)` (deny), not UNKNOWN — matching the
-/// permissive walker and keeping absence fail-closed.
+/// JSON classes; see [`compare_json_op_type_strict`]) **or an absent field**.
+/// It propagates through the logical connectives by Kleene semantics and through
+/// `Not` as itself, so a negated incomparable/absent comparison stays UNKNOWN
+/// (→ deny) rather than flipping to admit. This is the security walker: a row is
+/// admitted only on a definite `Some(true)`.
 pub fn evaluate_filter_resolved_type_strict_tri<F>(
     expr: &FilterExpression,
     resolve: &F,
@@ -1479,8 +1476,13 @@ where
                 Some(resolve(field).is_some_and(|json_val| !json_val.is_null()))
             }
             _ => match resolve(field) {
-                // Absent field → deny (not UNKNOWN): absence is fail-closed.
-                None => Some(false),
+                // Absent field → UNKNOWN (None), not Some(false). This is the
+                // fix for the absence-axis `Not` leak: a value comparison over a
+                // missing field is UNKNOWN, so `Not(UNKNOWN) = UNKNOWN → deny`
+                // (via the wrapper's `unwrap_or(false)`), not `Not(false) = admit`.
+                // Positive comparisons are unaffected — UNKNOWN also denies. Null
+                // tests are handled above (presence-decided) and never reach here.
+                None => None,
                 Some(json_val) => compare_json_op_type_strict(operator, &json_val, value),
             },
         },
