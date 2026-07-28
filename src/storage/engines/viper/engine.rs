@@ -1994,10 +1994,10 @@ impl UnifiedStorageFormat for ViperEngine {
             "engine_name".to_string(),
             serde_json::Value::String("VIPER".to_string()),
         );
-        // Step 3: Notify EventLog for async AXIS indexing (synchronous acknowledgment)
-        let flush_handler =
-            crate::storage::engines::viper::eventlog_flush::ViperFlushNotifier::new();
-        // Extract the file path from engine_metrics
+        // Step 3: index the just-flushed vectors into AXIS directly (ADR-078).
+        // Previously this published a metadata event to the AXIS queue, whose
+        // consumer re-read these same vectors back out of storage — the records
+        // are already in hand on `params`, so that round-trip bought nothing.
         let file_paths = if let Some(path_value) = flush_result.engine_metrics.get("parquet_files")
             && let serde_json::Value::String(path) = path_value
         {
@@ -2005,18 +2005,12 @@ impl UnifiedStorageFormat for ViperEngine {
         } else {
             vec![]
         };
-        if let Err(e) = flush_handler
-            .notify_flush_complete(params, file_paths, &vector_records_v1)
-            .await
-        {
-            // Log but don't fail the flush - EventLog notification is best-effort
-            warn!(
-                "⚠️ VIPER: Failed to notify EventLog for AXIS indexing: {}",
-                e
-            );
-        } else {
-            info!("✅ VIPER: Successfully notified EventLog for AXIS indexing");
-        }
+        crate::storage::common::axis_flush_hook::index_flushed_into_axis(
+            self.axis_manager().cloned(),
+            params,
+            file_paths,
+        )
+        .await;
         Ok(flush_result)
     }
 

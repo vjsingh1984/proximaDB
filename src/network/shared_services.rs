@@ -1287,6 +1287,12 @@ impl SharedServices {
             "✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search"
         );
 
+        // ADR-078: register the same manager for the shared flush→AXIS hook.
+        // VIPER/HELIX/NOVA construct `axis_manager: None` and nothing ever set
+        // it, which is precisely why they routed flush notifications through the
+        // AXIS queue instead of indexing directly. This gives them a handle.
+        crate::storage::common::axis_flush_hook::set_flush_axis_manager(axis_manager.clone());
+
         // Create VectorOperationsService with optimized architecture and two-stage search
         debug!(
             "🔧 SharedServices::new - About to create VectorOperationsService with two-stage search..."

@@ -3,6 +3,7 @@
 //! This module provides reusable components for storage engine implementations,
 //! including bitmap operations, compaction coordination, and memory-mapped I/O.
 
+pub mod axis_flush_hook;
 pub mod bitmap;
 pub mod compaction_orchestrator;
 pub mod compaction_utils;
