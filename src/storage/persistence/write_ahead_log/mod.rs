@@ -21,7 +21,6 @@
 //! ## Key Components
 //!
 //! - **WriteAheadLogManager**: Core manager coordinating all WAL operations
-//! - **WALBatchStrategy**: Strategy pattern for different serialization formats (Proto/Avro/Bincode)
 //! - **MemtableManager**: In-memory buffer for fast vector access
 //! - **DiskManager**: Persistent WAL file management with multi-disk support
 //! - **FlushCoordinator**: Orchestrates flushing from WAL to storage engines
@@ -88,13 +87,9 @@ use proximadb_records::ProximaRecord;
 // DIP: CollectionPathResolver is re-exported below via pub use
 
 // Sub-modules
-pub mod avro_serialization_strategy; // Clean architecture avro implementation
 pub mod background_manager;
 pub mod backup; // Incremental backup coordinator
-pub mod batch_factory;
-pub mod batch_strategy;
 pub mod batch_sync_coordinator;
-pub mod bincode_serialization_strategy; // Clean architecture bincode implementation
 pub mod collection_path;
 pub mod compact_batch_id;
 pub mod compaction_axis_integration;
@@ -110,7 +105,6 @@ pub mod memtable_manager; // New centralized memtable operations
 pub mod optimized_write_buffer_writer;
 pub mod parallel_search;
 pub mod pitr; // Point-in-Time Recovery manager
-pub mod proto_serialization_strategy; // Clean architecture proto implementation
 pub mod recovery_manager; // New centralized recovery operations
 pub mod recovery_thread_pool; // Thread pool for parallel recovery
 pub mod recovery_token;
@@ -127,18 +121,10 @@ pub mod v2_segment_header;
 // MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver
 // pub mod atomic_write_buffer_sync;
 
-// Unit tests
-#[cfg(test)]
-mod batch_strategy_tests;
-
 // Re-exports
-pub use avro_serialization_strategy::AvroSerializationStrategy;
 pub use background_manager::{
     BackgroundMaintenanceManager, BackgroundMaintenanceStats, BackgroundTaskStatus,
 };
-pub use batch_factory::{StrategyComparison, StrategyInfo, WALBatchFactory};
-pub use batch_strategy::WALBatchStrategy;
-pub use bincode_serialization_strategy::BincodeSerializationStrategy;
 pub use compaction_axis_integration::{CompactionAxisUpdater, CompactionIndexStats};
 pub use compaction_coordinator::{
     CollectionCompactionState, CompactionConfig, CompactionCoordinator, CompactionResult,
@@ -152,7 +138,6 @@ pub use flush_coordinator::{
     WALFlushCoordinator,
 };
 pub use memtable_manager::{MemtableManager, MemtableStats};
-pub use proto_serialization_strategy::ProtoSerializationStrategy;
 pub use recovery_manager::{ParallelRecoveryManager, RecoveryManager, RecoveryMode, RecoveryStats};
 pub use recovery_thread_pool::{
     RecoveryPoolStats, RecoveryThreadPool, get_recovery_thread_pool,
@@ -403,8 +388,6 @@ pub struct WriteAheadLogManagerRegistry {
     pool_config: WriteAheadLogManagerPoolConfig,
     /// WAL configuration for creating new managers
     wal_config: config::WALConfig,
-    /// Strategy type for creating new managers
-    strategy_type: config::WriteBufferStrategyType,
     /// Next manager ID for creating new instances
     next_manager_id: Arc<tokio::sync::Mutex<u64>>,
 }
@@ -616,7 +599,6 @@ impl WriteAheadLogManagerRegistry {
             manager_pool: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             pool_config,
             wal_config: config::WALConfig::default(),
-            strategy_type: config::WriteBufferStrategyType::AvroBatch,
             next_manager_id: Arc::new(tokio::sync::Mutex::new(1)),
         }
     }
@@ -676,9 +658,9 @@ impl WriteAheadLogManagerRegistry {
     /// Ensure initial pool of WalManagers exists
     async fn ensure_initial_pool(
         &self,
-        strategy_type: crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType,
+        _strategy_type: crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType,
         config: &WALConfig,
-        filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+        _filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     ) -> Result<()> {
         let pool = self.manager_pool.read().await;
         if !pool.is_empty() {
@@ -700,19 +682,8 @@ impl WriteAheadLogManagerRegistry {
         for i in 0..self.pool_config.initial_pool_size {
             let manager_id = format!("write_buffer_manager_pool_{}", i + 1);
 
-            let strategy = WALBatchFactory::create_batch_serialization_strategy(
-                strategy_type,
-                config,
-                filesystem.clone(),
-            )
-            .await?;
             let manager = Arc::new(
-                WriteAheadLogManager::new_pool_manager(
-                    strategy,
-                    config.clone(),
-                    manager_id.clone(),
-                )
-                .await?,
+                WriteAheadLogManager::new_pool_manager(config.clone(), manager_id.clone()).await?,
             );
 
             let entry = WriteAheadLogManagerPoolEntry {
@@ -838,21 +809,9 @@ impl WriteAheadLogManagerRegistry {
         );
 
         // Use registry-level config for dynamic managers
-        let strategy_type = self.strategy_type;
         let config = &self.wal_config;
-        let filesystem_config =
-            crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
-                .await?,
-        );
-
-        let strategy =
-            WALBatchFactory::create_batch_serialization_strategy(strategy_type, config, filesystem)
-                .await?;
         let manager = Arc::new(
-            WriteAheadLogManager::new_pool_manager(strategy, config.clone(), manager_id.clone())
-                .await?,
+            WriteAheadLogManager::new_pool_manager(config.clone(), manager_id.clone()).await?,
         );
 
         let entry = WriteAheadLogManagerPoolEntry {
@@ -1387,9 +1346,9 @@ pub struct WriteAheadLogManagerPoolStats {
 
 impl WriteAheadLogManager {
     /// Create new WriteAheadLogManager
-    pub async fn new(strategy: Box<dyn WALBatchStrategy>, config: WALConfig) -> Result<Self> {
+    pub async fn new(config: WALConfig) -> Result<Self> {
         // Use new_pool_manager with a default manager ID for backwards compatibility
-        Self::new_pool_manager(strategy, config, "default_manager".to_string()).await
+        Self::new_pool_manager(config, "default_manager".to_string()).await
     }
 
     /// Create new WriteAheadLogManager for specific collections with shared global memtable
@@ -1551,11 +1510,7 @@ impl WriteAheadLogManager {
     }
 
     /// Create new WriteAheadLogManager for pool with empty collection set
-    pub async fn new_pool_manager(
-        _strategy: Box<dyn WALBatchStrategy>,
-        config: WALConfig,
-        manager_id: String,
-    ) -> Result<Self> {
+    pub async fn new_pool_manager(config: WALConfig, manager_id: String) -> Result<Self> {
         tracing::debug!(
             "🏊 Creating pool WriteAheadLogManager {} (shared global memtable)",
             manager_id
@@ -1616,18 +1571,17 @@ impl WriteAheadLogManager {
 
     /// Create new WAL manager using the factory (recommended)
     pub async fn create_with_factory(
-        strategy_type: crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType,
+        _strategy_type: crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType,
         config: WALConfig,
-        filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+        _filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     ) -> Result<Self> {
-        // Use the new batch serialization strategies for better separation of concerns
-        let strategy = WALBatchFactory::create_batch_serialization_strategy(
-            strategy_type,
-            &config,
-            filesystem,
-        )
-        .await?;
-        Self::new(strategy, config).await
+        // The batch-serialization strategy object was constructed here and then
+        // dropped by the manager (which routes on `config.strategy_type` + the
+        // global write buffer, never a `WALBatchStrategy`); the whole stack was
+        // removed. `strategy_type`/`filesystem` are retained on the signature for
+        // the live callers (engine.rs, metadata/write_ahead_log.rs) that pass an
+        // enum, but are no longer needed to construct the manager.
+        Self::new(config).await
     }
 
     /// Create new WAL manager using the batch factory (alias for modern naming)

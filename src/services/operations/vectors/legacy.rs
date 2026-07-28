@@ -5052,18 +5052,9 @@ mod index_first_search_tests {
         let sst_engine = Arc::new(crate::storage::engines::sst::SstEngine::new().await?);
 
         let wal_config = crate::storage::persistence::write_ahead_log::WALConfig::default();
-        let strategy_type =
-            crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
-        let strategy = crate::storage::persistence::write_ahead_log::WALBatchFactory::create_batch_serialization_strategy(
-            strategy_type,
-            &wal_config,
-            filesystem.clone()
-        ).await?;
         let wal_manager = Arc::new(
-            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(
-                strategy, wal_config,
-            )
-            .await?,
+            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(wal_config)
+                .await?,
         );
 
         let axis_manager = Arc::new(
