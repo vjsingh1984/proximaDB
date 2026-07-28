@@ -96,6 +96,7 @@ artifact = "docs/10-quality/td/TD-COMPACT-5-training-compaction-trigger.adoc"
 hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build, serialized runs"
 date = "2026-07-25"
 version = "feat/flush-triggers -> develop (#1207)"
+notes = "PRE-ASYNC measurement: the compaction trigger was INLINE (run_due_compaction, awaited by flush). Post-async (#1253, 2026-07-28): compaction is now enqueued to background workers (D1) — flush returns immediately after the L0 write. See async_compaction_1m_e2e for the post-async 1M measurement. The recall/GET numbers here are valid for the pre-async code state."
 
 [[claims]]
 id = "nprobe_sweep_trained_1m"
@@ -125,6 +126,7 @@ artifact = "docs/10-quality/td/TD-FLUSH-5-flush-encode-single-threaded.adoc"
 hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build"
 date = "2026-07-26"
 version = "feat/overnight-followups -> develop"
+notes = "PRE-ASYNC measurement: 'Flush now completes ~4s after ingest end' included the inline compaction wait. Post-async (#1253): flush returns immediately after the L0 write (does not await compaction). See async_compaction_1m_e2e."
 
 
 [[claims]]
@@ -719,3 +721,21 @@ artifact = "docs/10-quality/td/TD-CACHE-6-survivor-cache-bypassed-on-probe-path.
 hardware = "Local macOS arm64, Azurite 3.36 blob emulator on localhost:11000"
 date = "2026-07-26"
 version = "feat/tt-bed-evidence -> develop"
+
+[[claims]]
+id = "async_compaction_1m_e2e"
+claim = "ADR-076 D1+D2 post-merge verification, SIFT 1M REST e2e on merged develop: async compaction (workers reuse the persistent Compaction — no per-task cold temp_manager) + L0 admission watermarks (stop=10, slowdown=6). Ingest throughput 36,818 vec/s (1M in 27s — flush no longer blocks on compaction; was ~1 flush/35s inline). 6/6 compaction tasks completed by the async worker pool (~2.1–2.7s each, non-blocking). L0 bounded: D2 STOP engaged 146x (flushes deferred + retried; data safe in WAL); steady-state 4 L0 + 6 L1 segments. recall@10 = 0.9875 (200 queries, full 1M brute-force GT, ratchet held). Cold latency p50 255.8ms / p95 270.7ms. D3 training debounce: 0 redundant training-arm fires (count arm handled compaction; write-train default-ON produced trained L1). The 89 'flush failures' are D2-stop deferrals (backpressure), NOT errors."
+metric = "ingest throughput + recall@10 + compaction completions + L0 segment count + D2 backpressure count"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-076-async-compaction-admission-control.adoc",
+  "docs/10-quality/td/TD-COMPACT-6-async-compaction.adoc",
+  "docs/10-quality/td/TD-COMPACT-7-l0-admission-control-watermarks.adoc",
+]
+bench_source = "scripts/bench/async_compaction_1m_verify.py"
+bench_command = "python3 scripts/bench/async_compaction_1m_verify.py  # server on :5678, flush_interval=12s, PROXIMADB_L0_COMPACTION_ENABLED=1"
+artifact = "docs/_internal/status/ASYNC_COMPACTION_1M_EVIDENCE_2026_07_28.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release run"
+date = "2026-07-28"
+version = "develop @ 99b84be1a (post-merge of #1253 + #1265 + #1271)"
+notes = "Post-merge of the async-compaction arc (D3 #1241, D0 #1242, D1+D2 #1253, follow-ups #1265, CI fix #1271). The prior compaction entries (training_compaction_cold_ladder_1m, flush_encode_parallel_1m) measured the PRE-ASYNC inline path; this entry measures the ASYNC path. Recall/GET numbers from the pre-async entries are still valid for that code state; the async change eliminated the ~35s inline flush block (D1) and added bounded L0 backpressure (D2)."
