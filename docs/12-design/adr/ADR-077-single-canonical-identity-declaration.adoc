@@ -141,8 +141,10 @@ here; it is the steady state.
 |===
 | Step | Content
 
-| **M1** (one PR)
-| Normalize on load (`table_identity` at the deserialize boundary); route all identity writes through the single constructor, which writes the canonical field **and** maintains the projections; `validate_schema` rejects a projection that disagrees with its canonical source.
+| **M1** (one PR) ✅ **implemented**
+| `schema::normalize_identity` folds every discovered UNIQUE into the canonical field — additively, so the index names and types the projections carry survive — and runs inside `apply_evolution`, so the backfill happens *on touch* rather than in an offline pass. `CatalogTableSchema::with_unique` is the single write constructor, maintaining canonical + projection together. `validate_schema` rejects a projection holding a UNIQUE the canonical field lacks (the "cataloged but never enforced" shape), while allowing canonical *without* a projection — an unnamed UNIQUE has no index form to project into.
+
+**Correction found while implementing:** this section first said normalize *on load*. That was wrong. `validate_schema` is called on **write** paths only — the seven `create_table` sites plus `apply_evolution` — and **never on load**, so a legacy schema is never rejected merely for being read. Normalizing on load would have addressed a problem that does not exist while missing the one that does; the hook belongs in `apply_evolution`, before validation.
 
 | **M2** (optional, GA or never)
 | Remove the legacy fields from the struct. Only worth doing if the projections stop being useful to introspection — which today they are not, so **the honest expectation is that M2 never happens**.
