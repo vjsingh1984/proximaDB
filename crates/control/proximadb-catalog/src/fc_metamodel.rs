@@ -427,14 +427,32 @@ pub fn identity_slot_from_table_schema(schema: &CatalogTableSchema) -> IdentityS
         Some(spec)
     };
 
-    // 2. Unique indexes → UniquenessSecondary (only when a PK owns the row).
-    for idx in &schema.indexes {
-        if !idx.is_unique || idx.columns == schema.primary_key {
-            continue;
+    // 2. Every declared UNIQUE → UniquenessSecondary (only when a PK owns the row).
+    //
+    // A UNIQUE reaches the catalog by *two* routes — as a unique `CatalogIndex`,
+    // and as a `ColumnConstraint::Unique` in `relational_capabilities` — and this
+    // step originally read only the first. A `UNIQUE` declared as a constraint
+    // therefore produced no facet at all, which is not merely a missing label:
+    // the identity slot is the seam by which F2's ConditionalKeyStore learns
+    // which keys to fence (TF-2 §2 D12-b), so an unseen UNIQUE is an unenforced
+    // one. Both routes are read here, deduplicated by key.
+    let mut secondary_keys: Vec<Vec<String>> = Vec::new();
+    let mut push_secondary = |columns: &[String],
+                              label: String,
+                              facets: &mut Vec<IdentityFacet>,
+                              gaps: &mut Vec<String>| {
+        if columns.is_empty() || same_column_set(columns, &schema.primary_key) {
+            return;
         }
+        // The same key declared as both an index and a constraint is one facet.
+        if secondary_keys.iter().any(|k| same_column_set(k, columns)) {
+            return;
+        }
+        secondary_keys.push(columns.to_vec());
+
         let key = CompositeKeySpec {
             keyspace: keyspace.clone(),
-            columns: idx.columns.iter().map(|n| column_ref(schema, n)).collect(),
+            columns: columns.iter().map(|n| column_ref(schema, n)).collect(),
         };
         match &primary_spec {
             Some(pk) => facets.push(IdentityFacet {
@@ -443,10 +461,28 @@ pub fn identity_slot_from_table_schema(schema: &CatalogTableSchema) -> IdentityS
                 },
                 key,
             }),
-            None => gaps.push(format!(
-                "unique index '{}' has no primary key to own it",
-                idx.name
-            )),
+            None => gaps.push(format!("{label} has no primary key to own it")),
+        }
+    };
+
+    for idx in &schema.indexes {
+        if idx.is_unique {
+            push_secondary(
+                &idx.columns,
+                format!("unique index '{}'", idx.name),
+                &mut facets,
+                &mut gaps,
+            );
+        }
+    }
+    for constraint in &schema.relational_capabilities.constraints {
+        if let ColumnConstraint::Unique { columns } = constraint {
+            push_secondary(
+                columns,
+                format!("UNIQUE constraint on ({})", columns.join(", ")),
+                &mut facets,
+                &mut gaps,
+            );
         }
     }
 
@@ -705,19 +741,23 @@ pub struct DerivedRelationships {
     pub gaps: Vec<String>,
 }
 
+/// Do two column lists denote the same key? Order-insensitive: a `UNIQUE(a,b)`
+/// and a `UNIQUE(b,a)` fence the same tuple, so they are one key, not two.
+fn same_column_set(a: &[String], b: &[String]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut a: Vec<&str> = a.iter().map(String::as_str).collect();
+    let mut b: Vec<&str> = b.iter().map(String::as_str).collect();
+    a.sort_unstable();
+    b.sort_unstable();
+    a == b
+}
+
 /// Is this column set unique **in the declaring table** (its PK, a unique index,
 /// or a `UNIQUE` constraint)? Order-insensitive: `UNIQUE(a,b)` fences `(b,a)` too.
 fn columns_are_unique_in(schema: &CatalogTableSchema, columns: &[String]) -> bool {
-    let same = |other: &[String]| -> bool {
-        if other.len() != columns.len() {
-            return false;
-        }
-        let mut a: Vec<&str> = columns.iter().map(String::as_str).collect();
-        let mut b: Vec<&str> = other.iter().map(String::as_str).collect();
-        a.sort_unstable();
-        b.sort_unstable();
-        a == b
-    };
+    let same = |other: &[String]| -> bool { same_column_set(columns, other) };
 
     same(&schema.primary_key)
         || schema
@@ -1365,6 +1405,163 @@ mod tests {
         assert!(filt.contains(&"dept"));
         assert!(filt.contains(&"email"));
         assert!(!filt.contains(&"body_vec"));
+    }
+
+    fn secondary_key_names(slot: &IdentitySlot) -> Vec<Vec<String>> {
+        slot.facets
+            .iter()
+            .filter(|f| matches!(f.role, IdentityRole::UniquenessSecondary { .. }))
+            .map(|f| f.key.columns.iter().map(|c| c.name.clone()).collect())
+            .collect()
+    }
+
+    /// `t(id PK, email, tenant, region)` with UNIQUE declared as a *constraint*
+    /// rather than an index.
+    fn schema_with_unique_constraints(constraints: Vec<ColumnConstraint>) -> CatalogTableSchema {
+        CatalogTableSchema::new("t")
+            .with_column(CatalogColumn::new(
+                0,
+                "id",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(str_col(1, "email"))
+            .with_column(str_col(2, "tenant"))
+            .with_column(str_col(3, "region"))
+            .with_primary_key(vec!["id".to_string()])
+            .with_relational_capabilities(crate::RelationalCapabilities {
+                constraints,
+                ..Default::default()
+            })
+    }
+
+    #[test]
+    fn a_unique_declared_as_a_constraint_is_fenced_like_one_declared_as_an_index() {
+        // The gap: a UNIQUE reaches the catalog by two routes, and derivation
+        // read only the index route. The identity slot is how F2's CKS learns
+        // which keys to fence, so a UNIQUE it cannot see is a UNIQUE that is
+        // never enforced.
+        let slot = identity_slot_from_table_schema(&schema_with_unique_constraints(vec![
+            ColumnConstraint::Unique {
+                columns: vec!["email".to_string()],
+            },
+        ]));
+
+        assert_eq!(secondary_key_names(&slot), vec![vec!["email".to_string()]]);
+        let secondary = slot
+            .facets
+            .iter()
+            .find(|f| matches!(f.role, IdentityRole::UniquenessSecondary { .. }))
+            .expect("the constraint-declared UNIQUE produces a facet");
+        assert!(secondary.is_cks_fenced());
+        match &secondary.role {
+            IdentityRole::UniquenessSecondary { owning_primary } => {
+                assert_eq!(owning_primary.columns[0].name, "id");
+            }
+            _ => unreachable!(),
+        }
+        assert!(slot.validate().is_ok());
+    }
+
+    #[test]
+    fn a_composite_unique_constraint_keeps_all_its_columns() {
+        let slot = identity_slot_from_table_schema(&schema_with_unique_constraints(vec![
+            ColumnConstraint::Unique {
+                columns: vec!["tenant".to_string(), "email".to_string()],
+            },
+        ]));
+        assert_eq!(
+            secondary_key_names(&slot),
+            vec![vec!["tenant".to_string(), "email".to_string()]]
+        );
+    }
+
+    #[test]
+    fn the_same_key_declared_as_both_an_index_and_a_constraint_yields_one_facet() {
+        // Catalogs routinely carry both forms for one DDL `UNIQUE`. Two facets
+        // for one key would mean the CKS fences it twice.
+        let schema = schema_with_unique_constraints(vec![ColumnConstraint::Unique {
+            columns: vec!["email".to_string()],
+        }])
+        .with_index(
+            crate::CatalogIndex::new(
+                "uq_email",
+                vec!["email".to_string()],
+                crate::CatalogIndexType::BTree,
+            )
+            .unique(),
+        );
+        assert_eq!(
+            secondary_key_names(&identity_slot_from_table_schema(&schema)),
+            vec![vec!["email".to_string()]]
+        );
+    }
+
+    #[test]
+    fn column_order_does_not_make_a_second_key() {
+        // UNIQUE(a,b) and UNIQUE(b,a) fence the same tuple.
+        let schema = schema_with_unique_constraints(vec![ColumnConstraint::Unique {
+            columns: vec!["tenant".to_string(), "email".to_string()],
+        }])
+        .with_index(
+            crate::CatalogIndex::new(
+                "uq_email_tenant",
+                vec!["email".to_string(), "tenant".to_string()],
+                crate::CatalogIndexType::BTree,
+            )
+            .unique(),
+        );
+        assert_eq!(
+            secondary_key_names(&identity_slot_from_table_schema(&schema)).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_unique_constraint_restating_the_primary_key_is_not_a_secondary() {
+        let slot = identity_slot_from_table_schema(&schema_with_unique_constraints(vec![
+            ColumnConstraint::Unique {
+                columns: vec!["id".to_string()],
+            },
+        ]));
+        assert!(secondary_key_names(&slot).is_empty());
+        assert_eq!(slot.primary_count(), 1);
+    }
+
+    #[test]
+    fn non_unique_constraints_produce_no_facet() {
+        let slot = identity_slot_from_table_schema(&schema_with_unique_constraints(vec![
+            ColumnConstraint::Check {
+                expression: "email <> ''".to_string(),
+            },
+            ColumnConstraint::ForeignKey {
+                columns: vec!["tenant".to_string()],
+                references_table: "tenants".to_string(),
+                references_columns: vec!["id".to_string()],
+                on_delete: None,
+                on_update: None,
+            },
+        ]));
+        assert!(secondary_key_names(&slot).is_empty());
+    }
+
+    #[test]
+    fn a_constraint_unique_without_a_primary_key_is_recorded_as_a_gap() {
+        let schema = CatalogTableSchema::new("t")
+            .with_column(str_col(0, "email"))
+            .with_relational_capabilities(crate::RelationalCapabilities {
+                constraints: vec![ColumnConstraint::Unique {
+                    columns: vec!["email".to_string()],
+                }],
+                ..Default::default()
+            });
+        let slot = identity_slot_from_table_schema(&schema);
+        // No PK to own it — say so rather than emitting an unowned facet.
+        assert!(secondary_key_names(&slot).is_empty());
+        assert!(
+            slot.completeness_gaps
+                .iter()
+                .any(|g| g.contains("UNIQUE constraint on (email)") && g.contains("no primary key"))
+        );
     }
 
     #[test]
