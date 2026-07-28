@@ -15,6 +15,7 @@
 
 pub mod block_prune;
 pub mod bounded_queue;
+pub mod compiled_filter;
 pub mod json_comparison;
 pub mod json_value_serde;
 pub mod results;
