@@ -62,8 +62,10 @@ impl OidPositionResolver {
         self.oids.is_empty()
     }
 
-    /// Serialize as `[OPR_MAGIC | count u32 | (oid_len u32, utf8 bytes)* ]` in
-    /// position order, all little-endian.
+    /// Serialize as `[OPR_MAGIC | count u32 | (oid_len u32, utf8 bytes)* | crc32 u32]`
+    /// in position order, all little-endian. The trailing CRC32 (over the whole
+    /// preceding body) lets a loader reject a correct-magic-but-corrupt sidecar
+    /// instead of mapping a delete to the wrong position (TD-DELVEC-1 §9 / WI-2b).
     pub fn serialize(&self) -> Result<Vec<u8>, BitmapError> {
         let mut out = Vec::new();
         out.extend_from_slice(OPR_MAGIC);
@@ -73,30 +75,46 @@ impl OidPositionResolver {
             out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
             out.extend_from_slice(bytes);
         }
+        let crc = crc32fast::hash(&out);
+        out.extend_from_slice(&crc.to_le_bytes());
         Ok(out)
     }
 
     /// Deserialize, rejecting an absent/unknown magic (so a caller can fall back
-    /// to a no-resolver path) or a truncated body.
+    /// to a no-resolver path), a truncated body, OR a CRC32 mismatch — a
+    /// correct-magic-but-corrupt sidecar must never yield a wrong-position map
+    /// (TD-DELVEC-1 §9 / WI-2b).
     pub fn deserialize(bytes: &[u8]) -> Result<Self, BitmapError> {
         let err = |m: &str| BitmapError::SerializationError(m.to_string());
-        if bytes.len() < OPR_MAGIC.len() + 4 || &bytes[..OPR_MAGIC.len()] != OPR_MAGIC {
+        if bytes.len() < OPR_MAGIC.len() {
+            return Err(err("oid-position resolver: too short for magic"));
+        }
+        if &bytes[..OPR_MAGIC.len()] != OPR_MAGIC {
             return Err(err("oid-position resolver: missing or unknown magic"));
         }
+        // Trailing CRC32 over the body = everything except the last 4 bytes.
+        if bytes.len() < OPR_MAGIC.len() + 4 + 4 {
+            return Err(err("oid-position resolver: too short for count + crc"));
+        }
+        let body = &bytes[..bytes.len() - 4];
+        let stored_crc = u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().unwrap());
+        if crc32fast::hash(body) != stored_crc {
+            return Err(err("oid-position resolver: crc32 mismatch (corrupt body)"));
+        }
         let mut off = OPR_MAGIC.len();
-        let count = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
+        let count = u32::from_le_bytes(body[off..off + 4].try_into().unwrap()) as usize;
         off += 4;
         let mut oids = Vec::with_capacity(count);
         for _ in 0..count {
-            if off + 4 > bytes.len() {
+            if off + 4 > body.len() {
                 return Err(err("oid-position resolver: truncated length"));
             }
-            let len = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
+            let len = u32::from_le_bytes(body[off..off + 4].try_into().unwrap()) as usize;
             off += 4;
-            if off + len > bytes.len() {
+            if off + len > body.len() {
                 return Err(err("oid-position resolver: truncated oid"));
             }
-            let oid = std::str::from_utf8(&bytes[off..off + len])
+            let oid = std::str::from_utf8(&body[off..off + len])
                 .map_err(|_| err("oid-position resolver: invalid utf8 oid"))?
                 .to_string();
             off += len;
@@ -172,6 +190,21 @@ mod tests {
         short_body.extend_from_slice(&10u32.to_le_bytes());
         short_body.extend_from_slice(b"abc");
         assert!(OidPositionResolver::deserialize(&short_body).is_err());
+    }
+
+    #[test]
+    fn crc_rejects_corrupt_body_not_wrong_position() {
+        // TD-DELVEC-1 §9 (DeepSeek T4): correct magic + a corrupt body must NOT
+        // deserialize to a wrong-position map. Flip one body byte (not the CRC
+        // trailer) and assert the loader rejects it outright.
+        let r = OidPositionResolver::from_stream_order(vec!["a".into(), "b".into(), "c".into()]);
+        let mut bytes = r.serialize().expect("serialize");
+        // Byte 8 sits inside the body (after magic + count), before the CRC.
+        bytes[8] ^= 0xFF;
+        assert!(
+            OidPositionResolver::deserialize(&bytes).is_err(),
+            "a corrupt body must be rejected at the CRC, never silently yield a wrong-position resolver"
+        );
     }
 
     #[test]
