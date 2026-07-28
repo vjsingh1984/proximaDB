@@ -125,14 +125,12 @@ if [ "$SCOPE" = "restart" ]; then
   CARGO_BUILD_JOBS=1 cargo test -p proximadb --features azure --lib \
     warm_manifest_round_trips_on_object_store \
     -- --ignored --nocapture --test-threads=1
-  # TD-OBJSTORE-5 S2: per-primitive contract tests against the PRODUCTION root
-  # FileSystem backends (PUT->prefix-LIST, prefix-exists-false, multi-page LIST).
-  # Azure + S3 strict; GCS best-effort (skips if the backend does not register).
-  echo "==> TD-OBJSTORE-5 S2: backend contract tests (Azure/S3 strict, GCS best-effort)"
-  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features aws,azure,gcp \
-    --test objstore_backend_contract_test \
-    -- --ignored --nocapture --test-threads=1
-  echo "==> Restart-recovery + contract validation complete (cleanup trap tears emulators down)"
+  # TD-OBJSTORE-5 S2 (backend contract tests) moved to --qa — see below.
+  # Keeping it here forced a 3rd cold feature-set compile (aws,azure,gcp)
+  # that, combined with the two azure builds above, exceeded the job's timeout
+  # budget. In --qa it's a near-free incremental build on the existing
+  # cloud-full artifact (cloud-full = aws+azure+gcp — identical feature set).
+  echo "==> Restart-recovery validation complete (cleanup trap tears emulators down)"
   exit 0
 fi
 
@@ -149,6 +147,15 @@ if [ "$SCOPE" = "qa" ]; then
   echo "==> TD-OBJSTORE-5 QA tier: build server (cloud-full) before emulator runs"
   CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features cloud-full \
     --test object_store_restart_recovery --no-run
+
+  # TD-OBJSTORE-5 S2: backend contract tests (moved from --restart to --qa for
+  # compile efficiency). cloud-full (= aws+azure+gcp) is already built above;
+  # this is a near-free incremental build + run. Emulators (Azurite/MinIO/gcs)
+  # are started by the setup trap before this scope runs.
+  echo "==> TD-OBJSTORE-5 S2: backend contract tests (Azure/S3 strict, GCS best-effort)"
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features cloud-full \
+    --test objstore_backend_contract_test \
+    -- --ignored --nocapture --test-threads=1
 
   echo "==> QA tier [1/2]: Azure (Azurite, adls://) — restart proofs + recall ratchet"
   export PROXIMADB_AZURE_EMULATOR=1 AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
