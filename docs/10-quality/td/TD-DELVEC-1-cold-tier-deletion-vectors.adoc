@@ -231,7 +231,8 @@ snapshot-correct `is_deleted_as_of(pos, snapshot_lsn)`; versioned `PDV2` magic +
 /deserialize (magic-rejection fallback). Pure-additive, wired to nothing. §7.2-1. | **building**
 | WI-2 | **OID→position resolver.** Dense `OID→footer-ordinal` recorded at write (footer
 sidecar / the reserved `stats_kind` "PR3 OID bloom" hook) or resolve-and-record at delete
-time. Additive to the footer. §7.2-2. | pending
+time. Additive to the footer. §7.2-2. *(WI-2a — the `OidPositionResolver` type +
+serialization — built additive/wired-to-nothing; WI-2b wires it into the segment writer.)* | **building**
 | WI-3 | **Delete path → set DV bit** (feature-gated): a hot tombstone landing on a row in
 an immutable cold segment resolves `(segment, position)` (WI-2) and sets the versioned DV
 bit at the delete LSN, instead of a cascading cold tombstone. §7.2 D2. | pending
