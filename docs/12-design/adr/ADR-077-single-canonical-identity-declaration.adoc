@@ -1,0 +1,137 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-077: One canonical identity declaration per table
+:status: Proposed
+:date: 2026-07-28
+:authors: foundation session 2026-07-28
+:amends: ADR-072 D1 (catalog as the governance seam)
+:tracked-by: TD-CAT-6
+
+== Context
+
+ADR-072 **D1** ratified that *"constraint/index enforcement is written **once against
+the metamodel**"*, and made that the justification for `ConditionalKeyStore` being
+modality-agnostic: *"uniqueness on the entity's identity key" is a metamodel concept.*
+
+The implementation does not match. `CatalogTableSchema` lets one fact — *what identity
+does this table declare?* — be written to **six** places:
+
+[cols="3,2,2"]
+|===
+| Location | Written by | Read by
+
+| `schema.primary_key` | most creation paths, evolution | record_store, fc_metamodel, pgwire, introspection
+| `relational_capabilities.primary_key` | **one** site (CREATE TABLE) | `relational::effective_primary_key`, table_write_plan
+| `relational_capabilities.unique_indexes` | **one** site (inline `UNIQUE(...)`) | the enforcement path
+| `relational_capabilities.constraints[Unique]` | CREATE TABLE + ALTER | the enforcement path
+| `schema.indexes[].is_unique` | CREATE INDEX, ALTER ADD CONSTRAINT | fc_metamodel, introspection
+| `properties["constraint:unique:…"]` | ALTER ADD CONSTRAINT | nothing
+|===
+
+Nothing validated agreement between them, and no consumer read all of them. The
+consequences were not hypothetical:
+
+* **`ALTER TABLE … ADD CONSTRAINT … UNIQUE` was cataloged and never enforced** — the
+  write and the read touched disjoint fields. Fixed in the S0 commit of TD-CAT-6.
+* **Renaming a PK column left a stale primary key** in the capabilities copy, which
+  `effective_primary_key` *prefers* — so row validation resolved a column that no longer
+  existed. Fixed likewise.
+* **`DROP CONSTRAINT` leaked its property row**, because the key is derived from columns
+  and the filter matched on the constraint *name*.
+* **Five different answers to "what is the primary key"**, with different precedence and
+  fallbacks, across `record_store`, `relational`, `table_write_plan`,
+  `relational_pipeline`, and introspection.
+* **`relational_capabilities.secondary_indexes` has zero non-test writers** — the
+  TD-127 secondary-index path is dead in production because `CREATE INDEX` writes
+  `schema.indexes` instead.
+
+TD-CAT-6 established *why* this is structural rather than careless: the canonical answer
+lived in the root crate, `control → root` is forbidden by the layering guard, so every
+lower layer was **forced** to re-derive. Its slice 1 put discovery in the catalog crate
+(`schema::table_identity`), which stops the readers diverging.
+
+**That fixes the readers. It does not fix the writers.** Six writable locations with no
+invariant is a generator of the defects above: each new writer picks a field, each new
+reader picks a subset, and nothing makes disagreement impossible.
+
+== Decision
+
+**One canonical location per identity fact. Every other location becomes derived or is
+removed, so an inconsistent schema becomes unrepresentable.**
+
+. **Primary key** — `schema.primary_key` is canonical.
+  `relational_capabilities.primary_key` is removed from the write surface and, while it
+  must still deserialize, is never read for a decision.
+. **Uniqueness** — `relational_capabilities.constraints` (the `ColumnConstraint::Unique`
+  form) is canonical, because it is the only representation that survives without a
+  constraint name and is already what the enforcement path reads.
+  `relational_capabilities.unique_indexes` and `schema.indexes[].is_unique` become
+  *projections* maintained for introspection (pg/JDBC surfaces genuinely want an index
+  view), never sources of truth. The `properties["constraint:unique:…"]` blob is retired.
+. **Writes go through one constructor**, not by assigning fields. Identity declarations
+  are set via a method on the schema that maintains every projection together, so a
+  partial update is not expressible.
+. **`validate_schema` enforces the invariant** — already tightened in TD-CAT-6 S0 to
+  reject a disagreeing primary key; extended here to reject any projection that disagrees
+  with its canonical source.
+
+`schema::table_identity` (TD-CAT-6 S1) is the **migration shim**, not the destination.
+It exists to read the pre-migration shapes; once the collapse lands, it reads one field
+and its four-route fallback logic is deletable.
+
+== Migration (mixed-read-safe, per CLAUDE.md §8)
+
+`CatalogTableSchema` is **persisted** and read by 14+ files, so this is a storage-format
+change and follows the phased pattern — no flag day:
+
+. **Read-union, write-both** *(TD-CAT-6 S1 already ships the read half.)* Readers use
+  `table_identity`; writers keep populating the legacy fields.
+. **Write-canonical, read-union.** New writes go only to the canonical field; readers
+  still accept the legacy shapes, so old persisted schemas keep working.
+. **Backfill on touch.** Any schema passing through evolution is normalized to the
+  canonical shape. No offline migration pass.
+. **Read-canonical.** Legacy fields deserialize (so old data loads) but are no longer
+  consulted. `table_identity`'s fallbacks are deleted.
+. **Remove** the legacy fields from the write surface.
+
+Each phase is independently revertible, and a schema written at phase N is readable at
+phase N+1 — the property the mandate requires.
+
+== Consequences
+
+**Positive.** The class of defect above stops being expressible rather than being fixed
+case by case. ADR-072 D1's "written once against the metamodel" becomes true of the
+implementation. The identity slot's role model (`UniquenessPrimary` vs
+`UniquenessSecondary`) can then feed the CKS directly, which is what lets the write path
+distinguish *0 extra durable writes* (PK — the `oid` **is** the key, D3) from *1 write +
+coordination* (secondary UNIQUE) — a distinction a flat column-name list cannot carry, and
+which the current code encodes in control flow that admits it only handles single-column
+PKs.
+
+**Negative.** It touches a persisted type with many readers, so the migration is five
+phases rather than one commit. Introspection surfaces that legitimately want an *index*
+view of a UNIQUE keep needing a projection, so "one location" means one **source of
+truth**, not literally one field.
+
+**Risk if deferred.** Every new consumer must rediscover six locations; the census already
+found five disagreeing PK rules and one dead code path. The cost compounds with each
+modality that stacks on the catalog — which is precisely the surface D1 exists to protect.
+
+== Alternatives considered
+
+* **Keep `table_identity` as the permanent answer.** Cheapest, and it fixes the readers —
+  but writers can still produce inconsistent schemas, so the accessor is papering over a
+  representable-invalid state. It is the right shim, not the right end state.
+* **Validation only** (reject disagreement, keep all six fields). Turns silent corruption
+  into loud failure, which is better, but pushes the burden onto every writer forever and
+  makes legitimate partial writes (most creation paths leave `relational_capabilities`
+  empty) hard to distinguish from bugs.
+* **Collapse in one commit.** Rejected: the type is persisted, so a flag day would make
+  schemas written by the previous version unreadable.
+
+== References
+
+* ADR-072 D1 (catalog as the governance seam), D3 (CKS = the atomic OLTP primitive)
+* TD-CAT-6 — why the duplication is structurally forced by the layering
+* TD-FOUNDATION-2 §2 D12-b — the identity slot as the seam CKS reads
+* CLAUDE.md §8 — storage-format migration must be mixed-read-safe

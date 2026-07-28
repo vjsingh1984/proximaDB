@@ -61,6 +61,58 @@ pub fn validate_schema(schema: &CatalogTableSchema) -> Result<()> {
         }
     }
 
+    // `relational_capabilities` holds a second copy of the identity declarations
+    // (TD-CAT-6) and was never validated: its columns went unchecked, and nothing
+    // asserted that the two `primary_key` vectors agree. That silence is what let
+    // rename/drop leave the copies stale.
+    let rc = &schema.relational_capabilities;
+    for pk in &rc.primary_key {
+        if !schema.columns.iter().any(|c| &c.name == pk) {
+            return Err(anyhow!(
+                "relational_capabilities primary key column '{}' not found in schema",
+                pk
+            ));
+        }
+    }
+    // An empty `relational_capabilities.primary_key` is legal — it is only
+    // populated by `CREATE TABLE`, so most creation paths leave it unset. But a
+    // *populated* one that disagrees means the two readers of "what is the PK"
+    // resolve different columns, which is never intentional.
+    if !rc.primary_key.is_empty() && !same_column_set(&rc.primary_key, &schema.primary_key) {
+        return Err(anyhow!(
+            "primary key disagrees between schema.primary_key {:?} and \
+             relational_capabilities.primary_key {:?}",
+            schema.primary_key,
+            rc.primary_key
+        ));
+    }
+    for idx in rc.unique_indexes.iter().chain(rc.secondary_indexes.iter()) {
+        for col in &idx.columns {
+            if !schema.columns.iter().any(|c| &c.name == col) {
+                return Err(anyhow!(
+                    "relational_capabilities index '{}' references non-existent column '{}'",
+                    idx.name,
+                    col
+                ));
+            }
+        }
+    }
+    for constraint in &rc.constraints {
+        let columns = match constraint {
+            ColumnConstraint::Unique { columns } => columns,
+            ColumnConstraint::ForeignKey { columns, .. } => columns,
+            ColumnConstraint::Check { .. } => continue,
+        };
+        for col in columns {
+            if !schema.columns.iter().any(|c| &c.name == col) {
+                return Err(anyhow!(
+                    "relational_capabilities constraint references non-existent column '{}'",
+                    col
+                ));
+            }
+        }
+    }
+
     for col in &schema.columns {
         if matches!(
             col.data_type,
@@ -117,6 +169,236 @@ fn validate_storage_contract(schema: &CatalogTableSchema) -> Result<()> {
     Ok(())
 }
 
+/// Do two column lists denote the same key? Order-insensitive: `UNIQUE(a,b)` and
+/// `UNIQUE(b,a)` fence the same tuple, so they are one key, not two.
+pub fn same_column_set(a: &[String], b: &[String]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut a: Vec<&str> = a.iter().map(String::as_str).collect();
+    let mut b: Vec<&str> = b.iter().map(String::as_str).collect();
+    a.sort_unstable();
+    b.sort_unstable();
+    a == b
+}
+
+/// Rewrite `old_name` → `new_name` across **every** place a column name can be
+/// recorded as part of an identity or constraint.
+///
+/// `CatalogTableSchema` records identity in several locations (TD-CAT-6), and
+/// evolution used to maintain only the top-level `primary_key` + `indexes`. The
+/// `relational_capabilities` copies were left holding the pre-rename name — and
+/// since `relational::effective_primary_key` *prefers* `relational_capabilities
+/// .primary_key`, renaming a PK column left row validation and oid encoding
+/// resolving a column that no longer exists.
+fn rename_column_in_identity(schema: &mut CatalogTableSchema, old_name: &str, new_name: &str) {
+    let rename = |names: &mut Vec<String>| {
+        for n in names.iter_mut() {
+            if n == old_name {
+                *n = new_name.to_string();
+            }
+        }
+    };
+
+    rename(&mut schema.primary_key);
+    rename(&mut schema.relational_capabilities.primary_key);
+    for idx in &mut schema.indexes {
+        rename(&mut idx.columns);
+    }
+    for idx in &mut schema.relational_capabilities.unique_indexes {
+        rename(&mut idx.columns);
+    }
+    for idx in &mut schema.relational_capabilities.secondary_indexes {
+        rename(&mut idx.columns);
+    }
+    for constraint in &mut schema.relational_capabilities.constraints {
+        match constraint {
+            ColumnConstraint::Unique { columns } => rename(columns),
+            ColumnConstraint::ForeignKey {
+                columns,
+                references_columns,
+                ..
+            } => {
+                rename(columns);
+                // Only the *local* columns are renamed; `references_columns`
+                // name columns in the referenced table, which this evolution
+                // does not touch.
+                let _ = references_columns;
+            }
+            ColumnConstraint::Check { .. } => {}
+        }
+    }
+}
+
+/// Purge `name` from every identity/constraint location, dropping any index or
+/// constraint left with no columns. Mirrors [`rename_column_in_identity`] so a
+/// drop cannot leave a dangling reference in the copies evolution used to skip.
+fn drop_column_from_identity(schema: &mut CatalogTableSchema, name: &str) {
+    let purge = |names: &mut Vec<String>| names.retain(|c| c != name);
+
+    for idx in &mut schema.indexes {
+        purge(&mut idx.columns);
+    }
+    schema.indexes.retain(|idx| !idx.columns.is_empty());
+
+    for idx in &mut schema.relational_capabilities.unique_indexes {
+        purge(&mut idx.columns);
+    }
+    schema
+        .relational_capabilities
+        .unique_indexes
+        .retain(|idx| !idx.columns.is_empty());
+
+    for idx in &mut schema.relational_capabilities.secondary_indexes {
+        purge(&mut idx.columns);
+    }
+    schema
+        .relational_capabilities
+        .secondary_indexes
+        .retain(|idx| !idx.columns.is_empty());
+
+    for constraint in &mut schema.relational_capabilities.constraints {
+        if let ColumnConstraint::Unique { columns } = constraint {
+            purge(columns);
+        }
+    }
+    schema
+        .relational_capabilities
+        .constraints
+        .retain(|c| !matches!(c, ColumnConstraint::Unique { columns } if columns.is_empty()));
+}
+
+// ===========================================================================
+// Canonical identity discovery (TD-CAT-6 slice 1)
+// ===========================================================================
+
+/// What a table declares about its identity, resolved across **every** location
+/// `CatalogTableSchema` can record it in.
+///
+/// This is the single source of truth for *discovery*. It deliberately applies
+/// no policy: it reports what the schema says, and each consumer keeps its own
+/// rules on top (the identity slot excludes a UNIQUE restating the PK because
+/// that is not a *secondary*; the write path does not care). Policy was never
+/// where the consumers diverged — discovery was.
+///
+/// Why this lives here: a UNIQUE can arrive by four routes and a primary key by
+/// two, so any consumer that walks the fields itself will miss some. Layering
+/// forbids `control → root`, so a canonical answer in the root crate is
+/// unreachable from below and every lower layer is forced to re-derive it. The
+/// crate that owns the type owns the answers about it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TableIdentity {
+    /// The declared primary key columns, in declaration order. Empty when the
+    /// table declares none — no conventional-name inference is applied here.
+    pub primary_key: Vec<String>,
+    /// **Every** declared UNIQUE column set, deduplicated order-insensitively,
+    /// including one that restates the primary key. Use
+    /// [`TableIdentity::secondary_unique_sets`] to exclude that.
+    pub unique_sets: Vec<Vec<String>>,
+    /// What the schema left undetermined, for consumers that surface gaps.
+    pub gaps: Vec<String>,
+}
+
+impl TableIdentity {
+    /// The UNIQUE sets that are genuinely *secondary* — every declared set
+    /// except one restating the primary key, which the PK already fences.
+    pub fn secondary_unique_sets(&self) -> Vec<Vec<String>> {
+        self.unique_sets
+            .iter()
+            .filter(|set| !same_column_set(set, &self.primary_key))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Resolve a table's identity declarations from all locations.
+///
+/// Primary key: prefers the top-level `primary_key`, falling back to the
+/// `relational_capabilities` copy. `validate_schema` rejects a schema where a
+/// populated copy disagrees, so for a valid schema the choice is immaterial.
+///
+/// UNIQUE sets, in order, deduplicated:
+/// 1. `relational_capabilities.unique_indexes` — inline `UNIQUE (...)` at
+///    CREATE TABLE (the dominant route).
+/// 2. `relational_capabilities.constraints` → `ColumnConstraint::Unique`.
+/// 3. `schema.indexes` entries flagged `is_unique` — `CREATE INDEX` and, before
+///    the evolution fix, `ALTER … ADD CONSTRAINT`.
+/// 4. `properties["constraint:unique:…"]` — the legacy blob. Read so a schema
+///    evolved *before* the AddConstraint fix still yields its UNIQUE rather than
+///    silently losing it.
+///
+/// Note entries in `unique_indexes` are unique by virtue of the field they sit
+/// in; `CatalogIndex::new` leaves `is_unique` false and DDL never sets it, so
+/// that flag must NOT be filtered on for route 1.
+pub fn table_identity(schema: &CatalogTableSchema) -> TableIdentity {
+    let rc = &schema.relational_capabilities;
+
+    let primary_key = if !schema.primary_key.is_empty() {
+        schema.primary_key.clone()
+    } else {
+        rc.primary_key.clone()
+    };
+
+    let mut unique_sets: Vec<Vec<String>> = Vec::new();
+    let push = |columns: &[String], unique_sets: &mut Vec<Vec<String>>| {
+        if columns.is_empty() {
+            return;
+        }
+        if unique_sets.iter().any(|s| same_column_set(s, columns)) {
+            return;
+        }
+        unique_sets.push(columns.to_vec());
+    };
+
+    for idx in &rc.unique_indexes {
+        push(&idx.columns, &mut unique_sets);
+    }
+    for constraint in &rc.constraints {
+        if let ColumnConstraint::Unique { columns } = constraint {
+            push(columns, &mut unique_sets);
+        }
+    }
+    for idx in &schema.indexes {
+        if idx.is_unique {
+            push(&idx.columns, &mut unique_sets);
+        }
+    }
+    for (key, value) in &schema.properties {
+        if !key.starts_with("constraint:unique:") {
+            continue;
+        }
+        if let Ok(ColumnConstraint::Unique { columns }) =
+            serde_json::from_str::<ColumnConstraint>(value)
+        {
+            push(&columns, &mut unique_sets);
+        }
+    }
+
+    let mut gaps = Vec::new();
+    if primary_key.is_empty() {
+        gaps.push("no primary key declared".to_string());
+    }
+
+    TableIdentity {
+        primary_key,
+        unique_sets,
+        gaps,
+    }
+}
+
+/// Flat projection of [`table_identity`] for consumers that only need the UNIQUE
+/// column sets (the shape `services::record_store::schema_unique_column_sets`
+/// returns today — TD-CAT-6 slice 2 delegates to this).
+pub fn unique_column_sets(schema: &CatalogTableSchema) -> Vec<Vec<String>> {
+    table_identity(schema).unique_sets
+}
+
+/// Flat projection of [`table_identity`] for consumers that only need the PK.
+/// No conventional-name (`id`/`record_id`) inference — that is a caller policy.
+pub fn primary_key_columns(schema: &CatalogTableSchema) -> Vec<String> {
+    table_identity(schema).primary_key
+}
+
 /// Apply schema evolution changes and return a new schema.
 pub fn apply_evolution(
     schema: &CatalogTableSchema,
@@ -166,14 +448,18 @@ pub fn apply_evolution(
                     .iter()
                     .position(|c| &c.name == name)
                     .ok_or_else(|| anyhow!("Column '{}' not found", name))?;
-                if new_schema.primary_key.contains(name) {
+                // Guard BOTH primary-key vectors: a column that is the PK only in
+                // `relational_capabilities` used to pass this check and be dropped.
+                if new_schema.primary_key.contains(name)
+                    || new_schema
+                        .relational_capabilities
+                        .primary_key
+                        .contains(name)
+                {
                     return Err(anyhow!("Cannot drop primary key column '{}'", name));
                 }
                 new_schema.columns.remove(pos);
-                for idx in &mut new_schema.indexes {
-                    idx.columns.retain(|c| c != name);
-                }
-                new_schema.indexes.retain(|idx| !idx.columns.is_empty());
+                drop_column_from_identity(&mut new_schema, name);
             }
             SchemaChange::RenameColumn { old_name, new_name } => {
                 let col = new_schema
@@ -182,18 +468,7 @@ pub fn apply_evolution(
                     .find(|c| &c.name == old_name)
                     .ok_or_else(|| anyhow!("Column '{}' not found", old_name))?;
                 col.name = new_name.clone();
-                for pk in &mut new_schema.primary_key {
-                    if pk == old_name {
-                        *pk = new_name.clone();
-                    }
-                }
-                for idx in &mut new_schema.indexes {
-                    for col_name in &mut idx.columns {
-                        if col_name == old_name {
-                            *col_name = new_name.clone();
-                        }
-                    }
-                }
+                rename_column_in_identity(&mut new_schema, old_name, new_name);
             }
             SchemaChange::ChangeType { name, new_type } => {
                 let col = new_schema
@@ -313,6 +588,30 @@ pub fn apply_evolution(
                             ));
                         }
                     }
+                    // Record the constraint where UNIQUENESS IS ACTUALLY ENFORCED.
+                    //
+                    // This used to write only `properties` and (when the constraint
+                    // was named) `schema.indexes`. The enforcement path reads
+                    // neither — it reads `relational_capabilities.unique_indexes`
+                    // and `.constraints` — so an `ALTER TABLE … ADD CONSTRAINT …
+                    // UNIQUE` was cataloged and then never enforced, and an
+                    // *unnamed* one landed in `properties` alone. Writing the
+                    // constraint form covers both, named or not.
+                    if !new_schema
+                        .relational_capabilities
+                        .constraints
+                        .iter()
+                        .any(|c| {
+                            matches!(c, ColumnConstraint::Unique { columns: existing }
+                                          if same_column_set(existing, columns))
+                        })
+                    {
+                        new_schema.relational_capabilities.constraints.push(
+                            ColumnConstraint::Unique {
+                                columns: columns.clone(),
+                            },
+                        );
+                    }
                     if let Some(name) = constraint_name {
                         let unique_index =
                             CatalogIndex::new(name, columns.clone(), CatalogIndexType::BTree)
@@ -322,7 +621,23 @@ pub fn apply_evolution(
                 }
             }
             SchemaChange::DropConstraint { constraint_name } => {
-                let keys_to_remove: Vec<String> = new_schema
+                // A constraint is identifiable by two different keys, and the
+                // original code only understood one of them: the `properties` key
+                // is `constraint:unique:<cols>` — built from COLUMNS, never the
+                // constraint name — so `k.contains(constraint_name)` never matched
+                // a UNIQUE, and its property row leaked on every drop.
+                //
+                // Resolve the target from whichever source names it, then purge
+                // every location together. Doing this by-name-only would leave the
+                // enforced `relational_capabilities` copy behind, i.e. a dropped
+                // constraint that is still enforced.
+                let named_index_columns: Option<Vec<String>> = new_schema
+                    .indexes
+                    .iter()
+                    .find(|idx| &idx.name == constraint_name)
+                    .map(|idx| idx.columns.clone());
+
+                let mut keys_to_remove: Vec<String> = new_schema
                     .properties
                     .keys()
                     .filter(|k| {
@@ -331,24 +646,57 @@ pub fn apply_evolution(
                     .cloned()
                     .collect();
 
-                if keys_to_remove.is_empty() {
-                    let idx_pos = new_schema
-                        .indexes
-                        .iter()
-                        .position(|idx| &idx.name == constraint_name);
-                    if let Some(pos) = idx_pos {
-                        new_schema.indexes.remove(pos);
-                    } else {
-                        return Err(anyhow!("Constraint '{}' not found", constraint_name));
+                // Also match the column-derived key for the named index.
+                if let Some(columns) = &named_index_columns {
+                    let column_key = format!("constraint:unique:{}", columns.join(","));
+                    if new_schema.properties.contains_key(&column_key)
+                        && !keys_to_remove.contains(&column_key)
+                    {
+                        keys_to_remove.push(column_key);
                     }
-                } else {
-                    for key in keys_to_remove {
-                        new_schema.properties.remove(&key);
-                    }
-                    new_schema
-                        .indexes
-                        .retain(|idx| &idx.name != constraint_name);
                 }
+
+                if keys_to_remove.is_empty() && named_index_columns.is_none() {
+                    return Err(anyhow!("Constraint '{}' not found", constraint_name));
+                }
+
+                // Columns of every UNIQUE this drop resolves to — from the named
+                // index and from the property rows being removed.
+                let mut dropped_unique_columns: Vec<Vec<String>> =
+                    named_index_columns.into_iter().collect();
+                for key in &keys_to_remove {
+                    if let Some(value) = new_schema.properties.get(key)
+                        && let Ok(ColumnConstraint::Unique { columns }) =
+                            serde_json::from_str::<ColumnConstraint>(value)
+                    {
+                        dropped_unique_columns.push(columns);
+                    }
+                }
+
+                for key in keys_to_remove {
+                    new_schema.properties.remove(&key);
+                }
+                new_schema
+                    .indexes
+                    .retain(|idx| &idx.name != constraint_name);
+                new_schema
+                    .relational_capabilities
+                    .unique_indexes
+                    .retain(|idx| {
+                        &idx.name != constraint_name
+                            && !dropped_unique_columns
+                                .iter()
+                                .any(|dropped| same_column_set(dropped, &idx.columns))
+                    });
+                new_schema
+                    .relational_capabilities
+                    .constraints
+                    .retain(|c| match c {
+                        ColumnConstraint::Unique { columns } => !dropped_unique_columns
+                            .iter()
+                            .any(|dropped| same_column_set(dropped, columns)),
+                        _ => true,
+                    });
             }
             SchemaChange::PromotePropsKey {
                 key,
@@ -477,6 +825,408 @@ mod tests {
         CatalogTableSchema::new("t")
             .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
             .with_column(CatalogColumn::new(2, "name", ProximaType::String))
+    }
+
+    // ---- TD-CAT-6: identity is recorded in several places; evolution must
+    // maintain all of them, and enforcement must be able to see what DDL wrote.
+
+    /// The exact field set the live enforcement path reads
+    /// (`services::record_store::schema_unique_column_sets`): unique_indexes ++
+    /// `Unique` constraints. Mirrored here so these tests fail if evolution ever
+    /// writes a UNIQUE somewhere enforcement cannot see it.
+    fn enforceable_unique_sets(schema: &CatalogTableSchema) -> Vec<Vec<String>> {
+        schema
+            .relational_capabilities
+            .unique_indexes
+            .iter()
+            .map(|i| i.columns.clone())
+            .chain(
+                schema
+                    .relational_capabilities
+                    .constraints
+                    .iter()
+                    .filter_map(|c| match c {
+                        ColumnConstraint::Unique { columns } => Some(columns.clone()),
+                        _ => None,
+                    }),
+            )
+            .collect()
+    }
+
+    fn add_unique(name: Option<&str>, columns: &[&str]) -> CatalogSchemaEvolution {
+        CatalogSchemaEvolution {
+            changes: vec![SchemaChange::AddConstraint {
+                constraint_name: name.map(str::to_string),
+                constraint: ColumnConstraint::Unique {
+                    columns: columns.iter().map(|c| c.to_string()).collect(),
+                },
+            }],
+        }
+    }
+
+    #[test]
+    fn alter_add_unique_constraint_is_visible_to_enforcement() {
+        // THE BUG: this landed in `properties` + `schema.indexes`, while
+        // enforcement reads only `relational_capabilities`. The constraint was
+        // cataloged and then never enforced.
+        let evolved = apply_evolution(&base_schema(), &add_unique(Some("uq_name"), &["name"]))
+            .expect("evolution applies");
+
+        assert_eq!(
+            enforceable_unique_sets(&evolved),
+            vec![vec!["name".to_string()]],
+            "an ALTER-added UNIQUE must reach the fields enforcement reads"
+        );
+    }
+
+    #[test]
+    fn an_unnamed_alter_unique_constraint_is_also_enforced() {
+        // Worse case: without a constraint name, nothing was written even to
+        // `schema.indexes` — only the `properties` blob, which nothing reads.
+        let evolved =
+            apply_evolution(&base_schema(), &add_unique(None, &["name"])).expect("applies");
+        assert_eq!(
+            enforceable_unique_sets(&evolved),
+            vec![vec!["name".to_string()]]
+        );
+    }
+
+    #[test]
+    fn adding_the_same_unique_twice_does_not_double_fence_it() {
+        let once = apply_evolution(&base_schema(), &add_unique(Some("uq_name"), &["name"]))
+            .expect("applies");
+        // Re-declared with reversed column order — the same tuple, not a new key.
+        let twice =
+            apply_evolution(&once, &add_unique(Some("uq_name2"), &["name"])).expect("applies");
+        assert_eq!(enforceable_unique_sets(&twice).len(), 1);
+    }
+
+    #[test]
+    fn dropping_a_unique_constraint_stops_enforcing_it() {
+        let added = apply_evolution(&base_schema(), &add_unique(Some("uq_name"), &["name"]))
+            .expect("applies");
+        assert_eq!(enforceable_unique_sets(&added).len(), 1);
+
+        let dropped = apply_evolution(
+            &added,
+            &CatalogSchemaEvolution {
+                changes: vec![SchemaChange::DropConstraint {
+                    constraint_name: "uq_name".to_string(),
+                }],
+            },
+        )
+        .expect("applies");
+        assert!(
+            enforceable_unique_sets(&dropped).is_empty(),
+            "a dropped UNIQUE must stop being enforced"
+        );
+    }
+
+    // ---- TD-CAT-6 slice 1: canonical discovery across all four routes ----
+
+    #[test]
+    fn table_identity_finds_a_unique_from_every_route() {
+        let mut schema = base_schema()
+            .with_column(CatalogColumn::new(3, "email", ProximaType::String))
+            .with_column(CatalogColumn::new(4, "slug", ProximaType::String))
+            .with_primary_key(vec!["id".to_string()]);
+
+        // route 1: inline UNIQUE(...) at CREATE TABLE
+        schema.relational_capabilities.unique_indexes = vec![CatalogIndex::new(
+            "uq_name",
+            vec!["name".to_string()],
+            CatalogIndexType::BTree,
+        )];
+        // route 2: a Unique constraint
+        schema.relational_capabilities.constraints = vec![ColumnConstraint::Unique {
+            columns: vec!["email".to_string()],
+        }];
+        // route 3: a unique index on the top-level vector
+        schema = schema.with_index(
+            CatalogIndex::new("uq_slug", vec!["slug".to_string()], CatalogIndexType::BTree)
+                .unique(),
+        );
+
+        let identity = table_identity(&schema);
+        let mut found = identity.unique_sets.clone();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                vec!["email".to_string()],
+                vec!["name".to_string()],
+                vec!["slug".to_string()],
+            ],
+            "every route a UNIQUE can arrive by must be discovered"
+        );
+        assert_eq!(identity.primary_key, vec!["id".to_string()]);
+        assert!(identity.gaps.is_empty());
+    }
+
+    #[test]
+    fn table_identity_recovers_a_unique_from_the_legacy_property_blob() {
+        // Route 4: a schema evolved BEFORE the AddConstraint fix recorded the
+        // constraint only in `properties`. Reading it keeps those schemas from
+        // silently losing their UNIQUE.
+        let mut schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        schema.properties.insert(
+            "constraint:unique:name".to_string(),
+            serde_json::to_string(&ColumnConstraint::Unique {
+                columns: vec!["name".to_string()],
+            })
+            .expect("serializes"),
+        );
+        assert_eq!(
+            table_identity(&schema).unique_sets,
+            vec![vec!["name".to_string()]]
+        );
+    }
+
+    #[test]
+    fn table_identity_deduplicates_the_same_key_across_routes() {
+        // One DDL `UNIQUE` routinely lands in more than one field; and column
+        // order does not make a second key.
+        let mut schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        schema.relational_capabilities.unique_indexes = vec![CatalogIndex::new(
+            "uq_name",
+            vec!["name".to_string()],
+            CatalogIndexType::BTree,
+        )];
+        schema.relational_capabilities.constraints = vec![ColumnConstraint::Unique {
+            columns: vec!["name".to_string()],
+        }];
+        schema = schema.with_index(
+            CatalogIndex::new(
+                "uq_name2",
+                vec!["name".to_string()],
+                CatalogIndexType::BTree,
+            )
+            .unique(),
+        );
+        assert_eq!(table_identity(&schema).unique_sets.len(), 1);
+    }
+
+    #[test]
+    fn a_unique_index_entry_is_not_filtered_on_is_unique() {
+        // Entries in `unique_indexes` are unique by virtue of the field they sit
+        // in; DDL leaves `is_unique` false. Filtering on it drops every DDL UNIQUE.
+        let idx = CatalogIndex::new("uq_name", vec!["name".to_string()], CatalogIndexType::BTree);
+        assert!(!idx.is_unique, "precondition: DDL leaves the flag unset");
+        let mut schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        schema.relational_capabilities.unique_indexes = vec![idx];
+        assert_eq!(table_identity(&schema).unique_sets.len(), 1);
+    }
+
+    #[test]
+    fn secondary_unique_sets_excludes_one_restating_the_primary_key() {
+        // Discovery reports it; the *policy* of excluding it belongs to the
+        // caller — the PK already fences that tuple.
+        let mut schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        schema.relational_capabilities.constraints = vec![
+            ColumnConstraint::Unique {
+                columns: vec!["id".to_string()],
+            },
+            ColumnConstraint::Unique {
+                columns: vec!["name".to_string()],
+            },
+        ];
+        let identity = table_identity(&schema);
+        assert_eq!(identity.unique_sets.len(), 2, "discovery reports both");
+        assert_eq!(
+            identity.secondary_unique_sets(),
+            vec![vec!["name".to_string()]],
+            "only the genuinely secondary one is a secondary"
+        );
+    }
+
+    #[test]
+    fn table_identity_falls_back_to_the_capabilities_primary_key() {
+        let mut schema = base_schema();
+        schema.relational_capabilities.primary_key = vec!["id".to_string()];
+        assert!(schema.primary_key.is_empty());
+        assert_eq!(table_identity(&schema).primary_key, vec!["id".to_string()]);
+    }
+
+    #[test]
+    fn table_identity_reports_a_missing_primary_key_as_a_gap() {
+        let identity = table_identity(&base_schema());
+        assert!(identity.primary_key.is_empty());
+        assert!(identity.gaps.iter().any(|g| g.contains("no primary key")));
+    }
+
+    #[test]
+    fn an_alter_added_unique_reaches_the_identity_accessor() {
+        // End-to-end across S0 + S1: the evolution fix records it, and the
+        // canonical accessor finds it.
+        let evolved = apply_evolution(
+            &base_schema().with_primary_key(vec!["id".to_string()]),
+            &add_unique(Some("uq_name"), &["name"]),
+        )
+        .expect("applies");
+        assert_eq!(
+            table_identity(&evolved).secondary_unique_sets(),
+            vec![vec!["name".to_string()]]
+        );
+    }
+
+    #[test]
+    fn dropping_a_unique_constraint_does_not_leak_its_property_row() {
+        // The `properties` key is `constraint:unique:<cols>` — derived from
+        // COLUMNS, never the constraint name — so the by-name filter never
+        // matched it and the row leaked on every drop.
+        let added = apply_evolution(&base_schema(), &add_unique(Some("uq_name"), &["name"]))
+            .expect("applies");
+        assert!(
+            added
+                .properties
+                .keys()
+                .any(|k| k.starts_with("constraint:unique:")),
+            "precondition: AddConstraint records a property row"
+        );
+
+        let dropped = apply_evolution(
+            &added,
+            &CatalogSchemaEvolution {
+                changes: vec![SchemaChange::DropConstraint {
+                    constraint_name: "uq_name".to_string(),
+                }],
+            },
+        )
+        .expect("applies");
+
+        assert!(
+            !dropped
+                .properties
+                .keys()
+                .any(|k| k.starts_with("constraint:unique:")),
+            "the property row must be removed with the constraint"
+        );
+        assert!(dropped.indexes.is_empty());
+    }
+
+    #[test]
+    fn dropping_an_unknown_constraint_still_errors() {
+        let err = apply_evolution(
+            &base_schema(),
+            &CatalogSchemaEvolution {
+                changes: vec![SchemaChange::DropConstraint {
+                    constraint_name: "nope".to_string(),
+                }],
+            },
+        )
+        .expect_err("an unknown constraint must be rejected");
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn renaming_a_primary_key_column_updates_every_copy() {
+        // `relational::effective_primary_key` PREFERS relational_capabilities, so
+        // leaving that copy stale made row validation resolve a column that no
+        // longer exists.
+        let mut schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        schema.relational_capabilities.primary_key = vec!["id".to_string()];
+        schema.relational_capabilities.unique_indexes = vec![CatalogIndex::new(
+            "uq_id",
+            vec!["id".to_string()],
+            CatalogIndexType::BTree,
+        )];
+
+        let renamed = apply_evolution(
+            &schema,
+            &CatalogSchemaEvolution {
+                changes: vec![SchemaChange::RenameColumn {
+                    old_name: "id".to_string(),
+                    new_name: "pk".to_string(),
+                }],
+            },
+        )
+        .expect("applies");
+
+        assert_eq!(renamed.primary_key, vec!["pk".to_string()]);
+        assert_eq!(
+            renamed.relational_capabilities.primary_key,
+            vec!["pk".to_string()],
+            "the relational_capabilities PK copy went stale"
+        );
+        assert_eq!(
+            renamed.relational_capabilities.unique_indexes[0].columns,
+            vec!["pk".to_string()]
+        );
+        // And the result must still validate — a stale copy now fails the invariant.
+        validate_schema(&renamed).expect("renamed schema is self-consistent");
+    }
+
+    #[test]
+    fn a_primary_key_column_cannot_be_dropped_via_either_copy() {
+        let mut schema = base_schema();
+        // PK declared ONLY in relational_capabilities — this used to pass the guard.
+        schema.relational_capabilities.primary_key = vec!["id".to_string()];
+
+        let err = apply_evolution(
+            &schema,
+            &CatalogSchemaEvolution {
+                changes: vec![SchemaChange::DropColumn {
+                    name: "id".to_string(),
+                }],
+            },
+        )
+        .expect_err("dropping a primary key column must be rejected");
+        assert!(err.to_string().contains("primary key"));
+    }
+
+    #[test]
+    fn dropping_a_column_purges_it_from_the_capabilities_copies() {
+        let mut schema = base_schema();
+        schema.relational_capabilities.unique_indexes = vec![CatalogIndex::new(
+            "uq_name",
+            vec!["name".to_string()],
+            CatalogIndexType::BTree,
+        )];
+        schema.relational_capabilities.constraints = vec![ColumnConstraint::Unique {
+            columns: vec!["name".to_string()],
+        }];
+
+        let dropped = apply_evolution(
+            &schema,
+            &CatalogSchemaEvolution {
+                changes: vec![SchemaChange::DropColumn {
+                    name: "name".to_string(),
+                }],
+            },
+        )
+        .expect("applies");
+
+        assert!(
+            enforceable_unique_sets(&dropped).is_empty(),
+            "a dropped column must not be left referenced by an enforced constraint"
+        );
+        validate_schema(&dropped).expect("no dangling column references remain");
+    }
+
+    #[test]
+    fn validate_rejects_a_disagreeing_primary_key() {
+        let mut schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        schema.relational_capabilities.primary_key = vec!["name".to_string()];
+        let err = validate_schema(&schema).expect_err("disagreeing PK copies must be rejected");
+        assert!(err.to_string().contains("primary key disagrees"));
+    }
+
+    #[test]
+    fn validate_accepts_an_empty_capabilities_primary_key() {
+        // Only CREATE TABLE populates it, so most creation paths leave it empty.
+        let schema = base_schema().with_primary_key(vec!["id".to_string()]);
+        assert!(schema.relational_capabilities.primary_key.is_empty());
+        validate_schema(&schema).expect("an unset capabilities PK stays legal");
+    }
+
+    #[test]
+    fn validate_rejects_a_dangling_capabilities_column() {
+        let mut schema = base_schema();
+        schema.relational_capabilities.constraints = vec![ColumnConstraint::Unique {
+            columns: vec!["ghost".to_string()],
+        }];
+        let err = validate_schema(&schema).expect_err("dangling column must be rejected");
+        assert!(err.to_string().contains("ghost"));
     }
 
     #[test]
