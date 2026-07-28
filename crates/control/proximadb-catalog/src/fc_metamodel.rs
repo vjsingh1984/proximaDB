@@ -475,6 +475,19 @@ pub fn identity_slot_from_table_schema(schema: &CatalogTableSchema) -> IdentityS
             );
         }
     }
+    // The route relational DDL actually uses: an inline `UNIQUE (...)` in
+    // CREATE TABLE is lowered to a `CatalogIndex` here, NOT into `schema.indexes`
+    // (`services/ddl/mod.rs` → `capabilities.unique_indexes`). Note these entries
+    // are unique by virtue of the field they sit in — `is_unique` is not
+    // necessarily set on them, so it must not be filtered on.
+    for idx in &schema.relational_capabilities.unique_indexes {
+        push_secondary(
+            &idx.columns,
+            format!("unique index '{}'", idx.name),
+            &mut facets,
+            &mut gaps,
+        );
+    }
     for constraint in &schema.relational_capabilities.constraints {
         if let ColumnConstraint::Unique { columns } = constraint {
             push_secondary(
@@ -1514,6 +1527,114 @@ mod tests {
             secondary_key_names(&identity_slot_from_table_schema(&schema)).len(),
             1
         );
+    }
+
+    #[test]
+    fn a_unique_declared_inline_in_create_table_is_fenced() {
+        // The dominant route: `CREATE TABLE t (..., UNIQUE (email))` is lowered
+        // into relational_capabilities.unique_indexes, not schema.indexes.
+        let schema = CatalogTableSchema::new("t")
+            .with_column(CatalogColumn::new(
+                0,
+                "id",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(str_col(1, "email"))
+            .with_primary_key(vec!["id".to_string()])
+            .with_relational_capabilities(crate::RelationalCapabilities {
+                unique_indexes: vec![crate::CatalogIndex::new(
+                    "unique_email",
+                    vec!["email".to_string()],
+                    crate::CatalogIndexType::BTree,
+                )],
+                ..Default::default()
+            });
+
+        assert_eq!(
+            secondary_key_names(&identity_slot_from_table_schema(&schema)),
+            vec![vec!["email".to_string()]],
+            "an inline UNIQUE must produce a CKS-fenced facet"
+        );
+    }
+
+    #[test]
+    fn a_unique_index_entry_is_not_filtered_on_is_unique() {
+        // Entries in `unique_indexes` are unique by virtue of the field they sit
+        // in; `CatalogIndex::new` leaves `is_unique` false, and DDL does not set
+        // it. Filtering on the flag here would silently drop every DDL UNIQUE.
+        let idx = crate::CatalogIndex::new(
+            "unique_email",
+            vec!["email".to_string()],
+            crate::CatalogIndexType::BTree,
+        );
+        assert!(!idx.is_unique, "precondition: DDL leaves the flag unset");
+
+        let schema = CatalogTableSchema::new("t")
+            .with_column(CatalogColumn::new(
+                0,
+                "id",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(str_col(1, "email"))
+            .with_primary_key(vec!["id".to_string()])
+            .with_relational_capabilities(crate::RelationalCapabilities {
+                unique_indexes: vec![idx],
+                ..Default::default()
+            });
+        assert_eq!(
+            secondary_key_names(&identity_slot_from_table_schema(&schema)).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_metamodel_agrees_with_the_live_unique_key_discovery() {
+        // The live enforcement path (services/record_store.rs::schema_unique_column_sets)
+        // reads unique_indexes + constraints. The metamodel must not disagree,
+        // or F2's CKS and the identity slot would fence different key sets once
+        // D12-b wires the slot as the seam.
+        let schema = CatalogTableSchema::new("t")
+            .with_column(CatalogColumn::new(
+                0,
+                "id",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(str_col(1, "email"))
+            .with_column(str_col(2, "tenant"))
+            .with_primary_key(vec!["id".to_string()])
+            .with_relational_capabilities(crate::RelationalCapabilities {
+                unique_indexes: vec![crate::CatalogIndex::new(
+                    "unique_email",
+                    vec!["email".to_string()],
+                    crate::CatalogIndexType::BTree,
+                )],
+                constraints: vec![ColumnConstraint::Unique {
+                    columns: vec!["tenant".to_string()],
+                }],
+                ..Default::default()
+            });
+
+        // Mirrors schema_unique_column_sets: unique_indexes ++ Unique constraints.
+        let mut live: Vec<Vec<String>> = schema
+            .relational_capabilities
+            .unique_indexes
+            .iter()
+            .map(|i| i.columns.clone())
+            .chain(
+                schema
+                    .relational_capabilities
+                    .constraints
+                    .iter()
+                    .filter_map(|c| match c {
+                        ColumnConstraint::Unique { columns } => Some(columns.clone()),
+                        _ => None,
+                    }),
+            )
+            .collect();
+        let mut derived = secondary_key_names(&identity_slot_from_table_schema(&schema));
+        live.sort();
+        derived.sort();
+        assert_eq!(derived, live, "metamodel and live enforcement disagree");
     }
 
     #[test]
