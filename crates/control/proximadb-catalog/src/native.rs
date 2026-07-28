@@ -1471,7 +1471,6 @@ impl Catalog for NativeCatalog {
         // catalog object carried in its schema — columns and indexes — from the
         // one system-wide sequence. `mint_object_id` allocates when unset and
         // adopts-without-reuse a caller-supplied id (import/migration/CTAS).
-        let mut schema = schema;
         schema.object_id = Some(self.mint_object_id(schema.object_id));
         for column in &mut schema.columns {
             column.object_id = Some(self.mint_object_id(column.object_id));
