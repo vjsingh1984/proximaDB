@@ -10,7 +10,7 @@
 
 [cols="1,3"]
 |===
-| Status | **Build started (rev 3, 2026-07-28) — WI-1 in progress.** Hardened after a 3-agent red-team (2026-07-27; §7); the naïve §2 design is superseded by §7.2. Design gate **complete**: §7.2 folded into numbered WIs (§8); a `develop` verification pass re-confirmed the substrate and found the plain-bitmap `DeletionVector` primitive already exists (reusable), so **WI-1 = the MVCC-versioned form** (`VersionedDeletionVector`, per-position delete-gen, snapshot-correct). Additive, feature-gated `cold-deletion-vectors`, default path byte-for-byte unchanged. **Re-scoped: ~4–5w**; off the OLTP critical path.
+| Status | **Rev 4 (2026-07-28) — WI-1 + WI-2a merged; WI-2b next.** Hardened after a 3-agent red-team (2026-07-27; §7), a verification-first recon, and a DeepSeek cross-model review (§9). The naïve §2 design is superseded by §7.2; §7.2 is folded into numbered WIs (§8). **Rev-4 corrections (§9):** the §1 cold-delete mechanism cited in rev 3 (`SstEntry::tombstone`) is dead code — the live delete is a `ProximaRecord` tombstone via WAL→memtable→PAX; `OlapDeltaMerge` is the *Parquet relational* path, distinct from the DV's *PAX* path (WI-4 re-scoped); the reserved `stats_kind` footer hook cited in rev-3 WI-2 does not exist in code (WI-2b uses a `.opr` sidecar). Additive, feature-gated `cold-deletion-vectors`, default path byte-for-byte unchanged. **~4–5w**; off the OLTP critical path.
 | Problem | The cold tier deletes via **LSM tombstones** (delete-marker records that cascade through levels and are physically removed only at compaction) — every cold delete implies an eventual **segment rewrite**. D14 wants **deletion vectors**: a position bitmap overlaying the *immutable* segment, applied **merge-on-read**, purged at compaction behind the reader watermark — no rewrite on delete.
 | Feature | `cold-deletion-vectors` (additive, feature-gated; default path = today's tombstone+compaction, byte-for-byte unchanged).
 |===
@@ -228,17 +228,23 @@ the feature is introduced at the first *wiring* WI (WI-3), since the pure-additi
 | **WI-1** | **MVCC-versioned DV format.** `VersionedDeletionVector` (per-position delete
 `gen`/LSN as disjoint `gen -> RoaringBitmap` runs) beside the plain `DeletionVector`;
 snapshot-correct `is_deleted_as_of(pos, snapshot_lsn)`; versioned `PDV2` magic + serialize
-/deserialize (magic-rejection fallback). Pure-additive, wired to nothing. §7.2-1. | **building**
-| WI-2 | **OID→position resolver.** Dense `OID→footer-ordinal` recorded at write (footer
-sidecar / the reserved `stats_kind` "PR3 OID bloom" hook) or resolve-and-record at delete
-time. Additive to the footer. §7.2-2. *(WI-2a — the `OidPositionResolver` type +
-serialization — built additive/wired-to-nothing; WI-2b wires it into the segment writer.)* | **building**
+/deserialize (magic-rejection fallback). Pure-additive, wired to nothing. §7.2-1. | **merged (#1274)**
+| WI-2a | **OID→position resolver type.** `OidPositionResolver` — dense `oids: Vec<String>`
+(position→oid, O(1) reverse via `oid_at`) + `by_oid` (oid→position); `from_stream_order`; serialize/deserialize
+(`ORP1` magic, magic-rejection fallback). Pure-additive, wired to nothing. §7.2-2. | **merged (#1275)**
+| WI-2b | **Persist the resolver at flush.** Capture `record.oid` inside `PaxSegmentWriter::add_record`
+(`pax_block.rs:860` — the only post-reorder point; verified call-order == footer-block position) via a
+`with_oid_resolver` builder (mirrors `with_block_centroids`); finalize in `finish()`; write a **`.opr` sidecar**
+beside the `.pax` (via `staged.finalize`, `flush/mod.rs:626`) — `SegmentMeta` is in-memory only, so a field would
+not persist. **CRC32** on the sidecar (correct-magic + corrupt-body → wrong position → silent mis-delete; fall
+back to tombstone on CRC failure). `record.oid` is empty for append-only rows (non-addressable, harmless). | pending
 | WI-3 | **Delete path → set DV bit** (feature-gated): a hot tombstone landing on a row in
 an immutable cold segment resolves `(segment, position)` (WI-2) and sets the versioned DV
 bit at the delete LSN, instead of a cascading cold tombstone. §7.2 D2. | pending
-| WI-4 | **Merge-on-read + reader LSN.** Thread the reader snapshot LSN into the cold scan;
-apply DV bits with `gen <= snapshot`; reconcile with the oid-keyed `OlapDeltaMerge`
-suppress-set (persist its cold-side input). The snapshot-isolation fix. §7.2-1. | pending
+| WI-4 | **Merge-on-read + reader LSN (PAX path; rev-4 re-scoped, §9.2).** Thread the reader
+snapshot LSN into the **PAX** cold scan; apply DV bits with `gen <= snapshot`. Rev-3's
+"reconcile with `OlapDeltaMerge`" assumed a shared scan — the two are different cold paths
+(PAX vs Parquet); see §9.1/§9.2. The snapshot-isolation fix. §7.2-1. | pending
 | WI-5 | **Publish-before-retire.** Flush fsyncs the DV manifest bump **before** retiring
 the delete from the change-feed; readers pin one `(snapshot_lsn, DV-version)` tuple;
 straddle detection → re-read. The resurface fix. §7.2-3. | pending
@@ -254,3 +260,93 @@ row below a global static low-watermark; document that long-lived snapshots are 
 Sequencing WI-1 → WI-7; WI-3 depends on WI-2, WI-4 on WI-1+WI-3. The confirmation pass §7.3
 asks for lands with WI-1 (the versioned format, the load-bearing "newly-introduced
 structure") and WI-6 (the interlock). Re-scope stands at ~4–5w. Off the critical path.
+
+== 9. Rev-4 corrections + cross-model review (DeepSeek, 2026-07-28)
+
+Rev 4 folds in a verification-first recon (two passes) and a DeepSeek adversarial review of
+the load-bearing correctness claims, each validated against `origin/develop` (`1a72dd2af`)
+before acceptance. Kimi was planned as a second independent prior but was not run (no
+credits); DeepSeek + the recon stand as the gate basis.
+
+=== 9.1 Corrections to §1 (the substrate)
+
+* **The §1 cold-delete mechanism was dead code.** Rev 3 cited `SstEntry::tombstone`
+  (`sst/mod.rs:471–525`) — that has **zero live callers** (test-only). The *live* cold delete
+  is `delete_records_with_tenant_context` (`services/operations/vectors/legacy.rs:1092`) →
+  `tombstone_records_for_ids` (`write.rs:48`): a `ProximaRecord{valid_to_ns:Some(0),
+  origin:"delete", embeddings:[]}` through the normal WAL → memtable → PAX flush. The
+  "rewrite-on-delete" cost F3v targets is this tombstone-record lifecycle at compaction, not
+  an LSM `SstEntry` cascade. WI-3 hooks `legacy.rs:1092`.
+* **`OlapDeltaMerge` is a different cold path.** It is the *Parquet relational* path
+  (ADR-025, `ALTER TABLE … MATERIALIZE`, DataFusion), not the DV's *PAX/SST* path. The two do
+  **not** co-apply on one scan. Rev-3's D3/§5.1 framing ("the DV is the persistent cold-side
+  of `OlapDeltaMerge`"; "reconcile so they never double-count") is therefore misleading —
+  there is no shared scan to double-suppress on. See WI-4.
+* **The reserved `stats_kind` / "PR3 OID bloom" footer hook cited in rev-3 WI-2 does not exist
+  in code** (grep finds only this TD). WI-2b persists the resolver as a `.opr` sidecar.
+* **Sidecar DV over the pre-existing `row_flags::DELETED` in-block bit** (`row_dir.rs:21`):
+  setting the in-block flag would *mutate an immutable segment block* (a rewrite — defeats the
+  no-rewrite goal) and it is an unversioned bit with no gen/LSN, so it cannot give
+  snapshot-correct `is_deleted_as_of`. Sidecar `VersionedDeletionVector` it is.
+
+=== 9.2 WI refinements (folded into §8 statuses; specs here)
+
+* **WI-2b capture site verified.** `PaxSegmentWriter::add_record` (`pax_block.rs:860`) is the
+  only post-reorder point; direct code read confirms add_record call-order == footer-block
+  position (`finish_legacy`/`finish_coalesced` preserve index order; `write_pax_segment_ordered`
+  applies `plan.order` before `add_record`). A capture-order **property test** is added to
+  WI-2b. Residuals to confirm at build: `finish_legacy` body + `finish_v1` (not on the
+  `finish()` dispatch path).
+* **WI-3 multi-segment.** An oid may reside in more than one cold segment (MVCC versions); a
+  delete must set the DV bit in *every* segment containing it. WI-3 specifies
+  segment-resolution. Fallback to today's tombstone when no `.opr`/bad CRC is safe (the
+  tombstone is durable).
+* **WI-4 re-scoped (path-corrected).** Thread the reader snapshot LSN into the **PAX** cold
+  scan; apply DV bits with `gen ≤ snapshot`. The binding forward-invariant: **any**
+  change-feed-based suppress that co-applies with a past-T reader must be bounded by reader
+  `T`. (The OLAP path has no past-T reads today — always current — so this is a forward
+  invariant, not an active fix.)
+* **WI-5 (DeepSeek T2).** The DV "version" **is** the max-discharged LSN (a single monotonic
+  u64 — eliminates the version↔discharged-LSN TOCTOU; `snapshot_lsn > dv_version` is the whole
+  straddle check) + a **bounded retry** (2–3 attempts) on straddle re-read to prevent livelock
+  under concurrent compaction.
+* **WI-6 (DeepSeek T3).** The position→OID reverse map is **already provided** by
+  `OidPositionResolver::oid_at` (WI-2a). The CAS/lease interlock is **greenfield** (compactor
+  has none today: `MvccResolver` is `None`, inputs deleted unconditionally,
+  `compactor_impl.rs:220/371`). WI-6 must **specify the retry/abort failure policy** when
+  lease/CAS acquisition fails — never skip-the-interlock-and-delete (that loses the bit).
+
+=== 9.3 DeepSeek review — claim dispositions
+
+[cols="1,1,3"]
+|===
+| Target | Verdict | Disposition (validated against `origin/develop`)
+
+| T1 — versioned-DV snapshot correctness vs `OlapDeltaMerge`
+| PARTIALLY CONFIRMED (mechanism corrected)
+| Structural facts verified: `changed_oids_since(snapshot_lsn)` has **no upper bound**
+  (`olap_delta_merge.rs:124–129`); `snapshot_lsn` is base-materialization (:149). But the
+  attack assumes the DV and the delta-merge suppress the *same* scan — they are different cold
+  paths (PAX vs Parquet) and do not co-apply; the OLAP path has no past-T reads today (latent,
+  not active). Folded into WI-4 as a path-clarification + forward invariant.
+
+| T2 — publish-before-retire straddle
+| CONFIRMED
+| "DV version = max-discharged LSN" (single u64, no version↔LSN TOCTOU) + bounded retry.
+  Folded into WI-5.
+
+| T3 — compaction interlock
+| PARTIAL
+| The position→OID reverse map flagged as unspecified **already exists** (`oid_at`, WI-2a —
+  DeepSeek ran before WI-2a merged). CAS/lease is greenfield + failure policy was unspecified.
+  Folded into WI-6.
+
+| T4 — resolver position correctness
+| MOSTLY CLOSED
+| Capture-order **verified to hold** by direct code read. Remaining: **CRC32** on `.opr`
+  (WI-2b), **multi-segment** delete dedup (WI-3), capture-order property test (WI-2b).
+|===
+
+DeepSeek's highest-impact recommendation (bound the delta-merge suppress-set by reader `T`) is
+sound *if* the two paths ever merge; reframed in WI-4 as a path-clarification + forward
+invariant, since the suppressors are on different cold paths today.
