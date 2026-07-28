@@ -162,8 +162,27 @@ pub fn reference_tools() -> Vec<Tool> {
         },
         Tool {
             name: tool_name::CHECKPOINT.to_string(),
-            description: "Agent checkpoint: save or restore agent state (ADR-022).".to_string(),
-            input_schema: json!({ "type": "object", "additionalProperties": true }),
+            description: "Agent checkpoint: save, get, or list agent state for a thread (ADR-022). \
+                          Event-sourced — `save` appends and `get` returns the latest checkpoint \
+                          unless `checkpoint_id` is given."
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["thread_id", "tenant_id"],
+                "properties": {
+                    "op": { "type": "string", "enum": ["save", "get", "list"], "description": "Operation (default `save`)." },
+                    "thread_id": { "type": "string", "description": "Agent thread this checkpoint belongs to." },
+                    "tenant_id": { "type": "string", "description": "Tenant scope — required (fail-closed isolation)." },
+                    "checkpoint_ns": { "type": "string", "description": "Optional namespace within the thread (default `default`)." },
+                    "checkpoint_id": { "type": "string", "description": "On `save`, use this id instead of minting one. On `get`, select this checkpoint instead of the latest." },
+                    "parent_checkpoint_id": { "type": "string", "description": "Parent checkpoint, recording lineage." },
+                    "checkpoint": { "description": "State payload — required for `save`." },
+                    "metadata": { "type": "object", "description": "Optional checkpoint metadata." },
+                    "writes": { "type": "array", "description": "Optional pending channel writes." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Max entries for `list` (default 20)." }
+                },
+                "additionalProperties": true
+            }),
         },
         Tool {
             name: tool_name::EVENT.to_string(),

@@ -63,8 +63,8 @@ do not want to compete on, and none of the surface we do.
 | `tools.rs` grep for `graph\|rag\|traverse\|neighbor` = 0 hits; backend trait `tools.rs:46–60` lists 8 non-graph tools.
 
 | **G2**
-| **3 of 8 published tools are dead.** `memory` / `checkpoint` / `event` return an explicit *"not yet wired in-process"* from `EngineBackend` — there is no production agentic backend (only a `#[cfg(test)]` `MockBackend`). A published catalog would advertise tools that always fail.
-| `src/network/mcp/backend.rs`; TD-MCP-1 §Finding.
+| **RESOLVED 2026-07-28.** *Original claim ("3 of 8 tools dead") was wrong — corrected on inspection.* Only **`checkpoint`** was dead: `event` was already wired to `EventLogEngine` (MCP-1a) and `memory` **search** to `VectorMemoryStore` (MCP-1b); memory *put* stays LLM-gated (TD-101) and the tool description says so honestly rather than failing. `checkpoint` is now wired via `AgentCheckpointStore` — event-sourced over the same `EventLogEngine`, so it needed no new engine, filesystem handle, or LLM.
+| `src/network/mcp/backend.rs`; `src/services/agent_checkpoint.rs`. TD-MCP-1's `src/embedded/agent_memory.rs` reference is stale (file does not exist).
 
 | **G3**
 | **No relevance eval for graph-RAG.** `tests/graph_rag_integration_test.rs::test_rag_pipeline_integration` uses a **mock retriever** — plumbing test, not a relevance eval. Mandate #13 requires an eval with a real rubric (output *and* trajectory) for any ranked surface before it is promoted.
@@ -96,9 +96,9 @@ a smaller one.
 | S3, publish
 
 | **S2**
-| **Resolve the dead-tool catalog.** Either wire `memory`/`checkpoint`/`event` (TD-MCP-1 — needs a production agentic backend + LLM dependency) **or** gate them out of the published catalog behind the same flag that enables the hosted surface.
-| Exit: every tool in the published catalog succeeds on a healthy server. **Gating out is the cheap correct default** — wiring is TD-MCP-1's scope and carries an external LLM dependency.
-| publish
+| **DONE 2026-07-28.** `checkpoint` wired (`AgentCheckpointStore`, TD-MCP-1 phase MCP-1d): save/get/list, event-sourced over `EventLogEngine`, LangGraph-shaped (`thread_id`/`checkpoint_ns`/`parent_checkpoint_id`). Catalog schema replaced the open `additionalProperties`-only stub with a real one. The feared LLM dependency did not apply — it gates memory *put* only, which this surface does not offer.
+| Exit met: every tool in the published catalog now succeeds on a healthy server. Isolation is fail-closed (non-empty `tenant_id` required; tenant is structural in the entity id; `:` injection rejected). **Caveat: `TD-EVENTLOG-1`** — the underlying event log has no restart recovery, so `checkpoint` (and `event`) are process-lifetime durable only. That does not block publish, but it **does** bound what the listing may claim.
+| TD-EVENTLOG-1 blocks any durability claim
 
 | **S3**
 | **Graph-RAG relevance eval** (mandate #13, TD-ORION-1 residual). Real rubric over a small fixed corpus, covering **output** (are the expanded neighbours the right symbols) and **trajectory** (was the seed→expand path sound). Versioned with the code; threshold-gated in CI.
