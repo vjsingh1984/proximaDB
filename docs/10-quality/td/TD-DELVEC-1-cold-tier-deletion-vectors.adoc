@@ -10,7 +10,7 @@
 
 [cols="1,3"]
 |===
-| Status | **Rev 4 (2026-07-28) — WI-1 + WI-2a merged; WI-2b next.** Hardened after a 3-agent red-team (2026-07-27; §7), a verification-first recon, and a DeepSeek cross-model review (§9). The naïve §2 design is superseded by §7.2; §7.2 is folded into numbered WIs (§8). **Rev-4 corrections (§9):** the §1 cold-delete mechanism cited in rev 3 (`SstEntry::tombstone`) is dead code — the live delete is a `ProximaRecord` tombstone via WAL→memtable→PAX; `OlapDeltaMerge` is the *Parquet relational* path, distinct from the DV's *PAX* path (WI-4 re-scoped); the reserved `stats_kind` footer hook cited in rev-3 WI-2 does not exist in code (WI-2b uses a `.opr` sidecar). Additive, feature-gated `cold-deletion-vectors`, default path byte-for-byte unchanged. **~4–5w**; off the OLTP critical path.
+| Status | **Rev 5 (2026-07-28) — WI-1, WI-2a, WI-2b merged; WI-2c next.** Hardened after a 3-agent red-team (2026-07-27; §7), a verification-first recon, a DeepSeek cross-model review (§9), and a rev-5 persistence correction (§9.4). The naïve §2 design is superseded by §7.2; §7.2 is folded into numbered WIs (§8). **Rev-5 correction:** the OID→position resolver is an **immutable write-time component → a region in the segment footer** (`opr_off/opr_len`, mirrors the RaBitQ/SQ8 region pattern), NOT a `.opr` sidecar — all write-time components land as regions in the one atomic segment file (crash/DR-safe); only the post-write-mutable DV is external (CAS'd manifest, §7.2-3). Earlier revs' §9 corrections stand. Additive, feature-gated `cold-deletion-vectors`, default path byte-for-byte unchanged. **~4–5w**; off the OLTP critical path.
 | Problem | The cold tier deletes via **LSM tombstones** (delete-marker records that cascade through levels and are physically removed only at compaction) — every cold delete implies an eventual **segment rewrite**. D14 wants **deletion vectors**: a position bitmap overlaying the *immutable* segment, applied **merge-on-read**, purged at compaction behind the reader watermark — no rewrite on delete.
 | Feature | `cold-deletion-vectors` (additive, feature-gated; default path = today's tombstone+compaction, byte-for-byte unchanged).
 |===
@@ -232,12 +232,17 @@ snapshot-correct `is_deleted_as_of(pos, snapshot_lsn)`; versioned `PDV2` magic +
 | WI-2a | **OID→position resolver type.** `OidPositionResolver` — dense `oids: Vec<String>`
 (position→oid, O(1) reverse via `oid_at`) + `by_oid` (oid→position); `from_stream_order`; serialize/deserialize
 (`ORP1` magic, magic-rejection fallback). Pure-additive, wired to nothing. §7.2-2. | **merged (#1275)**
-| WI-2b | **Persist the resolver at flush.** Capture `record.oid` inside `PaxSegmentWriter::add_record`
-(`pax_block.rs:860` — the only post-reorder point; verified call-order == footer-block position) via a
-`with_oid_resolver` builder (mirrors `with_block_centroids`); finalize in `finish()`; write a **`.opr` sidecar**
-beside the `.pax` (via `staged.finalize`, `flush/mod.rs:626`) — `SegmentMeta` is in-memory only, so a field would
-not persist. **CRC32** on the sidecar (correct-magic + corrupt-body → wrong position → silent mis-delete; fall
-back to tombstone on CRC failure). `record.oid` is empty for append-only rows (non-addressable, harmless). | pending
+| WI-2b | **Writer-side resolver capture + CRC.** `PaxSegmentWriter::with_oid_resolver` builder (mirrors
+`with_block_centroids`); `add_record` (`pax_block.rs:860`, the only post-reorder point — verified call-order ==
+footer-block position) captures `record.oid` in stream order; `oid_resolver_bytes()` serializes it.
+`OidPositionResolver` serialize/deserialize carry a **CRC32** trailer (corrupt-body → reject, never a wrong
+position). Pure-additive, default off. §7.2-2, §9.2. | **merged (#1282)**
+| WI-2c | **Persist the resolver as a footer region (rev-5: NOT a sidecar).** Write the CRC32'd resolver bytes as a
+region *inside* the segment file — extend `SegmentFooterIndex` with `opr_off/opr_len` (mirrors `rabitq_off`/
+`sq8_off`; `#[serde(default)]`, 0 = absent → tombstone fallback, mixed-read-safe) and assemble the region in
+`finish_coalesced`/`finish_legacy`. The resolver lands inside the **single atomic segment put** — no separate
+file, no flush-path extra write, no torn-write window on crash/DR. The post-write-mutable DV stays in the CAS'd
+manifest (§7.2-3). §9.4. | pending
 | WI-3 | **Delete path → set DV bit** (feature-gated): a hot tombstone landing on a row in
 an immutable cold segment resolves `(segment, position)` (WI-2) and sets the versioned DV
 bit at the delete LSN, instead of a cascading cold tombstone. §7.2 D2. | pending
@@ -257,9 +262,9 @@ row below a global static low-watermark; document that long-lived snapshots are 
 (a real cold-reader watermark is a separately-scoped later item). §7.2-5. | pending
 |===
 
-Sequencing WI-1 → WI-7; WI-3 depends on WI-2, WI-4 on WI-1+WI-3. The confirmation pass §7.3
-asks for lands with WI-1 (the versioned format, the load-bearing "newly-introduced
-structure") and WI-6 (the interlock). Re-scope stands at ~4–5w. Off the critical path.
+Sequencing WI-1 (✓) → WI-2a (✓) → WI-2b (✓ writer-side) → **WI-2c** (footer-region write) → WI-3 (delete path;
+introduces `cold-deletion-vectors`) → WI-4..WI-7. WI-3 depends on WI-2c; WI-6 reuses the WI-2a reverse map.
+Re-scope stands at ~4–5w. Off the critical path.
 
 == 9. Rev-4 corrections + cross-model review (DeepSeek, 2026-07-28)
 
@@ -283,11 +288,12 @@ credits); DeepSeek + the recon stand as the gate basis.
   of `OlapDeltaMerge`"; "reconcile so they never double-count") is therefore misleading —
   there is no shared scan to double-suppress on. See WI-4.
 * **The reserved `stats_kind` / "PR3 OID bloom" footer hook cited in rev-3 WI-2 does not exist
-  in code** (grep finds only this TD). WI-2b persists the resolver as a `.opr` sidecar.
-* **Sidecar DV over the pre-existing `row_flags::DELETED` in-block bit** (`row_dir.rs:21`):
+  in code** (grep finds only this TD). Rev 5 persists the resolver as a footer *region* (§9.4), not a sidecar.
+* **Manifest-stored DV over the pre-existing `row_flags::DELETED` in-block bit** (`row_dir.rs:21`):
   setting the in-block flag would *mutate an immutable segment block* (a rewrite — defeats the
   no-rewrite goal) and it is an unversioned bit with no gen/LSN, so it cannot give
-  snapshot-correct `is_deleted_as_of`. Sidecar `VersionedDeletionVector` it is.
+  snapshot-correct `is_deleted_as_of`. The versioned DV lives in the CAS'd manifest (§7.2-3),
+  not the segment file.
 
 === 9.2 WI refinements (folded into §8 statuses; specs here)
 
@@ -299,8 +305,8 @@ credits); DeepSeek + the recon stand as the gate basis.
   `finish()` dispatch path).
 * **WI-3 multi-segment.** An oid may reside in more than one cold segment (MVCC versions); a
   delete must set the DV bit in *every* segment containing it. WI-3 specifies
-  segment-resolution. Fallback to today's tombstone when no `.opr`/bad CRC is safe (the
-  tombstone is durable).
+  segment-resolution. Fallback to today's tombstone when a segment has no resolver region
+  (`opr_off == 0`) or a bad CRC is safe (the tombstone is durable).
 * **WI-4 re-scoped (path-corrected).** Thread the reader snapshot LSN into the **PAX** cold
   scan; apply DV bits with `gen ≤ snapshot`. The binding forward-invariant: **any**
   change-feed-based suppress that co-applies with a past-T reader must be bounded by reader
@@ -342,11 +348,67 @@ credits); DeepSeek + the recon stand as the gate basis.
   Folded into WI-6.
 
 | T4 — resolver position correctness
-| MOSTLY CLOSED
-| Capture-order **verified to hold** by direct code read. Remaining: **CRC32** on `.opr`
-  (WI-2b), **multi-segment** delete dedup (WI-3), capture-order property test (WI-2b).
+| MOSTLY CLOSED (CRC32 landed)
+| Capture-order **verified to hold** by direct code read. **CRC32** landed in WI-2b (#1282);
+  remaining: persist the resolver as a **footer region** (WI-2c, rev-5), **multi-segment** delete dedup (WI-3).
 |===
 
 DeepSeek's highest-impact recommendation (bound the delta-merge suppress-set by reader `T`) is
 sound *if* the two paths ever merge; reframed in WI-4 as a path-clarification + forward
 invariant, since the suppressors are on different cold paths today.
+
+=== 9.4 Rev-5 — resolver persistence: footer region, not sidecar
+
+Rev 4 (and the WI-2c recon) proposed persisting the OID→position resolver as a `.opr` **sidecar**
+file beside the `.pax`. **Rev 5 reverses that** — the resolver is an *immutable, write-time*
+component (frozen at seal — positions never shift while the segment lives), so it is a **region in
+the segment footer** (`opr_off/opr_len`), landing inside the single segment object.
+
+**Object-store immutable puts are not an obstacle.** S3/GCS/Azure objects are write-once — you
+cannot edit a region or extend a footer after the PUT. The footer-region does not do that: the
+resolver bytes are serialized in `finish()` (the oids are all known by then) and appended to the
+in-memory segment buffer (`file_buf`) alongside the RaBitQ/SQ8 regions; the footer records
+`opr_off/opr_len`; the **whole buffer is the single immutable PUT** (or the final part of a
+multipart upload, which is atomic-on-complete). Nothing is edited post-PUT — the resolver is known
+at assembly time, never after.
+
+**Trade-off — atomicity / speed / feasibility / flexibility:**
+
+[cols="1,2,2"]
+|===
+| Axis | Footer region (rev-5) | Separate `.opr` file
+
+| Atomicity
+| Lands in the one segment PUT — crash/DR leaves the whole segment (with resolver) or nothing.
+| Two PUTs (segment + sidecar) — can tear (orphan segment / orphan resolver); the recon's "missing `.opr` → tombstone" was a band-aid for this.
+
+| Write speed
+| One PUT of a slightly larger object; resolver serialized once in `finish()`.
+| A second PUT (extra object-store request/round-trip).
+
+| Read speed
+| Resolver fetched by offset from the segment object (one range GET on a file the reader already opens).
+| A separate object GET (key resolution + round-trip).
+
+| Feasibility (immutable puts)
+| Assemble before the single PUT — fully compatible; no post-PUT edit.
+| Compatible (separate PUT) — but non-atomic.
+
+| Flexibility
+| Bakes the resolver into the versioned footer (one more `opr_off/opr_len`, mirroring `rabitq_off`/`sq8_off`); old readers ignore it, new readers see `opr_off == 0` on legacy segments → tombstone.
+| Sidecar format can evolve independently — but the resolver is immutable, so that flexibility is unused.
+|===
+
+Footer region wins on every axis; the only thing a sidecar avoids is a small footer-format extension, which is not worth the atomicity and speed costs.
+
+**The one necessary exception — the DV bitmap.** The *resolver* is immutable → footer region. The
+*deletion vector* is **post-write mutable** (each delete sets bits) — it cannot live in the
+immutable segment object (nothing to append to / edit). It stays in the **CAS'd manifest**
+(§7.2-3), with publish-before-retire handling its atomicity vs the change-feed. So "all write-time
+components land as one atomic object" holds for the resolver; the DV is the single, necessary
+external store.
+
+**WI-2c consequence.** Persisting as a footer region means **no flush-path sidecar write at all** —
+the resolver is assembled in `finish_coalesced`/`finish_legacy` with the RaBitQ/SQ8 regions and
+lands in the one segment PUT. This dissolves the async-finalize sidecar complexity the WI-2c recon
+was wrestling with.
