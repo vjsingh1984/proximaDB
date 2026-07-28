@@ -47,9 +47,10 @@
 //! absence-aware, and guarding them would turn `Not(IsNotNull(f))` — correctly
 //! `f IS NULL` — into a contradiction.
 
-use std::collections::BTreeSet;
-
-use crate::core::search::{ComparisonOperator, FilterExpression};
+use crate::core::search::{
+    ComparisonOperator, FilterExpression,
+    sql_value_filter::{evaluate_filter_resolved, evaluate_filter_resolved_type_strict},
+};
 
 /// Reserved field name for the synthetic unsatisfiable expression. It is never
 /// read from a record — the expression is a contradiction over *presence*, so it
@@ -198,12 +199,17 @@ impl SecurityFilter {
     ///
     /// `Unrestricted` negates to `Unsatisfiable` (this is the `Not(AlwaysAllow)`
     /// inversion, closed), `Unsatisfiable` to `Unrestricted`, and a restriction
-    /// to its **null-guarded** complement (S2).
+    /// to its plain complement. No synthetic null-guards: the security expression
+    /// is walked by the 3-valued strict walker, where an absent field is UNKNOWN
+    /// and `Not(UNKNOWN)=UNKNOWN→deny` — so the guard the 2-valued walker needed
+    /// is now redundant (and was the source of the `Not(And)` over-deny).
     pub fn negate(self) -> SecurityFilter {
         match self {
             SecurityFilter::Unrestricted => SecurityFilter::Unsatisfiable,
             SecurityFilter::Unsatisfiable => SecurityFilter::Unrestricted,
-            SecurityFilter::Restricted(e) => SecurityFilter::Restricted(null_guarded_not(e)),
+            SecurityFilter::Restricted(e) => {
+                SecurityFilter::Restricted(FilterExpression::Not(Box::new(e)))
+            }
         }
     }
 
@@ -224,61 +230,40 @@ impl SecurityFilter {
     }
 }
 
-/// `Not(e)` conjoined with an `IsNotNull` guard per value-compared field, so a
-/// record missing one of those fields is **excluded** rather than admitted by
-/// the evaluator's boolean `!`.
-fn null_guarded_not(e: FilterExpression) -> FilterExpression {
-    let mut guarded = vec![FilterExpression::Not(Box::new(e.clone()))];
-    for field in value_compared_fields(&e) {
-        guarded.push(FilterExpression::Comparison {
-            field,
-            operator: ComparisonOperator::IsNotNull,
-            value: serde_json::Value::Null,
-        });
-    }
-    match guarded.len() {
-        // No value comparison inside (e.g. a bare null test) — nothing to guard.
-        1 => FilterExpression::Not(Box::new(e)),
-        _ => FilterExpression::And(guarded),
-    }
-}
-
-/// Every field the expression compares **by value**, in stable order.
+/// Admit a row under **separate evaluation**: the user's filter is walked by the
+/// permissive (2-valued) walker, the security predicate by the **strict**
+/// (3-valued) walker, and a row is admitted only if BOTH admit. This is the
+/// evaluation model TF-2 §3.4 prescribes and the one the lattice's lowering now
+/// assumes — it is why the null-guards could be dropped.
 ///
-/// `IsNull`/`IsNotNull` are excluded: they are decided by presence and are
-/// already absence-correct, so guarding them would make `Not(IsNotNull(f))`
-/// (correctly `f IS NULL`) unsatisfiable.
-fn value_compared_fields(e: &FilterExpression) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    collect_value_compared_fields(e, &mut out);
-    out
-}
-
-fn collect_value_compared_fields(e: &FilterExpression, out: &mut BTreeSet<String>) {
-    match e {
-        FilterExpression::Comparison {
-            field, operator, ..
-        } => {
-            if !matches!(
-                operator,
-                ComparisonOperator::IsNull | ComparisonOperator::IsNotNull
-            ) {
-                out.insert(field.clone());
-            }
-        }
-        FilterExpression::And(parts) | FilterExpression::Or(parts) => {
-            for p in parts {
-                collect_value_compared_fields(p, out);
-            }
-        }
-        FilterExpression::Not(inner) => collect_value_compared_fields(inner, out),
-    }
+/// `AND`-associativity makes this exactly equivalent to a single conjunction for
+/// any row the *security* predicate admits, and strictly tighter for rows it
+/// denies (the security walker's UNKNOWN ⇒ deny). The user filter's permissive
+/// semantics are untouched.
+///
+/// FA-c wires this at the read primitive: it compiles `AuthorizedReadContext`'s
+/// `row_predicate_refs` into the `security` expression and supplies the user's
+/// query filter, then admits each row via this function. The legacy
+/// `services::operations::combine_filters` *merges* the two trees into one
+/// permissively-walked `And` — the merge that originally forced the null-guards;
+/// FA-c supersedes it.
+pub fn admits_with_security<F>(
+    user: Option<&FilterExpression>,
+    security: Option<&FilterExpression>,
+    resolve: &F,
+) -> bool
+where
+    F: Fn(&str) -> Option<serde_json::Value>,
+{
+    let user_admits = user.is_none_or(|e| evaluate_filter_resolved(e, resolve));
+    let security_admits = security.is_none_or(|e| evaluate_filter_resolved_type_strict(e, resolve));
+    user_admits && security_admits
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::search::sql_value_filter::evaluate_filter_resolved;
+    use crate::core::search::sql_value_filter::evaluate_filter_resolved_type_strict_tri;
     use serde_json::json;
 
     fn eq_expr(field: &str, value: serde_json::Value) -> FilterExpression {
@@ -293,9 +278,16 @@ mod tests {
         SecurityFilter::Restricted(eq_expr(field, value))
     }
 
-    /// Evaluate an expression against a record represented as a JSON map.
+    /// Admit/deny under the SECURITY walker (3-valued, UNKNOWN⇒deny). Every test in
+    /// this module is a security-filter test, so this — not the permissive walker —
+    /// is the correct evaluator for the lowering.
     fn admits(expr: &FilterExpression, row: &serde_json::Value) -> bool {
-        evaluate_filter_resolved(expr, &|field| row.get(field).cloned())
+        strict_tri(expr, row).unwrap_or(false)
+    }
+
+    /// The security walker's tri-valued result (None = UNKNOWN → deny).
+    fn strict_tri(expr: &FilterExpression, row: &serde_json::Value) -> Option<bool> {
+        evaluate_filter_resolved_type_strict_tri(expr, &|field| row.get(field).cloned())
     }
 
     fn admits_filter(f: &SecurityFilter, row: &serde_json::Value) -> bool {
@@ -524,23 +516,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn value_compared_fields_skips_null_tests() {
-        let expr = FilterExpression::And(vec![
-            eq_expr("a", json!(1)),
-            FilterExpression::Comparison {
-                field: "b".to_string(),
-                operator: ComparisonOperator::IsNull,
-                value: serde_json::Value::Null,
-            },
-            FilterExpression::Not(Box::new(eq_expr("c", json!(2)))),
-        ]);
-        let fields = value_compared_fields(&expr);
-        assert!(fields.contains("a"));
-        assert!(fields.contains("c"));
-        assert!(!fields.contains("b"));
-    }
-
     // --- the deny-biased subset property (S1–S3 joint) ---
 
     /// Reference semantics for the *intended* meaning of a lowered expression,
@@ -549,7 +524,15 @@ mod tests {
     ///
     /// The property under test is that the lowering never admits a row this
     /// reference denies — i.e. the bridge may only ever *tighten*.
+    /// Independent 3-valued (SQL/Kleene) oracle — the SPEC the walker is tested
+    /// against. Independent of the production comparator on the axes that broke
+    /// (Not propagation, absence): absence is UNKNOWN for value comparisons, and
+    /// `Not(UNKNOWN)=UNKNOWN`. The equality/null leaves are implemented directly;
+    /// the ordered/string/list leaves reuse the (separately, exhaustively tested)
+    /// `compare_json_op_type_strict` for their within-class semantics, so this
+    /// oracle does not duplicate that grid.
     fn reference_admits(e: &FilterExpression, row: &serde_json::Value) -> Option<bool> {
+        use crate::core::search::sql_value_filter::compare_json_op_type_strict;
         match e {
             FilterExpression::And(parts) => {
                 let mut seen_unknown = false;
@@ -573,6 +556,7 @@ mod tests {
                 }
                 if seen_unknown { None } else { Some(false) }
             }
+            // The fix under test: Not(UNKNOWN) = UNKNOWN, not `!false` = admit.
             FilterExpression::Not(inner) => reference_admits(inner, row).map(|v| !v),
             FilterExpression::Comparison {
                 field,
@@ -583,10 +567,17 @@ mod tests {
                 match operator {
                     ComparisonOperator::IsNull => Some(present.is_none()),
                     ComparisonOperator::IsNotNull => Some(present.is_some()),
-                    ComparisonOperator::Equals => present.map(|v| v == value),
-                    ComparisonOperator::NotEquals => present.map(|v| v != value),
-                    // Other operators are not generated by this property's grammar.
-                    _ => None,
+                    // Absence is UNKNOWN, and a present value is delegated to the
+                    // type-strict comparator (cross-class ⇒ None for EVERY
+                    // operator, including Equals — a structural `==` would wrongly
+                    // call a cross-class pair "unequal" and let `Not` admit it).
+                    // The leaf is exhaustively tested elsewhere (the 7×7×operator
+                    // grid); this oracle's independence is on the tree combinators
+                    // and the absence axis.
+                    _ => match present {
+                        None => None,
+                        Some(fv) => compare_json_op_type_strict(operator, fv, value),
+                    },
                 }
             }
         }
@@ -623,6 +614,9 @@ mod tests {
     }
 
     fn row_space() -> Vec<serde_json::Value> {
+        // Spans presence/absence, null, and the cross-class pairs that exposed
+        // the Not(comparison) fail-open (a string where a number was expected,
+        // and vice versa).
         vec![
             json!({}),
             json!({ "dept": "eng" }),
@@ -632,6 +626,13 @@ mod tests {
             json!({ "dept": "hr", "region": "us" }),
             json!({ "dept": null }),
             json!({ "dept": null, "region": "eu" }),
+            json!({ "level": 3 }),
+            json!({ "level": 5 }),
+            json!({ "level": "TS" }), // cross-class: string where number expected
+            json!({ "level": null }),
+            json!({ "flag": true }),
+            json!({ "dept": "eng", "level": 5 }),
+            json!({ "dept": "eng", "level": "TS" }),
         ]
     }
 
@@ -681,6 +682,210 @@ mod tests {
                 .expect("unsatisfiable must lower to a real expression, never None");
             for row in &rows {
                 assert!(!admits(&expr, row), "unsatisfiable admitted {row}");
+            }
+        }
+    }
+    // ---- P3: separate evaluation (security strict ∧ user permissive) ----
+
+    #[test]
+    fn separate_evaluation_denies_a_row_the_security_predicate_denies() {
+        // The user filter would admit (permissive Gt on a cross-class pair), but
+        // the security predicate denies it strictly. The AND must deny.
+        let resolve = |f: &str| match f {
+            "level" => Some(json!("TS")),
+            _ => None,
+        };
+        let user = Some(&FilterExpression::Comparison {
+            field: "level".to_string(),
+            operator: ComparisonOperator::GreaterThan,
+            value: json!(3),
+        });
+        let security = user; // same shape; permissive admits, strict denies
+        assert!(
+            evaluate_filter_resolved(user.unwrap(), &resolve),
+            "precondition: the permissive walker admits the cross-class row"
+        );
+        assert!(
+            !evaluate_filter_resolved_type_strict(security.unwrap(), &resolve),
+            "the strict walker denies it"
+        );
+        assert!(
+            !admits_with_security(user, security, &resolve),
+            "separate evaluation must deny: security's strict deny wins"
+        );
+    }
+
+    #[test]
+    fn separate_evaluation_admits_when_both_admit() {
+        let resolve = |f: &str| match f {
+            "dept" => Some(json!("eng")),
+            _ => None,
+        };
+        let user = Some(&FilterExpression::Comparison {
+            field: "dept".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!("eng"),
+        });
+        assert!(admits_with_security(user, user, &resolve));
+    }
+
+    #[test]
+    fn no_security_predicate_means_user_filter_alone() {
+        let resolve = |f: &str| match f {
+            "dept" => Some(json!("eng")),
+            _ => None,
+        };
+        let user = Some(&FilterExpression::Comparison {
+            field: "dept".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!("eng"),
+        });
+        assert!(admits_with_security(user, None, &resolve));
+        // And no filters at all admits (the scan's own predicate is the gate).
+        assert!(admits_with_security(None, None, &resolve));
+    }
+
+    // ---- P2: the behaviors the guard-drop FIXES (red-team Findings 2 & 4) ----
+
+    #[test]
+    fn negated_conjunction_admits_a_row_matching_one_arm() {
+        // Finding 4: the old null-guard conjoined IsNotNull for EVERY field, so
+        // Not(And([Eq(owner), Eq(tenant)])) denied a row missing `tenant` even
+        // though the owner arm is already false. With guards gone + strict 3VL,
+        // Kleene AND(false, UNKNOWN) = false, Not = admit.
+        let policy = SecurityFilter::all(vec![
+            restricted("owner", json!("alice")),
+            restricted("tenant", json!("t1")),
+        ])
+        .negate();
+        assert!(
+            admits_filter(&policy, &json!({ "owner": "bob" })),
+            "a row matching one arm of a negated conjunction must be admitted"
+        );
+        assert!(!admits_filter(
+            &policy,
+            &json!({ "owner": "alice", "tenant": "t1" })
+        ));
+        assert!(admits_filter(
+            &policy,
+            &json!({ "owner": "carol", "tenant": "t2" })
+        ));
+    }
+
+    #[test]
+    fn double_negation_is_the_identity() {
+        // The case the De-Morgan attempt broke: Not(Not(Eq)) must equal Eq,
+        // including over an absent field (UNKNOWN, not admit).
+        let p = restricted("dept", json!("eng"));
+        let dd = p.clone().negate().negate();
+        for row in [json!({"dept": "eng"}), json!({"dept": "hr"}), json!({})] {
+            assert_eq!(
+                admits_filter(&p, &row),
+                admits_filter(&dd, &row),
+                "double negation must be the identity: {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn negated_equals_denies_a_cross_class_row() {
+        // Finding 2: Not(Equals(owner, "u/alice")) must deny {owner: 42} — a
+        // cross-class pair is UNKNOWN, Not(UNKNOWN) = UNKNOWN → deny.
+        let policy = restricted("owner", json!("u/alice")).negate();
+        assert!(!admits_filter(&policy, &json!({ "owner": 42 })));
+        assert!(admits_filter(&policy, &json!({ "owner": "bob" })));
+        assert!(!admits_filter(&policy, &json!({ "owner": "u/alice" })));
+    }
+
+    /// A `FilterExpression` grammar spanning every operator and the And/Or/Not
+    /// compositions, so the walker is exercised over the whole surface, not just
+    /// the equality corner the old grammar covered.
+    fn filter_grammar() -> Vec<FilterExpression> {
+        use ComparisonOperator::*;
+        let mut ops = vec![
+            Equals,
+            NotEquals,
+            LessThan,
+            LessThanOrEqual,
+            GreaterThan,
+            GreaterThanOrEqual,
+            In,
+            NotIn,
+            Between,
+            Contains,
+            StartsWith,
+            EndsWith,
+            Like,
+            IsNull,
+            IsNotNull,
+        ];
+        let leaves: Vec<FilterExpression> = ops
+            .drain(..)
+            .flat_map(|op| {
+                let lit_for = |op: ComparisonOperator| -> serde_json::Value {
+                    match op {
+                        In | NotIn => json!(["eng", "hr"]),
+                        Between => json!(["a", "z"]),
+                        _ => json!("eng"),
+                    }
+                };
+                let on_level = FilterExpression::Comparison {
+                    field: "level".to_string(),
+                    operator: op.clone(),
+                    value: match op {
+                        In | NotIn => json!([3, 5]),
+                        Between => json!([1, 10]),
+                        _ => json!(3),
+                    },
+                };
+                vec![
+                    FilterExpression::Comparison {
+                        field: "dept".to_string(),
+                        operator: op.clone(),
+                        value: lit_for(op),
+                    },
+                    on_level,
+                ]
+            })
+            .collect();
+
+        let mut all = leaves.clone();
+        for a in &leaves {
+            all.push(FilterExpression::Not(Box::new(a.clone())));
+            all.push(FilterExpression::Not(Box::new(FilterExpression::Not(
+                Box::new(a.clone()),
+            ))));
+            for b in &leaves {
+                all.push(FilterExpression::And(vec![a.clone(), b.clone()]));
+                all.push(FilterExpression::Or(vec![a.clone(), b.clone()]));
+                all.push(FilterExpression::Not(Box::new(FilterExpression::And(
+                    vec![a.clone(), b.clone()],
+                ))));
+                all.push(FilterExpression::Not(Box::new(FilterExpression::Or(vec![
+                    a.clone(),
+                    b.clone(),
+                ]))));
+            }
+        }
+        all
+    }
+
+    /// P1 — the security walker MUST equal the independent 3-valued reference over
+    /// the whole grammar × row space. Equivalence (not a one-sided subset): it
+    /// catches fail-open (walker admits, reference denies) AND over-deny (walker
+    /// denies, reference admits). This is the property the narrow old grammar could
+    /// not catch.
+    #[test]
+    fn strict_walker_equals_the_three_valued_reference_over_the_whole_grammar() {
+        for expr in filter_grammar() {
+            for row in row_space() {
+                assert_eq!(
+                    strict_tri(&expr, &row),
+                    reference_admits(&expr, &row),
+                    "walker ≠ 3-valued reference:
+  expr = {expr:?}
+  row  = {row}"
+                );
             }
         }
     }
