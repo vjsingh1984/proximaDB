@@ -153,21 +153,3 @@ pub async fn renew(
 ) -> crate::Result<()> {
     try_acquire(fs, root, topic, partition, holder_id, lease_duration).await
 }
-
-#[cfg(test)]
-pub(crate) async fn read_meta(
-    fs: &Arc<dyn QueueFs>,
-    root: &Path,
-    topic: &str,
-    partition: PartitionId,
-) -> crate::Result<Option<LeaseMeta>> {
-    let path = lease_path(root, topic, partition);
-    match fs.read(&path).await {
-        Ok(bytes) if !bytes.is_empty() => {
-            Ok(Some(serde_json::from_slice(&bytes).map_err(|e| {
-                QueueError::Persistence(format!("lease read: {e}"))
-            })?))
-        }
-        _ => Ok(None),
-    }
-}

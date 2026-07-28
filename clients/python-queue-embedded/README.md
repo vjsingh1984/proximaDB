@@ -6,7 +6,7 @@ the Rust API, surfaced through a synchronous Python interface (the
 internal tokio runtime is hidden from the caller).
 
 Internal-only by architectural design — see locked invariant #2 in
-`crates/modalities/proximadb-queue/README.md`. Customers reach the
+`crates/horizontal/proximadb-queue/README.md`. Customers reach the
 queue only through the public REST/gRPC/Arrow Flight ingest paths;
 this wheel exists for internal tooling, tests, and drainer
 integration on Python-managed pods.

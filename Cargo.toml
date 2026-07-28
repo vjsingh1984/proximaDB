@@ -81,7 +81,7 @@ members = [
     "crates/modalities/proximadb-observability",
     "crates/modalities/proximadb-observability-engine",
     "crates/modalities/proximadb-embedding",
-    "crates/modalities/proximadb-queue",
+    "crates/horizontal/proximadb-queue",
     "crates/modalities/proximadb-ledger",
     "crates/modalities/proximadb-rank-core",
     "crates/modalities/proximadb-rank-features",
@@ -404,7 +404,7 @@ proximadb-ledger = { path = "crates/modalities/proximadb-ledger", optional = tru
 # the `oltp-integrity` feature. Optional → default builds are byte-for-byte unchanged.
 proximadb-cks-local = { path = "crates/storage/proximadb-cks-local", optional = true }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
-proximadb-queue = { path = "crates/modalities/proximadb-queue" }
+proximadb-queue = { path = "crates/horizontal/proximadb-queue" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
 proximadb-rank-features = { path = "crates/modalities/proximadb-rank-features" }
 proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
