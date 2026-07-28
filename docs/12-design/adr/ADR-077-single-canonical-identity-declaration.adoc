@@ -1,7 +1,7 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = ADR-077: One canonical identity declaration per table
-:status: Proposed
+:status: Accepted (2026-07-28) — M1 implemented
 :date: 2026-07-28
 :authors: foundation session 2026-07-28
 :amends: ADR-072 D1 (catalog as the governance seam)

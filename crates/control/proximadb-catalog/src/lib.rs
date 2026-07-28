@@ -879,6 +879,42 @@ impl CatalogTableSchema {
         self
     }
 
+    /// Declare a `UNIQUE` on `columns` — **the one way to do it** (ADR-077 M1).
+    ///
+    /// A UNIQUE has a canonical home and a projection, and they must not drift:
+    ///
+    /// * canonical — `relational_capabilities.constraints`, which is what the
+    ///   uniqueness enforcement path reads;
+    /// * projection — `relational_capabilities.unique_indexes`, which the pg/JDBC
+    ///   introspection surfaces render as an index.
+    ///
+    /// Setting either field directly is how a UNIQUE ends up cataloged but never
+    /// enforced. This maintains both together, so that state is not reachable
+    /// through the builder. `validate_schema` rejects it if reached another way.
+    ///
+    /// Idempotent and order-insensitive: re-declaring the same key — even with the
+    /// columns in a different order — does not fence it twice.
+    pub fn with_unique(mut self, index_name: impl Into<String>, columns: Vec<String>) -> Self {
+        if columns.is_empty() {
+            return self;
+        }
+        let already = self.relational_capabilities.constraints.iter().any(|c| {
+            matches!(c, ColumnConstraint::Unique { columns: existing }
+                              if crate::schema::same_column_set(existing, &columns))
+        });
+        if !already {
+            self.relational_capabilities
+                .constraints
+                .push(ColumnConstraint::Unique {
+                    columns: columns.clone(),
+                });
+            self.relational_capabilities
+                .unique_indexes
+                .push(CatalogIndex::new(index_name, columns, CatalogIndexType::BTree).unique());
+        }
+        self
+    }
+
     /// Add a storage layout/authority descriptor.
     pub fn with_storage_layout(mut self, layout: CatalogStorageLayout) -> Self {
         self.storage_layouts.push(layout);
