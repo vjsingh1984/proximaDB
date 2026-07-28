@@ -10,7 +10,7 @@
 
 [cols="1,3"]
 |===
-| Status | Draft — **hardened after a 3-agent red-team (2026-07-27); the naïve §2 design is NOT shippable — see §7**. Buildable on this substrate (positions are derivable, D5 holds), but §7 supersedes D1/D2/D3/D4 and adds two new sub-components. **Re-scoped: ~4–5w (not the 2w plan estimate)** — several pieces are new subsystems.
+| Status | **Build started (rev 3, 2026-07-28) — WI-1 in progress.** Hardened after a 3-agent red-team (2026-07-27; §7); the naïve §2 design is superseded by §7.2. Design gate **complete**: §7.2 folded into numbered WIs (§8); a `develop` verification pass re-confirmed the substrate and found the plain-bitmap `DeletionVector` primitive already exists (reusable), so **WI-1 = the MVCC-versioned form** (`VersionedDeletionVector`, per-position delete-gen, snapshot-correct). Additive, feature-gated `cold-deletion-vectors`, default path byte-for-byte unchanged. **Re-scoped: ~4–5w**; off the OLTP critical path.
 | Problem | The cold tier deletes via **LSM tombstones** (delete-marker records that cascade through levels and are physically removed only at compaction) — every cold delete implies an eventual **segment rewrite**. D14 wants **deletion vectors**: a position bitmap overlaying the *immutable* segment, applied **merge-on-read**, purged at compaction behind the reader watermark — no rewrite on delete.
 | Feature | `cold-deletion-vectors` (additive, feature-gated; default path = today's tombstone+compaction, byte-for-byte unchanged).
 |===
@@ -201,3 +201,55 @@ the publish-before-retire ordering, plus the conservative-purge unification. WI-
 in §3 are superseded by §7.2. The design **stays Draft** until §7.2 is folded into
 numbered WIs and a confirmation pass runs over the *versioned-DV + interlock* pieces
 (the newly-introduced structures). None of this is on the OLTP critical path (closed).
+
+== 8. Build plan — numbered work items (rev 3, 2026-07-28)
+
+§7.2 folded into a sequenced, additive WI list (this completes the design gate). A
+verification pass on `develop` (`c6c2f343d`) first re-confirmed the substrate and found
+one **surprise**: a *plain* position-bitmap `DeletionVector` **already exists**
+(`crates/storage/proximadb-storage-common/src/deletion_vector.rs`, ADR-025, wired to
+nothing) over an **in-repo `RoaringBitmap`** (no external `roaring` dep — offline build).
+So the DV *primitive* is reusable; the MVCC form + sidecar + manifest + resolver + all
+wiring are greenfield. Substrate anchors confirmed: footer block table gives a derivable
+stream ordinal (`segment_layout.rs` `FooterBlockEntry.row_count`); LSM tombstone +
+1h-reclaim compaction (`sst/mod.rs:473/505`, `compaction.rs:1178`); `OlapDeltaMerge`
+carries a base-materialization `snapshot_lsn`, **not** a reader-as-of (`olap_delta_merge.rs:149`);
+the SST compactor has **no** interlock — optional `MvccResolver` is `None`, inputs deleted
+unconditionally (`compactor_impl.rs:220/371`).
+
+Each WI is feature-gated `cold-deletion-vectors` (default path byte-for-byte unchanged);
+the feature is introduced at the first *wiring* WI (WI-3), since the pure-additive format
++ resolver types change no behavior.
+
+[cols="1,4,1"]
+|===
+| WI | Slice | Status
+
+| **WI-1** | **MVCC-versioned DV format.** `VersionedDeletionVector` (per-position delete
+`gen`/LSN as disjoint `gen -> RoaringBitmap` runs) beside the plain `DeletionVector`;
+snapshot-correct `is_deleted_as_of(pos, snapshot_lsn)`; versioned `PDV2` magic + serialize
+/deserialize (magic-rejection fallback). Pure-additive, wired to nothing. §7.2-1. | **building**
+| WI-2 | **OID→position resolver.** Dense `OID→footer-ordinal` recorded at write (footer
+sidecar / the reserved `stats_kind` "PR3 OID bloom" hook) or resolve-and-record at delete
+time. Additive to the footer. §7.2-2. | pending
+| WI-3 | **Delete path → set DV bit** (feature-gated): a hot tombstone landing on a row in
+an immutable cold segment resolves `(segment, position)` (WI-2) and sets the versioned DV
+bit at the delete LSN, instead of a cascading cold tombstone. §7.2 D2. | pending
+| WI-4 | **Merge-on-read + reader LSN.** Thread the reader snapshot LSN into the cold scan;
+apply DV bits with `gen <= snapshot`; reconcile with the oid-keyed `OlapDeltaMerge`
+suppress-set (persist its cold-side input). The snapshot-isolation fix. §7.2-1. | pending
+| WI-5 | **Publish-before-retire.** Flush fsyncs the DV manifest bump **before** retiring
+the delete from the change-feed; readers pin one `(snapshot_lsn, DV-version)` tuple;
+straddle detection → re-read. The resurface fix. §7.2-3. | pending
+| WI-6 | **Compaction DV-awareness + interlock.** k-way merge consults the DV; at commit,
+re-read inputs' DVs under one atomic step (manifest-CAS / per-segment lease over
+`compactor_impl.rs`), reduce surviving deleted-OIDs to an OID set and re-apply to the
+re-clustered output, then delete inputs + clear DVs. The lost-bit fix. §7.2-4. | pending
+| WI-7 | **Conservative purge**, unified with the 1h tombstone reclaim: never drop a DV'd
+row below a global static low-watermark; document that long-lived snapshots are not pinned
+(a real cold-reader watermark is a separately-scoped later item). §7.2-5. | pending
+|===
+
+Sequencing WI-1 → WI-7; WI-3 depends on WI-2, WI-4 on WI-1+WI-3. The confirmation pass §7.3
+asks for lands with WI-1 (the versioned format, the load-bearing "newly-introduced
+structure") and WI-6 (the interlock). Re-scope stands at ~4–5w. Off the critical path.
