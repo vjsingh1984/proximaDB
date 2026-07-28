@@ -1,0 +1,42 @@
+= TD-CONFIG-CONSOLIDATE-1: retire duplicate/dead config structs stranded by decomposition
+:status: S0 filed (2026-07-28)
+:owner: platform
+:relates: ADR-069 S1, Core Directive #19 (CLAUDE.md) / #32 (GEMINI.md)
+
+== Problem
+The root-crate decomposition (leaf types → `crates/foundation/proximadb-config`, re-exported so
+decomposed crates depend on a stable seam) has stranded **duplicate config structs**: a type is
+extracted into the foundation crate, but the assembled compound config keeps a separately-authored
+**core twin**, and the two drift as fields are added in parallel. Concurrent worktrees amplify it.
+The drift is not hypothetical: while wiring ADR-069 S1 (`wal_local_dir`) we nearly edited the DEAD twin.
+
+== Confirmed inventory (2026-07-28)
+* **WAL config (the lone genuine duplicate):**
+** Canonical/live: `WriteBufferUserConfig` (`src/core/config.rs:1010`). TOML `[storage.wal_config]`
+   → `CoreStorageConfig.wal_config` (`config.rs:848`); consumed on every serving path
+   (`shared_services.rs:2870/2952`, `database.rs:351`, `storage/engine.rs:223`).
+** Dead: `WalStorageConfig` (`crates/foundation/proximadb-config/src/lib.rs:1060`) — only consumer is a
+   **test-only** `impl From<&WalStorageConfig> for WALConfig` (`write_ahead_log/config.rs:~431`, called
+   only by unit tests). Stranded by `a63febcbf "Extract config contract crate"`; reflects the
+   pre-ADR-069 multi-disk design (no `write_buffer_directory`; hardcodes `data_directories`).
+* **Drifted converters (secondary):** `WriteBufferUserConfig::to_engine_config()` (`config.rs:1125`) and
+  `SharedServices::convert_toml_to_wal_config()` (`shared_services.rs:2870`) both build the same
+  `WALConfig` and have drifted — fold into one.
+* Scan of all other `src/core/config.rs` structs vs foundation twins: the rest are healthy re-exports
+  (`pub use`) or core-only compounds (`SstConfig`, `ViperConfig`, `CoreStorageConfig`). WAL is the only
+  offender among config structs.
+
+== Plan (small, mixed-safe, sequential PRs)
+1. Retire `WalStorageConfig` + `WalDistributionStrategy` (dead) + the test-only `From` impl + its tests;
+   drop them from the re-export (`src/core/config.rs:~1630`). No serving-path caller changes exist.
+2. Fold `to_engine_config()` and `convert_toml_to_wal_config()` into one canonical converter.
+3. Dead-symbol sweep beyond config (records/tenant/index types) via the `.victor/project.db` code-graph
+   + `cargo-bloat` / `cargo +nightly udeps`; retire test-only-reachable types.
+4. **Tripwire:** add a `make work-commit-check` guard that fails when a `pub struct`/`pub enum` name is
+   defined in BOTH `src/core/config.rs` and `crates/foundation/proximadb-config/` (a duplicate, not a
+   re-export) — stops decomposition/worktree drift from re-creating twins.
+
+== Guardrails
+Trace the live path before deleting (the dead twin is usually the *foundation extract*, not the core
+struct); build the **server binary**, not just `--lib`. Retiring a test-only *struct* is safe; retiring
+a *field* obeys the format-migration discipline (Core Directive #8). See Core Directive #19.

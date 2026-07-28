@@ -121,6 +121,44 @@ pub mod v2_segment_header;
 // MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver
 // pub mod atomic_write_buffer_sync;
 
+/// ADR-069 S1 opt-in local WAL root (`PROXIMADB_WAL_LOCAL_DIR`). When set to a
+/// directory/URL (e.g. `file:///waldisk`), the per-collection WAL is written
+/// under `{dir}/{collection_id}/wal/` on that local reattachable disk instead of
+/// the collection's object-store data assignment — WAL is high-frequency small
+/// appends, each of which is a paid object-store PUT, so a local disk avoids that
+/// cost while data/segments stay on object store. Governs BOTH the write path
+/// (`resolve_collection_base_location`) and recovery replay so recovery is
+/// consistent. Read once (process-global). Empty/unset ⇒ `None` ⇒ legacy
+/// WAL-co-located-with-data behavior. Registered: docs/12-design/ENV_GATE_REGISTRY.adoc.
+pub(crate) fn local_wal_dir(config: &config::WALConfig) -> Option<String> {
+    // Precedence (codebase convention): env override > TOML config > None.
+    if let Some(dir) = local_wal_dir_env() {
+        return Some(dir);
+    }
+    config
+        .wal_local_dir
+        .as_ref()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// ADR-069 S1: the env-only local WAL root (`PROXIMADB_WAL_LOCAL_DIR`), for
+/// recovery/replay paths that are free functions without a `WALConfig` handle
+/// (the recovery manager is threaded with a `disk_manager`, not config). Env is
+/// the per-pod override and the highest-precedence source, so for full write
+/// and replay consistency an operator sets the env. Shares the same OnceLock as
+/// [`local_wal_dir`] so the two never disagree when the env is set.
+pub(crate) fn local_wal_dir_env() -> Option<String> {
+    static ENV: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    ENV.get_or_init(|| {
+        std::env::var("PROXIMADB_WAL_LOCAL_DIR")
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty())
+    })
+    .clone()
+}
+
 // Re-exports
 pub use background_manager::{
     BackgroundMaintenanceManager, BackgroundMaintenanceStats, BackgroundTaskStatus,
@@ -1648,6 +1686,22 @@ impl WriteAheadLogManager {
     /// * `Ok(String)` - The resolved base location path
     /// * `Err` - If path cannot be resolved (e.g., collection not found)
     async fn resolve_collection_base_location(&self, collection_id: &str) -> Result<String> {
+        // ADR-069 S1: an explicit local WAL directory (PROXIMADB_WAL_LOCAL_DIR)
+        // DECOUPLES the WAL from the collection's (object-store) data assignment.
+        // WAL is high-frequency small appends — each object-store PUT is a paid
+        // write-txn — so a local reattachable disk avoids that cost while
+        // data/segments stay on object store. This precedes the resolver +
+        // catalog so it governs both the write path and replay consistently.
+        // Default unset ⇒ legacy behavior (WAL co-located with data).
+        if let Some(dir) = local_wal_dir(&self.config) {
+            tracing::debug!(
+                "WAL base via local WAL dir (ADR-069 S1): {} -> {}",
+                collection_id,
+                dir
+            );
+            return Ok(dir);
+        }
+
         // DIP: If a path_resolver is injected, use it directly (no 100ms wait needed)
         if let Some(ref resolver) = self.path_resolver {
             match resolver.resolve_base_location(collection_id).await {
@@ -3648,6 +3702,26 @@ mod optimization_validation_tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// ADR-069 S1: with the env override unset (guaranteed under nextest's
+    /// process-per-test isolation), `local_wal_dir` resolves from the TOML
+    /// `wal_local_dir` field and trims a trailing slash; `None` config ⇒ `None`
+    /// (legacy WAL-co-located-with-data). The env-override branch is covered by
+    /// the file:// + Azurite e2e beds (a process-global OnceLock can't be
+    /// re-toggled within one process).
+    #[test]
+    fn local_wal_dir_resolves_from_config_when_env_unset() {
+        assert!(
+            std::env::var("PROXIMADB_WAL_LOCAL_DIR").is_err(),
+            "test process must not have the env override set"
+        );
+        let mut cfg = config::WALConfig::default();
+        assert_eq!(local_wal_dir(&cfg), None);
+        cfg.wal_local_dir = Some("file:///waldisk/".to_string());
+        assert_eq!(local_wal_dir(&cfg), Some("file:///waldisk".to_string()));
+        cfg.wal_local_dir = Some("   ".to_string());
+        assert_eq!(local_wal_dir(&cfg), None, "blank config value is ignored");
+    }
 
     struct MockCollectionService {
         call_count: Arc<AtomicU32>,

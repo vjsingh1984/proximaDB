@@ -1587,6 +1587,24 @@ jobs:
             /usr/local/.ghcup \
             /usr/local/share/boost || true
           echo "Disk after reclaim:"; df -h /
+      # The `--restart` scope compiles the full root `proximadb` crate as
+      # `proximadb-server` under a single rustc invocation (CARGO_BUILD_JOBS=1).
+      # Its peak (type-check + monomorphization + codegen of the 940-file crate
+      # with the azure object_store generics) exceeds the runner's 16GB RAM, and
+      # ubuntu-latest ships with NO swap — so the peak OOM-kills mid-compile
+      # (observed: dies ~64 min in, still compiling dev-deps, test never runs).
+      # Root cause is the monolithic root crate (tracked for decomposition); the
+      # immediate mitigation mirrors the unit-matrix job (the "Add swap headroom"
+      # step below this): 12G of swap on the big ephemeral /mnt disk turns the
+      # residual spike into a slowdown instead of a dead runner. jobs stays 1
+      # (the established OOM-safe setting; jobs=2 would re-risk the kill).
+      - name: Add swap headroom
+        run: |
+          sudo fallocate -l 12G /mnt/swapfile-ci
+          sudo chmod 600 /mnt/swapfile-ci
+          sudo mkswap /mnt/swapfile-ci
+          sudo swapon /mnt/swapfile-ci
+          free -h
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps

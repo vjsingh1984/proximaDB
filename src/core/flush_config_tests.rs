@@ -49,6 +49,7 @@ mod tests {
             write_buffer_directory: "/custom/path".to_string(),
             enable_wal: false,
             global_manifest_url: None,
+            wal_local_dir: None,
             // ADR-069 tiered-flush knobs.
             flush_interval_secs: 300,
             flush_floor_predicted_mb: 128,
