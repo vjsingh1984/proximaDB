@@ -1124,76 +1124,82 @@ mod tests {
 // Type-strict operator evaluation (TD-FOUNDATION-3 slice FA-a2 / TF-2 S3)
 // ===========================================================================
 
-/// [`compare_json_op`], but **deny-biased on a type mismatch**.
+/// [`compare_json_op`], but on a **3-valued, type-strict substrate**: returns
+/// `None` when the operands are *incomparable* (different JSON classes), so a
+/// caller can propagate that as SQL UNKNOWN rather than collapsing it to a
+/// boolean that `Not` would flip into an admit.
 ///
-/// The permissive dispatch answers every comparison, falling back to JSON type
-/// precedence when the operands are of different classes. For a *user* filter
-/// that is a defensible total order. For an *authorization* predicate it is a
-/// fail-open channel, in two directions:
+/// ## Why three-valued, not a guarded boolean
 ///
-/// * **Ordered operators widen.** `String` outranks `Number` by precedence, so a
-///   `clearance >= 3` policy returns `true` for every record whose `clearance`
-///   holds a string — regardless of the string's content. A clearance gate
-///   admits the corpus it exists to withhold.
-/// * **Negative operators widen.** `dept != 5` is `true` for a string-valued
-///   `dept`, because "not equal" is trivially satisfied by "not comparable".
+/// An earlier version returned `bool`, guarding each negative operator with a
+/// `same_class` check and letting `Equals`/`In` fall through to `json_eq`. That
+/// is correct for *positive* comparisons but inverts under `Not`: a strict
+/// comparison returns `false` for an incomparable pair, and `Not(false)` **admits**
+/// — so `NOT(owner == "u/alice")` admitted `{owner: 42}` while `owner != "u/alice"`
+/// denied it. The same flip re-opens every guarded operator under negation
+/// (`Not(GreaterThan)`, `Not(NotEquals)`, …). Returning `None` for incomparable,
+/// and propagating `None` through `Not` as `None` (UNKNOWN → deny), closes the
+/// whole class at once. This is the "3-valued substrate" TF-2 §1.4 S2 prescribes.
 ///
-/// The rule here is one line: **if the operands are not comparable, the
-/// predicate does not admit.** Operators that are already type-exact
-/// (`Equals`/`In` via `json_eq`, the string operators via `as_str`, the null
-/// tests via presence) delegate unchanged — this only tightens the cases that
-/// could widen.
+/// Integers and floats share the `Number` class, so `1` and `1.5` remain
+/// comparable. The string operators require both operands to be strings; the
+/// null tests are decided by presence and never return `None`.
 ///
-/// Additive: [`compare_json_op`] is untouched, so the live metadata-search,
-/// document-filter and pushdown paths keep their current semantics. The security
-/// path opts in.
+/// Additive: [`compare_json_op`] is untouched.
 pub fn compare_json_op_type_strict(
     operator: &ComparisonOperator,
     json_val: &serde_json::Value,
     value: &serde_json::Value,
-) -> bool {
+) -> Option<bool> {
     use crate::json_comparison::comparable_class;
 
     let same_class =
         |other: &serde_json::Value| comparable_class(json_val) == comparable_class(other);
 
+    let require_same = || if same_class(value) { Some(()) } else { None };
+
     match operator {
-        // Ordered comparisons are meaningless across classes — deny rather than
-        // fall through to precedence ordering.
-        ComparisonOperator::LessThan
-        | ComparisonOperator::LessThanOrEqual
-        | ComparisonOperator::GreaterThan
-        | ComparisonOperator::GreaterThanOrEqual => {
-            same_class(value) && compare_json_op(operator, json_val, value)
+        // Null tests are decided by presence — handled by the walker, never None.
+        ComparisonOperator::IsNull | ComparisonOperator::IsNotNull => {
+            Some(compare_json_op(operator, json_val, value))
         }
 
-        // Both bounds must be comparable with the field, or the range is
-        // meaningless.
-        ComparisonOperator::Between => value.as_array().is_some_and(|bounds| {
-            bounds.len() == 2
-                && same_class(&bounds[0])
-                && same_class(&bounds[1])
-                && compare_json_op(operator, json_val, value)
-        }),
-
-        // "Not equal" must not be satisfied merely by being incomparable.
-        ComparisonOperator::NotEquals => {
-            same_class(value) && compare_json_op(operator, json_val, value)
+        // String operators are meaningful only between two strings.
+        ComparisonOperator::Contains
+        | ComparisonOperator::StartsWith
+        | ComparisonOperator::EndsWith
+        | ComparisonOperator::Like => {
+            if json_val.is_string() && value.is_string() {
+                Some(compare_json_op(operator, json_val, value))
+            } else {
+                None
+            }
         }
 
-        // Likewise "not in": require at least one list element the field could
-        // actually have equalled, else the exclusion is vacuous.
-        ComparisonOperator::NotIn => value.as_array().is_some_and(|values| {
-            values.iter().any(same_class) && compare_json_op(operator, json_val, value)
-        }),
+        // `In`/`NotIn` need at least one list element the field could actually
+        // have compared against, else the question is incomparable (and `NotIn`
+        // must not be satisfied merely by being incomparable).
+        ComparisonOperator::In | ComparisonOperator::NotIn => match value.as_array() {
+            Some(values) if values.iter().any(same_class) => {
+                Some(compare_json_op(operator, json_val, value))
+            }
+            _ => None,
+        },
 
-        // Already type-exact: Equals/In compare via `json_eq`, the string
-        // operators require `as_str` on both sides, and the null tests are
-        // decided by presence.
-        _ => compare_json_op(operator, json_val, value),
+        // `Between` needs both bounds comparable.
+        ComparisonOperator::Between => match value.as_array() {
+            Some(bounds)
+                if bounds.len() == 2 && same_class(&bounds[0]) && same_class(&bounds[1]) =>
+            {
+                Some(compare_json_op(operator, json_val, value))
+            }
+            _ => None,
+        },
+
+        // Equals, NotEquals, and the ordered operators all require the same class.
+        _ => require_same().map(|_| compare_json_op(operator, json_val, value)),
     }
 }
-
 #[cfg(test)]
 mod type_strict_tests {
     use super::*;
@@ -1207,7 +1213,8 @@ mod type_strict_tests {
         compare_json_op(&op, &field, &lit)
     }
     fn strict(op: ComparisonOperator, field: serde_json::Value, lit: serde_json::Value) -> bool {
-        compare_json_op_type_strict(&op, &field, &lit)
+        // UNKNOWN ⇒ deny, matching the security walker's contract.
+        compare_json_op_type_strict(&op, &field, &lit).unwrap_or(false)
     }
 
     #[test]
@@ -1343,8 +1350,10 @@ mod type_strict_tests {
             (ComparisonOperator::IsNull, json!(null), json!(null)),
             (ComparisonOperator::IsNotNull, json!("eng"), json!(null)),
         ] {
+            // For already-exact operators over same-class operands, strict (collapsed
+            // to bool) must agree with permissive. unwrap_or(false) = UNKNOWN⇒deny.
             assert_eq!(
-                compare_json_op_type_strict(&op, &field, &lit),
+                compare_json_op_type_strict(&op, &field, &lit).unwrap_or(false),
                 compare_json_op(&op, &field, &lit),
                 "strict mode changed an already-exact operator: {op:?} {field} {lit}"
             );
@@ -1382,7 +1391,7 @@ mod type_strict_tests {
         for op in &ops {
             for field in &values {
                 for lit in &values {
-                    if compare_json_op_type_strict(op, field, lit) {
+                    if compare_json_op_type_strict(op, field, lit).unwrap_or(false) {
                         assert!(
                             compare_json_op(op, field, lit),
                             "strict admitted what permissive denies: {op:?} {field} {lit}"
@@ -1416,36 +1425,76 @@ mod type_strict_tests {
 /// Absence handling is identical to the permissive walker (an absent field IS
 /// NULL for the null tests, and fails every other comparison), because that axis
 /// is already deny-biased. This adds only the type axis.
-pub fn evaluate_filter_resolved_type_strict<F>(expr: &FilterExpression, resolve: &F) -> bool
+/// 3-valued evaluation of an expression under type-strict comparison.
+///
+/// `None` is SQL UNKNOWN — produced by an incomparable comparison (different
+/// JSON classes; see [`compare_json_op_type_strict`]). It propagates through the
+/// logical connectives by Kleene semantics and through `Not` as itself, so a
+/// negated incomparable comparison stays UNKNOWN (→ deny) rather than flipping to
+/// admit. An **absent** field is `Some(false)` (deny), not UNKNOWN — matching the
+/// permissive walker and keeping absence fail-closed.
+pub fn evaluate_filter_resolved_type_strict_tri<F>(
+    expr: &FilterExpression,
+    resolve: &F,
+) -> Option<bool>
 where
     F: Fn(&str) -> Option<serde_json::Value>,
 {
     match expr {
-        FilterExpression::And(exprs) => exprs
-            .iter()
-            .all(|e| evaluate_filter_resolved_type_strict(e, resolve)),
-        FilterExpression::Or(exprs) => exprs
-            .iter()
-            .any(|e| evaluate_filter_resolved_type_strict(e, resolve)),
-        FilterExpression::Not(e) => !evaluate_filter_resolved_type_strict(e, resolve),
+        FilterExpression::And(exprs) => {
+            let mut saw_unknown = false;
+            for e in exprs {
+                match evaluate_filter_resolved_type_strict_tri(e, resolve) {
+                    Some(false) => return Some(false),
+                    None => saw_unknown = true,
+                    Some(true) => {}
+                }
+            }
+            if saw_unknown { None } else { Some(true) }
+        }
+        FilterExpression::Or(exprs) => {
+            let mut saw_unknown = false;
+            for e in exprs {
+                match evaluate_filter_resolved_type_strict_tri(e, resolve) {
+                    Some(true) => return Some(true),
+                    None => saw_unknown = true,
+                    Some(false) => {}
+                }
+            }
+            if saw_unknown { None } else { Some(false) }
+        }
+        // The fix: Not(UNKNOWN) = UNKNOWN (deny), not `!false` = true (admit).
+        FilterExpression::Not(e) => {
+            evaluate_filter_resolved_type_strict_tri(e, resolve).map(|b| !b)
+        }
         FilterExpression::Comparison {
             field,
             operator,
             value,
         } => match operator {
-            // Decided by presence, exactly as in the permissive walker.
-            ComparisonOperator::IsNull => resolve(field).is_none_or(|json_val| json_val.is_null()),
+            ComparisonOperator::IsNull => {
+                Some(resolve(field).is_none_or(|json_val| json_val.is_null()))
+            }
             ComparisonOperator::IsNotNull => {
-                resolve(field).is_some_and(|json_val| !json_val.is_null())
+                Some(resolve(field).is_some_and(|json_val| !json_val.is_null()))
             }
             _ => match resolve(field) {
+                // Absent field → deny (not UNKNOWN): absence is fail-closed.
+                None => Some(false),
                 Some(json_val) => compare_json_op_type_strict(operator, &json_val, value),
-                None => false,
             },
         },
     }
 }
 
+/// Type-strict evaluation collapsed to a boolean: UNKNOWN ⇒ **deny**. This is the
+/// security-walker contract — see [`evaluate_filter_resolved_type_strict_tri`].
+pub fn evaluate_filter_resolved_type_strict<F>(expr: &FilterExpression, resolve: &F) -> bool
+where
+    F: Fn(&str) -> Option<serde_json::Value>,
+{
+    evaluate_filter_resolved_type_strict_tri(expr, resolve).unwrap_or(false)
+}
 #[cfg(test)]
 mod type_strict_walker_tests {
     use super::*;
@@ -1527,6 +1576,90 @@ mod type_strict_walker_tests {
         );
         assert!(admits(&guarded, &json!({ "clearance": 5 })));
         assert!(!admits(&guarded, &json!({ "clearance": 3 })));
+    }
+
+    // ---- Red-team (2026-07-28): the Not(comparison) fail-open class ----
+
+    #[test]
+    fn not_of_equals_over_a_cross_class_field_no_longer_admits() {
+        // Finding 2: `Not(Equals(owner, "u/alice"))` admitted {owner: 42} because
+        // Equals (cross-class) was false and `!false` admitted. The permissive
+        // walker still admits; the strict walker must deny.
+        let policy = FilterExpression::Not(Box::new(cmp(
+            "owner",
+            ComparisonOperator::Equals,
+            json!("u/alice"),
+        )));
+        let row = json!({ "owner": 42 });
+
+        assert!(
+            admits_permissive(&policy, &row),
+            "characterizing the leak: permissive Not(Equals) admits cross-class"
+        );
+        assert!(
+            !admits(&policy, &row),
+            "strict Not(Equals) over a cross-class field must deny (UNKNOWN, not admit)"
+        );
+    }
+
+    #[test]
+    fn not_of_an_ordered_comparison_over_a_cross_class_field_denies() {
+        // The leak generalized beyond Equals: ANY strict comparison returns false
+        // for cross-class, and a bare `!` flipped it to admit.
+        for op in [
+            ComparisonOperator::GreaterThan,
+            ComparisonOperator::GreaterThanOrEqual,
+            ComparisonOperator::LessThan,
+            ComparisonOperator::NotEquals,
+        ] {
+            let policy = FilterExpression::Not(Box::new(cmp("clearance", op.clone(), json!(3))));
+            assert!(
+                !admits(&policy, &json!({ "clearance": "TS" })),
+                "strict Not({op:?}) over a cross-class field must deny"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tri_walker_carries_incomparable_as_unknown_not_false() {
+        // The mechanism: compare_json_op_type_strict returns None for cross-class,
+        // and Not(None) = None (UNKNOWN), which collapses to deny — not `!false`.
+        let resolve = |f: &str| match f {
+            "owner" => Some(json!(42)),
+            _ => None,
+        };
+        let eq = cmp("owner", ComparisonOperator::Equals, json!("u/alice"));
+        // The bare comparison is incomparable, not false.
+        assert_eq!(
+            evaluate_filter_resolved_type_strict_tri(&eq, &resolve),
+            None,
+            "a cross-class comparison is UNKNOWN, not false"
+        );
+        // And negating UNKNOWN stays UNKNOWN (→ deny), never admits.
+        assert_eq!(
+            evaluate_filter_resolved_type_strict_tri(
+                &FilterExpression::Not(Box::new(eq)),
+                &resolve
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn not_of_in_over_a_wholly_incomparable_list_denies() {
+        // Not(In(owner, ["u/alice","u/bob"])) over {owner: 42}: the list has no
+        // Number element, so the In question is incomparable → Not stays UNKNOWN → deny.
+        let policy = FilterExpression::Not(Box::new(cmp(
+            "owner",
+            ComparisonOperator::In,
+            json!(["u/alice", "u/bob"]),
+        )));
+        assert!(!admits(&policy, &json!({ "owner": 42 })));
+        // Positive In over a comparable list element still works.
+        assert!(admits(
+            &cmp("owner", ComparisonOperator::In, json!([42, 7])),
+            &json!({ "owner": 42 })
+        ));
     }
 
     #[test]
