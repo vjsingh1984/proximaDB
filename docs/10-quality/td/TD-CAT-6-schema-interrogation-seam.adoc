@@ -1,7 +1,7 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-CAT-6: Schema interrogation belongs to the crate that owns the schema
-:status: Proposed
+:status: In progress — S0/S1 landed; S2+ need the services owner
 :date: 2026-07-27
 :authors: foundation session 2026-07-27
 :realizes: ADR-072 (F2 uniqueness), ADR-039 / SOLID standards §17(a)
@@ -9,7 +9,7 @@
 
 [cols="1,3"]
 |===
-| Status | Proposed — slice 1 is in-lane and small; slice 2 needs the `services` owner
+| Status | **In progress** — S0 (correctness) + S1 (canonical discovery) landed; the rest needs the `services` owner. Root fix decided in **ADR-077**.
 | Problem | "Which column sets does this table declare UNIQUE?" is answered by **two independent implementations** that covered different, non-overlapping route subsets and silently disagreed for months.
 | Thesis | The duplication is **structurally forced**, not careless. Move the answer down to the crate that owns the type, and the duplication becomes unrepresentable.
 |===
@@ -91,18 +91,48 @@ is shared — which is precisely where they diverged.
 |===
 | # | Content | Lane
 
-| **1**
-| Add `unique_column_sets` + `same_column_set` to `proximadb-catalog::schema`; make `fc_metamodel`'s derivation consume them instead of walking the three routes itself. Behaviour-preserving; the #1261 tests (including the metamodel↔live agreement test) are the guard.
-| catalog — in-lane, do now
+| **S0** ✅
+| **Correctness first.** Implementing S1 surfaced three live defects the split had been hiding — see §4.1. Fixed in the catalog crate: evolution now records a UNIQUE where enforcement reads it, maintains every identity copy on rename/drop, purges all locations on `DROP CONSTRAINT`, and `validate_schema` rejects a schema whose copies disagree.
+| catalog — **landed**
 
-| **2**
-| `services::record_store::schema_unique_column_sets` becomes a one-line delegate to the catalog function (or is deleted and its two callers use the catalog path directly). Behaviour-preserving.
-| `services` owner — small and reviewable, but not a quiet edit from another lane
+| **S1** ✅
+| `schema::table_identity()` — canonical discovery across **all four** UNIQUE routes and both PK copies, with flat projections matching the shapes `record_store` returns. Shares *discovery*, not policy (`secondary_unique_sets()` applies the identity slot's PK-exclusion; the write path does not need it). `fc_metamodel` delegates instead of walking fields.
+| catalog — **landed**
 
-| **3**
-| Census the other 12 files for the same shape (notably `schema_primary_key_column`'s "explicit, else conventional `id`/`record_id`" rule, which is a second re-derived policy) and pull each answer down to the catalog crate as it is touched. Opportunistic, not a big-bang migration.
+| **S2**
+| `services::record_store::schema_unique_column_sets` → `schema::unique_column_sets`; `schema_primary_key_column` → `schema::primary_key_columns` (keeping its `id`/`record_id` inference as caller policy). Deletes dead `DmlService::unique_column_sets` (`dml/mod.rs:4311`, `#[allow(dead_code)]`, zero callers). **This is what makes the S0 fix reach the enforcement path for schemas evolved before it** — until then, only newly-added constraints are covered.
+| `services` owner
+
+| **S3**
+| Three further defects found by the census, each its own small fix:
+  (a) `relational_capabilities.secondary_indexes` has **zero** non-test writers — `CREATE INDEX` writes `schema.indexes` — so the TD-127 secondary-index path (`record_store.rs:923` is its only reader) is dead in production.
+  (b) `pg_constraint` (`catalog-introspection/src/lib.rs:1100`) omits `relational_capabilities.unique_indexes`, so a `CREATE TABLE … UNIQUE(x)` never appears as `contype='u'`.
+  (c) `unique_indexes_cataloged_not_enforced` (`table_write_plan.rs:1620`) is stale **and self-contradictory** — the same file reports `unique_non_null_fail_closed` as *enforced* over the identical fields, so every UNIQUE table is permanently mislabelled "partial". Tests at `dml/tests.rs:4593` and `table_write_plan.rs:2089` pin the wrong behaviour.
 | mixed
+
+| **S4**
+| Collapse the six writable locations to one canonical source per fact — **ADR-077**, five-phase mixed-read-safe migration. `table_identity` is the read-union shim; its fallbacks are deleted at the end.
+| after ADR-077 is accepted
 |===
+
+=== 4.1 Defects found while implementing (all fixed in S0)
+
+None of these were predicted by the design; each was found by a test written against
+*actual* behaviour rather than against the spec:
+
+. **`ALTER TABLE … ADD CONSTRAINT … UNIQUE` was cataloged and never enforced.** Evolution
+  wrote `properties` + (only when *named*) `schema.indexes`; enforcement reads only
+  `relational_capabilities`. Disjoint fields, so the conflict check never ran. An
+  **unnamed** one wrote only the properties blob, which nothing reads at all.
+. **Renaming a PK column left a stale primary key.** Only the top-level copies were
+  rewritten, and `relational::effective_primary_key` *prefers* the capabilities copy — so
+  row validation and oid encoding resolved a column that no longer existed. A PK column
+  could also be *dropped* if it was declared only in the capabilities copy.
+. **`DROP CONSTRAINT` leaked its property row.** The key is `constraint:unique:<cols>` —
+  derived from columns, never the constraint name — so the by-name filter never matched a
+  UNIQUE. Found because fixing (1) *without* fixing this would have been worse than the
+  bug: the enforced copy would outlive the drop, so a dropped UNIQUE would keep rejecting
+  inserts.
 
 == 5. Gate
 
