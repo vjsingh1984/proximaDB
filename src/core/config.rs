@@ -1025,6 +1025,16 @@ pub struct WriteBufferUserConfig {
     /// Global manifest location (optional)
     pub global_manifest_url: Option<String>,
 
+    /// ADR-069 S1 — opt-in local WAL root, e.g. `file:///waldisk`. When set, the
+    /// per-collection WAL is written under `{dir}/{collection_id}/wal/` on a local
+    /// reattachable disk, decoupled from the collection's object-store data
+    /// assignment (WAL = high-frequency small appends; each object-store PUT is a
+    /// paid write-txn). Resolves through the FilesystemFactory scheme, so a future
+    /// value could be `s3://…` (S3 Express) etc. Overridden by env
+    /// `PROXIMADB_WAL_LOCAL_DIR`. `None`/unset ⇒ legacy WAL-co-located-with-data.
+    #[serde(default)]
+    pub wal_local_dir: Option<String>,
+
     /// ADR-069 D2 — time-based WAL flush interval (seconds); 0 = disabled. The RPO
     /// floor: bounds worst-case loss on permanent local-volume loss to this interval for
     /// low-traffic collections that never reach the inline size trigger
@@ -1098,6 +1108,7 @@ impl Default for WriteBufferUserConfig {
             write_buffer_directory: "./data/write_buffer".to_string(),
             enable_wal: true,
             global_manifest_url: None,
+            wal_local_dir: None,
             // ADR-069 D2: time floor defaults to 300s (RPO safety net; the inline
             // size trigger handles throughput). wal_max_bytes stays 0 → S4 backpressure OFF.
             flush_interval_secs: default_flush_interval_secs(),
@@ -1140,6 +1151,7 @@ impl WriteBufferUserConfig {
             enable_background_compaction: true,
             collection_overrides: std::collections::HashMap::new(),
             global_manifest_url: self.global_manifest_url.clone(),
+            wal_local_dir: self.wal_local_dir.clone(),
             enable_optimized_writer: false,
             optimized_writer_batch_size: None,
             optimized_writer_batch_timeout_ms: None,

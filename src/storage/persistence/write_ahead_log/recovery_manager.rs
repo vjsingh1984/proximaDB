@@ -739,6 +739,13 @@ impl RecoveryManager {
                 bases.push(normalized);
             }
         };
+        // ADR-069 S1: when an opt-in local WAL root is set (PROXIMADB_WAL_LOCAL_DIR),
+        // the write path roots the WAL there — prepend it as a candidate base so
+        // replay lists it (otherwise the .bcwal on /waldisk is missed → restart data
+        // loss). Listed FIRST so a present local WAL short-circuits the union.
+        if let Some(local) = crate::storage::persistence::write_ahead_log::local_wal_dir_env() {
+            push_base(&mut bases, &local);
+        }
         if let Some(base) = catalog_base {
             push_base(&mut bases, base);
         }

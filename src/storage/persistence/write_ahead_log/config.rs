@@ -339,6 +339,17 @@ pub struct WALConfig {
     /// - "s3://bucket/wal-global" (cloud-based for distributed deployments)
     pub global_manifest_url: Option<String>,
 
+    /// ADR-069 S1: opt-in local WAL root (e.g. `file:///waldisk`). When set, the
+    /// per-collection WAL is written under `{dir}/{collection_id}/wal/` on this
+    /// local reattachable disk, DECOUPLED from the collection's object-store data
+    /// assignment — WAL is high-frequency small appends (each an object-store
+    /// PUT), so a local disk avoids that cost while data stays on object store.
+    /// TOML `[storage.wal_config].wal_local_dir`; overridden by env
+    /// `PROXIMADB_WAL_LOCAL_DIR`. None ⇒ legacy WAL-co-located-with-data.
+    /// The location resolves through the FilesystemFactory scheme, so a future
+    /// value could be `s3://…` (S3 Express) or another backend.
+    pub wal_local_dir: Option<String>,
+
     /// Compression settings
     pub compression: WalCompressionConfig,
 
@@ -382,6 +393,7 @@ impl Default for WALConfig {
             strategy_type: WriteBufferStrategyType::default(), // Bincode for maximum vector ingestion performance
             memtable: MemTableConfig::default(), // ART for metadata filtering efficiency
             multi_disk: MultiDiskConfig::default(), // LoadBalanced for bulk insert optimization
+            wal_local_dir: None,                 // ADR-069 S1: opt-in; None = legacy WAL-with-data
             compression: WalCompressionConfig::default(), // Snappy for balanced performance
             encryption: WalEncryptionConfig::default(), // Encryption disabled by default (TD-016)
             performance: WalPerformanceConfig::default(), // Optimized for large vectors and bulk processing
@@ -973,6 +985,7 @@ mod tests {
                 collection_affinity: true,
             },
             global_manifest_url: None,
+            wal_local_dir: None,
             memtable: MemTableConfig {
                 memtable_type: MemTableType::SkipList,
                 global_memory_limit: 256 * 1024 * 1024,
@@ -1058,6 +1071,7 @@ mod tests {
                 collection_affinity: true,
             },
             global_manifest_url: None,
+            wal_local_dir: None,
             memtable: MemTableConfig {
                 memtable_type: MemTableType::Art,
                 global_memory_limit: 512 * 1024 * 1024,

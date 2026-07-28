@@ -2965,6 +2965,9 @@ impl SharedServices {
             enable_background_compaction: true, // Enable background compaction
             enable_optimized_writer: toml_config.enable_wal, // Use enable_wal to control optimized writer
             global_manifest_url: toml_config.global_manifest_url.clone(),
+            // ADR-069 S1: opt-in local WAL root (TOML `[storage.wal_config]
+            // .wal_local_dir`); env `PROXIMADB_WAL_LOCAL_DIR` overrides at read time.
+            wal_local_dir: toml_config.wal_local_dir.clone(),
             ..Default::default()
         }
     }
