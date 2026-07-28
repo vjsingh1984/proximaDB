@@ -215,6 +215,17 @@ async fn flush_to_compaction(id: &str) -> Result<(tempfile::TempDir, SstEngine, 
         "the armed compaction must execute inline (compaction_error: {:?})",
         second.compaction_error
     );
+    // TD-COMPACT-6 D1: compaction now runs on the background worker pool
+    // (enqueued by the flush, not awaited inline). The compacted product (the
+    // v3/v1 .pax segment the assertions below read) isn't written until the
+    // worker drains the task — await quiescence before returning so the callers
+    // observe the post-compaction layout.
+    if let Some(cm) = engine.compaction_manager() {
+        let quiet = cm
+            .await_compaction_quiescence(std::time::Duration::from_secs(30))
+            .await;
+        assert!(quiet, "enqueued compaction did not complete within 30s");
+    }
     Ok((dir, engine, coll))
 }
 

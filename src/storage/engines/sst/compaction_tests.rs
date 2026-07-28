@@ -3,6 +3,7 @@ use crate::storage::engines::sst::{
     Compaction, CompactionPriority, CompactionStats, CompactionTask, SstConfig,
 };
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_compaction_basic() {
@@ -11,7 +12,7 @@ async fn test_compaction_basic() {
     config.compaction_threshold = 2;
     config.block_size_kb = 1024;
 
-    let mut manager = Compaction::new(config).await.unwrap();
+    let manager = Arc::new(Compaction::new(config).await.unwrap());
     assert!(manager.start_workers(1).await.is_ok());
     assert!(manager.stop().await.is_ok());
 }
@@ -36,6 +37,101 @@ async fn test_compaction_task_scheduling() {
     };
 
     assert!(manager.schedule_compaction(task).await.is_ok());
+}
+
+/// TD-COMPACT-6 (ADR-076 D1): the race fix moves the `active_compactions`
+/// insert from worker-time to enqueue-time, so two rapid `schedule_compaction`
+/// calls for the SAME output file are deduped. Verified deterministically with
+/// NO workers started (the task stays queued, so the dedup is directly
+/// observable rather than raced away by a draining worker).
+#[tokio::test]
+async fn td_compact6_schedule_dedups_same_output_at_enqueue() {
+    let manager = Compaction::new(SstConfig::default()).await.unwrap();
+    // No start_workers → task is never consumed; queue + active reflect enqueue.
+    let mk_task = || CompactionTask {
+        level: 0,
+        input_files: vec![PathBuf::from("/nonexistent/proxima_d1_test/input.pax")],
+        output_file: PathBuf::from("/nonexistent/proxima_d1_test/compacted_L1.pax"),
+        priority: CompactionPriority::Medium,
+        block_size_kb: None,
+        compression_config: None,
+        precision_hint: None,
+    };
+    manager.schedule_compaction(mk_task()).await.unwrap();
+    // Second schedule for the same output file is deduped at enqueue (the
+    // active marker was inserted atomically with the first schedule's check).
+    manager.schedule_compaction(mk_task()).await.unwrap();
+    assert_eq!(
+        manager.active_compaction_count().await,
+        1,
+        "exactly one active entry for the shared output file"
+    );
+    assert_eq!(
+        manager.pending_task_count().await,
+        1,
+        "the deduped second schedule did not enqueue a second task"
+    );
+}
+
+/// TD-COMPACT-6 (ADR-076 D1): on the async path the flush caller sets the
+/// per-collection `training_in_flight` guard before enqueuing and the
+/// background WORKER clears it once the task completes (deriving the
+/// collection dir from `task.output_file.parent()`). This proves the guard
+/// does not leak across the async boundary — the defect that would otherwise
+/// re-stall a collection's training arm forever.
+#[tokio::test]
+async fn td_compact6_worker_clears_training_in_flight_after_completion() {
+    use std::time::Duration;
+
+    let manager = Arc::new(Compaction::new(SstConfig::default()).await.unwrap());
+    // NOTE: set_training_in_flight must run BEFORE start_workers — the worker
+    // captures the Arc at spawn time. The default empty Arc from Compaction::new
+    // is already shared with the worker, so we don't replace it here (this
+    // mirrors core.rs, which links the guard before start_workers).
+    manager.start_workers(1).await.unwrap();
+
+    let coll_dir = PathBuf::from("/nonexistent/proxima_d1_async");
+    let coll_key = coll_dir.to_string_lossy().to_string();
+
+    // Flush-path order: mark training in-flight, THEN enqueue.
+    manager.mark_training_in_flight(&coll_key);
+    assert!(
+        manager.training_in_flight_for(&coll_key),
+        "guard set before enqueue"
+    );
+
+    let task = CompactionTask {
+        level: 0,
+        // Nonexistent input → the worker's perform_compaction errors, but it
+        // STILL runs release_task_state (the post-match cleanup), which is the
+        // path under test. No real files needed.
+        input_files: vec![coll_dir.join("input.pax")],
+        output_file: coll_dir.join("compacted_L1.pax"),
+        priority: CompactionPriority::Medium,
+        block_size_kb: None,
+        compression_config: None,
+        precision_hint: None,
+    };
+    manager.schedule_compaction(task).await.unwrap();
+
+    // The flush path never blocks on the worker; the quiescence barrier drains.
+    let quiesced = manager
+        .await_compaction_quiescence(Duration::from_secs(15))
+        .await;
+    assert!(quiesced, "compaction did not quiesce within 15s");
+
+    assert!(
+        !manager.training_in_flight_for(&coll_key),
+        "worker must clear the training_in_flight guard on completion \
+         (output_file.parent() == collection dir)"
+    );
+    assert_eq!(
+        manager.active_compaction_count().await,
+        0,
+        "no compaction left active after quiescence"
+    );
+
+    let _ = manager.stop().await;
 }
 
 // Unit tests for expired record deletion during compaction

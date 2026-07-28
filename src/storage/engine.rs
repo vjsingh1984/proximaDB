@@ -205,12 +205,17 @@ impl StorageEngine {
         self.recover_from_wal().await?;
         tracing::info!("✅ STORAGE_ENGINE: WAL recovery completed, starting compaction workers");
 
-        // Start compaction workers
-        // We need to replace the compaction manager to start workers
+        // The StorageEngine holds a Compaction handle ONLY for
+        // `set_precision_resolver` (database.rs) + shutdown — it is NEVER
+        // enqueued to (the flush path uses the SstEngine's own Compaction,
+        // started with workers in core.rs). So this instance starts NO workers
+        // (the former `start_workers` here spawned 4 idle, never-fed workers —
+        // pure proliferation). The precision-resolver wiring is a separate
+        // follow-up (it currently targets this idle instance, not the one that
+        // compacts).
         let sst_config = self.config.sst_config.clone().unwrap_or_default();
-        let mut temp_manager = Compaction::new(sst_config).await?;
-        temp_manager.start_workers(2).await?; // Start 2 worker threads
-        self.compaction_manager = Arc::new(temp_manager);
+        let temp_manager = Arc::new(Compaction::new(sst_config).await?);
+        self.compaction_manager = temp_manager;
 
         // ADR-069/TD-WAL-1: spawn the live auto-flush driver. The default config arms the
         // 300s time floor so the driver spawns and segments materialize while the server
@@ -260,10 +265,9 @@ impl StorageEngine {
             }
         }
 
-        // STEP 2: Stop compaction manager
-        if let Some(manager) = Arc::get_mut(&mut self.compaction_manager) {
-            manager.stop().await?;
-        }
+        // STEP 2: Stop compaction manager (stop() is &self; no Arc::get_mut
+        // needed — the workers hold clones but stop signals via shutdown_signal).
+        self.compaction_manager.stop().await?;
 
         // STEP 3: Force WAL flush during shutdown (for any remaining entries)
         tracing::debug!("🧹 Forcing WAL flush during storage engine shutdown");

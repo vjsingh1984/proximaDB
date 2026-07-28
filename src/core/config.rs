@@ -1213,6 +1213,26 @@ pub struct SstConfig {
     pub max_levels: u8,
     /// Number of background compaction threads
     pub background_thread_count: u32,
+    /// TD-COMPACT-7 (ADR-076 D2): L0 admission **slowdown** watermark. When the
+    /// live L0 file count for a collection reaches this, the flush path inserts
+    /// a brief (~1ms) delay before writing the next L0, giving the async
+    /// background compaction (TD-COMPACT-6) headroom to drain L0. This is the
+    /// soft backpressure half of the producer/consumer rate-control loop.
+    /// Default 6 — below `max_files_per_level` (10) so the `l0_stop_trigger`,
+    /// not this, is the hard ceiling. 0 disables the slowdown. Env override:
+    /// `PROXIMADB_L0_SLOWDOWN_TRIGGER`.
+    #[serde(default = "default_l0_slowdown_trigger")]
+    pub l0_slowdown_trigger: u32,
+    /// TD-COMPACT-7 (ADR-076 D2): L0 admission **stop** watermark — the hard
+    /// ceiling. When the live L0 file count reaches this, the flush refuses to
+    /// write a new L0 and returns backpressure (the memtable retains the data,
+    /// durable in the WAL; the write path slows until compaction drains L0).
+    /// This is the hard backpressure half that bounds unbounded L0 growth during
+    /// sustained ingest that outpaces compaction. Default = `max_files_per_level`
+    /// (10); must be ≤ `max_files_per_level`. 0 disables the stop (flush always
+    /// proceeds). Env override: `PROXIMADB_L0_STOP_TRIGGER`.
+    #[serde(default = "default_l0_stop_trigger")]
+    pub l0_stop_trigger: u32,
     /// Data directory for SST files
     pub data_directory: String,
     /// Enable memory-mapped I/O for SST files
@@ -1470,6 +1490,14 @@ fn default_vector_encoding_strategy() -> String {
 /// nodes and starve concurrent search/gRPC/REST. The cap keeps the
 /// pre-existing ceiling of 4 on large hosts, where compaction parallelism
 /// beyond that showed no benefit and steals cores from queries.
+fn default_l0_slowdown_trigger() -> u32 {
+    6
+}
+
+fn default_l0_stop_trigger() -> u32 {
+    10
+}
+
 fn default_background_thread_count() -> u32 {
     std::thread::available_parallelism()
         .map(|n| n.get() as u32 / 2)
@@ -1499,6 +1527,9 @@ impl Default for SstConfig {
             level_size_multiplier: 10.0,
             max_levels: 7,
             background_thread_count: default_background_thread_count(),
+            // TD-COMPACT-7 D2: L0 admission watermarks (soft + hard backpressure).
+            l0_slowdown_trigger: default_l0_slowdown_trigger(),
+            l0_stop_trigger: default_l0_stop_trigger(),
             data_directory: "./sst_data".to_string(),
             mmap_enabled: true,
             prefetch_enabled: true,

@@ -148,7 +148,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_manager_worker_lifecycle() {
         let config = create_test_sst_config();
-        let mut manager = Compaction::new(config).await.unwrap();
+        let manager = std::sync::Arc::new(Compaction::new(config).await.unwrap());
 
         // Test starting workers with different counts
         assert!(manager.start_workers(0).await.is_ok()); // Zero workers should be OK

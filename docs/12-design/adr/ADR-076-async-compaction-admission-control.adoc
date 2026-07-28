@@ -1,17 +1,17 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = ADR-076: Async compaction + L0 admission control for streaming ingest on object storage
-:status: Proposed
+:status: Accepted
 :date: 2026-07-26
 :authors: co-design session 2026-07-26
 
 [cols="1,3"]
 |===
-| Status | Proposed
-| Date | 2026-07-26
+| Status | **Accepted** (implemented). D3 landed in #1241, D0 in #1242, D1+D2 in #1253. See _Implementation history_ below for the cross-model-review corrections to the original Proposed text.
+| Date | 2026-07-26 (Proposed), 2026-07-27 (Accepted — implementation complete)
 | Deciders | Vijaykumar Singh
 | Relates to | ADR-027 (DrPath / storage layout — compaction writes under the path contract), ADR-036 (flat keys + per-object access tier — compaction I/O cost), ADR-052 (co-design cost spine — object-store round-trips dominate), TD-COMPACT-5 (training compaction trigger — the arm that fires per-flush), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (the dominant cost term is I/O round-trips, not CPU)
-| Tracked by | TD-COMPACT-6 (async compaction), TD-COMPACT-7 (admission control watermarks), TD-COMPACT-8 (training-arm debounce)
+| Tracked by | TD-COMPACT-6 (async compaction — Implemented), TD-COMPACT-7 (admission control watermarks — Implemented), TD-COMPACT-8 (training-arm debounce — Implemented)
 | Supersedes | —
 |===
 
@@ -60,37 +60,67 @@ writes), gated by **L0 admission control watermarks**.
 
 === D1 — Async compaction (background workers, not inline)
 
-Move `run_due_compaction` from inline-synchronous (blocking the flush at
-`flush/mod.rs:756`) to the **existing background compaction workers** (2
-daemon threads spawned at `engine.rs:212`, currently idle because the inline
-path bypasses them). Flush creates L0 files and returns immediately; compaction
-runs concurrently on the worker pool.
+The flush path calls `Compaction::enqueue_due_compaction` (non-blocking) instead
+of the inline `run_due_compaction`. Flush creates the L0 file and returns ~1 s
+later; compaction runs concurrently on the background worker pool. The inline
+`run_due_compaction` is retained as the deterministic test primitive.
 
-The existing `schedule_compaction` + `task_queue` + `worker_loop`
-(`compaction.rs:589-902`) provide the machinery — they are built, tested, and
-idle. This decision wires them into the production path.
+The existing `schedule_compaction` + `task_queue` + `worker_loop` provide the
+machinery. Two corrections from the cross-model review shape the shipped form:
+
+* **D0 (prerequisite, #1242):** two separate `Compaction` instances existed —
+  the `SstEngine`'s (no workers) and the `StorageEngine`'s (with workers). The
+  flush path uses the `SstEngine`'s instance, so D1 required starting workers on
+  THAT instance (now wired to `background_thread_count`, was hardcoded 2).
+* **Race fix:** the `active_compactions` dedup insert moved from worker-time to
+  enqueue-time (`schedule_compaction`), under one write lock with the check —
+  closing the TOCTOU where two rapid schedules for the same output both passed
+  the read check before either worker inserted.
+* **Atomic-coordinator preservation:** the `SstEngine`'s `Compaction` is built
+  via `with_atomic_coordinator(Some(coord))` so the workers carry the ADR-046
+  atomic-swap coordinator the inline path had (the default `Compaction::new`
+  passes `None` → non-atomic publish on the async path).
 
 === D2 — L0 admission control (RocksDB-style watermarks)
 
-Add two L0-file-count watermarks to `SstConfig` (TOML-controllable):
+Add two L0-file-count watermarks to `SstConfig` (TOML-controllable, env-overridable):
 
-- **`l0_slowdown_trigger`** (default 8): when L0 file count ≥ this, delay each
-  write by a small amount (~1 ms) to give compaction breathing room.
-- **`l0_stop_trigger`** (default 12): when L0 file count ≥ this, **stall
-  writes** (reject with a BACKPRESSURE error, same as the existing memtable
-  backpressure) until compaction reduces L0 below the watermark.
+- **`l0_slowdown_trigger`** (default **6**): when the live L0 file count ≥ this,
+  the flush yields ~1 ms before writing the next L0 (gives the async compaction
+  workers headroom).
+- **`l0_stop_trigger`** (default **10** = `max_files_per_level`): when the live L0
+  file count ≥ this, the flush **defers** — returns `Err` so
+  `materialize_collection`'s `?` returns before its `free_wal` block (the data
+  stays durable in the WAL; the auto-flush driver retries next tick).
 
-This is the proven RocksDB model: writes naturally slow down when compaction
+Defaults are 6/10 (not the 8/12 of the original Proposed text) per the
+cross-model review: `stop_trigger` must be ≤ `max_files_per_level` (10) so the
+stop boundary, not the level ceiling, is the active backpressure surface. Both
+`0` disable. Armed only when a compaction manager exists.
+
+This is the proven RocksDB model: flushes naturally slow down when compaction
 can't keep up, preventing unbounded L0 backlog + compaction storms.
 
-=== D3 — Training-arm debounce (wait for segment stability)
+=== D3 — Training-arm debounce (state flag, not a timer)
 
-The TD-COMPACT-5 training arm (`should_trigger_compaction` arm 2) should NOT
-fire on a segment that received new writes recently. Add a **stability guard**:
-track the last-flush timestamp per collection; only arm the training compaction
-if no new flush has arrived in the last `training_debounce_secs` (default 120 s).
-This ensures training happens ONCE after ingest settles, not N times during
-ingest.
+The original Proposed text specified a **time debounce** (track last-flush
+timestamp; skip the arm if a flush arrived in the last `training_debounce_secs`
+= 120 s). The cross-model review (Kimi) replaced this with a **state flag**,
+which is race-free and self-tunes to any ingest rate rather than guessing 120 s:
+
+A per-collection `training_in_flight: Arc<Mutex<HashSet<String>>>` guard. The
+flush path inserts the collection's `storage_url` before enqueuing a training
+compaction; `should_trigger_compaction` arm 2 skips re-arming while it is
+present; the guard is cleared when the compaction completes.
+
+* **D3 (#1241):** the guard lived on `SstEngine`, set by the flush caller and
+  cleared by the inline caller after `run_due_compaction`.
+* **D1 evolution (#1253):** on the async path the inline caller can no longer
+  clear the guard (enqueue returns before the compaction runs). The guard is now
+  shared (same `Arc`) with the `Compaction`; the background `worker_loop` clears
+  it via `release_task_state` on every exit path (Ok / Err / manager-construction
+  failure), deriving the collection dir from `task.output_file.parent()`. The
+  flush caller also clears it on the no-worker paths (`Ok(false)`, enqueue `Err`).
 
 === D4 — Separation of concerns (the boundary contract)
 
@@ -108,6 +138,35 @@ Each surface has a single, well-integrated responsibility:
 The boundaries prevent the current pathology: flush never blocks on
 compaction; compaction never re-trains an actively-growing segment; admission
 control prevents backlog from outpacing compaction.
+
+== Implementation history (re-sequencing + cross-model review)
+
+The Proposed text sequenced D1 → D2 → D3 as one slice. Three independent
+cross-model reviews (Opus 5, Kimi, DeepSeek) verified the 21 code-location
+citations and corrected the sequence + four design points. Shipped in this
+order:
+
+1. **D3 (#1241)** — `training_in_flight` state flag (smallest diff, biggest
+   COGS win: kills the redundant re-training loop). Independent of the async
+   refactor; ships first.
+2. **D0 (#1242)** — unify the two `Compaction` instances (the `SstEngine`'s
+   flush-path instance must be the one with workers). Wiring prerequisite for D1.
+3. **D1 + D2 (#1253)** — async compaction + L0 admission watermarks, shipped as
+   ONE slice (Kimi's first-principles framing: they are halves of one
+   producer/consumer rate-control loop, not separable decisions).
+
+Cross-model corrections folded into the D1/D2/D3 text above: D0 added; D3
+converted from a 120 s time-debounce to a state flag; D2 thresholds 8/12 →
+6/10 (`stop ≤ max_files_per_level`); the `active_compactions` race fix moved to
+enqueue-time; the atomic-coordinator must be threaded into the workers (else the
+async path publishes non-atomically).
+
+Test strategy (all three reviewers): the **async path is the default test
+surface**, exercised via a quiescence barrier (`await_compaction_quiescence` —
+await until the task queue and active-compaction set are both empty). The inline
+`run_due_compaction` path is retained as a `#[cfg(test)]`-style deterministic
+option, not the default — the prior "inline-only" coverage gap is what let the
+metrics-panic + warm-manifest bugs ship.
 
 == Consequences
 

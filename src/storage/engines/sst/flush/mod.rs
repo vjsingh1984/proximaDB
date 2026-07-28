@@ -341,6 +341,62 @@ impl SstEngine {
 
         tracing::debug!(storage_url = %storage_url, filename = %filename, "Starting flush operation");
 
+        // TD-COMPACT-7 (ADR-076 D2): L0 admission watermarks — the CONSUMER
+        // half of the producer/consumer rate-control loop. TD-COMPACT-6 D1 made
+        // compaction async, so flush can outrun compaction during sustained
+        // ingest; these watermarks feed backpressure from the L0 backlog into
+        // the flush rate. Checked before writing a new L0, using the same file
+        // count `should_trigger_compaction` reasons over:
+        //  - STOP (hard):    l0_count >= stop_trigger    → defer the flush
+        //    (return Err). `materialize_collection`'s `?` returns before its
+        //    `free_wal` block, so the data stays durable in the WAL and the
+        //    auto-flush driver retries next tick. Bounds unbounded L0 growth.
+        //  - SLOWDOWN (soft): l0_count >= slowdown_trigger → yield ~1ms so the
+        //    background compaction workers get headroom to drain L0.
+        // Both default-OFF via 0; env-overridable. Only armed when a compaction
+        // manager exists (no point bounding L0 for a collection that can't
+        // compact it).
+        if self.compaction_manager().is_some() {
+            let cfg = self.config();
+            let stop_trigger = std::env::var("PROXIMADB_L0_STOP_TRIGGER")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(cfg.l0_stop_trigger);
+            let slowdown_trigger = std::env::var("PROXIMADB_L0_SLOWDOWN_TRIGGER")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(cfg.l0_slowdown_trigger);
+            if stop_trigger > 0 || slowdown_trigger > 0 {
+                let l0_count = self
+                    .discover_sstable_files(storage_url)
+                    .await
+                    .unwrap_or_default()
+                    .len() as u32;
+                if stop_trigger > 0 && l0_count >= stop_trigger {
+                    tracing::warn!(
+                        collection = %storage_url,
+                        l0_count, stop_trigger,
+                        "TD-COMPACT-7: L0 admission STOP — deferring flush (WAL retained); \
+                         background compaction must drain L0 first"
+                    );
+                    return Err(SstError::Flush(format!(
+                        "TD-COMPACT-7: L0 admission stop — {l0_count} L0 files >= stop_trigger \
+                         {stop_trigger}; deferring flush so background compaction can drain L0 \
+                         (data is durable in the WAL)"
+                    ))
+                    .into());
+                }
+                if slowdown_trigger > 0 && l0_count >= slowdown_trigger {
+                    tracing::debug!(
+                        collection = %storage_url,
+                        l0_count, slowdown_trigger,
+                        "TD-COMPACT-7: L0 admission SLOWDOWN — yielding ~1ms for compaction"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                }
+            }
+        }
+
         let atomic_op = if recovery_materialization.is_some() {
             // Recovery publishes directly to the deterministic final object via
             // write_if_absent. Track it as zero-copy managed so abort only removes
@@ -753,42 +809,54 @@ impl SstEngine {
             // or 1 when the TD-COMPACT-5 training arm fired (so the executor
             // compacts the few large untrained L0s instead of declining).
             let l0_threshold = due_threshold;
-            // TD-COMPACT-8: mark training in-flight (prevents re-arming on the
-            // next flush while this training pass runs). Only for the training
-            // arm (threshold <= 1). Always cleared below (Ok, no-op, or Err).
+            // TD-COMPACT-8 / TD-COMPACT-6 D1: mark training in-flight BEFORE
+            // enqueuing. Only for the training arm (threshold <= 1). On the
+            // async path the flag is NOT cleared here — the background worker
+            // clears it (via release_task_state) once the compaction completes,
+            // covering the entire queue→run window. This is what lets
+            // `should_trigger_compaction` skip re-arming across rapid flushes
+            // (eliminating the redundant re-training loop). self.training_in_flight
+            // is the same Arc the Compaction's workers hold.
             let is_training = due_threshold <= 1;
             if is_training && let Ok(mut guard) = self.training_in_flight.lock() {
                 guard.insert(storage_url.to_string());
             }
+            // TD-COMPACT-6 D1 (ADR-076): ENQUEUE to the background worker pool
+            // instead of executing inline. Flush returns immediately (~1s after
+            // the L0 write, not ~35s blocked on the re-cluster training). The
+            // producer/consumer rate-control loop is closed by the L0 admission
+            // watermarks (TD-COMPACT-7) checked above; the dedup + the
+            // training_in_flight guard above prevent redundant work. The worker
+            // clears training_in_flight on completion (Ok or Err).
             match compaction
-                .run_due_compaction(
-                    cid,
-                    collection_dir,
-                    self.config(),
-                    l0_threshold,
-                    Some(self.atomic_coordinator().clone()),
-                )
+                .enqueue_due_compaction(cid, collection_dir, l0_threshold)
                 .await
             {
                 Ok(true) => {
                     compaction_ran = true;
-                    info!("✅ SST Flush: re-cluster compaction ran for collection {cid}");
+                    info!(
+                        "✅ SST Flush: re-cluster compaction enqueued (async) for collection {cid}"
+                    );
                 }
                 Ok(false) => {
                     debug!("SST Flush: compaction armed but nothing due for collection {cid}");
+                    // Nothing was due, so no worker will run to clear the guard
+                    // — clear it here so the training arm can re-arm next flush.
+                    if is_training && let Ok(mut guard) = self.training_in_flight.lock() {
+                        guard.remove(storage_url);
+                    }
                 }
                 Err(e) => {
                     warn!(
-                        "SST Flush: re-cluster compaction failed for {cid} (best-effort, \
+                        "SST Flush: re-cluster compaction enqueue failed for {cid} (best-effort, \
                          flush succeeded): {e}"
                     );
                     compaction_error = Some(e.to_string());
+                    // Enqueue failed — no worker will clear the guard; do it here.
+                    if is_training && let Ok(mut guard) = self.training_in_flight.lock() {
+                        guard.remove(storage_url);
+                    }
                 }
-            }
-            // TD-COMPACT-8: always clear the training flag after compaction
-            // (Ok, no-op, or Err — the guard is set above only for training).
-            if is_training && let Ok(mut guard) = self.training_in_flight.lock() {
-                guard.remove(storage_url);
             }
         }
 
@@ -900,8 +968,11 @@ impl SstEngine {
         // TD-COMPACT-8: skip re-arming while a training compaction is in-flight
         // for this collection (prevents the redundant re-training loop — up to
         // N-1 wasted cycles per ingest batch, each costing N GETs + PCA + PUT +
-        // DELETEs). The flag is set by the flush caller before run_due_compaction
-        // and cleared after.
+        // DELETEs). TD-COMPACT-6 D1 (async path): the flag is set by the flush
+        // caller before `enqueue_due_compaction` and cleared by the background
+        // worker once the compaction completes (covers the full queue→run
+        // window); the flush caller also clears it on the no-worker paths
+        // (nothing-due Ok(false), or enqueue Err).
         if self
             .training_in_flight
             .lock()

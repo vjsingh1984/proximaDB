@@ -250,7 +250,10 @@ pub struct Compaction {
     config: SstConfig,
     task_queue: Arc<Mutex<VecDeque<SstCompactionTask>>>,
     task_notify: Arc<Notify>,
-    worker_handles: Vec<JoinHandle<()>>,
+    /// Background worker join handles. Interior-mutable so `start_workers` can
+    /// run via the `self: &Arc<Self>` receiver (workers reuse this persistent
+    /// `Compaction` — no per-task `temp_manager` construction).
+    worker_handles: std::sync::Mutex<Vec<JoinHandle<()>>>,
     shutdown_signal: Arc<AtomicBool>,
     stats: Arc<RwLock<SstCompactionStats>>,
     active_compactions: Arc<RwLock<HashMap<String, SstCompactionTask>>>,
@@ -275,6 +278,17 @@ pub struct Compaction {
     precision_resolver:
         Arc<OnceCell<Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>>>,
     // manifest: Option<Arc<super::SstManifest>>, // Removed - using directory discovery
+    /// TD-COMPACT-8 / TD-COMPACT-6 (ADR-076 D1): per-collection
+    /// `training_in_flight` guard, shared (same `Arc`) with the `SstEngine`
+    /// that owns this `Compaction`. The flush path inserts the collection's
+    /// `storage_url` before enqueuing a training compaction; the background
+    /// worker removes it after the compaction completes (Ok or Err). This
+    /// closes the async gap the inline path did not have: while a training
+    /// pass is queued or running, `should_trigger_compaction` skips re-arming
+    /// (eliminating the redundant re-training loop). Instances constructed
+    /// without `set_training_in_flight` (e.g. the worker's `temp_manager`)
+    /// carry a disconnected empty set — correct, since they never arm the guard.
+    training_in_flight: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl std::fmt::Debug for Compaction {
@@ -283,7 +297,10 @@ impl std::fmt::Debug for Compaction {
             .field("config", &self.config)
             .field("task_queue", &"<task_queue>")
             .field("task_notify", &"<task_notify>")
-            .field("worker_handles", &self.worker_handles.len())
+            .field(
+                "worker_handles",
+                &self.worker_handles.lock().map(|h| h.len()).unwrap_or(0),
+            )
             .field("shutdown_signal", &self.shutdown_signal)
             .field("stats", &"<stats>")
             .field("active_compactions", &"<active_compactions>")
@@ -423,7 +440,7 @@ impl Compaction {
             config,
             task_queue: Arc::new(Mutex::new(VecDeque::new())),
             task_notify: Arc::new(Notify::new()),
-            worker_handles: Vec::new(),
+            worker_handles: std::sync::Mutex::new(Vec::new()),
             shutdown_signal: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(RwLock::new(SstCompactionStats::default())),
             active_compactions: Arc::new(RwLock::new(HashMap::new())),
@@ -433,7 +450,42 @@ impl Compaction {
             filesystem_factory,
             compaction_orchestrator: orchestrator,
             precision_resolver: Arc::new(OnceCell::new()),
+            // TD-COMPACT-6 D1: disconnected empty set until
+            // `set_training_in_flight` links this instance to the owning
+            // `SstEngine`'s guard (done in core.rs before `start_workers`).
+            training_in_flight: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         })
+    }
+
+    /// TD-COMPACT-6 (ADR-076 D1): link this `Compaction` to the owning
+    /// `SstEngine`'s `training_in_flight` guard by sharing the same `Arc`.
+    /// Called once, in core.rs, after construction and before
+    /// `start_workers` (so the workers clone the linked handle). Instances
+    /// that never call this (e.g. the worker's own `temp_manager`) keep a
+    /// private empty set — harmless, since they never arm the guard.
+    pub fn set_training_in_flight(
+        &mut self,
+        guard: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    ) {
+        self.training_in_flight = guard;
+    }
+
+    /// TD-COMPACT-8: is a training compaction in-flight for this collection?
+    /// Read by `SstEngine::should_trigger_compaction` (via
+    /// `compaction_manager()`) to skip re-arming the TD-COMPACT-5 training
+    /// arm while a training pass is queued or running.
+    pub fn training_in_flight_for(&self, storage_url: &str) -> bool {
+        self.training_in_flight
+            .lock()
+            .is_ok_and(|guard| guard.contains(storage_url))
+    }
+
+    /// TD-COMPACT-8: mark a training compaction in-flight for a collection
+    /// (insert before enqueuing). Called by the flush path.
+    pub fn mark_training_in_flight(&self, storage_url: &str) {
+        if let Ok(mut guard) = self.training_in_flight.lock() {
+            guard.insert(storage_url.to_string());
+        }
     }
 
     /// Attach a `CanonicalPrecisionResolver` so produced `SstCompactionTask`s
@@ -550,8 +602,12 @@ impl Compaction {
         Ok(self)
     }
 
-    /// Start background compaction workers
-    pub async fn start_workers(&mut self, worker_count: usize) -> Result<()> {
+    /// Start background compaction workers. Takes `self: &Arc<Self>` so each
+    /// worker can hold an `Arc<Compaction>` clone and call `perform_compaction`
+    /// on THIS persistent instance — reusing its warmed reader/compactor/factory
+    /// instead of constructing a cold `temp_manager` per task (which hung on the
+    /// read path). Callers must wrap the `Compaction` in `Arc` before starting.
+    pub async fn start_workers(self: &Arc<Self>, worker_count: usize) -> Result<()> {
         info!("Starting {} compaction workers", worker_count);
 
         for worker_id in 0..worker_count {
@@ -560,8 +616,10 @@ impl Compaction {
             let shutdown_signal = Arc::clone(&self.shutdown_signal);
             let stats = Arc::clone(&self.stats);
             let active_compactions = Arc::clone(&self.active_compactions);
-            let atomic_coordinator = self.atomic_coordinator.clone();
-            let config = self.config.clone();
+            // TD-COMPACT-6 D1: each worker reuses this persistent Compaction
+            // (shared Arc) — no per-task temp_manager construction.
+            let compaction = Arc::clone(self);
+            let training_in_flight = Arc::clone(&self.training_in_flight);
 
             let handle = tokio::spawn(async move {
                 Self::worker_loop(
@@ -571,27 +629,35 @@ impl Compaction {
                     shutdown_signal,
                     stats,
                     active_compactions,
-                    config,
-                    atomic_coordinator,
+                    compaction,
+                    training_in_flight,
                 )
                 .await;
             });
 
-            self.worker_handles.push(handle);
+            if let Ok(mut handles) = self.worker_handles.lock() {
+                handles.push(handle);
+            }
         }
 
         Ok(())
     }
 
     /// Stop all compaction workers gracefully
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&self) -> Result<()> {
         info!("Stopping compaction manager");
 
         self.shutdown_signal.store(true, Ordering::SeqCst);
         self.task_notify.notify_waiters();
 
-        // Wait for all workers to finish
-        for handle in self.worker_handles.drain(..) {
+        // Wait for all workers to finish (take the handles out before awaiting
+        // so the lock is not held across the await).
+        let handles: Vec<JoinHandle<()>> = if let Ok(mut h) = self.worker_handles.lock() {
+            std::mem::take(&mut *h)
+        } else {
+            Vec::new()
+        };
+        for handle in handles {
             if let Err(e) = handle.await {
                 warn!("Compaction worker failed to shutdown cleanly: {}", e);
             }
@@ -622,13 +688,21 @@ impl Compaction {
             task.input_files.len()
         );
 
-        // Use the output file path as a unique key for active compactions
-        // This prevents multiple compactions writing to the same output file
+        // The output file path is the unique key for active compactions —
+        // prevents two compactions writing to the same output file.
         let compaction_key = task.output_file.to_string_lossy().to_string();
 
-        // Check if there's already an active compaction for this output file
+        // TD-COMPACT-6 (ADR-076 D1) RACE FIX: do the dedup check AND the
+        // active-compaction insert under ONE write lock, at enqueue time
+        // (not worker time). The previous code took a read lock for the
+        // check and deferred the insert to the worker (~:830) in a separate
+        // critical section, so two rapid `schedule_compaction` calls for the
+        // same output could both pass the read check before either worker
+        // inserted — double-enqueue to the same output. Marking active here,
+        // atomically with the dedup, closes that TOCTOU. The worker only
+        // removes the entry after completion.
         {
-            let active = self.active_compactions.read().await;
+            let mut active = self.active_compactions.write().await;
             if active.contains_key(&compaction_key) {
                 debug!(
                     "Skipping compaction - already active for output file {}",
@@ -636,6 +710,7 @@ impl Compaction {
                 );
                 return Ok(());
             }
+            active.insert(compaction_key, task.clone());
         }
 
         let mut queue = self.task_queue.lock().await;
@@ -659,22 +734,30 @@ impl Compaction {
         Ok(())
     }
 
-    /// TD-WLP-7 (ADR-061 D3): run compaction for a collection **now** if it is
-    /// due (L0 ≥ threshold), synchronously (awaited) — the flush-path trigger's
-    /// execution primitive. Deterministic and test-safe: it does NOT enqueue to
-    /// the background workers (`schedule_compaction`), so there is no rogue
-    /// non-daemon thread and a test can await the merge to completion. Uses the
-    /// atomic-swap path (ADR-046 LSN-coherent read across the segment swap) when
-    /// an `atomic_coordinator` is supplied. Returns whether a compaction ran
-    /// (`false` = nothing was due). The caller treats errors as best-effort — a
-    /// compaction failure must never fail the flush that armed it.
-    pub async fn run_due_compaction(
+    /// TD-COMPACT-6 (ADR-076 D1): the production flush-path compaction trigger.
+    /// Builds the task if a collection has due compaction (L0 ≥ threshold or an
+    /// untrained large L0), then **enqueues** it to the background worker pool —
+    /// flush returns immediately (~1s after the L0 write, not ~35s blocked on
+    /// the re-cluster). This is the producer half of the producer/consumer
+    /// rate-control loop; the consumer half is the L0 admission watermarks
+    /// (TD-COMPACT-7) at the flush boundary.
+    ///
+    /// Returns whether a task was enqueued (`false` = nothing was due).
+    /// Dedup is `schedule_compaction`'s active-compaction guard (output-file
+    /// keyed); the per-collection `training_in_flight` guard (set by the flush
+    /// caller) prevents `should_trigger_compaction` from re-arming the training
+    /// arm while a pass is queued/running. The worker clears
+    /// `training_in_flight` after completion (collection dir derived from
+    /// `task.output_file.parent()`).
+    ///
+    /// The caller treats errors as best-effort — an enqueue failure must never
+    /// fail the flush that armed it. Tests that need the merge complete before
+    /// asserting use `await_compaction_quiescence`.
+    pub async fn enqueue_due_compaction(
         &self,
         collection_id: &str,
         collection_dir: &Path,
-        config: &SstConfig,
         l0_threshold: usize,
-        atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) -> Result<bool> {
         let Some(task) = self
             .check_compaction_needed(collection_id, collection_dir, Some(l0_threshold))
@@ -682,8 +765,12 @@ impl Compaction {
         else {
             return Ok(false);
         };
-        self.perform_compaction_enhanced(&task, config, atomic_coordinator, None)
-            .await?;
+        // TD-COMPACT-6 D1: the worker clears the shared training_in_flight guard
+        // for this collection on completion. It derives the collection dir from
+        // `task.output_file.parent()` (the output is always generated under the
+        // collection dir — see `generate_output_file_path`), so no separate
+        // field is needed on the task.
+        self.schedule_compaction(task).await?;
         Ok(true)
     }
 
@@ -838,7 +925,45 @@ impl Compaction {
         self.stats.read().await.clone()
     }
 
-    /// Worker loop for processing compaction tasks
+    /// Number of compaction tasks waiting in the queue (not yet picked up by a
+    /// worker). Observability + test seam for the TD-COMPACT-6 admission checks.
+    pub async fn pending_task_count(&self) -> usize {
+        self.task_queue.lock().await.len()
+    }
+
+    /// Number of compactions currently in-flight (a worker is processing them).
+    /// Populated at enqueue time (the race-fix insertion site).
+    pub async fn active_compaction_count(&self) -> usize {
+        self.active_compactions.read().await.len()
+    }
+
+    /// TD-COMPACT-6 (ADR-076 D1): quiescence barrier for tests + the async
+    /// flush path. Returns once the task queue is empty AND no compaction is
+    /// active — i.e. every enqueued compaction has been processed by a worker.
+    /// The flush path itself never blocks on the worker (it returns ~immediately
+    /// after `enqueue_due_compaction`); callers that need the merge complete
+    /// before asserting on the post-compaction layout call this. Polls with a
+    /// short backoff rather than spinning; `timeout` bounds the wait (returns
+    /// `false` on timeout so the caller can fail loudly rather than hang).
+    pub async fn await_compaction_quiescence(&self, timeout: std::time::Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let queue_empty = self.task_queue.lock().await.is_empty();
+            let active_empty = self.active_compactions.read().await.is_empty();
+            if queue_empty && active_empty {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
+    /// Worker loop for processing compaction tasks. Each worker holds an
+    /// `Arc<Compaction>` clone of the persistent instance and calls
+    /// `perform_compaction` on it — reusing the warmed reader/compactor/factory
+    /// rather than constructing a cold `temp_manager` per task.
     async fn worker_loop(
         worker_id: usize,
         task_queue: Arc<Mutex<VecDeque<SstCompactionTask>>>,
@@ -846,8 +971,11 @@ impl Compaction {
         shutdown_signal: Arc<AtomicBool>,
         stats: Arc<RwLock<SstCompactionStats>>,
         active_compactions: Arc<RwLock<HashMap<String, SstCompactionTask>>>,
-        config: SstConfig,
-        atomic_coordinator: Option<Arc<TransactionCoordinator>>,
+        compaction: Arc<Compaction>,
+        // TD-COMPACT-6 D1: shared training_in_flight guard. The worker clears
+        // the originating collection's entry once the task is processed (Ok or
+        // Err), re-arming `should_trigger_compaction` for that collection.
+        training_in_flight: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     ) {
         debug!("Compaction worker {} started", worker_id);
 
@@ -874,32 +1002,20 @@ impl Compaction {
                     task.output_file.display()
                 );
 
-                // Mark as active using output file as key
+                // TD-COMPACT-6 D1: the task was marked active at enqueue time
+                // (schedule_compaction) — no insert here. We only remove below
+                // once the task is processed.
                 let compaction_key = task.output_file.to_string_lossy().to_string();
-                {
-                    let mut active = active_compactions.write().await;
-                    active.insert(compaction_key.clone(), task.clone());
-                }
 
                 let start_time = std::time::Instant::now();
 
-                // Perform compaction - create a temporary manager for SSTable parsing
-                let temp_manager = match Compaction::with_atomic_coordinator(
-                    config.clone(),
-                    atomic_coordinator.clone(),
-                )
-                .await
-                {
-                    Ok(manager) => manager,
-                    Err(e) => {
-                        error!("Failed to create compaction manager: {}", e);
-                        continue;
-                    }
-                };
-                match temp_manager
-                    .perform_compaction(&task, &config, atomic_coordinator.clone())
-                    .await
-                {
+                // Reuse the persistent Compaction instance (shared Arc). The
+                // former code built a fresh `Compaction` per task via
+                // `with_atomic_coordinator`; that cold instance's read path
+                // hung on the worker. `perform_compaction` only reads through
+                // the Arc-shared reader/compactor/factory, so concurrent
+                // invocation across workers + flush is safe.
+                match compaction.perform_compaction(&task).await {
                     Ok(compaction_stats) => {
                         info!(
                             "Compaction completed for level {} in {}ms: {} files merged -> {}",
@@ -938,11 +1054,15 @@ impl Compaction {
                     }
                 }
 
-                // Remove from active compactions
-                {
-                    let mut active = active_compactions.write().await;
-                    active.remove(&compaction_key);
-                }
+                // TD-COMPACT-6 D1: release the enqueue-time active marker and the
+                // per-collection training guard so the flush path can re-arm.
+                Self::release_task_state(
+                    &active_compactions,
+                    &training_in_flight,
+                    &compaction_key,
+                    task.output_file.parent(),
+                )
+                .await;
             } else {
                 notified.await;
             }
@@ -951,15 +1071,37 @@ impl Compaction {
         debug!("Compaction worker {} stopped", worker_id);
     }
 
-    /// Perform the actual compaction operation
-    async fn perform_compaction(
-        &self,
-        task: &SstCompactionTask,
-        _config: &SstConfig,
-        atomic_coordinator: Option<Arc<TransactionCoordinator>>,
-    ) -> Result<SstCompactionStats> {
+    /// TD-COMPACT-6 (ADR-076 D1): drop the per-task bookkeeping once a worker
+    /// finishes a task (Ok, Err, or manager-construction failure). Removes the
+    /// output-file key from `active_compactions` (re-allowing compaction to the
+    /// same output) and, if the task carried a `collection_dir`, clears the
+    /// shared `training_in_flight` guard (re-arming the flush path's
+    /// `should_trigger_compaction` training arm for that collection). Shared by
+    /// every worker exit path so the guard can never leak.
+    async fn release_task_state(
+        active_compactions: &Arc<RwLock<HashMap<String, SstCompactionTask>>>,
+        training_in_flight: &Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+        compaction_key: &str,
+        collection_dir: Option<&Path>,
+    ) {
+        {
+            let mut active = active_compactions.write().await;
+            active.remove(compaction_key);
+        }
+        if let Some(dir) = collection_dir {
+            let key = dir.to_string_lossy();
+            if let Ok(mut guard) = training_in_flight.lock() {
+                guard.remove(key.as_ref());
+            }
+        }
+    }
+
+    /// Perform the actual compaction operation on a task, using this
+    /// persistent instance's config + atomic coordinator. Called by the
+    /// background workers (which hold an `Arc<Compaction>` clone).
+    async fn perform_compaction(&self, task: &SstCompactionTask) -> Result<SstCompactionStats> {
         let enhanced_stats = self
-            .perform_compaction_enhanced(task, _config, atomic_coordinator, None)
+            .perform_compaction_enhanced(task, &self.config, self.atomic_coordinator.clone(), None)
             .await?;
         Ok(enhanced_stats.base_stats)
     }
@@ -1052,15 +1194,11 @@ impl Compaction {
             task.level
         );
 
-        // Read and merge all input files using existing infrastructure
-        let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::create(
-                crate::storage::persistence::filesystem::FilesystemConfig::default(),
-            )
-            .await
-            .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?,
-        );
-        let fs = filesystem_factory
+        // Reuse this persistent Compaction's filesystem factory (TD-COMPACT-6:
+        // the former code constructed a fresh FilesystemFactory per compaction
+        // call — pointless proliferation + another cold instance).
+        let fs = self
+            .filesystem_factory
             .get_filesystem("file:///")
             .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
 
@@ -2308,8 +2446,10 @@ impl Drop for Compaction {
         self.shutdown_signal.store(true, Ordering::SeqCst);
 
         // Abort remaining worker handles
-        for handle in &self.worker_handles {
-            handle.abort();
+        if let Ok(handles) = self.worker_handles.lock() {
+            for handle in handles.iter() {
+                handle.abort();
+            }
         }
     }
 }
