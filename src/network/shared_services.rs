@@ -1917,10 +1917,15 @@ impl SharedServices {
                 "eventlog".to_string(),
             ),
         );
-        let event_log = match crate::storage::engines::eventlog::EventLogEngine::new(
+        // `open` (not `new`) — recovers the sequence counter and index from what
+        // is already persisted. `new` alone would restart the counter at 0 and
+        // silently overwrite prior events (TD-EVENTLOG-1).
+        let event_log = match crate::storage::engines::eventlog::EventLogEngine::open(
             event_log_config,
             event_log_filesystem,
-        ) {
+        )
+        .await
+        {
             Ok(engine) => Some(Arc::new(engine)),
             Err(e) => {
                 warn!("Failed to create EventLogEngine for audit trails: {}", e);

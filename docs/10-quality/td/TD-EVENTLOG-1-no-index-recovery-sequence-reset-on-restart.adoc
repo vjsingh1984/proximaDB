@@ -70,9 +70,13 @@ server restart silently gets "no checkpoint" and loses its state.
 {base}/partition_{seq/1000:05}/event_{seq:010}.bin
 ----
 
-With `sequence_counter` restarting at 0, the first event appended after a
-restart is written to `event_0000000000.bin` — **overwriting the pre-restart
-event at that sequence**. Each restart silently destroys the head of the log.
+`append_event` pre-increments (`*counter += 1`, then use), so with
+`sequence_counter` restarting at 0 the first event appended after a restart takes
+sequence **1** and is written to `event_0000000001.bin` — **overwriting the
+pre-restart event at that sequence**. The write is not merely incidental: the
+options are explicitly `FileOptions { create_dirs: true, overwrite: true, .. }`,
+so the collision silently destroys rather than erroring. Each restart destroys the
+head of the log.
 
 Defect B is the more serious of the two: A loses visibility of data that still
 exists, B destroys it.
