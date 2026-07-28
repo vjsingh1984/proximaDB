@@ -10,7 +10,7 @@
 
 [cols="1,3"]
 |===
-| Status | Draft — **hardened after a 2-agent red-team (2026-07-27)**. Verification-first found D15(a) ~built; a buildability review confirmed the *mechanism* (one compiled filter, cost model, crate layering) is **sound and largely already-convergent**; a tenancy-safety review **broke the naïve §3 D3** and forced a reframe. **§8 supersedes the original D3.** Key correction: **cross-tenant isolation is physical (collection-scoping, ADR-032), not a planner concern** — the woven filter is for **intra-collection RLS/ABAC**. The review also surfaced **three live gaps in the existing isolation path** (§7) that are higher-priority than F7 itself. Not on the OLTP critical path.
+| Status | Draft — **hardened after a 2-agent red-team (2026-07-27)**. Verification-first found D15(a) ~built; a buildability review confirmed the *mechanism* (one compiled filter, cost model, crate layering) is **sound and largely already-convergent**; a tenancy-safety review **broke the naïve §3 D3** and forced a reframe. **§8 supersedes the original D3.** Key correction: **cross-tenant isolation is physical (collection-scoping, ADR-032), not a planner concern** — the woven filter is for **intra-collection RLS/ABAC**. The review's three suspected isolation gaps were **verified (2026-07-28): H2 is NOT a live leak** (collection ids are globally-unique + single-owner, so cache keys can't collide across tenants); H1/H3 are cheap defense-in-depth hardening (§4). Not on the OLTP critical path.
 | Problem | Hybrid vector+metadata queries must pick **pre / post / exact** by cost, compile the predicate to **one** object woven into the ANN traversal, and carry **RLS/ABAC as the same always-ANDed filter**. The selector + cost model exist (ADR-011 Beta). The gaps: (b) the predicate is applied by two branches (they *already share* the evaluator — low risk), and (c) **no RLS/ABAC predicate reaches the ANN path at all** — the RLS engine is unwired dead code, and `AxisHybridQuery` has no place to carry a mandatory access predicate.
 | Feature | `hybrid-global-filter` (additive, feature-gated; default path = today's ADR-011 routing, byte-for-byte unchanged when off).
 |===
@@ -91,22 +91,29 @@ Introduce `CompiledGlobalFilter` exposing `contains(doc_id) -> bool` (the existi
 === D4 — Fail-closed + explainable
 Extend the trace (`search_plan_trace`, `route_explain`) to record which components were ANDed (user / access), the estimated selectivity, and the chosen mode. An **access-predicate that cannot be resolved fails closed** (empty result + a distinct trace state), never a wider scan.
 
-== 4. Cross-tenant isolation hardening (carved out — higher priority than the planner)
-The tenancy-safety review found **three live gaps in the existing physical-isolation path**. These are not F7 planner work but must ship first (or alongside), tracked here so they are not lost:
+== 4. Cross-tenant isolation review (carved out) — H2 VERIFIED not-a-leak; H1/H3 = cheap hardening
+The tenancy-safety review flagged three suspected gaps in the existing physical-isolation path. A **follow-up verification (2026-07-28, agent-confirmed against the code)** downgraded all three: the alarming one (H2) is **not a live leak**, and H1/H3 are defense-in-depth hardening, not vulnerabilities. Recorded so the fear is not re-raised.
 
 [cols="1,3"]
 |===
-| Gap | Evidence / fix
-| **H1 — `Option<tenant_context>` bypass** | `legacy.rs:742` takes `tenant_context: Option<…>`; a `None` path skips both the access check and the result scrub (`:2343`). **Fail closed** on any authenticated entry point with `None`.
-| **H2 — query cache served before the scrub, key not tenant-qualified** | results are cached at `legacy.rs:2332–2340` **before** `validate_search_results_tenant_isolation` at `:2343`. If the cache key is not tenant-qualified, a hit serves **cross-tenant** cached rows. **Verify the cache key includes the tenant; tenant-qualify it and/or cache post-scrub.** (Potential live cross-tenant leak — verify first.)
-| **H3 — second `AxisHybridQuery` construction site** | `src/services/external_collection/service.rs:528` builds an `AxisHybridQuery` outside the canonical builder — any tenancy/predicate wiring must cover it, or it is a bypass.
+| Gap | Verified status / evidence
+
+| **H2 — cache hit skips the per-row scrub** — **VERIFIED NOT-A-LEAK**
+| The cache key is `(collection_id, vector, k, filter)` with no `tenant_id` (`query_cache.rs:11–42`) and a hit (`legacy.rs:2285–2293`) skips the scrub at `:2343`. **But two tenants can never collide on the key:** `collection_id` is resolved to a **globally-unique** id *before* search (`record_ops_service.rs:395–410` → `collection.id`), minted from an allocator that is "globally unique, never reused across all tenants" (`manager.rs:2421–2440`); each collection is owned by **exactly one** tenant (`proximadb-tenant/src/lib.rs:50` single owner; `validate_tenant_collection_access` fail-closed, `manager.rs:436–450`). So the two tenants' id-sets are disjoint → keys cannot collide. Additionally, production callers reaching `:2187` pass `tenant_context = None` (the real tenant-scoped search routes through the *different* `unified_search_v1`), so no hit/miss scrub asymmetry is even reachable. The per-row scrub (`:2361`) is genuine belt-and-suspenders.
+| **H2-fix (optional hardening)** — fold `tenant_id` into `QueryKey::new` (`query_cache.rs:19`) so the key is tenant-partitioned **by construction** rather than by the upstream resolve-first *contract*. Not required to close a leak; removes a standing assumption.
+
+| **H1 — `Option<tenant_context>`** — hardening
+| `legacy.rs:742` takes `tenant_context: Option<…>`; a `None` path skips the access check + scrub. Production paths pass `None` here by design (see H2), so this is not a live bypass — but making authenticated entry points fail-closed on `None` removes the footgun for a future caller.
+
+| **H3 — second `AxisHybridQuery` build site** — hardening
+| `src/services/external_collection/service.rs:528` builds an `AxisHybridQuery` outside the canonical builder. Not a current leak; any future tenancy/predicate wiring (D3) must cover it, tracked so it isn't missed.
 |===
 
 == 5. Work items
 [cols="1,4,1"]
 |===
 | WI | Description | Gated by
-| WI-0 | **(priority)** Ship H1–H3 isolation hardening (§4). H2 first — verify the cache-key/tenant-qualification leak. | —
+| WI-0 | **(optional hardening — H2 verified not-a-leak, §4)** Tenant-partition `QueryKey::new`; fail-closed on `None` tenant context at authenticated entry points; cover the H3 build site. Low priority. | —
 | WI-1 | `CompiledGlobalFilter` + `GlobalFilterProvider` contract in `proximadb-query-filter`; extract the shared `contains`/enumerate from the existing closure/stream. Scope to id+metadata. | —
 | WI-2 | Thread `ann_filtering_policy` + `estimated_selectivity` through `contract.rs:103` (stop `..default()`-dropping them); always estimate on the canonical path. | WI-1
 | WI-3 | Single-brain the mode: optimizer reads collection policy + passes mode structurally; fix `unwrap_or(1.0)`; AXIS consumes not recomputes. | WI-2
@@ -129,8 +136,8 @@ The tenancy-safety review found **three live gaps in the existing physical-isola
 * **ABAC policy resolution** (subject attributes, attribute-authority store) — FA / TD-FOUNDATION-3.
 * **The graph/hybrid divergent evaluator** (`src/graph/hybrid/mod.rs:1147`, hand-rolled raw-JSON equality) and the other ~5 filter-eval sites (WAL parallel search, progressive pipeline, multi-tier dedup, per-engine block pruning) — F7 scopes to the **AxisManager ANN path**; routing those through `CompiledGlobalFilter` is budgeted follow-up, not F7.
 
-== 8. Red-team log + what changed (rev 2, 2026-07-27)
-Two adversarial agents attacked the draft against the code.
+== 8. Red-team log + what changed (rev 2, 2026-07-27; H2 verified rev 3, 2026-07-28)
+Two adversarial agents attacked the draft against the code; a third verification pass closed out the suspected isolation gaps.
 
 **Buildability review — the mechanism is sound (verdicts SOUND ×3):** Inline and PreFilter already share one builder + one evaluator (no divergence to fix — §1); `FilterExpression` is a foundation leaf crate so the layering has no inversion; PostFilter shortfall is disclosed on 4 channels. *Residual:* ~7 filter-eval sites exist and graph/hybrid is a true semantic divergence → scoped out (§7). Net: §7 of the draft (targets T3/T6) over-stated the risk; D2 simplified to an extraction.
 
@@ -139,8 +146,8 @@ Two adversarial agents attacked the draft against the code.
 **What changed:**
 1. **Reframed the whole concern (§2):** cross-tenant = physical isolation (not a predicate); the woven filter is for intra-collection RLS/ABAC.
 2. **Withdrew the "tenancy pins the mode" decision** — unnecessary once tenancy is not a predicate; intra-collection RLS is mode-agnostic.
-3. **Carved out the three live isolation gaps (§4, WI-0)** as higher priority than the planner — H2 (cache) is a potential live cross-tenant leak to verify first.
+3. **Carved out the three suspected isolation gaps (§4).** A rev-3 verification (2026-07-28) then found **H2 is NOT a live leak** — `collection_id` is globally-unique + single-owner, so cache keys cannot collide across tenants, and the `:2187` path passes `tenant_context = None` anyway. H1/H3 downgraded to optional defense-in-depth hardening. The scary "potential live cross-tenant leak" is retracted.
 4. **Simplified D2** to an extraction of already-convergent code; confirmed the crate layering.
 5. **Added the single-brain + `unwrap_or(1.0)` fix (D1)** from the two-brain finding.
 
-**Re-scope:** the *planner* mechanism is **smaller than the 2w estimate** (much is extraction + wiring). The **isolation hardening (§4)** is the real, urgent work and should be pulled forward independent of F7. TD stays **Draft** until §4/H2 is verified against the cache implementation and D3's RLS-reuse-vs-delete call is made with FA.
+**Re-scope:** the *planner* mechanism is **smaller than the 2w estimate** (much is extraction + wiring). The isolation concerns (§4) turned out to be **hardening, not a live vuln**. TD stays **Draft** until D3's RLS-reuse-vs-delete call is made with FA; there is no longer a blocking security item.
