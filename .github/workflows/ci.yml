@@ -1560,7 +1560,14 @@ jobs:
   object-store-restart-recovery:
     name: Object-store restart recovery (Azurite)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # The `--restart` scope (scripts/run_cloud_emulator_tests.sh) builds 3 test
+    # targets across distinct cloud feature sets (azure; aws,azure,gcp) at
+    # CARGO_BUILD_JOBS=1 (OOM-safe on the 16GB runner). No other CI job builds
+    # these feature sets, so they are always a COLD compile (~85-90 min) — the
+    # prior 90-min budget timed out at the edge. Bumped to 150 for reliable
+    # headroom. (Efficiency follow-up: warm these feature sets in a shared
+    # earlier job, or split the contract test out of --restart.)
+    timeout-minutes: 150
     needs: [changes]
     if: |
       !inputs.skip_tests &&
