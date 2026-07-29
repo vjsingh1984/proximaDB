@@ -77,6 +77,19 @@ use super::write::{
     insert_existing_record_conflict_result, insert_only_lock_key, tombstone_records_for_ids,
 };
 
+/// ADR-070 / ADR-081: AXIS is a configured projection, not an automatic cost
+/// paid by every vector collection. PAX-only collections carry no index config;
+/// the explicit RawF32 compatibility tag retains the established AXIS path.
+fn collection_uses_axis_indexes(collection: &Collection) -> bool {
+    collection.config.as_ref().is_some_and(|config| {
+        !config.index_configs.is_empty()
+            || config
+                .tags
+                .iter()
+                .any(|tag| tag.trim().eq_ignore_ascii_case("pax_vector_format:off"))
+    })
+}
+
 // Import vector query service contract (Phase 2.1)
 use proximadb_vector_query::{VectorQueryRequest, VectorQueryService, VectorSearchResult};
 
@@ -3584,10 +3597,7 @@ impl VectorOperationsService {
         // A0 coarse-probe) in the SST engine handles the search — the segment IS
         // the index. This avoids the 8.6GB RSS + minutes of IVF training for
         // cost-optimized, object-storage-backed collections.
-        let collection_has_axis_indexes = collection
-            .config
-            .as_ref()
-            .is_some_and(|c| !c.index_configs.is_empty());
+        let collection_has_axis_indexes = collection_uses_axis_indexes(&collection);
         let axis_optimized_results = if !collection_has_axis_indexes {
             info!(
                 "🔍 Co-design: skipping AXIS for collection {} (no index_configs) — \
@@ -4111,28 +4121,39 @@ impl VectorOperationsService {
             .write_vector_batch_native_arc(collection_id, Arc::new(vectors.clone()))
             .await?;
 
-        let axis_start = std::time::Instant::now();
-        for record in vectors.iter() {
-            if let Err(e) = self
-                .axis_index_manager
-                .insert_record(collection_id, record)
-                .await
-            {
-                tracing::warn!(
-                    "Failed to index vector {} in AXIS: {} (search will use linear scan)",
-                    record.oid,
-                    e
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let axis_duration = if collection_uses_axis_indexes(&collection) {
+            let axis_start = std::time::Instant::now();
+            for record in vectors.iter() {
+                if let Err(e) = self
+                    .axis_index_manager
+                    .insert_record(collection_id, record)
+                    .await
+                {
+                    tracing::warn!(
+                        "Failed to index vector {} in AXIS: {} (search will use storage)",
+                        record.oid,
+                        e
+                    );
+                }
+            }
+            let axis_duration = axis_start.elapsed();
+            if axis_duration.as_millis() > 10 {
+                tracing::debug!(
+                    "AXIS indexing for {} vectors took {:?}",
+                    vectors.len(),
+                    axis_duration
                 );
             }
-        }
-        let axis_duration = axis_start.elapsed();
-        if axis_duration.as_millis() > 10 {
+            axis_duration
+        } else {
             tracing::debug!(
-                "AXIS indexing for {} vectors took {:?}",
-                vectors.len(),
-                axis_duration
+                collection_id,
+                records = vectors.len(),
+                "ADR-081: skipping AXIS insert feed because collection has no index_configs"
             );
-        }
+            std::time::Duration::ZERO
+        };
 
         let duration_micros = start.elapsed().as_micros() as i64;
         let bytes_written = vectors
@@ -6198,5 +6219,47 @@ mod recompute_merged_shortfall_tests {
         assert!(recompute_merged_shortfall(10, 10, true, Some(&ctx)).is_none());
         // also: more than requested (cap) is not a shortfall
         assert!(recompute_merged_shortfall(10, 12, true, Some(&ctx)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod axis_insert_gate_tests {
+    use super::collection_uses_axis_indexes;
+    use crate::proto::proximadb_v1::{Collection, CollectionConfig, IndexConfig};
+
+    #[test]
+    fn empty_index_configs_do_not_feed_axis() {
+        let collection = Collection {
+            config: Some(CollectionConfig {
+                index_configs: Vec::new(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!collection_uses_axis_indexes(&collection));
+    }
+
+    #[test]
+    fn configured_index_feeds_axis() {
+        let collection = Collection {
+            config: Some(CollectionConfig {
+                index_configs: vec![IndexConfig::default()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(collection_uses_axis_indexes(&collection));
+    }
+
+    #[test]
+    fn raw_f32_compatibility_tag_feeds_axis() {
+        let collection = Collection {
+            config: Some(CollectionConfig {
+                tags: vec!["pax_vector_format:off".to_string()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(collection_uses_axis_indexes(&collection));
     }
 }

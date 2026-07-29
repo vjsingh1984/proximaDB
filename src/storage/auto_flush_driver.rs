@@ -124,12 +124,10 @@ impl AutoFlushDriver {
         // Catalog is the metadata authority (engine / dimension / path / tenant) —
         // the same source flush_memtable_to_storage resolves each plan from.
         let catalog = list_collections_from_catalog().await;
+        let mut pending = tokio::task::JoinSet::new();
 
         for collection_id in &collections {
-            let mem_bytes: u64 = match write_buffer.get_unflushed_batches(collection_id).await {
-                Ok(batches) => batches.iter().map(|b| b.total_size_bytes as u64).sum(),
-                Err(_) => 0,
-            };
+            let mem_bytes = write_buffer.unflushed_bytes(collection_id).await;
             // Observation is emitted at the decision boundary: what /metrics shows
             // is exactly what the policy acted on.
             wal_flush_metrics::set_wal_size(collection_id, mem_bytes as i64);
@@ -180,38 +178,59 @@ impl AutoFlushDriver {
                 tenant_id,
             };
 
-            // free_wal=true: once the SST segment is written, free the covered WAL
-            // so the materialized segment (not a WAL replay) is the durable restart
-            // source — the same posture as the shutdown flush (engine.rs), gated by
-            // the insert→flush→search recall round-trip.
-            let start = Instant::now();
-            let res = materialize_collection(
-                &write_buffer,
-                &plan,
-                self.storage_write_fence.as_ref(),
-                None,
-                true,
-                Some(&self.axis_index_manager),
-            )
-            .await;
-            let dur = start.elapsed().as_secs_f64();
+            // ADR-081 D4: submit independent collections concurrently. The
+            // process-wide materializer permit pool bounds the actual work, and
+            // its per-collection gate collapses overlap with inline/shutdown
+            // triggers.
+            let task_write_buffer = write_buffer.clone();
+            let task_axis = self.axis_index_manager.clone();
+            let task_fence = self.storage_write_fence.clone();
+            let reason_label = reason.as_str().to_string();
+            pending.spawn(async move {
+                let start = Instant::now();
+                let result = materialize_collection(
+                    &task_write_buffer,
+                    &plan,
+                    task_fence.as_ref(),
+                    None,
+                    true,
+                    Some(&task_axis),
+                )
+                .await;
+                (
+                    plan.wal_key,
+                    reason_label,
+                    start.elapsed().as_secs_f64(),
+                    result,
+                )
+            });
+        }
 
-            match res {
+        while let Some(joined) = pending.join_next().await {
+            let (collection_id, reason, dur, result) = match joined {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::error!("ADR-081 auto-flush task failed to join: {}", error);
+                    continue;
+                }
+            };
+            match result {
                 Ok(Some(outcome)) => {
                     wal_flush_metrics::record_flush(
-                        collection_id,
-                        reason.as_str(),
+                        &collection_id,
+                        &reason,
                         true,
                         outcome.bytes as i64,
                         outcome.entries_flushed as i64,
                         dur,
                         Self::now_unixtime(),
                     );
-                    self.note_flushed(collection_id).await;
-                    wal_flush_metrics::set_wal_size(collection_id, 0);
+                    self.note_flushed(&collection_id).await;
+                    let remaining = write_buffer.unflushed_bytes(&collection_id).await;
+                    wal_flush_metrics::set_wal_size(&collection_id, remaining as i64);
                     tracing::info!(
-                        "✅ ADR-069 auto-flush [{}] '{}': {} vectors, {} bytes in {:.3}s",
-                        reason.as_str(),
+                        "✅ ADR-081 auto-flush [{}] '{}': {} vectors, {} bytes in {:.3}s",
+                        reason,
                         collection_id,
                         outcome.entries_flushed,
                         outcome.bytes,
@@ -220,25 +239,17 @@ impl AutoFlushDriver {
                 }
                 Ok(None) => {
                     // Raced to empty; reset the window so we don't re-decide every tick.
-                    self.note_flushed(collection_id).await;
+                    self.note_flushed(&collection_id).await;
                 }
                 Err(e) => {
-                    wal_flush_metrics::record_flush(
-                        collection_id,
-                        reason.as_str(),
-                        false,
-                        0,
-                        0,
-                        dur,
-                        0,
-                    );
+                    wal_flush_metrics::record_flush(&collection_id, &reason, false, 0, 0, dur, 0);
                     // TD-FLUSH-6: `{:#}` prints the full anyhow source chain, not
                     // just the outer "Failed to commit atomic flush operation"
                     // wrapper — the proximate object-store cause lives 1-2 .context
                     // layers down and was previously dropped.
                     tracing::warn!(
-                        "❌ ADR-069 auto-flush [{}] '{}' failed: {:#}",
-                        reason.as_str(),
+                        "❌ ADR-081 auto-flush [{}] '{}' failed: {:#}",
+                        reason,
                         collection_id,
                         e
                     );

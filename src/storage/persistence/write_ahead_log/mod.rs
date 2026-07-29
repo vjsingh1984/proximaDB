@@ -1140,23 +1140,12 @@ pub fn get_global_write_buffer_behavior()
         .cloned()
 }
 
-/// Per-collection in-flight flush guard for the inline size-trigger. A `Semaphore(1)`
-/// per collection: [`spawn_inline_flush`] try-acquires and skips if a flush is already
-/// running for that collection, so a burst of size-threshold-crossing writes collapses
-/// into a single in-flight materialization (avoiding duplicate segments). The periodic
-/// `AutoFlushDriver` is independently rate-limited by its tick; a concurrent driver
-/// flush of the same collection is harmless — `materialize_collection` no-ops via its
-/// `Ok(None)` empty-batches early-return once the inline flush has cleared them.
-static INLINE_FLUSH_GUARDS: std::sync::LazyLock<
-    dashmap::DashMap<String, std::sync::Arc<tokio::sync::Semaphore>>,
-> = std::sync::LazyLock::new(dashmap::DashMap::new);
-
 /// ADR-069 D2 inline size-trigger: fire-and-forget a `materialize_collection` for the
-/// collection. Per-collection guarded (see [`INLINE_FLUSH_GUARDS`]). Reuses the exact
-/// `AutoFlushDriver` recipe (same globals, same plan shape via
-/// `flush_plan_from_collection_meta`) — ONE materialization path; the inline trigger
-/// only adds *when* to fire (a size crossing on the live write path, vs. the driver's
-/// periodic tick).
+/// collection. ADR-081's canonical materializer gate collapses a burst for this
+/// collection. Reuses the exact `AutoFlushDriver` recipe (same globals, same plan
+/// shape via `flush_plan_from_collection_meta`) — ONE materialization path; the
+/// inline trigger only adds *when* to fire (a size crossing on the live write path,
+/// vs. the driver's periodic tick).
 /// TD-FLUSH-4: count of inline size-flush materializations currently in
 /// flight. Shutdown MUST await these — a large-memtable materialize takes
 /// tens of seconds (measured 43.9s for 884k entries) and killing it at
@@ -1204,26 +1193,11 @@ impl Drop for InlineFlushTicket {
 
 fn spawn_inline_flush(collection_id: String) {
     use crate::storage::flush_materializer::{
-        flush_plan_from_collection_meta, materialize_collection,
+        flush_plan_from_collection_meta, materialize_collection_if_idle,
     };
 
     tokio::spawn(async move {
         let _ticket = InlineFlushTicket::new();
-        // per-collection guard: skip if a flush is already in flight for this collection
-        let guard = INLINE_FLUSH_GUARDS
-            .entry(collection_id.clone())
-            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
-            .clone();
-        let _permit = match guard.try_acquire() {
-            Ok(p) => p,
-            Err(_) => {
-                tracing::trace!(
-                    "inline size-flush: already in flight for '{}', skipping",
-                    collection_id
-                );
-                return;
-            }
-        };
 
         let Some(write_buffer) = get_global_write_buffer_behavior() else {
             return;
@@ -1248,7 +1222,15 @@ fn spawn_inline_flush(collection_id: String) {
             "🚿 inline size-flush starting (segments appear on completion)"
         );
         let start = std::time::Instant::now();
-        match materialize_collection(&write_buffer, &plan, None, None, true, axis.as_deref()).await
+        match materialize_collection_if_idle(
+            &write_buffer,
+            &plan,
+            None,
+            None,
+            true,
+            axis.as_deref(),
+        )
+        .await
         {
             Ok(Some(outcome)) => tracing::info!(
                 "✅ inline size-flush '{}': {} entries, {} bytes in {:.3}s",

@@ -19,6 +19,11 @@
 //!   * `proximadb_wal_last_flush_timestamp_seconds{collection}`   — gauge, unixtime of last OK flush (age = `time()-metric`)
 //!   * `proximadb_wal_backpressure_active{collection}`            — gauge, 1 while a write is being throttled
 //!   * `proximadb_wal_backpressure_total{collection}`             — counter, backpressure engagements
+//!   * `proximadb_wal_flush_admission_total{collection,result}`    — counter, admission verdicts
+//!   * `proximadb_wal_flush_admitted_in_flight`                    — gauge, globally admitted jobs
+//!   * `proximadb_wal_flush_admission_wait_seconds`                — histogram, global permit wait
+//!   * `proximadb_wal_flush_claimed_batches{collection}`           — gauge, exact source batches owned
+//!   * `proximadb_wal_flush_claim_rollback_batches_total{collection}` — counter, batches returned
 //!   * `proximadb_wal_truncation_segments_reclaimed_total`        — counter, WAL segments reclaimed below the canonical marker (TD-WAL-1 S6)
 //!   * `proximadb_wal_replay_duration_seconds`                    — gauge, last boot's WAL replay wall-clock (TD-WAL-1 S6)
 //!
@@ -95,6 +100,31 @@ lazy_static! {
     static ref BACKPRESSURE_TOTAL: IntCounterVec = build_counter(
         "proximadb_wal_backpressure_total",
         "Count of write-backpressure engagements at the critical watermark, per collection (ADR-069 D3)",
+        &["collection"],
+    );
+    static ref FLUSH_ADMISSION_TOTAL: IntCounterVec = build_counter(
+        "proximadb_wal_flush_admission_total",
+        "Flush pre-materialization admission verdicts (ADR-081)",
+        &["collection", "result"],
+    );
+    static ref FLUSH_ADMITTED_IN_FLIGHT: IntGaugeVec = build_gauge(
+        "proximadb_wal_flush_admitted_in_flight",
+        "Globally admitted flush jobs currently holding a resource permit (ADR-081)",
+        &[],
+    );
+    static ref FLUSH_ADMISSION_WAIT: HistogramVec = build_histogram(
+        "proximadb_wal_flush_admission_wait_seconds",
+        "Time a collection-admitted flush waits for a global resource permit (ADR-081)",
+        &[],
+    );
+    static ref FLUSH_CLAIMED_BATCHES: IntGaugeVec = build_gauge(
+        "proximadb_wal_flush_claimed_batches",
+        "Exact WAL source batches currently claimed by a flush job (ADR-081)",
+        &["collection"],
+    );
+    static ref FLUSH_CLAIM_ROLLBACK_BATCHES: IntCounterVec = build_counter(
+        "proximadb_wal_flush_claim_rollback_batches_total",
+        "WAL source batches returned after flush error, cancellation, or keep-WAL completion (ADR-081)",
         &["collection"],
     );
     // TD-WAL-1 S6 residuals. Both are boot/compaction-wide aggregates (no
@@ -228,6 +258,45 @@ pub fn set_backpressure_active(collection: &str, active: bool) {
 /// Count a backpressure engagement (paired with `set_backpressure_active(.., true)`).
 pub fn inc_backpressure(collection: &str) {
     BACKPRESSURE_TOTAL.with_label_values(&[collection]).inc();
+}
+
+/// Record an engine admission verdict before source records are materialized.
+pub fn record_admission(collection: &str, admitted: bool) {
+    FLUSH_ADMISSION_TOTAL
+        .with_label_values(&[collection, if admitted { "admitted" } else { "rejected" }])
+        .inc();
+}
+
+pub fn inc_admitted_in_flight() {
+    FLUSH_ADMITTED_IN_FLIGHT
+        .with_label_values::<&str>(&[])
+        .inc();
+}
+
+pub fn dec_admitted_in_flight() {
+    FLUSH_ADMITTED_IN_FLIGHT
+        .with_label_values::<&str>(&[])
+        .dec();
+}
+
+pub fn record_admission_wait(seconds: f64) {
+    FLUSH_ADMISSION_WAIT
+        .with_label_values::<&str>(&[])
+        .observe(seconds.max(0.0));
+}
+
+pub fn set_claimed_batches(collection: &str, batches: i64) {
+    FLUSH_CLAIMED_BATCHES
+        .with_label_values(&[collection])
+        .set(batches.max(0));
+}
+
+pub fn record_claim_rollback(collection: &str, batches: u64) {
+    if batches > 0 {
+        FLUSH_CLAIM_ROLLBACK_BATCHES
+            .with_label_values(&[collection])
+            .inc_by(batches);
+    }
 }
 
 /// Count WAL segments reclaimed by canonical-marker truncation (TD-WAL-1 S6).

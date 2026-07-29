@@ -55,6 +55,10 @@ Read these in order for future-shaping architecture work:
 5. `VECTOR_OBJECT_ECONOMY_ROUTE_HLD_LLD_2026_05_27.adoc` +
    Active HLD/LLD for object-storage vector economics, SST/HELIX centroid block pruning, cache
    affinity, WAL freshness, EXPLAIN visibility, and cataloged vector access-method projections.
+   Companion implementation blueprint:
+   link:SIFT1M_ADMISSION_FIRST_GET_REDUCTION_BLUEPRINT_2026_07_29.adoc[SIFT1M admission-first flush,
+   compaction, clustering, and GET reduction] — establishes source ownership and quiescent evidence
+   before consolidating segments, coalescing reads, or applying rate-card economics.
 6. `TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc` +
    Active TD-064 blueprint for predicate-aware vector search correctness, ADR-011 route selection,
    tenant/RLS predicate pushdown, record-aware ANN predicates, and fallback/shortfall disclosure.

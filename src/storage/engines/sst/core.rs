@@ -374,6 +374,11 @@ pub struct SstEngine {
     freshness_lsn_source: Option<
         Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
     >,
+
+    /// ADR-081 regression hook: rejected preflights must not reach the
+    /// vector-proportional sort boundary.
+    #[cfg(test)]
+    pub(crate) flush_sort_invocations: std::sync::atomic::AtomicU64,
 }
 
 impl SstEngine {
@@ -615,6 +620,8 @@ impl SstEngine {
             survivor_cache,
             tiering_integration: None,
             freshness_lsn_source: None,
+            #[cfg(test)]
+            flush_sort_invocations: std::sync::atomic::AtomicU64::new(0),
         })
     }
 

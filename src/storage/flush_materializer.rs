@@ -20,9 +20,11 @@
 //! server reads the catalog; embedded uses its collection port) and, optionally, a
 //! fallback engine to reuse.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use dashmap::DashMap;
+use tokio::sync::{Mutex, OnceCell, Semaphore};
 
 use crate::index::AxisManager;
 use crate::proto::proximadb_v1::{
@@ -80,6 +82,7 @@ pub fn flush_plan_from_collection_meta(
 }
 
 /// What a single collection's materialization produced.
+#[derive(Debug)]
 pub struct CollectionFlushOutcome {
     /// Records submitted to the engine (post tombstone-filter) — the count used
     /// for collection stats / optimizer row estimates.
@@ -88,6 +91,191 @@ pub struct CollectionFlushOutcome {
     /// count used for flush summaries.
     pub entries_flushed: u64,
     pub bytes: u64,
+}
+
+/// Process-wide owner of flush engines, per-collection serialization, and
+/// bounded cross-collection admission (ADR-081).
+struct FlushExecutionCoordinator {
+    collection_gates: DashMap<String, Weak<Mutex<()>>>,
+    engines: DashMap<i32, Arc<OnceCell<Arc<dyn UnifiedStorageFormat>>>>,
+    permits: Arc<Semaphore>,
+}
+
+impl FlushExecutionCoordinator {
+    fn new(max_parallel_flushes: usize) -> Self {
+        Self {
+            collection_gates: DashMap::new(),
+            engines: DashMap::new(),
+            permits: Arc::new(Semaphore::new(max_parallel_flushes.max(1))),
+        }
+    }
+
+    fn collection_gate(&self, plan: &CollectionFlushPlan) -> Arc<Mutex<()>> {
+        let key = format!(
+            "{}:{}",
+            plan.tenant_id.as_deref().unwrap_or(""),
+            plan.canonical_id
+        );
+        if self.collection_gates.len() > 4_096 {
+            self.collection_gates
+                .retain(|_, gate| gate.strong_count() > 0);
+        }
+        match self.collection_gates.entry(key) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                if let Some(gate) = entry.get().upgrade() {
+                    gate
+                } else {
+                    let gate = Arc::new(Mutex::new(()));
+                    entry.insert(Arc::downgrade(&gate));
+                    gate
+                }
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                let gate = Arc::new(Mutex::new(()));
+                entry.insert(Arc::downgrade(&gate));
+                gate
+            }
+        }
+    }
+
+    async fn engine_for(
+        &self,
+        engine_type: ProtoStorageEngine,
+        fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
+    ) -> Result<Arc<dyn UnifiedStorageFormat>> {
+        let key = engine_type as i32;
+        let cell = self
+            .engines
+            .entry(key)
+            .or_insert_with(|| Arc::new(OnceCell::new()))
+            .clone();
+        let engine = cell
+            .get_or_try_init(|| async move {
+                if let Some(engine) = fallback_engine {
+                    return Ok(engine);
+                }
+                crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
+                    engine_type,
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to construct canonical {} flush engine",
+                        engine_type.as_str_name()
+                    )
+                })
+            })
+            .await?;
+        Ok(engine.clone())
+    }
+}
+
+static FLUSH_EXECUTION_COORDINATOR: OnceLock<FlushExecutionCoordinator> = OnceLock::new();
+
+pub(crate) fn default_parallel_flushes() -> usize {
+    crate::core::config::SstConfig::default()
+        .background_thread_count
+        .max(1) as usize
+}
+
+fn flush_execution_coordinator() -> &'static FlushExecutionCoordinator {
+    FLUSH_EXECUTION_COORDINATOR
+        .get_or_init(|| FlushExecutionCoordinator::new(default_parallel_flushes()))
+}
+
+/// Configure the process-wide flush concurrency before the first materializer
+/// runs. Production calls this from `StorageEngine::start` using the existing
+/// SST background worker setting; tests may rely on the bounded default.
+pub fn configure_flush_admission(max_parallel_flushes: usize) {
+    if FLUSH_EXECUTION_COORDINATOR
+        .set(FlushExecutionCoordinator::new(max_parallel_flushes))
+        .is_err()
+    {
+        tracing::debug!(
+            requested = max_parallel_flushes,
+            "flush admission coordinator already initialized; retaining its original limit"
+        );
+    }
+}
+
+/// Seed the canonical engine instance for a storage format.
+///
+/// The composition root uses this for SST so flush and compaction share the
+/// configured worker pool. Other formats are constructed lazily once by the
+/// coordinator until their composition roots provide an instance.
+pub async fn register_flush_engine(
+    engine_type: ProtoStorageEngine,
+    engine: Arc<dyn UnifiedStorageFormat>,
+) {
+    let coordinator = flush_execution_coordinator();
+    let cell = coordinator
+        .engines
+        .entry(engine_type as i32)
+        .or_insert_with(|| Arc::new(OnceCell::new()))
+        .clone();
+    let requested = engine.clone();
+    let resolved = cell.get_or_init(|| async move { engine }).await;
+    if !Arc::ptr_eq(resolved, &requested) {
+        tracing::warn!(
+            engine = engine_type.as_str_name(),
+            "flush engine was resolved before composition-root registration; retaining the existing canonical instance"
+        );
+    }
+}
+
+struct FlushAdmissionTicket;
+
+impl FlushAdmissionTicket {
+    fn new(wait: std::time::Duration) -> Self {
+        crate::metrics::wal_flush_metrics::record_admission_wait(wait.as_secs_f64());
+        crate::metrics::wal_flush_metrics::inc_admitted_in_flight();
+        Self
+    }
+}
+
+impl Drop for FlushAdmissionTicket {
+    fn drop(&mut self) {
+        crate::metrics::wal_flush_metrics::dec_admitted_in_flight();
+    }
+}
+
+/// Cancellation-safe metrics ownership for an exact source claim.
+///
+/// The WAL claim itself owns correctness. This companion keeps the observable
+/// gauge/counter consistent when a task is aborted at any await point.
+struct FlushClaimTicket {
+    collection_id: String,
+    batch_count: u64,
+    completed: bool,
+}
+
+impl FlushClaimTicket {
+    fn new(collection_id: &str, batch_count: usize) -> Self {
+        crate::metrics::wal_flush_metrics::set_claimed_batches(collection_id, batch_count as i64);
+        Self {
+            collection_id: collection_id.to_string(),
+            batch_count: batch_count as u64,
+            completed: false,
+        }
+    }
+
+    fn complete(&mut self) {
+        crate::metrics::wal_flush_metrics::set_claimed_batches(&self.collection_id, 0);
+        self.completed = true;
+    }
+}
+
+impl Drop for FlushClaimTicket {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        crate::metrics::wal_flush_metrics::record_claim_rollback(
+            &self.collection_id,
+            self.batch_count,
+        );
+        crate::metrics::wal_flush_metrics::set_claimed_batches(&self.collection_id, 0);
+    }
 }
 
 /// Materialize one collection's unflushed WAL batches to its configured storage
@@ -124,6 +312,83 @@ pub async fn materialize_collection(
     free_wal: bool,
     axis_index_manager: Option<&AxisManager>,
 ) -> Result<Option<CollectionFlushOutcome>> {
+    materialize_collection_with_coordinator_mode(
+        flush_execution_coordinator(),
+        write_buffer,
+        plan,
+        fence,
+        fallback_engine,
+        free_wal,
+        axis_index_manager,
+        CollectionAdmission::Wait,
+    )
+    .await
+}
+
+/// Inline-trigger variant that collapses a burst when this collection already
+/// has a materialization in progress. The same canonical coordinator owns the
+/// decision; no trigger-local semaphore or scheduling registry is involved.
+pub async fn materialize_collection_if_idle(
+    write_buffer: &Arc<WALBehaviorWrapper>,
+    plan: &CollectionFlushPlan,
+    fence: Option<&Arc<dyn StorageWriteFence>>,
+    fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
+    free_wal: bool,
+    axis_index_manager: Option<&AxisManager>,
+) -> Result<Option<CollectionFlushOutcome>> {
+    materialize_collection_with_coordinator_mode(
+        flush_execution_coordinator(),
+        write_buffer,
+        plan,
+        fence,
+        fallback_engine,
+        free_wal,
+        axis_index_manager,
+        CollectionAdmission::SkipIfBusy,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum CollectionAdmission {
+    Wait,
+    SkipIfBusy,
+}
+
+#[cfg(test)]
+async fn materialize_collection_with_coordinator(
+    coordinator: &FlushExecutionCoordinator,
+    write_buffer: &Arc<WALBehaviorWrapper>,
+    plan: &CollectionFlushPlan,
+    fence: Option<&Arc<dyn StorageWriteFence>>,
+    fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
+    free_wal: bool,
+    axis_index_manager: Option<&AxisManager>,
+) -> Result<Option<CollectionFlushOutcome>> {
+    materialize_collection_with_coordinator_mode(
+        coordinator,
+        write_buffer,
+        plan,
+        fence,
+        fallback_engine,
+        free_wal,
+        axis_index_manager,
+        CollectionAdmission::Wait,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn materialize_collection_with_coordinator_mode(
+    coordinator: &FlushExecutionCoordinator,
+    write_buffer: &Arc<WALBehaviorWrapper>,
+    plan: &CollectionFlushPlan,
+    fence: Option<&Arc<dyn StorageWriteFence>>,
+    fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
+    free_wal: bool,
+    axis_index_manager: Option<&AxisManager>,
+    collection_admission: CollectionAdmission,
+) -> Result<Option<CollectionFlushOutcome>> {
     // A6 storage-write fence — reject a displaced pod before touching storage.
     if write_fencing_enabled() {
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -151,27 +416,39 @@ pub async fn materialize_collection(
         }
     }
 
-    let batches = write_buffer.get_unflushed_batches(&plan.wal_key).await?;
-    if batches.is_empty() {
+    // ADR-081 D1: serialize only this collection. Contenders wait without
+    // consuming a global worker permit, so a hot collection cannot starve
+    // independent collections.
+    let collection_gate = coordinator.collection_gate(plan);
+    let _collection_guard = match collection_admission {
+        CollectionAdmission::Wait => collection_gate.lock_owned().await,
+        CollectionAdmission::SkipIfBusy => match collection_gate.try_lock_owned() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::trace!(
+                    collection_id = %plan.wal_key,
+                    "inline flush collapsed into the collection's admitted materialization"
+                );
+                return Ok(None);
+            }
+        },
+    };
+    if write_buffer.unflushed_batch_count(&plan.wal_key).await == 0 {
         return Ok(None);
     }
 
-    // Combine canonical records from all unflushed batches. Tombstones (no
-    // embeddings) are dropped: the SST writer's centroid/clustering pipeline
-    // cannot handle empty vectors, and the deleted ids are simply absent from the
-    // resulting segment (correct for this single-level flush — no older segment
-    // holds a stale copy).
-    let vector_records: Vec<proximadb_records::ProximaRecord> = batches
-        .iter()
-        .flat_map(|batch| batch.vector_records.iter().cloned())
-        .filter(|r| r.embeddings.first().is_some_and(|e| !e.values.is_empty()))
-        .collect();
-    let vector_count = vector_records.len() as u64;
+    let permit_wait = std::time::Instant::now();
+    let _permit = coordinator
+        .permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| anyhow::anyhow!("flush admission coordinator is closed"))?;
+    let _admission_ticket = FlushAdmissionTicket::new(permit_wait.elapsed());
 
-    // Resolve the collection's configured engine (proven factory path). An
-    // unrecognized engine id is a misconfiguration — fail loudly rather than
-    // silently substituting SST, which would write the collection's data in a
-    // different on-disk format than it was configured for.
+    // Resolve one canonical engine per configured storage format. An
+    // unrecognized engine id or construction failure is fail-closed; silently
+    // substituting SST would write bytes in the wrong format.
     let proto_engine = ProtoStorageEngine::try_from(plan.engine_type).map_err(|_| {
         anyhow::anyhow!(
             "flush: collection '{}' declares an unrecognized storage engine id {} — \
@@ -180,29 +457,9 @@ pub async fn materialize_collection(
             plan.engine_type
         )
     })?;
-    let engine =
-        match crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
-            proto_engine,
-        )
-        .await
-        {
-            Ok(engine) => engine,
-            Err(e) => {
-                tracing::warn!(
-                    "flush: failed to create {:?} engine for '{}': {}; falling back to SST",
-                    proto_engine,
-                    plan.wal_key,
-                    e
-                );
-                match fallback_engine {
-                    Some(engine) => engine,
-                    None => {
-                        crate::storage::engines::factory::StorageFormatFactory::create_sst_async()
-                            .await?
-                    }
-                }
-            }
-        };
+    let engine = coordinator
+        .engine_for(proto_engine, fallback_engine)
+        .await?;
 
     // Collection config carries engine + dimension + the on-disk layout path so the
     // flush writes into the same directory recovery reads from.
@@ -222,18 +479,65 @@ pub async fn materialize_collection(
         ..Default::default()
     };
 
+    // ADR-081 D3: engine admission occurs before a source claim and before
+    // cloning any ProximaRecord. The preflight payload is metadata-only.
+    let preflight_params = FlushParameters {
+        collection_id: Some(plan.canonical_id.clone()),
+        force: true,
+        synchronous: true,
+        collection_config: Some(collection_config.clone()),
+        ..Default::default()
+    };
+    if let Err(error) = engine.preflight_flush(&preflight_params).await {
+        crate::metrics::wal_flush_metrics::record_admission(&plan.wal_key, false);
+        return Err(error);
+    }
+    crate::metrics::wal_flush_metrics::record_admission(&plan.wal_key, true);
+
+    // Exact source ownership is acquired only after engine admission. The
+    // claim's Drop releases every batch on error or future cancellation.
+    let Some(mut claim) = write_buffer.claim_unflushed_batches(&plan.wal_key).await? else {
+        return Ok(None);
+    };
+    let mut claim_ticket = FlushClaimTicket::new(&plan.wal_key, claim.batch_ids().len());
+
+    // Vector-proportional work starts here, inside the admitted job. Tombstones
+    // remain a WAL concern because the current segment writer requires a
+    // non-empty embedding.
+    let vector_records: Vec<proximadb_records::ProximaRecord> = claim
+        .batches()
+        .iter()
+        .flat_map(|batch| batch.vector_records.iter().cloned())
+        .filter(|record| {
+            record
+                .embeddings
+                .first()
+                .is_some_and(|embedding| !embedding.values.is_empty())
+        })
+        .collect();
+    let vector_count = vector_records.len() as u64;
     let flush_params = FlushParameters {
         collection_id: Some(plan.canonical_id.clone()),
         force: true,
         synchronous: true,
         vector_records,
-        batch_ids: batches.iter().map(|batch| batch.batch_id).collect(),
+        batch_ids: claim.batches().iter().map(|batch| batch.batch_id).collect(),
         collection_config: Some(collection_config),
         ..Default::default()
     };
 
     // The single trait `flush()` funnel (validation + post-processing + do_flush).
-    let result = engine.flush(flush_params).await?;
+    let result = match engine.flush(flush_params).await {
+        Ok(result) => result,
+        Err(error) => return Err(error),
+    };
+    if !result.success {
+        anyhow::bail!(
+            "{} flush returned an unsuccessful publication result for '{}'; exact WAL claim retained for retry",
+            engine.engine_name(),
+            plan.wal_key
+        );
+    }
     let bytes = result.bytes_written.unwrap_or(0);
     let entries_flushed = result.entries_flushed.unwrap_or(0);
 
@@ -260,48 +564,19 @@ pub async fn materialize_collection(
         );
     }
 
-    // WAL cleanup after a successful flush: clear the memtable batches and delete
-    // the now-redundant WAL files (avoids 2× WAL+segment storage overhead). Gated
-    // by `free_wal`: the server keeps the WAL until the cold SST read path serves
-    // exact recall, so recovery's WAL replay remains the recall source post-restart.
+    // WAL cleanup after successful publication retires only the exact claim.
+    // Batches appended while the segment encoded remain unflushed.
     if free_wal {
-        if let Err(e) = write_buffer.clear_flushed(&plan.wal_key).await {
-            tracing::warn!(
-                "flush: failed to clear flushed batches for '{}': {}",
-                plan.wal_key,
-                e
-            );
+        let batch_id_strings = claim.batch_ids().to_vec();
+        if let Err(error) = write_buffer.complete_flush_claim(&mut claim).await {
+            return Err(error).with_context(|| {
+                format!(
+                    "flush segment published but exact WAL retirement failed for '{}'",
+                    plan.wal_key
+                )
+            });
         }
-        let batch_id_strings: Vec<String> = batches
-            .iter()
-            .map(|batch| batch.batch_id.to_base62())
-            .collect();
-        // ADR-069: ALSO retire the batches in the BATCH COORDINATOR — the store
-        // `get_unflushed_batches` / `list_collections_with_unflushed_data` read
-        // from. `clear_flushed` above only clears the inner memtable, so without
-        // this the just-flushed batches are re-served as "unflushed" forever —
-        // harmless on the terminal shutdown flush, but an infinite re-flush loop
-        // for any periodic caller (the auto-flush driver exposed this).
-        for batch_id in &batch_id_strings {
-            if let Err(e) = write_buffer
-                .mark_batch_flushed(&plan.wal_key, batch_id)
-                .await
-            {
-                tracing::warn!(
-                    "flush: failed to mark batch {} flushed for '{}': {}",
-                    batch_id,
-                    plan.wal_key,
-                    e
-                );
-            }
-        }
-        if let Err(e) = write_buffer.clear_flushed_batches(&plan.wal_key).await {
-            tracing::warn!(
-                "flush: failed to clear coordinator batches for '{}': {}",
-                plan.wal_key,
-                e
-            );
-        }
+        claim_ticket.complete();
         if !batch_id_strings.is_empty()
             && let Err(e) = crate::storage::persistence::write_ahead_log::manifest::mark_flushed_and_delete_files(
                 &batch_id_strings,
@@ -328,7 +603,16 @@ pub async fn materialize_collection(
     // leaving it resident caused unbounded memory growth (OOM) and masked cold-read
     // bugs (warm GETs served from the stale copy). Non-fatal: the segment is the
     // source of truth post-flush, so a reap failure is logged, not fatal.
-    if let Some(axis) = axis_index_manager
+    // Do not clear AXIS records belonging to batches that arrived while this
+    // flush encoded. Once the WAL delta reaches empty, the whole projection is
+    // safe to reap.
+    let collection_wal_empty = write_buffer
+        .get_unflushed_batches(&plan.wal_key)
+        .await
+        .map(|batches| batches.is_empty())
+        .unwrap_or(false);
+    if collection_wal_empty
+        && let Some(axis) = axis_index_manager
         && let Err(e) = axis.clear_collection_vectors(&plan.canonical_id).await
     {
         tracing::warn!(
@@ -343,4 +627,544 @@ pub async fn materialize_collection(
         entries_flushed,
         bytes,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::memtable::core::MemtableConfig;
+    use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+    use crate::storage::persistence::write_ahead_log::BatchId;
+    use crate::storage::traits::{
+        CompactionParameters, CompactionResult, FlushResult, StorageEngineStrategy,
+        StorageQueryContext,
+    };
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tokio::sync::{Barrier, Notify};
+
+    struct ActiveFlush<'a>(&'a AtomicUsize);
+
+    impl Drop for ActiveFlush<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    struct RecordingEngine {
+        preflight_allowed: AtomicBool,
+        fail_flush: AtomicBool,
+        successful_result: AtomicBool,
+        preflight_calls: AtomicUsize,
+        flush_calls: AtomicUsize,
+        active_flushes: AtomicUsize,
+        max_active_flushes: AtomicUsize,
+        rendezvous: Option<Arc<Barrier>>,
+        wait_for_release: bool,
+        entered_flush: Notify,
+        release_flush: Notify,
+    }
+
+    impl RecordingEngine {
+        fn new() -> Self {
+            Self {
+                preflight_allowed: AtomicBool::new(true),
+                fail_flush: AtomicBool::new(false),
+                successful_result: AtomicBool::new(true),
+                preflight_calls: AtomicUsize::new(0),
+                flush_calls: AtomicUsize::new(0),
+                active_flushes: AtomicUsize::new(0),
+                max_active_flushes: AtomicUsize::new(0),
+                rendezvous: None,
+                wait_for_release: false,
+                entered_flush: Notify::new(),
+                release_flush: Notify::new(),
+            }
+        }
+
+        fn with_rendezvous(parties: usize) -> Self {
+            Self {
+                rendezvous: Some(Arc::new(Barrier::new(parties))),
+                ..Self::new()
+            }
+        }
+
+        fn blocking() -> Self {
+            Self {
+                wait_for_release: true,
+                ..Self::new()
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl UnifiedStorageFormat for RecordingEngine {
+        fn engine_name(&self) -> &'static str {
+            "recording"
+        }
+
+        fn engine_version(&self) -> &'static str {
+            "test"
+        }
+
+        fn strategy(&self) -> StorageEngineStrategy {
+            StorageEngineStrategy::Sst
+        }
+
+        async fn preflight_flush(&self, _params: &FlushParameters) -> Result<()> {
+            self.preflight_calls.fetch_add(1, Ordering::SeqCst);
+            if self.preflight_allowed.load(Ordering::SeqCst) {
+                Ok(())
+            } else {
+                anyhow::bail!("test admission rejection")
+            }
+        }
+
+        async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
+            self.flush_calls.fetch_add(1, Ordering::SeqCst);
+            let active = self.active_flushes.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active_flushes.fetch_max(active, Ordering::SeqCst);
+            let _active_guard = ActiveFlush(&self.active_flushes);
+
+            if let Some(rendezvous) = &self.rendezvous {
+                rendezvous.wait().await;
+            }
+            if self.wait_for_release {
+                self.entered_flush.notify_one();
+                self.release_flush.notified().await;
+            }
+            if self.fail_flush.load(Ordering::SeqCst) {
+                anyhow::bail!("test flush failure")
+            }
+
+            Ok(FlushResult {
+                success: self.successful_result.load(Ordering::SeqCst),
+                entries_flushed: Some(params.vector_records.len() as u64),
+                bytes_written: Some(params.vector_records.len() as u64 * 32),
+                ..Default::default()
+            })
+        }
+
+        async fn do_compact(&self, _params: &CompactionParameters) -> Result<CompactionResult> {
+            Ok(CompactionResult::default())
+        }
+
+        async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+            Ok(HashMap::new())
+        }
+
+        async fn vector_by_id(
+            &self,
+            _collection_id: &str,
+            _base_path: &str,
+            _vector_id: &str,
+        ) -> Result<Option<proximadb_records::ProximaRecord>> {
+            Ok(None)
+        }
+
+        async fn search_vectors_unified(
+            &self,
+            _ctx: &StorageQueryContext,
+        ) -> Result<Vec<proximadb_search_types::results::OptimizedSearchRecord>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn plan(collection_id: &str) -> CollectionFlushPlan {
+        CollectionFlushPlan {
+            wal_key: collection_id.to_string(),
+            canonical_id: collection_id.to_string(),
+            base_location: "file:///tmp/adr081-tests".to_string(),
+            engine_type: ProtoStorageEngine::Sst as i32,
+            dimension: 2,
+            tenant_id: Some("test-tenant".to_string()),
+        }
+    }
+
+    fn record(oid: &str) -> proximadb_records::ProximaRecord {
+        proximadb_records::ProximaRecord {
+            oid: oid.to_string(),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 2,
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    async fn add_batch(write_buffer: &WALBehaviorWrapper, collection_id: &str, oid: &str) {
+        let records = vec![record(oid)];
+        write_buffer
+            .add_vector_batch(
+                collection_id,
+                WALVectorBatch {
+                    batch_id: BatchId::new(),
+                    total_size_bytes: WALVectorBatch::estimate_records_size(&records),
+                    vector_records: Arc::new(records),
+                    timestamp: std::time::SystemTime::now(),
+                    is_flushed: false,
+                    metadata_bloom_filter: None,
+                },
+            )
+            .await
+            .expect("test batch must enter the WAL");
+    }
+
+    #[tokio::test]
+    async fn adr081_rejection_happens_before_batch_claim_or_flush() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_batch(&write_buffer, "rejected", "v0").await;
+        let engine = Arc::new(RecordingEngine::new());
+        engine.preflight_allowed.store(false, Ordering::SeqCst);
+
+        let error = materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan("rejected"),
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect_err("preflight must reject the job");
+
+        assert!(error.to_string().contains("admission rejection"));
+        assert_eq!(engine.preflight_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            write_buffer.claimed_flush_batch_count("rejected").unwrap(),
+            0
+        );
+        assert_eq!(
+            write_buffer
+                .get_unflushed_batches("rejected")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn adr081_zero_byte_source_batch_is_not_mistaken_for_empty() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        let records = vec![record("legacy-zero")];
+        write_buffer
+            .add_vector_batch(
+                "zero",
+                WALVectorBatch {
+                    batch_id: BatchId::new(),
+                    vector_records: Arc::new(records),
+                    timestamp: std::time::SystemTime::now(),
+                    total_size_bytes: 0,
+                    is_flushed: false,
+                    metadata_bloom_filter: None,
+                },
+            )
+            .await
+            .expect("legacy zero-byte batch must enter the WAL");
+        let engine = Arc::new(RecordingEngine::new());
+
+        let outcome = materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan("zero"),
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect("zero-byte source still contains a record");
+
+        assert!(outcome.is_some());
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn adr081_same_collection_contenders_publish_one_source_set_once() {
+        let coordinator = FlushExecutionCoordinator::new(2);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_batch(&write_buffer, "same", "v0").await;
+        let engine = Arc::new(RecordingEngine::new());
+        let plan = plan("same");
+
+        let (first, second) = tokio::join!(
+            materialize_collection_with_coordinator(
+                &coordinator,
+                &write_buffer,
+                &plan,
+                None,
+                Some(engine.clone()),
+                true,
+                None,
+            ),
+            materialize_collection_with_coordinator(
+                &coordinator,
+                &write_buffer,
+                &plan,
+                None,
+                Some(engine.clone()),
+                true,
+                None,
+            )
+        );
+
+        let published = [first.unwrap(), second.unwrap()]
+            .into_iter()
+            .filter(Option::is_some)
+            .count();
+        assert_eq!(published, 1);
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 1);
+        assert!(
+            write_buffer
+                .get_unflushed_batches("same")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn adr081_different_collections_flush_in_parallel_within_global_bound() {
+        let coordinator = FlushExecutionCoordinator::new(2);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_batch(&write_buffer, "left", "left-v0").await;
+        add_batch(&write_buffer, "right", "right-v0").await;
+        let engine = Arc::new(RecordingEngine::with_rendezvous(2));
+        let left = plan("left");
+        let right = plan("right");
+
+        let (left_result, right_result) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                tokio::join!(
+                    materialize_collection_with_coordinator(
+                        &coordinator,
+                        &write_buffer,
+                        &left,
+                        None,
+                        Some(engine.clone()),
+                        false,
+                        None,
+                    ),
+                    materialize_collection_with_coordinator(
+                        &coordinator,
+                        &write_buffer,
+                        &right,
+                        None,
+                        Some(engine.clone()),
+                        false,
+                        None,
+                    )
+                )
+            })
+            .await
+            .expect("independent collections must both reach the engine");
+        left_result.expect("left flush must succeed");
+        right_result.expect("right flush must succeed");
+
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(engine.max_active_flushes.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn adr081_failed_flush_releases_claim_for_retry() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_batch(&write_buffer, "retry", "v0").await;
+        let engine = Arc::new(RecordingEngine::new());
+        engine.fail_flush.store(true, Ordering::SeqCst);
+
+        materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan("retry"),
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect_err("first publication must fail");
+        assert_eq!(write_buffer.claimed_flush_batch_count("retry").unwrap(), 0);
+
+        engine.fail_flush.store(false, Ordering::SeqCst);
+        let retry = materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan("retry"),
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect("released source must be retryable");
+        assert!(retry.is_some());
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn adr081_unsuccessful_result_does_not_retire_source() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_batch(&write_buffer, "unsuccessful", "v0").await;
+        let engine = Arc::new(RecordingEngine::new());
+        engine.successful_result.store(false, Ordering::SeqCst);
+
+        materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan("unsuccessful"),
+            None,
+            Some(engine),
+            true,
+            None,
+        )
+        .await
+        .expect_err("an unsuccessful result is not a durable publication");
+
+        assert_eq!(
+            write_buffer
+                .claimed_flush_batch_count("unsuccessful")
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            write_buffer
+                .get_unflushed_batches("unsuccessful")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn adr081_cancellation_releases_claim_for_retry() {
+        let coordinator = Arc::new(FlushExecutionCoordinator::new(1));
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_batch(&write_buffer, "cancel", "v0").await;
+        let engine = Arc::new(RecordingEngine::blocking());
+        let task_coordinator = coordinator.clone();
+        let task_buffer = write_buffer.clone();
+        let task_engine = engine.clone();
+
+        let task = tokio::spawn(async move {
+            materialize_collection_with_coordinator(
+                &task_coordinator,
+                &task_buffer,
+                &plan("cancel"),
+                None,
+                Some(task_engine),
+                true,
+                None,
+            )
+            .await
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            engine.entered_flush.notified(),
+        )
+        .await
+        .expect("flush must enter the engine");
+        assert_eq!(write_buffer.claimed_flush_batch_count("cancel").unwrap(), 1);
+
+        task.abort();
+        let join_error = task.await.expect_err("aborted flush must be cancelled");
+        assert!(join_error.is_cancelled());
+        assert_eq!(write_buffer.claimed_flush_batch_count("cancel").unwrap(), 0);
+        assert_eq!(
+            write_buffer
+                .get_unflushed_batches("cancel")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn adr081_batch_appended_during_flush_remains_for_next_epoch() {
+        let coordinator = Arc::new(FlushExecutionCoordinator::new(1));
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_batch(&write_buffer, "append", "old").await;
+        let engine = Arc::new(RecordingEngine::blocking());
+        let task_coordinator = coordinator.clone();
+        let task_buffer = write_buffer.clone();
+        let task_engine = engine.clone();
+
+        let task = tokio::spawn(async move {
+            materialize_collection_with_coordinator(
+                &task_coordinator,
+                &task_buffer,
+                &plan("append"),
+                None,
+                Some(task_engine),
+                true,
+                None,
+            )
+            .await
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            engine.entered_flush.notified(),
+        )
+        .await
+        .expect("first source epoch must enter the engine");
+        add_batch(&write_buffer, "append", "new").await;
+        engine.release_flush.notify_one();
+        task.await
+            .expect("flush task must join")
+            .expect("flush must succeed");
+
+        let remaining = write_buffer
+            .get_unflushed_batches("append")
+            .await
+            .expect("new source epoch must remain readable");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].vector_records[0].oid, "new");
+    }
+
+    #[tokio::test]
+    async fn adr081_engine_instance_is_canonical_per_format() {
+        let coordinator = FlushExecutionCoordinator::new(2);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_batch(&write_buffer, "first", "v0").await;
+        add_batch(&write_buffer, "second", "v1").await;
+        let canonical = Arc::new(RecordingEngine::new());
+        let discarded = Arc::new(RecordingEngine::new());
+
+        materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan("first"),
+            None,
+            Some(canonical.clone()),
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan("second"),
+            None,
+            Some(discarded.clone()),
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(canonical.flush_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(discarded.flush_calls.load(Ordering::SeqCst), 0);
+    }
 }
