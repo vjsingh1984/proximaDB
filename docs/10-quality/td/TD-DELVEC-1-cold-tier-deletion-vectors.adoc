@@ -412,3 +412,86 @@ external store.
 the resolver is assembled in `finish_coalesced`/`finish_legacy` with the RaBitQ/SQ8 regions and
 lands in the one segment PUT. This dissolves the async-finalize sidecar complexity the WI-2c recon
 was wrestling with.
+
+== 10. Compaction model — resolver vs deletion vector (rev 6, 2026-07-28)
+
+A first-principles note on how deletion-vectors behave across compaction
+(L0→L1→…→L7). The key disentangle: the **resolver** and the **deletion vector
+(DV)** are two different artifacts in two different stores, because one is
+immutable and one is mutable. Conflating them (calling the resolver a "bitmap
+index") is the common confusion this section exists to prevent.
+
+=== 10.1 Two artifacts, two stores
+
+[cols="1,2,2"]
+|===
+| | Resolver (`opr` footer region) | Deletion Vector (DV)
+
+| Answers | "oid X is at which *position* in segment S?" | "is position P *deleted* in S, as of snapshot T?"
+| Mutability | Immutable — frozen at seal | Mutable — grows as deletes arrive
+| Store | the segment **footer** (atomic with the PUT) | the **CAS'd manifest**, keyed by segment id
+| Keyed by | oid → position | position → deleted-gen
+|===
+
+The DV *cannot* live in the immutable segment (nothing to append to / edit after
+the seal) — it must be external (the manifest). The resolver *can* ride in the
+footer (immutable). That single distinction drives the whole layout, and is the
+reason the resolver is a footer region (§9.4) while the DV is manifest-stored.
+
+=== 10.2 Compaction: drop the purged, carry the live
+
+Compaction consults each input segment's **DV** (looked up by segment id in the
+manifest — never "missed") and the **resolver** (read from the footer compaction
+opens anyway). Deleted rows are *dropped* when safe (purged — never retained
+across segments) and *carried* (kept + re-marked in the output's DV) when a live
+snapshot still needs them (the watermark, §7.2-5 / WI-7). The resolver is the
+translator that lets a position-keyed DV survive a re-cluster, which changes
+every position: `input-pos → oid` (input resolver) → `output-pos` (output
+resolver). This is the §7.2-4 "reduce to an OID set and re-apply" step.
+
+....
+ L0 inputs                              MANIFEST (DV per segment, by id)
+   S [footer: resolver_S] -------------+      DV(S) = {3, 7}   <-- found by "S"
+   T [footer: resolver_T] -------------|      DV(T) = {1}
+                                        |
+         +------------------------------v-----------------------+
+         | COMPACTION (k-way merge -> re-cluster)               |
+         | for each input X:                                    |
+         |   footer  -> resolver_X (oid <-> pos)                |
+         |   manifest -> DV(X) by X.id (the deleted positions)  |
+         |   stream blocks; for each row at pos P:              |
+         |     P in DV(X)?                                      |
+         |       gen behind watermark -> DROP the row (purged)  |
+         |       else -> KEEP + CARRY: pos -> resolver_X -> oid |
+         | write survivors re-clustered -> O                    |
+         |   O captures its OWN resolver_O (oid -> O positions) |
+         |   re-apply carried deletes: oid -> resolver_O ->     |
+         |     O-pos -> set bit in DV(O) @ the original gen     |
+         | COMMIT: re-read ALL inputs' DVs under ONE atomic     |
+         |   step (manifest-CAS), then delete inputs + clear DVs|
+         +-------------------------------------------------------+
+                                        |
+ L1: O [footer: resolver_O] ------------+   DV(O) = { carried deletes @ their gens }
+....
+
+=== 10.3 The real hazard — the lost-bit race (WI-6)
+
+The genuine correctness risk is **not** where the resolver lives — it is a
+delete setting a DV bit *after* compaction streamed the input but *before* it
+deletes the input → the bit vanishes with the input, never carried. This is
+closed by the **commit-time atomic re-read of all inputs' DVs** (the COMMIT box
+above) — the §7.2-4 manifest-CAS / per-segment lease interlock = **WI-6**. It is
+entirely a manifest/interlock concern; it is identical whether the resolver is in
+the footer or a sidecar. So the footer-region choice makes compaction neither
+harder nor easier — the hard part (the interlock) is downstream and
+resolver-location-independent.
+
+=== 10.4 Why a footer region, not a global index file
+
+A single global "bitmap index file" (the sidecar intuition) would be *worse*:
+one contention point for every delete and every compaction across all segments,
+and non-atomic with any one segment's PUT. The per-segment design — **footer
+resolver** (immutable, atomic) + **manifest DV** (mutable, CAS'd, keyed by
+segment id) — is the granular, scalable version of that intuition. The resolver
+is co-located with the rows compaction reads anyway (zero extra lookups); the DV
+is always found by the segment id being compacted.
