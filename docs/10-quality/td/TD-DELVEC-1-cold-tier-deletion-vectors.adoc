@@ -495,3 +495,54 @@ resolver** (immutable, atomic) + **manifest DV** (mutable, CAS'd, keyed by
 segment id) — is the granular, scalable version of that intuition. The resolver
 is co-located with the rows compaction reads anyway (zero extra lookups); the DV
 is always found by the segment id being compacted.
+
+== 11. Rev-7 — WI-3 implementation recon: hidden prerequisites + split (2026-07-29)
+
+A verification-first recon of WI-3 ("delete path → set DV bit") found it
+**infeasible as one PR** — three prerequisites are missing, one make-or-break.
+This section records the split + the decision so the implementation slices land
+cleanly. (DV API confirmed: `VersionedDeletionVector::mark_deleted(position,
+generation)` — `deletion_vector.rs:142`; hook point `legacy.rs:1110-1116`.)
+
+=== 11.1 Three missing prerequisites
+
+* **The delete LSN is discarded.** `gen` must be the delete's WAL/MVCC LSN, but
+  `insert_vectors_via_wal_with_mode` drops the WAL's returned `Vec<u64>` at the
+  `Ok(_)` arm (`write.rs:333`); the tombstone path keys on wall-clock `now_ns`
+  today. Surfacing it is a real ripple (`BatchOperationResult` has no `Default`
+  derive → ~11 construction sites, or a helper-return change → 4 callers).
+* **No oid→segment index exists (make-or-break).** A cold delete must find
+  *which* immutable segment holds the oid before it can resolve oid→position
+  (WI-2c footer resolver) and set the bit. But `SegmentRegistry` holds **no oid
+  membership** (aggregate stats only), `point_lookup` is a **full scan**
+  (`trait_impl.rs:221`), and the per-SSTable blooms are **read-side pruners**, not
+  a write-side reverse lookup. Rev-3–6 WI-3 glossed over this.
+* **DV storage is greenfield.** `SstManifest` is the legacy `.sst` tier (no DV
+  field); `SegmentRegistry` is in-memory (lost on restart). A CAS'd per-segment DV
+  manifest store is needed (reuse `TransactionCoordinator` + `write_atomic` from
+  `manifest.rs:88,195`).
+
+=== 11.2 The split (supersedes the rev-3 WI-3 row)
+
+* **WI-3a — plumbing (no behavior change).** `cold-deletion-vectors` feature gate
+  + flush-path resolver capture — **landed** (#1306). Remaining 3a: WAL-LSN
+  plumbing + the CAS'd DV manifest store.
+* **WI-3c — oid→segment resolution (the gate).** **Decision: bloom-prefixed
+  footer scan** — for each candidate segment, probe its bloom (oid maybe-present)
+  → on hit, read the footer resolver (`opr_off/opr_len`) →
+  `OidPositionResolver::position_of(oid)`. O(segments) bloom probes + O(hits)
+  footer reads per delete; uses existing blooms + the WI-2c resolver, **no new
+  index**. A greenfield oid→segment reverse index (O(1)) is deferred unless
+  measured delete latency at scale demands it.
+* **WI-3b — the delete wiring.** At `legacy.rs:1110`, under
+  `cold-deletion-vectors`: determine cold-residency (memtable miss), resolve
+  oid→segment→position (WI-3c), `VersionedDeletionVector::mark_deleted(position,
+  gen)` (gen = WI-3a LSN) in the DV manifest store (WI-3a). Multi-segment: set the
+  bit in every segment containing the oid. Blocked on 3a-remaining + 3c.
+
+=== 11.3 Sequence
+
+WI-3a-remaining (DV store + LSN plumbing) → WI-3c (bloom-scan resolution) →
+WI-3b (delete wiring) → WI-4 (merge-on-read) → WI-5/6/7. The WI-3a-remaining +
+WI-3c slices are decision-independent groundwork (additive primitives); WI-3b is
+where the behavior lands.
