@@ -321,7 +321,14 @@ impl SstEngine {
         // Both default-OFF via 0; env-overridable. Only armed when a compaction
         // manager exists (no point bounding L0 for a collection that can't
         // compact it).
-        if self.compaction_manager().is_some() {
+        //
+        // SKIP during WAL recovery (`recovery_materialization.is_some()`):
+        // recovery flushes MUST complete regardless of L0 count — the watermark
+        // would deadlock (the flush can't proceed AND the compaction workers
+        // can't drain L0 because the server isn't fully started). Discovered by
+        // the Phase 2 cache sweep (server restart with l0_count=10 →
+        // stop_trigger=10 → D2 blocks → WAL recovery fails → server can't boot).
+        if self.compaction_manager().is_some() && recovery_materialization.is_none() {
             let cfg = self.config();
             let stop_trigger = std::env::var("PROXIMADB_L0_STOP_TRIGGER")
                 .ok()
