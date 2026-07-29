@@ -42,6 +42,8 @@
 // These are declared in the parent module's mod.rs
 
 use anyhow::Result;
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::ReadContext;
 use proximadb_records::ProximaRecord;
 use proximadb_records::conversions::sql_value_to_proxima;
 // PR 3b follow-up: ingest-edge guard so non-Fp32 records can't sneak
@@ -2651,6 +2653,7 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let resolved = match tenant_context {
             Some(tc) if !tc.tenant_id.is_empty() => {
@@ -2667,8 +2670,16 @@ impl VectorOperationsService {
             }
             _ => collection_id.to_string(),
         };
-        self.unified_search_native(&resolved, query_vector, k, filter, config)
-            .await
+        self.unified_search_native(
+            &resolved,
+            query_vector,
+            k,
+            filter,
+            config,
+            #[cfg(feature = "abac-policy")]
+            read_context,
+        )
+        .await
     }
 
     /// Native variant: returns optimized native records for internal callers.
@@ -2680,6 +2691,7 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         use std::time::Instant;
         let total_start = Instant::now();
@@ -2876,7 +2888,18 @@ impl VectorOperationsService {
         config: Option<UnifiedSearchConfig>,
     ) -> Result<Vec<crate::core::service_types::DomainSearchResult>> {
         let natives = self
-            .unified_search_native(collection_id, query_vector, k, filter, config)
+            .unified_search_native(
+                collection_id,
+                query_vector,
+                k,
+                filter,
+                config,
+                #[cfg(feature = "abac-policy")]
+                &proximadb_abac::ReadContext::system(
+                    proximadb_abac::SystemReadReason::Statistics,
+                    "legacy::search [CLIENT-PLACEHOLDER]",
+                ),
+            )
             .await?;
         // Group into a single DomainSearchResult (consistent with previous behavior)
         let mut hits = Vec::with_capacity(natives.len());
@@ -5921,6 +5944,11 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
             filter,
             None,
             tenant_ctx.as_ref(),
+            #[cfg(feature = "abac-policy")]
+            &proximadb_abac::ReadContext::system(
+                proximadb_abac::SystemReadReason::Statistics,
+                "legacy::tests",
+            ),
         )
         .await
     }

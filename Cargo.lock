@@ -7249,6 +7249,7 @@ dependencies = [
  "num_cpus",
  "numpy",
  "proximadb",
+ "proximadb-abac",
  "proximadb-data-model",
  "proximadb-embedded-common",
  "proximadb-hardware",

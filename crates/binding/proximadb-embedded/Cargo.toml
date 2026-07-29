@@ -16,6 +16,11 @@ path = "src/lib.rs"
 [dependencies]
 # Depends on the root proximadb library (one-directional: embedded -> root, no cycle).
 proximadb = { path = "../../.." }
+# FA-b: optional, behind the `abac-policy` feature. Embedded mode is abac-OFF by
+# design (in-process; the host app owns authorization) — this dep exists only so
+# the abac verification can compile embedded's calls against root's threaded
+# `unified_search_native` signature. See the `abac-policy` feature below.
+proximadb-abac = { workspace = true, optional = true }
 proximadb-embedded-common = { path = "../../horizontal/proximadb-embedded-common" }
 anyhow.workspace = true
 serde.workspace = true
@@ -48,6 +53,12 @@ napi-derive = { version = "2.14", optional = true }
 
 [features]
 default = []
+# FA-b: mirrors root's `abac-policy`. OFF by default — embedded mode is
+# in-process and the host application owns authorization, so ABAC (a server-side
+# multi-tenant concern) does not apply. The feature exists so the abac
+# verification can build embedded against root's threaded signature; run it with
+# `--features abac-policy,proximadb-embedded/abac-policy`.
+abac-policy = ["proximadb/abac-policy", "dep:proximadb-abac"]
 # Python bindings (PyO3 + zero-copy numpy).
 python = ["dep:pyo3", "dep:numpy"]
 # Java bindings (JNI).

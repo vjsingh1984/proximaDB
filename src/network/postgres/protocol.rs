@@ -2225,6 +2225,11 @@ impl PostgresProtocol {
                     top_k,
                     metadata_filter, // TD-100: mem0 metadata-scoped WHERE pushdown
                     None,            // Default config
+                    #[cfg(feature = "abac-policy")]
+                    &proximadb_abac::ReadContext::system(
+                        proximadb_abac::SystemReadReason::Statistics,
+                        "pgwire [CLIENT-PLACEHOLDER]",
+                    ),
                 )
                 .await
             {

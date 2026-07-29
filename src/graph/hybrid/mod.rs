@@ -1402,6 +1402,11 @@ impl HybridQueryEngine {
                     max_results,
                     None, // No filter for hybrid queries
                     Some(search_config.clone()),
+                    #[cfg(feature = "abac-policy")]
+                    &proximadb_abac::ReadContext::system(
+                        proximadb_abac::SystemReadReason::Statistics,
+                        "graph::hybrid [CLIENT-PLACEHOLDER]",
+                    ),
                 )
                 .await
             {

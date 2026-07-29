@@ -519,6 +519,11 @@ impl FusionService {
         let query_vector = params.query_vector.clone();
         let limit = params.limit;
 
+        #[cfg(feature = "abac-policy")]
+        let read_ctx = proximadb_abac::ReadContext::system(
+            proximadb_abac::SystemReadReason::Statistics,
+            "fusion_service [CLIENT-PLACEHOLDER]",
+        );
         let mut hits = retry_vector_search(
             &collection,
             || {
@@ -529,6 +534,8 @@ impl FusionService {
                     None,
                     None,
                     tenant_ctx.as_ref(),
+                    #[cfg(feature = "abac-policy")]
+                    &read_ctx,
                 )
             },
             2,
