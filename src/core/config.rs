@@ -1253,6 +1253,19 @@ pub struct SstConfig {
     /// cache. 0 disables (resolver lazy-loaded on each delete — no in-memory
     /// cache). Env override: `PROXIMADB_OID_RESOLVER_CACHE_MB`.
     pub oid_resolver_cache_mb: u64,
+    /// Optional shared persistent cache root (normally instance-store NVMe).
+    /// `None` keeps the historical DRAM-only path. Env override:
+    /// `PROXIMADB_CACHE_NVME_PATH`.
+    #[serde(default)]
+    pub cache_nvme_path: Option<String>,
+    /// Shared persistent cache budget in GiB. Env override:
+    /// `PROXIMADB_CACHE_NVME_MAX_GB`.
+    #[serde(default = "default_cache_nvme_max_gb")]
+    pub cache_nvme_max_gb: u64,
+    /// Post-publication write-time cache population policy. Env override:
+    /// `PROXIMADB_CACHE_ON_WRITE`.
+    #[serde(default)]
+    pub cache_on_write: CacheOnWritePolicy,
     /// Maximum files per level
     pub max_files_per_level: u32,
     /// Size multiplier between levels
@@ -1460,6 +1473,38 @@ pub struct CoarseProbeConfig {
     pub nprobe_max: usize,
 }
 
+/// Cache population performed only after a segment is atomically published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheOnWritePolicy {
+    /// Preserve lazy read-through behavior.
+    None,
+    /// Seed control metadata and Region A.
+    #[default]
+    Invariant,
+    /// Seed invariant data plus the complete SQ8 Region B parent range.
+    All,
+}
+
+impl CacheOnWritePolicy {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "none" => Some(Self::None),
+            "invariant" => Some(Self::Invariant),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    pub fn includes_invariants(self) -> bool {
+        matches!(self, Self::Invariant | Self::All)
+    }
+
+    pub fn includes_survivors(self) -> bool {
+        matches!(self, Self::All)
+    }
+}
+
 fn default_nprobe_multiplier() -> f32 {
     1.0
 }
@@ -1546,6 +1591,10 @@ fn default_l0_stop_trigger() -> u32 {
     10
 }
 
+fn default_cache_nvme_max_gb() -> u64 {
+    100
+}
+
 fn default_background_thread_count() -> u32 {
     std::thread::available_parallelism()
         .map(|n| n.get() as u32 / 2)
@@ -1572,6 +1621,9 @@ impl Default for SstConfig {
             segment_invariants_cache_mb: 256,
             survivor_cache_mb: 1024,
             oid_resolver_cache_mb: 64,
+            cache_nvme_path: None,
+            cache_nvme_max_gb: default_cache_nvme_max_gb(),
+            cache_on_write: CacheOnWritePolicy::default(),
             max_files_per_level: 10,
             level_size_multiplier: 10.0,
             max_levels: 7,

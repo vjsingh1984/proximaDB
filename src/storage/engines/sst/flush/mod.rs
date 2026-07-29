@@ -459,6 +459,11 @@ impl SstEngine {
         // off (empty centroids) ⇒ no emission — S2 is default-OFF via the S1 flag.
         let mut write_outcome: Option<crate::storage::engines::sst::writer::SstableWriteOutcome> =
             None;
+        let cache_on_write = std::env::var("PROXIMADB_CACHE_ON_WRITE")
+            .ok()
+            .and_then(|value| crate::core::config::CacheOnWritePolicy::parse(&value))
+            .unwrap_or(self.config().cache_on_write);
+        let mut pax_cache_seed: Option<proximadb_storage_common::pax_block::PaxCacheSeed> = None;
 
         match block_format {
             BlockFormat::ArrowBlock => {
@@ -518,7 +523,9 @@ impl SstEngine {
                 // object-store) URL. Reads are mixed-format-safe via
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
-                use crate::storage::engines::sst::segment_format::write_pax_segment_full;
+                use crate::storage::engines::sst::segment_format::{
+                    write_pax_segment_full, write_pax_segment_full_with_cache_seed,
+                };
                 // Local write path from the staged write (uploaded on finalize
                 // when the staging URL is remote).
                 let staging_path = staged.local_path();
@@ -563,17 +570,34 @@ impl SstEngine {
                     .map(|cfg| cfg.tags.as_slice())
                     .unwrap_or(&[]);
                 let rerank_quant = resolve_pax_rerank_quant(rerank_tags);
-                let meta = write_pax_segment_full(
-                    std::path::Path::new(staging_path),
-                    &records,
-                    collection_id,
-                    embedding_count,
-                    quant,
-                    rerank_quant,
-                    f32_tier,
-                    target_block,
-                )
-                .context("Failed to write PAX vector segment")?;
+                let meta = if cache_on_write.includes_invariants() {
+                    let write = write_pax_segment_full_with_cache_seed(
+                        std::path::Path::new(staging_path),
+                        &records,
+                        collection_id,
+                        embedding_count,
+                        quant,
+                        rerank_quant,
+                        f32_tier,
+                        target_block,
+                        cache_on_write.includes_survivors(),
+                    )
+                    .context("Failed to write PAX vector segment")?;
+                    pax_cache_seed = write.cache_seed;
+                    write.meta
+                } else {
+                    write_pax_segment_full(
+                        std::path::Path::new(staging_path),
+                        &records,
+                        collection_id,
+                        embedding_count,
+                        quant,
+                        rerank_quant,
+                        f32_tier,
+                        target_block,
+                    )
+                    .context("Failed to write PAX vector segment")?
+                };
                 tracing::debug!(blocks = meta.block_count, "PAX segment write completed");
                 // TD-RDSTRAT-5 S2: when block clustering produced per-block centroids,
                 // build an outcome from the segment metadata so the directory emission
@@ -738,6 +762,16 @@ impl SstEngine {
         }
 
         let final_file_path = format!("{}/{}", atomic_op.final_url, filename);
+
+        if let Some(seed) = pax_cache_seed {
+            crate::storage::engines::sst::segment_format::install_pax_cache_seed(
+                &final_file_path,
+                seed,
+                self.segment_invariants_cache.as_deref(),
+                self.survivor_cache.as_deref(),
+            )
+            .await;
+        }
 
         if already_materialized {
             return Ok(FlushResult {

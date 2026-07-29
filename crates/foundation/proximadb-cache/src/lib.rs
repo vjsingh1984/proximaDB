@@ -22,6 +22,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -29,6 +30,10 @@ use std::time::Duration;
 use dashmap::DashMap;
 use moka::future::Cache;
 use moka::notification::RemovalCause;
+
+mod persistent_l2;
+
+pub use persistent_l2::{L2Class, PersistentByteStore};
 
 /// The category of a cached artifact. Drives key-namespacing and per-kind stats;
 /// extend as new consumers adopt the cache.
@@ -66,6 +71,102 @@ impl CacheKey {
             key: Arc::from(key.as_ref()),
         }
     }
+
+    fn persistent_key(&self, namespace: &str) -> String {
+        format!(
+            "{namespace}/{}:{}/{}:{}",
+            self.tenant.len(),
+            self.tenant,
+            self.kind.stable_id(),
+            self.key
+        )
+    }
+}
+
+impl CacheKind {
+    /// Stable discriminator used by persistent cache keys.
+    pub fn stable_id(self) -> u8 {
+        match self {
+            Self::Footer => 0,
+            Self::SegmentIndex => 1,
+            Self::QuantizedCodes => 2,
+            Self::QueryResult => 3,
+            Self::CatalogSchema => 4,
+            Self::Other => 5,
+        }
+    }
+}
+
+/// Async value seam behind [`TenantCache`]. L2 failures are fail-open cache
+/// misses; callers retain the authoritative loader for correctness.
+#[async_trait::async_trait]
+pub trait L2ValueStore<V>: Send + Sync + std::fmt::Debug {
+    async fn get(&self, key: &CacheKey) -> io::Result<Option<(V, u32)>>;
+    async fn put(&self, key: &CacheKey, weight: u32, value: V) -> io::Result<()>;
+    async fn remove(&self, key: &CacheKey) -> io::Result<bool>;
+    fn resident_bytes(&self) -> u64;
+}
+
+/// Persistent L2 adapter for the raw byte values used by PAX range caches.
+#[derive(Debug)]
+pub struct PersistentArcBytesL2 {
+    store: Arc<PersistentByteStore>,
+    namespace: Arc<str>,
+    class: L2Class,
+}
+
+impl PersistentArcBytesL2 {
+    pub fn new(
+        store: Arc<PersistentByteStore>,
+        namespace: impl AsRef<str>,
+        class: L2Class,
+    ) -> Self {
+        Self {
+            store,
+            namespace: Arc::from(namespace.as_ref()),
+            class,
+        }
+    }
+
+    pub fn backing_store(&self) -> Arc<PersistentByteStore> {
+        self.store.clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl L2ValueStore<Arc<[u8]>> for PersistentArcBytesL2 {
+    async fn get(&self, key: &CacheKey) -> io::Result<Option<(Arc<[u8]>, u32)>> {
+        Ok(self
+            .store
+            .get(&key.persistent_key(&self.namespace))
+            .await?
+            .map(|value| {
+                let weight = value.len().try_into().unwrap_or(u32::MAX);
+                (value, weight)
+            }))
+    }
+
+    async fn put(&self, key: &CacheKey, _weight: u32, value: Arc<[u8]>) -> io::Result<()> {
+        self.store
+            .put(key.persistent_key(&self.namespace), self.class, value)
+            .await
+    }
+
+    async fn remove(&self, key: &CacheKey) -> io::Result<bool> {
+        Ok(self.store.remove(&key.persistent_key(&self.namespace)))
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.store.resident_bytes_for(self.class)
+    }
+}
+
+/// Point-in-time persistent-tier counters for one [`TenantCache`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct L2CacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub resident_bytes: u64,
 }
 
 /// A cached value carrying its byte weight (so moka's weigher budgets by bytes,
@@ -447,6 +548,11 @@ pub struct TenantCache<V: Clone + Send + Sync + 'static> {
     kind_ceiling_bytes: Arc<HashMap<CacheKind, u64>>,
     /// Live per-kind admitted bytes (reconciled by the eviction listener).
     kind_bytes: Arc<DashMap<CacheKind, AtomicU64>>,
+    /// Optional persistent L2. Values are written through before L1
+    /// admission, so a later moka eviction is already represented on disk.
+    l2: Option<Arc<dyn L2ValueStore<V>>>,
+    l2_hits: Arc<AtomicU64>,
+    l2_misses: Arc<AtomicU64>,
 }
 
 impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
@@ -509,6 +615,9 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
                     .collect(),
             ),
             kind_bytes,
+            l2: None,
+            l2_hits: Arc::new(AtomicU64::new(0)),
+            l2_misses: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -517,6 +626,13 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
     /// [`TenantTier::limits`]. Overrides the static per-tenant map.
     pub fn with_limits_resolver(mut self, resolver: Arc<LimitsResolver>) -> Self {
         self.limits_resolver = Some(resolver);
+        self
+    }
+
+    /// Attach a persistent L2. With no backend the historical DRAM-only path
+    /// is unchanged.
+    pub fn with_l2_backend(mut self, backend: Arc<dyn L2ValueStore<V>>) -> Self {
+        self.l2 = Some(backend);
         self
     }
 
@@ -621,7 +737,21 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
             }
             None => {
                 u.misses.fetch_add(1, Ordering::Relaxed);
-                None
+                drop(u);
+                let Some(l2) = &self.l2 else {
+                    return None;
+                };
+                match l2.get(key).await {
+                    Ok(Some((value, weight))) => {
+                        self.l2_hits.fetch_add(1, Ordering::Relaxed);
+                        self.insert_l1(key.clone(), weight, value.clone()).await;
+                        Some(value)
+                    }
+                    Ok(None) | Err(_) => {
+                        self.l2_misses.fetch_add(1, Ordering::Relaxed);
+                        None
+                    }
+                }
             }
         }
     }
@@ -646,22 +776,10 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         // `get` already recorded the miss.
         let value = loader().await?;
 
-        if self.should_admit(&key.tenant, weight as u64)
-            && self.kind_admits(key.kind, weight as u64)
-        {
-            self.account_insert(&key.tenant, key.kind, weight);
-            if !self.try_pin_admitted(&key, weight, &value) {
-                self.inner
-                    .insert(
-                        key,
-                        CachedValue {
-                            weight,
-                            value: value.clone(),
-                        },
-                    )
-                    .await;
-            }
+        if let Some(l2) = &self.l2 {
+            let _ = l2.put(&key, weight, value.clone()).await;
         }
+        self.insert_l1(key, weight, value.clone()).await;
         Ok(value)
     }
 
@@ -694,6 +812,23 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
 
     /// Explicitly insert/replace a value, subject to the elastic admission policy.
     pub async fn insert(&self, key: CacheKey, weight: u32, value: V) {
+        if let Some(l2) = &self.l2 {
+            let _ = l2.put(&key, weight, value.clone()).await;
+        }
+        self.insert_l1(key, weight, value).await;
+    }
+
+    /// Admit directly into DRAM without writing the attached L2.
+    ///
+    /// This is intentionally narrow: callers use it when the same immutable
+    /// bytes are persisted under a different, range-aware parent key. Writing
+    /// through the ordinary exact-key adapter as well would duplicate the
+    /// complete region on disk.
+    pub async fn insert_memory_only(&self, key: CacheKey, weight: u32, value: V) {
+        self.insert_l1(key, weight, value).await;
+    }
+
+    async fn insert_l1(&self, key: CacheKey, weight: u32, value: V) {
         if !self.should_admit(&key.tenant, weight as u64)
             || !self.kind_admits(key.kind, weight as u64)
         {
@@ -732,6 +867,9 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         let mut removed = victims.len();
         for k in &victims {
             self.inner.invalidate(k).await;
+            if let Some(l2) = &self.l2 {
+                let _ = l2.remove(k).await;
+            }
         }
         if let Some(p) = &self.pinned {
             let pinned_victims: Vec<CacheKey> = p
@@ -743,6 +881,9 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
             for k in pinned_victims {
                 if let Some(w) = p.remove(&k) {
                     removed += 1;
+                    if let Some(l2) = &self.l2 {
+                        let _ = l2.remove(&k).await;
+                    }
                     self.global_bytes.fetch_sub(w as u64, Ordering::Relaxed);
                     if let Some(b) = self.kind_bytes.get(&k.kind) {
                         b.fetch_sub(w as u64, Ordering::Relaxed);
@@ -800,6 +941,15 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
             .map(|u| u.bytes.load(Ordering::Relaxed))
             .unwrap_or(0)
     }
+
+    /// Persistent-tier counters for metrics emission.
+    pub fn l2_stats(&self) -> L2CacheStats {
+        L2CacheStats {
+            hits: self.l2_hits.load(Ordering::Relaxed),
+            misses: self.l2_misses.load(Ordering::Relaxed),
+            resident_bytes: self.l2.as_ref().map_or(0, |l2| l2.resident_bytes()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -808,6 +958,28 @@ mod tests {
 
     fn key(tenant: &str, k: &str) -> CacheKey {
         CacheKey::new(tenant, CacheKind::Footer, k)
+    }
+
+    #[tokio::test]
+    async fn persistent_l2_survives_a_new_l1_instance() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let store = Arc::new(
+            PersistentByteStore::open(dir.path(), 1 << 20).expect("open persistent cache"),
+        );
+        let first = TenantCache::new(CacheBudget::new(1024, 1024)).with_l2_backend(Arc::new(
+            PersistentArcBytesL2::new(store.clone(), "survivor", L2Class::Survivor),
+        ));
+        let cache_key = CacheKey::new("tenant-a", CacheKind::QuantizedCodes, "segment:0:5");
+        first
+            .insert(cache_key.clone(), 5, Arc::from(&b"bytes"[..]))
+            .await;
+        drop(first);
+
+        let second = TenantCache::new(CacheBudget::new(1024, 1024)).with_l2_backend(Arc::new(
+            PersistentArcBytesL2::new(store, "survivor", L2Class::Survivor),
+        ));
+        assert_eq!(second.get(&cache_key).await.as_deref(), Some(&b"bytes"[..]));
+        assert_eq!(second.l2_stats().hits, 1);
     }
 
     /// TD-CACHE-3 S2: a churning tenant CANNOT evict another tenant's pinned

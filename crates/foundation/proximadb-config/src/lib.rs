@@ -821,7 +821,12 @@ pub struct CompactionConfig {
     /// L0 size threshold in MB for compaction.
     pub l0_size_threshold_mb: usize,
 
-    /// Multiplier for higher level thresholds.
+    /// Multiplier for higher-level file-count thresholds.
+    ///
+    /// Vector search pays a read-amplification cost for every query-visible
+    /// segment, so the default is deliberately `1.0`: every level consolidates
+    /// at the L0 threshold. A RocksDB-style `2.0` default optimizes write
+    /// amplification but lets L1/L2 segment counts grow geometrically.
     pub level_multiplier: f64,
 
     /// Maximum number of levels.
@@ -839,7 +844,7 @@ impl Default for CompactionConfig {
         Self {
             l0_file_threshold: 5,
             l0_size_threshold_mb: 256,
-            level_multiplier: 2.0,
+            level_multiplier: 1.0,
             max_levels: 7,
             strategy: "hybrid".to_string(),
             target_file_size_mb: 128,
@@ -1261,7 +1266,11 @@ mod tests {
 
         assert_eq!(config.l0_file_threshold, 5);
         assert_eq!(config.l0_size_threshold_mb, 256);
-        assert_eq!(config.level_multiplier, 2.0);
+        assert_eq!(
+            config.level_multiplier, 1.0,
+            "vector-search levels must consolidate at the L0 threshold; \
+             a RocksDB-style 2.0 multiplier strands query-visible segments"
+        );
         assert_eq!(config.max_levels, 7);
         assert_eq!(config.strategy, "hybrid");
         assert_eq!(config.target_file_size_mb, 128);

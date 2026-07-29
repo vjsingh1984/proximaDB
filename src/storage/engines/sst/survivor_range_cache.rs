@@ -43,7 +43,10 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use proximadb_cache::{CacheBudget, CacheKey, CacheKind, TenantCache};
+use proximadb_cache::{
+    CacheBudget, CacheKey, CacheKind, L2CacheStats, L2Class, PersistentArcBytesL2,
+    PersistentByteStore, TenantCache,
+};
 use proximadb_storage_filesystem_types::{FilesystemError, FsResult};
 
 /// The fair-sharing / isolation dimension for the survivor cache's
@@ -72,6 +75,9 @@ const FALLBACK_TENANT: &str = "survivor-cache";
 /// Backed by the multitenant, byte-budgeted, work-conserving [`TenantCache`].
 pub struct SurvivorRangeCache {
     inner: Arc<TenantCache<Arc<[u8]>>>,
+    l2_store: Option<Arc<PersistentByteStore>>,
+    parent_l2_hits: std::sync::atomic::AtomicU64,
+    parent_l2_misses: std::sync::atomic::AtomicU64,
     /// TD-CACHE-1 S2: per-tenant hot-key hit counters — the warm-set source
     /// for the shutdown manifest. Bounded (see `HOT_KEYS_CAP`); pruned by
     /// dropping the low-hit half when full. Keys are `(kind, path, off, len)`
@@ -121,6 +127,15 @@ impl SurvivorRangeCache {
         budget_bytes: u64,
         resolver: Option<Arc<proximadb_cache::LimitsResolver>>,
     ) -> Self {
+        Self::with_resolver_and_l2(budget_bytes, resolver, None)
+    }
+
+    /// Construct with the optional shared persistent byte store.
+    pub fn with_resolver_and_l2(
+        budget_bytes: u64,
+        resolver: Option<Arc<proximadb_cache::LimitsResolver>>,
+        l2_store: Option<Arc<PersistentByteStore>>,
+    ) -> Self {
         let pin_frac = std::env::var("PROXIMADB_SURVIVOR_PIN_RESERVE_FRAC")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
@@ -137,13 +152,183 @@ impl SurvivorRangeCache {
             .with_high_watermark(0.9)
             .with_pin_reserve(pin_frac)
             .with_kind_ceiling(CacheKind::Other, oid_ceiling);
-        let cache = match resolver {
+        let mut cache = match resolver {
             Some(r) => TenantCache::new(budget).with_limits_resolver(r),
             None => TenantCache::new(budget),
         };
+        if let Some(store) = &l2_store {
+            cache = cache.with_l2_backend(Arc::new(PersistentArcBytesL2::new(
+                store.clone(),
+                "survivor-exact",
+                L2Class::Survivor,
+            )));
+        }
         Self {
             inner: Arc::new(cache),
+            l2_store,
+            parent_l2_hits: std::sync::atomic::AtomicU64::new(0),
+            parent_l2_misses: std::sync::atomic::AtomicU64::new(0),
             hot_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    fn parent_key(path: &str, off: u64, len: u64) -> String {
+        format!("survivor-parent/{path}:{off}:{len}")
+    }
+
+    fn track_hot_key(&self, tenant: &str, kind: CacheKind, path: &str, off: u64, len: u64) {
+        if let Ok(mut hot) = self.hot_keys.lock() {
+            let per_tenant = hot.entry(tenant.to_string()).or_default();
+            if per_tenant.len() >= HOT_KEYS_CAP {
+                let mut counts: Vec<u64> = per_tenant.values().copied().collect();
+                counts.sort_unstable();
+                let median = counts[counts.len() / 2];
+                per_tenant.retain(|_, hits| *hits > median);
+            }
+            *per_tenant
+                .entry(WarmKey {
+                    k: match kind {
+                        CacheKind::QuantizedCodes => 0,
+                        _ => 1,
+                    },
+                    p: path.to_string(),
+                    o: off,
+                    l: len,
+                })
+                .or_insert(0) += 1;
+        }
+    }
+
+    /// Seed a complete immutable region after its segment is atomically
+    /// published. The fallback-tenant L1 entry is process-wide; the stable L2
+    /// parent key lets any request tenant read exact subranges after restart.
+    pub async fn seed_parent_region(&self, path: &str, off: u64, bytes: Arc<[u8]>) -> FsResult<()> {
+        let len = bytes.len() as u64;
+        let key = CacheKey::new(
+            FALLBACK_TENANT,
+            CacheKind::QuantizedCodes,
+            format!("{path}:{off}:{len}"),
+        );
+        let weight = bytes.len().try_into().unwrap_or(u32::MAX);
+        // Persist the complete region only under the range-aware parent key.
+        // The exact-key TenantCache adapter would otherwise duplicate the
+        // entire SQ8 region in the same L2.
+        self.inner
+            .insert_memory_only(key, weight, bytes.clone())
+            .await;
+        if let Some(store) = &self.l2_store {
+            store
+                .put(Self::parent_key(path, off, len), L2Class::Survivor, bytes)
+                .await
+                .map_err(FilesystemError::Io)?;
+        }
+        self.sync_prometheus();
+        Ok(())
+    }
+
+    /// Read through the exact-range cache, then a write-time parent-region
+    /// seed, and only then the authoritative loader.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_or_fetch_in_parent<F, Fut>(
+        &self,
+        kind: CacheKind,
+        path: &str,
+        off: u64,
+        len: u64,
+        parent_off: u64,
+        parent_len: u64,
+        loader: F,
+    ) -> FsResult<Arc<[u8]>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = FsResult<Vec<u8>>>,
+    {
+        let Some(relative_off) = off.checked_sub(parent_off) else {
+            return self.get_or_fetch(kind, path, off, len, loader).await;
+        };
+        if relative_off.saturating_add(len) > parent_len {
+            return self.get_or_fetch(kind, path, off, len, loader).await;
+        }
+        let tenant = crate::observability::io_trace::current_tenant();
+        let tenant_str = tenant.as_deref().unwrap_or(FALLBACK_TENANT);
+        self.track_hot_key(tenant_str, kind, path, off, len);
+        let exact_key = CacheKey::new(tenant_str, kind, format!("{path}:{off}:{len}"));
+        let weight = len.try_into().unwrap_or(u32::MAX);
+        let parent_key = CacheKey::new(
+            FALLBACK_TENANT,
+            CacheKind::QuantizedCodes,
+            format!("{path}:{parent_off}:{parent_len}"),
+        );
+        let Ok(start) = usize::try_from(relative_off) else {
+            return self.get_or_fetch(kind, path, off, len, loader).await;
+        };
+        let Ok(slice_len) = usize::try_from(len) else {
+            return self.get_or_fetch(kind, path, off, len, loader).await;
+        };
+        let result = self
+            .inner
+            .get_or_load(exact_key, weight, || async {
+                if let Some(parent) = self.inner.get(&parent_key).await {
+                    let end = start.saturating_add(slice_len);
+                    if let Some(slice) = parent.get(start..end) {
+                        return Ok::<Arc<[u8]>, FilesystemError>(Arc::from(slice));
+                    }
+                }
+                if let Some(store) = &self.l2_store {
+                    let persistent_key = Self::parent_key(path, parent_off, parent_len);
+                    match store.get(&persistent_key).await {
+                        Ok(Some(parent))
+                            if u64::try_from(parent.len()).ok() == Some(parent_len) =>
+                        {
+                            self.parent_l2_hits
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            // Validate the complete entry checksum once, then
+                            // promote the parent to DRAM. The remaining cells
+                            // in this query become memory slices instead of
+                            // repeated NVMe reads, and corrupt local bytes
+                            // fail through to object storage.
+                            self.inner
+                                .insert_memory_only(
+                                    parent_key.clone(),
+                                    parent.len().try_into().unwrap_or(u32::MAX),
+                                    parent.clone(),
+                                )
+                                .await;
+                            let end = start.saturating_add(slice_len);
+                            if let Some(slice) = parent.get(start..end) {
+                                return Ok(Arc::from(slice));
+                            }
+                        }
+                        Ok(Some(_)) => {
+                            store.remove(&persistent_key);
+                            self.parent_l2_misses
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        Ok(None) | Err(_) => {
+                            self.parent_l2_misses
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                }
+                Ok(Arc::from(loader().await?))
+            })
+            .await;
+        self.sync_prometheus();
+        result
+    }
+
+    pub fn l2_stats(&self) -> L2CacheStats {
+        let exact = self.inner.l2_stats();
+        L2CacheStats {
+            hits: exact.hits
+                + self
+                    .parent_l2_hits
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            misses: exact.misses
+                + self
+                    .parent_l2_misses
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            resident_bytes: exact.resident_bytes,
         }
     }
 
@@ -152,9 +337,29 @@ impl SurvivorRangeCache {
     /// deletes an input file; keys are `{path}:{off}:{len}`.
     pub async fn purge_path(&self, path: &str) -> usize {
         let prefix = format!("{path}:");
-        self.inner
+        let mut removed = self
+            .inner
             .purge_where(|k| k.key.starts_with(prefix.as_str()))
-            .await
+            .await;
+        if let Some(store) = &self.l2_store {
+            let parent_prefix = format!("survivor-parent/{path}:");
+            let quantized_marker = format!("/{}:{path}:", CacheKind::QuantizedCodes.stable_id());
+            let other_marker = format!("/{}:{path}:", CacheKind::Other.stable_id());
+            removed += store
+                .remove_where(|key| {
+                    key.starts_with(&parent_prefix)
+                        || (key.starts_with("survivor-exact/")
+                            && (key.contains(&quantized_marker) || key.contains(&other_marker)))
+                })
+                .await;
+        }
+        if let Ok(mut hot) = self.hot_keys.lock() {
+            for keys in hot.values_mut() {
+                keys.retain(|key, _| key.p != path);
+            }
+            hot.retain(|_, keys| !keys.is_empty());
+        }
+        removed
     }
 
     /// Look up the byte range `[off, off+len)` of `path`; on a miss run `loader`
@@ -188,26 +393,7 @@ impl SurvivorRangeCache {
         let tenant_str = tenant.as_deref().unwrap_or(FALLBACK_TENANT);
         // TD-CACHE-1 S2: count this range toward the tenant's warm set (the
         // shutdown manifest's source). Bounded map; low-hit half pruned at cap.
-        if let Ok(mut hot) = self.hot_keys.lock() {
-            let per_tenant = hot.entry(tenant_str.to_string()).or_default();
-            if per_tenant.len() >= HOT_KEYS_CAP {
-                let mut counts: Vec<u64> = per_tenant.values().copied().collect();
-                counts.sort_unstable();
-                let median = counts[counts.len() / 2];
-                per_tenant.retain(|_, hits| *hits > median);
-            }
-            *per_tenant
-                .entry(WarmKey {
-                    k: match kind {
-                        CacheKind::QuantizedCodes => 0,
-                        _ => 1,
-                    },
-                    p: path.to_string(),
-                    o: off,
-                    l: len,
-                })
-                .or_insert(0) += 1;
-        }
+        self.track_hot_key(tenant_str, kind, path, off, len);
         let key = CacheKey::new(tenant_str, kind, format!("{path}:{off}:{len}"));
         // Ranges are ≤ a few MiB; cap the weight at u32::MAX defensively.
         let weight: u32 = len.try_into().unwrap_or(u32::MAX);
@@ -281,6 +467,7 @@ impl SurvivorRangeCache {
         crate::metrics::operational_metrics::SURVIVOR_CACHE_HITS.set(hits);
         crate::metrics::operational_metrics::SURVIVOR_CACHE_MISSES.set(misses);
         crate::metrics::operational_metrics::SURVIVOR_CACHE_BYTES.set(bytes);
+        crate::metrics::operational_metrics::sync_nvme_stats("survivor", self.l2_stats());
         // TD-CACHE-3 S1: per-tenant series, bounded to the top tenants by
         // resident bytes (noisy-neighbor + hot-tier entitlement signal).
         stats.sort_by_key(|s| std::cmp::Reverse(s.bytes));
@@ -312,6 +499,102 @@ impl SurvivorRangeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn write_seed_serves_subrange_from_dram_and_persistent_restart() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let store =
+            Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("open persistent L2"));
+        let cache = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(store.clone()));
+        let parent: Arc<[u8]> = Arc::from((0u8..32).collect::<Vec<_>>());
+        cache
+            .seed_parent_region("seg.pax", 1_000, parent)
+            .await
+            .expect("seed parent");
+
+        let loads = Arc::new(AtomicUsize::new(0));
+        let loads_first = loads.clone();
+        let bytes = cache
+            .get_or_fetch_in_parent(
+                CacheKind::QuantizedCodes,
+                "seg.pax",
+                1_008,
+                4,
+                1_000,
+                32,
+                move || {
+                    let loads = loads_first.clone();
+                    async move {
+                        loads.fetch_add(1, Ordering::SeqCst);
+                        Ok(vec![99; 4])
+                    }
+                },
+            )
+            .await
+            .expect("DRAM parent slice");
+        assert_eq!(bytes.as_ref(), &[8, 9, 10, 11]);
+        assert_eq!(loads.load(Ordering::SeqCst), 0);
+        drop(cache);
+        drop(store);
+
+        let reopened =
+            Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("reopen persistent L2"));
+        let restarted = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(reopened));
+        let loads_restart = loads.clone();
+        let bytes = restarted
+            .get_or_fetch_in_parent(
+                CacheKind::QuantizedCodes,
+                "seg.pax",
+                1_016,
+                4,
+                1_000,
+                32,
+                move || {
+                    let loads = loads_restart.clone();
+                    async move {
+                        loads.fetch_add(1, Ordering::SeqCst);
+                        Ok(vec![99; 4])
+                    }
+                },
+            )
+            .await
+            .expect("persistent parent slice");
+        assert_eq!(bytes.as_ref(), &[16, 17, 18, 19]);
+        assert_eq!(loads.load(Ordering::SeqCst), 0);
+        assert_eq!(restarted.l2_stats().hits, 1);
+
+        assert!(
+            restarted.purge_path("seg.pax").await >= 1,
+            "path invalidation removes DRAM and persistent entries"
+        );
+        drop(restarted);
+
+        let reopened_after_purge =
+            Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("reopen after purge"));
+        let cold =
+            SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(reopened_after_purge));
+        let loads_after_purge = loads.clone();
+        let bytes = cold
+            .get_or_fetch_in_parent(
+                CacheKind::QuantizedCodes,
+                "seg.pax",
+                1_016,
+                4,
+                1_000,
+                32,
+                move || {
+                    let loads = loads_after_purge.clone();
+                    async move {
+                        loads.fetch_add(1, Ordering::SeqCst);
+                        Ok(vec![99; 4])
+                    }
+                },
+            )
+            .await
+            .expect("loader after invalidation");
+        assert_eq!(bytes.as_ref(), &[99; 4]);
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
+    }
 
     /// TD-CACHE-3 S2 e2e (survivor level): tenant A's tier floor is pinned —
     /// tenant B churning far past the pool cannot evict it. A's ranges are

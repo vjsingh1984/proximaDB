@@ -1169,7 +1169,7 @@ impl Compaction {
     async fn perform_unified_vectorrecord_compaction(
         &self,
         task: &SstCompactionTask,
-        _config: &SstConfig,
+        config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
         compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<EnhancedSstCompactionStats> {
@@ -1481,6 +1481,12 @@ impl Compaction {
         // are retired — compaction re-emits PAX (`write_pax_segment_compacted`) or
         // Arrow (`ArrowBlockWriter`), neither of which takes those.
 
+        let cache_on_write = std::env::var("PROXIMADB_CACHE_ON_WRITE")
+            .ok()
+            .and_then(|value| crate::core::config::CacheOnWritePolicy::parse(&value))
+            .unwrap_or(config.cache_on_write);
+        let mut pax_cache_seed: Option<proximadb_storage_common::pax_block::PaxCacheSeed> = None;
+
         let bytes_written = if let Some(ref coordinator) = atomic_coordinator {
             // Use atomic operations for compaction
             info!("🔒 LSM COMPACTION: Using atomic operations for compaction_info");
@@ -1598,21 +1604,42 @@ impl Compaction {
                         .max()
                         .unwrap_or(1)
                         .max(1);
-                    crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
-                        &staging_file_path,
-                        &records,
-                        &collection_id,
-                        embedding_count,
-                        proximadb_block_format::VectorQuant::RaBitQ,
-                        rerank_quant,
-                        f32_tier,
-                        None,
-                    )
-                    .map_err(|e| {
-                        crate::core::StorageError::SstEngine(format!(
-                            "PAX compaction write failed: {e}"
-                        ))
-                    })?;
+                    if cache_on_write.includes_invariants() {
+                        let write = crate::storage::engines::sst::segment_format::
+                            write_pax_segment_compacted_with_cache_seed(
+                                &staging_file_path,
+                                &records,
+                                &collection_id,
+                                embedding_count,
+                                proximadb_block_format::VectorQuant::RaBitQ,
+                                rerank_quant,
+                                f32_tier,
+                                None,
+                                cache_on_write.includes_survivors(),
+                            )
+                            .map_err(|e| {
+                                crate::core::StorageError::SstEngine(format!(
+                                    "PAX compaction write failed: {e}"
+                                ))
+                            })?;
+                        pax_cache_seed = write.cache_seed;
+                    } else {
+                        crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
+                            &staging_file_path,
+                            &records,
+                            &collection_id,
+                            embedding_count,
+                            proximadb_block_format::VectorQuant::RaBitQ,
+                            rerank_quant,
+                            f32_tier,
+                            None,
+                        )
+                        .map_err(|e| {
+                            crate::core::StorageError::SstEngine(format!(
+                                "PAX compaction write failed: {e}"
+                            ))
+                        })?;
+                    }
                     info!(
                         "✅ COMPACTION: Wrote {} records to PAX segment",
                         records.len()
@@ -1742,21 +1769,42 @@ impl Compaction {
                         .max()
                         .unwrap_or(1)
                         .max(1);
-                    crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
-                        &task.output_file,
-                        &records,
-                        &collection_id,
-                        embedding_count,
-                        proximadb_block_format::VectorQuant::RaBitQ,
-                        rerank_quant,
-                        f32_tier,
-                        None,
-                    )
-                    .map_err(|e| {
-                        crate::core::StorageError::SstEngine(format!(
-                            "PAX compaction write failed: {e}"
-                        ))
-                    })?;
+                    if cache_on_write.includes_invariants() {
+                        let write = crate::storage::engines::sst::segment_format::
+                            write_pax_segment_compacted_with_cache_seed(
+                                &task.output_file,
+                                &records,
+                                &collection_id,
+                                embedding_count,
+                                proximadb_block_format::VectorQuant::RaBitQ,
+                                rerank_quant,
+                                f32_tier,
+                                None,
+                                cache_on_write.includes_survivors(),
+                            )
+                            .map_err(|e| {
+                                crate::core::StorageError::SstEngine(format!(
+                                    "PAX compaction write failed: {e}"
+                                ))
+                            })?;
+                        pax_cache_seed = write.cache_seed;
+                    } else {
+                        crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
+                            &task.output_file,
+                            &records,
+                            &collection_id,
+                            embedding_count,
+                            proximadb_block_format::VectorQuant::RaBitQ,
+                            rerank_quant,
+                            f32_tier,
+                            None,
+                        )
+                        .map_err(|e| {
+                            crate::core::StorageError::SstEngine(format!(
+                                "PAX compaction write failed: {e}"
+                            ))
+                        })?;
+                    }
                     info!(
                         "✅ COMPACTION (non-atomic): Wrote {} records to PAX segment",
                         records.len()
@@ -1846,12 +1894,24 @@ impl Compaction {
             "Compaction completed - files will be discovered automatically by directory scanning"
         );
 
+        // D6: populate only after the output is published at its final path.
+        // A staged/failed write must never become visible through the warm tier.
+        let warm_caches = crate::storage::engines::sst::core::get_warm_tier_caches();
+        if let (Some(seed), Some((invariants, survivor))) = (pax_cache_seed, &warm_caches) {
+            crate::storage::engines::sst::segment_format::install_pax_cache_seed(
+                &task.output_file.to_string_lossy(),
+                seed,
+                Some(invariants),
+                Some(survivor),
+            )
+            .await;
+        }
+
         // Remove input files after successful compaction using plugin filesystem
         // TD-CACHE-2 S2d: evict the warm-tier cache entries for each deleted
         // input file — correctness is structural (UUID-unique outputs, old
         // paths never queried again), but without eviction the dead entries
         // squat in the invariants/survivor budgets until recency ages them out.
-        let warm_caches = crate::storage::engines::sst::core::get_warm_tier_caches();
         for input_file in &task.input_files {
             let input_path = input_file.to_string_lossy();
             if let Err(e) = fs.delete(&input_path).await {

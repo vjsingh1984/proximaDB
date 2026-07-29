@@ -1,120 +1,192 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= TD-SEARCH-3: Per-operation read coalescing — Azure charges per GET, not per byte
-:status: Open
+= TD-SEARCH-3: Per-operation PAX reads are fragmented and mis-metered
+:status: In Progress
 :dim: D1
 :pillar: PERF
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open.** Design identified 2026-07-29. Follow-up to TD-COMPACT-10 (the segment-count fix). Independent — can ship before or after.
-| Priority | **P2** — saves ~1-2 GETs/segment/query (modest but compounds with segment-count reduction). The architectural insight (per-operation billing) is P0 for all future GET-reduction work.
-| Component | `src/storage/engines/sst/segment_format.rs` (PaxSegmentScanner, `plan_probe_cell_ranges`); `crates/storage/proximadb-storage-filesystem-types/src/counting.rs` (CountingFileSystem).
-| Evidence | 2026-07-29 SIFT1M benchmark: 205 GETs/query at 9 segments = ~23 GETs/segment (including header/A0/footer as separate GETs). Azure Blob charges $0.0065/10K **operations** — a 72-byte GET costs the same as a 24MB GET.
+
+| Status
+| **In Progress.** The physical-operation counter and bounded prefix read are
+implemented. The SIFT1M cloud/restart evidence gate is still open; projected
+GET reductions are not recorded as measured results.
+
+| Priority
+| **P1.** Operation count is a direct Hot-tier Blob cost and latency multiplier.
+Byte amplification remains a separate latency, bandwidth, scanned-byte, and
+possible egress concern.
+
+| Component
+| `src/storage/engines/sst/segment_format.rs`;
+`crates/storage/proximadb-storage-filesystem-types/src/counting.rs`
+
+| Trigger
+| The SIFT1M investigation reported 205 GETs/query, but the benchmark and
+counter were not first-principles sound: `read_ranges()` counted one logical
+batch even when its default implementation issued one physical `read_range()`
+per element. The original TD also assumed physical adjacencies that do not
+exist in the v3 layout.
 |===
 
-== The architectural insight
+== Cost model: operations and bytes are different axes
 
-**Azure Blob Storage (and S3, GCS) charge per read OPERATION, not per byte.** A 72-byte
-ranged GET costs the same as a 24MB ranged GET: $0.00000065 (at $0.0065/10K ops).
+For the Azure Blob **flat Blob endpoint** used by active PAX segments, every
+HTTP ranged GET is a read transaction. Hot-tier pricing has no separate
+per-GB *data retrieval* fee, so a 72-byte and a 24-MiB range each contribute
+one read operation. The exact transaction rate is region, redundancy, and
+account dependent; `$0.005/10K` must not be described as a universal Azure
+price.
 
-This means **coalescing adjacent reads into fewer operations is the #1 GET-reduction
-lever** (after segment count). Two 72-byte reads = 2 operations = 2× the cost of one
-coalesced 144-byte read.
+That does **not** make bytes free:
 
-== Current state — 3 separate reads for header + A0 + Region A
+* larger ranges consume network/NIC and memory bandwidth and can increase
+  tail latency;
+* cross-region/public transfer can incur bandwidth/egress charges;
+* ProximaDB's own scanned-byte KRU term still meters bytes;
+* Cool/Cold/Archive tiers add data-retrieval charges;
+* hierarchical-namespace/Data Lake endpoints can have different transaction
+  categorization and must not be conflated with the flat Blob endpoint.
 
-The PAX segment layout is sequential:
+Therefore a merge is admissible only when the saved round trip is worth its
+bounded gap over-read. Optimizing GET count without a byte cap merely moves
+the cost.
 
-```
-[Header 72B] [A0 ~KB] [Region A RaBitQ ~24MB] [Region B SQ8 ~128MB] [Blocks D] [Footer ~KB]
-              ←── contiguous ──→
-```
+== Actual v3 layout and dependency chain
 
-The first query per segment reads:
-. Header (72B) — MUST read first to discover offsets. 1 GET.
-. A0 coarse directory (~KB) — discovered via header. 1 GET.
-. Region A probed cells (~3MB) — discovered via header + A0. 1-2 GETs (coalesced by
-  `plan_probe_cell_ranges`).
-. Footer (~KB). 1 GET.
+The persisted order is:
 
-= 4-5 GETs for the control plane + Region A. **The header → A0 → Region A transition
-is 3 separate GETs even though the regions are CONTIGUOUS.**
+[source,text]
+----
+[fixed header, 72 B]
+[A0 coarse model + cell directory, variable]
+[Region A: RaBitQ header + presence bitmap + cell-major codes]
+[Region B: SQ8 params/codes]
+[optional OID-position resolver]
+[Region D blocks: OIDs, metadata, optional f32 stripes]
+[footer index, variable][footer_len][magic]
+----
 
-== The optimization
+The fixed header is at byte zero and mirrors all region offsets, including
+`footer_off/footer_len`. This is deliberate: the reader can discover the
+footer with the first ranged GET and does **not** need an object-store `HEAD`
+plus tail seek.
 
-After the first query, the header + A0 + footer are cached in `SegmentInvariantsCache`.
-The offsets are known. The scanner can:
+The footer is variable because it contains the block table, schema/encoding
+map, and optional resolver metadata that are known only after blocks are
+written. Keeping it at the tail preserves streaming assembly and mixed-version
+readability. Moving it beside the header would require a second-pass rewrite
+or a bounded reserved hole and would not eliminate the need for the fixed
+header. Duplicating the entire footer in a prefix would also make format
+evolution and integrity reconciliation harder.
 
-. **Coalesce A0 + first Region A range**: if A0 and the first probed cell's RaBitQ
-  range are contiguous (which they are by the sequential layout), issue ONE ranged GET
-  covering both. Saves 1 GET per segment per query (after cache warm).
+The efficient policy is:
 
-. **Pre-read A0 into the coarse-probe planner**: the A0 directory (~KB) is tiny. On
-  a cold query (cache miss), read it together with the header in a single GET covering
-  [0, a0_off + a0_len]. The header is 72B; A0 is ~KB; together they're still <16KB —
-  one small GET instead of two.
+* keep the fixed routing header at byte zero;
+* keep the authoritative variable footer at the tail;
+* retain both in `SegmentInvariantsCache` and persistent L2;
+* populate them from writer-owned bytes only after atomic publication.
 
-. **Coalesce footer with the last Region B range**: if the footer is adjacent to the
-  last SQ8 survivor range, merge them into one GET. Saves 1 GET per segment.
+Thus header/footer placement is not the steady-state GET problem. A working
+warm tier makes their steady-state object GET count zero.
 
-== Savings model
+== Correct adjacency analysis
 
-|===
-| Scenario | Current GETs/segment | After coalescing | Savings
+The prior version made three incorrect assumptions.
 
-| Cold (first query, cache empty)
-| ~7-8 (header + A0 + A + B + D + footer)
-| ~5-6 (header+A0 coalesced, footer+B coalesced)
-| ~2 GETs/segment
+. **A0 is not always “a few KB.”** Its exact size is
+  `fixed + 4*dim + 4*ncomp*dim + 4*k*ncomp + 4*k + 72*k + checksum`.
+  It grows with dimension and cell count.
+. **A0 is not generally adjacent to the first selected cell.** Region A has
+  its own header and presence bitmap, and the nearest probed cell may occur
+  after codes for unselected cells. Joining them can require gap over-read.
+. **The footer is not adjacent to the last Region-B survivor range.** The
+  optional resolver and Region-D blocks lie between Region B and the footer.
+  A `B+footer` merge would read most of Region D and is rejected.
 
-| Warm (header/A0/footer cached)
-| ~3-6 (A + B + D)
-| ~3-5 (A0+A coalesced where applicable, but A0 is cached so this is marginal)
-| ~0-1 GETs/segment
+Adjacent *selected cell extents* can still be coalesced, and non-adjacent
+extents can be joined when both `max_gap_bytes` and `max_range_bytes` admit the
+over-read. Logical selected slices remain unchanged, so recall is invariant.
 
-| At 2 segments (post-TD-COMPACT-10 fix)
-| ~14-16 cold
-| ~10-12 cold
-| ~25% additional reduction
-|===
+== Implemented remediation
 
-Combined with the segment-count fix (TD-COMPACT-10: 205 → ~25 GETs/query), this
-coalescing optimization brings cold GETs/query to **~18-22** — further improving the
-retrieval margin from 67% to ~72-75%.
+=== S1: physical GET accounting
 
-== Implementation notes
+`CountingFileSystem::read_ranges(path, ranges)` now adds `ranges.len()` physical
+range operations because the trait's default implementation issues exactly
+that many `read_range()` calls. The recorder receives the physical count too.
+This fixes benchmark/metering under-counting; a future backend that implements
+a true one-request multi-range API must override both the I/O method and its
+physical-operation report.
 
-. Extend `plan_probe_cell_ranges()` in `segment_format.rs` to accept an optional
-  "prefix range" (the A0 directory extent) and coalesce it with the first cell range
-  if contiguous.
+The invariant is:
 
-. The cold-path header read can be extended to cover A0: `read_range(0,
-  a0_off + a0_len)` instead of `read_range(0, 72)`. The extra bytes (~KB) are
-  negligible vs the saved operation.
+[source,text]
+----
+physical ranged HTTP requests == counted range operations
+----
 
-. The CountingFileSystem (`PROXIMADB_COUNT_FS_IO=1`) already counts per
-  `read_range()` call, so the metering automatically reflects the reduced GET count.
+A Rust function call named `read_ranges` is not evidence of one cloud request.
 
-== Metering correctness
+=== S2: bounded prefix read
 
-The metering chain maps 1:1 to Azure billing:
+On a cold invariants miss, the reader now fetches a bounded prefix:
 
-```
-read_range() call → CountingFileSystem +1 GET → Prometheus counter → KRU billing
-```
+* default: 1 MiB;
+* `PROXIMADB_PAX_PREFIX_PREFETCH_BYTES=0`: kill switch;
+* explicit values are clamped to 8 MiB.
 
-Each `read_range()` = 1 GET = 1 Azure read operation. Coalescing two ranges into one
-`read_range()` call = 1 GET instead of 2. **The metering is per-operation, matching
-Azure's per-operation billing model exactly.**
+The same byte buffer supplies the fixed header and, when fully covered, A0,
+the RaBitQ control header, and early selected-cell ranges. No bytes are
+reinterpreted: every consumer takes its original exact logical slice.
 
-No metering gap. The optimization reduces BOTH the real cost AND the billed cost
-identically.
+This speculative prefix is intentionally bounded. If A0 or a selected cell
+does not fit, the reader performs the normal exact ranged read. The expected
+cold saving is workload/layout dependent and must be measured; it is not
+asserted as “one GET per segment” for every segment.
+
+=== S3: existing selected-range coalescer
+
+`plan_probe_cell_ranges()` remains the correct cell-data seam. It sorts extents
+in file order and merges only under `ObjectRangeCoalescePolicy` gap/range
+bounds. It never changes `nprobe`, selected rows, or ranking inputs.
+
+== Remaining inefficiencies
+
+* The filesystem trait's generic `read_ranges()` is bounded-concurrent but
+  still N physical GETs. Concurrency reduces latency waves, not billable
+  operations.
+* Concurrent identical misses can race through the cache and issue duplicate
+  object GETs. Singleflight by immutable `(path, offset, len)` is the next
+  operation-only reduction.
+* Exact range keys miss when one request asks for a subrange of a cached parent.
+  The write-time SQ8 seed now has an explicit parent-range lookup; the general
+  cache can later grow interval containment if evidence warrants it.
+* `nprobe` multiplies both Region-A and Region-B work. A recall-ratcheted
+  nprobe reduction is potentially larger than all control-read coalescing.
+* Segment count remains the outer multiplier. Coalescing does not substitute
+  for higher-level consolidation.
+
+== Verification gate
+
+Close this TD only with a benchmark that records, for the same fully
+materialized segment geometry:
+
+. physical GETs/query by PAX region/tier;
+. bytes/query;
+. cold and NVMe-warm p50/p95;
+. segment count and level distribution;
+. recall@10 (must not regress below the ratchet);
+. prefix disabled (`0`) versus 1 MiB versus a justified alternative.
+
+The benchmark must wait for flush/compaction quiescence and prove that all
+1M vectors are searchable from materialized segments before restarting.
 
 == Related
 
-link:TD-COMPACT-10-l2-segment-consolidation-gap.adoc[TD-COMPACT-10] (the segment-count fix),
+link:TD-COMPACT-10-l2-segment-consolidation-gap.adoc[TD-COMPACT-10],
 link:../12-design/adr/ADR-080-vector-search-compaction-tuning.adoc[ADR-080],
-link:../12-design/adr/ADR-065-*.adoc[ADR-065] (the PAX region layout + cache tiers),
-link:../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (GETs dominate the cost spine).
+link:../../12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065],
+link:../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052].

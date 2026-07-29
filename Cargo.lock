@@ -7004,10 +7004,14 @@ dependencies = [
 name = "proximadb-cache"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
+ "crc32fast",
  "dashmap",
  "moka",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
  "tokio",
 ]
 
