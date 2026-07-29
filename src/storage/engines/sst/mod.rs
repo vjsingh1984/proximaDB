@@ -253,6 +253,8 @@ pub mod collections;
 pub mod core;
 pub mod flush;
 pub mod manifest;
+#[cfg(feature = "cold-deletion-vectors")]
+pub mod oid_resolver_cache; // TD-DELVEC-1 WI-3c: per-segment OID→position resolver cache
 pub mod pca_manager; // PCA caching for Z-Order spatial encoding
 pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod search;
