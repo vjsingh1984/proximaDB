@@ -38,6 +38,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::{ReadContext, SystemReadReason};
 use proximadb_catalog::{
     CatalogColumn, CatalogStorageLayout, CatalogTableSchema, CatalogTableStatistics,
     relational::{
@@ -1326,6 +1328,11 @@ impl DmlService {
                         },
                         None,
                         tenant_context,
+                        #[cfg(feature = "abac-policy")]
+                        &ReadContext::system(
+                            SystemReadReason::Statistics,
+                            "dml [CLIENT-PLACEHOLDER]",
+                        ),
                     )
                     .await?;
                 (RelationalSelectAccessPath::TableScan, records, 0)
@@ -1437,6 +1444,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
 
@@ -1709,6 +1718,8 @@ impl DmlService {
                     include_props: true,
                 },
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
         match record {
@@ -1757,6 +1768,8 @@ impl DmlService {
                         include_props: true,
                     },
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
                 )
                 .await?;
             if let Some(rich) = record {
@@ -1820,6 +1833,8 @@ impl DmlService {
                         include_props: true,
                     },
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
                 )
                 .await?;
             if let Some(rich) = record {
@@ -1870,6 +1885,11 @@ impl DmlService {
                             include_props: true,
                         },
                         tenant_context,
+                        #[cfg(feature = "abac-policy")]
+                        &ReadContext::system(
+                            SystemReadReason::Statistics,
+                            "dml [CLIENT-PLACEHOLDER]",
+                        ),
                     )
                     .await?
                 else {
@@ -1914,6 +1934,11 @@ impl DmlService {
                                 include_props: true,
                             },
                             tenant_context,
+                            #[cfg(feature = "abac-policy")]
+                            &ReadContext::system(
+                                SystemReadReason::Statistics,
+                                "dml [CLIENT-PLACEHOLDER]",
+                            ),
                         )
                         .await?
                     else {
@@ -1946,6 +1971,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
         Ok((RelationalSelectAccessPath::TableScan, records))
@@ -2031,6 +2058,8 @@ impl DmlService {
                         include_props: true,
                     },
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
                 )
                 .await?;
             let primary_key = table_schema.primary_key.first().map(String::as_str);
@@ -2073,6 +2102,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
 
@@ -2106,6 +2137,8 @@ impl DmlService {
                     include_props,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
 
@@ -3082,6 +3115,11 @@ impl DmlService {
                                 include_props: false,
                             },
                             None,
+                            #[cfg(feature = "abac-policy")]
+                            &ReadContext::system(
+                                SystemReadReason::ForeignKeyResolution,
+                                "dml::fk_check",
+                            ),
                         )
                         .await?
                         .is_some()
@@ -3236,6 +3274,8 @@ impl DmlService {
                         include_props: true,
                     },
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
                 )
                 .await?
             else {
@@ -4715,6 +4755,11 @@ impl DmlService {
                     },
                     predicate,
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::ForeignKeyResolution,
+                        "dml::referencing_check",
+                    ),
                 )
                 .await?;
             if referencing.is_empty() {
@@ -4957,6 +5002,11 @@ impl DmlService {
                                 include_props: false,
                             },
                             tenant_context,
+                            #[cfg(feature = "abac-policy")]
+                            &ReadContext::system(
+                                SystemReadReason::ForeignKeyResolution,
+                                "dml::fk_check",
+                            ),
                         )
                         .await?
                         .is_some()
@@ -5010,6 +5060,11 @@ impl DmlService {
                             include_props: true,
                         },
                         tenant_context,
+                        #[cfg(feature = "abac-policy")]
+                        &ReadContext::system(
+                            SystemReadReason::Statistics,
+                            "dml [CLIENT-PLACEHOLDER]",
+                        ),
                     )
                     .await?
                 else {
@@ -5039,6 +5094,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
         Ok(records.into_iter().map(|record| record.oid).collect())

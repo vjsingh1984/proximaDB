@@ -158,6 +158,7 @@ impl TableRecordStore for MockTableRecordStore {
         _table_schema: &CatalogTableSchema,
         _request: TableRecordGetRequest,
         _tenant_context: Option<&StorageTenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
     ) -> Result<TableRecordGetResponse> {
         Ok(None)
     }

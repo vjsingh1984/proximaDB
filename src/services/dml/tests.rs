@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::{ReadContext, SystemReadReason};
 
 /// TD-OLAP-6: explicit `cluster_key` property wins; else the first
 /// DATE/TIMESTAMP column; NULL-keyed rows sort last.
@@ -264,6 +266,7 @@ impl TableRecordStore for ExplainOnlyRecordStore {
         _table_schema: &CatalogTableSchema,
         _request: TableRecordGetRequest,
         _tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
     ) -> Result<TableRecordGetResponse> {
         Ok(None)
     }
@@ -273,6 +276,7 @@ impl TableRecordStore for ExplainOnlyRecordStore {
         _table_schema: &CatalogTableSchema,
         _request: TableRecordScanRequest,
         _tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
     ) -> Result<TableRecordScanResponse> {
         Ok(Vec::new())
     }
@@ -4729,6 +4733,8 @@ async fn delete_enforces_referential_actions() {
                         include_props: true,
                     },
                     None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml::tests"),
                 )
                 .await
                 .expect("get_by_key")
@@ -4874,6 +4880,8 @@ async fn delete_enforces_composite_fk() {
                         include_props: true,
                     },
                     None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml::tests"),
                 )
                 .await
                 .expect("get_by_key")
@@ -4995,6 +5003,8 @@ async fn delete_enforces_cross_namespace_fk() {
                         include_props: true,
                     },
                     None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml::tests"),
                 )
                 .await
                 .expect("get_by_key")
@@ -5099,6 +5109,8 @@ async fn delete_cascade_recurses_and_rejects_cycles_and_depth() {
                         include_props: true,
                     },
                     None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml::tests"),
                 )
                 .await
                 .expect("get_by_key")
