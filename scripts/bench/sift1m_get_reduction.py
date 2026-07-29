@@ -680,13 +680,14 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=5690)
     parser.add_argument("--rows", type=int, default=1_000_000)
     parser.add_argument("--batch-size", type=int, default=2_000)
-    parser.add_argument("--queries", type=int, default=200)
+    parser.add_argument("--queries", type=int, default=1_000)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--settle-timeout-secs", type=int, default=1_200)
     parser.add_argument("--stable-secs", type=int, default=30)
-    parser.add_argument("--max-segments", type=int, default=2)
+    parser.add_argument("--max-segments", type=int, default=1)
     parser.add_argument("--post-write-max-gets", type=float, default=5.0)
     parser.add_argument("--local-warm-max-gets", type=float, default=10.0)
+    parser.add_argument("--object-cold-max-gets", type=float, default=20.0)
     parser.add_argument("--min-recall", type=float, default=0.98)
     parser.add_argument("--max-p50-ms", type=float, default=50.0)
     args = parser.parse_args()
@@ -780,6 +781,7 @@ def main() -> int:
         "thresholds": {
             "post_write_max_gets_per_query": args.post_write_max_gets,
             "local_disk_warm_max_gets_per_query": args.local_warm_max_gets,
+            "object_cold_max_gets_per_query": args.object_cold_max_gets,
             "min_recall_at_k": args.min_recall,
             "max_p50_ms": args.max_p50_ms,
             "max_segments": args.max_segments,
@@ -884,7 +886,7 @@ def main() -> int:
         failures.extend(gate_failures(
             "object_cold",
             object_cold,
-            None,
+            args.object_cold_max_gets,
             args.min_recall,
             args.max_p50_ms,
             require_local_hit=False,
