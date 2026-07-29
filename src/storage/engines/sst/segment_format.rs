@@ -1471,6 +1471,43 @@ impl SegmentInvariantsCache {
         }
     }
 
+    /// Remove every invariant entry below a retired collection directory.
+    ///
+    /// The trailing separator prevents collection `12` from matching `123`.
+    /// This is resource reclamation rather than row-level coherence: PAX
+    /// segments are immutable, but a deleted collection must not retain dead
+    /// DRAM/local-disk capacity until ordinary eviction.
+    pub async fn invalidate_prefix_all(&self, path_prefix: &str) -> usize {
+        let prefix = format!("{}/", path_prefix.trim_end_matches('/'));
+        let mut removed = 0;
+        for shard in &self.shards {
+            let Ok(mut entries) = shard.write() else {
+                continue;
+            };
+            let victims: Vec<String> = entries
+                .keys()
+                .filter(|path| path.starts_with(&prefix))
+                .cloned()
+                .collect();
+            for path in victims {
+                if let Some(entry) = entries.remove(&path) {
+                    self.sub_bytes(inv_bytes(&entry.inv));
+                    removed += 1;
+                }
+            }
+        }
+        if let Some(store) = &self.l2_store {
+            let control_prefix = format!("invariants/control/{prefix}");
+            let region_prefix = format!("invariants/region-a/{prefix}");
+            removed += store
+                .remove_where(|key| {
+                    key.starts_with(&control_prefix) || key.starts_with(&region_prefix)
+                })
+                .await;
+        }
+        removed
+    }
+
     fn invalidate_entry(&self, key: &str) {
         if let Ok(mut shard) = self.shard_for(key).write()
             && let Some(removed) = shard.remove(key)

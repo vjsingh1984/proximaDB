@@ -86,6 +86,16 @@ pub fn get_warm_tier_caches() -> Option<(
     GLOBAL_WARM_TIER_CACHES.get().cloned()
 }
 
+/// Reclaim all immutable PAX acceleration bytes below a successfully retired
+/// collection directory. No cache is a valid no-op (env-unset behavior).
+pub async fn purge_warm_tier_prefix(path_prefix: &str) -> usize {
+    let Some((invariants, survivor)) = get_warm_tier_caches() else {
+        return 0;
+    };
+    let invariant_entries = invariants.invalidate_prefix_all(path_prefix).await;
+    invariant_entries + survivor.purge_prefix(path_prefix).await
+}
+
 // Global PCA model cache for Z-Order spatial encoding
 // Uses lazy_static for thread-safe initialization
 lazy_static::lazy_static! {

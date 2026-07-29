@@ -280,10 +280,12 @@ collection_affinity = true
 # Populate immutable PAX bytes only after atomic publication:
 # "none" | "invariant" (default) | "all".
 # cache_on_write = "invariant"
-# L0 batches five write files; query-visible L1+ levels merge at three files,
-# leaving one or two steady segments. The multiplier defaults to 1.0 between
-# higher levels; values outside [1.0, 1.5] emit a warning. Omit this object to
-# use those defaults. A TOML override must currently specify the complete
+# L0 batches five write files; query-visible L1+ levels merge at three ready
+# files. A completed job re-evaluates the collection so cascaded work drains
+# without leaving three or more ready files at one level. The multiplier
+# defaults to 1.0 between higher levels; values outside [1.0, 1.5] emit a
+# warning. Total steady segment count is workload/level dependent and must be
+# verified after quiescence. A TOML override must currently specify the complete
 # CompactionConfig object (partial inline objects are rejected by serde).
 
 # TD-064 / tier-migration integration

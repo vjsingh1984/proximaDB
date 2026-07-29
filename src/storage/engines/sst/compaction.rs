@@ -2711,4 +2711,58 @@ mod compaction_cache_retirement_tests {
             "survivor persistent parent"
         );
     }
+
+    #[tokio::test]
+    async fn collection_prefix_retirement_preserves_similarly_named_sibling() {
+        let directory = tempfile::tempdir().expect("cache tempdir");
+        let store = Arc::new(
+            PersistentByteStore::open(directory.path(), 1 << 20).expect("persistent cache store"),
+        );
+        let invariants = SegmentInvariantsCache::with_l2(1 << 20, store.clone());
+        let survivor = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(store.clone()));
+        let retired_root = "file:///tenant-a/collection-12";
+        let retired_path = "file:///tenant-a/collection-12/L1.pax";
+        let sibling_path = "file:///tenant-a/collection-123/L1.pax";
+
+        for path in [retired_path, sibling_path] {
+            invariants
+                .put_with_l2(
+                    path.to_string(),
+                    Arc::new(SegmentInvariants {
+                        header_bytes: vec![1],
+                        region_bytes: Some(Arc::from(&b"region"[..])),
+                        footer_bytes: vec![2],
+                        a0_bytes: None,
+                        rabitq_header_bytes: None,
+                    }),
+                )
+                .await;
+            survivor
+                .seed_parent_region(path, 100, Arc::from(&b"sq8"[..]))
+                .await
+                .expect("seed survivor parent");
+        }
+
+        assert!(invariants.invalidate_prefix_all(retired_root).await > 0);
+        assert!(survivor.purge_prefix(retired_root).await > 0);
+        assert!(invariants.get(retired_path).is_none());
+        assert!(
+            invariants.get(sibling_path).is_some(),
+            "separator-aware prefix retirement must preserve collection-123"
+        );
+        assert!(
+            store
+                .get(&format!("survivor-parent/{retired_path}:100:3"))
+                .await
+                .expect("retired persistent lookup")
+                .is_none()
+        );
+        assert!(
+            store
+                .get(&format!("survivor-parent/{sibling_path}:100:3"))
+                .await
+                .expect("sibling persistent lookup")
+                .is_some()
+        );
+    }
 }

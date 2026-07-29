@@ -349,6 +349,31 @@ impl SurvivorRangeCache {
         removed
     }
 
+    /// Remove every range below a retired collection directory while
+    /// preserving sibling collections that merely share a textual prefix.
+    pub async fn purge_prefix(&self, path_prefix: &str) -> usize {
+        let prefix = format!("{}/", path_prefix.trim_end_matches('/'));
+        let mut removed = self
+            .inner
+            .purge_where(|key| key.key.starts_with(&prefix))
+            .await;
+        if let Some(store) = &self.l2_store {
+            removed += store
+                .remove_where(|key| {
+                    (key.starts_with("survivor-parent/") || key.starts_with("survivor-exact/"))
+                        && key.contains(&prefix)
+                })
+                .await;
+        }
+        if let Ok(mut hot) = self.hot_keys.lock() {
+            for keys in hot.values_mut() {
+                keys.retain(|key, _| !key.p.starts_with(&prefix));
+            }
+            hot.retain(|_, keys| !keys.is_empty());
+        }
+        removed
+    }
+
     /// Look up the byte range `[off, off+len)` of `path`; on a miss run `loader`
     /// and cache its result iff the tenant is under its byte ceiling. Returns
     /// the cached or freshly-loaded bytes.

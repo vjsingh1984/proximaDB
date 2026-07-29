@@ -38,6 +38,14 @@ So the migration is **convergence, not a rewrite** — finish the spokes that st
 
 **D5. ADR-019 closure at M4.** When the ratchet reads ≈ 0, delete `proto/proximadb/v1/`, the conversion seam (`proxima_record_to_vector`), and the v1 edge adapters in one final PR (the TD-121 gate).
 
+**D6. Adjacent implementation work moves toward v2/native, never deeper into
+v1.** A feature that encounters a v1 DTO or port must not add new identity or
+cache semantics to that DTO. It either uses the existing adapter temporarily or
+introduces a bounded native/v2 seam, and the no-regression ratchet must remain
+green. Catalog `object_id: u64` is the authoritative collection identity;
+string `Collection.id` fields are transitional views, not a second authority.
+This rule does not waive mixed-read support for durable v1 segment bytes.
+
 == Considered alternatives (rejected)
 
 * **Big-bang rewrite.** Re-implement storage/API on v2 from scratch, cutover on a flag-day. Rejected: violates the no-flag-day constraint; legacy on-disk v1 SST files demand mixed-read for years; ~2,940 references make a single coherent change un-reviewable; and the converged PAX/block-format write path would be discarded.

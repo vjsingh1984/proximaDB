@@ -106,6 +106,11 @@ successfully deleted input path is purged from:
 * survivor exact and parent entries in DRAM and persistent storage; and
 * warm-replay tracking.
 
+After a collection directory is successfully removed (or confirmed absent),
+the same immutable-byte caches are purged by separator-aware directory prefix.
+For example, retiring collection path `.../12` must not match sibling
+`.../123`. This is capacity reclamation, not row-level coherence.
+
 PAX segment paths are immutable and unique. An MVCC tombstone does not change
 the bytes of an existing segment, so it does not invalidate these byte caches;
 the canonical read merge and collection query-cache invalidation enforce
@@ -143,7 +148,8 @@ because optional resolver and Region-D blocks intervene.
   except the corrected default-on invariant metadata population and bounded
   prefix read.
 . Reopen, corrupt-entry fallback, cross-chunk selective read, tenant
-  namespacing, priority eviction, and post-compaction persistent purge tests.
+  namespacing, priority eviction, post-compaction persistent purge, and
+  separator-safe collection-prefix purge tests.
 . SIFT1M after quiescent materialization: recall@10 >= 0.98.
 . Persistent-local warm diverse queries: physical object GETs/query <= 10.
 . First query after an `all`-policy write: physical object GETs/query <= 5.
