@@ -276,6 +276,7 @@ impl TableRecordStore for ExplainOnlyRecordStore {
         _table_schema: &CatalogTableSchema,
         _request: TableRecordScanRequest,
         _tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
     ) -> Result<TableRecordScanResponse> {
         Ok(Vec::new())
     }

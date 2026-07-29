@@ -247,6 +247,11 @@ impl TableRecordSourceReader for TableRecordStoreSourceReader {
                     // TD-113 family: scope the SELECT-source scan to the tenant's
                     // record partition (was `None` → unscoped/cross-tenant read).
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::Statistics,
+                        "table_write_executor [CLIENT-PLACEHOLDER]",
+                    ),
                 )
                 .await?;
             cursor.buffered_records = Some(records);
@@ -1139,6 +1144,7 @@ mod tests {
             _table_schema: &CatalogTableSchema,
             _request: TableRecordScanRequest,
             _tenant_context: Option<&TenantContext>,
+            #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
         ) -> Result<Vec<ProximaRecord>> {
             Ok(self.records.clone())
         }
@@ -1718,6 +1724,7 @@ mod tests {
             _table_schema: &CatalogTableSchema,
             _request: TableRecordScanRequest,
             _tenant_context: Option<&TenantContext>,
+            #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
         ) -> Result<Vec<ProximaRecord>> {
             Ok(Vec::new())
         }

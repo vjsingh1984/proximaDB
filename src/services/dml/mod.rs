@@ -1328,6 +1328,11 @@ impl DmlService {
                         },
                         None,
                         tenant_context,
+                        #[cfg(feature = "abac-policy")]
+                        &ReadContext::system(
+                            SystemReadReason::Statistics,
+                            "dml [CLIENT-PLACEHOLDER]",
+                        ),
                     )
                     .await?;
                 (RelationalSelectAccessPath::TableScan, records, 0)
@@ -1439,6 +1444,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
 
@@ -1964,6 +1971,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
         Ok((RelationalSelectAccessPath::TableScan, records))
@@ -2093,6 +2102,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
 
@@ -4744,6 +4755,11 @@ impl DmlService {
                     },
                     predicate,
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::ForeignKeyResolution,
+                        "dml::referencing_check",
+                    ),
                 )
                 .await?;
             if referencing.is_empty() {
@@ -5078,6 +5094,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
         Ok(records.into_iter().map(|record| record.oid).collect())
