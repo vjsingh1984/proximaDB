@@ -101,7 +101,7 @@ impl Consumer {
             // Acquire the cross-process lease before doing any in-process
             // bookkeeping — a conflict here means we're not allowed to
             // touch this partition.
-            crate::leases::try_acquire(&fs, &root, topic, p, &holder_id, lease_duration).await?;
+            crate::leases::try_acquire(&fs, &root, topic, p, &self.inner.group_id, &holder_id, lease_duration).await?;
 
             self.inner
                 .in_flight
@@ -117,20 +117,20 @@ impl Consumer {
             let renew_root = root.clone();
             let renew_topic = topic.to_string();
             let renew_holder = holder_id.clone();
+            let renew_group = self.inner.group_id.clone();
             let interval = lease_duration / 2;
             let join = tokio::spawn(async move {
                 loop {
                     tokio::select! {
                         _ = &mut rx => {
-                            // Clean shutdown — best-effort delete the
-                            // lease.meta so a follow-on subscriber
-                            // (different replica, same process+next
-                            // QueueClient) doesn't wait for expiry.
-                            // Failure here is non-fatal: the lease
-                            // will expire on its own.
+                            // Clean shutdown — best-effort delete this group's
+                            // lease.meta so a follow-on subscriber in the same
+                            // group doesn't wait for expiry. Failure is
+                            // non-fatal: the lease expires on its own.
                             let lease_path = renew_root
                                 .join(&renew_topic)
                                 .join(p.to_string())
+                                .join(crate::offset_store::group_dir_name(&renew_group))
                                 .join("lease.meta");
                             let _ = renew_fs.delete(&lease_path).await;
                             break;
@@ -141,6 +141,7 @@ impl Consumer {
                                 &renew_root,
                                 &renew_topic,
                                 p,
+                                &renew_group,
                                 &renew_holder,
                                 lease_duration,
                             ).await {

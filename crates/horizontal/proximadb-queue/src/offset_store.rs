@@ -50,7 +50,7 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 /// directory (`/`, `..`, `:`, NUL, whitespace) to `_`. Two ids that sanitize
 /// the same collide on disk — acceptable since groups are app-controlled and
 /// the collision is deterministic, not a correctness/corruption hazard.
-fn group_dir_name(group: &str) -> String {
+pub(crate) fn group_dir_name(group: &str) -> String {
     let cleaned: String = group
         .chars()
         .map(|c| {

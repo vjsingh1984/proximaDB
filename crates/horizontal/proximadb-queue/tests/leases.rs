@@ -40,7 +40,7 @@ async fn first_subscriber_acquires_lease() {
     let consumer = client.consumer("g");
     consumer.subscribe("t", &[0]).await.expect("subscribe");
 
-    let lease_path = tmp.path().join("t").join("0").join("lease.meta");
+    let lease_path = tmp.path().join("t").join("0").join("g").join("lease.meta");
     assert!(
         lease_path.exists(),
         "lease.meta should be written on subscribe"
@@ -114,7 +114,7 @@ async fn expired_lease_is_reclaimable() {
     // Read A's holder_id from the freshly-written lease.meta. We
     // capture it BEFORE dropping A so we can later assert that B's
     // takeover replaced it with a different id.
-    let lease_path = tmp.path().join("t").join("0").join("lease.meta");
+    let lease_path = tmp.path().join("t").join("0").join("g").join("lease.meta");
     let a_body = std::fs::read_to_string(&lease_path).expect("read A's lease");
     let a_parsed: serde_json::Value = serde_json::from_str(&a_body).expect("parse A");
     let a_instance = a_parsed["holder_id"]
@@ -141,7 +141,7 @@ async fn expired_lease_is_reclaimable() {
         .expect("B should reclaim");
 
     // Verify the holder switched.
-    let lease_body = std::fs::read_to_string(tmp.path().join("t").join("0").join("lease.meta"))
+    let lease_body = std::fs::read_to_string(tmp.path().join("t").join("0").join("g").join("lease.meta"))
         .expect("read lease");
     let parsed: serde_json::Value = serde_json::from_str(&lease_body).expect("parse");
     let new_holder = parsed["holder_id"].as_str().expect("holder_id");
@@ -175,6 +175,43 @@ async fn lease_renewer_keeps_holder_alive() {
         .await
         .expect_err("renewer must have kept lease alive");
     assert!(matches!(err, QueueError::LeaseConflict { .. }));
+
+    client_a.shutdown().await.expect("shutdown A");
+    client_b.shutdown().await.expect("shutdown B");
+}
+
+/// ADR-079 §Semantics: leases are scoped per consumer GROUP. Two different
+/// groups can each hold the SAME partition concurrently (pub/sub fan-out) —
+/// only consumers in the SAME group compete (the cases above). RED for slice 3:
+/// today the lease is global per partition, so group B conflicts with group A.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_different_groups_each_hold_the_same_partition() {
+    let tmp = TempDir::new().expect("tempdir");
+    let client_a = QueueClient::open(cfg(tmp.path(), Duration::from_secs(30)))
+        .await
+        .expect("open A");
+    let consumer_a = client_a.consumer("alpha");
+    consumer_a.subscribe("t", &[0]).await.expect("group A subscribes");
+
+    // group B subscribes to the SAME partition — must NOT conflict (different group).
+    let client_b = QueueClient::open(cfg(tmp.path(), Duration::from_secs(30)))
+        .await
+        .expect("open B");
+    let consumer_b = client_b.consumer("beta");
+    consumer_b
+        .subscribe("t", &[0])
+        .await
+        .expect("group B subscribes with no conflict (per-group lease)");
+
+    // Two independent lease files exist — one per group.
+    assert!(
+        tmp.path().join("t").join("0").join("alpha").join("lease.meta").exists(),
+        "group alpha has its own lease",
+    );
+    assert!(
+        tmp.path().join("t").join("0").join("beta").join("lease.meta").exists(),
+        "group beta has its own lease",
+    );
 
     client_a.shutdown().await.expect("shutdown A");
     client_b.shutdown().await.expect("shutdown B");
