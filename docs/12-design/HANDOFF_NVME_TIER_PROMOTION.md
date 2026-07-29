@@ -202,3 +202,140 @@ python3 scripts/bench/cache_hot_vs_cold_1m.py
 # Record: GETs/query (expect ~5-10 — NVMe catches the overflow)
 # Scrape: proximadb_cache_nvme_hits_total > 0
 ```
+
+## D6 — Write-Time Cache Population (policy-driven)
+
+### The insight: the writer ALREADY has the data in DRAM
+
+During `write_pax_segment_compacted` (`segment_format.rs`), the writer has the
+RaBitQ codes (24MB) and SQ8 codes (128MB) **in memory** — it's encoding them
+INTO the segment file. Inserting them into the cache is an `Arc<[u8]>` clone +
+hash insert. **Zero extra I/O. Zero extra GETs. Nanoseconds of CPU.**
+
+```
+CURRENT write path:
+  vectors → encode RaBitQ → encode SQ8 → write .pax file → DROP data → done
+  First query: COLD MISS → GET from object store → populate cache (expensive)
+
+PROPOSED write path:
+  vectors → encode RaBitQ → encode SQ8 → write .pax file → INSERT into cache → done
+  First query: CACHE HIT → 0 GETs (free!)
+```
+
+### Policy
+
+```toml
+[storage.sst_config]
+# Write-time cache population policy
+# "none" = lazy read-through (current behavior, zero regression)
+# "invariant" = cache RaBitQ Region A + header/A0/footer on write (default)
+# "all" = cache RaBitQ + SQ8 on write
+cache_on_write = "invariant"
+```
+
+| Policy | Write-time cost | Cached on write | First-query GETs saved | Budget impact |
+|---|---|---|---|---|
+| `none` | 0 | nothing | 0 | none |
+| `invariant` | ~0 (Arc clone) | RaBitQ (24MB) + header/A0/footer | ~4/segment | 48MB at 2 segments — fits 256MB |
+| `all` | ~0 (Arc clone) | RaBitQ + SQ8 | ~7/segment | 304MB at 2 segments — fits 1280MB combined |
+
+**Recommended default: `invariant`** — near-zero cost, eliminates the 0% invariants
+cache hit rate observed in the benchmark (4 GETs/segment wasted on cold first query).
+
+### Why this is free (co-design first principles)
+
+The data being cached is ALREADY in DRAM during the write — the writer just
+encoded it. The insert is:
+1. `Arc::from(rabitq_bytes)` — one allocation (or zero if already Arc).
+2. `cache.insert(key, arc_value)` — one hash insert.
+
+No I/O. No GET. No extra encode. The bytes are dropped after the write anyway —
+this just keeps them alive via the cache's Arc reference.
+
+### Budget pressure handling
+
+The cache is byte-budgeted (256MB invariants + 1024MB survivor). When write-time
+insertion exceeds the budget, LRU eviction drops the OLDEST entries. This
+**naturally prioritizes fresh data** — the most recently written segments are the
+most likely to be queried next. No special logic needed.
+
+### What does NOT get warmed on restart
+
+Write-time caching only applies to **NEW writes** (post-boot). For previously-
+written segments:
+
+1. **Hot data** → warmed via TD-CACHE-1 manifest (`src/storage/engines/sst/warming.rs`).
+   The existing mechanism: shutdown emits top-K hot keys; boot replays them. This
+   is demand-driven (only recently-queried ranges) — NOT a full sweep.
+
+2. **Cold data** → lazy read-through on first query (current behavior).
+
+**Re-reading ALL data on restart would waste GETs** — the user's instinct is
+correct. The existing manifest mechanism is the right hybrid:
+- Write-time caching for fresh writes (free, in-DRAM during write).
+- Manifest warming for hot data (a few GETs for top-K ranges).
+- Lazy read-through for the cold tail (1 GET on first access).
+
+### Implementation (in write_pax_segment_compacted)
+
+In `src/storage/engines/sst/segment_format.rs`, after writing each region to the
+file, check the policy and insert into the cache:
+
+```rust
+// After writing RaBitQ (Region A) bytes to the file:
+if policy >= CacheOnWritePolicy::Invariant {
+    if let Some(inv_cache) = invariants_cache {
+        inv_cache.insert(
+            &segment_path,
+            CacheTier::InvariantIndex,
+            Arc::from(rabitq_bytes.as_slice()),
+        );
+    }
+}
+
+// After writing SQ8 (Region B) bytes:
+if policy >= CacheOnWritePolicy::All {
+    if let Some(surv_cache) = survivor_cache {
+        surv_cache.insert(
+            CacheKind::QuantizedCodes,
+            &segment_path,
+            sq8_off,
+            sq8_len,
+            Arc::from(sq8_bytes.as_slice()),
+        );
+    }
+}
+```
+
+The `rabitq_bytes` / `sq8_bytes` are already in scope — the writer just encoded
+them for the file write. No extra work.
+
+### Files to modify (additional to D1-D5)
+
+- `src/storage/engines/sst/segment_format.rs` — `write_pax_segment_compacted` +
+  `write_pax_segment_full`: insert into caches after writing each region.
+- `src/core/config.rs` — add `cache_on_write: CacheOnWritePolicy` to `SstConfig`.
+- `src/storage/engines/sst/core.rs` — pass the policy + cache handles through to
+  the writer.
+
+### Combined GET-reduction stack
+
+| Lever | When it fires | GETs saved | Cost |
+|---|---|---|---|
+| **Write-time caching** (D6) | On write/compaction | ~4-7 per segment (first query) | ~0 (Arc clone) |
+| **NVMe L2 spill** (D1-D2) | On DRAM eviction | All subsequent reads of evicted data | ~0 (free NVMe) |
+| **Manifest warming** (TD-CACHE-1, existing) | On restart | Top-K hot ranges | Few GETs |
+| **Lazy read-through** (existing) | First query on cold data | N/A (the fallback) | 1 GET per access |
+
+**Together:** the ONLY time a GET happens is for data that was NEVER written
+(cold new collections) or NEVER queried AND evicted from NVMe (rare with 100GB
+NVMe budget).
+
+### Expected combined impact
+
+| Scenario | Without D6 | With D6 (write-time + NVMe) |
+|---|---|---|
+| First query after write | 48.5 GETs (cold) | **~0 GETs** (write-time cached) |
+| Second query (DRAM warm) | ~0 GETs | ~0 GETs |
+| After DRAM eviction + restart | ~48.5 GETs (cold) | **~5-10 GETs** (NVMe L2 hit) |
+| After NVMe eviction (rare) | ~48.5 GETs (cold) | ~48.5 GETs (fallback to object store) |
