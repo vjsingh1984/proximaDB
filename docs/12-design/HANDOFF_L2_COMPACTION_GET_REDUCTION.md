@@ -18,7 +18,23 @@ Full design: `docs/12-design/adr/ADR-080-vector-search-compaction-tuning.adoc` +
 
 5. **The acceptance criteria** — ≤30 GETs/query at 1M cold. With level_multiplier=1.0 + flush_floor=128MB, will the 1M corpus settle to 1-2 segments?
 
-## Measured Numbers (2026-07-29, develop @ 79209453a)
+## VERIFIED Results (level_multiplier=1.0, 2026-07-29)
+
+| Metric | Before (9 segs) | After (2 segs) |
+|---|---|---|
+| Segments | 9 | **2** |
+| Cold GETs/query | 205 | **48.5** (4.2x) |
+| Cold p50 | 149.6ms | **44.8ms** (3.3x) |
+| Recall@10 | 0.978 | **0.9815** |
+| COGS/M ($0.005/10K Hot) | $103 | **$24.25** |
+| Margin @ $50/M | -106% | **+51.5%** |
+
+nprobe = sqrt(k_c) scales with segment size. 2 large segments (nprobe~14 each)
+vs 9 small (nprobe~6 each). Cell probes: 28 vs 54 = 2x, not 4.5x.
+
+Path to <=20: fix invariants cache (-4), warm survivor (-7), coalescing (-2).
+
+## Original Measured Numbers (2026-07-29, develop @ 79209453a)
 
 - Ingest: 1M in 29.5s (33,888 vec/s), flush 0.35-0.43s each (async compaction)
 - Recall@10: 0.978

@@ -66,6 +66,29 @@ The L0 early-return at line 264 also starves the higher-level loop during
 sustained ingest — L0 always has ≥5 files, so the loop never runs until ingest
 settles.
 
+== VERIFIED (2026-07-29, level_multiplier=1.0 + flush_floor=128MB)
+
+[cols="4,2,2,2"]
+|===
+| Metric | Before (mult=2.0) | After (mult=1.0) | Change
+
+| Segments | 9 | **2** | 4.5x fewer
+| Cold GETs/query | 205 | **48.5** | 4.2x fewer
+| Cold p50 | 149.6ms | **44.8ms** | 3.3x faster
+| Recall@10 | 0.978 | **0.9815** | improved
+| Retrieval COGS/M ($0.005/10K) | $103 | **$24.25** | 4.2x cheaper
+| Margin @ $50/M KRU | -106% | **+51.5%** | profitable
+|===
+
+nprobe scaling insight: nprobe=sqrt(k_c). 2 large segments (k_c~200,
+nprobe~14 each) vs 9 small segments (k_c~40, nprobe~6 each). Total cell
+probes: 28 vs 54 -- 2x reduction, not 4.5x. This explains why GETs dropped
+to 48.5, not the predicted ~25.
+
+Separate bug found: SegmentInvariantsCache 0% hit rate on this run (vs
+99.96% in Phase 2). Adds ~4 GETs/query. Root cause TBD.
+
+
 == Fix
 
 . **`level_multiplier: 1.0`** (was 2.0) — every level compacts at the same file

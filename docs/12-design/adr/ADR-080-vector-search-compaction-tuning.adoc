@@ -117,7 +117,7 @@ the recommendation (`1.0`) in the config template + the ENV_GATE_REGISTRY.
 The dominant at-rest + read cost term for a cloud DB is **I/O round-trips +
 egress**, not CPU (ADR-052). For vector search on Azure Blob:
 
-- Each GET costs $0.0065/10K operations.
+- Each GET costs $0.005/10K operations (verified Azure Hot tier).
 - Each segment adds ~7-8 GETs per cold query.
 - Write amplification (PUT cost) is negligible: $0.065/10K PUTs × 1 merge per
   ingest batch → ~$0.0065 per merge. Amortized over M queries → noise.
