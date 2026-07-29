@@ -481,6 +481,17 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def require_complete_insert(response: dict, expected_count: int) -> None:
+    inserted = response.get("inserted_count")
+    failed = response.get("failed_count")
+    if inserted != expected_count or failed != 0:
+        raise RuntimeError(
+            "batch insert was not fully admitted: "
+            f"expected={expected_count}, inserted_count={inserted!r}, "
+            f"failed_count={failed!r}, errors={response.get('errors')!r}"
+        )
+
+
 def write_config(path: Path, root: Path, port: int,
                  write_buffer_mb: int) -> None:
     data = root / "data"
@@ -633,7 +644,7 @@ class OwnedServer:
 
 
 def ingest(server: str, base_path: Path, expected_rows: int,
-           batch_size: int) -> tuple[str, float]:
+           batch_size: int) -> tuple[str, float, dict[int, int]]:
     _, dimension = count_fixed_records(base_path, 4)
     response = request_json(
         server + "/api/v2/collections",
@@ -659,20 +670,25 @@ def ingest(server: str, base_path: Path, expected_rows: int,
         ) from error
     started = time.perf_counter()
     inserted = 0
+    retry_status_counts: dict[int, int] = {}
     for batch in iter_fvec_batches(base_path, expected_rows, batch_size):
         for attempt in range(8):
             try:
-                request_json(
+                response = request_json(
                     f"{server}/api/v2/collections/"
                     f"{collection_id}/records/batch",
                     method="POST",
                     body={"records": batch},
                     timeout=300,
                 )
+                require_complete_insert(response, len(batch))
                 break
             except urllib.error.HTTPError as error:
                 if error.code not in (429, 503) or attempt == 7:
                     raise
+                retry_status_counts[error.code] = (
+                    retry_status_counts.get(error.code, 0) + 1
+                )
                 time.sleep(min(10, 0.25 * (2 ** attempt)))
         inserted += len(batch)
         if inserted % 100_000 == 0:
@@ -682,8 +698,12 @@ def ingest(server: str, base_path: Path, expected_rows: int,
                 f"({inserted / elapsed:,.0f} vectors/s)",
                 flush=True,
             )
+    if inserted != expected_rows:
+        raise RuntimeError(
+            f"ingest iterator admitted {inserted} rows, expected {expected_rows}"
+        )
     elapsed = time.perf_counter() - started
-    return collection_id, elapsed
+    return collection_id, elapsed, retry_status_counts
 
 
 def require_empty_directory(path: Path) -> None:
@@ -763,7 +783,7 @@ def main() -> int:
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--settle-timeout-secs", type=int, default=1_200)
     parser.add_argument("--stable-secs", type=int, default=30)
-    parser.add_argument("--max-segments", type=int, default=1)
+    parser.add_argument("--max-segments", type=int, default=2)
     parser.add_argument("--require-layout-version", type=int, default=3)
     parser.add_argument("--post-write-max-gets", type=float, default=5.0)
     parser.add_argument("--local-warm-max-gets", type=float, default=10.0)
@@ -928,13 +948,14 @@ def main() -> int:
             args.nprobe,
         )
         active.start()
-        collection_id, ingest_seconds = ingest(
+        collection_id, ingest_seconds, retry_status_counts = ingest(
             server_url, base_path, args.rows, args.batch_size
         )
         result["collection_id"] = collection_id
         result["ingest"] = {
             "seconds": ingest_seconds,
             "vectors_per_second": args.rows / ingest_seconds,
+            "retry_status_counts": retry_status_counts,
         }
         geometry = wait_for_materialization(
             root / "data" / "sst",
