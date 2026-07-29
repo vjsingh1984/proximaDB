@@ -10,7 +10,9 @@
 //! walker via [`admits_with_security`](super::filter_lattice::admits_with_security).
 
 #[cfg(feature = "abac-policy")]
-use crate::core::search::{FilterExpression, sql_value_filter::proxima_value_to_json};
+use crate::core::search::{
+    FilterExpression, OptimizedSearchRecord, sql_value_filter::proxima_value_to_json,
+};
 #[cfg(feature = "abac-policy")]
 use crate::security::rls::filter_lattice::admits_with_security;
 #[cfg(feature = "abac-policy")]
@@ -86,6 +88,7 @@ pub struct AbacEnforcer {
 }
 
 #[cfg(feature = "abac-policy")]
+#[allow(dead_code)]
 impl AbacEnforcer {
     /// Construct from the three substrate stores. In production these are the
     /// durable-backed impls; in tests, the in-memory ones.
@@ -162,6 +165,59 @@ impl AbacEnforcer {
             )),
         }
     }
+
+    /// Resolve `subject`'s authorization and **post-filter** vector search
+    /// results. The ANN search runs first (over its own metadata filter), then
+    /// this removes inadmissible results via the strict 3-valued walker.
+    ///
+    /// This is the **vector-path integration** (FA-c Phase 3, Option A): the
+    /// search kernel is untouched; the security filter is a post-processing step
+    /// on the results. Less efficient than a pre-filter (the search evaluates
+    /// more rows than returned) but correct — the permissive search filter and
+    /// the strict security filter are evaluated independently and ANDed, so the
+    /// fail-open the `combine_filters` merge caused is structurally avoided.
+    ///
+    /// Returns `Ok(filtered)` on success, `Err(reason)` if the subject is denied
+    /// entirely.
+    #[allow(dead_code)]
+    pub fn filter_search_results(
+        &self,
+        results: Vec<OptimizedSearchRecord>,
+        subject: &SubjectId,
+        tenant: u64,
+        target: Target,
+        bindings: &[PolicyBinding],
+    ) -> Result<Vec<OptimizedSearchRecord>, DenyReason> {
+        let security = self.security_expression_for(subject, tenant, target, bindings)?;
+        Ok(match security {
+            None => results,
+            Some(expr) => post_filter_search_results(results, &expr),
+        })
+    }
+}
+
+/// Post-filter vector search results by a compiled security `FilterExpression`.
+///
+/// Each result's `metadata` is resolved against the expression under the strict
+/// 3-valued walker. Inadmissible results are removed. This is the vector-path
+/// analogue of `abac_scan_predicate` (relational): both evaluate
+/// `admits_with_security` per record, but this operates on the *output* of the
+/// search rather than as a *predicate* during the scan.
+#[cfg(feature = "abac-policy")]
+#[allow(dead_code)]
+pub fn post_filter_search_results(
+    results: Vec<OptimizedSearchRecord>,
+    security: &FilterExpression,
+) -> Vec<OptimizedSearchRecord> {
+    results
+        .into_iter()
+        .filter(|record| {
+            let resolve = |field: &str| -> Option<serde_json::Value> {
+                record.metadata.get(field).map(proxima_value_to_json)
+            };
+            admits_with_security(None, Some(security), &resolve)
+        })
+        .collect()
 }
 
 #[cfg(all(test, feature = "abac-policy"))]
@@ -335,5 +391,65 @@ mod tests {
             &bindings,
         );
         assert!(result.is_err(), "unbound subject must be denied");
+    }
+
+    // --- Phase 3: vector-path post-filter ---
+
+    use proximadb_search_types::results::OptimizedSearchRecord;
+    use std::collections::HashMap;
+
+    fn search_result(id: &str, dept: &str) -> OptimizedSearchRecord {
+        let mut metadata = HashMap::new();
+        metadata.insert("dept".to_string(), ProximaValue::String(dept.to_string()));
+        OptimizedSearchRecord {
+            id: id.to_string(),
+            metadata,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn post_filter_removes_inadmissible_search_results() {
+        let mut store = InMemoryPredicateObjectStore::new();
+        store.register(
+            42,
+            FilterExpression::Comparison {
+                field: "dept".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: json!("eng"),
+            },
+        );
+
+        let results = vec![
+            search_result("r1", "eng"),
+            search_result("r2", "hr"),
+            search_result("r3", "eng"),
+            search_result("r4", "legal"),
+        ];
+
+        let security = compile_security_filter(&[42], &store).expect("compiled");
+        let filtered = post_filter_search_results(results, &security);
+
+        assert_eq!(filtered.len(), 2, "only dept=eng results survive");
+        assert_eq!(filtered[0].id, "r1");
+        assert_eq!(filtered[1].id, "r3");
+    }
+
+    #[test]
+    fn enforcer_filter_search_results_denies_unbound() {
+        let (enforcer, bindings) = enforcer_with_alice("eng");
+        let results = vec![search_result("r1", "eng")];
+        let outcome = enforcer.filter_search_results(
+            results,
+            &SubjectId("mallory".into()),
+            7,
+            Target {
+                namespace: 3,
+                table: 200,
+                column: None,
+            },
+            &bindings,
+        );
+        assert!(outcome.is_err(), "unbound subject denied");
     }
 }
