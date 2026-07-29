@@ -148,7 +148,7 @@ notes = "N=20000 representative vector-ANN envelopes (585 bytes each): p50=13959
 
 [[claims]]
 id = "rdstrat8_sift_ivf2_coarse_probe"
-claim = "TD-RDSTRAT-8 PR-B two-level IVF coarse probe (default-OFF PROXIMADB_IVF2_PROBE) on a v3 segment built by the production compaction trigger HOLDS recall and CUTS bytes, but does NOT cut GETs at N=100k. SIFT N=100000 (100 queries, top-10, Euclidean, brute-force GT, IVF_K=64, nprobe=16): baseline (probe OFF, whole-region) recall@10=0.9820, range_gets/q=13, bytes/q=6,258,456; probe (ON) recall@10=0.9800 (drop 0.002 — recall held), bytes/q=3,820,034 (-39%), range_gets/q=22 (UP — the probe fragments Region-A into more, smaller ranged reads; the coalesced baseline is already GET-optimal at this scale). Probe engaged on 100/100 queries (Σcells_total=6400 Σcells_probed=1600 Σfetch_rounds=799). Decision: default-on NOT justified at 100k (GETs, the dominant cloud cost, went up); a 1M-scale GET-cut gate is the follow-up. The probe stays default-OFF."
+claim = "Historical PR-B landing-state measurement: the then-default-OFF two-level IVF coarse probe on a v3 segment built by the production compaction trigger HOLDS recall and CUTS bytes, but does NOT cut GETs at N=100k. SIFT N=100000 (100 queries, top-10, Euclidean, brute-force GT, IVF_K=64, nprobe=16): baseline (probe OFF, whole-region) recall@10=0.9820, range_gets/q=13, bytes/q=6,258,456; probe (ON) recall@10=0.9800 (drop 0.002 — recall held), bytes/q=3,820,034 (-39%), range_gets/q=22 (UP — the probe fragments Region-A into more, smaller ranged reads; the coalesced baseline is already GET-optimal at this scale). Probe engaged on 100/100 queries (Σcells_total=6400 Σcells_probed=1600 Σfetch_rounds=799). At that code state default-on was not justified at 100k; later 1M evidence in nprobe_sweep_trained_1m justified the current default-on reader."
 metric = "recall@10 + range_gets_per_query + bytes_read_per_query + probe engagement"
 status = "measured"
 asserted_in = [
@@ -160,7 +160,7 @@ artifact = "docs/_internal/status/RDSTRAT8_SIFT_IVF2_COARSE_PROBE_2026_07_22.ado
 hardware = "Local macOS arm64 (Apple Silicon), serialized release run, no competing workload"
 date = "2026-07-22"
 version = "feat/rdstrat8-sift-ivf2-gate off develop @ 1a8404b62"
-notes = "v3 segment built via the production compaction trigger (workload_profile:append + l0_threshold:2 -> inline compaction on 2nd flush under PROXIMADB_IVF2=1), not a direct write_pax_segment_compacted call. Co-design finding: the coarse probe is recall-neutral + bytes-positive (-39%) but GET-negative at 100k single-file because GETs grow ~proportional to N (~9 at 100k, ~51 at 1M per coalesced_rabitq_noivf_decisive_sift1m) and the coalesced whole-region baseline is already GET-optimal here. The 1M-scale GET-cut evidence is the gated follow-up before default-on. Indicative dev-machine run, not an SLA."
+notes = "Historical snapshot, not the current default. v3 segment built via the production compaction trigger (workload_profile:append + l0_threshold:2 -> inline compaction on 2nd flush under the retired PROXIMADB_IVF2 name), not a direct write_pax_segment_compacted call. Co-design finding: the coarse probe is recall-neutral + bytes-positive (-39%) but GET-negative at 100k single-file because the coalesced whole-region baseline is already GET-optimal there. The later 1M nprobe sweep supplied the gated default-on evidence. Indicative dev-machine run, not an SLA."
 
 [[claims]]
 id = "adr069_s7_wal_backpressure_soak"
@@ -192,8 +192,8 @@ bench_command = "Single: PROXIMADB_SIFT_DATASET_DIR=<verified-sift> PROXIMADB_SI
 artifact = "docs/_internal/status/RDSTRAT8_IVF2_LAYOUT_COALESCING_SIFT1M_2026_07_22.adoc"
 hardware = "Local macOS arm64 (Apple Silicon), release profile; candidate arms serialized over the same generated files and 100 queries"
 date = "2026-07-22"
-version = "feat/rdstrat8-prc2-layout-proof rebased onto develop @ f21a60f5b (measured candidate)"
-notes = "Full TEXMEX SIFT1M (1,000,000 x 128d), first 100 official queries, supplied full-corpus GT. Retained 1 MiB combined arm: single cold baseline/treatment 33/30 GETs, 26,728,854/27,130,193 bytes, score 793.453/744.967, p50/p95 18,208/22,207 vs 17,182/22,817 us; single warm 24/19 GETs, 17,973,196/18,307,400 bytes, score 568.103/479.296. Four cold 75/65 GETs, 56,390,706/57,570,090 bytes, score 1777.692/1594.116, p50/p95 44,040/83,653 vs 47,074/61,607 us; four warm 62/44 GETs, 40,629,552/41,545,058 bytes, score 1434.537/1089.702. Recall is bit-identical per geometry; probe engaged; zero fallback. Region bytes are computed from the physical per-stage GET trace; durable query telemetry separately records IVF engagement/fallback. Candidate gates remain default OFF. Indicative dev-machine run, not an SLA."
+version = "merged #1153 @ 0ed422c7b"
+notes = "Full TEXMEX SIFT1M (1,000,000 x 128d), first 100 official queries, supplied full-corpus GT. Retained 1 MiB combined arm: single cold baseline/treatment 33/30 GETs, 26,728,854/27,130,193 bytes, score 793.453/744.967, p50/p95 18,208/22,207 vs 17,182/22,817 us; single warm 24/19 GETs, 17,973,196/18,307,400 bytes, score 568.103/479.296. Four cold 75/65 GETs, 56,390,706/57,570,090 bytes, score 1777.692/1594.116, p50/p95 44,040/83,653 vs 47,074/61,607 us; four warm 62/44 GETs, 40,629,552/41,545,058 bytes, score 1434.537/1089.702. Recall is bit-identical per geometry; probe engaged; zero fallback. Region bytes are computed from the physical per-stage GET trace; durable query telemetry separately records IVF engagement/fallback. The component prefix/split-cache/gap gates remain default OFF even though the implementation PR merged. Indicative dev-machine run, not an SLA."
 
 [[claims]]
 id = "object_economy_cpu_cost"

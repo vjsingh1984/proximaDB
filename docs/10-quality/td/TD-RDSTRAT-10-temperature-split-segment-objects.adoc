@@ -5,10 +5,10 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Proposed** (2026-07-23, from the restart/recovery pressure-test floor analysis). Design-stage; no code yet.
-| Priority | **P1** — moves BOTH at-rest GB-month (the dominant at-rest term, ADR-036) and DRAM economics (~30× hot-tier density), using machinery that already exists (per-PUT access tier, survivor cache, region-coalesced layout).
+| Status | **Rejected as filed / not an active implementation direction (reconciled 2026-07-28).** The two-object proposal contradicts ADR-062 D1 and ADR-065's accepted one-object atomic segment contract. Retain this document as an explored alternative. Reopening it requires a superseding ADR plus measured multi-object publication, recovery, lifecycle, and read-cost evidence.
+| Priority | None under the current contract. Do not implement as a TD-only extension.
 | Component | `crates/storage/proximadb-block-format` (segment writer/reader), `coalesced_rabitq.rs`, flush/compaction writers, `ObjectAccessTier`/`FileOptions.storage_class` plumbing, survivor cache budget.
-| Evidence (floor analysis) | SIFT 1M: coarse tier (header 40 B + centroids/PCA A0 + RaBitQ 1 bit/dim) ≈ **16 MB = ~2% of the 763 MB segment set**, touched by **every** query; SQ8 (~128 MB) + fp32 (~512 MB) touched only by rerank survivors (~200 KB/query). Survivor cache currently budgets ~600 MB/collection to make the hot path 0-GET; a fully-resident coarse tier costs 16 MB for the same coarse-phase effect.
+| Historical floor analysis | SIFT 1M estimated a ~16 MB coarse tier versus a ~763 MB segment set. The cache premise predates the current config-first shared survivor pool and did not measure the multi-object publication/recovery or Cool-tier read penalties. It is not acceptance evidence for the rejected split.
 |===
 
 == First-principles finding
@@ -24,6 +24,9 @@ The segment already separates temperatures logically (coalesced regions
   applied differentially — the coldest bytes ride the hottest tier.
 
 == Direction
+
+The direction below is historical and non-normative after the 2026-07-28
+reconciliation.
 
 S1 — **Split at write time into two objects** (flush + compaction writers):
 `<seg>.hot.pax` = header-prefix + footer-index + A0 model + coalesced RaBitQ

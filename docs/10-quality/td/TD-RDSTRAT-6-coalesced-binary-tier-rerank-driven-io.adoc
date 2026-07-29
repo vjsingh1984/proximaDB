@@ -6,9 +6,9 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Core implemented; successor work split by control boundary (reconciled 2026-07-21).** Layout/read path #1019; adaptive-M/cache/IopsBudget #1060; lossless scalar bytes #1064; Region-B SQ8/range cache #1069; bounded parallel reads #1094. Per-block OID Bloom remains open. Large-segment selective Region-A/B probing is link:TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8]; collection file/cache/compaction policy is link:TD-RDSTRAT-9-collection-read-cost-envelope.adoc[TD-RDSTRAT-9]. Historical measurements below remain provenance; current order is SQ8-Morton at coalesced flush and PCA+IVF at compaction.
-| Severity | High — `per_get=20.0` is the dominant vector-route cost-model term; block-pruning is measured GET-capped (link:../../_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc[the eval]), so the GET lever is unreachable until this lands.
-| Component | `src/storage/engines/sst/segment_format.rs` (writer+reader); `crates/storage/proximadb-block-format/src/writer.rs::PaxBlockWriter` (`:134`) + `crates/storage/proximadb-storage-common/src/pax_block.rs::PaxSegmentScanner` (`:887`) + `stripe.rs::SegmentMeta`; `src/storage/engines/sst/search/mod.rs::try_pax_cascade`; `src/storage/engines/core/coalesce_strategy.rs` + `sst_query_engine.rs::{plan_selected_block_ranges (:733), ObjectRangeCoalescePolicy (:289)}`; `src/storage/engines/sst/compaction.rs`; `crates/storage/proximadb-storage-common` (a NEW per-backend `IopsBudget` — NOT the `StorageProfile` workload enum); `crates/storage/proximadb-storage-filesystem-types` (`FileSystem::read_ranges` — default is a sequential loop; the GET win is the coalesce policy's); `crates/storage/proximadb-object-store/src/lib.rs::put_if_absent` (`:247`, create-only — compaction CAS via Iceberg fresh-name+manifest-swap, ADR-020).
+| Status | **Core scope resolved; canonical contract current (reconciled 2026-07-28).** Layout/read path #1019; default-on route #1024; adaptive-M/cache/IopsBudget #1060; lossless scalar bytes #1064; Region-B SQ8/range cache #1069; bounded parallel reads #1094. TD-RDSTRAT-8's v3/A0 successor is also default ON (#1210/#1234), with cache/config seams closed by #1227/#1252. Per-block point-lookup OID Bloom remains the only open item from this TD. Collection file/cache/compaction policy remains link:TD-RDSTRAT-9-collection-read-cost-envelope.adoc[TD-RDSTRAT-9]. Historical measurements below remain provenance; current order is SQ8-Morton at coalesced flush and PCA+IVF/Hilbert at compaction.
+| Severity | Resolved core; the remaining OID Bloom is a bounded point-lookup tail, not a blocker for vector scan/rerank serving.
+| Component | `src/storage/engines/sst/segment_format.rs` (writer+reader); `crates/storage/proximadb-block-format/src/writer.rs::PaxBlockWriter` (`:134`) + `crates/storage/proximadb-storage-common/src/pax_block.rs::PaxSegmentScanner` (`:887`) + `stripe.rs::SegmentMeta`; `src/storage/engines/sst/search/mod.rs::try_pax_cascade`; `src/storage/engines/core/coalesce_strategy.rs` + `sst_query_engine.rs::{plan_selected_block_ranges (:733), ObjectRangeCoalescePolicy (:289)}`; `src/storage/engines/sst/compaction.rs`; `crates/storage/proximadb-storage-common` (per-backend `IopsBudget` — NOT the `StorageProfile` workload enum); `crates/storage/proximadb-storage-filesystem-types` (`FileSystem::read_ranges` — default is a sequential loop; the GET win is the coalesce policy's); `crates/storage/proximadb-object-store/src/lib.rs::put_if_absent` (`:247`, create-only — compaction CAS via Iceberg fresh-name+manifest-swap, ADR-020).
 | Relates | link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (decision), ADR-065 (Region-B extension), link:TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8] (per-segment scale), link:TD-RDSTRAT-9-collection-read-cost-envelope.adoc[TD-RDSTRAT-9] (collection control), link:TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (rerank substrate), link:TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (historical gate), ADR-061 (profile/authority core), ADR-046/045 (mixed-read/readability), ADR-036 (storage profile), ADR-020 (WAL authority; footer is advisory), ADR-047 (collection-as-table schema)
 | Pillar | COST (GET round-trips), PERF (recall at fixed GETs)
 |===
@@ -105,9 +105,11 @@ Same segment magic/version as today; in-place writer + readability-preserving re
 4. `SegmentMeta` gains `rabitq_off/rabitq_len`; `pax_write_outcome` (`flush/mod.rs:970`) threads
    them into the VOE `IndexEntry`/footer so the read path finds the region.
 
-Same magic/version. PR1 shipped behind `PROXIMADB_PAX_COALESCED_RABITQ=1`, default OFF; readers
-remain mixed-read-safe. Later on-disk encodings stay independently default OFF until their
-recall/cost and readability ratchets pass.
+Same magic/version. PR1 initially shipped behind
+`PROXIMADB_PAX_COALESCED_RABITQ=1`, default OFF; #1024 later made the canonical
+coalesced route default ON with kill-switch semantics. Readers remain
+mixed-read-safe. Later on-disk encodings stay independently default OFF until
+their recall/cost and readability ratchets pass.
 
 == Reader changes — scan-then-rerank
 
@@ -148,12 +150,13 @@ PR1/v1 emits `StatsKind::None` with an empty payload. PR3 activates `BloomOid` (
 Bloom, no false negatives → `vector_by_id`/edge-by-oid skips to the one positive block).
 `MinMax` pushdown + Bloom on other columns remain deferred.
 
-PR1 implemented the readable footer-v1 **core**: RaBitQ/row/dimension summary, legacy encoding
-summary, block extents, and an empty typed stats slot (`StatsKind::None`). The full schema,
-per-stripe map, per-column stats directory, and auxiliary-region references live in the clean
-footer v2 specified by ADR-062 D4/D5 and TD-RDSTRAT-7. New readers retain the footer-v1 parser;
-footer-v2 writes remain default OFF during rollout. Explicit unknown data encodings fail closed
-rather than aliasing to SQ8.
+PR1 implemented the readable footer **core**: RaBitQ/row/dimension summary,
+legacy encoding summary, block extents, and an empty typed stats slot
+(`StatsKind::None`). Because the format was unreleased, #1064/#1069 evolved that
+same footer version in place with typed optional sections for the per-stripe map
+and auxiliary-region references. The sectionless form retains its legacy
+interpretation; explicit unknown data encodings fail closed rather than
+aliasing to SQ8. Full schema snapshot/evolution remains TD-TBL-4/ADR-047.
 
 == Self-derived geometry
 
@@ -294,8 +297,8 @@ probing and collection-level scale economics.
   catalog-authority invariant (Q3) are PR2/PR3 follow-ups, not PR1 gates.
 * 2026-07-15 — PR1 #1019 landed and measured recall@10 `0.984`, `20` range GETs/query, and
   `31.7 MB` read/query. Linked the active bytes phase TD-RDSTRAT-7 and reconciled the spec with
-  the shipped footer-v1 core/default-OFF gate; full typed metadata uses footer v2 while new
-  readers retain the v1 path.
+  the shipped footer core/default-OFF gate. The unreleased footer later evolved
+  in place through additive typed sections rather than a second footer version.
 * 2026-07-16 — full N=1M follow-up measured recall `0.968` and `61` GETs/query
   for flat SQ8. The bytes bake-off found no winner; adaptive M, actual-byte
   `IopsBudget` geometry, and scalable cluster fitting are prerequisites.
