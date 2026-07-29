@@ -44,6 +44,9 @@ import urllib.request
 
 PAX_MAGIC = b"PAXSEG01"
 PAX_HEADER_MAGIC = b"PXH1"
+A0_MAGIC = b"PXA0"
+AZURE_COALESCE_GAP_BYTES = 1024 * 1024
+AZURE_COALESCE_RANGE_BYTES = 4 * 1024 * 1024
 METRICS = (
     "proximadb_object_store_gets_total",
     "proximadb_object_store_bytes_read_total",
@@ -177,12 +180,28 @@ def parse_pax(path: Path, root: Path) -> dict:
         )
     if header[:4] != PAX_HEADER_MAGIC:
         raise RuntimeError(f"{path}: legacy PAX layout cannot prove row count")
+    coarse = {}
+    if header[4] == 3:
+        a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
+        if a0_length < 40:
+            raise RuntimeError(f"{path}: invalid A0 length {a0_length}")
+        with path.open("rb") as segment:
+            segment.seek(a0_offset)
+            a0_header = segment.read(40)
+        if a0_header[:4] != A0_MAGIC:
+            raise RuntimeError(f"{path}: missing A0 directory magic")
+        coarse = {
+            "coarse_cells": struct.unpack_from("<I", a0_header, 8)[0],
+            "coarse_components": struct.unpack_from("<H", a0_header, 6)[0],
+            "coarse_trained_rows": struct.unpack_from("<Q", a0_header, 24)[0],
+        }
     return {
         "path": str(path.relative_to(root)),
         "bytes": size,
         "rows": struct.unpack_from("<Q", footer_prefix, 1)[0],
         "layout_version": header[4],
         "mtime_ns": path.stat().st_mtime_ns,
+        **coarse,
     }
 
 
@@ -462,7 +481,8 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_config(path: Path, root: Path, port: int) -> None:
+def write_config(path: Path, root: Path, port: int,
+                 write_buffer_mb: int) -> None:
     data = root / "data"
     config = f"""[server]
 node_id = "sift1m-get-reduction"
@@ -487,7 +507,7 @@ tags = ["durable", "benchmark"]
 write_buffer_directory = "file://{data / 'wal'}"
 enable_wal = true
 sync_mode = "PerBatch"
-write_buffer_size_mb = 4096
+write_buffer_size_mb = {write_buffer_mb}
 flush_interval_secs = 12
 
 [storage.sst_config]
@@ -515,12 +535,15 @@ log_level = "info"
 
 class OwnedServer:
     def __init__(self, binary: Path, config: Path, server: str,
-                 log_path: Path, local_disk_path: Path | None):
+                 log_path: Path, local_disk_path: Path | None,
+                 ivf_k: int | None = None, nprobe: int | None = None):
         self.binary = binary
         self.config = config
         self.server = server
         self.log_path = log_path
         self.local_disk_path = local_disk_path
+        self.ivf_k = ivf_k
+        self.nprobe = nprobe
         self.process: subprocess.Popen | None = None
         self.log_file = None
 
@@ -532,6 +555,23 @@ class OwnedServer:
                 "PROXIMADB_CACHE_PREFILL": "0",
                 "PROXIMADB_CACHE_ON_WRITE": "all",
                 "PROXIMADB_L0_COMPACTION_ENABLED": "1",
+                # The durable backend stays file:// so this harness counts the
+                # physical read seam without WAN noise. Force the production
+                # Azure range-planner bounds; otherwise the engine correctly
+                # selects its 1 MiB local-disk policy and the operation count
+                # would not model Azure.
+                "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(
+                    AZURE_COALESCE_GAP_BYTES
+                ),
+                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(
+                    AZURE_COALESCE_RANGE_BYTES
+                ),
+                "PROXIMADB_PAX_COALESCE_GAP": str(
+                    AZURE_COALESCE_GAP_BYTES
+                ),
+                "PROXIMADB_PAX_COALESCE_RANGE": str(
+                    AZURE_COALESCE_RANGE_BYTES
+                ),
             }
         )
         # The diagnostic object-cold phase must remain cold even when the
@@ -541,8 +581,14 @@ class OwnedServer:
             "PROXIMADB_CACHE_LOCAL_DISK_MAX_GB",
             "PROXIMADB_CACHE_NVME_PATH",
             "PROXIMADB_CACHE_NVME_MAX_GB",
+            "PROXIMADB_IVF_K",
+            "PROXIMADB_PAX_READ_COARSE_NPROBE",
         ):
             environment.pop(inherited_gate, None)
+        if self.ivf_k is not None:
+            environment["PROXIMADB_IVF_K"] = str(self.ivf_k)
+        if self.nprobe is not None:
+            environment["PROXIMADB_PAX_READ_COARSE_NPROBE"] = str(self.nprobe)
         if self.local_disk_path is not None:
             environment["PROXIMADB_CACHE_LOCAL_DISK_PATH"] = str(
                 self.local_disk_path
@@ -648,6 +694,16 @@ def require_empty_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def require_groundtruth_scope(rows: int, groundtruth_scope: int) -> None:
+    if groundtruth_scope != rows:
+        raise RuntimeError(
+            "ground-truth corpus mismatch: "
+            f"--rows={rows}, groundtruth_scope={groundtruth_scope}; "
+            "subset runs require an ivecs file generated against exactly the "
+            "same corpus prefix"
+        )
+
+
 def gate_failures(phase: str, result: dict, max_gets: float | None,
                   min_recall: float, max_p50_ms: float,
                   require_local_hit: bool) -> list[str]:
@@ -683,20 +739,54 @@ def main() -> int:
         type=Path,
         default=Path(os.environ.get("SIFT_DIR", "/Users/vijaysingh/sift1m")),
     )
+    parser.add_argument(
+        "--groundtruth-path",
+        type=Path,
+        help=(
+            "ivecs ground truth for exactly --rows corpus rows; defaults to "
+            "<sift-dir>/sift_groundtruth.ivecs (the full base corpus)"
+        ),
+    )
+    parser.add_argument(
+        "--groundtruth-scope-rows",
+        type=int,
+        help=(
+            "corpus cardinality used to generate --groundtruth-path; required "
+            "with a custom path and required to equal --rows"
+        ),
+    )
     parser.add_argument("--port", type=int, default=5690)
     parser.add_argument("--rows", type=int, default=1_000_000)
     parser.add_argument("--batch-size", type=int, default=2_000)
+    parser.add_argument("--write-buffer-mb", type=int, default=4096)
     parser.add_argument("--queries", type=int, default=1_000)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--settle-timeout-secs", type=int, default=1_200)
     parser.add_argument("--stable-secs", type=int, default=30)
     parser.add_argument("--max-segments", type=int, default=1)
+    parser.add_argument("--require-layout-version", type=int, default=3)
     parser.add_argument("--post-write-max-gets", type=float, default=5.0)
     parser.add_argument("--local-warm-max-gets", type=float, default=10.0)
     parser.add_argument("--object-cold-max-gets", type=float, default=20.0)
     parser.add_argument("--min-recall", type=float, default=0.98)
     parser.add_argument("--max-p50-ms", type=float, default=50.0)
+    parser.add_argument(
+        "--ivf-k",
+        type=int,
+        help="force compaction-time coarse cell count (scale experiments only)",
+    )
+    parser.add_argument(
+        "--nprobe",
+        type=int,
+        help="force query-time coarse cells (scale experiments only)",
+    )
     args = parser.parse_args()
+    if args.write_buffer_mb <= 0:
+        raise RuntimeError("--write-buffer-mb must be positive")
+    if args.ivf_k is not None and args.ivf_k <= 0:
+        raise RuntimeError("--ivf-k must be positive")
+    if args.nprobe is not None and args.nprobe <= 0:
+        raise RuntimeError("--nprobe must be positive")
 
     binary = args.binary.resolve()
     if not binary.is_file():
@@ -727,8 +817,22 @@ def main() -> int:
 
     base_path = args.sift_dir / "sift_base.fvecs"
     query_path = args.sift_dir / "sift_query.fvecs"
-    groundtruth_path = args.sift_dir / "sift_groundtruth.ivecs"
     base_count, base_dimension = count_fixed_records(base_path, 4)
+    groundtruth_path = (
+        args.groundtruth_path.resolve()
+        if args.groundtruth_path is not None
+        else args.sift_dir / "sift_groundtruth.ivecs"
+    )
+    if args.groundtruth_path is not None and args.groundtruth_scope_rows is None:
+        raise RuntimeError(
+            "--groundtruth-scope-rows is required with --groundtruth-path"
+        )
+    groundtruth_scope = (
+        args.groundtruth_scope_rows
+        if args.groundtruth_scope_rows is not None
+        else base_count
+    )
+    require_groundtruth_scope(args.rows, groundtruth_scope)
     query_count, query_dimension = count_fixed_records(query_path, 4)
     gt_count, _ = count_fixed_records(groundtruth_path, 4)
     if args.rows > base_count or base_dimension != 128:
@@ -747,7 +851,7 @@ def main() -> int:
     root = args.root.resolve()
     require_empty_directory(root)
     config = root / "benchmark.toml"
-    write_config(config, root, args.port)
+    write_config(config, root, args.port, args.write_buffer_mb)
     server_url = f"http://127.0.0.1:{args.port}"
     local_disk = root / "local-disk-cache"
     result = {
@@ -774,15 +878,31 @@ def main() -> int:
                 "local_disk_warm": [args.queries, args.queries * 2],
                 "object_cold": [args.queries * 2, args.queries * 3],
             },
-            "groundtruth_scope": base_count,
+            "groundtruth": str(groundtruth_path),
+            "groundtruth_scope": groundtruth_scope,
         },
         "filesystem_profile": {
             "segment_backend": "file",
             "local_disk_path": str(local_disk),
+            "range_planner": {
+                "profile": "azure",
+                "max_gap_bytes": AZURE_COALESCE_GAP_BYTES,
+                "max_range_bytes": AZURE_COALESCE_RANGE_BYTES,
+            },
             "note": (
                 "GET count is physical-I/O-seam evidence; latency is local "
-                "filesystem evidence, not Azure WAN evidence"
+                "filesystem evidence, not Azure WAN evidence. Azure planner "
+                "bounds are explicit because the segment URL remains file://."
             ),
+        },
+        "probe_policy": {
+            "ivf_k_override": args.ivf_k,
+            "nprobe_override": args.nprobe,
+            "required_layout_version": args.require_layout_version,
+        },
+        "ingest_config": {
+            "batch_size": args.batch_size,
+            "write_buffer_mb": args.write_buffer_mb,
         },
         "thresholds": {
             "post_write_max_gets_per_query": args.post_write_max_gets,
@@ -799,7 +919,13 @@ def main() -> int:
     failures: list[str] = []
     try:
         active = OwnedServer(
-            binary, config, server_url, root / "server-ingest.log", local_disk
+            binary,
+            config,
+            server_url,
+            root / "server-ingest.log",
+            local_disk,
+            args.ivf_k,
+            args.nprobe,
         )
         active.start()
         collection_id, ingest_seconds = ingest(
@@ -819,6 +945,25 @@ def main() -> int:
             args.settle_timeout_secs,
             args.stable_secs,
         )
+        wrong_layouts = [
+            segment for segment in geometry["segments"]
+            if segment["layout_version"] != args.require_layout_version
+        ]
+        if wrong_layouts:
+            raise RuntimeError(
+                "settled segment layout mismatch: "
+                f"required v{args.require_layout_version}, got {wrong_layouts}"
+            )
+        if args.ivf_k is not None:
+            wrong_cells = [
+                segment for segment in geometry["segments"]
+                if segment.get("coarse_cells") != args.ivf_k
+            ]
+            if wrong_cells:
+                raise RuntimeError(
+                    f"forced ivf_k={args.ivf_k} was not persisted: "
+                    f"{wrong_cells}"
+                )
         result["settled_geometry"] = geometry
         post_write = run_query_sweep(
             server_url,
@@ -847,6 +992,8 @@ def main() -> int:
             server_url,
             root / "server-local-disk-warm.log",
             local_disk,
+            args.ivf_k,
+            args.nprobe,
         )
         active.start()
         local_warm = run_query_sweep(
@@ -876,6 +1023,8 @@ def main() -> int:
             server_url,
             root / "server-object-cold.log",
             None,
+            args.ivf_k,
+            args.nprobe,
         )
         active.start()
         object_cold = run_query_sweep(
