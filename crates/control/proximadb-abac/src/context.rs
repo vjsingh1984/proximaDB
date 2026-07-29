@@ -690,3 +690,60 @@ mod tests {
         assert!(d.admitted().is_none());
     }
 }
+
+// ===========================================================================
+// ReadContext — the unified required parameter (Phase 4 / FA-b)
+// ===========================================================================
+
+/// The **required** read context every client-servicing read primitive takes
+/// (Phase 4 / FA-b). Unifies the two access modes into one non-`Option` type,
+/// so a read that bypasses authorization does not compile.
+///
+/// - `Client` — a resolved [`AuthorizedReadContext`]; the scan applies the
+///   subject's ABAC policy. Required for every client-servicing read.
+/// - `System` — an audited [`SystemReadContext`]; the scan runs unfiltered.
+///   Required for internal reads (compaction, FK resolution, index build,
+///   replication, recovery).
+///
+/// Construct `System` via [`ReadContext::system`]; construct `Client` by
+/// resolving an [`AuthorizedReadContext`] and wrapping it. There is no
+/// `Default` and no `unfiltered()` — the type has no "I forgot" escape.
+#[derive(Debug, Clone)]
+pub enum ReadContext {
+    /// A client-servicing read — the subject's ABAC policy applies.
+    Client(AuthorizedReadContext),
+    /// An internal read — unfiltered, but audited (names the reason).
+    System(SystemReadContext),
+}
+
+impl ReadContext {
+    /// Shortcut for an audited system read.
+    pub fn system(reason: SystemReadReason, origin: impl Into<String>) -> Self {
+        ReadContext::System(SystemReadContext::audited(reason, origin))
+    }
+
+    /// Whether this is a client-servicing context (ABAC applies).
+    pub fn is_client(&self) -> bool {
+        matches!(self, ReadContext::Client(_))
+    }
+
+    /// The [`AuthorizedReadContext`], if this is a client read.
+    pub fn as_client(&self) -> Option<&AuthorizedReadContext> {
+        match self {
+            ReadContext::Client(ctx) => Some(ctx),
+            ReadContext::System(_) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod read_context_tests {
+    use super::*;
+
+    #[test]
+    fn system_context_is_not_client() {
+        let ctx = ReadContext::system(SystemReadReason::Compaction, "compactor");
+        assert!(!ctx.is_client());
+        assert!(ctx.as_client().is_none());
+    }
+}
