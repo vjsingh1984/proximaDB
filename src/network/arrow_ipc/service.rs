@@ -828,9 +828,14 @@ impl ProximaFlightService {
     }
 
     async fn trigger_collection_compaction(&self, collection_id: &str) -> Result<()> {
+        let collection = self
+            .collection_service
+            .collection(collection_id)
+            .await?
+            .with_context(|| format!("Collection not found: {collection_id}"))?;
         let storage_engine = self.vector_operations_service.unified_engine();
         storage_engine
-            .compact_collection(collection_id, None)
+            .compact_collection(&collection.id, Some(&collection))
             .await
             .with_context(|| format!("Failed to compact collection '{}'", collection_id))?;
         Ok(())
@@ -2245,10 +2250,7 @@ impl FlightService for ProximaFlightService {
 
                 info!(collection_id = %collection_id, "Arrow Flight: compact_collection");
 
-                // Compact collection via storage engine
-                let storage_engine = self.vector_operations_service.unified_engine();
-                storage_engine
-                    .compact_collection(collection_id, None)
+                self.trigger_collection_compaction(collection_id)
                     .await
                     .map_err(|e| {
                         TonicStatus::internal(format!("Failed to compact collection: {}", e))
@@ -2294,9 +2296,7 @@ impl FlightService for ProximaFlightService {
                         TonicStatus::internal(format!("Failed to flush collection: {}", e))
                     })?;
 
-                let storage_engine = self.vector_operations_service.unified_engine();
-                storage_engine
-                    .compact_collection(collection_id, None)
+                self.trigger_collection_compaction(collection_id)
                     .await
                     .map_err(|e| {
                         TonicStatus::internal(format!("Failed to compact collection: {}", e))

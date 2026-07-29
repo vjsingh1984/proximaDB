@@ -145,6 +145,21 @@ impl CompactionParameters {
             })
     }
 
+    /// Resolve the native, globally unique catalog object identity.
+    ///
+    /// Compaction may retire files and cache entries, so accepting a mutable
+    /// collection alias at this boundary would make the operation ambiguous.
+    pub fn get_collection_object_id(
+        &self,
+    ) -> Result<proximadb_kernel::stable_id::CollectionObjectId> {
+        let collection_id = self.get_collection_id()?;
+        collection_id.parse().map_err(|error| {
+            anyhow!(
+                "compaction collection_id must be a decimal catalog object id, got {collection_id:?}: {error}"
+            )
+        })
+    }
+
     /// Resolve the collection data directory from cached config or an engine hint.
     pub fn get_data_dir(&self) -> Result<String> {
         if let Some(collection_config) = &self.collection_config
@@ -261,6 +276,27 @@ mod tests {
         assert!(params.collection_id.is_none());
         assert!(!params.force);
         assert_eq!(params.priority, OperationPriority::Medium);
+    }
+
+    #[test]
+    fn compaction_adapter_accepts_only_catalog_object_identity() {
+        let numeric = CompactionParameters {
+            collection_id: Some("184467".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(numeric.get_collection_object_id().unwrap(), 184467);
+
+        let alias = CompactionParameters {
+            collection_id: Some("customer-orders".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            alias
+                .get_collection_object_id()
+                .unwrap_err()
+                .to_string()
+                .contains("decimal catalog object id")
+        );
     }
 
     #[test]

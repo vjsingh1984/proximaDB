@@ -1217,9 +1217,16 @@ impl SharedServices {
         // Create SST engine
         debug!("🔧 SharedServices::new - Creating SST engine...");
         let sst_engine = {
-            let mut engine = crate::storage::engines::sst::SstEngine::new()
-                .await?
-                .with_directory_cache(directory_cache.clone());
+            let sst_config = storage_config.effective_sst_config();
+            let distance_compute =
+                Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
+            let mut engine = crate::storage::engines::sst::SstEngine::new_with_config(
+                sst_config,
+                filesystem_factory.clone(),
+                distance_compute,
+            )
+            .await?
+            .with_directory_cache(directory_cache.clone());
             if let Some(src) = freshness_lsn_source.clone() {
                 engine = engine.with_freshness_lsn_source(src);
             }

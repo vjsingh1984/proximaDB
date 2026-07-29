@@ -822,8 +822,9 @@ pub struct CompactionConfig {
     ///
     /// This is intentionally lower than the L0 admission threshold: L0
     /// batches writes, while every steady-state higher-level segment adds a
-    /// search cascade. Three means the stable query-visible fanout is one or
-    /// two segments between merges.
+    /// search cascade. Two is the smallest threshold that actually reduces
+    /// fanout: a pair of immutable segments is merged once, while the
+    /// single-file rewrite guard prevents pointless level promotion.
     #[serde(default = "default_higher_level_file_threshold")]
     pub higher_level_file_threshold: usize,
 
@@ -863,7 +864,7 @@ impl Default for CompactionConfig {
 }
 
 fn default_higher_level_file_threshold() -> usize {
-    3
+    2
 }
 
 /// Performance optimization configuration.
@@ -1280,8 +1281,8 @@ mod tests {
 
         assert_eq!(config.l0_file_threshold, 5);
         assert_eq!(
-            config.higher_level_file_threshold, 3,
-            "higher levels must quiesce at one or two query-visible segments"
+            config.higher_level_file_threshold, 2,
+            "two query-visible files must consolidate instead of stranding a pair"
         );
         assert_eq!(config.l0_size_threshold_mb, 256);
         assert_eq!(

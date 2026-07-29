@@ -153,7 +153,7 @@ impl StorageEngine {
         // background compaction. Keeping this Arc prevents the worker-owning
         // instance from being discarded and a second default engine from being
         // constructed by the materializer.
-        let sst_config = config.sst_config.clone().unwrap_or_default();
+        let sst_config = config.effective_sst_config();
         let distance_compute =
             Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
         let canonical_sst_storage = Arc::new(

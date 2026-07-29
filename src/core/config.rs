@@ -880,6 +880,20 @@ pub use proximadb_config::{
 };
 
 impl StorageConfig {
+    /// Resolve the SST configuration that every runtime SST instance must use.
+    ///
+    /// `storage.compaction_config` is the common operator-facing policy.
+    /// `storage.sst_config.compaction_config`, when present, is the explicit
+    /// engine override. Centralizing the merge here prevents one SST instance
+    /// from silently falling back to code defaults while another honors TOML.
+    pub fn effective_sst_config(&self) -> SstConfig {
+        let mut config = self.sst_config.clone().unwrap_or_default();
+        if config.compaction_config.is_none() {
+            config.compaction_config = Some(self.compaction_config.clone());
+        }
+        config
+    }
+
     /// Get storage URLs from locations
     pub fn storage_urls(&self) -> Vec<String> {
         self.storage_locations
@@ -1773,7 +1787,7 @@ impl SstConfig {
 
 #[cfg(test)]
 mod sst_config_validation_tests {
-    use super::{CompactionConfig, SstConfig};
+    use super::{CompactionConfig, SstConfig, StorageConfig};
 
     #[test]
     fn compaction_multiplier_guard_is_soft_but_invalid_values_fail() {
@@ -1808,6 +1822,42 @@ mod sst_config_validation_tests {
             ..SstConfig::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn common_compaction_config_reaches_sst_runtime() {
+        let mut storage = StorageConfig::default();
+        storage.compaction_config.higher_level_file_threshold = 2;
+        storage.compaction_config.level_multiplier = 1.25;
+
+        let effective = storage.effective_sst_config();
+        let compaction = effective
+            .compaction_config
+            .expect("common compaction config must be inherited");
+
+        assert_eq!(compaction.higher_level_file_threshold, 2);
+        assert_eq!(compaction.level_multiplier, 1.25);
+    }
+
+    #[test]
+    fn explicit_sst_compaction_config_overrides_common_policy() {
+        let mut storage = StorageConfig::default();
+        storage.compaction_config.higher_level_file_threshold = 2;
+        let mut engine_override = CompactionConfig::default();
+        engine_override.higher_level_file_threshold = 4;
+        storage
+            .sst_config
+            .get_or_insert_with(SstConfig::default)
+            .compaction_config = Some(engine_override);
+
+        let effective = storage.effective_sst_config();
+        assert_eq!(
+            effective
+                .compaction_config
+                .expect("SST override must be retained")
+                .higher_level_file_threshold,
+            4
+        );
     }
 }
 

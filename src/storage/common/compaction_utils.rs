@@ -208,6 +208,11 @@ fn higher_level_compaction_reduces_fanout(
     threshold_triggered && compactable_file_count >= 2
 }
 
+fn higher_level_file_threshold(config: &CompactionConfig, level: u32) -> usize {
+    (config.higher_level_file_threshold as f64 * config.level_multiplier.powi(level as i32 - 1))
+        .ceil() as usize
+}
+
 impl CompactionTaskBuilder {
     /// Check if compaction is needed and build task if necessary
     /// This unifies logic from SST's check_compaction_needed and VIPER's discover_compactable_files
@@ -293,13 +298,11 @@ impl CompactionTaskBuilder {
         // Check higher levels if needed (using configured max_levels)
         for level in 1..config.max_levels as u32 {
             // L0 admission batches writes; query-visible higher levels use a
-            // lower base so their steady-state fanout is bounded at one or
-            // two files. The multiplier applies between higher levels (L1 is
+            // lower base so any pair is consolidated rather than left as two
+            // permanent query cascades. The multiplier applies between higher levels (L1 is
             // exponent zero), preserving the operator's write-amplification
             // trade-off without inheriting the L0 batching threshold.
-            let level_file_threshold = (config.higher_level_file_threshold as f64
-                * config.level_multiplier.powi(level as i32 - 1))
-            .ceil() as usize;
+            let level_file_threshold = higher_level_file_threshold(config, level);
             let level_size_threshold_mb = (config.l0_size_threshold_mb as f64
                 * config.level_multiplier.powi(level as i32))
                 as usize;
@@ -516,6 +519,14 @@ mod tests {
         assert!(!higher_level_compaction_reduces_fanout(1, true));
         assert!(higher_level_compaction_reduces_fanout(2, true));
         assert!(!higher_level_compaction_reduces_fanout(3, false));
+    }
+
+    #[test]
+    fn default_higher_levels_consolidate_a_pair() {
+        let config = CompactionConfig::default();
+
+        assert_eq!(higher_level_file_threshold(&config, 1), 2);
+        assert_eq!(higher_level_file_threshold(&config, 2), 2);
     }
 
     #[test]
