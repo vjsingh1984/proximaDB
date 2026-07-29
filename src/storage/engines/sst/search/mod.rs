@@ -2057,6 +2057,16 @@ impl SstEngine {
     async fn load_sst_header_centroid(&self, file_path: &str) -> Result<Option<(Vec<f32>, f32)>> {
         use crate::storage::engines::sst::SstableHeader;
 
+        // Discovery already classifies current PAX segments by their durable
+        // `.pax` suffix. PAX has its partitioning model in Region A0, not in a
+        // legacy SST1 header centroid, so probing its first 8 bytes can only
+        // return `None`. Avoid one paid ranged GET per PAX segment per query.
+        // Unknown and legacy paths still take the magic-sniff path below,
+        // preserving mixed-format reads.
+        if file_path.ends_with(".pax") {
+            return Ok(None);
+        }
+
         let fs = self.filesystem().get_filesystem(file_path)?;
 
         // Read just the first part of the file to get header
@@ -2650,6 +2660,29 @@ mod tests {
 
         // Test invalid storage URL
         assert!(engine.parse_storage_url("invalid_url").is_err());
+    }
+
+    #[tokio::test]
+    async fn pax_centroid_classification_does_not_probe_object() {
+        let engine = create_test_engine().await;
+        let missing_pax = "file:///definitely-missing/segment.pax";
+        assert!(
+            engine
+                .load_sst_header_centroid(missing_pax)
+                .await
+                .unwrap()
+                .is_none(),
+            "PAX carries its partition model in A0 and must not pay an SST1 magic GET"
+        );
+
+        let missing_legacy = "file:///definitely-missing/segment.sst";
+        assert!(
+            engine
+                .load_sst_header_centroid(missing_legacy)
+                .await
+                .is_err(),
+            "unknown/legacy paths must retain the mixed-format magic sniff"
+        );
     }
 
     #[tokio::test]

@@ -21,6 +21,7 @@ possible egress concern.
 
 | Component
 | `src/storage/engines/sst/segment_format.rs`;
+`src/storage/engines/sst/search/mod.rs`;
 `crates/storage/proximadb-storage-filesystem-types/src/counting.rs`
 
 | Trigger
@@ -156,6 +157,26 @@ asserted as “one GET per segment” for every segment.
 `plan_probe_cell_ranges()` remains the correct cell-data seam. It sorts extents
 in file order and merges only under `ObjectRangeCoalescePolicy` gap/range
 bounds. It never changes `nprobe`, selected rows, or ranking inputs.
+
+=== S4: remove the redundant PAX-as-SST1 magic probe
+
+The first passing release run after the persistent-tier implementation reported
+exactly 2 physical GETs/query and 16 bytes/query in the local-disk-warm phase
+with exactly 2 PAX segments. The source was not PAX header/footer loading:
+`load_sst_header_centroid()` performed an 8-byte `SST1` magic probe for every
+discovered file before returning “no legacy centroid” for PAX.
+
+Discovery already classifies current PAX segments by the durable `.pax` suffix,
+and PAX stores its partition model in A0 rather than a legacy SST header.
+The centroid loader therefore returns `None` for `.pax` before acquiring a
+filesystem or reading bytes. Unknown and legacy paths retain the magic sniff,
+so mixed-format reads are unchanged. The regression test uses a nonexistent
+`.pax` object to prove the PAX branch performs no I/O and a nonexistent `.sst`
+object to prove the fallback still probes.
+
+Expected effect for the measured two-segment geometry is local-disk-warm
+2→0 GETs/query and object-cold approximately 42→40. This expectation is not
+promoted as evidence until the release benchmark is rerun.
 
 == Remaining inefficiencies
 
