@@ -46,31 +46,59 @@ never consulted the queue: it lazily warm-loads its persisted `ivf.bin` on the
 next query (`manager.rs`, "the next query (or `resume_collection`) warm-loads
 it"). The queue was in-process coordination only.
 
-== 2. Existing machinery — check before building
+== 2. Existing machinery — the "reuse dead code" premise is WRONG (verified 2026-07-29)
 
-The pieces for this appear to have been built and **never wired**. Evaluate reuse
-before writing anything new:
+The earlier note guessed `IndexRecoveryManager` / `load_index_from_disk` were
+built-for-this and never wired. They are **not** a fit — do not build on them:
 
-* `IndexRecoveryManager` (`src/index/axis/storage/recovery.rs`) exposes
-  `recover_all_collections` and `recover_collection`, and is re-exported from
-  `src/index/axis/mod.rs` — **zero callers**.
-* `load_index_from_disk` (`integration/memory_tracker.rs`) — **zero callers**.
+* `IndexRecoveryManager::recover_all_collections` loads **persisted index state**
+  (the `ivf.bin` etc., via `collection_state.list_collections()`). It recovers
+  *index files that exist*; it cannot discover segments that were **never
+  indexed** (they have no index entry to recover). It is the wrong shape.
+* `load_index_from_disk` likewise reloads a persisted index file.
+* **`AxisManager` holds no storage/catalog/manifest/filesystem reference** — its
+  fields are index-internal only (`GlobalIdIndex`, `MetadataIndex`,
+  `DenseVectorIndex`, …). It **cannot enumerate a collection's segments**, so the
+  "diff manifest vs coverage" cannot live in AXIS.
+* **No coverage tracking exists** — neither AXIS nor storage records "is segment X
+  indexed?" There is nothing to diff against.
+* No rebuild-from-SST-on-miss self-heal path was found in AXIS (the td112 test
+  only checks post-flush recall with well-separated clusters, not post-restart).
 
-(Do not confuse these with the WAL `recovery_manager`, which *is* wired at
+(Do not confuse the above with the WAL `recovery_manager`, which *is* wired at
 `src/storage/engine.rs` and returns `WalRecoveryStats` — a different component.)
 
-== 3. Next action
+== 3. Next action — storage-driven reconciliation (cross-subsystem)
 
-. **Reproduce first (TDD).** End-to-end: ingest → flush → kill the process before
-  indexing completes → restart → query, and assert the flushed vectors are
-  searchable. No current test covers this.
-. **Diff manifest segments against index coverage** and re-index the delta.
-. **Trigger lazily**, alongside the existing cold `ivf.bin` warm-load
-  (`load_ivf_whole_file`), rather than eagerly at boot. Matches the current
-  lazy-recovery posture and avoids an O(N) boot scan — which on object storage is
-  the dominant cost term (`CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`).
+The manifest lives in **storage**; AXIS can't see it. So the reconciliation must
+be **storage-driven**: storage owns the segment set + drives re-indexing through
+the AXIS seam (`handle_flushed_vectors`, the same call #1281's flush hook uses).
+Two viable designs — pick one during implementation:
+
+* **(A) Coverage marker (manifest schema change ⇒ mandate #8).** Storage marks
+  each segment `indexed` after AXIS's `handle_flushed_vectors` returns; on
+  restart it scans for `flushed && !indexed` segments and re-emits them to AXIS.
+  Needs an index→storage "indexed" signal + a per-segment marker in the manifest
+  (mixed-read-safe, default-OFF).
+* **(B) Idempotent re-emit (no marker).** Make `handle_flushed_vectors` dedup by
+  vector id; on restart, storage re-emits **all** of a collection's segments to
+  AXIS when it is first touched (lazy). Already-indexed vectors are a cheap dedup
+  no-op; un-indexed ones get indexed. No schema change, but a per-collection
+  re-index pass on first read after restart (bounded by the dedup check).
+
+Either way:
+
+. **Reproduce first (TDD).** End-to-end: ingest → flush → kill before indexing
+  completes → restart → query, and assert the flushed vectors are searchable. No
+  current test covers this — it is the regression gate.
+. **Trigger lazily** (per-collection, on first touch / alongside the cold
+  `ivf.bin` warm-load), not an eager O(N) boot scan — on object storage the
+  round-trip is the dominant cost term (`CODESIGN_DIMENSIONAL_ARCHITECTURE`).
 . **Emit a metric** for segments found un-indexed. The defining property of this
   bug is that it is invisible; a fix that stays invisible is half a fix.
+
+This is a **substantial, recall-sensitive, cross-subsystem feature** (storage↔index
+seam), larger than the original "reuse dead code" framing. Execute focused.
 
 == 4. Watch out
 
