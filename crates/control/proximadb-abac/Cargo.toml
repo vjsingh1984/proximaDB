@@ -15,7 +15,9 @@ path = "src/lib.rs"
 
 [dependencies]
 proximadb-catalog = { workspace = true, features = ["fc-metamodel"] }
+proximadb-filter-expression = { workspace = true }
 serde.workspace = true
+serde_json.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true
 
