@@ -363,6 +363,7 @@ proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-abac = { path = "crates/control/proximadb-abac", optional = true }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
@@ -707,6 +708,11 @@ experimental-ledger = ["dep:proximadb-ledger", "proximadb-ledger/durable"]
 # path. Off by default → the existing check-then-act PK-uniqueness probe runs unchanged;
 # on, a LocalWalKeyStore is wired in and enforces composite-PK uniqueness atomically.
 oltp-integrity = ["dep:proximadb-cks-local"]
+# FA (TD-FOUNDATION-3): enable ABAC row-level enforcement. Off by default → the
+# read primitives run unchanged; on, the compile bridge + admits_with_security
+# filter rows by the subject's policy. The abac crate itself stays un-gated
+# (a security substrate that never compiles is never tested).
+abac-policy = ["dep:proximadb-abac"]
 # Experimental SIMD path; not enabled by default
 simd-experimental = ["proximadb-codec/simd-experimental"]
 # TD-160 / ADR-027 / ADR-030: gate the PERF-CLASS I/O-trace *emission* (the
