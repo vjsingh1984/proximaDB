@@ -739,3 +739,19 @@ hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release run"
 date = "2026-07-28"
 version = "develop @ 99b84be1a (post-merge of #1253 + #1265 + #1271)"
 notes = "Post-merge of the async-compaction arc (D3 #1241, D0 #1242, D1+D2 #1253, follow-ups #1265, CI fix #1271). The prior compaction entries (training_compaction_cold_ladder_1m, flush_encode_parallel_1m) measured the PRE-ASYNC inline path; this entry measures the ASYNC path. Recall/GET numbers from the pre-async entries are still valid for that code state; the async change eliminated the ~35s inline flush block (D1) and added bounded L0 backpressure (D2)."
+
+[[claims]]
+id = "cache_hot_vs_cold_1m_post_compaction"
+claim = "Phase 2 cache measurement (hot vs cold) on merged develop's trained v3/A0 segment layout, SIFT 1M REST e2e: COLD first-access p50=131.6ms / p95=142.2ms (segment scan, caches empty after restart); HOT repeat p50=0.4ms / p95=0.7ms (result cache, 323x speedup). Segment invariants cache 99.96% hit rate during cold sweep (segment-level — loaded once per segment, shared across queries). Survivor range cache 38.2% hit rate (query-level — cell overlap across diverse queries, consistent with TD-CACHE-8's ~33%). The trained v3/A0 layout (post-async-compaction) has similar cache dynamics to the pre-compaction layout — the A0 coarse directory adds a cached region but overall hit patterns are unchanged. Discovered the D2 restart-recovery deadlock (fixed in #1294)."
+metric = "cold/hot p50/p95 latency + cache hit% (survivor + invariants)"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/CACHE_HOT_VS_COLD_1M_EVIDENCE_2026_07_28.adoc",
+]
+bench_source = "scripts/bench/cache_hot_vs_cold_1m.py"
+bench_command = "python3 scripts/bench/cache_hot_vs_cold_1m.py  # restart server first to clear caches; PROXIMADB_L0_STOP_TRIGGER=0 if l0>=10 (D2 bug, #1294)"
+artifact = "docs/_internal/status/CACHE_HOT_VS_COLD_1M_EVIDENCE_2026_07_28.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release run, server restarted to clear caches"
+date = "2026-07-28"
+version = "develop @ 79209453a (merged #1253)"
+notes = "The HOT 0.4ms is the result cache (vector-hash-keyed), not the segment caches — the same known TD-CACHE-8 behavior. The segment cache value is in the COLD sweep: invariants ~100% (eliminates per-query segment-metadata re-reads) + survivor ~38% (reduces per-query SQ8 range GETs via cell overlap). Phase 3 (budget sweep) follows once the D2 restart-recovery fix (#1294) enables multi-config restarts."
