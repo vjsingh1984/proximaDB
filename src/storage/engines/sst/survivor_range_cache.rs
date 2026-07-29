@@ -276,20 +276,17 @@ impl SurvivorRangeCache {
         }
         if let Some(store) = &self.l2_store {
             let persistent_key = Self::parent_key(path, parent_off, parent_len);
-            match store.get_range(&persistent_key, relative_off, len).await {
-                Ok(Some(bytes)) => {
-                    self.parent_l2_hits
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    // Promote only the demanded range. `insert_memory_only`
-                    // deliberately avoids writing an exact-range duplicate
-                    // beside the durable parent entry.
-                    self.inner
-                        .insert_memory_only(exact_key, weight, bytes.clone())
-                        .await;
-                    self.sync_prometheus();
-                    return Ok(bytes);
-                }
-                Ok(None) | Err(_) => {}
+            if let Ok(Some(bytes)) = store.get_range(&persistent_key, relative_off, len).await {
+                self.parent_l2_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // Promote only the demanded range. `insert_memory_only`
+                // deliberately avoids writing an exact-range duplicate
+                // beside the durable parent entry.
+                self.inner
+                    .insert_memory_only(exact_key, weight, bytes.clone())
+                    .await;
+                self.sync_prometheus();
+                return Ok(bytes);
             }
             self.parent_l2_misses
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
