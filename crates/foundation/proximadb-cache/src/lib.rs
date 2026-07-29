@@ -53,30 +53,84 @@ pub enum CacheKind {
     Other,
 }
 
-/// A tenant-namespaced cache key. `tenant` is the isolation boundary; `kind`
-/// separates artifact classes; `key` is the per-artifact identifier (e.g. a
-/// segment path + block offset).
+/// The owner/fair-share scope of a cache entry.
+///
+/// Stable catalog tenant ids remain integers in memory; named scopes exist for
+/// consumers whose authoritative identity is genuinely textual (for example a
+/// graph name). `Shared` is for background work with no resolved tenant. Text
+/// rendering is deliberately confined to metrics and persistent-key boundaries.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CacheScope {
+    StableTenant(u64),
+    Named(Arc<str>),
+    Shared,
+}
+
+impl CacheScope {
+    pub fn stable_tenant(tenant_stable_id: u64) -> Self {
+        Self::StableTenant(tenant_stable_id)
+    }
+
+    pub fn named(scope: impl AsRef<str>) -> Self {
+        Self::Named(Arc::from(scope.as_ref()))
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::StableTenant(id) => id.to_string(),
+            Self::Named(name) => name.to_string(),
+            Self::Shared => "shared".to_string(),
+        }
+    }
+
+    fn persistent_component(&self) -> String {
+        match self {
+            Self::StableTenant(id) => format!("t:{id}"),
+            Self::Named(name) => format!("n:{}:{name}", name.len()),
+            Self::Shared => "s".to_string(),
+        }
+    }
+}
+
+/// A scope-namespaced cache key. `scope` is the fair-share/accounting
+/// boundary; `kind` separates artifact classes; `key` is the per-artifact
+/// identifier (e.g. a segment path + block offset). Data isolation must also
+/// be structural in the artifact key (for PAX this is the full `DrPath`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
-    pub tenant: Arc<str>,
+    pub scope: CacheScope,
     pub kind: CacheKind,
     pub key: Arc<str>,
 }
 
 impl CacheKey {
-    pub fn new(tenant: impl AsRef<str>, kind: CacheKind, key: impl AsRef<str>) -> Self {
+    pub fn with_scope(scope: CacheScope, kind: CacheKind, key: impl AsRef<str>) -> Self {
         Self {
-            tenant: Arc::from(tenant.as_ref()),
+            scope,
             kind,
             key: Arc::from(key.as_ref()),
         }
     }
 
+    /// Construct a key for an authoritative textual scope.
+    pub fn new(scope: impl AsRef<str>, kind: CacheKind, key: impl AsRef<str>) -> Self {
+        Self::with_scope(CacheScope::named(scope), kind, key)
+    }
+
+    /// Construct a key for a catalog-authoritative numeric tenant id.
+    pub fn for_tenant_id(tenant_stable_id: u64, kind: CacheKind, key: impl AsRef<str>) -> Self {
+        Self::with_scope(CacheScope::stable_tenant(tenant_stable_id), kind, key)
+    }
+
+    /// Construct a key for background work without a resolved tenant.
+    pub fn shared(kind: CacheKind, key: impl AsRef<str>) -> Self {
+        Self::with_scope(CacheScope::Shared, kind, key)
+    }
+
     fn persistent_key(&self, namespace: &str) -> String {
         format!(
-            "{namespace}/{}:{}/{}:{}",
-            self.tenant.len(),
-            self.tenant,
+            "{namespace}/{}/{}:{}",
+            self.scope.persistent_component(),
             self.kind.stable_id(),
             self.key
         )
@@ -405,7 +459,7 @@ struct PinnedEntry<V> {
 
 struct PinnedStore<V> {
     entries: DashMap<CacheKey, PinnedEntry<V>>,
-    tenant_bytes: DashMap<Arc<str>, AtomicU64>,
+    tenant_bytes: DashMap<CacheScope, AtomicU64>,
     reserve_bytes: u64,
     used_bytes: AtomicU64,
     clock: AtomicU64,
@@ -415,7 +469,7 @@ struct PinnedStore<V> {
 /// entries recycled to make room (caller reconciles the byte gauges).
 struct PinOutcome {
     pinned: bool,
-    recycled: Vec<(Arc<str>, CacheKind, u32)>,
+    recycled: Vec<(CacheScope, CacheKind, u32)>,
 }
 
 impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
@@ -438,9 +492,9 @@ impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
         Some(e.value.clone())
     }
 
-    fn tenant_pinned(&self, tenant: &Arc<str>) -> u64 {
+    fn tenant_pinned(&self, scope: &CacheScope) -> u64 {
         self.tenant_bytes
-            .get(tenant)
+            .get(scope)
             .map(|b| b.load(Ordering::Relaxed))
             .unwrap_or(0)
     }
@@ -450,7 +504,7 @@ impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
         let (_, e) = self.entries.remove(key)?;
         self.used_bytes
             .fetch_sub(e.weight as u64, Ordering::Relaxed);
-        if let Some(b) = self.tenant_bytes.get(&key.tenant) {
+        if let Some(b) = self.tenant_bytes.get(&key.scope) {
             b.fetch_sub(e.weight as u64, Ordering::Relaxed);
         }
         Some(e.weight)
@@ -458,10 +512,10 @@ impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
 
     /// The tenant's least-recently-touched pinned key (O(tenant entries); pin
     /// attempts are rare relative to gets, and a floor holds a bounded set).
-    fn tenant_lru(&self, tenant: &Arc<str>) -> Option<CacheKey> {
+    fn tenant_lru(&self, scope: &CacheScope) -> Option<CacheKey> {
         self.entries
             .iter()
-            .filter(|e| e.key().tenant == *tenant)
+            .filter(|e| e.key().scope == *scope)
             .min_by_key(|e| e.value().touch.load(Ordering::Relaxed))
             .map(|e| e.key().clone())
     }
@@ -471,7 +525,7 @@ impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
     /// tenants; never exceeds the global reserve.
     fn try_pin(&self, key: CacheKey, weight: u32, value: V, floor_bytes: u64) -> PinOutcome {
         let w = weight as u64;
-        let mut recycled: Vec<(Arc<str>, CacheKind, u32)> = Vec::new();
+        let mut recycled: Vec<(CacheScope, CacheKind, u32)> = Vec::new();
         if w == 0 || w > floor_bytes {
             return PinOutcome {
                 pinned: false,
@@ -480,20 +534,20 @@ impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
         }
         // Replacing an existing pin of the same key: drop the old copy first.
         if let Some(old_w) = self.remove(&key) {
-            recycled.push((key.tenant.clone(), key.kind, old_w));
+            recycled.push((key.scope.clone(), key.kind, old_w));
         }
         // Within-tenant LRU recycling until the floor fits the new entry.
-        while self.tenant_pinned(&key.tenant).saturating_add(w) > floor_bytes {
-            let Some(lru) = self.tenant_lru(&key.tenant) else {
+        while self.tenant_pinned(&key.scope).saturating_add(w) > floor_bytes {
+            let Some(lru) = self.tenant_lru(&key.scope) else {
                 break;
             };
             if let Some(old_w) = self.remove(&lru) {
-                recycled.push((lru.tenant.clone(), lru.kind, old_w));
+                recycled.push((lru.scope.clone(), lru.kind, old_w));
             } else {
                 break;
             }
         }
-        if self.tenant_pinned(&key.tenant).saturating_add(w) > floor_bytes {
+        if self.tenant_pinned(&key.scope).saturating_add(w) > floor_bytes {
             return PinOutcome {
                 pinned: false,
                 recycled,
@@ -509,7 +563,7 @@ impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
             };
         }
         self.tenant_bytes
-            .entry(key.tenant.clone())
+            .entry(key.scope.clone())
             .or_default()
             .fetch_add(w, Ordering::Relaxed);
         let touch = self.clock.fetch_add(1, Ordering::Relaxed);
@@ -531,7 +585,7 @@ impl<V: Clone + Send + Sync + 'static> PinnedStore<V> {
 /// A multitenant, byte-budgeted, **work-conserving elastic** cache over `V`.
 pub struct TenantCache<V: Clone + Send + Sync + 'static> {
     inner: Cache<CacheKey, CachedValue<V>>,
-    usage: Arc<DashMap<Arc<str>, TenantUsage>>,
+    usage: Arc<DashMap<CacheScope, TenantUsage>>,
     /// Live sum of admitted bytes across all tenants (pressure signal).
     global_bytes: Arc<AtomicU64>,
     total_bytes: u64,
@@ -559,7 +613,7 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
     /// Build a cache for the given byte `budget`. The eviction listener keeps the
     /// per-tenant and global byte gauges accurate under pressure.
     pub fn new(budget: CacheBudget) -> Self {
-        let usage: Arc<DashMap<Arc<str>, TenantUsage>> = Arc::new(DashMap::new());
+        let usage: Arc<DashMap<CacheScope, TenantUsage>> = Arc::new(DashMap::new());
         let global_bytes = Arc::new(AtomicU64::new(0));
         let listener_usage = usage.clone();
         let listener_global = global_bytes.clone();
@@ -580,7 +634,7 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
                     if let Some(b) = listener_kind.get(&k.kind) {
                         b.fetch_sub(v.weight as u64, Ordering::Relaxed);
                     }
-                    if let Some(u) = listener_usage.get(&k.tenant) {
+                    if let Some(u) = listener_usage.get(&k.scope) {
                         u.bytes.fetch_sub(v.weight as u64, Ordering::Relaxed);
                         // Count true capacity/expiry evictions (not explicit removals).
                         if matches!(cause, RemovalCause::Size | RemovalCause::Expired) {
@@ -636,12 +690,11 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         self
     }
 
-    fn usage_for(&self, tenant: &Arc<str>) -> dashmap::mapref::one::Ref<'_, Arc<str>, TenantUsage> {
-        if let Some(u) = self.usage.get(tenant) {
-            return u;
-        }
-        self.usage.entry(tenant.clone()).or_default();
-        self.usage.get(tenant).expect("just inserted")
+    fn usage_for(
+        &self,
+        scope: &CacheScope,
+    ) -> dashmap::mapref::one::RefMut<'_, CacheScope, TenantUsage> {
+        self.usage.entry(scope.clone()).or_default()
     }
 
     /// TD-CACHE-3 S3: the effective limits (entitlement) for a tenant —
@@ -671,7 +724,7 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         self.usage
             .iter()
             .filter(|e| e.value().bytes.load(Ordering::Relaxed) > 0)
-            .map(|e| self.limits_for(e.key()).weight.max(1) as u64)
+            .map(|e| self.limits_for(&e.key().label()).weight.max(1) as u64)
             .sum()
     }
 
@@ -693,9 +746,9 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         used.saturating_add(weight) <= *ceiling
     }
 
-    fn should_admit(&self, tenant: &Arc<str>, weight: u64) -> bool {
-        let limits = self.limits_for(tenant);
-        let u = self.usage_for(tenant).bytes.load(Ordering::Relaxed);
+    fn should_admit(&self, scope: &CacheScope, weight: u64) -> bool {
+        let limits = self.limits_for(&scope.label());
+        let u = self.usage_for(scope).bytes.load(Ordering::Relaxed);
         // 1. absolute runaway guard — always enforced.
         if u.saturating_add(weight) > limits.hard_ceiling_bytes {
             return false;
@@ -723,13 +776,13 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         if let Some(pinned) = &self.pinned
             && let Some(v) = pinned.get(key)
         {
-            self.usage_for(&key.tenant)
+            self.usage_for(&key.scope)
                 .hits
                 .fetch_add(1, Ordering::Relaxed);
             return Some(v);
         }
         let result = self.inner.get(key).await;
-        let u = self.usage_for(&key.tenant);
+        let u = self.usage_for(&key.scope);
         match result {
             Some(cv) => {
                 u.hits.fetch_add(1, Ordering::Relaxed);
@@ -792,7 +845,7 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         let Some(pinned) = &self.pinned else {
             return false;
         };
-        let floor = self.limits_for(&key.tenant).floor_bytes;
+        let floor = self.limits_for(&key.scope.label()).floor_bytes;
         if floor == 0 {
             return false;
         }
@@ -829,19 +882,19 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
     }
 
     async fn insert_l1(&self, key: CacheKey, weight: u32, value: V) {
-        if !self.should_admit(&key.tenant, weight as u64)
+        if !self.should_admit(&key.scope, weight as u64)
             || !self.kind_admits(key.kind, weight as u64)
         {
             return;
         }
-        self.account_insert(&key.tenant, key.kind, weight);
+        self.account_insert(&key.scope, key.kind, weight);
         if !self.try_pin_admitted(&key, weight, &value) {
             self.inner.insert(key, CachedValue { weight, value }).await;
         }
     }
 
-    fn account_insert(&self, tenant: &Arc<str>, kind: CacheKind, weight: u32) {
-        let u = self.usage_for(tenant);
+    fn account_insert(&self, scope: &CacheScope, kind: CacheKind, weight: u32) {
+        let u = self.usage_for(scope);
         u.bytes.fetch_add(weight as u64, Ordering::Relaxed);
         u.inserts.fetch_add(1, Ordering::Relaxed);
         self.global_bytes
@@ -888,7 +941,7 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
                     if let Some(b) = self.kind_bytes.get(&k.kind) {
                         b.fetch_sub(w as u64, Ordering::Relaxed);
                     }
-                    if let Some(u) = self.usage.get(&k.tenant) {
+                    if let Some(u) = self.usage.get(&k.scope) {
                         u.bytes.fetch_sub(w as u64, Ordering::Relaxed);
                     }
                 }
@@ -913,7 +966,7 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
                 let misses = u.misses.load(Ordering::Relaxed);
                 let total = hits + misses;
                 TenantCacheStat {
-                    tenant: e.key().to_string(),
+                    tenant: e.key().label(),
                     bytes: u.bytes.load(Ordering::Relaxed),
                     pinned_bytes: self
                         .pinned
@@ -937,7 +990,15 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
     /// Current tracked byte usage for a tenant (post-`sync`).
     pub fn tenant_bytes(&self, tenant: &str) -> u64 {
         self.usage
-            .get(&Arc::from(tenant))
+            .get(&CacheScope::named(tenant))
+            .map(|u| u.bytes.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
+    /// Current tracked byte usage for a catalog-authoritative stable tenant.
+    pub fn stable_tenant_bytes(&self, tenant_stable_id: u64) -> u64 {
+        self.usage
+            .get(&CacheScope::stable_tenant(tenant_stable_id))
             .map(|u| u.bytes.load(Ordering::Relaxed))
             .unwrap_or(0)
     }
@@ -980,6 +1041,22 @@ mod tests {
         ));
         assert_eq!(second.get(&cache_key).await.as_deref(), Some(&b"bytes"[..]));
         assert_eq!(second.l2_stats().hits, 1);
+    }
+
+    #[tokio::test]
+    async fn stable_tenant_scope_stays_numeric_and_distinct_from_named_alias() {
+        let c = TenantCache::new(CacheBudget::new(1024, 1024));
+        let stable = CacheKey::for_tenant_id(42, CacheKind::Footer, "segment");
+        let textual = CacheKey::new("42", CacheKind::Footer, "segment");
+
+        assert_ne!(
+            stable, textual,
+            "a textual alias must not impersonate a catalog stable tenant id"
+        );
+        c.insert(stable.clone(), 8, 7).await;
+        assert_eq!(c.get(&stable).await, Some(7));
+        assert_eq!(c.get(&textual).await, None);
+        assert_eq!(c.stable_tenant_bytes(42), 8);
     }
 
     /// TD-CACHE-3 S2: a churning tenant CANNOT evict another tenant's pinned

@@ -146,18 +146,18 @@ lazy_static! {
         "proximadb_segment_invariants_cache_bytes",
         "Resident bytes in the segment-invariants cache",
     );
-    pub static ref CACHE_NVME_HITS_TOTAL: Option<IntCounterVec> = counter_vec(
-        "proximadb_cache_nvme_hits_total",
+    pub static ref CACHE_LOCAL_DISK_HITS_TOTAL: Option<IntCounterVec> = counter_vec(
+        "proximadb_cache_local_disk_hits_total",
         "Persistent local-cache hits that avoided an object-store GET",
         &["tier"],
     );
-    pub static ref CACHE_NVME_MISSES_TOTAL: Option<IntCounterVec> = counter_vec(
-        "proximadb_cache_nvme_misses_total",
-        "Persistent local-cache misses that fell through toward object storage",
+    pub static ref CACHE_LOCAL_DISK_MISSES_TOTAL: Option<IntCounterVec> = counter_vec(
+        "proximadb_cache_local_disk_misses_total",
+        "Persistent local-cache namespace lookup misses; another local parent lookup may still avoid object storage",
         &["tier"],
     );
-    pub static ref CACHE_NVME_BYTES: prometheus::IntGaugeVec = gauge_vec(
-        "proximadb_cache_nvme_bytes",
+    pub static ref CACHE_LOCAL_DISK_BYTES: prometheus::IntGaugeVec = gauge_vec(
+        "proximadb_cache_local_disk_bytes",
         "Resident persistent local-cache bytes by PAX cache tier",
         &["tier"],
     );
@@ -186,24 +186,24 @@ lazy_static! {
     );
 }
 
-/// Mirror monotonic cache-internal NVMe counters into Prometheus counters and
+/// Mirror monotonic cache-internal local-disk counters into Prometheus counters and
 /// publish the current resident-byte gauge.
-pub fn sync_nvme_stats(tier: &str, stats: proximadb_cache::L2CacheStats) {
-    if let Some(family) = CACHE_NVME_HITS_TOTAL.as_ref() {
+pub fn sync_local_disk_stats(tier: &str, stats: proximadb_cache::L2CacheStats) {
+    if let Some(family) = CACHE_LOCAL_DISK_HITS_TOTAL.as_ref() {
         let hits = family.with_label_values(&[tier]);
         let recorded_hits = hits.get();
         if stats.hits > recorded_hits {
             hits.inc_by(stats.hits - recorded_hits);
         }
     }
-    if let Some(family) = CACHE_NVME_MISSES_TOTAL.as_ref() {
+    if let Some(family) = CACHE_LOCAL_DISK_MISSES_TOTAL.as_ref() {
         let misses = family.with_label_values(&[tier]);
         let recorded_misses = misses.get();
         if stats.misses > recorded_misses {
             misses.inc_by(stats.misses - recorded_misses);
         }
     }
-    CACHE_NVME_BYTES
+    CACHE_LOCAL_DISK_BYTES
         .with_label_values(&[tier])
         .set(stats.resident_bytes.min(i64::MAX as u64) as i64);
 }
@@ -222,16 +222,20 @@ pub fn touch() {
     SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.get();
     SEGMENT_INVARIANTS_CACHE_MISSES_TOTAL.get();
     SEGMENT_INVARIANTS_CACHE_BYTES.get();
-    if let Some(family) = CACHE_NVME_HITS_TOTAL.as_ref() {
+    if let Some(family) = CACHE_LOCAL_DISK_HITS_TOTAL.as_ref() {
         family.with_label_values(&["survivor"]).get();
         family.with_label_values(&["invariants"]).get();
     }
-    if let Some(family) = CACHE_NVME_MISSES_TOTAL.as_ref() {
+    if let Some(family) = CACHE_LOCAL_DISK_MISSES_TOTAL.as_ref() {
         family.with_label_values(&["survivor"]).get();
         family.with_label_values(&["invariants"]).get();
     }
-    CACHE_NVME_BYTES.with_label_values(&["survivor"]).get();
-    CACHE_NVME_BYTES.with_label_values(&["invariants"]).get();
+    CACHE_LOCAL_DISK_BYTES
+        .with_label_values(&["survivor"])
+        .get();
+    CACHE_LOCAL_DISK_BYTES
+        .with_label_values(&["invariants"])
+        .get();
     COMPACTIONS_TOTAL.get();
     COMPACTION_BYTES_READ_TOTAL.get();
     COMPACTION_BYTES_WRITTEN_TOTAL.get();
@@ -252,9 +256,17 @@ mod tests {
         assert_eq!(SURVIVOR_CACHE_HITS.get(), 7);
         SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.inc();
         assert!(SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.get() >= 1);
-        CACHE_NVME_BYTES.with_label_values(&["survivor"]).set(1024);
+        assert!(
+            CACHE_LOCAL_DISK_HITS_TOTAL.is_some() && CACHE_LOCAL_DISK_MISSES_TOTAL.is_some(),
+            "the exact persistent-cache metric families must register"
+        );
+        CACHE_LOCAL_DISK_BYTES
+            .with_label_values(&["survivor"])
+            .set(1024);
         assert_eq!(
-            CACHE_NVME_BYTES.with_label_values(&["survivor"]).get(),
+            CACHE_LOCAL_DISK_BYTES
+                .with_label_values(&["survivor"])
+                .get(),
             1024
         );
     }

@@ -818,6 +818,15 @@ pub struct CompactionConfig {
     /// L0 file count threshold for compaction.
     pub l0_file_threshold: usize,
 
+    /// Query-visible file-count threshold for L1 and higher levels.
+    ///
+    /// This is intentionally lower than the L0 admission threshold: L0
+    /// batches writes, while every steady-state higher-level segment adds a
+    /// search cascade. Three means the stable query-visible fanout is one or
+    /// two segments between merges.
+    #[serde(default = "default_higher_level_file_threshold")]
+    pub higher_level_file_threshold: usize,
+
     /// L0 size threshold in MB for compaction.
     pub l0_size_threshold_mb: usize,
 
@@ -843,6 +852,7 @@ impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
             l0_file_threshold: 5,
+            higher_level_file_threshold: default_higher_level_file_threshold(),
             l0_size_threshold_mb: 256,
             level_multiplier: 1.0,
             max_levels: 7,
@@ -850,6 +860,10 @@ impl Default for CompactionConfig {
             target_file_size_mb: 128,
         }
     }
+}
+
+fn default_higher_level_file_threshold() -> usize {
+    3
 }
 
 /// Performance optimization configuration.
@@ -1265,6 +1279,10 @@ mod tests {
         let config = CompactionConfig::default();
 
         assert_eq!(config.l0_file_threshold, 5);
+        assert_eq!(
+            config.higher_level_file_threshold, 3,
+            "higher levels must quiesce at one or two query-visible segments"
+        );
         assert_eq!(config.l0_size_threshold_mb, 256);
         assert_eq!(
             config.level_multiplier, 1.0,

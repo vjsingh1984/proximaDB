@@ -34,7 +34,7 @@ use tokio::sync::RwLock;
 #[cfg(feature = "axis")]
 use crate::index::AxisManager;
 use crate::metrics::wal_flush_metrics;
-use crate::storage::flush_materializer::{CollectionFlushPlan, materialize_collection};
+use crate::storage::flush_materializer::materialize_collection;
 use crate::storage::persistence::write_ahead_log::flush_policy::FlushPolicy;
 use crate::storage::persistence::write_ahead_log::{
     get_global_write_buffer_behavior, list_collections_from_catalog,
@@ -160,26 +160,17 @@ impl AutoFlushDriver {
                 );
                 continue;
             };
-            let config = meta.config.as_ref();
-            let assignment = meta.storage_assignment.as_ref();
-            let engine_type = assignment
-                .map(|a| a.engine)
-                .or_else(|| config.and_then(|c| c.storage_engine))
-                .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
-            let dimension = config.map(|c| c.dimension).unwrap_or(0);
-            let base_location = assignment
-                .map(|a| a.base_location.clone())
-                .unwrap_or_default();
-            let tenant_id = proximadb_tenant::tenant_id_of(meta);
-
-            let plan = CollectionFlushPlan {
-                wal_key: collection_id.clone(),
-                canonical_id: collection_id.clone(),
-                base_location,
-                engine_type,
-                dimension,
-                tenant_id,
-            };
+            let plan =
+                match crate::storage::flush_materializer::flush_plan_from_collection_meta(meta) {
+                    Ok(plan) => plan,
+                    Err(error) => {
+                        tracing::warn!(
+                            collection_id,
+                            "ADR-069 auto-flush: catalog identity resolution failed: {error}"
+                        );
+                        continue;
+                    }
+                };
 
             // ADR-081 D4: submit independent collections concurrently. The
             // process-wide materializer permit pool bounds the actual work, and
@@ -206,7 +197,7 @@ impl AutoFlushDriver {
                 )
                 .await;
                 (
-                    plan.wal_key,
+                    plan.collection_object_id.to_string(),
                     reason_label,
                     start.elapsed().as_secs_f64(),
                     result,

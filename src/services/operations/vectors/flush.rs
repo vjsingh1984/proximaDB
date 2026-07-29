@@ -26,14 +26,14 @@ use crate::storage::traits::UnifiedStorageFormat;
 pub(crate) struct FlushCompactionCoordinator {
     wal_manager: Arc<WriteAheadLogManager>,
     storage_engine: Arc<dyn UnifiedStorageFormat>,
-    collection_cache: Arc<DashMap<String, Arc<Collection>>>,
+    collection_cache: Arc<DashMap<crate::core::stable_id::CollectionObjectId, Arc<Collection>>>,
 }
 
 impl FlushCompactionCoordinator {
     pub(crate) fn new(
         wal_manager: Arc<WriteAheadLogManager>,
         storage_engine: Arc<dyn UnifiedStorageFormat>,
-        collection_cache: Arc<DashMap<String, Arc<Collection>>>,
+        collection_cache: Arc<DashMap<crate::core::stable_id::CollectionObjectId, Arc<Collection>>>,
     ) -> Self {
         Self {
             wal_manager,
@@ -53,14 +53,15 @@ impl FlushCompactionCoordinator {
         // Trigger compaction in storage engine
         // Note: compact_all is not available in UnifiedStorageFormat trait
         // Instead, we need to compact each collection individually
-        let collections: Vec<String> = self
+        let collections: Vec<crate::core::stable_id::CollectionObjectId> = self
             .collection_cache
             .iter()
-            .map(|entry| entry.key().clone())
+            .map(|entry| *entry.key())
             .collect();
 
-        for collection_id in collections {
-            if let Some(collection) = self.collection_cache.get(&collection_id) {
+        for collection_object_id in collections {
+            if let Some(collection) = self.collection_cache.get(&collection_object_id) {
+                let collection_id = collection_object_id.to_string();
                 match self
                     .storage_engine
                     .compact_collection(&collection_id, Some(&**collection))
@@ -99,7 +100,13 @@ impl FlushCompactionCoordinator {
             .await?;
 
         // Trigger compaction for this collection
-        if let Some(collection) = self.collection_cache.get(collection_id) {
+        let collection_object_id: crate::core::stable_id::CollectionObjectId =
+            collection_id.parse().map_err(|error| {
+                anyhow::anyhow!(
+                    "force flush requires a numeric catalog object id, got {collection_id:?}: {error}"
+                )
+            })?;
+        if let Some(collection) = self.collection_cache.get(&collection_object_id) {
             match self
                 .storage_engine
                 .compact_collection(collection_id, Some(&**collection))

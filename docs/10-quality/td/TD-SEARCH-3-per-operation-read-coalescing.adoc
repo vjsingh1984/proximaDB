@@ -117,15 +117,19 @@ over-read. Logical selected slices remain unchanged, so recall is invariant.
 `CountingFileSystem::read_ranges(path, ranges)` now adds `ranges.len()` physical
 range operations because the trait's default implementation issues exactly
 that many `read_range()` calls. The recorder receives the physical count too.
-This fixes benchmark/metering under-counting; a future backend that implements
-a true one-request multi-range API must override both the I/O method and its
-physical-operation report.
+This fixes the unencrypted local/object-store benchmark route's under-counting.
+The encryption wrapper is a documented exception: an encrypted batch can
+materialize the encrypted object once and slice it locally. HTTP-boundary
+instrumentation is still required before calling this counter universally
+physical for encrypted deployments. A future true one-request multi-range
+backend likewise needs an explicit physical-operation report.
 
 The invariant is:
 
 [source,text]
 ----
-physical ranged HTTP requests == counted range operations
+unencrypted current backends:
+physical ranged requests == counted range operations
 ----
 
 A Rust function call named `read_ranges` is not evidence of one cloud request.
@@ -176,7 +180,7 @@ materialized segment geometry:
 
 . physical GETs/query by PAX region/tier;
 . bytes/query;
-. cold and NVMe-warm p50/p95;
+. cold and local-disk-warm p50/p95;
 . segment count and level distribution;
 . recall@10 (must not regress below the ratchet);
 . prefix disabled (`0`) versus 1 MiB versus a justified alternative.
@@ -187,6 +191,6 @@ The benchmark must wait for flush/compaction quiescence and prove that all
 == Related
 
 link:TD-COMPACT-10-l2-segment-consolidation-gap.adoc[TD-COMPACT-10],
-link:../12-design/adr/ADR-080-vector-search-compaction-tuning.adoc[ADR-080],
+link:../../12-design/adr/ADR-080-vector-search-compaction-tuning.adoc[ADR-080],
 link:../../12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065],
-link:../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052].
+link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052].

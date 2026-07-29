@@ -1679,8 +1679,9 @@ pub async fn search_with_typed_filters(
         egress_bytes,
         object_store_gets,
         object_store_bytes_read,
-    ) = crate::observability::io_trace::instrument(
+    ) = crate::observability::io_trace::instrument_with_stable_tenant(
         Some(tenant.tenant_id.clone()),
+        tenant.tenant_stable_id,
         "rest.v2.records.search",
         crate::observability::predicate_diagnostics::scope(async {
             let outcome = state

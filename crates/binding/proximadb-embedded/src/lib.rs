@@ -2364,8 +2364,13 @@ impl EmbeddedProximaDB {
                     // Embedded is single-pod: it passes no fence and reuses the running
                     // unified SST engine as the create-failure fallback.
                     let plan = proximadb::storage::flush_materializer::CollectionFlushPlan {
-                        wal_key: collection_id.clone(),
-                        canonical_id: canonical_collection_id.clone(),
+                        collection_object_id: canonical_collection_id.parse().map_err(|error| {
+                            anyhow::anyhow!(
+                                "catalog collection object identity '{}' is not numeric: {error}",
+                                canonical_collection_id
+                            )
+                        })?,
+                        collection_name: collection_name.clone(),
                         base_location: base_location_for_flush.clone(),
                         engine_type: storage_engine_type,
                         dimension: collection_dimension,

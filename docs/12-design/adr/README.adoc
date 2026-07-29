@@ -407,6 +407,10 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | AXIS is a compile-time Cargo feature `axis` (default ON, gateable OFF)
 | Accepted (2026-07-30)
 | Makes `src/index/axis/` a default-ON Cargo feature gateable OFF for PAX-exact-scan builds (off → exact-scan path), realising the TD-AXIS-4 wind-down. Gating is `#[cfg(feature = "axis")]` inline (not trait-ify) so the default-ON build is byte-for-byte identical and the recall path is untouched; off-state fallbacks are no-op/`None`/exact-scan. `proximadb-embedded` becomes axis-optional (default OFF); `proximadb-server` forwards `axis` explicitly. Tracked: PR #1332.
+| link:ADR-082-persistent-pax-warm-tier.adoc[ADR-082]
+| Persistent PAX warm tier and post-publication cache population
+| Accepted (2026-07-29)
+| Adds a real restart-persistent, checksum-verified local-disk tier behind both PAX warm caches; promotes local hits to DRAM, writes through authoritative misses, and seeds writer-owned invariant/SQ8 bytes only after atomic publication. Corrects the legacy `NvmeBackend` assumption (it is memory-only), makes coarse-probe metadata population default-on, purges DRAM/local/replay entries after compaction input deletion, and adds bounded prefix coalescing. Tracked: TD-CACHE-9 and TD-SEARCH-3.
 | link:ADR-0083-consolidated-catalog-identity-model.adoc[ADR-0083]
 | Consolidated catalog identity model — physical key, addressing composite, display name (three layers)
 | Accepted (2026-07-30)

@@ -17,7 +17,12 @@ use proximadb_kernel::CompactBatchId as BatchId;
 /// Flexible flush parameters that work for all storage engines.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlushParameters {
-    /// Target collection (None means global flush for engines that support it)
+    /// Decimal catalog object identity at the legacy storage-trait boundary.
+    ///
+    /// `None` means a global flush for engines that support it. New scheduling,
+    /// admission, and cache code must immediately parse this adapter field to
+    /// `CollectionObjectId`; user-facing collection aliases never cross this
+    /// boundary.
     pub collection_id: Option<String>,
 
     /// Force immediate flush regardless of thresholds
@@ -61,6 +66,21 @@ impl FlushParameters {
                     .map(|collection| collection.id.clone())
             })
             .ok_or_else(|| anyhow!("No collection_id provided in flush parameters"))
+    }
+
+    /// Resolve the native, globally unique catalog object identity.
+    ///
+    /// This is deliberately fail-closed: storage execution must never invent an
+    /// identity from a mutable collection name.
+    pub fn get_collection_object_id(
+        &self,
+    ) -> Result<proximadb_kernel::stable_id::CollectionObjectId> {
+        let collection_id = self.get_collection_id()?;
+        collection_id.parse().map_err(|error| {
+            anyhow!(
+                "flush collection_id must be a decimal catalog object id, got {collection_id:?}: {error}"
+            )
+        })
     }
 
     /// Resolve the collection data directory from cached config or an engine hint.
@@ -212,6 +232,27 @@ mod tests {
         assert!(params.collection_id.is_none());
         assert!(!params.force);
         assert!(!params.synchronous);
+    }
+
+    #[test]
+    fn flush_adapter_accepts_only_catalog_object_identity() {
+        let numeric = FlushParameters {
+            collection_id: Some("184467".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(numeric.get_collection_object_id().unwrap(), 184467);
+
+        let alias = FlushParameters {
+            collection_id: Some("customer-orders".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            alias
+                .get_collection_object_id()
+                .unwrap_err()
+                .to_string()
+                .contains("decimal catalog object id")
+        );
     }
 
     #[test]

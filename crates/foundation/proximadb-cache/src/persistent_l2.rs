@@ -1,7 +1,7 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-//! Persistent, rebuildable local-NVMe byte tier.
+//! Persistent, rebuildable local-disk byte tier.
 //!
 //! The store is deliberately a cache, never a correctness authority. Entries
 //! are immutable, atomically published files addressed by a stable SHA-256 of
@@ -17,8 +17,11 @@ use crc32fast::Hasher as Crc32;
 use dashmap::DashMap;
 use sha2::{Digest, Sha256};
 
-const MAGIC: &[u8; 8] = b"PXNVME01";
-const HEADER_LEN: u64 = 8 + 1 + 4 + 8 + 4;
+const MAGIC: &[u8; 8] = b"PXLDSK02";
+const HEADER_LEN: u64 = 8 + 1 + 4 + 8 + 4 + 4;
+/// Integrity and read-amplification unit for verified ranged reads. This
+/// matches the Azure Blob I/O target used by the PAX range planner.
+const CHECKSUM_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
 const SHARDS: usize = 16;
 const MAX_KEY_BYTES: usize = 16 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -52,6 +55,7 @@ struct EntryMeta {
     value_len: u64,
     file_len: u64,
     value_crc: u32,
+    chunk_crcs: Arc<[u32]>,
     class: L2Class,
     touch: AtomicU64,
 }
@@ -61,15 +65,18 @@ struct StoreInner {
     base: PathBuf,
     max_bytes: u64,
     resident_bytes: AtomicU64,
+    class_resident_bytes: [AtomicU64; 2],
     clock: AtomicU64,
     entries: DashMap<String, Arc<EntryMeta>>,
     mutation: tokio::sync::Mutex<()>,
 }
 
-/// A persistent raw-byte cache suitable for instance-store NVMe.
+/// A persistent raw-byte cache for a local filesystem.
 ///
 /// Clones share one index and byte budget. Reads never become object-store
 /// correctness dependencies: any corrupt/missing local entry returns a miss.
+/// Fast SSD/NVMe media is recommended for query latency, but it is not part of
+/// the storage contract.
 #[derive(Clone, Debug)]
 pub struct PersistentByteStore {
     inner: Arc<StoreInner>,
@@ -87,6 +94,7 @@ impl PersistentByteStore {
             base,
             max_bytes,
             resident_bytes: AtomicU64::new(0),
+            class_resident_bytes: [AtomicU64::new(0), AtomicU64::new(0)],
             clock: AtomicU64::new(1),
             entries: DashMap::new(),
             mutation: tokio::sync::Mutex::new(()),
@@ -103,12 +111,7 @@ impl PersistentByteStore {
     }
 
     pub fn resident_bytes_for(&self, class: L2Class) -> u64 {
-        self.inner
-            .entries
-            .iter()
-            .filter(|entry| entry.value().class == class)
-            .map(|entry| entry.value().file_len)
-            .sum()
+        self.inner.class_resident_bytes[class as usize].load(Ordering::Relaxed)
     }
 
     /// Number of indexed entries.
@@ -163,10 +166,13 @@ impl PersistentByteStore {
                 self.inner
                     .resident_bytes
                     .fetch_sub(old.file_len, Ordering::Relaxed);
+                self.inner.class_resident_bytes[old.class as usize]
+                    .fetch_sub(old.file_len, Ordering::Relaxed);
             }
             self.inner
                 .resident_bytes
                 .fetch_add(file_len, Ordering::Relaxed);
+            self.inner.class_resident_bytes[class as usize].fetch_add(file_len, Ordering::Relaxed);
         } else if !self.inner.entries.contains_key(&key) {
             // A prior process may already have published this immutable key.
             if let Ok((stored_key, meta)) = read_entry_metadata(&final_path)
@@ -174,6 +180,8 @@ impl PersistentByteStore {
             {
                 self.inner
                     .resident_bytes
+                    .fetch_add(meta.file_len, Ordering::Relaxed);
+                self.inner.class_resident_bytes[meta.class as usize]
                     .fetch_add(meta.file_len, Ordering::Relaxed);
                 self.inner.entries.insert(key, Arc::new(meta));
             }
@@ -191,6 +199,44 @@ impl PersistentByteStore {
         let result = tokio::task::spawn_blocking(move || read_full_value(&meta_for_read))
             .await
             .map_err(join_error)?;
+        match result {
+            Ok(bytes) => {
+                meta.touch.store(self.next_tick(), Ordering::Relaxed);
+                Ok(Some(Arc::from(bytes)))
+            }
+            Err(error) if is_rebuildable_miss(&error) => {
+                self.remove_indexed(key, true);
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Read a byte subrange relative to the cached value.
+    ///
+    /// Every touched 4 MiB chunk is read in full and checked against its
+    /// persisted CRC before any requested bytes are returned. This keeps local
+    /// reads selective without allowing an unchecked partial-cache hit.
+    pub async fn get_range(
+        &self,
+        key: &str,
+        offset: u64,
+        len: u64,
+    ) -> std::io::Result<Option<Arc<[u8]>>> {
+        let Some(meta) = self.inner.entries.get(key).map(|entry| entry.clone()) else {
+            return Ok(None);
+        };
+        let Some(end) = offset.checked_add(len) else {
+            return Ok(None);
+        };
+        if end > meta.value_len {
+            return Ok(None);
+        }
+        let meta_for_read = meta.clone();
+        let result =
+            tokio::task::spawn_blocking(move || read_verified_range(&meta_for_read, offset, len))
+                .await
+                .map_err(join_error)?;
         match result {
             Ok(bytes) => {
                 meta.touch.store(self.next_tick(), Ordering::Relaxed);
@@ -262,13 +308,18 @@ impl PersistentByteStore {
                 match read_entry_metadata(&path) {
                     Ok((key, meta)) => {
                         let file_len = meta.file_len;
+                        let class = meta.class;
                         if let Some(old) = self.inner.entries.insert(key, Arc::new(meta)) {
                             self.inner
                                 .resident_bytes
                                 .fetch_sub(old.file_len, Ordering::Relaxed);
+                            self.inner.class_resident_bytes[old.class as usize]
+                                .fetch_sub(old.file_len, Ordering::Relaxed);
                         }
                         self.inner
                             .resident_bytes
+                            .fetch_add(file_len, Ordering::Relaxed);
+                        self.inner.class_resident_bytes[class as usize]
                             .fetch_add(file_len, Ordering::Relaxed);
                     }
                     Err(_) => {
@@ -311,6 +362,11 @@ impl PersistentByteStore {
             Ordering::Relaxed,
             |current| Some(current.saturating_sub(meta.file_len)),
         );
+        let _ = self.inner.class_resident_bytes[meta.class as usize].fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |current| Some(current.saturating_sub(meta.file_len)),
+        );
         if delete_file {
             let _ = std::fs::remove_file(&meta.path);
         }
@@ -336,6 +392,20 @@ fn write_entry_file(
     let mut checksum = Crc32::new();
     checksum.update(value);
     let value_crc = checksum.finalize();
+    let chunk_crcs: Vec<u32> = value
+        .chunks(CHECKSUM_CHUNK_BYTES as usize)
+        .map(|chunk| {
+            let mut checksum = Crc32::new();
+            checksum.update(chunk);
+            checksum.finalize()
+        })
+        .collect();
+    let chunk_count = u32::try_from(chunk_crcs.len()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "persistent cache chunk count exceeds u32",
+        )
+    })?;
     let key_len = u32::try_from(key.len()).map_err(|_| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -353,17 +423,24 @@ fn write_entry_file(
         file.write_all(&key_len.to_le_bytes())?;
         file.write_all(&value_len.to_le_bytes())?;
         file.write_all(&value_crc.to_le_bytes())?;
+        file.write_all(&chunk_count.to_le_bytes())?;
         file.write_all(key.as_bytes())?;
+        for crc in &chunk_crcs {
+            file.write_all(&crc.to_le_bytes())?;
+        }
         file.write_all(value)?;
         file.sync_all()?;
         std::fs::rename(temp_path, final_path)?;
-        let file_len = HEADER_LEN + key.len() as u64 + value_len;
+        let crc_table_len = u64::from(chunk_count) * 4;
+        let value_offset = HEADER_LEN + key.len() as u64 + crc_table_len;
+        let file_len = value_offset + value_len;
         Ok(Some(EntryMeta {
             path: final_path.to_path_buf(),
-            value_offset: HEADER_LEN + key.len() as u64,
+            value_offset,
             value_len,
             file_len,
             value_crc,
+            chunk_crcs: Arc::from(chunk_crcs),
             class,
             touch: AtomicU64::new(1),
         }))
@@ -404,8 +481,27 @@ fn read_entry_metadata(path: &Path) -> std::io::Result<(String, EntryMeta)> {
     let value_crc = u32::from_le_bytes(header[21..25].try_into().map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid checksum field")
     })?);
+    let chunk_count = u32::from_le_bytes(header[25..29].try_into().map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid checksum chunk-count field",
+        )
+    })?);
+    let expected_chunk_count = if value_len == 0 {
+        0
+    } else {
+        value_len.div_ceil(CHECKSUM_CHUNK_BYTES)
+    };
+    if u64::from(chunk_count) != expected_chunk_count {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "persistent cache checksum chunk count mismatch",
+        ));
+    }
+    let crc_table_len = u64::from(chunk_count) * 4;
     let expected_len = HEADER_LEN
         .checked_add(key_len as u64)
+        .and_then(|len| len.checked_add(crc_table_len))
         .and_then(|len| len.checked_add(value_len))
         .ok_or_else(|| {
             std::io::Error::new(
@@ -427,14 +523,33 @@ fn read_entry_metadata(path: &Path) -> std::io::Result<(String, EntryMeta)> {
             format!("persistent cache key is not UTF-8: {error}"),
         )
     })?;
+    let crc_table_bytes = usize::try_from(crc_table_len).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "persistent cache checksum table does not fit address space",
+        )
+    })?;
+    let mut encoded_crcs = vec![0u8; crc_table_bytes];
+    file.read_exact(&mut encoded_crcs)?;
+    let mut chunk_crcs = Vec::with_capacity(chunk_count as usize);
+    for encoded in encoded_crcs.chunks_exact(4) {
+        chunk_crcs.push(u32::from_le_bytes(encoded.try_into().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid persistent cache chunk checksum",
+            )
+        })?));
+    }
+    let value_offset = HEADER_LEN + key_len as u64 + crc_table_len;
     Ok((
         key,
         EntryMeta {
             path: path.to_path_buf(),
-            value_offset: HEADER_LEN + key_len as u64,
+            value_offset,
             value_len,
             file_len: actual_len,
             value_crc,
+            chunk_crcs: Arc::from(chunk_crcs),
             class,
             touch: AtomicU64::new(1),
         },
@@ -480,6 +595,90 @@ fn read_value_range(meta: &EntryMeta, offset: u64, len: u64) -> std::io::Result<
     Ok(bytes)
 }
 
+fn read_verified_range(meta: &EntryMeta, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    let end = offset.checked_add(len).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "persistent cache range overflow",
+        )
+    })?;
+    let expected_len = usize::try_from(len).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "persistent cache range does not fit address space",
+        )
+    })?;
+    let first_chunk = offset / CHECKSUM_CHUNK_BYTES;
+    let last_chunk = (end - 1) / CHECKSUM_CHUNK_BYTES;
+    let mut file = std::fs::File::open(&meta.path)?;
+    let mut result = Vec::with_capacity(expected_len);
+    for chunk_index in first_chunk..=last_chunk {
+        let chunk_start = chunk_index * CHECKSUM_CHUNK_BYTES;
+        let chunk_end = (chunk_start + CHECKSUM_CHUNK_BYTES).min(meta.value_len);
+        let chunk_len = usize::try_from(chunk_end - chunk_start).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "persistent cache checksum chunk does not fit address space",
+            )
+        })?;
+        file.seek(SeekFrom::Start(meta.value_offset + chunk_start))?;
+        let mut chunk = vec![0u8; chunk_len];
+        file.read_exact(&mut chunk)?;
+        let mut checksum = Crc32::new();
+        checksum.update(&chunk);
+        let expected_crc = meta
+            .chunk_crcs
+            .get(usize::try_from(chunk_index).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "persistent cache chunk index does not fit address space",
+                )
+            })?)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "persistent cache checksum chunk is missing",
+                )
+            })?;
+        if checksum.finalize() != *expected_crc {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "persistent cache chunk checksum mismatch",
+            ));
+        }
+        let copy_start = offset.max(chunk_start) - chunk_start;
+        let copy_end = end.min(chunk_end) - chunk_start;
+        let copy_start = usize::try_from(copy_start).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "persistent cache slice start does not fit address space",
+            )
+        })?;
+        let copy_end = usize::try_from(copy_end).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "persistent cache slice end does not fit address space",
+            )
+        })?;
+        result.extend_from_slice(chunk.get(copy_start..copy_end).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "persistent cache verified slice lies outside checksum chunk",
+            )
+        })?);
+    }
+    if result.len() != expected_len {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "persistent cache verified range was truncated",
+        ));
+    }
+    Ok(result)
+}
+
 fn is_rebuildable_miss(error: &std::io::Error) -> bool {
     matches!(
         error.kind(),
@@ -495,7 +694,8 @@ fn join_error(error: tokio::task::JoinError) -> std::io::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{L2Class, PersistentByteStore};
+    use super::{CHECKSUM_CHUNK_BYTES, L2Class, PersistentByteStore};
+    use std::io::{Seek, SeekFrom, Write};
     use std::sync::Arc;
 
     #[tokio::test]
@@ -513,6 +713,7 @@ mod tests {
         drop(store);
 
         let reopened = PersistentByteStore::open(dir.path(), 1 << 20).expect("reopen");
+        assert!(reopened.resident_bytes_for(L2Class::Survivor) > 0);
         assert_eq!(
             reopened
                 .get("tenant-a/segment-a")
@@ -521,6 +722,67 @@ mod tests {
                 .as_deref(),
             Some(&b"persistent"[..])
         );
+    }
+
+    #[tokio::test]
+    async fn verified_range_crosses_checksum_chunks_without_full_value_read() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let budget = CHECKSUM_CHUNK_BYTES * 2;
+        let store = PersistentByteStore::open(dir.path(), budget).expect("open");
+        let mut value = vec![0u8; CHECKSUM_CHUNK_BYTES as usize + 8];
+        let boundary = CHECKSUM_CHUNK_BYTES as usize;
+        value[boundary - 2..boundary + 2].copy_from_slice(&[1, 2, 3, 4]);
+        store
+            .put("segment/sq8", L2Class::Survivor, Arc::from(value))
+            .await
+            .expect("put");
+
+        assert_eq!(
+            store
+                .get_range("segment/sq8", CHECKSUM_CHUNK_BYTES - 2, 4)
+                .await
+                .expect("range")
+                .as_deref(),
+            Some(&[1, 2, 3, 4][..])
+        );
+    }
+
+    #[tokio::test]
+    async fn corrupt_requested_chunk_is_a_range_miss() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let store = PersistentByteStore::open(dir.path(), 1 << 20).expect("open");
+        store
+            .put(
+                "segment/sq8",
+                L2Class::Survivor,
+                Arc::from(&b"0123456789"[..]),
+            )
+            .await
+            .expect("put");
+        let value_offset = store
+            .inner
+            .entries
+            .get("segment/sq8")
+            .map(|entry| entry.value_offset)
+            .expect("indexed entry");
+        let path = store.entry_path_for_test("segment/sq8");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("open entry");
+        file.seek(SeekFrom::Start(value_offset))
+            .expect("seek value");
+        file.write_all(b"x").expect("corrupt value");
+        file.sync_all().expect("sync corruption");
+
+        assert!(
+            store
+                .get_range("segment/sq8", 0, 4)
+                .await
+                .expect("range")
+                .is_none()
+        );
+        assert_eq!(store.entry_count(), 0);
     }
 
     #[tokio::test]

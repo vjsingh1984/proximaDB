@@ -1447,14 +1447,27 @@ impl SegmentInvariantsCache {
         }
     }
 
-    /// Remove a path (call from flush/compaction when a segment is rewritten).
-    /// Removes both the control entry and the Region-A companion (S2b).
+    /// Remove a path from DRAM.
+    ///
+    /// Call [`Self::invalidate_all`] when the backing immutable segment has
+    /// been retired and persistent entries must be removed as well.
     pub fn invalidate(&self, path: &str) {
         self.invalidate_entry(path);
         self.invalidate_entry(&Self::region_entry_key(path));
+    }
+
+    /// Remove both DRAM and persistent entries for a retired segment.
+    ///
+    /// The persistent sweep shares the store's publication mutex, so an
+    /// invalidation racing a cache seed cannot leave a persistent-only entry.
+    pub async fn invalidate_all(&self, path: &str) {
+        self.invalidate(path);
         if let Some(store) = &self.l2_store {
-            store.remove(&Self::l2_control_key(path));
-            store.remove(&Self::l2_region_key(path));
+            let control_key = Self::l2_control_key(path);
+            let region_key = Self::l2_region_key(path);
+            store
+                .remove_where(|key| key == control_key || key == region_key)
+                .await;
         }
     }
 
@@ -2164,7 +2177,7 @@ pub async fn rabitq_search_segment_coalesced(
         if let Some(c) = cache {
             crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_BYTES
                 .set(c.bytes_used() as i64);
-            crate::metrics::operational_metrics::sync_nvme_stats("invariants", c.l2_stats());
+            crate::metrics::operational_metrics::sync_local_disk_stats("invariants", c.l2_stats());
         }
     }
 
@@ -2652,7 +2665,7 @@ mod tests {
             matches!(reopened.get_or_promote(path).await, InvariantLookup::L1(_)),
             "the persistent value must be promoted into DRAM"
         );
-        reopened.invalidate(path);
+        reopened.invalidate_all(path).await;
         assert!(reopened.get(path).is_none(), "L1 entries were invalidated");
         assert!(matches!(
             reopened.get_or_promote(path).await,

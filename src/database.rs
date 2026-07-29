@@ -1384,8 +1384,8 @@ impl ProximaDB {
     pub async fn force_flush_collection(&self, collection: &str) -> anyhow::Result<()> {
         if let Some(ref multi_server) = self.multi_server {
             let vops = &multi_server.shared_services.vector_operations_service;
-            let id = vops.resolve_collection_id(collection).await;
-            vops.force_flush_collection(&id)
+            let object_id = vops.resolve_collection_object_id(collection).await?;
+            vops.force_flush_collection(&object_id.to_string())
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to force-flush collection: {}", e))?;
             Ok(())

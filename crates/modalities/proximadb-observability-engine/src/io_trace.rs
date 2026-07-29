@@ -286,6 +286,10 @@ pub struct IoTrace {
     /// Absent outside an instrumented scope (or across un-propagated spawns —
     /// the same constraint all io_trace metering already has).
     tenant_id: Mutex<Option<String>>,
+    /// Catalog-authoritative stable tenant identity for in-process ownership,
+    /// cache fair-sharing, and authorization joins. Unlike `tenant_id`, this
+    /// stays numeric and is never derived from an alias.
+    tenant_stable_id: Mutex<Option<u64>>,
 }
 
 /// Neutral primitive tuple carrying one operator's metered actuals into
@@ -332,12 +336,28 @@ impl IoTrace {
         *self.tenant_id.lock().unwrap_or_else(|p| p.into_inner()) = tenant;
     }
 
+    /// Stamp the catalog-authoritative stable tenant id for this scope.
+    pub fn set_tenant_stable_id(&self, tenant_stable_id: Option<u64>) {
+        *self
+            .tenant_stable_id
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = tenant_stable_id;
+    }
+
     /// The stamped tenant, if any.
     pub fn tenant(&self) -> Option<String> {
         self.tenant_id
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clone()
+    }
+
+    /// The stamped catalog-authoritative stable tenant id, if resolved.
+    pub fn tenant_stable_id(&self) -> Option<u64> {
+        *self
+            .tenant_stable_id
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
     }
 
     /// The stamped per-query id, if any.
@@ -1303,8 +1323,28 @@ pub fn current_tenant() -> Option<String> {
     IO_TRACE.try_with(|t| t.tenant()).ok().flatten()
 }
 
+/// Catalog-authoritative stable tenant id of the current instrumented request.
+/// No alias parsing or hashing fallback is permitted: unresolved means `None`.
+pub fn current_tenant_stable_id() -> Option<u64> {
+    IO_TRACE.try_with(|t| t.tenant_stable_id()).ok().flatten()
+}
+
 pub async fn instrument<F>(
     tenant_id: Option<String>,
+    route: impl Into<String>,
+    future: F,
+) -> F::Output
+where
+    F: std::future::Future,
+{
+    instrument_with_stable_tenant(tenant_id, None, route, future).await
+}
+
+/// Instrument a query with both its external billing label and its
+/// catalog-authoritative numeric tenant identity.
+pub async fn instrument_with_stable_tenant<F>(
+    tenant_id: Option<String>,
+    tenant_stable_id: Option<u64>,
     route: impl Into<String>,
     future: F,
 ) -> F::Output
@@ -1321,6 +1361,7 @@ where
             // TD-CACHE-3 S1: stamp the tenant into the scope so engine-side
             // consumers (per-tenant cache keys) can read it ambiently.
             let _ = IO_TRACE.try_with(|t| t.set_tenant(tenant_id.clone()));
+            let _ = IO_TRACE.try_with(|t| t.set_tenant_stable_id(tenant_stable_id));
             let out = future.await;
             // Still inside the scope: read and emit before the binding drops.
             if let Ok((snap, stamped_route)) = IO_TRACE.try_with(|t| (t.snapshot(), t.route())) {

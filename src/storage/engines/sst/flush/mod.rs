@@ -859,10 +859,47 @@ impl SstEngine {
             // watermarks (TD-COMPACT-7) checked above; the dedup + the
             // training_in_flight guard above prevent redundant work. The worker
             // clears training_in_flight on completion (Ok or Err).
-            match compaction
-                .enqueue_due_compaction(cid, collection_dir, l0_threshold)
-                .await
-            {
+            let precision_hint = params
+                .collection_config
+                .as_ref()
+                .and_then(|collection| collection.config.as_ref())
+                .and_then(|config| config.canonical_embedding_precision)
+                .and_then(|precision| {
+                    use crate::proto::proximadb_v1::EmbeddingPrecision;
+                    match EmbeddingPrecision::try_from(precision) {
+                        Ok(EmbeddingPrecision::Fp16) => {
+                            Some(proximadb_records::EmbeddingScalarType::Fp16)
+                        }
+                        Ok(EmbeddingPrecision::Bf16) => {
+                            Some(proximadb_records::EmbeddingScalarType::Bf16)
+                        }
+                        Ok(EmbeddingPrecision::Int8) => {
+                            Some(proximadb_records::EmbeddingScalarType::Int8Scalar)
+                        }
+                        Ok(EmbeddingPrecision::Uint8) => {
+                            Some(proximadb_records::EmbeddingScalarType::UInt8Scalar)
+                        }
+                        Ok(EmbeddingPrecision::Unspecified | EmbeddingPrecision::Fp32) | Err(_) => {
+                            None
+                        }
+                    }
+                });
+            let enqueue_result = match params.get_collection_object_id() {
+                Ok(collection_object_id) => {
+                    compaction
+                        .enqueue_due_compaction(
+                            collection_object_id,
+                            collection_dir,
+                            l0_threshold,
+                            precision_hint,
+                        )
+                        .await
+                }
+                Err(error) => Err(crate::core::StorageError::SstEngine(format!(
+                    "compaction admission requires a catalog-resolved collection object id for {cid:?}: {error}"
+                ))),
+            };
+            match enqueue_result {
                 Ok(true) => {
                     compaction_ran = true;
                     info!(

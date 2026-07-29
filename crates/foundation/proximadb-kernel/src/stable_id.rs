@@ -26,6 +26,20 @@
 /// Global customer identity (billing/auth). Assigned by the control plane.
 pub type AccountId = u32;
 
+/// Stable tenant identity from the control-plane/catalog tenant registry.
+///
+/// Tenant display names and aliases are accepted only at identity-resolution
+/// boundaries. Authorization, ownership, and cache attribution use this native
+/// value after resolution.
+pub type TenantStableId = u64;
+
+/// Globally unique, never-reused catalog object identity for a collection.
+///
+/// This is distinct from [`CollectionId`]: `CollectionId` is a compact u32
+/// scoped by `(account, namespace)` for physical path composition, while this
+/// u64 identifies the catalog object globally for admission and scheduling.
+pub type CollectionObjectId = u64;
+
 /// Regional deployment scope (us-east, eu-west). Per-account, auth-assigned.
 pub type WorkspaceId = u16;
 

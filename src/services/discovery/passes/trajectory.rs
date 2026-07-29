@@ -22,8 +22,9 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
         return Ok(DiscoveryJobResult::default());
     };
     let collection_id = vector_ops
-        .resolve_collection_id(ctx.collection_id.as_str())
-        .await;
+        .resolve_collection_object_id(ctx.collection_id.as_str())
+        .await?
+        .to_string();
 
     let records = vector_ops
         .list_all_records_with_tenant_context(collection_id.as_str(), None)

@@ -45,9 +45,9 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_AZURE_EMULATOR` | Point the Azure blob backend at the Azurite emulator. | OFF (false) | test-only; — | src/storage/persistence/filesystem/mod.rs
 | `PROXIMADB_AZURE_TEST` | Gate that enables the `#[ignore]`d Azure dual-store integration test. | test skipped unless set | test-only; — | src/index/axis/indexes/dual_store_ivf.rs
 | `PROXIMADB_CACHE_PREFILL` | restart warming replay (0=off) | ON | TD-CACHE-1 | `src/database.rs (+1)`
-| `PROXIMADB_CACHE_NVME_MAX_GB` | Shared persistent PAX warm-tier budget in GiB; only active when the NVMe path is configured. | 100 | config-mirror; ADR-082 | src/storage/engines/sst/core.rs
-| `PROXIMADB_CACHE_NVME_PATH` | Root directory for the optional persistent PAX warm tier (normally instance-store NVMe). | unset = L2 disabled | config-mirror; ADR-082 | src/storage/engines/sst/core.rs
-| `PROXIMADB_CACHE_ON_WRITE` | Post-publication PAX cache population policy: `none`, `invariant`, or `all`. | invariant | config-mirror; ADR-082 | src/core/config.rs; src/storage/engines/sst/core.rs
+| `PROXIMADB_CACHE_LOCAL_DISK_MAX_GB` | Shared persistent PAX warm-tier budget in GiB; only active when the local-disk path is configured. Zero disables the tier. | 100 | config-mirror; ADR-082/TD-CACHE-9 | src/storage/engines/sst/core.rs
+| `PROXIMADB_CACHE_LOCAL_DISK_PATH` | Local filesystem root for the optional persistent PAX warm tier. HDD is valid; SSD/NVMe is recommended for latency. URLs are invalid. | unset = L2 disabled | config-mirror; ADR-082/TD-CACHE-9 | src/storage/engines/sst/core.rs
+| `PROXIMADB_CACHE_ON_WRITE` | Post-publication PAX cache population policy: `none`, `invariant`, or `all`. | invariant | config-mirror; ADR-082/TD-CACHE-9 | src/core/config.rs; src/storage/engines/sst/flush/mod.rs; src/storage/engines/sst/compaction.rs
 | `PROXIMADB_CACHE_TIERS_PATH` | operator tier policy JSON (floors/weights) | unset = uniform | TD-CACHE-3 S1 | `src/network/shared_services.rs (+3)`
 | `PROXIMADB_CATALOG_DRPATH` | Route the system-catalog WAL under the DR-path operator control-plane prefix. | OFF (falls back to `{base}/system-catalog.wal`) | opt-in; — (mirrors PROXIMADB_WAREHOUSE_DRPATH) | src/network/shared_services.rs
 | `PROXIMADB_CATALOG_FOLLOWER_POLL_SECS` | Enable + interval (secs) for catalog follower snapshot polling (cross-pod coherence). | OFF (unset/0 = disabled) | opt-in; Phase 6b | src/network/shared_services.rs
@@ -181,7 +181,7 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_PAX_READ_COARSE_NPROBE` | READ knob: coarse-probe cell count (nprobe). Falls back to TOML `[storage.sst_config.coarse_probe] nprobe_multiplier/min/max` → geometric `ceil(sqrt(ncells) × multiplier)` | geometric `ceil(sqrt(ncells) × 1.0)` (was `k_c/4`; ~56× fewer ranks at 1M) | config-mirror; TD-RDSTRAT-8 PR-B; retired alias `PROXIMADB_IVF2_NPROBE` | `src/storage/engines/sst/segment_format.rs`
 | `PROXIMADB_PAX_READ_COARSE_PROBE` | READ kill-switch: coarse probe via A0 on trained v3 segments (`0/off/false/no` disables). Falls back to TOML `[storage.sst_config.coarse_probe] enable_read_probe` | **ON** (flipped 2026-07-26; sweep: recall 0.986-0.987 ≥ ratchet at default nprobe, 81 GETs/92ms vs 108/144ms unprobed) | config-mirror; TD-RDSTRAT-8 PR-B | `src/storage/engines/sst/segment_format.rs`
 | `PROXIMADB_PAX_RERANK_QUANT` | Tier-2 rerank quant strategy when tier-1 is RaBitQ (fp16/f32/sq8). | `Sq8` (after per-collection tag) | opt-in; TD-123 | src/storage/engines/sst/flush/mod.rs:1239
-| `PROXIMADB_PAX_SPLIT_PROBE_META_CACHE` | Compatibility kill-switch for caching immutable header/A0/RaBitQ-parameter/footer bytes on the coarse-probe path; explicit `0/off/false/no` disables. | ON (unset) | kill-switch; TD-NVME-1 | src/storage/engines/sst/segment_format.rs
+| `PROXIMADB_PAX_SPLIT_PROBE_META_CACHE` | Compatibility kill-switch for caching immutable header/A0/RaBitQ-parameter/footer bytes on the coarse-probe path; explicit `0/off/false/no` disables. | ON (unset) | kill-switch; TD-CACHE-9 | src/storage/engines/sst/segment_format.rs
 | `PROXIMADB_PAX_VECTOR_COALESCE_GAP` | Max byte gap to bridge when coalescing adjacent A-region (vector-stripe) probe-cell ranged GETs | 0 (no gap coalescing) | eval; — | `src/storage/engines/sst/segment_format.rs`
 | `PROXIMADB_PAX_VECTOR_COALESCE_RANGE` | Max coalesced byte range for A-region probe-cell GETs | 0 (off) | eval; — | `src/storage/engines/sst/segment_format.rs`
 | `PROXIMADB_PAX_VECTOR_QUANT` | flush vector quant codec (rabitq|sq8|...) | rabitq | Phase F | `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs (+1)`
@@ -298,3 +298,5 @@ layer; at GA, renames become alias-forever):
 * `PROXIMADB_IVF2` → `PROXIMADB_PAX_WRITE_A0_TRAIN` (2026-07-25)
 * `PROXIMADB_IVF2_PROBE` → `PROXIMADB_PAX_READ_COARSE_PROBE` (2026-07-25)
 * `PROXIMADB_IVF2_NPROBE` → `PROXIMADB_PAX_READ_COARSE_NPROBE` (2026-07-25)
+* `PROXIMADB_CACHE_NVME_PATH` → `PROXIMADB_CACHE_LOCAL_DISK_PATH` (2026-07-29; pre-GA clean break)
+* `PROXIMADB_CACHE_NVME_MAX_GB` → `PROXIMADB_CACHE_LOCAL_DISK_MAX_GB` (2026-07-29; pre-GA clean break)

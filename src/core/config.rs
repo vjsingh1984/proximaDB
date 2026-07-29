@@ -1253,15 +1253,16 @@ pub struct SstConfig {
     /// cache. 0 disables (resolver lazy-loaded on each delete — no in-memory
     /// cache). Env override: `PROXIMADB_OID_RESOLVER_CACHE_MB`.
     pub oid_resolver_cache_mb: u64,
-    /// Optional shared persistent cache root (normally instance-store NVMe).
-    /// `None` keeps the historical DRAM-only path. Env override:
-    /// `PROXIMADB_CACHE_NVME_PATH`.
+    /// Optional shared persistent cache root on a local filesystem.
+    /// `None` keeps the historical DRAM-only path. Fast SSD/NVMe media is
+    /// recommended for latency, but the cache is correct on any local disk.
+    /// Env override: `PROXIMADB_CACHE_LOCAL_DISK_PATH`.
     #[serde(default)]
-    pub cache_nvme_path: Option<String>,
+    pub cache_local_disk_path: Option<String>,
     /// Shared persistent cache budget in GiB. Env override:
-    /// `PROXIMADB_CACHE_NVME_MAX_GB`.
-    #[serde(default = "default_cache_nvme_max_gb")]
-    pub cache_nvme_max_gb: u64,
+    /// `PROXIMADB_CACHE_LOCAL_DISK_MAX_GB`.
+    #[serde(default = "default_cache_local_disk_max_gb")]
+    pub cache_local_disk_max_gb: u64,
     /// Post-publication write-time cache population policy. Env override:
     /// `PROXIMADB_CACHE_ON_WRITE`.
     #[serde(default)]
@@ -1591,7 +1592,7 @@ fn default_l0_stop_trigger() -> u32 {
     10
 }
 
-fn default_cache_nvme_max_gb() -> u64 {
+fn default_cache_local_disk_max_gb() -> u64 {
     100
 }
 
@@ -1621,8 +1622,8 @@ impl Default for SstConfig {
             segment_invariants_cache_mb: 256,
             survivor_cache_mb: 1024,
             oid_resolver_cache_mb: 64,
-            cache_nvme_path: None,
-            cache_nvme_max_gb: default_cache_nvme_max_gb(),
+            cache_local_disk_path: None,
+            cache_local_disk_max_gb: default_cache_local_disk_max_gb(),
             cache_on_write: CacheOnWritePolicy::default(),
             max_files_per_level: 10,
             level_size_multiplier: 10.0,
@@ -1658,6 +1659,31 @@ impl SstConfig {
         }
         if self.compaction_threshold == 0 {
             return Err("compaction_threshold must be greater than 0".to_string());
+        }
+        if let Some(compaction) = &self.compaction_config {
+            if compaction.higher_level_file_threshold < 2 {
+                return Err("compaction higher_level_file_threshold must be at least 2".to_string());
+            }
+            if !compaction.level_multiplier.is_finite() || compaction.level_multiplier <= 0.0 {
+                return Err("compaction level_multiplier must be finite and positive".to_string());
+            }
+            if !(1.0..=1.5).contains(&compaction.level_multiplier) {
+                tracing::warn!(
+                    level_multiplier = compaction.level_multiplier,
+                    "SST compaction level_multiplier is outside the vector-search \
+                     recommendation [1.0, 1.5]; segment accumulation or rewrite churn may result"
+                );
+            }
+        }
+        if let Some(path) = &self.cache_local_disk_path {
+            if path.trim().is_empty() {
+                return Err("cache_local_disk_path must not be empty".to_string());
+            }
+            if path.contains("://") {
+                return Err(
+                    "cache_local_disk_path must be a local filesystem path, not a URL".to_string(),
+                );
+            }
         }
 
         // Validate block size for optimal performance and storage compatibility
@@ -1742,6 +1768,46 @@ impl SstConfig {
             compression_level: 3,            // Balanced compression level
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod sst_config_validation_tests {
+    use super::{CompactionConfig, SstConfig};
+
+    #[test]
+    fn compaction_multiplier_guard_is_soft_but_invalid_values_fail() {
+        let mut config = SstConfig {
+            compaction_config: Some(CompactionConfig {
+                level_multiplier: 2.0,
+                ..CompactionConfig::default()
+            }),
+            ..SstConfig::default()
+        };
+        assert!(
+            config.validate().is_ok(),
+            "2.0 warns but remains overridable"
+        );
+
+        if let Some(compaction) = &mut config.compaction_config {
+            compaction.level_multiplier = 0.0;
+        }
+        assert!(config.validate().is_err());
+
+        if let Some(compaction) = &mut config.compaction_config {
+            compaction.level_multiplier = 1.0;
+            compaction.higher_level_file_threshold = 1;
+        }
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn persistent_cache_path_must_be_a_local_path() {
+        let config = SstConfig {
+            cache_local_disk_path: Some("file:///tmp/cache".to_string()),
+            ..SstConfig::default()
+        };
+        assert!(config.validate().is_err());
     }
 }
 

@@ -392,8 +392,24 @@ impl StorageEngine {
             let tenant_id = proximadb_tenant::tenant_id_of(meta);
 
             let plan = CollectionFlushPlan {
-                wal_key: collection_id.clone(),
-                canonical_id: collection_id.clone(),
+                collection_object_id: match collection_id.parse() {
+                    Ok(object_id) => object_id,
+                    Err(error) => {
+                        tracing::warn!(
+                            collection_id,
+                            "STORAGE_ENGINE: catalog object identity is not numeric: {error}"
+                        );
+                        failed_collections.push((
+                            collection_id.clone(),
+                            "invalid catalog object identity".to_string(),
+                        ));
+                        continue;
+                    }
+                },
+                collection_name: config
+                    .map(|config| config.name.clone())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| collection_id.clone()),
                 base_location,
                 engine_type,
                 dimension,

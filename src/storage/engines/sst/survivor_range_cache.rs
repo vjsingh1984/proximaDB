@@ -24,8 +24,8 @@
 //!   policy, no new metering.
 //! - **RAM for v1.** The billed ms-latency GET dominates cost, not the cache
 //!   medium, so a RAM hit wins; the SIFT1M survivor working set fits a
-//!   few-hundred-MB budget. NVMe spill for 10M+ scale swaps the backing behind
-//!   the same key/budget API (follow-up).
+//!   few-hundred-MB budget. The optional persistent local-disk tier absorbs
+//!   overflow and survives process restart; SSD/NVMe is recommended for latency.
 //! - **Metering is free.** The cache sits *above* the FS backend: a HIT never
 //!   runs the caller's loader, so `fs.read_range` is never called and the
 //!   backend's `record_range_gets`/`record_bytes_read` never fire — the GET is
@@ -44,7 +44,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use proximadb_cache::{
-    CacheBudget, CacheKey, CacheKind, L2CacheStats, L2Class, PersistentArcBytesL2,
+    CacheBudget, CacheKey, CacheKind, CacheScope, L2CacheStats, L2Class, PersistentArcBytesL2,
     PersistentByteStore, TenantCache,
 };
 use proximadb_storage_filesystem_types::{FilesystemError, FsResult};
@@ -58,14 +58,14 @@ use proximadb_storage_filesystem_types::{FilesystemError, FsResult};
 /// *fair-sharing* dimension (per-tenant floors/ceilings under pool pressure).
 /// v1 uses a single shared tenant (one elastic pool); per-tenant fair-sharing
 /// is a follow-up that threads the real `tenant_id` into the search path.
-/// Fallback pool id when no request tenant is in scope (unauthenticated
-/// surfaces, background work, tests). Real requests resolve the tenant
-/// ambiently from the io_trace scope (TD-CACHE-3 S1) so per-tenant
-/// fair-share/stats work without threading tenant through every search
-/// signature. NOTE: isolation is STRUCTURAL either way — the DrPath-scoped
-/// segment path inside the key prevents cross-tenant reads; the tenant field
-/// only drives fair-share/budget/stat attribution.
-const FALLBACK_TENANT: &str = "survivor-cache";
+/// Resolve the fair-share owner from the request trace. Missing control-plane
+/// resolution uses the shared scope; aliases are never parsed or hashed into a
+/// synthetic stable id. Data isolation remains structural in the `DrPath`.
+fn request_cache_scope() -> CacheScope {
+    crate::observability::io_trace::current_tenant_stable_id()
+        .map(CacheScope::stable_tenant)
+        .unwrap_or(CacheScope::Shared)
+}
 
 /// A byte-range cache for survivor (Region B SQ8) and OID (Region D) ranges of
 /// immutable coalesced segments. Read-through: on a miss the caller-supplied
@@ -83,7 +83,7 @@ pub struct SurvivorRangeCache {
     /// dropping the low-hit half when full. Keys are `(kind, path, off, len)`
     /// tuples, exactly what replay needs to re-issue coalesced loads.
     hot_keys: std::sync::Mutex<
-        std::collections::HashMap<String, std::collections::HashMap<WarmKey, u64>>,
+        std::collections::HashMap<CacheScope, std::collections::HashMap<WarmKey, u64>>,
     >,
 }
 
@@ -176,9 +176,9 @@ impl SurvivorRangeCache {
         format!("survivor-parent/{path}:{off}:{len}")
     }
 
-    fn track_hot_key(&self, tenant: &str, kind: CacheKind, path: &str, off: u64, len: u64) {
+    fn track_hot_key(&self, scope: &CacheScope, kind: CacheKind, path: &str, off: u64, len: u64) {
         if let Ok(mut hot) = self.hot_keys.lock() {
-            let per_tenant = hot.entry(tenant.to_string()).or_default();
+            let per_tenant = hot.entry(scope.clone()).or_default();
             if per_tenant.len() >= HOT_KEYS_CAP {
                 let mut counts: Vec<u64> = per_tenant.values().copied().collect();
                 counts.sort_unstable();
@@ -204,11 +204,7 @@ impl SurvivorRangeCache {
     /// parent key lets any request tenant read exact subranges after restart.
     pub async fn seed_parent_region(&self, path: &str, off: u64, bytes: Arc<[u8]>) -> FsResult<()> {
         let len = bytes.len() as u64;
-        let key = CacheKey::new(
-            FALLBACK_TENANT,
-            CacheKind::QuantizedCodes,
-            format!("{path}:{off}:{len}"),
-        );
+        let key = CacheKey::shared(CacheKind::QuantizedCodes, format!("{path}:{off}:{len}"));
         let weight = bytes.len().try_into().unwrap_or(u32::MAX);
         // Persist the complete region only under the range-aware parent key.
         // The exact-key TenantCache adapter would otherwise duplicate the
@@ -249,13 +245,11 @@ impl SurvivorRangeCache {
         if relative_off.saturating_add(len) > parent_len {
             return self.get_or_fetch(kind, path, off, len, loader).await;
         }
-        let tenant = crate::observability::io_trace::current_tenant();
-        let tenant_str = tenant.as_deref().unwrap_or(FALLBACK_TENANT);
-        self.track_hot_key(tenant_str, kind, path, off, len);
-        let exact_key = CacheKey::new(tenant_str, kind, format!("{path}:{off}:{len}"));
+        let scope = request_cache_scope();
+        self.track_hot_key(&scope, kind, path, off, len);
+        let exact_key = CacheKey::with_scope(scope, kind, format!("{path}:{off}:{len}"));
         let weight = len.try_into().unwrap_or(u32::MAX);
-        let parent_key = CacheKey::new(
-            FALLBACK_TENANT,
+        let parent_key = CacheKey::shared(
             CacheKind::QuantizedCodes,
             format!("{path}:{parent_off}:{parent_len}"),
         );
@@ -265,52 +259,45 @@ impl SurvivorRangeCache {
         let Ok(slice_len) = usize::try_from(len) else {
             return self.get_or_fetch(kind, path, off, len, loader).await;
         };
+        if let Some(exact) = self.inner.get(&exact_key).await {
+            self.sync_prometheus();
+            return Ok(exact);
+        }
+        let end = start.saturating_add(slice_len);
+        if let Some(parent) = self.inner.get(&parent_key).await
+            && let Some(slice) = parent.get(start..end)
+        {
+            // A complete write-time seed already occupies the useful cache
+            // slot. Do not admit every query-dependent slice as another exact
+            // entry: doing so duplicates the region, evicts its parent, and
+            // synchronously spills tens of MiB/query into L2.
+            self.sync_prometheus();
+            return Ok(Arc::from(slice));
+        }
+        if let Some(store) = &self.l2_store {
+            let persistent_key = Self::parent_key(path, parent_off, parent_len);
+            match store.get_range(&persistent_key, relative_off, len).await {
+                Ok(Some(bytes)) => {
+                    self.parent_l2_hits
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    // Promote only the demanded range. `insert_memory_only`
+                    // deliberately avoids writing an exact-range duplicate
+                    // beside the durable parent entry.
+                    self.inner
+                        .insert_memory_only(exact_key, weight, bytes.clone())
+                        .await;
+                    self.sync_prometheus();
+                    return Ok(bytes);
+                }
+                Ok(None) | Err(_) => {}
+            }
+            self.parent_l2_misses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         let result = self
             .inner
             .get_or_load(exact_key, weight, || async {
-                if let Some(parent) = self.inner.get(&parent_key).await {
-                    let end = start.saturating_add(slice_len);
-                    if let Some(slice) = parent.get(start..end) {
-                        return Ok::<Arc<[u8]>, FilesystemError>(Arc::from(slice));
-                    }
-                }
-                if let Some(store) = &self.l2_store {
-                    let persistent_key = Self::parent_key(path, parent_off, parent_len);
-                    match store.get(&persistent_key).await {
-                        Ok(Some(parent))
-                            if u64::try_from(parent.len()).ok() == Some(parent_len) =>
-                        {
-                            self.parent_l2_hits
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            // Validate the complete entry checksum once, then
-                            // promote the parent to DRAM. The remaining cells
-                            // in this query become memory slices instead of
-                            // repeated NVMe reads, and corrupt local bytes
-                            // fail through to object storage.
-                            self.inner
-                                .insert_memory_only(
-                                    parent_key.clone(),
-                                    parent.len().try_into().unwrap_or(u32::MAX),
-                                    parent.clone(),
-                                )
-                                .await;
-                            let end = start.saturating_add(slice_len);
-                            if let Some(slice) = parent.get(start..end) {
-                                return Ok(Arc::from(slice));
-                            }
-                        }
-                        Ok(Some(_)) => {
-                            store.remove(&persistent_key);
-                            self.parent_l2_misses
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        Ok(None) | Err(_) => {
-                            self.parent_l2_misses
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    }
-                }
-                Ok(Arc::from(loader().await?))
+                Ok::<Arc<[u8]>, FilesystemError>(Arc::from(loader().await?))
             })
             .await;
         self.sync_prometheus();
@@ -389,12 +376,11 @@ impl SurvivorRangeCache {
         // from the per-request io_trace scope; falls back to the shared pool id
         // outside a scope). Enables per-tenant hit/miss/bytes stats and the
         // tier-resolver fair-share floors.
-        let tenant = crate::observability::io_trace::current_tenant();
-        let tenant_str = tenant.as_deref().unwrap_or(FALLBACK_TENANT);
+        let scope = request_cache_scope();
         // TD-CACHE-1 S2: count this range toward the tenant's warm set (the
         // shutdown manifest's source). Bounded map; low-hit half pruned at cap.
-        self.track_hot_key(tenant_str, kind, path, off, len);
-        let key = CacheKey::new(tenant_str, kind, format!("{path}:{off}:{len}"));
+        self.track_hot_key(&scope, kind, path, off, len);
+        let key = CacheKey::with_scope(scope, kind, format!("{path}:{off}:{len}"));
         // Ranges are ≤ a few MiB; cap the weight at u32::MAX defensively.
         let weight: u32 = len.try_into().unwrap_or(u32::MAX);
         let result = self
@@ -419,7 +405,7 @@ impl SurvivorRangeCache {
                 let mut ranked: Vec<(&WarmKey, u64)> = keys.iter().map(|(k, h)| (k, *h)).collect();
                 ranked.sort_by_key(|(_, hits)| std::cmp::Reverse(*hits));
                 (
-                    tenant.clone(),
+                    tenant.label(),
                     ranked
                         .into_iter()
                         .take(top_k)
@@ -467,7 +453,7 @@ impl SurvivorRangeCache {
         crate::metrics::operational_metrics::SURVIVOR_CACHE_HITS.set(hits);
         crate::metrics::operational_metrics::SURVIVOR_CACHE_MISSES.set(misses);
         crate::metrics::operational_metrics::SURVIVOR_CACHE_BYTES.set(bytes);
-        crate::metrics::operational_metrics::sync_nvme_stats("survivor", self.l2_stats());
+        crate::metrics::operational_metrics::sync_local_disk_stats("survivor", self.l2_stats());
         // TD-CACHE-3 S1: per-tenant series, bounded to the top tenants by
         // resident bytes (noisy-neighbor + hot-tier entitlement signal).
         stats.sort_by_key(|s| std::cmp::Reverse(s.bytes));
@@ -534,12 +520,18 @@ mod tests {
             .expect("DRAM parent slice");
         assert_eq!(bytes.as_ref(), &[8, 9, 10, 11]);
         assert_eq!(loads.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            store.entry_count(),
+            1,
+            "parent hits must not duplicate query-dependent exact ranges in L2"
+        );
         drop(cache);
         drop(store);
 
         let reopened =
             Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("reopen persistent L2"));
-        let restarted = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(reopened));
+        let restarted =
+            SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(reopened.clone()));
         let loads_restart = loads.clone();
         let bytes = restarted
             .get_or_fetch_in_parent(
@@ -562,6 +554,11 @@ mod tests {
         assert_eq!(bytes.as_ref(), &[16, 17, 18, 19]);
         assert_eq!(loads.load(Ordering::SeqCst), 0);
         assert_eq!(restarted.l2_stats().hits, 1);
+        assert_eq!(
+            reopened.entry_count(),
+            1,
+            "restart promotion keeps the parent as the only persistent copy"
+        );
 
         assert!(
             restarted.purge_path("seg.pax").await >= 1,
@@ -606,74 +603,89 @@ mod tests {
         unsafe { std::env::set_var("PROXIMADB_SURVIVOR_PIN_RESERVE_FRAC", "0.5") };
         let resolver: Arc<proximadb_cache::LimitsResolver> =
             Arc::new(|tenant: &str| proximadb_cache::TenantLimits {
-                floor_bytes: if tenant == "tenant-a" { 4_000 } else { 0 },
+                floor_bytes: if tenant == "101" { 4_000 } else { 0 },
                 hard_ceiling_bytes: 10_000,
                 weight: 1,
             });
         let cache = SurvivorRangeCache::with_resolver(10_000, Some(resolver));
 
         // A loads its working set inside its tenant scope (4 × 1 KB = floor).
-        crate::observability::io_trace::instrument(Some("tenant-a".to_string()), "test", async {
-            for i in 0..4u64 {
-                cache
-                    .get_or_fetch(
-                        CacheKind::QuantizedCodes,
-                        "a.pax",
-                        i * 1_000,
-                        1_000,
-                        || async { Ok(vec![i as u8; 1_000]) },
-                    )
-                    .await
-                    .unwrap();
-            }
-        })
+        crate::observability::io_trace::instrument_with_stable_tenant(
+            Some("tenant-a".to_string()),
+            Some(101),
+            "test",
+            async {
+                for i in 0..4u64 {
+                    cache
+                        .get_or_fetch(
+                            CacheKind::QuantizedCodes,
+                            "a.pax",
+                            i * 1_000,
+                            1_000,
+                            || async { Ok(vec![i as u8; 1_000]) },
+                        )
+                        .await
+                        .unwrap();
+                }
+            },
+        )
         .await;
 
         // B floods 100 KB through the 5 KB shared pool from its own scope.
-        crate::observability::io_trace::instrument(Some("tenant-b".to_string()), "test", async {
-            for i in 0..100u64 {
-                cache
-                    .get_or_fetch(
-                        CacheKind::QuantizedCodes,
-                        "b.pax",
-                        i * 1_000,
-                        1_000,
-                        || async { Ok(vec![0u8; 1_000]) },
-                    )
-                    .await
-                    .unwrap();
-            }
-        })
+        crate::observability::io_trace::instrument_with_stable_tenant(
+            Some("tenant-b".to_string()),
+            Some(202),
+            "test",
+            async {
+                for i in 0..100u64 {
+                    cache
+                        .get_or_fetch(
+                            CacheKind::QuantizedCodes,
+                            "b.pax",
+                            i * 1_000,
+                            1_000,
+                            || async { Ok(vec![0u8; 1_000]) },
+                        )
+                        .await
+                        .unwrap();
+                }
+            },
+        )
         .await;
 
         // A's floor must be served from the pinned segment: loader NOT re-run.
-        crate::observability::io_trace::instrument(Some("tenant-a".to_string()), "test", async {
-            for i in 0..4u64 {
-                let reloaded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let r2 = reloaded.clone();
-                let bytes = cache
-                    .get_or_fetch(
-                        CacheKind::QuantizedCodes,
-                        "a.pax",
-                        i * 1_000,
-                        1_000,
-                        move || {
-                            let r = r2.clone();
-                            async move {
-                                r.store(true, std::sync::atomic::Ordering::SeqCst);
-                                Ok(vec![i as u8; 1_000])
-                            }
-                        },
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(bytes[0], i as u8);
-                assert!(
-                    !reloaded.load(std::sync::atomic::Ordering::SeqCst),
-                    "range {i}: pinned floor entry must survive B's churn"
-                );
-            }
-        })
+        crate::observability::io_trace::instrument_with_stable_tenant(
+            Some("tenant-a".to_string()),
+            Some(101),
+            "test",
+            async {
+                for i in 0..4u64 {
+                    let reloaded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let r2 = reloaded.clone();
+                    let bytes = cache
+                        .get_or_fetch(
+                            CacheKind::QuantizedCodes,
+                            "a.pax",
+                            i * 1_000,
+                            1_000,
+                            move || {
+                                let r = r2.clone();
+                                async move {
+                                    r.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    Ok(vec![i as u8; 1_000])
+                                }
+                            },
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(bytes[0], i as u8);
+                    assert!(
+                        !reloaded.load(std::sync::atomic::Ordering::SeqCst),
+                        "range {i}: pinned floor entry must survive B's churn"
+                    );
+                }
+            },
+        )
         .await;
     }
 

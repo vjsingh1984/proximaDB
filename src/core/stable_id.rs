@@ -9,6 +9,6 @@
 //! See `crates/foundation/proximadb-kernel/src/stable_id.rs` for the source.
 
 pub use proximadb_kernel::stable_id::{
-    AccountId, CollectionId, CollectionIdentity, ColumnId, IndexId, NamespaceId, SegmentId,
-    ToPathSegment, WorkspaceId,
+    AccountId, CollectionId, CollectionIdentity, CollectionObjectId, ColumnId, IndexId,
+    NamespaceId, SegmentId, TenantStableId, ToPathSegment, WorkspaceId,
 };

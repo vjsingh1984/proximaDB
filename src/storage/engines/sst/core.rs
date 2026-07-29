@@ -545,27 +545,39 @@ impl SstEngine {
             config.coarse_probe.as_ref(),
         );
 
-        static SHARED_NVME_STORE: std::sync::OnceLock<
+        static SHARED_LOCAL_DISK_STORE: std::sync::OnceLock<
             Option<Arc<proximadb_cache::PersistentByteStore>>,
         > = std::sync::OnceLock::new();
-        let nvme_store = SHARED_NVME_STORE
+        let local_disk_store = SHARED_LOCAL_DISK_STORE
             .get_or_init(|| {
-                let path = std::env::var("PROXIMADB_CACHE_NVME_PATH")
+                let path = std::env::var("PROXIMADB_CACHE_LOCAL_DISK_PATH")
                     .ok()
                     .filter(|path| !path.trim().is_empty())
-                    .or_else(|| config.cache_nvme_path.clone());
-                let max_gb = std::env::var("PROXIMADB_CACHE_NVME_MAX_GB")
+                    .or_else(|| config.cache_local_disk_path.clone());
+                let max_gb = std::env::var("PROXIMADB_CACHE_LOCAL_DISK_MAX_GB")
                     .ok()
                     .and_then(|value| value.parse::<u64>().ok())
-                    .unwrap_or(config.cache_nvme_max_gb);
+                    .unwrap_or(config.cache_local_disk_max_gb);
                 path.and_then(|path| {
+                    if path.contains("://") {
+                        tracing::warn!(
+                            "persistent PAX cache disabled: local-disk path must be a filesystem path"
+                        );
+                        return None;
+                    }
+                    if max_gb == 0 {
+                        tracing::warn!(
+                            "persistent PAX cache disabled: local-disk budget is zero GiB"
+                        );
+                        return None;
+                    }
                     let root = std::path::PathBuf::from(path).join("pax-warm-tier-v1");
                     let max_bytes = max_gb.saturating_mul(1024 * 1024 * 1024);
                     match proximadb_cache::PersistentByteStore::open(root, max_bytes) {
                         Ok(store) => Some(Arc::new(store)),
                         Err(error) => {
                             tracing::warn!(
-                                "persistent PAX cache disabled: unable to open NVMe tier: {error}"
+                                "persistent PAX cache disabled: unable to open local-disk tier: {error}"
                             );
                             None
                         }
@@ -584,7 +596,7 @@ impl SstEngine {
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(config.segment_invariants_cache_mb);
                 (mb > 0).then(|| {
-                    Arc::new(if let Some(store) = &nvme_store {
+                    Arc::new(if let Some(store) = &local_disk_store {
                         crate::storage::engines::sst::segment_format::SegmentInvariantsCache::with_l2(
                             (mb as usize) * 1024 * 1024,
                             store.clone(),
@@ -629,7 +641,7 @@ impl SstEngine {
                     crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::with_resolver_and_l2(
                         budget_bytes,
                         resolver,
-                        nvme_store.clone(),
+                        local_disk_store.clone(),
                     ),
                 )
             })
