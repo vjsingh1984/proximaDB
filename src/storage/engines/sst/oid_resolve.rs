@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use proximadb_storage_common::oid_position_resolver::OidPositionResolver;
-use proximadb_storage_common::segment_layout::{SEG_TAIL_LEN, SEGMENT_MAGIC, SegmentFooterIndex};
+use proximadb_storage_common::pax_block::SEGMENT_MAGIC;
+use proximadb_storage_common::segment_layout::{SEG_TAIL_LEN, SegmentFooterIndex};
 
 use crate::storage::engines::sst::oid_resolver_cache::OidResolverCache;
 
