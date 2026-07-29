@@ -335,8 +335,14 @@ def labelled_metric(text: str, name: str, label: str,
 
 
 def metric_delta(before: dict, after: dict, name: str) -> float:
-    present = set(after.get("_present", []))
-    if name not in present:
+    present_before = set(before.get("_present", []))
+    present_after = set(after.get("_present", []))
+    if name not in present_after and name not in present_before:
+        # Prometheus collectors may register counters lazily on the first
+        # increment. Absence on both sides is therefore an observed zero
+        # delta, which is the expected state for a fully eliminated GET path.
+        return 0.0
+    if name not in present_after:
         raise RuntimeError(f"required metric {name} is absent after the sweep")
     delta = after[name] - before.get(name, 0.0)
     if delta < 0:
