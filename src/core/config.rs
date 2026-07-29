@@ -1658,7 +1658,7 @@ impl SstConfig {
 
 pub use proximadb_config::ApiConfig;
 
-pub use proximadb_config::{WalDistributionStrategy, WalStorageConfig};
+// RETIRED (TD-CONFIG-CONSOLIDATE-1): WalStorageConfig + WalDistributionStrategy — dead twin of WriteBufferUserConfig; do not re-add.
 
 // Helper functions for serde defaults
 #[allow(dead_code)]
