@@ -338,6 +338,13 @@ pub struct SstEngine {
     pub(crate) segment_invariants_cache:
         Option<Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>>,
 
+    /// TD-DELVEC-1 WI-3c: per-segment OID→position resolver cache. Feature-gated
+    /// `cold-deletion-vectors`. Empty on boot; lazy-filled by the resolve path
+    /// (`read_resolver` on cache miss). Compaction invalidates on retire.
+    #[cfg(feature = "cold-deletion-vectors")]
+    pub(crate) oid_resolver_cache:
+        Option<Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>>,
+
     /// ADR-065 Q3: ranged RAM cache for survivor (Region B SQ8) + OID (Region D)
     /// byte ranges. Hot repeat queries skip the per-range `fs.read_range` GETs.
     /// Default `None` (read path byte-for-byte unchanged); opt in via
@@ -597,6 +604,30 @@ impl SstEngine {
             }
         }
 
+        // TD-DELVEC-1 WI-3c: process-global OID resolver cache (sibling to the
+        // invariants cache). Feature-gated; 0 disables (lazy-load on each delete).
+        #[cfg(feature = "cold-deletion-vectors")]
+        let oid_resolver_cache = {
+            static SHARED_OID_RESOLVER_CACHE: std::sync::OnceLock<
+                Option<Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>>,
+            > = std::sync::OnceLock::new();
+            SHARED_OID_RESOLVER_CACHE
+                .get_or_init(|| {
+                    let mb = std::env::var("PROXIMADB_OID_RESOLVER_CACHE_MB")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(config.oid_resolver_cache_mb);
+                    (mb > 0).then(|| {
+                        Arc::new(
+                            crate::storage::engines::sst::oid_resolver_cache::OidResolverCache::new(
+                                (mb as usize) * 1024 * 1024,
+                            ),
+                        )
+                    })
+                })
+                .clone()
+        };
+
         Ok(Self {
             config,
             compaction_manager,
@@ -618,6 +649,8 @@ impl SstEngine {
             directory_cache: None,
             segment_invariants_cache,
             survivor_cache,
+            #[cfg(feature = "cold-deletion-vectors")]
+            oid_resolver_cache,
             tiering_integration: None,
             freshness_lsn_source: None,
             #[cfg(test)]

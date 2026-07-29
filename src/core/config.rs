@@ -1217,6 +1217,10 @@ pub struct SstConfig {
     /// the full ranged-GET chain). 0 disables. Env override:
     /// `PROXIMADB_SURVIVOR_CACHE_BUDGET_MB`.
     pub survivor_cache_mb: u64,
+    /// TD-DELVEC-1 WI-3c: budget (MB) for the per-segment OID→position resolver
+    /// cache. 0 disables (resolver lazy-loaded on each delete — no in-memory
+    /// cache). Env override: `PROXIMADB_OID_RESOLVER_CACHE_MB`.
+    pub oid_resolver_cache_mb: u64,
     /// Maximum files per level
     pub max_files_per_level: u32,
     /// Size multiplier between levels
@@ -1535,6 +1539,7 @@ impl Default for SstConfig {
             cache_size_mb: 128,
             segment_invariants_cache_mb: 256,
             survivor_cache_mb: 1024,
+            oid_resolver_cache_mb: 64,
             max_files_per_level: 10,
             level_size_multiplier: 10.0,
             max_levels: 7,
