@@ -339,3 +339,83 @@ NVMe budget).
 | Second query (DRAM warm) | ~0 GETs | ~0 GETs |
 | After DRAM eviction + restart | ~48.5 GETs (cold) | **~5-10 GETs** (NVMe L2 hit) |
 | After NVMe eviction (rare) | ~48.5 GETs (cold) | ~48.5 GETs (fallback to object store) |
+
+## Projected rate-card economics (why this ships — pricing rationale)
+
+The NVMe tier + write-time caching are not just perf work — they are a **pricing
+prerequisite**. Modeling the current rate card (KSU $0.02/GB-mo, KRU $50/M flat,
+KIU $0.75/GB) against the verified GET measurements shows the cold path goes
+negative at scale, but the blended path stays strongly profitable everywhere.
+
+=== Headline
+
+**The $50/M KRU flat rate is safe AFTER the NVMe tier ships.** On the cold path
+alone it goes negative at ≥100M. On the blended path (the realistic steady state
+once D1–D6 land) it holds 61–90% margin at every scale up to 1B.
+
+Blend assumption (the realistic steady state post-D6): 50% write-time-hot
+(0 GETs) + 35% NVMe-warm + 15% cold. GETs at each scale are projected from the
+verified 48.5 cold at 1M, scaled by segment count (each segment adds ~7-8 reads,
+nprobe scales as sqrt(k_c)).
+
+=== Per-scale margin (Azure Hot tier, $0.005/10K reads)
+
+[cols="2,1,1,1,1,1"]
+|===
+| Scale | Cold GETs/q | Cold margin | Blended GETs/q | Blended margin | vs Turbopuffer $16 floor
+
+| 1M   | 48.5  | **+51.5%** | 9.7  | +90.3% | WIN ($7.27)
+| 10M  | 72    | **+28.0%** | 15.0 | +85.0% | WIN ($11.35)
+| 100M | 120   | **−20%**   | 24.3 | +75.7% | tie ($19.66 ≈ $16)
+| 1B   | 200   | **−100%**  | 38.8 | +61.3% | WIN ($44.20 vs $61.48)
+|===
+
+The cold-path negatives at 100M/1B are the reason the tier must ship before we
+price large corpora at $50/M flat. Until then the rate card carries a note:
+"assumes ≥35% blended cache hit (default with NVMe + write-time caching)."
+
+=== Rate-card decisions
+
+. **KRU $50/M flat — KEEP.** Designed for 36–51 GETs (anvaiops ADR-0044).
+  Measured 48.5 cold at 1M is inside the design band → 51.5% cold margin. Blended
+  pushes it to 85–90%. Do not lower it.
+
+. **KSU $0.02/GB-mo — KEEP, and make the free NVMe the headline.** Storage
+  margin is 82% (engine bytes × $0.018 vs raw × $0.020). Turbopuffer charges
+  $0.10/GB for the SSD cache layer we include free → **6.7× cheaper
+  storage+cache stack**. This compounds at scale; the query rate does not.
+
+. **Do NOT chase S3 Vectors on per-query price.** $2.53/mo at 1M is AWS's
+  loss-leader bare ANN — structurally unwinnable with a flat query rate, and
+  AWS-only. The moat is Azure-native + managed + free tier + multitenancy.
+
+. **Turbopuffer $16 floor is the real win-line.** Beatable at ≤10M blended,
+  ties at 100M, wins decisively at 1B (where its storage markup dominates).
+
+=== Competitor map (1M queries/month, blended 33% margin)
+
+|===
+| Offering | Monthly @1M | Monthly @1B | Notes
+
+| **ProximaDB** (blended) | $7.27 | $44.20 | free NVMe tier
+| Turbopuffer (AWS) | $16.00 (floor) | $61.48 | BYOC; $0.10/GB SSD markup
+| S3 Vectors (AWS) | $2.53 | $33.22 | bare ANN, AWS-only
+| Qdrant (Azure VM) | $100+ | $100+ | self-managed
+| Pinecone | $250+ | $250+ | managed, premium
+|===
+
+=== unit_economics.json corrections (the source is stale)
+
+Wherever the rate card sources its COGS assumptions, four values drifted and must
+be corrected when the code lands:
+
+[cols="3,2,2,3"]
+|===
+| Field | Current | Corrected | Reason
+
+| `read_request_usd_per_10k.azure` | 0.0065 | **0.005** | web-verified Azure Hot tier
+| `measured_cold_gets_per_query_at_gate` | 51 | **48.5** | post level_multiplier=1.0
+| `pooled_vector_limit` | 5,000,000 | **100,000,000** | post NVMe tier (1B needs quote)
+| `minimum_cache_hit_ratio_at_gate` | 0.5 | **0.3** | NVMe tier makes this easier
+|===
+
