@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 = ADR-065: Clustered tier regions (column families) within the single atomic segment — extend ADR-062's hoisted-region pattern to SQ8 / fp32 / row data
 
-:status: Accepted (2026-07-16; implementation reconciled 2026-07-17)
+:status: Accepted (2026-07-16; implementation reconciled through 2026-07-28)
 :date: 2026-07-16
 :deciders: architecture
 :relates-to: link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (extends D2; upholds D1), ADR-052 (round-trips dominate), ADR-020 (WAL authority; manifest-level atomicity), ADR-036 (per-object access tier), ADR-055 (P-Shred user columns → the row-data family), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6] (measured baseline), link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7] (lossless bytes phase), link:../../10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8] (per-segment scale successor), link:../../10-quality/td/TD-RDSTRAT-9-collection-read-cost-envelope.adoc[TD-RDSTRAT-9] (collection file/cache/compaction controller)
@@ -12,11 +12,16 @@
 **Accepted (2026-07-16).** Acceptance governs the one-object, tier-region
 architecture. It does not mean every region has shipped.
 
-**Implementation reconciliation (2026-07-17).** Region B and its byte-budgeted
-survivor/OID range cache shipped in #1069. Region C has not shipped. Region D is
-still the ordinary PAX block area (including optional exact-f32 stripes), not a
-pure result region. The current `PXH1` header has explicit offsets for Regions A
-and B plus the footer; it is not a generic four-region table.
+**Implementation reconciliation (2026-07-28).** Regions A and B and their
+byte-budgeted invariant/survivor caches are live. The v3 header adds the optional
+A0 extent and the footer mirrors it through an additive optional section; v1/v3
+segments remain mixed-read-safe. The trained v3/A0 compaction writer and selective
+reader are default ON (#1210/#1234; config-path correction #1252), with explicit
+kill-switches. #1227 closed the probe-path cache bypass for Region A and the
+whole-Region-B fallback. Region C has not shipped. Region D is still the ordinary
+PAX block area (including optional exact-f32 stripes), not a pure result region.
+The header is an explicit versioned region contract, not a generic four-region
+table.
 
 The accepted review's ordering conclusion is superseded by shipped code and
 must not be used as an implementation contract. New coalesced flushes use
@@ -39,6 +44,10 @@ segment; they do not choose the number of live segments. TD-RDSTRAT-9 owns the
 feasible band between per-file Region-A cache admission and the collection GET
 budget, including compaction write-amplification payback. A per-segment win cannot
 authorize a collection compaction policy.
+
+See
+link:../../_internal/status/ADR_TD_TRUTH_RECONCILIATION_2026_07_28.adoc[the
+2026-07-28 ADR/TD truth reconciliation] for the current lineage matrix.
 
 == Context — the remaining cost term is block dead weight, not GETs
 
@@ -120,14 +129,14 @@ budget is the sum over live segments.
 
 1. **Region B — shipped (#1069):** SQ8 is hoisted; blocks carry no
    `EMBED_BASE`; the coalesced reader reranks Region B then fetches top-k row
-   blocks. The survivor/OID cache also shipped. A dated, ledgered cloud trace is
-   still required before promoting the PR-body byte/GET numbers as a baseline.
-2. **Large-segment selective probing — active (TD-RDSTRAT-8):** persist the
-   existing compaction IVF model/cell runs and probe Region-A/B subranges. PR-A
-   shipped in #1128 (layout v3, Region A0 serde, compaction-only writer, default
-   OFF). PR-B's selective probe reader and end-to-end recall/GET/byte evidence
-   remain open; no default promotion is authorized. This precedes adding more
-   families.
+   blocks. The invariant and survivor caches are active, byte-budgeted surfaces.
+2. **Large-segment selective probing — shipped and default ON
+   (TD-RDSTRAT-8):** #1128/#1135 added v3/A0 and the selective reader;
+   #1144/#1148 added durable telemetry and SIFT ratchets; #1153 proved additional
+   layout controls; #1210/#1234 promoted trained writes and reads; #1227/#1252
+   closed cache and configuration seams. Production object-store, 10M,
+   high-dimensional, and multi-metric measurements remain hardening gates, not
+   claims that the current path is default OFF.
 3. **Region C — open and evidence-gated:** hoist exact f32 only when an actual
    `include_vectors`/exact-query trace proves that saved bystander bytes exceed
    the extra writer buffering, persisted bytes, cache pressure, and result GETs.

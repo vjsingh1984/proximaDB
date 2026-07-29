@@ -5,8 +5,8 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open — architecture/control-plane prerequisite.** The current `l0_threshold:N` mechanism is a fixed segment-count trigger, not ADR-062's query-GET-budget controller. Implement observe/recommend mode before permitting automatic compaction decisions.
-| Priority | P1 for scale promotion. TD-RDSTRAT-8 PR-A shipped in #1128; PR-B's selective reader and evidence remain open. Neither automatic successor-layout promotion nor adaptive compaction becomes default until this collection-level envelope is measured.
+| Status | **Open — collection read-cost controller not implemented (reconciled 2026-07-28).** Async background compaction and L0 admission watermarks are live; #1294 made the 6/10 watermark path restart-safe by exempting mandatory WAL recovery. Those are bounded operational controls, not ADR-062's query-GET/cache/payback controller. Implement observe/recommend mode before allowing read-cost-driven compaction decisions.
+| Priority | P1 for multi-segment scale economics. TD-RDSTRAT-8's trained v3/A0 path is already default ON; this TD no longer blocks that format promotion. It blocks only adaptive collection-level decisions that trade GETs/cache residency against compaction write amplification.
 | Severity | High — the wrong file geometry either multiplies cold GETs or creates Region-A entries too large to admit usefully into cache; over-compaction merely converts read cost into write amplification.
 | Component | Collection/catalog policy, SST compaction scheduling, `SegmentInvariantsCache` / `SurvivorRangeCache`, `IopsBudget`, query-scoped I/O trace, and EXPLAIN/decision trace. No new storage encoding or query metric.
 | Governs | The collection-level decision to leave segments alone, compact a subset, change successor-layout eligibility, or report that the configured GET/cache envelope is infeasible.
@@ -20,7 +20,9 @@ ADR-062 correctly made file count a vector-query GET knob, and ADR-065 made
 Regions A/B independently addressable. The implementation now has the pieces,
 but no collection-level controller joins them:
 
-* `resolve_l0_threshold` triggers at a configured number of L0 files. It does not
+* Async compaction and the configured L0 slowdown/stop watermarks bound background
+  work and live-ingest admission. #1294 ensures recovery materialization bypasses
+  those live-ingest watermarks. None of these controls
   consume measured GETs/query, bytes/query, cache admission, query rate, or write
   amplification.
 * `IopsBudget` sizes the **survivor-fetch unit** and range coalescing for Region B.

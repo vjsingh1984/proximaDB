@@ -5,8 +5,8 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open (design; implementation gated on ADR-050 cost-router + io_trace, default-off → observe → flip)
-| Severity | Medium-High (perf + cloud cost — bytes-scanned/GET-cost is the dominant cloud-OLAP cost per ADR-052)
+| Status | **Superseded for canonical PAX vector reads (reconciled 2026-07-28).** ADR-062/#1024 replaced the parallel chooser shape with the coalesced Region-A scan plus survivor-driven Region-B path; ADR-065 and TD-RDSTRAT-8 extend that canonical route. The generic cost primitives remain useful, but this ticket must not be implemented against the retired reader. File a fresh topic-scoped TD if a cross-engine/tier chooser is still needed.
+| Severity | Historical — retained as cost-model provenance, not active implementation work.
 | Component | PAX/SST read path (`sst_io_layer.rs`, `sst_query_engine.rs`); the route cost model (`src/query/.../route_metrics` / cost loop); `io_trace` (`TD-IOTRACE-1`, always-on).
 | Governs | link:../../12-design/adr/ADR-050-statistics-fed-datafusion-route-selection.adoc[ADR-050] (cost-based routing) + link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (bytes-scanned thesis) + link:../../12-design/adr/ADR-011-filtered-ann-routing-modes.adoc[ADR-011] (selectivity routing).
 | Relates | TD-151 slice 1 baseline (#780 — always-coalesce); link:TD-ENGINE-1-deprecated-engine-removal-entanglement.adoc[TD-IOTRACE-1/2] (io_trace); link:../../12-design/adr/ADR-034-objectstore-access-path-codesign.adoc[ADR-034] (object-store access path); link:TECHNICAL_DEBT.adoc[TD-159] (adaptive engine consumes io_trace).

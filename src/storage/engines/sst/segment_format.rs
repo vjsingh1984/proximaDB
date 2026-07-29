@@ -284,9 +284,10 @@ pub fn write_pax_segment_compacted(
 ) -> Result<SegmentMeta> {
     use crate::storage::engines::sst::block_cluster;
     let cluster = block_cluster::block_cluster_enabled();
-    // TD-RDSTRAT-8 rev 3 (default OFF, `PROXIMADB_PAX_WRITE_A0_TRAIN=1`): compaction is the ONLY
-    // write path that emits the persisted-IVF-probe (v3) layout — production flush
-    // stays sign-bit L0 (IVF-at-flush measured ~80× flush cost, dropped), and large
+    // TD-RDSTRAT-8 rev 3: compaction is the ONLY write path that emits the
+    // persisted-IVF-probe (v3) layout. Training is default ON;
+    // `PROXIMADB_PAX_WRITE_A0_TRAIN=0` is the kill-switch. Production flush stays
+    // sign-bit L0 (IVF-at-flush measured ~80× flush cost, dropped), and large
     // corpora reach v3 on their normal compaction cadence with no migration event.
     // The probe plan persists the SAME IOP-derived PCA/IVF plan the single-level
     // path computes (no second quantizer); it falls back to the plain single-level
@@ -3265,10 +3266,10 @@ mod tests {
     }
 
     /// TD-RDSTRAT-8 PR-A (rev 3): `write_pax_segment_compacted` emits the
-    /// persisted-IVF-probe (v3) layout ONLY under `PROXIMADB_PAX_WRITE_A0_TRAIN=1` (default-OFF,
-    /// compaction-only), and the current binary reads a v3 segment through the
-    /// SAME single-level scan path with full parity (correctness before the PR-B
-    /// probe reader lands): search recall holds, and `read_segment_records`
+    /// persisted-IVF-probe (v3) layout when write training is enabled (default
+    /// ON, compaction-only). The current binary probes v3 by default; the
+    /// read-side kill-switch serves it through the same single-level scan path
+    /// with full parity: search recall holds, and `read_segment_records`
     /// reconstructs every row WITH its Region-B vectors (the compaction/recovery
     /// inverse — a v3 segment must never silently drop vectors when re-compacted).
     /// TD-CACHE-6: the PROBE-ARMED path must serve hot repeats from the

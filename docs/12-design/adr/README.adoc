@@ -318,8 +318,8 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 
 | link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062]
 | Coalesced RaBitQ-header + self-describing footer PAX layout — scan-then-rerank over the logical-file unit
-| Accepted (2026-07-15, review-approved)
-| Dissolves the measured block-centroid-prune GET ceiling (TD-WLP-9 / the 2026-07-15 SIFT eval: block-prune is GET-capped at ~0.87 recall, not tunable). **D1** the file is the atomic logical unit (no RaBitQ sidecar — per-object DR/lifecycle/versioning/conditional-write stay atomic); **D2** RaBitQ hoisted to a coalesced header region @0, scanned at keep=100% (~0.99 recall, zero prune loss, cached/file) while SQ8/fp32/metadata/text blocks stay unchanged; **D3** rerank reuses the existing `plan_selected_block_ranges` + `read_ranges` (clustered survivors → few coalesced GETs); **D4** Parquet-style self-describing footer-index (schema snapshot + block table + per-stripe encoding map; encoding control in the footer, magic stays format-family); **D5** per-block OID bloom in v1 via an extensible `StatsKind` (point-lookup index; `MinMax` pushdown deferred, no format change); **D6** self-derived block geometry (dim × tier-composition × backend IOPS) + GET-budget compaction (file-count = query GET-count knob; the WLP-7 seam reframed). In-place writer + readability-preserving reader (footer presence-field) per the ADR-061 pre-GA amendment. Supersedes block-prune (TD-RDSTRAT-4/5) as the object-storage end-state; block-prune retained as optional coarse pre-filter. Implemented by TD-RDSTRAT-6; phased PR1 (layout+read-path) / PR2 (cost-control) / PR3 (point-lookup).
+| Accepted (2026-07-15; implementation reconciled through 2026-07-28)
+| Dissolves the measured block-centroid-prune GET ceiling. **Current contract:** one atomic object; header-first Region A; self-describing Parquet-style footer; Region-B rerank; mixed-safe v1/v3 A0 probing. Core TD-RDSTRAT-6 is resolved except the point-lookup OID Bloom. The trained v3/A0 writer and reader are default ON after #1210/#1234, with cache/config seams closed by #1227/#1252. TD-RDSTRAT-9 owns the still-open collection GET/cache/compaction-payback controller. TD-RDSTRAT-10's two-object proposal is rejected as filed because it conflicts with D1.
 
 | link:ADR-063-objstore-native-catalog-driven-restartability.adoc[ADR-063]
 | Object-store-native catalog & catalog-driven restartability — no side RDBMS; LIST discovers, self-describing WAL objects carry correctness, manifests are caches
@@ -333,8 +333,8 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 
 | link:ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065]
 | Clustered tier regions inside one atomic PAX segment
-| Accepted (2026-07-16; implementation reconciled 2026-07-17)
-| Extends ADR-062 without multiplying objects/commit points. **Shipped #1069:** Region B hoists SQ8 from blocks; coalesced flush uses SQ8-Morton order, compaction uses PCA+IVF/Hilbert, and byte-budgeted caches serve repeated ranges. **Scale successor PR-A/PR-B shipped #1128/#1135:** TD-RDSTRAT-8 persists that existing IOP-derived plan in a default-OFF v3/A0 layout and selectively probes the nearest cells instead of fetching all of Region A. SIFT-scale absolute recall, durable `ivf_*` telemetry, and default-on promotion remain open. Optional exact-f32 Region C / vector-free Region D remain trace-gated after the dominant probe-routing lever.
+| Accepted (2026-07-16; implementation reconciled through 2026-07-28)
+| Extends ADR-062 without multiplying objects/commit points. **Shipped #1069:** Region B hoists SQ8 from blocks; coalesced flush uses SQ8-Morton order, compaction uses PCA+IVF/Hilbert, and byte-budgeted caches serve repeated ranges. **Scale successor shipped and default ON:** #1128/#1135 added mixed-safe v3/A0 selective probing, #1144/#1148 durable `ivf_*` telemetry and SIFT ratchets, #1153 layout controls, #1210/#1234 default promotion, #1227 probe-cache closure, and #1252 config-path correction. Optional exact-f32 Region C / vector-free Region D and collection-level read-cost control remain open.
 
 | link:ADR-066-structured-io-trace-etl-sink.adoc[ADR-066]
 | Structured io_trace ETL sink — versioned envelope → JSONL+zstd landing → Iceberg-managed Parquet
