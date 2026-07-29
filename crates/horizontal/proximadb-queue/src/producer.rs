@@ -65,7 +65,7 @@ impl Producer {
 
         // Hard backpressure check before any I/O. Memory-full rejection
         // would later leak phantom disk writes — fail fast instead.
-        if let Some(crate::memory_tier::PressureLevel::Hard(pct)) = part.pressure() {
+        if let Some(crate::memory_tier::PressureLevel::Hard(pct)) = part.pressure().await {
             QUEUE_BACKPRESSURE
                 .with_label_values(&[&topic_name, "hard"])
                 .inc();
@@ -80,25 +80,28 @@ impl Producer {
         // that same offset so MessageId is stable across crash/replay.
         let outcome = disk_writer.append(&message).await?;
 
-        let mut to_send = message;
-        let (entry, backpressure_hint) = part
+        let to_send = message;
+        let (entry, backpressure_hint) = match part
             .enqueue_with_offset(to_send.clone(), outcome.offset)
-            .map_err(|m| {
-                to_send = m;
+            .await
+        {
+            Ok(pair) => pair,
+            Err(_m) => {
                 QUEUE_BACKPRESSURE
                     .with_label_values(&[&topic_name, "soft"])
                     .inc();
-                QueueError::Backpressure {
-                    pct: part.depth_pct() * 100.0,
+                return Err(QueueError::Backpressure {
+                    pct: part.depth_pct().await * 100.0,
                     retry_after_ms: 100,
-                }
-            })?;
+                });
+            }
+        };
 
         // Memory tier depth gauge — reflects the post-enqueue state.
         // Consumer drains will set it back down via the same gauge.
         QUEUE_DEPTH
             .with_label_values(&[&topic_name, &partition_label])
-            .set(part.depth() as i64);
+            .set(part.depth().await as i64);
 
         // Strict mode: block on the group-commit fsync barrier so the
         // returned receipt's `fsynced_at` is a real guarantee.

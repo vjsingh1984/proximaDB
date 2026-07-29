@@ -47,11 +47,6 @@ const SEGMENT_EXT: &str = "qseg";
 const UPLOADED_MARKER_EXT: &str = "uploaded";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Same convention `recovery.rs` uses. When multi-group support lands,
-/// the reaper will read every `offset.*.meta` file and demand the
-/// minimum committed offset across all groups before deleting.
-const DEFAULT_GROUP_FOR_REAPING: &str = "g";
-
 pub struct Reaper {
     fs: Arc<dyn QueueFs>,
     poll_interval: Duration,
@@ -109,14 +104,18 @@ impl Reaper {
                 let writer = writer.clone();
                 let active_id = writer.active_segment_id().await;
                 let segments = writer.segments().await.unwrap_or_default();
-                let committed = crate::offset_store::read(
+                let groups = crate::offset_store::read_all_groups(
                     &self.fs,
                     client.root_path(),
                     &topic,
                     partition_id,
-                    DEFAULT_GROUP_FOR_REAPING,
                 )
                 .await?;
+                // A segment is reapable only once EVERY group has consumed
+                // past it — take the min committed offset across groups.
+                // None ⇒ no group has acked yet ⇒ keep the segment (pub/sub
+                // safety: never delete before the slowest group has read).
+                let committed = groups.iter().map(|(_, o)| *o).min();
                 for segment in segments {
                     // Skip the active segment — producers are still
                     // appending to it.

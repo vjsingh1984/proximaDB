@@ -1,14 +1,16 @@
-//! Cross-process partition leases — prevents two consumer instances
-//! (running on different replicas) from competing for the same
+//! Cross-process partition leases — prevents two consumer instances IN THE SAME
+//! GROUP (running on different replicas) from competing for the same
 //! `(topic, partition)` and producing duplicate work.
 //!
 //! ## Mechanism
 //!
-//! Each `(topic, partition)` has a `lease.meta` file at
-//! `{queue_root}/{topic}/{partition}/lease.meta` containing
-//! `{holder_id, expires_at_unix_nanos}`. Acquisition uses the same
-//! temp-write + atomic-rename pattern as `offset_store`, plus a
-//! re-read after the rename to detect lost-race situations.
+//! Leases are scoped per consumer group: each `(group, topic, partition)` has
+//! a `lease.meta` file at `{queue_root}/{topic}/{partition}/{group}/lease.meta`
+//! containing `{holder_id, expires_at_unix_nanos}`. Two DIFFERENT groups can
+//! each hold the same partition (pub/sub fan-out); only consumers in the SAME
+//! group compete. Acquisition uses the same temp-write + atomic-rename pattern
+//! as `offset_store`, plus a re-read after the rename to detect lost-race
+//! situations.
 //!
 //! ## Acquisition flow
 //!
@@ -59,9 +61,10 @@ const LEASE_FILE: &str = "lease.meta";
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-fn lease_path(root: &Path, topic: &str, partition: PartitionId) -> PathBuf {
+fn lease_path(root: &Path, topic: &str, partition: PartitionId, group: &str) -> PathBuf {
     root.join(topic)
         .join(partition.to_string())
+        .join(crate::offset_store::group_dir_name(group))
         .join(LEASE_FILE)
 }
 
@@ -80,18 +83,22 @@ fn now_unix_nanos() -> u128 {
         .as_nanos()
 }
 
-/// Acquire (or take over an expired) lease on `(topic, partition)` for
-/// `holder_id`. Returns `LeaseConflict` if a non-expired lease is held
-/// by someone else.
+/// Acquire (or take over an expired) lease on `(group, topic, partition)` for
+/// `holder_id`. Returns `LeaseConflict` if a non-expired lease for THIS group
+/// is held by someone else. Different groups never conflict (pub/sub fan-out).
 pub async fn try_acquire(
     fs: &Arc<dyn QueueFs>,
     root: &Path,
     topic: &str,
     partition: PartitionId,
+    group: &str,
     holder_id: &str,
     lease_duration: Duration,
 ) -> crate::Result<()> {
-    let path = lease_path(root, topic, partition);
+    let path = lease_path(root, topic, partition, group);
+    if let Some(parent) = path.parent() {
+        fs.create_dir_all(parent).await?;
+    }
     let now = now_unix_nanos();
 
     // Step 1: existing lease check.
@@ -148,8 +155,9 @@ pub async fn renew(
     root: &Path,
     topic: &str,
     partition: PartitionId,
+    group: &str,
     holder_id: &str,
     lease_duration: Duration,
 ) -> crate::Result<()> {
-    try_acquire(fs, root, topic, partition, holder_id, lease_duration).await
+    try_acquire(fs, root, topic, partition, group, holder_id, lease_duration).await
 }

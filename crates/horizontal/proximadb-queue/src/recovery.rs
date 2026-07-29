@@ -28,13 +28,6 @@ use crate::fs::QueueFs;
 use crate::message::Message;
 use crate::topic::PartitionId;
 
-/// Consumer-group key recovery uses to look up `offset.meta`. Phase 2C
-/// locks the design to one consumer group per topic (README invariant
-/// #4), so this is sufficient. When multi-group support lands, recovery
-/// will glob `offset.*.meta` and take the minimum committed offset
-/// across groups.
-const DEFAULT_GROUP_FOR_RECOVERY: &str = "g";
-
 const SEGMENT_EXT: &str = "qseg";
 
 /// Extract `(segment_id, path)` from a directory entry whose filename
@@ -157,9 +150,13 @@ async fn replay_partition(
         })?
         .clone();
 
-    // Read the per-partition committed offset for the default consumer
-    // group. None = no offset.meta on disk (cold start, replay all).
-    // Some(c) = skip messages whose frame-offset <= c (already acked).
+    // Recovery skip uses the MIN committed offset across all consumer groups:
+    // a frame is only left out of the replay once EVERY group has acked past
+    // it (pub/sub safe — a fast group can't cause recovery to drop frames a
+    // slower group still needs). None = no group has committed yet (cold
+    // start, or all groups fresh) → replay every persisted frame. Each group
+    // resumes at its OWN cursor on `subscribe` (offset_store::read), so this
+    // skip is purely a memory-capacity optimization, not a correctness gate.
     let root_path = partition_dir
         .parent()
         .and_then(|topic_dir| topic_dir.parent())
@@ -168,9 +165,8 @@ async fn replay_partition(
                 "recovery: cannot derive queue root from {partition_dir:?}"
             ))
         })?;
-    let committed =
-        crate::offset_store::read(fs, root_path, topic, partition, DEFAULT_GROUP_FOR_RECOVERY)
-            .await?;
+    let groups = crate::offset_store::read_all_groups(fs, root_path, topic, partition).await?;
+    let committed = groups.iter().map(|(_, o)| *o).min();
 
     let mut replayed = 0usize;
     let mut skipped = 0usize;
@@ -244,7 +240,11 @@ async fn replay_partition(
 
             // Re-enqueue with the frame-recorded offset so MessageId is
             // stable across crash/replay.
-            if mem.enqueue_with_offset(message, frame_offset).is_err() {
+            if mem
+                .enqueue_with_offset(message, frame_offset)
+                .await
+                .is_err()
+            {
                 return Err(QueueError::Persistence(format!(
                     "recovery: memory tier full at topic={topic} partition={partition} \
                      segment={segment_id} replayed={replayed} — increase memory_capacity"
@@ -331,7 +331,7 @@ mod tests {
                 .unwrap();
 
         assert_eq!(replayed, 0);
-        assert_eq!(state.memory[0].depth(), 0);
+        assert_eq!(state.memory[0].depth().await, 0);
     }
 
     #[tokio::test]
@@ -361,7 +361,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(replayed, 1);
-        let restored = state.memory[0].try_pop_batch(10);
+        let restored = state.memory[0].read_from(0, 10).await;
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].message.payload, b"survives");
     }

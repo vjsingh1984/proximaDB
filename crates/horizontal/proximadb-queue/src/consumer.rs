@@ -54,6 +54,11 @@ struct RenewerHandle {
 struct InFlight {
     /// Messages handed out via `poll` that haven't been ack'd or nack'd.
     pending: Vec<MemoryEntry>,
+    /// This group's read cursor — the next offset to deliver. Advanced on
+    /// delivery (not ack), so a second `poll` doesn't re-deliver within a
+    /// session. Initialized from the group's committed offset on `subscribe`;
+    /// restart resumes there because ack persists it via `offset_store`.
+    next_read_offset: u64,
 }
 
 impl Consumer {
@@ -101,12 +106,33 @@ impl Consumer {
             // Acquire the cross-process lease before doing any in-process
             // bookkeeping — a conflict here means we're not allowed to
             // touch this partition.
-            crate::leases::try_acquire(&fs, &root, topic, p, &holder_id, lease_duration).await?;
+            crate::leases::try_acquire(
+                &fs,
+                &root,
+                topic,
+                p,
+                &self.inner.group_id,
+                &holder_id,
+                lease_duration,
+            )
+            .await?;
 
+            // Initialize this group's read cursor from its committed offset
+            // (None → 0, cold start). Restart resumes at the persisted cursor.
+            let committed = crate::offset_store::read(&fs, &root, topic, p, &self.inner.group_id)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(0);
             self.inner
                 .in_flight
                 .entry((topic.to_string(), p))
-                .or_insert_with(|| Mutex::new(InFlight::default()));
+                .or_insert_with(|| {
+                    Mutex::new(InFlight {
+                        pending: Vec::new(),
+                        next_read_offset: committed,
+                    })
+                });
 
             // Spawn a renewer task — every lease_duration/2 it re-runs
             // try_acquire to push the expiry forward. On Consumer drop
@@ -117,20 +143,20 @@ impl Consumer {
             let renew_root = root.clone();
             let renew_topic = topic.to_string();
             let renew_holder = holder_id.clone();
+            let renew_group = self.inner.group_id.clone();
             let interval = lease_duration / 2;
             let join = tokio::spawn(async move {
                 loop {
                     tokio::select! {
                         _ = &mut rx => {
-                            // Clean shutdown — best-effort delete the
-                            // lease.meta so a follow-on subscriber
-                            // (different replica, same process+next
-                            // QueueClient) doesn't wait for expiry.
-                            // Failure here is non-fatal: the lease
-                            // will expire on its own.
+                            // Clean shutdown — best-effort delete this group's
+                            // lease.meta so a follow-on subscriber in the same
+                            // group doesn't wait for expiry. Failure is
+                            // non-fatal: the lease expires on its own.
                             let lease_path = renew_root
                                 .join(&renew_topic)
                                 .join(p.to_string())
+                                .join(crate::offset_store::group_dir_name(&renew_group))
                                 .join("lease.meta");
                             let _ = renew_fs.delete(&lease_path).await;
                             break;
@@ -141,6 +167,7 @@ impl Consumer {
                                 &renew_root,
                                 &renew_topic,
                                 p,
+                                &renew_group,
                                 &renew_holder,
                                 lease_duration,
                             ).await {
@@ -192,9 +219,17 @@ impl Consumer {
                 if remaining == 0 {
                     break;
                 }
-                let batch = part.try_pop_batch(remaining);
+                // Cursor-based read: `read_from` is NON-consuming, so other
+                // consumer groups see the same messages (pub/sub). Advance THIS
+                // group's read cursor past the delivered batch so the next poll
+                // doesn't re-deliver within a session.
+                let mut tracker = entry.value().lock().await;
+                let cursor = tracker.next_read_offset;
+                let batch = part.read_from(cursor, remaining).await;
                 if !batch.is_empty() {
-                    let mut tracker = entry.value().lock().await;
+                    if let Some(last) = batch.last() {
+                        tracker.next_read_offset = last.offset + 1;
+                    }
                     for memo in &batch {
                         tracker.pending.push(memo.clone());
                     }

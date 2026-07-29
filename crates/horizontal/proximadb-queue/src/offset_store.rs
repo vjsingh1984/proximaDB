@@ -1,8 +1,10 @@
-//! Per-partition committed-offset metadata file.
+//! Per-`(group, partition)` committed-offset metadata file (ADR-079 §Semantics).
 //!
-//! Stored at `{queue_root}/{topic}/{partition_id}/offset.meta` as a tiny
-//! JSON document `{"group": "...", "committed_offset": <u64>}`. A successful
-//! `Consumer::ack` writes this file; consumer restart reads it to resume.
+//! Stored at `{queue_root}/{topic}/{partition_id}/{group}/offset.meta` as a
+//! tiny JSON document `{"group": "...", "committed_offset": <u64>}`. Each
+//! consumer group gets its OWN file, so group A's ack cannot clobber group B's
+//! cursor (the pub/sub isolation property). A successful `Consumer::ack` writes
+//! its group's file; consumer restart reads its group's file to resume.
 //!
 //! ## Atomic write protocol
 //!
@@ -20,6 +22,7 @@
 //! rename completed). The temp file is cleaned up on the next commit
 //! attempt. We never observe a half-written `offset.meta`.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -43,9 +46,38 @@ const META_FILE: &str = "offset.meta";
 /// stomp on the same temp file even across threads / tasks.
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Build `{root}/{topic}/{partition}/offset.meta`.
-fn meta_path(root: &Path, topic: &str, partition: PartitionId) -> PathBuf {
-    root.join(topic).join(partition.to_string()).join(META_FILE)
+/// Reduce a consumer-group id to a safe single path component. Group ids are
+/// application-supplied, so strip anything that could escape the partition
+/// directory (`/`, `..`, `:`, NUL, whitespace) to `_`. Two ids that sanitize
+/// the same collide on disk — acceptable since groups are app-controlled and
+/// the collision is deterministic, not a correctness/corruption hazard.
+pub(crate) fn group_dir_name(group: &str) -> String {
+    let cleaned: String = group
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let cleaned = cleaned
+        .trim_matches(|c: char| c == '.' || c == '_')
+        .to_string();
+    if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+        "default".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// Build `{root}/{topic}/{partition}/{group}/offset.meta` — one file per group.
+fn meta_path(root: &Path, topic: &str, partition: PartitionId, group: &str) -> PathBuf {
+    root.join(topic)
+        .join(partition.to_string())
+        .join(group_dir_name(group))
+        .join(META_FILE)
 }
 
 /// Per-call unique temp path: `offset.meta.tmp.{pid}.{seq}`. The rename
@@ -72,7 +104,12 @@ pub async fn commit(
     group: &str,
     committed_offset: u64,
 ) -> crate::Result<()> {
-    let final_path = meta_path(root, topic, partition);
+    let final_path = meta_path(root, topic, partition, group);
+    // Ensure the per-group directory exists (LocalFs needs it; object stores
+    // use flat keys and treat create_dir_all as a no-op on the prefix).
+    if let Some(parent) = final_path.parent() {
+        fs.create_dir_all(parent).await?;
+    }
     let tmp = tmp_path(&final_path);
 
     let body = OffsetMeta {
@@ -88,14 +125,10 @@ pub async fn commit(
     Ok(())
 }
 
-/// Read the committed offset for `(topic, partition)`. Returns `None`
-/// when no `offset.meta` exists yet (cold start — recovery replays
-/// every persisted message). Returns `Some(n)` when an `offset.meta` is
-/// on disk: recovery skips frames whose `offset <= n`.
-///
-/// The `group` parameter is verified — if the on-disk file was written
-/// by a different consumer group, returns `None` so we re-deliver
-/// rather than silently honoring a stranger's commit.
+/// Read THIS group's committed offset for `(topic, partition)`. Returns `None`
+/// when the group has no `offset.meta` yet (cold start — recovery replays
+/// every persisted message). Each group has its own file, so this never sees
+/// another group's commit.
 pub async fn read(
     fs: &Arc<dyn QueueFs>,
     root: &Path,
@@ -103,7 +136,7 @@ pub async fn read(
     partition: PartitionId,
     group: &str,
 ) -> crate::Result<Option<u64>> {
-    let final_path = meta_path(root, topic, partition);
+    let final_path = meta_path(root, topic, partition, group);
     let bytes = match fs.read(&final_path).await {
         Ok(b) => b,
         Err(_) => return Ok(None),
@@ -113,8 +146,61 @@ pub async fn read(
     }
     let parsed: OffsetMeta = serde_json::from_slice(&bytes)
         .map_err(|e| QueueError::Persistence(format!("offset_store parse: {e}")))?;
-    if parsed.group != group {
-        return Ok(None);
-    }
+    // Each group has its own file, so the stored group always matches; keep
+    // returning the offset directly.
     Ok(Some(parsed.committed_offset))
+}
+
+const LEASE_FILE_LEAF: &str = "lease.meta";
+
+/// Read EVERY consumer group's committed offset for `(topic, partition)`, used
+/// by the reaper to compute the minimum offset across groups (a disk segment is
+/// only reapable once ALL groups have consumed past it — pub/sub safety).
+///
+/// Handles both `QueueFs::list` shapes:
+/// - local `read_dir` returns the group subdirectories (single level) — descend
+///   into each to confirm it holds an `offset.meta`;
+/// - object stores return recursive-prefix leaves like `<group>/offset.meta`
+///   (and `<group>/lease.meta`) — the group is the entry's parent dir name.
+pub async fn read_all_groups(
+    fs: &Arc<dyn QueueFs>,
+    root: &Path,
+    topic: &str,
+    partition: PartitionId,
+) -> crate::Result<Vec<(String, u64)>> {
+    let partition_dir = root.join(topic).join(partition.to_string());
+    let mut group_names: HashSet<String> = HashSet::new();
+
+    let entries = fs.list(&partition_dir).await.unwrap_or_default();
+    for entry in entries {
+        let fname = entry.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if fname == META_FILE || fname == LEASE_FILE_LEAF {
+            // Object-store leaf under a group dir → group = parent dir name.
+            if let Some(group) = entry
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+            {
+                group_names.insert(group.to_string());
+            }
+        } else {
+            // Local-shape group subdirectory — confirm it holds an offset.meta.
+            if let Ok(children) = fs.list(&entry).await
+                && children
+                    .iter()
+                    .any(|c| c.file_name().and_then(|n| n.to_str()) == Some(META_FILE))
+                && let Some(group) = entry.file_name().and_then(|n| n.to_str())
+            {
+                group_names.insert(group.to_string());
+            }
+        }
+    }
+
+    let mut out = Vec::with_capacity(group_names.len());
+    for group in group_names {
+        if let Ok(Some(off)) = read(fs, root, topic, partition, &group).await {
+            out.push((group, off));
+        }
+    }
+    Ok(out)
 }
