@@ -1,19 +1,22 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-AXIS-4: No reconciliation between manifest segments and AXIS index coverage — silent recall loss after an unclean restart
-:status: Open
+:status: Superseded
 :date: 2026-07-28
 :dim: D4 (compute-per-modality)
 :pillar: REL
 :realizes: ADR-078 D4
-:relates-to: TD-AXIS-3 (convergence + queue removal), TD-112 (index-on-flush), TD-AXIS-2 (enable-axis-indexes flag not wired to boot)
+:relates-to: TD-AXIS-3 (convergence + queue removal), TD-112 (index-on-flush), TD-AXIS-2 (enable-axis-indexes flag not wired to boot), ADR-052 (PAX-driven analytics), the PAX-exact-scan direction
 
 [cols="1,3"]
 |===
 | Field | Value
 
 | Status
-| **Open** — the one genuine gap left after ADR-078. Predates that work; the retired AXIS queue never addressed it either.
+| **Superseded (2026-07-29) — will not fix.** AXIS is winding down in favour of
+  the PAX-layout-driven exact-scan path; the recall gap this TD tracks is a
+  property of the AXIS index, so it self-resolves as AXIS is retired. See §0
+  below.
 
 | Priority
 | P2 — silent, and it degrades rather than fails.
@@ -26,6 +29,37 @@
 |===
 
 toc::[]
+
+== 0. Decision (2026-07-29): Superseded — will not fix
+
+**Do not invest in reconciliation.** AXIS is being phased out for the PAX-layout-driven
+exact-scan path, and the recall gap this TD tracks is a property of the AXIS *index* —
+it disappears as AXIS is retired.
+
+Verified against the code, the engine already implements the tradeoff that makes AXIS
+disposable for DRAM-scale workloads:
+
+* `sst/search/mod.rs::want_exact_search` (Adaptive mode) chooses **exact brute-force scan**
+  when `scan_bytes <= byte_budget && count <= threshold`, and only falls back to AXIS
+  (approximate) **beyond the DRAM byte-budget / count threshold**. `SearchMode::Exact` /
+  `pin_exact` force brute-force at any N.
+* Within that budget the exact scan (PAX cascade → Arrow → ProximaBlocks reader + rerank,
+  backed by the survivor cache + cache warming) gives **100% recall, zero index build, no
+  approximation** — strictly better than AXIS. AXIS's *only* unique value is sub-linear
+  search for collections that don't fit (quantized) DRAM, where brute-force O(n×d) over
+  object storage is catastrophic.
+* Quantization (SQ8/RaBitQ) shrinks vectors 4–32×, pushing the `byte_budget` crossover
+  *up* — so the PAX + quantization + DRAM-cache path covers a wider range before any
+  sub-linear index is needed.
+
+**Consequence for this TD:** the "un-indexed segment after unclean restart" state is an
+AXIS-index artifact. The exact scan has no such state — it scans whatever is in its budget.
+So as AXIS winds down, the gap self-resolves; reconciliation (§3) is not worth building.
+AXIS keeps a narrow role only for beyond-(quantized-)DRAM-scale ANN until a compact-index
+successor (or the quantized scan at that scale) lands; this TD does not apply to that path.
+
+The corrected remedy analysis (§2–§3) is retained below for the record, in case a
+compact-index successor ever needs the same reconciliation.
 
 == 1. Problem
 
