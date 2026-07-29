@@ -6740,6 +6740,7 @@ dependencies = [
  "proptest",
  "prost",
  "prost-types",
+ "proximadb-abac",
  "proximadb-admin-ui",
  "proximadb-api",
  "proximadb-block-format",
