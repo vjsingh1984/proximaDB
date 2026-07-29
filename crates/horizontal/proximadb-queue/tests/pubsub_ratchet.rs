@@ -87,7 +87,11 @@ async fn two_groups_each_independently_receive_all_messages() {
 
     // group B consumes AFTER A — must ALSO receive all N (pub/sub fan-out).
     let b_delivered = drain(&b, N).await;
-    assert_eq!(b_delivered.len(), N, "group B independently receives all {N}");
+    assert_eq!(
+        b_delivered.len(),
+        N,
+        "group B independently receives all {N}"
+    );
     assert_eq!(
         payloads_of(&b_delivered),
         (0..N as u8).collect::<Vec<_>>(),
@@ -123,14 +127,25 @@ async fn pubsub_delivery_guarantee_ratchet() {
 
         let batch = drain(&c, N).await;
         // Completeness: every group receives exactly N.
-        assert_eq!(batch.len(), N, "group {g}: received {} of {N} (loss)", batch.len());
+        assert_eq!(
+            batch.len(),
+            N,
+            "group {g}: received {} of {N} (loss)",
+            batch.len()
+        );
 
         // Order + uniqueness: payloads (sent as vec![i]) are the offset proxy —
         // strictly ascending 0..N with no duplicates.
-        let payloads: Vec<u64> =
-            batch.iter().map(|d| d.message.payload.first().copied().unwrap_or(0) as u64).collect();
+        let payloads: Vec<u64> = batch
+            .iter()
+            .map(|d| d.message.payload.first().copied().unwrap_or(0) as u64)
+            .collect();
         let unique: HashSet<u64> = payloads.iter().copied().collect();
-        assert_eq!(unique.len(), N, "group {g}: expected {N} unique messages (no dups)");
+        assert_eq!(
+            unique.len(),
+            N,
+            "group {g}: expected {N} unique messages (no dups)"
+        );
         assert_eq!(
             payloads,
             (0..N as u64).collect::<Vec<_>>(),
@@ -143,7 +158,10 @@ async fn pubsub_delivery_guarantee_ratchet() {
     // (true fan-out — no group's consumption affected another's).
     let baseline = delivered_per_group["compliance"].clone();
     for (g, msgs) in &delivered_per_group {
-        assert_eq!(msgs, &baseline, "group {g} received the same set as compliance");
+        assert_eq!(
+            msgs, &baseline,
+            "group {g} received the same set as compliance"
+        );
     }
 
     client.shutdown().await.expect("shutdown");

@@ -146,15 +146,14 @@ async fn each_consumer_group_has_an_independent_committed_offset() {
     let a = client.consumer("a");
     a.subscribe("t", &[0]).await.expect("subscribe a");
     let batch = a.poll(5, Duration::from_millis(200)).await.expect("poll a");
-    let ids: Vec<proximadb_queue::MessageId> =
-        batch.iter().map(|d| d.message_id.clone()).collect();
+    let ids: Vec<proximadb_queue::MessageId> = batch.iter().map(|d| d.message_id.clone()).collect();
     a.ack(&ids).await.expect("ack a");
 
     // group A has its OWN offset.meta under t/0/a/.
     let a_meta = root.join("t").join("0").join("a").join("offset.meta");
     assert!(a_meta.exists(), "group A writes its own offset.meta");
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(&a_meta).expect("read"))
-        .expect("parse");
+    let v: Value =
+        serde_json::from_str(&std::fs::read_to_string(&a_meta).expect("read")).expect("parse");
     assert_eq!(v["committed_offset"].as_u64(), Some(4));
     assert_eq!(v["group"], "a");
 

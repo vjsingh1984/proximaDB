@@ -344,7 +344,11 @@ async fn poll_does_not_redeliver_within_a_session() {
     assert_eq!(batch1.len(), 4);
 
     let batch2 = c.poll(8, Duration::from_millis(50)).await.unwrap();
-    assert_eq!(batch2.len(), 4, "second poll delivers the NEXT 4, not re-delivered");
+    assert_eq!(
+        batch2.len(),
+        4,
+        "second poll delivers the NEXT 4, not re-delivered"
+    );
 
     // No overlap between the two batches.
     let mut ids: Vec<&proximadb_queue::MessageId> = batch1.iter().map(|d| &d.message_id).collect();

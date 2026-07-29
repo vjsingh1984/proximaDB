@@ -152,7 +152,13 @@ impl PartitionMemory {
             Some(PressureLevel::Soft(_)) => Some(BackpressureHint::Soft),
             _ => None,
         };
-        Ok((MessageEntry { message_id: id, offset }, hint))
+        Ok((
+            MessageEntry {
+                message_id: id,
+                offset,
+            },
+            hint,
+        ))
     }
 
     /// Read up to `max` messages starting at `cursor` **without removing them**
@@ -262,10 +268,16 @@ mod tests {
 
         let (_, hint) = memory.try_enqueue(message(3)).await.unwrap();
         assert!(matches!(hint, Some(BackpressureHint::Soft)));
-        assert!(matches!(memory.pressure().await.unwrap(), PressureLevel::Soft(_)));
+        assert!(matches!(
+            memory.pressure().await.unwrap(),
+            PressureLevel::Soft(_)
+        ));
 
         memory.try_enqueue(message(4)).await.unwrap();
-        assert!(matches!(memory.pressure().await.unwrap(), PressureLevel::Hard(_)));
+        assert!(matches!(
+            memory.pressure().await.unwrap(),
+            PressureLevel::Hard(_)
+        ));
     }
 
     #[tokio::test]
@@ -312,7 +324,11 @@ mod tests {
         let group_b = memory.read_from(0, 10).await;
 
         assert_eq!(group_a.len(), 4, "group A sees all messages");
-        assert_eq!(group_b.len(), 4, "group B sees all messages (not consumed by A)");
+        assert_eq!(
+            group_b.len(),
+            4,
+            "group B sees all messages (not consumed by A)"
+        );
         assert_eq!(
             group_a.iter().map(|e| e.offset).collect::<Vec<_>>(),
             group_b.iter().map(|e| e.offset).collect::<Vec<_>>(),

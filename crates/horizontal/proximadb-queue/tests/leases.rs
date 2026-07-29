@@ -141,8 +141,9 @@ async fn expired_lease_is_reclaimable() {
         .expect("B should reclaim");
 
     // Verify the holder switched.
-    let lease_body = std::fs::read_to_string(tmp.path().join("t").join("0").join("g").join("lease.meta"))
-        .expect("read lease");
+    let lease_body =
+        std::fs::read_to_string(tmp.path().join("t").join("0").join("g").join("lease.meta"))
+            .expect("read lease");
     let parsed: serde_json::Value = serde_json::from_str(&lease_body).expect("parse");
     let new_holder = parsed["holder_id"].as_str().expect("holder_id");
     assert_ne!(new_holder, a_instance, "B's instance must differ from A's");
@@ -191,7 +192,10 @@ async fn two_different_groups_each_hold_the_same_partition() {
         .await
         .expect("open A");
     let consumer_a = client_a.consumer("alpha");
-    consumer_a.subscribe("t", &[0]).await.expect("group A subscribes");
+    consumer_a
+        .subscribe("t", &[0])
+        .await
+        .expect("group A subscribes");
 
     // group B subscribes to the SAME partition — must NOT conflict (different group).
     let client_b = QueueClient::open(cfg(tmp.path(), Duration::from_secs(30)))
@@ -205,11 +209,21 @@ async fn two_different_groups_each_hold_the_same_partition() {
 
     // Two independent lease files exist — one per group.
     assert!(
-        tmp.path().join("t").join("0").join("alpha").join("lease.meta").exists(),
+        tmp.path()
+            .join("t")
+            .join("0")
+            .join("alpha")
+            .join("lease.meta")
+            .exists(),
         "group alpha has its own lease",
     );
     assert!(
-        tmp.path().join("t").join("0").join("beta").join("lease.meta").exists(),
+        tmp.path()
+            .join("t")
+            .join("0")
+            .join("beta")
+            .join("lease.meta")
+            .exists(),
         "group beta has its own lease",
     );
 

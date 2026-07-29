@@ -62,7 +62,9 @@ pub(crate) fn group_dir_name(group: &str) -> String {
             }
         })
         .collect();
-    let cleaned = cleaned.trim_matches(|c: char| c == '.' || c == '_').to_string();
+    let cleaned = cleaned
+        .trim_matches(|c: char| c == '.' || c == '_')
+        .to_string();
     if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
         "default".to_string()
     } else {

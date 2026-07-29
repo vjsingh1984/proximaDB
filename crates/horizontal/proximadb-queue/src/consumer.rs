@@ -106,7 +106,16 @@ impl Consumer {
             // Acquire the cross-process lease before doing any in-process
             // bookkeeping — a conflict here means we're not allowed to
             // touch this partition.
-            crate::leases::try_acquire(&fs, &root, topic, p, &self.inner.group_id, &holder_id, lease_duration).await?;
+            crate::leases::try_acquire(
+                &fs,
+                &root,
+                topic,
+                p,
+                &self.inner.group_id,
+                &holder_id,
+                lease_duration,
+            )
+            .await?;
 
             // Initialize this group's read cursor from its committed offset
             // (None → 0, cold start). Restart resumes at the persisted cursor.

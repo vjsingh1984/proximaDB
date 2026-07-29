@@ -165,8 +165,7 @@ async fn replay_partition(
                 "recovery: cannot derive queue root from {partition_dir:?}"
             ))
         })?;
-    let groups =
-        crate::offset_store::read_all_groups(fs, root_path, topic, partition).await?;
+    let groups = crate::offset_store::read_all_groups(fs, root_path, topic, partition).await?;
     let committed = groups.iter().map(|(_, o)| *o).min();
 
     let mut replayed = 0usize;
@@ -241,7 +240,11 @@ async fn replay_partition(
 
             // Re-enqueue with the frame-recorded offset so MessageId is
             // stable across crash/replay.
-            if mem.enqueue_with_offset(message, frame_offset).await.is_err() {
+            if mem
+                .enqueue_with_offset(message, frame_offset)
+                .await
+                .is_err()
+            {
                 return Err(QueueError::Persistence(format!(
                     "recovery: memory tier full at topic={topic} partition={partition} \
                      segment={segment_id} replayed={replayed} — increase memory_capacity"
