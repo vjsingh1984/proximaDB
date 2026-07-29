@@ -58,7 +58,7 @@ async fn ack_commits_offset_to_disk() {
     consumer.ack(&ack_ids).await.expect("ack");
 
     // offset.meta must now exist on disk.
-    let meta_path = root.join("t").join("0").join("offset.meta");
+    let meta_path = root.join("t").join("0").join("g").join("offset.meta");
     assert!(meta_path.exists(), "offset.meta should be written");
     let body = std::fs::read_to_string(&meta_path).expect("read meta");
     let parsed: Value = serde_json::from_str(&body).expect("parse json");
@@ -113,7 +113,7 @@ async fn offset_commit_is_atomic() {
     // committed_offset must be a reachable value (≤ 99). The exact
     // value depends on scheduling — what matters is that we never
     // observe a corrupted file.
-    let meta_path = root.join("t").join("0").join("offset.meta");
+    let meta_path = root.join("t").join("0").join("g").join("offset.meta");
     assert!(meta_path.exists(), "offset.meta should exist");
     let body = std::fs::read_to_string(&meta_path).expect("read meta");
     let parsed: Value = serde_json::from_str(&body).expect("parse json (no corruption)");
@@ -123,4 +123,42 @@ async fn offset_commit_is_atomic() {
         "committed_offset {committed} must be within range 0..=99"
     );
     assert_eq!(parsed["group"], "g");
+}
+
+/// ADR-079 §Semantics: each consumer group has its OWN committed-offset file,
+/// so group A's ack does not clobber group B's cursor (the pub/sub isolation
+/// property). RED for slice 2: today there is one shared `offset.meta` per
+/// partition, so this test fails until offset paths are keyed by group.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_consumer_group_has_an_independent_committed_offset() {
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let client = QueueClient::open(cfg(root, "t", 1)).await.expect("open");
+    let producer = client.producer();
+    for i in 0..5u32 {
+        producer
+            .send(Message::new("t", "tenant-a", vec![i as u8]))
+            .await
+            .expect("send");
+    }
+
+    // group A acks all five (committed_offset → 4).
+    let a = client.consumer("a");
+    a.subscribe("t", &[0]).await.expect("subscribe a");
+    let batch = a.poll(5, Duration::from_millis(200)).await.expect("poll a");
+    let ids: Vec<proximadb_queue::MessageId> =
+        batch.iter().map(|d| d.message_id.clone()).collect();
+    a.ack(&ids).await.expect("ack a");
+
+    // group A has its OWN offset.meta under t/0/a/.
+    let a_meta = root.join("t").join("0").join("a").join("offset.meta");
+    assert!(a_meta.exists(), "group A writes its own offset.meta");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&a_meta).expect("read"))
+        .expect("parse");
+    assert_eq!(v["committed_offset"].as_u64(), Some(4));
+    assert_eq!(v["group"], "a");
+
+    // group B (never subscribed) has NO offset file — independent of A.
+    let b_meta = root.join("t").join("0").join("b").join("offset.meta");
+    assert!(!b_meta.exists(), "group A's ack must not clobber group B");
 }
