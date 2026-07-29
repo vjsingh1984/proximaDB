@@ -1346,6 +1346,9 @@ jobs:
         with:
           prefix-key: "v1-rust-compile-benches"
           shared-key: "benches"
+      # Install sccache (RUSTC_WRAPPER=sccache is set in this job's env). Without
+      # it the first rustc invocation dies: "sccache: No such file or directory".
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - name: Install Dependencies
         run: |
           sudo apt-get update
