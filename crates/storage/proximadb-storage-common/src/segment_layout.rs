@@ -331,6 +331,15 @@ const SECTION_VERSION_V1: u8 = 1;
 const FOOTER_V1: u8 = 1;
 /// `[a0_off u64][a0_len u64]`.
 const COARSE_DIRECTORY_SECTION_LEN: usize = 16;
+/// Optional footer section mirroring the OID→position resolver region extent
+/// (TD-DELVEC-1 WI-2c). The resolver is an immutable write-time component, so it
+/// is persisted as a region *inside* the segment (atomic with it), not a sidecar.
+/// Additive: parsers that predate it skip unknown section tags. `opr_len == 0`
+/// ⇒ no resolver region ⇒ WI-3 tombstone fallback. The region payload is a
+/// self-CRC'd `ORP1` blob (`OidPositionResolver::serialize`).
+const SECTION_OID_RESOLVER: u8 = 4;
+/// `[opr_off u64][opr_len u64]`.
+const OID_RESOLVER_SECTION_LEN: usize = 16;
 
 /// The self-describing footer-index (Parquet-style metadata hub): block table +
 /// schema snapshot + per-stripe encoding map + RaBitQ mirror + row count. Located
@@ -381,6 +390,14 @@ pub struct SegmentFooterIndex {
     /// an optional trailing section, so v1 footers are byte-unchanged.
     pub a0_off: u64,
     pub a0_len: u64,
+    /// OID→position resolver region extent (TD-DELVEC-1 WI-2c). The resolver is
+    /// an immutable write-time component persisted as a region *inside* the
+    /// segment (atomic with it on the single PUT), not a sidecar. `0/0` = no
+    /// resolver (legacy/non-coalesced segments, or `with_oid_resolver` off) ⇒
+    /// WI-3 tombstone fallback. Serialized as an optional trailing section
+    /// (forward-compatible — old parsers skip the unknown tag).
+    pub opr_off: u64,
+    pub opr_len: u64,
 }
 
 /// `[footer_len u64][SEGMENT_MAGIC 8B]` — the 16 B tail that locates the footer.
@@ -726,6 +743,12 @@ impl SegmentFooterIndex {
             payload.extend_from_slice(&self.a0_len.to_le_bytes());
             sections.push((SECTION_COARSE_DIRECTORY, payload));
         }
+        if self.opr_len > 0 {
+            let mut payload = Vec::with_capacity(OID_RESOLVER_SECTION_LEN);
+            payload.extend_from_slice(&self.opr_off.to_le_bytes());
+            payload.extend_from_slice(&self.opr_len.to_le_bytes());
+            sections.push((SECTION_OID_RESOLVER, payload));
+        }
         if !sections.is_empty() {
             let section_count = u16::try_from(sections.len())
                 .map_err(|_| anyhow::anyhow!("footer section count exceeds u16"))?;
@@ -865,6 +888,8 @@ impl SegmentFooterIndex {
         let mut block_tier_assignments = Vec::new();
         let mut a0_off = 0u64;
         let mut a0_len = 0u64;
+        let mut opr_off = 0u64;
+        let mut opr_len = 0u64;
         if p != body.len() {
             let section_count = read_u16(body, &mut p)? as usize;
             if section_count > body.len().saturating_sub(p) / 6 {
@@ -893,6 +918,15 @@ impl SegmentFooterIndex {
                     }
                     a0_off = u64::from_le_bytes(section[..8].try_into()?);
                     a0_len = u64::from_le_bytes(section[8..16].try_into()?);
+                } else if tag == SECTION_OID_RESOLVER {
+                    if version != SECTION_VERSION_V1 {
+                        bail!("unsupported oid-resolver section version {version}");
+                    }
+                    if section.len() != OID_RESOLVER_SECTION_LEN {
+                        bail!("oid-resolver section has wrong length");
+                    }
+                    opr_off = u64::from_le_bytes(section[..8].try_into()?);
+                    opr_len = u64::from_le_bytes(section[8..16].try_into()?);
                 }
             }
             if p != body.len() {
@@ -916,6 +950,8 @@ impl SegmentFooterIndex {
             block_tier_assignments,
             a0_off,
             a0_len,
+            opr_off,
+            opr_len,
         })
     }
 
@@ -971,6 +1007,8 @@ mod tests {
             block_tier_assignments: Vec::new(),
             a0_off: 0,
             a0_len: 0,
+            opr_off: 0,
+            opr_len: 0,
             blocks: vec![
                 FooterBlockEntry {
                     offset: 152_056,
@@ -1246,6 +1284,45 @@ mod tests {
         let reparsed = SegmentFooterIndex::parse(&plain.to_bytes().unwrap()).unwrap();
         assert_eq!(reparsed.a0_off, 0);
         assert_eq!(reparsed.a0_len, 0);
+    }
+
+    #[test]
+    fn footer_oid_resolver_section_round_trips() {
+        // TD-DELVEC-1 WI-2c: the OID→position resolver region extent is an
+        // optional footer section (tag 4), mirroring the coarse-directory
+        // section. Round-trips, coexists with other sections, and is absent
+        // (byte-identical to the sectionless footer) when opr_len == 0.
+        let mut footer = sample_footer();
+        footer.opr_off = 500_000;
+        footer.opr_len = 7_777;
+        let bytes = footer.to_bytes().unwrap();
+        let parsed = SegmentFooterIndex::parse(&bytes).unwrap();
+        assert_eq!(parsed.opr_off, 500_000);
+        assert_eq!(parsed.opr_len, 7_777);
+        assert_eq!(parsed.blocks.len(), 2);
+        // Coexists with the encoding-map + coarse-directory sections (three).
+        let mut v2 = sample_v2_footer();
+        v2.a0_off = 72;
+        v2.a0_len = 99;
+        v2.opr_off = 8_000;
+        v2.opr_len = 4_000;
+        let parsed2 = SegmentFooterIndex::parse(&v2.to_bytes().unwrap()).unwrap();
+        assert_eq!(parsed2.encoding_map, v2.encoding_map);
+        assert_eq!(parsed2.a0_len, 99);
+        assert_eq!(parsed2.opr_off, 8_000);
+        assert_eq!(parsed2.opr_len, 4_000);
+        // Absent resolver (opr_len == 0) ⇒ byte-identical to the sectionless
+        // footer (v1 / non-coalesced segments unchanged on disk by this feature).
+        let plain = sample_footer();
+        assert_eq!(plain.to_bytes().unwrap(), {
+            let mut same = sample_footer();
+            same.opr_off = 999; // off without len must NOT emit a section
+            same.opr_len = 0;
+            same.to_bytes().unwrap()
+        });
+        let reparsed = SegmentFooterIndex::parse(&plain.to_bytes().unwrap()).unwrap();
+        assert_eq!(reparsed.opr_off, 0);
+        assert_eq!(reparsed.opr_len, 0);
     }
 
     #[test]
