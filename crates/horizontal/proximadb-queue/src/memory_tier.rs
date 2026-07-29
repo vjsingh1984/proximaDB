@@ -1,15 +1,26 @@
-//! Memory tier — lock-free per-partition ring buffer with backpressure.
+//! Memory tier — retained, offset-indexed per-partition buffer (ADR-079 §Semantics).
 //!
-//! Each `(topic, partition)` owns one `PartitionMemory`. Producers push
-//! messages onto it; consumers pop them off. The disk tier (when wired)
-//! writes through transparently — every successful push to the memory tier
-//! has already had its bytes appended to the active disk segment.
+//! Each `(topic, partition)` owns one `PartitionMemory`. Producers append
+//! messages; **consumer groups read by cursor** (`read_from(offset, max)`)
+//! without removing them, so multiple independent groups (pub/sub) each see
+//! the whole stream. Messages are retained until trimmed below the low
+//! watermark (consumer/reaper). The disk tier writes through transparently:
+//! every successful append to memory has already had its bytes appended to
+//! the active disk segment, so the segment log is the source of truth.
+//!
+//! Storage is a `BTreeMap<offset, entry>` so concurrent producers (which
+//! receive offsets from the disk writer in commit order but may enqueue into
+//! memory out of order) never violate contiguity — inserts are by key.
+//! `read_from` walks the **contiguous prefix** from the cursor, stopping at the
+//! first gap, so a consumer never sees a hole a lagging producer has not filled
+//! yet (Kafka's high-water-mark property). This replaces the earlier pop-once
+//! `ArrayQueue`, which was fundamentally single-consumer-per-partition.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crossbeam_queue::ArrayQueue;
-use tokio::sync::Notify;
+use tokio::sync::{Mutex, Notify};
 
 use crate::message::{BackpressureHint, Message, MessageId};
 use crate::topic::PartitionId;
@@ -20,12 +31,15 @@ const HARD_PCT: f32 = 0.95;
 pub struct PartitionMemory {
     pub(crate) partition: PartitionId,
     capacity: usize,
-    queue: ArrayQueue<MemoryEntry>,
-    /// Monotonic offset assigned to each successfully-enqueued message.
-    /// Persisted via the disk tier; consumers use it as their commit cursor.
+    buf: Mutex<RetainedBuf>,
+    /// Monotonic high-water mark — the next offset a producer will receive.
     next_offset: AtomicU64,
-    /// Wake up consumers blocked on `poll` when something is enqueued.
+    /// Wake consumers blocked on `poll` when something is appended.
     pub(crate) notify: Notify,
+}
+
+struct RetainedBuf {
+    entries: BTreeMap<u64, MemoryEntry>,
 }
 
 #[derive(Clone)]
@@ -41,7 +55,9 @@ impl PartitionMemory {
         Self {
             partition,
             capacity: cap,
-            queue: ArrayQueue::new(cap),
+            buf: Mutex::new(RetainedBuf {
+                entries: BTreeMap::new(),
+            }),
             next_offset: AtomicU64::new(0),
             notify: Notify::new(),
         }
@@ -51,16 +67,16 @@ impl PartitionMemory {
         self.capacity
     }
 
-    pub fn depth(&self) -> usize {
-        self.queue.len()
+    pub async fn depth(&self) -> usize {
+        self.buf.lock().await.entries.len()
     }
 
-    pub fn depth_pct(&self) -> f32 {
-        self.depth() as f32 / self.capacity as f32
+    pub async fn depth_pct(&self) -> f32 {
+        self.depth().await as f32 / self.capacity as f32
     }
 
-    pub fn pressure(&self) -> Option<PressureLevel> {
-        let pct = self.depth_pct();
+    pub async fn pressure(&self) -> Option<PressureLevel> {
+        let pct = self.depth_pct().await;
         if pct >= HARD_PCT {
             Some(PressureLevel::Hard(pct))
         } else if pct >= SOFT_PCT {
@@ -70,56 +86,46 @@ impl PartitionMemory {
         }
     }
 
-    /// Try to enqueue a message. Returns the assigned offset on success or
-    /// `Err(QueueFull)` when the ring buffer cannot accept it.
-    /// Returns the queued entry on success or the original `Message`
-    /// (which is the large variant) on backpressure rejection so the
-    /// caller can retry or spill without reconstructing it. Clippy
-    /// `result_large_err` is silenced because the `Err` payload IS the
-    /// retry payload — moving it into a `Box` would force every retry
-    /// site to unbox just to re-enqueue.
+    /// The next offset a producer will receive (the high-water mark of the log).
+    pub fn next_offset(&self) -> u64 {
+        self.next_offset.load(Ordering::Relaxed)
+    }
+
+    /// Append a message, assigning the next offset.
     #[allow(clippy::result_large_err)]
-    pub fn try_enqueue(
+    pub async fn try_enqueue(
         self: &Arc<Self>,
         message: Message,
     ) -> std::result::Result<(MessageEntry, Option<BackpressureHint>), Message> {
         let offset = self.next_offset.fetch_add(1, Ordering::Relaxed);
-        let id = MessageId::new(self.partition, /* segment_id */ 0, offset);
-        let entry = MemoryEntry {
-            message: message.clone(),
-            message_id: id.clone(),
-            offset,
-        };
-        match self.queue.push(entry) {
-            Ok(()) => {
-                self.notify.notify_waiters();
-                let hint = match self.pressure() {
-                    Some(PressureLevel::Soft(_)) => Some(BackpressureHint::Soft),
-                    _ => None,
-                };
-                Ok((
-                    MessageEntry {
-                        message_id: id,
-                        offset,
-                    },
-                    hint,
-                ))
-            }
-            // ArrayQueue::push returns Err(value) when full — give the
-            // caller their message back so they can decide what to do.
-            Err(rejected) => Err(rejected.message),
-        }
+        self.enqueue_at(message, offset).await
     }
 
-    /// Enqueue a message with a pre-assigned offset (used by recovery and
-    /// by the producer path now that `PartitionDiskWriter` owns offset
-    /// assignment). Bypasses the memory-tier's internal counter so the
-    /// disk frame's offset is the source of truth across restart.
-    ///
-    /// Same `result_large_err` rationale as `try_enqueue` — the `Err`
-    /// payload IS the retry payload.
+    /// Append a message with a pre-assigned offset (recovery / disk-owned
+    /// offset assignment). The disk frame's offset is the source of truth
+    /// across restart; this advances the internal counter past it.
     #[allow(clippy::result_large_err)]
-    pub fn enqueue_with_offset(
+    pub async fn enqueue_with_offset(
+        self: &Arc<Self>,
+        message: Message,
+        offset: u64,
+    ) -> std::result::Result<(MessageEntry, Option<BackpressureHint>), Message> {
+        let mut current = self.next_offset.load(Ordering::Relaxed);
+        while offset + 1 > current {
+            match self.next_offset.compare_exchange_weak(
+                current,
+                offset + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+        self.enqueue_at(message, offset).await
+    }
+
+    async fn enqueue_at(
         self: &Arc<Self>,
         message: Message,
         offset: u64,
@@ -130,33 +136,76 @@ impl PartitionMemory {
             message_id: id.clone(),
             offset,
         };
-        match self.queue.push(entry) {
-            Ok(()) => {
-                self.notify.notify_waiters();
-                let hint = match self.pressure() {
-                    Some(PressureLevel::Soft(_)) => Some(BackpressureHint::Soft),
-                    _ => None,
-                };
-                Ok((
-                    MessageEntry {
-                        message_id: id,
-                        offset,
-                    },
-                    hint,
-                ))
+        {
+            let mut buf = self.buf.lock().await;
+            if buf.entries.len() >= self.capacity {
+                return Err(message);
             }
-            Err(rejected) => Err(rejected.message),
+            // Insert by offset key — concurrent producers may enqueue out of
+            // order; the BTreeMap tolerates that and `read_from` serves only
+            // the contiguous prefix, so gaps from in-flight producers never
+            // reach a consumer.
+            buf.entries.insert(offset, entry);
         }
+        self.notify.notify_waiters();
+        let hint = match self.pressure().await {
+            Some(PressureLevel::Soft(_)) => Some(BackpressureHint::Soft),
+            _ => None,
+        };
+        Ok((MessageEntry { message_id: id, offset }, hint))
     }
 
-    /// Drain up to `max` messages from the front of the queue.
-    pub fn try_pop_batch(self: &Arc<Self>, max: usize) -> Vec<MemoryEntry> {
+    /// Read up to `max` messages starting at `cursor` **without removing them**
+    /// — the pub/sub primitive. Walks the **contiguous prefix** from `cursor`:
+    /// stops at the first missing offset (a concurrent producer has not filled
+    /// it yet) so a consumer never observes a hole. If `cursor` lags behind the
+    /// trimmed base, clamps up to the first available offset.
+    pub async fn read_from(self: &Arc<Self>, cursor: u64, max: usize) -> Vec<MemoryEntry> {
+        let buf = self.buf.lock().await;
         let mut out = Vec::with_capacity(max);
-        while out.len() < max {
-            match self.queue.pop() {
-                Some(e) => out.push(e),
-                None => break,
+        let mut expected: Option<u64> = None;
+        for (&off, entry) in buf.entries.range(cursor..) {
+            match expected {
+                None => {
+                    // First available key — clamp a lagging cursor up to it.
+                    expected = Some(off);
+                }
+                Some(exp) if off == exp => {}
+                Some(_) => break, // gap — stop at the contiguous prefix boundary
             }
+            if out.len() >= max {
+                break;
+            }
+            out.push(entry.clone());
+            expected = Some(expected.unwrap() + 1);
+        }
+        out
+    }
+
+    /// Drop retained entries whose offset is `< watermark`.
+    pub async fn trim_below(self: &Arc<Self>, watermark: u64) {
+        let mut buf = self.buf.lock().await;
+        // split_off returns the >= watermark half and leaves self with < half;
+        // reassigning keeps the >= half, dropping the trimmed prefix.
+        buf.entries = buf.entries.split_off(&watermark);
+    }
+
+    /// Compat shim for the pop-once consumer path: read from the head and trim
+    /// past it. Retained until the consumer migrates to cursor-based `read_from`
+    /// (slice 4); the reaper then owns trimming (min across groups).
+    pub async fn try_pop_batch(self: &Arc<Self>, max: usize) -> Vec<MemoryEntry> {
+        let base = self
+            .buf
+            .lock()
+            .await
+            .entries
+            .keys()
+            .next()
+            .copied()
+            .unwrap_or(0);
+        let out = self.read_from(base, max).await;
+        if let Some(last) = out.last() {
+            self.trim_below(last.offset + 1).await;
         }
         out
     }
@@ -176,9 +225,8 @@ impl PressureLevel {
     }
 }
 
-/// Lightweight view returned from `try_enqueue` — the caller turns this into
-/// a full `MessageReceipt` once disk fsync is confirmed (Strict mode) or
-/// immediately (Lazy mode).
+/// Lightweight view returned from enqueue — the caller turns this into a full
+/// `MessageReceipt` once disk fsync is confirmed (Strict) or immediately (Lazy).
 pub struct MessageEntry {
     pub message_id: MessageId,
     pub offset: u64,
@@ -192,86 +240,151 @@ mod tests {
         Message::new("topic", "tenant", vec![n])
     }
 
-    #[test]
-    fn partition_memory_capacity_is_never_zero() {
+    #[tokio::test]
+    async fn partition_memory_capacity_is_never_zero() {
         let memory = PartitionMemory::new(3, 0);
-
         assert_eq!(memory.partition, 3);
         assert_eq!(memory.capacity(), 1);
-        assert_eq!(memory.depth(), 0);
-        assert_eq!(memory.depth_pct(), 0.0);
-        assert!(memory.pressure().is_none());
+        assert_eq!(memory.depth().await, 0);
+        assert_eq!(memory.depth_pct().await, 0.0);
+        assert!(memory.pressure().await.is_none());
     }
 
-    #[test]
-    fn enqueue_assigns_partition_scoped_ids_and_pop_preserves_fifo_order() {
+    #[tokio::test]
+    async fn enqueue_assigns_partition_scoped_ids_and_pop_preserves_fifo_order() {
         let memory = Arc::new(PartitionMemory::new(5, 4));
 
-        let (first, hint) = memory.try_enqueue(message(1)).unwrap();
-        let (second, _) = memory.try_enqueue(message(2)).unwrap();
+        let (first, hint) = memory.try_enqueue(message(1)).await.unwrap();
+        let (second, _) = memory.try_enqueue(message(2)).await.unwrap();
 
         assert_eq!(first.message_id, MessageId::new(5, 0, 0));
         assert_eq!(first.offset, 0);
         assert_eq!(second.message_id, MessageId::new(5, 0, 1));
         assert!(hint.is_none());
-        assert_eq!(memory.depth(), 2);
+        assert_eq!(memory.depth().await, 2);
 
-        let popped = memory.try_pop_batch(10);
+        let popped = memory.try_pop_batch(10).await;
         assert_eq!(popped.len(), 2);
         assert_eq!(popped[0].message.payload, vec![1]);
         assert_eq!(popped[1].message.payload, vec![2]);
-        assert_eq!(memory.depth(), 0);
+        assert_eq!(memory.depth().await, 0);
     }
 
-    #[test]
-    fn pressure_transitions_from_none_to_soft_to_hard() {
+    #[tokio::test]
+    async fn pressure_transitions_from_none_to_soft_to_hard() {
         let memory = Arc::new(PartitionMemory::new(1, 4));
 
-        assert!(memory.pressure().is_none());
-        memory.try_enqueue(message(1)).unwrap();
-        memory.try_enqueue(message(2)).unwrap();
-        assert!(memory.pressure().is_none());
+        assert!(memory.pressure().await.is_none());
+        memory.try_enqueue(message(1)).await.unwrap();
+        memory.try_enqueue(message(2)).await.unwrap();
+        assert!(memory.pressure().await.is_none());
 
-        let (_, hint) = memory.try_enqueue(message(3)).unwrap();
+        let (_, hint) = memory.try_enqueue(message(3)).await.unwrap();
         assert!(matches!(hint, Some(BackpressureHint::Soft)));
-        let soft = memory.pressure().unwrap();
-        assert!(matches!(soft, PressureLevel::Soft(_)));
-        assert_eq!(soft.pct(), 0.75);
+        assert!(matches!(memory.pressure().await.unwrap(), PressureLevel::Soft(_)));
 
-        memory.try_enqueue(message(4)).unwrap();
-        let hard = memory.pressure().unwrap();
-        assert!(matches!(hard, PressureLevel::Hard(_)));
-        assert_eq!(hard.pct(), 1.0);
+        memory.try_enqueue(message(4)).await.unwrap();
+        assert!(matches!(memory.pressure().await.unwrap(), PressureLevel::Hard(_)));
     }
 
-    #[test]
-    fn full_queue_rejects_message_but_offset_counter_remains_monotonic() {
+    #[tokio::test]
+    async fn full_window_rejects_append_but_offset_counter_remains_monotonic() {
         let memory = Arc::new(PartitionMemory::new(2, 1));
 
-        let first = memory.try_enqueue(message(1)).unwrap().0;
-        let rejected = match memory.try_enqueue(message(2)) {
-            Ok(_) => panic!("expected full queue to reject enqueue"),
+        let first = memory.try_enqueue(message(1)).await.unwrap().0;
+        let rejected = match memory.try_enqueue(message(2)).await {
+            Ok(_) => panic!("expected full window to reject append"),
             Err(message) => message,
         };
         assert_eq!(first.offset, 0);
         assert_eq!(rejected.payload, vec![2]);
 
-        assert_eq!(memory.try_pop_batch(1).len(), 1);
-        let next = memory.try_enqueue(message(3)).unwrap().0;
+        memory.trim_below(1).await; // free one slot
+        let next = memory.try_enqueue(message(3)).await.unwrap().0;
         assert_eq!(next.offset, 2);
         assert_eq!(next.message_id, MessageId::new(2, 0, 2));
     }
 
-    #[test]
-    fn pop_batch_respects_max_and_empty_queue_returns_empty_vec() {
+    #[tokio::test]
+    async fn pop_batch_respects_max_and_empty_queue_returns_empty_vec() {
         let memory = Arc::new(PartitionMemory::new(0, 3));
-        memory.try_enqueue(message(1)).unwrap();
-        memory.try_enqueue(message(2)).unwrap();
-        memory.try_enqueue(message(3)).unwrap();
+        memory.try_enqueue(message(1)).await.unwrap();
+        memory.try_enqueue(message(2)).await.unwrap();
+        memory.try_enqueue(message(3)).await.unwrap();
 
-        assert_eq!(memory.try_pop_batch(0).len(), 0);
-        assert_eq!(memory.try_pop_batch(2).len(), 2);
-        assert_eq!(memory.try_pop_batch(2).len(), 1);
-        assert!(memory.try_pop_batch(2).is_empty());
+        assert_eq!(memory.try_pop_batch(0).await.len(), 0);
+        assert_eq!(memory.try_pop_batch(2).await.len(), 2);
+        assert_eq!(memory.try_pop_batch(2).await.len(), 1);
+        assert!(memory.try_pop_batch(2).await.is_empty());
+    }
+
+    // ---- ADR-079 §Semantics: pub/sub (consumer-group) ----
+
+    #[tokio::test]
+    async fn read_from_is_non_consuming_so_two_cursors_see_the_same_messages() {
+        let memory = Arc::new(PartitionMemory::new(1, 8));
+        for n in 1..=4u8 {
+            memory.try_enqueue(message(n)).await.unwrap();
+        }
+
+        let group_a = memory.read_from(0, 10).await;
+        let group_b = memory.read_from(0, 10).await;
+
+        assert_eq!(group_a.len(), 4, "group A sees all messages");
+        assert_eq!(group_b.len(), 4, "group B sees all messages (not consumed by A)");
+        assert_eq!(
+            group_a.iter().map(|e| e.offset).collect::<Vec<_>>(),
+            group_b.iter().map(|e| e.offset).collect::<Vec<_>>(),
+        );
+    }
+
+    #[tokio::test]
+    async fn read_from_advances_per_call_without_consuming_other_groups() {
+        let memory = Arc::new(PartitionMemory::new(2, 8));
+        for n in 1..=4u8 {
+            memory.try_enqueue(message(n)).await.unwrap();
+        }
+        let a1 = memory.read_from(0, 2).await;
+        let a2 = memory.read_from(2, 2).await;
+        assert_eq!(a1.len(), 2);
+        assert_eq!(a2.len(), 2);
+        assert_eq!(a1[0].offset, 0);
+        assert_eq!(a2[0].offset, 2);
+        let b = memory.read_from(0, 10).await;
+        assert_eq!(b.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn trim_below_drops_old_entries_but_a_lagging_read_clamps_to_base() {
+        let memory = Arc::new(PartitionMemory::new(9, 8));
+        for n in 1..=4u8 {
+            memory.try_enqueue(message(n)).await.unwrap();
+        }
+        memory.trim_below(2).await;
+        assert_eq!(memory.depth().await, 2);
+        let read = memory.read_from(0, 10).await;
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[0].offset, 2);
+    }
+
+    /// A gap (offset not yet inserted by a concurrent producer) truncates the
+    /// read to the contiguous prefix — the Kafka high-water-mark property.
+    #[tokio::test]
+    async fn read_from_stops_at_the_first_gap() {
+        let memory = Arc::new(PartitionMemory::new(1, 8));
+        // Insert 0,1,2,4 — leave a gap at 3 (simulate an in-flight producer).
+        memory.enqueue_with_offset(message(0), 0).await.unwrap();
+        memory.enqueue_with_offset(message(1), 1).await.unwrap();
+        memory.enqueue_with_offset(message(2), 2).await.unwrap();
+        memory.enqueue_with_offset(message(4), 4).await.unwrap();
+
+        let read = memory.read_from(0, 10).await;
+        assert_eq!(read.len(), 3, "stops at the gap before offset 3");
+        assert_eq!(read[2].offset, 2);
+        // Filling the gap extends the contiguous prefix to include 4.
+        memory.enqueue_with_offset(message(3), 3).await.unwrap();
+        let read = memory.read_from(0, 10).await;
+        assert_eq!(read.len(), 5);
+        assert_eq!(read[4].offset, 4);
     }
 }

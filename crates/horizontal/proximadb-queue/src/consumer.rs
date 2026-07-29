@@ -192,7 +192,7 @@ impl Consumer {
                 if remaining == 0 {
                     break;
                 }
-                let batch = part.try_pop_batch(remaining);
+                let batch = part.try_pop_batch(remaining).await;
                 if !batch.is_empty() {
                     let mut tracker = entry.value().lock().await;
                     for memo in &batch {

@@ -244,7 +244,7 @@ async fn replay_partition(
 
             // Re-enqueue with the frame-recorded offset so MessageId is
             // stable across crash/replay.
-            if mem.enqueue_with_offset(message, frame_offset).is_err() {
+            if mem.enqueue_with_offset(message, frame_offset).await.is_err() {
                 return Err(QueueError::Persistence(format!(
                     "recovery: memory tier full at topic={topic} partition={partition} \
                      segment={segment_id} replayed={replayed} — increase memory_capacity"
@@ -331,7 +331,7 @@ mod tests {
                 .unwrap();
 
         assert_eq!(replayed, 0);
-        assert_eq!(state.memory[0].depth(), 0);
+        assert_eq!(state.memory[0].depth().await, 0);
     }
 
     #[tokio::test]
@@ -361,7 +361,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(replayed, 1);
-        let restored = state.memory[0].try_pop_batch(10);
+        let restored = state.memory[0].try_pop_batch(10).await;
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].message.payload, b"survives");
     }
