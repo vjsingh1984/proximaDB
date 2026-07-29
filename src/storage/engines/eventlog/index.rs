@@ -47,6 +47,13 @@ pub struct EventIndex {
 
     /// Reverse index: sequence -> (entity_id, event_type, timestamp)
     reverse_index: Arc<RwLock<HashMap<EventSequence, (EntityId, EventType, DateTime<Utc>)>>>,
+
+    /// sequence -> on-disk storage path. Populated for EVERY indexed event
+    /// (append + both recovery layouts) so reads GET the right path without
+    /// reconstructing it — essential for the entity-keyed layout
+    /// (`{entity}/event_{seq}.bin`, ADR: TD-EVENTLOG-1 §3), where the path
+    /// can't be derived from `seq` alone.
+    event_paths: Arc<RwLock<HashMap<EventSequence, String>>>,
 }
 
 impl EventIndex {
@@ -69,6 +76,7 @@ impl EventIndex {
             type_index: Arc::new(RwLock::new(HashMap::new())),
             timestamp_index: Arc::new(RwLock::new(HashMap::new())),
             reverse_index: Arc::new(RwLock::new(HashMap::new())),
+            event_paths: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -115,6 +123,43 @@ impl EventIndex {
 
         debug!("Indexed event {} for entity {}", seq, entity_id);
         Ok(())
+    }
+
+    /// Record an event's storage path (sequence -> path). Called alongside
+    /// `index_event` on append + legacy recovery so reads can GET the right
+    /// path without reconstructing it.
+    pub async fn record_path(&self, sequence: EventSequence, path: String) {
+        self.event_paths.write().await.insert(sequence, path);
+    }
+
+    /// The entity-keyed recovery fast path (ADR: TD-EVENTLOG-1 §3): index an
+    /// event's `(entity, sequence, path)` from the **path alone** — NO payload
+    /// GET. Only `entity_index` + `event_paths` are populated (the production
+    /// read path, `read_events_by_entity_prefix`, needs just those); the
+    /// type/timestamp/reverse indexes (unused in production) stay empty until a
+    /// payload is read. This is what drops recovery from O(N) GETs to O(LIST).
+    pub async fn index_entity_sequence(
+        &self,
+        entity_id: EntityId,
+        sequence: EventSequence,
+        path: String,
+    ) -> Result<()> {
+        {
+            let mut index = self.entity_index.write().await;
+            index
+                .entry(entity_id.clone())
+                .or_insert_with(Vec::new)
+                .push(sequence);
+        }
+        self.event_paths.write().await.insert(sequence, path);
+        Ok(())
+    }
+
+    /// The storage path for `sequence`, if recorded. Reads use this to GET the
+    /// payload; falls back to path reconstruction only when no path is recorded
+    /// (legacy data not seen by this engine's recovery/append).
+    pub async fn path_for(&self, sequence: EventSequence) -> Option<String> {
+        self.event_paths.read().await.get(&sequence).cloned()
     }
 
     /// Get event sequences for an entity (sorted)

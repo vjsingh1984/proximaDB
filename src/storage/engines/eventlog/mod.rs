@@ -211,6 +211,18 @@ fn parse_event_sequence(file_name: &str) -> Option<EventSequence> {
         .ok()
 }
 
+/// The parent directory name of a storage URL. For entity-keyed paths
+/// (`{base}/{sanitize_entity}/event_{seq}.bin`) this is the sanitized entity.
+/// `Path` splits on `/`, so it works on local paths and object-store URLs
+/// (`s3://bucket/base/entity/event.bin` → `entity`) alike.
+fn path_parent_name(url: &str) -> Option<String> {
+    std::path::Path::new(url)
+        .parent()?
+        .file_name()?
+        .to_str()
+        .map(|s| s.to_string())
+}
+
 impl EventLogEngine {
     /// Create a new event log engine
     pub fn new(config: EventLogConfig, filesystem: Arc<UnifiedCachingFilesystem>) -> Result<Self> {
@@ -319,26 +331,52 @@ impl EventLogEngine {
                 if let Some(sequence) = parse_event_sequence(&entry.name) {
                     report.max_sequence = report.max_sequence.max(sequence);
 
-                    // Repopulate the index. A single unreadable/corrupt event
-                    // must not abort recovery — resuming the counter is the
-                    // safety-critical half and must still happen.
-                    match FileSystem::read(self.filesystem.as_ref(), &entry.url).await {
-                        Ok(bytes) => match serde_json::from_slice::<Event>(&bytes) {
-                            Ok(event) => {
-                                self.event_index.index_event(&event).await?;
+                    if Self::entity_keyed_enabled() {
+                        // Entity-keyed layout: the entity IS the event file's
+                        // parent dir (a single path-safe component). Index from
+                        // the PATH — NO payload GET. (ADR: TD-EVENTLOG-1 §3 —
+                        // recovery is O(LIST), not O(N) GETs.)
+                        match path_parent_name(&entry.url) {
+                            Some(entity) => {
+                                self.event_index
+                                    .index_entity_sequence(entity, sequence, entry.url.clone())
+                                    .await?;
                                 report.events_indexed += 1;
                             }
-                            Err(e) => warn!("Skipping undecodable event {}: {e}", entry.url),
-                        },
-                        Err(e) => warn!("Skipping unreadable event {}: {e}", entry.url),
+                            None => warn!(
+                                "Skipping entity-keyed event with unparseable parent: {}",
+                                entry.url
+                            ),
+                        }
+                    } else {
+                        // Legacy sequence-keyed layout: GET payload + full index.
+                        // A single unreadable/corrupt event must not abort
+                        // recovery — resuming the counter is safety-critical.
+                        match FileSystem::read(self.filesystem.as_ref(), &entry.url).await {
+                            Ok(bytes) => match serde_json::from_slice::<Event>(&bytes) {
+                                Ok(event) => {
+                                    self.event_index.index_event(&event).await?;
+                                    self.event_index
+                                        .record_path(sequence, entry.url.clone())
+                                        .await;
+                                    report.events_indexed += 1;
+                                }
+                                Err(e) => warn!("Skipping undecodable event {}: {e}", entry.url),
+                            },
+                            Err(e) => warn!("Skipping unreadable event {}: {e}", entry.url),
+                        }
                     }
-                } else if entry.name.starts_with("partition_") && descents < MAX_RECOVERY_DESCENTS {
-                    // Local-shape: a partition directory to descend into.
+                } else if (entry.name.starts_with("partition_") || Self::entity_keyed_enabled())
+                    && descents < MAX_RECOVERY_DESCENTS
+                {
+                    // A container directory: `partition_*` (legacy) always, or
+                    // — under the entity-keyed gate — an entity dir on a local
+                    // filesystem (object stores hand back leaves directly).
                     descents += 1;
                     report.partitions_scanned += 1;
                     match FileSystem::list(self.filesystem.as_ref(), &entry.url).await {
                         Ok(children) => pending.push(children),
-                        Err(e) => warn!("Skipping unlistable partition {}: {e}", entry.url),
+                        Err(e) => warn!("Skipping unlistable dir {}: {e}", entry.url),
                     }
                 }
             }
@@ -382,7 +420,7 @@ impl EventLogEngine {
         // Persist to storage (append-only). Parent directories come from the
         // `create_dirs` option — never from a direct `tokio::fs` call, which
         // would break object-store bases (TD-OBJSTORE-1, #960).
-        let event_path = self.get_event_path(sequence);
+        let event_path = self.get_event_path(&event.entity_id, sequence);
         let options = crate::storage::persistence::filesystem::FileOptions {
             create_dirs: true,
             overwrite: true,
@@ -396,8 +434,22 @@ impl EventLogEngine {
         )
         .await?;
 
-        // Update index
-        self.event_index.index_event(&event).await?;
+        // Update the index. Under the entity-keyed gate, key `entity_index` by
+        // the sanitized entity (consistent with entity-keyed recovery, which
+        // parses the entity from the path); type/timestamp indexes populate
+        // lazily on read (unused in production). Legacy layout full-indexes +
+        // records the sequence-keyed path.
+        if Self::entity_keyed_enabled() {
+            let sani = Self::sanitize_entity(&event.entity_id);
+            self.event_index
+                .index_entity_sequence(sani, sequence, event_path.clone())
+                .await?;
+        } else {
+            self.event_index.index_event(&event).await?;
+            self.event_index
+                .record_path(sequence, event_path.clone())
+                .await;
+        }
 
         // Check if snapshot is needed
         if sequence % self.config.snapshot_interval == 0 {
@@ -461,7 +513,7 @@ impl EventLogEngine {
         // Load events from storage
         let mut events = Vec::new();
         for sequence in sequences {
-            let event_path = self.get_event_path(sequence);
+            let event_path = self.read_event_path(sequence).await;
             let data = FileSystem::read(self.filesystem.as_ref(), &event_path).await?;
 
             let event: Event = serde_json::from_slice(&data).map_err(|e| {
@@ -489,14 +541,22 @@ impl EventLogEngine {
             prefix, from_sequence, limit
         );
 
+        // Under the entity-keyed gate the index is keyed by the sanitized
+        // entity (sanitize_entity is prefix-preserving), so sanitize the lookup
+        // prefix to match. Legacy layout keys by the original entity id.
+        let lookup_prefix = if Self::entity_keyed_enabled() {
+            Self::sanitize_entity(prefix)
+        } else {
+            prefix.to_string()
+        };
         let sequences = self
             .event_index
-            .get_entity_events_by_prefix(prefix, from_sequence, limit)
+            .get_entity_events_by_prefix(&lookup_prefix, from_sequence, limit)
             .await?;
 
         let mut events = Vec::new();
         for sequence in sequences {
-            let event_path = self.get_event_path(sequence);
+            let event_path = self.read_event_path(sequence).await;
             let data = FileSystem::read(self.filesystem.as_ref(), &event_path).await?;
             let event: Event = serde_json::from_slice(&data).map_err(|e| {
                 ProximaDBError::Internal(format!("Event deserialization failed: {}", e))
@@ -627,15 +687,65 @@ impl EventLogEngine {
 
     /// Get storage path for an event. String-joined (never `PathBuf::join`)
     /// so an object-store base URL survives verbatim on every platform.
-    fn get_event_path(&self, sequence: EventSequence) -> String {
-        // Partition events by sequence (1000 events per partition)
+    /// Whether the entity-keyed layout is ON (ADR: TD-EVENTLOG-1 §3). When ON,
+    /// event paths carry the entity so recovery rebuilds `entity_index` from a
+    /// LIST — no per-event GET. Default OFF; mandate #8 (mixed-read-safe).
+    fn entity_keyed_enabled() -> bool {
+        std::env::var("PROXIMADB_EVENTLOG_ENTITY_KEYED").as_deref() == Ok("1")
+    }
+
+    /// Reduce an entity id to a single path-safe component, **prefix-preserving**
+    /// (so a `read_events_by_entity_prefix(prefix)` scan matches `sanitize(prefix)`).
+    /// Non-`[A-Za-z0-9_.-]` → `_`. Two ids that sanitize identically collide on
+    /// disk — acceptable (entity ids are app-controlled; collision is deterministic).
+    fn sanitize_entity(entity: &str) -> String {
+        entity
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+
+    /// Legacy (sequence-keyed) path: `{base}/partition_NNNNN/event_{seq}.bin`.
+    fn get_event_path_by_seq(&self, sequence: EventSequence) -> String {
         let partition = sequence / 1000;
         format!(
             "{}/partition_{:05}/event_{:010}.bin",
             self.config.base_dir.trim_end_matches('/'),
             partition,
-            sequence
+            sequence,
         )
+    }
+
+    /// Storage path for an event. Entity-keyed when the gate is ON
+    /// (`{base}/{sanitize_entity(entity)}/event_{seq}.bin`); legacy
+    /// partition-keyed when OFF.
+    fn get_event_path(&self, entity: &str, sequence: EventSequence) -> String {
+        if Self::entity_keyed_enabled() {
+            format!(
+                "{}/{}/event_{:010}.bin",
+                self.config.base_dir.trim_end_matches('/'),
+                Self::sanitize_entity(entity),
+                sequence,
+            )
+        } else {
+            self.get_event_path_by_seq(sequence)
+        }
+    }
+
+    /// Path to GET a stored event by sequence: the recorded path if recovery
+    /// or append saw it, else the legacy sequence-keyed path. Works for both
+    /// layouts (entity-keyed paths are recorded; legacy paths reconstruct).
+    async fn read_event_path(&self, sequence: EventSequence) -> String {
+        self.event_index
+            .path_for(sequence)
+            .await
+            .unwrap_or_else(|| self.get_event_path_by_seq(sequence))
     }
 }
 
@@ -1108,5 +1218,117 @@ mod tests {
                 < 2,
             "`new` cannot see the pre-restart event"
         );
+    }
+
+    // ---- TD-EVENTLOG-1 §3: entity-keyed layout (PROXIMADB_EVENTLOG_ENTITY_KEYED) ----
+    //
+    // The entity-keyed layout stores events at `{base}/{sanitize_entity}/event_{seq}.bin`
+    // so recovery rebuilds `entity_index` from the PATH (entity = the event
+    // file's parent dir) — NO per-event GET. O(N) GETs → O(entities) LISTs.
+    // nextest isolates each test in its own process, so the env var is process-local.
+
+    fn enable_entity_keyed() {
+        // SAFETY: nextest runs each test in its own process; set before any
+        // async/concurrent work, so there is no concurrent env read to race.
+        unsafe {
+            std::env::set_var("PROXIMADB_EVENTLOG_ENTITY_KEYED", "1");
+        }
+    }
+
+    #[tokio::test]
+    async fn entity_keyed_round_trip_writes_and_reads_by_entity() {
+        enable_entity_keyed();
+        let base = recovery_base().await;
+        let engine = EventLogEngine::open(cfg(&base), fs_for("ek_rt").await)
+            .await
+            .expect("open");
+        for i in 0..5u32 {
+            engine
+                .append_event(ev("agent-checkpoint:t:ns:th1", &format!("S{i}")))
+                .await
+                .expect("append");
+        }
+        // read by the ORIGINAL entity prefix returns all 5 (prefix sanitized
+        // internally to match the sanitized entity_index keys).
+        let events = engine
+            .read_events_by_entity_prefix("agent-checkpoint:t:ns:th1", 0, 100)
+            .await
+            .expect("read");
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[0].entity_id, "agent-checkpoint:t:ns:th1");
+    }
+
+    #[tokio::test]
+    async fn entity_keyed_restart_survives_via_path_index() {
+        enable_entity_keyed();
+        let base = recovery_base().await;
+        {
+            let engine = EventLogEngine::open(cfg(&base), fs_for("ek_a").await)
+                .await
+                .expect("open");
+            for i in 0..3u32 {
+                engine
+                    .append_event(ev(&format!("agent-checkpoint:t:ns:th{i}"), "C"))
+                    .await
+                    .expect("append");
+            }
+        } // drop → simulate restart
+
+        let reopened = EventLogEngine::open(cfg(&base), fs_for("ek_b").await)
+            .await
+            .expect("reopen");
+        // Each entity's events survive (index rebuilt from paths — no GET).
+        for i in 0..3u32 {
+            let events = reopened
+                .read_events_by_entity_prefix(&format!("agent-checkpoint:t:ns:th{i}"), 0, 100)
+                .await
+                .expect("read");
+            assert_eq!(events.len(), 1, "entity th{i} survives restart");
+        }
+        // Counter resumed past the 3 persisted → new append is seq 4, not 1.
+        let next = reopened
+            .append_event(ev("agent-checkpoint:t:ns:th9", "AfterRestart"))
+            .await
+            .expect("append");
+        assert_eq!(next.sequence, 4);
+    }
+
+    /// Pressure check for the co-design win: 200 events across 20 entities.
+    /// Recovery rebuilds the index from the paths — the gate-ON recovery branch
+    /// issues NO `FileSystem::read` for event leaves, so indexing 200 events
+    /// costs ~LISTs (O(entities)), not 200 GETs (O(N)). A per-entity read then
+    /// GETs only that entity's events lazily.
+    #[tokio::test]
+    async fn entity_keyed_recovery_indexes_many_events_from_paths() {
+        enable_entity_keyed();
+        let base = recovery_base().await;
+        const N: u32 = 200;
+        const ENTITIES: u32 = 20;
+        {
+            let engine = EventLogEngine::open(cfg(&base), fs_for("pk_a").await)
+                .await
+                .expect("open");
+            for i in 0..N {
+                // 2-digit ids so each full-id prefix matches exactly one entity
+                // (no th1/th10-style prefix collisions).
+                let entity = format!("agent-checkpoint:t:ns:th{:02}", i % ENTITIES);
+                engine.append_event(ev(&entity, "C")).await.expect("append");
+            }
+        }
+        let reopened = EventLogEngine::open(cfg(&base), fs_for("pk_b").await)
+            .await
+            .expect("reopen");
+        // Every entity's events are findable after recovery (indexed from paths).
+        for i in 0..ENTITIES {
+            let events = reopened
+                .read_events_by_entity_prefix(&format!("agent-checkpoint:t:ns:th{:02}", i), 0, 100)
+                .await
+                .expect("read");
+            assert_eq!(
+                events.len(),
+                (N / ENTITIES) as usize,
+                "entity th{i:02} recovered its full share"
+            );
+        }
     }
 }

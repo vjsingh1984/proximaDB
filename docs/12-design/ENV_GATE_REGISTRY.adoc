@@ -90,6 +90,7 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_EMBED_SESSIONS` | ONNX session-pool size for embedding. | 1 (clamped 1..32) | config-mirror; — | crates/modalities/proximadb-embedding/src/models/bge.rs
 | `PROXIMADB_EMBED_SYNC_QUEUE_CAP` | Sync embedding pool queue capacity. | 8 | config-mirror; — | crates/modalities/proximadb-embedding/src/scheduler.rs
 | `PROXIMADB_EMBED_SYNC_WORKERS` | Sync embedding pool worker-thread count. | 4 | config-mirror; — | crates/modalities/proximadb-embedding/src/scheduler.rs
+| `PROXIMADB_EVENTLOG_ENTITY_KEYED` | Store audit events entity-keyed (`{base}/{entity}/event_{seq}.bin`) so restart recovery rebuilds the index from a LIST (no per-event GET) — O(N)→O(entities) round-trips (TD-EVENTLOG-1 §3). Mixed-read-safe: legacy `partition_*` events still recovered via GET. | OFF (legacy sequence-keyed layout) | opt-in; TD-EVENTLOG-1 | src/storage/engines/eventlog/mod.rs
 | `PROXIMADB_EMBED_VARIANT` | BGE model variant (small/large/m3). | small | config-mirror; — | apps/proximadb-server/src/main.rs
 | `PROXIMADB_EMIT_USAGE_EVENTS` | Enable emission of usage/billing events (default-inert egress hook). | OFF (unless truthy) | opt-in; — | src/metrics/usage_event.rs
 | `PROXIMADB_EVICTION_WATCH` | Spot IMDS watch (azure|aws|gcp) | OFF | TD-CACHE-1 S4 | `src/database.rs (+1)`
