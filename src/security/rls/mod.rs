@@ -1,4 +1,15 @@
-//! Row-Level Security (RLS) for ProximaDB
+//! Row-Level Security (RLS) and ABAC row-level enforcement for ProximaDB.
+//!
+//! ## ABAC enforcement substrate (TD-FOUNDATION-3, behind `abac-policy`)
+//!
+//! The [`abac_adapter`] module provides the `AbacEnforcer` — the service-facing
+//! API that resolves a subject's authorization, compiles it to a
+//! `FilterExpression` or a per-row predicate, and feeds it to the read
+//! primitives (`scan_records_filtered`, `unified_search_native`). The substrate
+//! (crates/control/proximadb-abac) provides the attribute authority, policy-epoch
+//! cache keying, and the non-optional `AuthorizedReadContext`.
+//!
+//! ## Legacy RLS (inert on the read path)
 //!
 //! Implements collection-level data isolation through security predicates
 //! that filter records based on user context. RLS policies are evaluated

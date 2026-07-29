@@ -1196,8 +1196,44 @@ pub fn compare_json_op_type_strict(
             _ => None,
         },
 
-        // Equals, NotEquals, and the ordered operators all require the same class.
+        // Equals/NotEquals use EXACT numeric equality, not json_eq's epsilon.
+        // (Red-team Finding 5: json_eq uses a relative epsilon for floats, so a
+        // predicate `clearance == 3` would admit `clearance = 3.0000001` within
+        // epsilon — a false admit in a security context. The ordered operators
+        // already use exact `partial_cmp`; this makes Equals consistent with
+        // them under the strict path.)
+        ComparisonOperator::Equals => require_same().map(|_| exact_json_eq(json_val, value)),
+        ComparisonOperator::NotEquals => require_same().map(|_| !exact_json_eq(json_val, value)),
+
+        // The ordered operators require the same class.
         _ => require_same().map(|_| compare_json_op(operator, json_val, value)),
+    }
+}
+
+/// Exact JSON equality — like `json_eq` but WITHOUT the float epsilon.
+///
+/// `json_eq` uses a relative-epsilon comparison for floats (`compare_json_numbers`),
+/// which is defensible for user-facing metadata search but **wrong for a security
+/// predicate**: a policy `clearance == 3` should not admit `3.0000001`. This
+/// function is the strict-path alternative — exact for numbers, structural for
+/// everything else.
+fn exact_json_eq(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a, b) {
+        (serde_json::Value::Number(n1), serde_json::Value::Number(n2)) => {
+            // Exact integer first (preserves precision), then exact float.
+            match (n1.as_i64(), n2.as_i64()) {
+                (Some(i1), Some(i2)) => i1 == i2,
+                _ => match (n1.as_u64(), n2.as_u64()) {
+                    (Some(u1), Some(u2)) => u1 == u2,
+                    _ => n1
+                        .as_f64()
+                        .zip(n2.as_f64())
+                        .is_some_and(|(f1, f2)| f1 == f2),
+                },
+            }
+        }
+        // Non-numbers: structural equality, same as json_eq.
+        _ => a == b,
     }
 }
 #[cfg(test)]
@@ -1358,6 +1394,38 @@ mod type_strict_tests {
                 "strict mode changed an already-exact operator: {op:?} {field} {lit}"
             );
         }
+    }
+
+    #[test]
+    fn strict_equals_uses_exact_numeric_comparison_not_epsilon() {
+        // Finding 5: json_eq uses relative epsilon for floats, so a security
+        // predicate clearance == 3 would admit 3.0000001 within epsilon.
+        // The strict path must use exact equality.
+        let near = json!(1.0_f64 + f64::EPSILON); // within json_eq's epsilon of 1.0
+        let one = json!(1.0);
+        assert!(
+            compare_json_op(&ComparisonOperator::Equals, &near, &one),
+            "precondition: the permissive json_eq admits (epsilon absorbs the diff)"
+        );
+        assert!(
+            !compare_json_op_type_strict(&ComparisonOperator::Equals, &near, &one).unwrap_or(false),
+            "strict Equals must NOT admit a near-but-not-equal float (no epsilon)"
+        );
+        // And exact equality still works.
+        assert!(
+            compare_json_op_type_strict(&ComparisonOperator::Equals, &json!(3), &json!(3))
+                .unwrap_or(false)
+        );
+    }
+
+    #[test]
+    fn strict_not_equals_uses_exact_numeric_comparison() {
+        let near = json!(1.0_f64 + f64::EPSILON);
+        assert!(
+            compare_json_op_type_strict(&ComparisonOperator::NotEquals, &near, &json!(1.0))
+                .unwrap_or(false),
+            "strict NotEquals must deny a near-but-not-equal float (they are NOT equal exactly)"
+        );
     }
 
     #[test]

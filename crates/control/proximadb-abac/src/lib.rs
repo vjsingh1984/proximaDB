@@ -42,6 +42,8 @@
 //!    them reaching a client sink — at compile time, not by review.
 //!
 //! Design of record: `docs/10-quality/td/TD-FOUNDATION-3-abac-enforcement-subsystem.adoc`
+//! (search for 'TD-FOUNDATION-3' or 'ABAC enforcement' to find the full track).
+//! The enforcement wiring plan: `docs/12-design/` + the 5-phase plan.
 //! (build track) and `TD-FOUNDATION-2` §3.4 / §8 (architecture + S1–S10).
 
 #![forbid(unsafe_code)]

@@ -10,7 +10,7 @@
 //! walker via [`admits_with_security`](super::filter_lattice::admits_with_security).
 
 #[cfg(feature = "abac-policy")]
-use crate::core::search::sql_value_filter::proxima_value_to_json;
+use crate::core::search::{FilterExpression, sql_value_filter::proxima_value_to_json};
 #[cfg(feature = "abac-policy")]
 use crate::security::rls::filter_lattice::admits_with_security;
 #[cfg(feature = "abac-policy")]
@@ -129,6 +129,37 @@ impl AbacEnforcer {
                     None => AbacScanResult::Unrestricted,
                 }
             }
+        }
+    }
+
+    /// Resolve `subject`'s authorization and return the compiled security
+    /// `FilterExpression` directly — for read paths that take a `FilterExpression`
+    /// natively (e.g. `unified_search_native`'s `filter` param), rather than a
+    /// per-record closure.
+    ///
+    /// Returns `Ok(None)` when the subject is permitted with no row predicates;
+    /// `Ok(Some(expr))` when a security filter applies; `Err(reason)` when denied.
+    /// The caller ANDs `expr` with the user's own filter before the search.
+    pub fn security_expression_for(
+        &self,
+        subject: &SubjectId,
+        tenant: u64,
+        target: Target,
+        bindings: &[PolicyBinding],
+    ) -> Result<Option<FilterExpression>, DenyReason> {
+        match AuthorizedReadContext::resolve(
+            self.authority.as_ref(),
+            self.epochs.as_ref(),
+            bindings,
+            subject,
+            tenant,
+            target,
+        ) {
+            proximadb_abac::ReadDecision::Deny(reason) => Err(reason),
+            proximadb_abac::ReadDecision::Admit(ctx) => Ok(compile_security_filter(
+                ctx.row_predicate_refs(),
+                self.store.as_ref(),
+            )),
         }
     }
 }
@@ -255,5 +286,54 @@ mod tests {
             &bindings,
         );
         assert!(matches!(result, AbacScanResult::Denied(_)));
+    }
+
+    #[test]
+    fn enforcer_returns_security_expression_for_vector_path() {
+        // The vector search path (unified_search_native) takes a FilterExpression,
+        // not a closure. security_expression_for returns it directly.
+        let (enforcer, bindings) = enforcer_with_alice("eng");
+        let result = enforcer
+            .security_expression_for(
+                &SubjectId("alice".into()),
+                7,
+                Target {
+                    namespace: 3,
+                    table: 200,
+                    column: None,
+                },
+                &bindings,
+            )
+            .expect("alice is admitted");
+
+        let expr = result.expect("alice has a predicate ref → Some(expr)");
+        // The expression should be the dept=eng filter.
+        match expr {
+            FilterExpression::Comparison {
+                field,
+                operator: ComparisonOperator::Equals,
+                value,
+            } => {
+                assert_eq!(field, "dept");
+                assert_eq!(value, json!("eng"));
+            }
+            _ => panic!("expected a single Eq(dept, eng) comparison"),
+        }
+    }
+
+    #[test]
+    fn enforcer_expression_denies_unbound_subject() {
+        let (enforcer, bindings) = enforcer_with_alice("eng");
+        let result = enforcer.security_expression_for(
+            &SubjectId("mallory".into()),
+            7,
+            Target {
+                namespace: 3,
+                table: 200,
+                column: None,
+            },
+            &bindings,
+        );
+        assert!(result.is_err(), "unbound subject must be denied");
     }
 }
