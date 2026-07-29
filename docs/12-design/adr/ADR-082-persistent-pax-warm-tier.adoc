@@ -42,9 +42,11 @@ checksum-failing data is deleted and treated as a miss; object storage remains
 the correctness source.
 
 Full values carry a whole-value CRC. Selective reads use a persisted CRC per
-4 MiB chunk and validate every touched chunk before returning bytes. This avoids
-reading/checksumming a complete 128 MiB SQ8 parent to serve a small survivor
-range while retaining corruption detection.
+64 KiB local chunk and validate every touched chunk before returning bytes. The
+touched chunks are fetched as one contiguous envelope. This avoids both
+reading/checksumming a complete 128 MiB SQ8 parent and the measured
+read-amplification from incorrectly reusing the 4 MiB cloud billing target as a
+local integrity unit. The CRC table overhead is about 0.006%.
 
 One byte budget is shared by both PAX caches. Survivor entries evict before
 invariant entries, then least-recently touched within a class. Resident byte

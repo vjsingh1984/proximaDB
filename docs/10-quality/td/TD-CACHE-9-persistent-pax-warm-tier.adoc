@@ -76,6 +76,25 @@ retired.
 * corrected SIFT1M run with quiescence/materialization/segment-geometry gates,
   cold DRAM + cold L2, cold DRAM + warm L2, and post-write `all` policy.
 
+=== Release acceptance iteration 1
+
+The first clean `release-server` run at commit `acfb71dbe` validated the GET and
+recall design but rejected the latency implementation:
+
+* 1,000,000 live PAX rows, WAL zero, 2 L1 segments;
+* post-write: recall 0.9855, 2.44 GET/query, p50 36.95 ms;
+* local-disk warm: recall 0.9825, 2.00 GET/query, p50 57.76 ms (FAIL);
+* object-cold local-file control: recall 0.9805, 42.91 GET/query, p50 38.55 ms.
+
+The local phase served 7,874 parent-range hits across 200 queries. Its original
+4 MiB checksum unit therefore read and hashed roughly 4 MiB for each typically
+smaller survivor range. That cloud-I/O-sized integrity unit was a local-tier
+co-design error. The pre-GA format now uses 64 KiB CRC chunks (about 0.006%
+metadata overhead) and reads all touched chunks in one contiguous envelope.
+There is no compatibility version bump for an unreleased, rebuildable cache.
+Acceptance must be rerun; iteration 1 remains rejected evidence, not a promoted
+benchmark result.
+
 The acceptance driver is
 `scripts/bench/sift1m_get_reduction.py`. It owns each measured server process,
 accepts only `target/release` or `target/release-server` binaries, hashes the

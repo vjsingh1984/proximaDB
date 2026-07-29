@@ -17,11 +17,15 @@ use crc32fast::Hasher as Crc32;
 use dashmap::DashMap;
 use sha2::{Digest, Sha256};
 
-const MAGIC: &[u8; 8] = b"PXLDSK02";
+/// File-family discriminator, not a compatibility version. This cache is
+/// rebuildable and has no pre-GA legacy readers.
+const MAGIC: &[u8; 8] = b"PXLCACHE";
 const HEADER_LEN: u64 = 8 + 1 + 4 + 8 + 4 + 4;
 /// Integrity and read-amplification unit for verified ranged reads. This
-/// matches the Azure Blob I/O target used by the PAX range planner.
-const CHECKSUM_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
+/// follows local-disk range locality, not the object-store billing unit: a
+/// 4 MiB integrity chunk made ~1 MiB survivor reads hash 4 MiB each. The CRC
+/// table costs only 4 bytes per 64 KiB (0.006%).
+const CHECKSUM_CHUNK_BYTES: u64 = 64 * 1024;
 const SHARDS: usize = 16;
 const MAX_KEY_BYTES: usize = 16 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -214,9 +218,9 @@ impl PersistentByteStore {
 
     /// Read a byte subrange relative to the cached value.
     ///
-    /// Every touched 4 MiB chunk is read in full and checked against its
-    /// persisted CRC before any requested bytes are returned. This keeps local
-    /// reads selective without allowing an unchecked partial-cache hit.
+    /// Every touched 64 KiB chunk is checked against its persisted CRC before
+    /// any requested bytes are returned. All touched chunks are fetched as one
+    /// contiguous envelope, avoiding a seek/read syscall per checksum chunk.
     pub async fn get_range(
         &self,
         key: &str,
@@ -613,22 +617,42 @@ fn read_verified_range(meta: &EntryMeta, offset: u64, len: u64) -> std::io::Resu
     })?;
     let first_chunk = offset / CHECKSUM_CHUNK_BYTES;
     let last_chunk = (end - 1) / CHECKSUM_CHUNK_BYTES;
+    let verified_start = first_chunk * CHECKSUM_CHUNK_BYTES;
+    let verified_end = ((last_chunk + 1) * CHECKSUM_CHUNK_BYTES).min(meta.value_len);
+    let verified_len = usize::try_from(verified_end - verified_start).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "persistent cache verified envelope does not fit address space",
+        )
+    })?;
     let mut file = std::fs::File::open(&meta.path)?;
-    let mut result = Vec::with_capacity(expected_len);
+    file.seek(SeekFrom::Start(meta.value_offset + verified_start))?;
+    let mut verified = vec![0u8; verified_len];
+    file.read_exact(&mut verified)?;
+
     for chunk_index in first_chunk..=last_chunk {
         let chunk_start = chunk_index * CHECKSUM_CHUNK_BYTES;
         let chunk_end = (chunk_start + CHECKSUM_CHUNK_BYTES).min(meta.value_len);
-        let chunk_len = usize::try_from(chunk_end - chunk_start).map_err(|_| {
+        let relative_start = usize::try_from(chunk_start - verified_start).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "persistent cache checksum chunk does not fit address space",
+                "persistent cache checksum start does not fit address space",
             )
         })?;
-        file.seek(SeekFrom::Start(meta.value_offset + chunk_start))?;
-        let mut chunk = vec![0u8; chunk_len];
-        file.read_exact(&mut chunk)?;
+        let relative_end = usize::try_from(chunk_end - verified_start).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "persistent cache checksum end does not fit address space",
+            )
+        })?;
+        let chunk = verified.get(relative_start..relative_end).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "persistent cache checksum chunk lies outside verified envelope",
+            )
+        })?;
         let mut checksum = Crc32::new();
-        checksum.update(&chunk);
+        checksum.update(chunk);
         let expected_crc = meta
             .chunk_crcs
             .get(usize::try_from(chunk_index).map_err(|_| {
@@ -649,34 +673,28 @@ fn read_verified_range(meta: &EntryMeta, offset: u64, len: u64) -> std::io::Resu
                 "persistent cache chunk checksum mismatch",
             ));
         }
-        let copy_start = offset.max(chunk_start) - chunk_start;
-        let copy_end = end.min(chunk_end) - chunk_start;
-        let copy_start = usize::try_from(copy_start).map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "persistent cache slice start does not fit address space",
-            )
-        })?;
-        let copy_end = usize::try_from(copy_end).map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "persistent cache slice end does not fit address space",
-            )
-        })?;
-        result.extend_from_slice(chunk.get(copy_start..copy_end).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "persistent cache verified slice lies outside checksum chunk",
-            )
-        })?);
     }
-    if result.len() != expected_len {
+    let requested_start = usize::try_from(offset - verified_start).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "persistent cache result start does not fit address space",
+        )
+    })?;
+    let requested_end = requested_start.checked_add(expected_len).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "persistent cache result range overflow",
+        )
+    })?;
+    if requested_end > verified.len() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
             "persistent cache verified range was truncated",
         ));
     }
-    Ok(result)
+    verified.copy_within(requested_start..requested_end, 0);
+    verified.truncate(expected_len);
+    Ok(verified)
 }
 
 fn is_rebuildable_miss(error: &std::io::Error) -> bool {
