@@ -8,6 +8,7 @@ result unless:
 * the SIFT files have the requested cardinality and dimension;
 * live PAX footer row counts sum to the full corpus;
 * segment paths/sizes/row counts are stable after async compaction;
+* the collection's unflushed-WAL byte gauge is zero;
 * the physical object-store GET/byte counters are present; and
 * recall is computed against full-corpus SIFT ground truth.
 
@@ -31,6 +32,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import signal
 import struct
 import subprocess
@@ -53,6 +55,7 @@ METRICS = (
     "proximadb_cache_local_disk_misses_total",
     "proximadb_cache_local_disk_bytes",
     "proximadb_compactions_total",
+    "proximadb_wal_size_bytes",
 )
 
 
@@ -204,7 +207,8 @@ def stable_signature(geometry: dict) -> tuple:
     )
 
 
-def wait_for_materialization(root: Path, expected_rows: int, max_segments: int,
+def wait_for_materialization(root: Path, server: str, collection_id: str,
+                             expected_rows: int, max_segments: int,
                              timeout_seconds: int,
                              stable_seconds: int) -> dict:
     deadline = time.monotonic() + timeout_seconds
@@ -230,12 +234,19 @@ def wait_for_materialization(root: Path, expected_rows: int, max_segments: int,
             time.sleep(3)
             continue
         signature = stable_signature(geometry)
+        wal_bytes = labelled_metric(
+            scrape_text(server),
+            "proximadb_wal_size_bytes",
+            "collection",
+            collection_id,
+        )
         if now - last_report >= 15:
             print(
                 "settle:"
                 f" rows={geometry['row_count']:,}/{expected_rows:,}"
                 f" segments={geometry['segment_count']}"
-                f" bytes={geometry['bytes']:,}",
+                f" bytes={geometry['bytes']:,}"
+                f" wal_unflushed={wal_bytes!r}",
                 flush=True,
             )
             last_report = now
@@ -245,10 +256,12 @@ def wait_for_materialization(root: Path, expected_rows: int, max_segments: int,
         complete = (
             geometry["row_count"] == expected_rows
             and 0 < geometry["segment_count"] <= max_segments
+            and wal_bytes == 0
         )
         if complete and signature == prior:
             stable_since = stable_since or now
             if now - stable_since >= stable_seconds:
+                geometry["wal_unflushed_bytes"] = wal_bytes
                 return geometry
         else:
             stable_since = now if complete else None
@@ -288,11 +301,37 @@ def parse_prometheus(text: str) -> dict[str, float]:
     return totals
 
 
-def scrape(server: str) -> dict[str, float]:
+def scrape_text(server: str) -> str:
     with urllib.request.urlopen(
         server + "/metrics/prometheus", timeout=30
     ) as response:
-        return parse_prometheus(response.read().decode())
+        return response.read().decode()
+
+
+def scrape(server: str) -> dict[str, float]:
+    return parse_prometheus(scrape_text(server))
+
+
+def labelled_metric(text: str, name: str, label: str,
+                    expected_value: str) -> float | None:
+    """Return one exact labelled Prometheus sample without summing tenants."""
+    label_pattern = re.compile(
+        rf'(?:^|,){re.escape(label)}="([^"\\]*(?:\\.[^"\\]*)*)"'
+    )
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith(name + "{"):
+            continue
+        token, _, raw_value = line.partition(" ")
+        labels = token[len(name) + 1:-1]
+        match = label_pattern.search(labels)
+        if match is None or match.group(1) != expected_value:
+            continue
+        try:
+            return float(raw_value.strip().split()[0])
+        except (ValueError, IndexError):
+            return None
+    return None
 
 
 def metric_delta(before: dict, after: dict, name: str) -> float:
@@ -489,6 +528,15 @@ class OwnedServer:
                 "PROXIMADB_L0_COMPACTION_ENABLED": "1",
             }
         )
+        # The diagnostic object-cold phase must remain cold even when the
+        # invoking shell exports a persistent-cache config mirror.
+        for inherited_gate in (
+            "PROXIMADB_CACHE_LOCAL_DISK_PATH",
+            "PROXIMADB_CACHE_LOCAL_DISK_MAX_GB",
+            "PROXIMADB_CACHE_NVME_PATH",
+            "PROXIMADB_CACHE_NVME_MAX_GB",
+        ):
+            environment.pop(inherited_gate, None)
         if self.local_disk_path is not None:
             environment["PROXIMADB_CACHE_LOCAL_DISK_PATH"] = str(
                 self.local_disk_path
@@ -551,6 +599,12 @@ def ingest(server: str, base_path: Path, expected_rows: int,
     )
     if not collection_id:
         raise RuntimeError(f"create response has no collection id: {response}")
+    try:
+        int(collection_id)
+    except ValueError as error:
+        raise RuntimeError(
+            f"v2 create returned non-numeric catalog object id {collection_id!r}"
+        ) from error
     started = time.perf_counter()
     inserted = 0
     for batch in iter_fvec_batches(base_path, expected_rows, batch_size):
@@ -646,8 +700,24 @@ def main() -> int:
             "benchmark binary must come from target/release or "
             "target/release-server"
         )
-    root = args.root.resolve()
-    require_empty_directory(root)
+    git_revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    tracked_status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=normal"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if tracked_status:
+        raise RuntimeError(
+            "benchmark refuses a dirty worktree; commit the exact "
+            "source state before building and measuring"
+        )
+
     base_path = args.sift_dir / "sift_base.fvecs"
     query_path = args.sift_dir / "sift_query.fvecs"
     groundtruth_path = args.sift_dir / "sift_groundtruth.ivecs"
@@ -667,18 +737,14 @@ def main() -> int:
     if query_dimension != base_dimension:
         raise RuntimeError("base/query dimensions differ")
 
+    root = args.root.resolve()
+    require_empty_directory(root)
     config = root / "benchmark.toml"
     write_config(config, root, args.port)
     server_url = f"http://127.0.0.1:{args.port}"
     local_disk = root / "local-disk-cache"
-    git_revision = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
     result = {
-        "protocol": "sift1m_get_reduction_v1",
+        "protocol": "sift1m_get_reduction_v2",
         "git_revision": git_revision,
         "binary": {
             "path": str(binary),
@@ -738,6 +804,8 @@ def main() -> int:
         }
         geometry = wait_for_materialization(
             root / "data" / "sst",
+            server_url,
+            collection_id,
             args.rows,
             args.max_segments,
             args.settle_timeout_secs,

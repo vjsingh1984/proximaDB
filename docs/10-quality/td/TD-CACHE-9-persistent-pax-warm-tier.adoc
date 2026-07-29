@@ -79,11 +79,14 @@ retired.
 The acceptance driver is
 `scripts/bench/sift1m_get_reduction.py`. It owns each measured server process,
 accepts only `target/release` or `target/release-server` binaries, hashes the
-binary, and records the Git revision. Unlike the historical `/tmp` harness, it
-streams ingest, persists the returned collection ID, requires live PAX footer
-row counts to equal the requested corpus, and requires geometry to remain stable
-before issuing queries. It never substitutes cache misses for an absent
-physical-GET counter.
+binary, records the Git revision, and refuses a dirty source tree.
+Unlike the historical `/tmp` harness, it streams ingest, persists the returned
+collection ID, requires live PAX footer row counts to equal the requested
+corpus, and requires geometry to remain stable with the collection's
+unflushed-WAL gauge at zero before issuing queries. It never substitutes cache
+misses for an absent physical-GET counter. Each owned process removes inherited
+local-disk env mirrors before applying its phase configuration, so an operator
+shell cannot accidentally make the object-cold control warm.
 
 The three phases use fresh result/DRAM state:
 

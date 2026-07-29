@@ -143,15 +143,19 @@ mod tests {
 
     #[test]
     fn u16_path_segment_is_zero_padded_to_3() {
+        assert_eq!(0u16.to_path_segment(), "000");
         assert_eq!(1u16.to_path_segment(), "001");
         assert_eq!(10u16.to_path_segment(), "00A"); // base62: 10 = 'A' (uppercase)
         assert_eq!(1000u16.to_path_segment().len(), 3);
+        assert_eq!(u16::MAX.to_path_segment().len(), 3);
     }
 
     #[test]
     fn u32_path_segment_is_zero_padded_to_6() {
+        assert_eq!(0u32.to_path_segment(), "000000");
         assert_eq!(1u32.to_path_segment(), "000001");
         assert_eq!(42u32.to_path_segment().len(), 6);
+        assert_eq!(u32::MAX.to_path_segment().len(), 6);
     }
 
     #[test]
