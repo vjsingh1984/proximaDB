@@ -286,32 +286,40 @@ impl SstEngine {
     /// error or for non-`SST1` segments (Arrow/PAX), so the gate then falls through
     /// to the normal approximate/orchestrated path.
     async fn segment_vector_count(&self, storage_url: &str) -> usize {
-        use crate::storage::engines::sst::SstableHeader;
         let files = match self.discover_sstable_files(storage_url).await {
             Ok(files) => files,
             Err(_) => return 0,
         };
         let mut total = 0usize;
         for file_path in &files {
-            let Ok(fs) = self.filesystem().get_filesystem(file_path) else {
-                continue;
-            };
-            let Ok(prefix) = fs.read_range(file_path, 0, 8).await else {
-                continue;
-            };
-            if prefix.len() < 8 || &prefix[0..4] != b"SST1" {
-                continue;
-            }
-            let header_len =
-                u32::from_le_bytes([prefix[4], prefix[5], prefix[6], prefix[7]]) as u64;
-            let Ok(header_data) = fs.read_range(file_path, 8, header_len).await else {
-                continue;
-            };
-            if let Ok(header) = bincode::deserialize::<SstableHeader>(&header_data) {
-                total += header.entry_count as usize;
+            if let Ok(Some(entry_count)) = self.legacy_sst_entry_count(file_path).await {
+                total = total.saturating_add(entry_count);
             }
         }
         total
+    }
+
+    /// Read the count carried by a legacy `SST1` header.
+    ///
+    /// Current PAX files expose no useful count through this legacy header, so
+    /// their durable suffix is enough to return `None` without a paid magic
+    /// probe. Unknown/non-PAX paths still sniff the header for mixed-format
+    /// safety.
+    async fn legacy_sst_entry_count(&self, file_path: &str) -> Result<Option<usize>> {
+        use crate::storage::engines::sst::SstableHeader;
+
+        if file_path.ends_with(".pax") {
+            return Ok(None);
+        }
+        let fs = self.filesystem().get_filesystem(file_path)?;
+        let prefix = fs.read_range(file_path, 0, 8).await?;
+        if prefix.len() < 8 || &prefix[0..4] != b"SST1" {
+            return Ok(None);
+        }
+        let header_len = u32::from_le_bytes([prefix[4], prefix[5], prefix[6], prefix[7]]) as u64;
+        let header_data = fs.read_range(file_path, 8, header_len).await?;
+        let header: SstableHeader = bincode::deserialize(&header_data)?;
+        Ok(Some(header.entry_count as usize))
     }
 
     /// TD-165: exact brute-force search over the collection's segment(s), bypassing
@@ -2682,6 +2690,26 @@ mod tests {
                 .await
                 .is_err(),
             "unknown/legacy paths must retain the mixed-format magic sniff"
+        );
+    }
+
+    #[tokio::test]
+    async fn pax_count_classification_does_not_probe_object() {
+        let engine = create_test_engine().await;
+        let missing_pax = "file:///definitely-missing/segment.pax";
+        assert!(
+            engine
+                .legacy_sst_entry_count(missing_pax)
+                .await
+                .unwrap()
+                .is_none(),
+            "PAX has no legacy SST1 count and must not pay a magic GET"
+        );
+
+        let missing_legacy = "file:///definitely-missing/segment.sst";
+        assert!(
+            engine.legacy_sst_entry_count(missing_legacy).await.is_err(),
+            "unknown/legacy count paths must retain the mixed-format magic sniff"
         );
     }
 
