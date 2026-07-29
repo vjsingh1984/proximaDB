@@ -25,7 +25,6 @@ const OID_RESOLVER_CACHE_SHARDS: usize = 16;
 
 /// Sharded, byte-budgeted, recency-LRU cache of per-segment OID→position
 /// resolvers, keyed by segment path.
-#[derive(Debug)]
 pub struct OidResolverCache {
     shards: Box<[RwLock<HashMap<String, ResolverEntry>>]>,
     bytes_used: AtomicUsize,
@@ -124,7 +123,9 @@ impl OidResolverCache {
     pub fn put(&self, path: String, resolver: Arc<OidPositionResolver>) {
         let entry_bytes = resolver_bytes(&resolver);
         {
-            let mut shard = self.shard_for(&path).write().unwrap();
+            let Some(mut shard) = self.shard_for(&path).write().ok() else {
+                return; // poisoned — best-effort cache, skip
+            };
             if let Some(old) = shard.insert(
                 path,
                 ResolverEntry {
@@ -168,7 +169,9 @@ impl OidResolverCache {
             (Some(i), Some(k)) => (i, k),
             _ => return false,
         };
-        let mut shard = self.shards[idx].write().unwrap();
+        let Some(mut shard) = self.shards[idx].write().ok() else {
+            return false; // poisoned — caller retries
+        };
         if let Some(entry) = shard.remove(&key) {
             self.sub_bytes(resolver_bytes(&entry.resolver));
             true
@@ -179,7 +182,9 @@ impl OidResolverCache {
 
     /// Remove a single entry (compaction invalidation on segment retire).
     pub fn invalidate(&self, path: &str) {
-        let mut shard = self.shard_for(path).write().unwrap();
+        let Some(mut shard) = self.shard_for(path).write().ok() else {
+            return; // poisoned — best-effort, skip
+        };
         if let Some(entry) = shard.remove(path) {
             self.sub_bytes(resolver_bytes(&entry.resolver));
         }
