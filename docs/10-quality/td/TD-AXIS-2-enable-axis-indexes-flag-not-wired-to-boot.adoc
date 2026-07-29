@@ -1,0 +1,65 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-AXIS-2: `enable_axis_indexes` config flag is not wired to boot-time AxisManager initialization
+:toc: macro
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open** — flag default flipped to `false` (ADR-070 posture) in the same PR that filed this TD; the boot wiring remains.
+| Severity | Medium — no correctness impact (the #1145 per-collection gate governs AXIS usage on the hot path), but the documented server-level knob is a silent no-op, and boot-time AxisManager construction cost is unavoidable even for pure co-design deployments.
+| Component | `crates/foundation/proximadb-config/src/lib.rs` (`OptimizationConfig.enable_axis_indexes`); `src/network/shared_services.rs` (`SharedServices::new` AxisManager construction); `src/storage/engine.rs` (`StorageEngine::new_internal` AxisManager construction)
+| Tracked-by | link:../../12-design/adr/ADR-070-axis-not-needed-for-codesign-collections.adoc[ADR-070] (AXIS not the default for co-design collections)
+| Pillar | PERF (idle footprint), DX (config honesty)
+|===
+
+toc::[]
+
+== Symptom
+
+`[storage.optimization] enable_axis_indexes = false` in the server TOML parses and
+deserializes, but **nothing reads the field**. Both boot paths construct the
+AxisManager unconditionally:
+
+* `SharedServices::new` (the live server path) — builds the manager, wires the
+  recall-probe gate / filesystem factory / persist dir / catalog resolver,
+  registers the SST + orion globals, and hands a non-optional
+  `Arc<AxisManager>` to `VectorOperationsService`.
+* `StorageEngine::new_internal` — builds a second manager and registers the SST
+  + WAL-inline-flush globals; the field is a non-optional struct member used on
+  the delete / create-collection / drop-collection / auto-flush paths.
+
+An operator who sets the flag to `false` (e.g. the AnvaiOps AKS ConfigMap does)
+reasonably expects boot-time AXIS initialization to be skipped; today it is not.
+
+== What already protects the hot path
+
+This TD is about the *boot* footprint only. The per-collection gate (#1145,
+`use_axis_indexes = pax_off || !index_configs.is_empty()` in
+`proximadb-storage-traits/src/query.rs`) plus the flush-side skip (#1155)
+already keep AXIS build + search cost off co-design collections — the measured
+~8.6 GB / busy-core AXIS cost is per collection *with indexes built*, not from
+the bare manager construction.
+
+== Fix shape (when picked up)
+
+Gate both construction sites on `config.optimization.enable_axis_indexes`. That
+requires threading `Option<Arc<AxisManager>>` through:
+
+* `StorageEngine.axis_index_manager` (+ its delete / ensure-strategy / drop /
+  `AutoFlushDriver::spawn` uses — the flush materializer already takes
+  `Option<&AxisManager>`),
+* `VectorOperationsService` (constructor + `axis_index_manager()` accessor),
+* the global registration seams (all `get_*_axis_manager()` readers already
+  return `Option` and degrade to the PAX/direct-scan path).
+
+Semantics to preserve: with the flag `false`, a collection that declares
+`index_configs` should either fail loudly at create time or degrade to the PAX
+scan path with a WARN — never silently build a partial index through the
+still-referenced direct `Arc`s while the search-side globals are absent.
+
+== Interim posture
+
+The flag's default is `false` (matches ADR-070 and the co-design deployment
+posture); its doc comment states explicitly that it is not yet load-bearing at
+boot. Deployments relying on the per-collection gate lose nothing.

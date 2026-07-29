@@ -231,6 +231,35 @@ impl ConfigLoader {
         Ok(output)
     }
 
+    /// Resolve `path_str` to an absolute path anchored at `base_dir` (rather
+    /// than the process cwd). URLs and already-absolute paths pass through
+    /// unchanged.
+    ///
+    /// TD-WAL-4: the WAL write buffer and the SST/VIPER data dirs are rooted
+    /// under the instance's `data_dir` with this, so two servers launched from
+    /// the same working directory with distinct `data_dir` never silently share
+    /// a physical WAL write buffer (which cross-contaminated recovery — each
+    /// instance listed and replayed the other's collections).
+    pub(crate) fn resolve_path_under(base_dir: &std::path::Path, path_str: &str) -> String {
+        use std::path::Path;
+        if path_str.contains("://") || Path::new(path_str).is_absolute() {
+            return path_str.to_string();
+        }
+        let mut resolved = base_dir.to_path_buf();
+        let mut remaining = path_str;
+        while let Some(rest) = remaining.strip_prefix("../") {
+            if let Some(parent) = resolved.parent() {
+                resolved = parent.to_path_buf();
+            }
+            remaining = rest;
+        }
+        let clean = remaining.strip_prefix("./").unwrap_or(remaining);
+        if clean.is_empty() || clean == "." {
+            return resolved.to_string_lossy().into_owned();
+        }
+        resolved.join(clean).to_string_lossy().into_owned()
+    }
+
     /// Resolve all relative paths in config to absolute paths
     fn resolve_config_paths(
         config: &mut Config,
@@ -315,18 +344,27 @@ impl ConfigLoader {
         // Resolve metadata URL
         config.storage.metadata_url = to_file_url(&config.storage.metadata_url)?;
 
-        // Resolve write buffer directory
+        // TD-WAL-4: anchor the WAL write buffer + SST/VIPER data dirs under the
+        // instance's `data_dir` (already resolved to absolute above), NOT the
+        // process cwd that `resolve_path` uses. Without this, two servers
+        // launched from the same directory with distinct `data_dir` but an unset
+        // (cwd-relative default) write_buffer_directory shared one physical WAL,
+        // cross-contaminating recovery. A remote/object-store URL or an explicit
+        // absolute path passes through unchanged.
+        let data_dir = config.server.data_dir.clone();
         config.storage.wal_config.write_buffer_directory =
-            resolve_path(&config.storage.wal_config.write_buffer_directory)?;
+            Self::resolve_path_under(&data_dir, &config.storage.wal_config.write_buffer_directory);
 
         // Resolve SST data directory if configured
         if let Some(ref mut sst_config) = config.storage.sst_config {
-            sst_config.data_directory = resolve_path(&sst_config.data_directory)?;
+            sst_config.data_directory =
+                Self::resolve_path_under(&data_dir, &sst_config.data_directory);
         }
 
         // Resolve VIPER data directory if configured
         if let Some(ref mut viper_config) = config.storage.viper_config {
-            viper_config.data_directory = resolve_path(&viper_config.data_directory)?;
+            viper_config.data_directory =
+                Self::resolve_path_under(&data_dir, &viper_config.data_directory);
         }
 
         // Resolve TLS certificate paths if configured
@@ -340,5 +378,43 @@ impl ConfigLoader {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod wal4_tests {
+    use super::ConfigLoader;
+    use std::path::Path;
+
+    #[test]
+    fn data_dirs_anchor_under_data_dir_not_cwd() {
+        // TD-WAL-4 repro: two instances with distinct data_dir and the SAME
+        // unset (cwd-relative default) write_buffer_directory must resolve to
+        // DISTINCT physical paths — otherwise they share one WAL write buffer.
+        let a = ConfigLoader::resolve_path_under(Path::new("/srv/pdb"), "./data/write_buffer");
+        let b = ConfigLoader::resolve_path_under(Path::new("/srv/pdb2"), "./data/write_buffer");
+        assert_eq!(a, "/srv/pdb/data/write_buffer");
+        assert_eq!(b, "/srv/pdb2/data/write_buffer");
+        assert_ne!(a, b, "distinct data_dir must not share a write buffer");
+
+        // Bare-relative (no leading ./) also anchors under data_dir.
+        assert_eq!(
+            ConfigLoader::resolve_path_under(Path::new("/srv/pdb"), "sst_data"),
+            "/srv/pdb/sst_data"
+        );
+    }
+
+    #[test]
+    fn absolute_and_url_paths_pass_through_unchanged() {
+        // An explicit absolute path or object-store URL is an intentional
+        // override and is never re-rooted.
+        assert_eq!(
+            ConfigLoader::resolve_path_under(Path::new("/srv/pdb"), "/mnt/wb"),
+            "/mnt/wb"
+        );
+        assert_eq!(
+            ConfigLoader::resolve_path_under(Path::new("/srv/pdb"), "s3://bucket/wb"),
+            "s3://bucket/wb"
+        );
     }
 }

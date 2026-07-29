@@ -144,7 +144,7 @@ pub fn read_segment_records(
 ///
 /// `embedding_count` is the collection's embedding-modality count (≥1). `quant` selects
 /// the vector quantization strategy (P3 Phase D): `VectorQuant::Auto` keeps the env
-/// default (SQ8 unless `PROXIMADB_VECTOR_RABITQ`), `RaBitQ` writes ~30× binary codes.
+/// default (SQ8 unless `PROXIMADB_VECTOR_RABITQ_ENABLE`), `RaBitQ` writes ~30× binary codes.
 ///
 /// `target_block` is the optional target block size in bytes (TD-156 / ADR-026
 /// configurable geometry). `None` keeps the writer default; a larger value (e.g.
@@ -284,14 +284,16 @@ pub fn write_pax_segment_compacted(
 ) -> Result<SegmentMeta> {
     use crate::storage::engines::sst::block_cluster;
     let cluster = block_cluster::block_cluster_enabled();
-    // TD-RDSTRAT-8 rev 3 (default OFF, `PROXIMADB_IVF2=1`): compaction is the ONLY
-    // write path that emits the persisted-IVF-probe (v3) layout — production flush
-    // stays sign-bit L0 (IVF-at-flush measured ~80× flush cost, dropped), and large
+    // TD-RDSTRAT-8 rev 3: compaction is the ONLY write path that emits the
+    // persisted-IVF-probe (v3) layout. Training is default ON;
+    // `PROXIMADB_PAX_WRITE_A0_TRAIN=0` is the kill-switch. Production flush stays
+    // sign-bit L0 (IVF-at-flush measured ~80× flush cost, dropped), and large
     // corpora reach v3 on their normal compaction cadence with no migration event.
     // The probe plan persists the SAME IOP-derived PCA/IVF plan the single-level
     // path computes (no second quantizer); it falls back to the plain single-level
     // plan whenever the model can't be trained (fail-safe, never a worse segment).
     let coalesced = quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled();
+    let t_cluster_plan = std::time::Instant::now();
     let mut probe_model = None;
     let plan = if cluster {
         if coalesced && block_cluster::ivf_probe_enabled() {
@@ -308,6 +310,15 @@ pub fn write_pax_segment_compacted(
     } else {
         None
     };
+    // TD-COMPACT-1 S1: cluster-plan wall clock (encode/finalize are timed inside
+    // `write_pax_segment_ordered` under the same gate).
+    if pax_write_trace() {
+        eprintln!(
+            "[PAX write] n={n} kind=compaction | cluster_plan {ms:.0} ms",
+            n = records.len(),
+            ms = t_cluster_plan.elapsed().as_secs_f64() * 1e3,
+        );
+    }
     write_pax_segment_ordered(
         path,
         records,
@@ -361,12 +372,22 @@ fn write_pax_segment_ordered(
     // ADR-061 pre-GA in-place amendment; `PROXIMADB_PAX_COALESCED_RABITQ=0` opts
     // out to the legacy in-block RaBitQ layout for mixed-read / measurement).
     .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled());
+    // TD-DELVEC-1 WI-3a: capture the OID→position resolver (footer region, WI-2c)
+    // so a cold-resident delete (WI-3b) can set a deletion-vector bit without
+    // rewriting the segment. Feature-gated; default builds are byte-for-byte
+    // unchanged (the resolver is emitted only when this feature is on).
+    #[cfg(feature = "cold-deletion-vectors")]
+    {
+        writer = writer.with_oid_resolver(true);
+    }
     // TD-RDSTRAT-8 rev 3: the persisted IVF probe directory (v3 layout) — the
     // plan's runs are its IOP-derived cells, so the writer pads blocks at the
     // same boundaries the model's cell_rows describe (a cell = whole D-blocks).
     if let Some(model) = two_level {
         writer = writer.with_two_level(model);
     }
+    let trace = pax_write_trace();
+    let t_encode = std::time::Instant::now();
     match &plan {
         Some(plan) => {
             let mut next_run = 1usize;
@@ -388,7 +409,26 @@ fn write_pax_segment_ordered(
             }
         }
     }
-    writer.finish()
+    let encode_ms = t_encode.elapsed().as_secs_f64() * 1e3;
+    let t_finalize = std::time::Instant::now();
+    let result = writer.finish();
+    let finalize_ms = t_finalize.elapsed().as_secs_f64() * 1e3;
+    // TD-COMPACT-1 S1: encode = per-record RaBitQ/SQ8 quantize; finalize =
+    // serialize regions + footer. Combined with `cluster_plan` (logged by the
+    // compaction entry under the same gate) and `PROXIMADB_TRACE_IVF_FLUSH`'s
+    // cluster internals, this accounts the full re-cluster wall clock.
+    if trace {
+        eprintln!(
+            "[PAX write] n={n} quant={q:?} coalesced={c} | encode {enc:.0} ms  finalize {fin:.0} ms  | total {tot:.0} ms",
+            n = records.len(),
+            q = quant,
+            c = quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled(),
+            enc = encode_ms,
+            fin = finalize_ms,
+            tot = encode_ms + finalize_ms,
+        );
+    }
+    result
 }
 
 fn lossless_clustered_enabled() -> bool {
@@ -413,6 +453,19 @@ fn lossless_scalar_enabled() -> bool {
             .as_deref(),
         Some("1") | Some("true") | Some("on") | Some("yes")
     )
+}
+
+/// TD-COMPACT-1 S1: env-gated (`PROXIMADB_TRACE_PAX_WRITE`) phase timer for the
+/// PAX segment WRITE path. Logs `cluster_plan` (the re-cluster ordering wall
+/// clock) + `encode` (per-record RaBitQ/SQ8 quantize) + `finalize` (serialize
+/// regions + footer to disk). Complements `PROXIMADB_TRACE_IVF_FLUSH`, which
+/// breaks the cluster plan into pca/project/kmeans/assign/order internals — the
+/// two together localize the L0→L1 re-cluster wall clock (observed 666s on SIFT
+/// 1M) to cluster-vs-encode-vs-finalize, which is the data needed to choose the
+/// fix (S3 preserve the IVF model vs S4 parallelize the re-encode). Off in prod
+/// (env unset): a single `var_os` check per write, zero formatting cost.
+fn pax_write_trace() -> bool {
+    std::env::var_os("PROXIMADB_TRACE_PAX_WRITE").is_some()
 }
 
 /// True only when every vector row in every input `.pax` segment has an exact
@@ -703,6 +756,66 @@ fn plan_coalesced_row_ranges(
     out
 }
 
+/// One selected IVF cell's exact Region-A code slice. A coalesced physical
+/// range may contain gaps or unselected cells, but only these slices are ever
+/// handed to the RaBitQ ranker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProbeCellSlice {
+    start: u64,
+    end: u64,
+    row_start: usize,
+}
+
+/// One physical Region-A read containing one or more selected cell slices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProbeRangeFetch {
+    start: u64,
+    end: u64,
+    selected: Vec<ProbeCellSlice>,
+}
+
+/// Merge selected Region-A cell extents according to the provider-bounded
+/// range policy. The returned `selected` slices preserve the logical nprobe
+/// set, so gap over-read changes only physical I/O, never ranking semantics.
+fn plan_probe_cell_ranges(
+    cells: &[ProbeCellSlice],
+    policy: &crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy,
+) -> Vec<ProbeRangeFetch> {
+    let mut sorted = cells.to_vec();
+    sorted.sort_by_key(|cell| cell.start);
+    let mut out: Vec<ProbeRangeFetch> = Vec::new();
+    for cell in sorted {
+        if cell.end <= cell.start {
+            continue;
+        }
+        let merged = match out.last_mut() {
+            Some(last) => {
+                let gap = cell.start.saturating_sub(last.end);
+                let merged_len = cell.end.saturating_sub(last.start);
+                let within_gap = gap <= policy.max_gap_bytes;
+                let within_max =
+                    policy.max_range_bytes == 0 || merged_len <= policy.max_range_bytes;
+                if within_gap && within_max {
+                    last.end = last.end.max(cell.end);
+                    last.selected.push(cell);
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
+        };
+        if !merged {
+            out.push(ProbeRangeFetch {
+                start: cell.start,
+                end: cell.end,
+                selected: vec![cell],
+            });
+        }
+    }
+    out
+}
+
 /// Per-metric "lower = nearer" rerank score against a reconstructed vector.
 fn rerank_distance(metric: RankMetric, q: &[f32], v: &[f32]) -> f32 {
     match metric {
@@ -776,77 +889,337 @@ pub fn pax_rabitq_pool_for_top_k(k: usize, n: usize) -> usize {
 /// is the only way to reduce it — caching parsed structs downstream doesn't help).
 pub struct SegmentInvariants {
     pub header_bytes: Vec<u8>,
-    pub region_bytes: Arc<[u8]>,
+    pub region_bytes: Option<Arc<[u8]>>,
     pub footer_bytes: Vec<u8>,
+    pub a0_bytes: Option<Arc<[u8]>>,
+    pub rabitq_header_bytes: Option<Arc<[u8]>>,
 }
 
 /// Per-segment invariants cache, **byte-budgeted** (ADR-065 cache-co-design #35).
 /// The old entry-count cap was wrong for Region A entries (~24 MB each → 64
-/// entries = 1.5 GB unbounded). Now the cache caps **total bytes** (dominated by
-/// Region A `region_bytes`), evicting arbitrary entries when over budget. Region A
-/// is the `CacheTier::InvariantIndex` tier (hottest, highest value); header/footer
-/// are `InvariantMeta` (tiny, ~free). Thread-safe; the lock is held briefly.
+/// entries = 1.5 GB unbounded). The cache caps **total bytes** (dominated by
+/// Region A `region_bytes`).
+///
+/// TD-CACHE-2 S1: eviction is **priority-then-recency** — victims are chosen
+/// by lowest [`CacheTier::evict_priority`] first (meta-only entries before
+/// control-bearing before Region-A-bearing), ties broken by least-recent
+/// touch. This enforces the ADR-065 intent the enum documents: a hot
+/// segment's Region A (a hit saves the full-region GET, re-read every query)
+/// is the last thing shed under budget pressure.
+///
+/// TD-CACHE-2 S2a (concurrency): the map is **sharded** (16 shards, per-shard
+/// `RwLock`) with a shared `AtomicUsize` byte budget and `AtomicU64` recency
+/// ticks — a cache HIT takes only a shard *read* lock plus one relaxed store,
+/// so the 100%-hit hot path never serializes on a global mutex (the c=16
+/// contention suspect in TD-SEARCH-2). Victim selection scans per-shard
+/// minima under read locks then confirms under the victim shard's write lock
+/// — exact (priority, recency) policy at segment-count cardinality, no global
+/// lock ever held. Eviction races are benign: each entry's bytes are credited
+/// exactly once by whichever thread removes it.
 pub struct SegmentInvariantsCache {
-    inner: std::sync::Mutex<CacheInner>,
+    shards: Box<[std::sync::RwLock<std::collections::HashMap<String, CacheEntry>>]>,
+    bytes_used: std::sync::atomic::AtomicUsize,
+    /// Monotonic touch counter for recency (relaxed; ordering slack between
+    /// racing touches is irrelevant to eviction quality).
+    tick: std::sync::atomic::AtomicU64,
     byte_budget: usize,
 }
 
-struct CacheInner {
-    map: std::collections::HashMap<String, Arc<SegmentInvariants>>,
-    bytes_used: usize,
+const INVARIANTS_CACHE_SHARDS: usize = 16;
+
+struct CacheEntry {
+    inv: Arc<SegmentInvariants>,
+    /// Tick of the last `get`/`put` touch (recency for eviction ties). Atomic
+    /// so a hit updates it under the shard READ lock.
+    last_hit: std::sync::atomic::AtomicU64,
 }
 
-/// Bytes an invariants entry contributes (Region A dominates).
+/// The eviction tier of a cached entry, derived from which byte classes it
+/// carries: Region-A-bearing entries are `InvariantIndex` (pinned hardest),
+/// control-prefix entries (`a0`/RaBitQ params) are `SearchControl`, and
+/// header+footer-only entries are `InvariantMeta` (cheapest to refetch).
+fn entry_tier(inv: &SegmentInvariants) -> CacheTier {
+    if inv.region_bytes.is_some() {
+        CacheTier::InvariantIndex
+    } else if inv.a0_bytes.is_some() || inv.rabitq_header_bytes.is_some() {
+        CacheTier::SearchControl
+    } else {
+        CacheTier::InvariantMeta
+    }
+}
+
+/// Bytes an invariants entry contributes. Whole-scan entries are dominated by
+/// Region A; probe-only entries contain only small control metadata.
 fn inv_bytes(inv: &SegmentInvariants) -> usize {
-    inv.region_bytes.len() + inv.header_bytes.len() + inv.footer_bytes.len()
+    inv.region_bytes.as_ref().map_or(0, |bytes| bytes.len())
+        + inv.header_bytes.len()
+        + inv.footer_bytes.len()
+        + inv.a0_bytes.as_ref().map_or(0, |bytes| bytes.len())
+        + inv
+            .rabitq_header_bytes
+            .as_ref()
+            .map_or(0, |bytes| bytes.len())
 }
 
 impl SegmentInvariantsCache {
     /// `byte_budget` caps the total cached bytes (Region A region_bytes dominate).
     pub fn new(byte_budget: usize) -> Self {
+        let shards = (0..INVARIANTS_CACHE_SHARDS)
+            .map(|_| std::sync::RwLock::new(std::collections::HashMap::new()))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         Self {
-            inner: std::sync::Mutex::new(CacheInner {
-                map: std::collections::HashMap::new(),
-                bytes_used: 0,
-            }),
+            shards,
+            bytes_used: std::sync::atomic::AtomicUsize::new(0),
+            tick: std::sync::atomic::AtomicU64::new(0),
             byte_budget,
         }
     }
 
-    /// On hit, return the cached invariants (Arc clone — refcount bump only).
-    pub fn get(&self, path: &str) -> Option<Arc<SegmentInvariants>> {
-        self.inner.lock().ok()?.map.get(path).cloned()
+    fn shard_for(
+        &self,
+        path: &str,
+    ) -> &std::sync::RwLock<std::collections::HashMap<String, CacheEntry>> {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        path.hash(&mut h);
+        &self.shards[(h.finish() as usize) % self.shards.len()]
     }
 
-    /// Insert; evict arbitrary entries while over the byte budget. Region A
-    /// (region_bytes) dominates, so this effectively bounds the index tier.
+    fn next_tick(&self) -> u64 {
+        self.tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+    }
+
+    /// Credit bytes back without underflow (saturating; relaxed — the budget
+    /// check tolerates transient slack).
+    fn sub_bytes(&self, n: usize) {
+        use std::sync::atomic::Ordering;
+        let _ = self
+            .bytes_used
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(v.saturating_sub(n))
+            });
+    }
+
+    /// TD-CACHE-2 S2b: internal key of the Region-A companion entry for
+    /// `path` (`\u{1}` cannot occur in a segment path). Control bytes and the
+    /// Region-A body are stored as SEPARATE entries so budget pressure can
+    /// shed a 24 MB region while keeping the few-KB control plane that saves
+    /// 3 GETs per cold query — per-class eviction without changing the read
+    /// contract (`get` recomposes).
+    fn region_entry_key(path: &str) -> String {
+        format!("{path}\u{1}A")
+    }
+
+    /// On hit, return the cached invariants (recomposed from the control
+    /// entry + optional Region-A companion) and stamp recency. Takes only
+    /// shard READ locks (TD-CACHE-2 S2a).
+    pub fn get(&self, path: &str) -> Option<Arc<SegmentInvariants>> {
+        let Some(control) = self.get_entry(path) else {
+            // Control anchor gone: a resident Region-A companion is an orphan
+            // (nothing can recompose it) — self-heal by freeing its bytes.
+            self.invalidate_entry(&Self::region_entry_key(path));
+            return None;
+        };
+        if control.region_bytes.is_some() {
+            return Some(control); // legacy merged entry (pre-split put)
+        }
+        match self.get_entry(&Self::region_entry_key(path)) {
+            Some(region) if region.region_bytes.is_some() => Some(Arc::new(SegmentInvariants {
+                header_bytes: control.header_bytes.clone(),
+                region_bytes: region.region_bytes.clone(),
+                footer_bytes: control.footer_bytes.clone(),
+                a0_bytes: control.a0_bytes.clone(),
+                rabitq_header_bytes: control.rabitq_header_bytes.clone(),
+            })),
+            _ => Some(control),
+        }
+    }
+
+    fn get_entry(&self, path: &str) -> Option<Arc<SegmentInvariants>> {
+        let shard = self.shard_for(path).read().ok()?;
+        let entry = shard.get(path)?;
+        entry
+            .last_hit
+            .store(self.next_tick(), std::sync::atomic::Ordering::Relaxed);
+        Some(entry.inv.clone())
+    }
+
+    /// Resident bytes currently held (TD-METRICS-1 gauge source).
+    pub fn bytes_used(&self) -> usize {
+        self.bytes_used.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Insert; while over the byte budget, evict the entry with the lowest
+    /// `evict_priority`, ties by least-recent touch (TD-CACHE-2 S1). Victim
+    /// search takes per-shard READ locks to find the global (priority, recency)
+    /// minimum, then confirms-and-removes under that shard's WRITE lock — no
+    /// lock is held across shards, and a racing removal simply retries.
     pub fn put(&self, path: String, inv: Arc<SegmentInvariants>) {
+        // TD-CACHE-2 S2b: split Region A into its own entry (tier
+        // InvariantIndex) so eviction operates per class; the control entry
+        // (tier SearchControl/InvariantMeta) keeps everything else.
+        if let Some(region) = inv.region_bytes.clone() {
+            let control = Arc::new(SegmentInvariants {
+                header_bytes: inv.header_bytes.clone(),
+                region_bytes: None,
+                footer_bytes: inv.footer_bytes.clone(),
+                a0_bytes: inv.a0_bytes.clone(),
+                rabitq_header_bytes: inv.rabitq_header_bytes.clone(),
+            });
+            self.put_entry(
+                Self::region_entry_key(&path),
+                Arc::new(SegmentInvariants {
+                    header_bytes: Vec::new(),
+                    region_bytes: Some(region),
+                    footer_bytes: Vec::new(),
+                    a0_bytes: None,
+                    rabitq_header_bytes: None,
+                }),
+            );
+            self.put_entry(path, control);
+        } else {
+            self.put_entry(path, inv);
+        }
+    }
+
+    fn put_entry(&self, path: String, inv: Arc<SegmentInvariants>) {
+        use std::sync::atomic::Ordering;
         let entry_bytes = inv_bytes(&inv);
-        if let Ok(mut inner) = self.inner.lock() {
-            // Replacing an existing path: credit the old entry's bytes back.
-            if let Some(old) = inner.map.remove(&path) {
-                inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&old));
+        // Replacing an existing path: credit the old entry's bytes back.
+        if let Ok(mut shard) = self.shard_for(&path).write()
+            && let Some(old) = shard.remove(&path)
+        {
+            self.sub_bytes(inv_bytes(&old.inv));
+        }
+        // Evict by (priority asc, last_hit asc) until the new entry fits.
+        // Bounded retries guard against pathological races.
+        let mut attempts = 0;
+        while self.bytes_used().saturating_add(entry_bytes) > self.byte_budget && attempts < 64 {
+            attempts += 1;
+            // Phase 1: find the global minimum under per-shard read locks.
+            let mut victim: Option<(u8, u64, usize, String)> = None;
+            for (idx, shard) in self.shards.iter().enumerate() {
+                if let Ok(guard) = shard.read() {
+                    for (key, entry) in guard.iter() {
+                        // S2b: zero-byte entries (e.g. an anchor whose bytes
+                        // live in the companion) free nothing — skip them.
+                        if inv_bytes(&entry.inv) == 0 {
+                            continue;
+                        }
+                        let prio = entry_tier(&entry.inv).evict_priority();
+                        let hit = entry.last_hit.load(Ordering::Relaxed);
+                        if victim.as_ref().is_none_or(|v| (prio, hit) < (v.0, v.1)) {
+                            victim = Some((prio, hit, idx, key.clone()));
+                        }
+                    }
+                }
             }
-            // Evict arbitrary entries until the new entry fits under budget.
-            while inner.bytes_used + entry_bytes > self.byte_budget
-                && let Some(key) = inner.map.keys().next().cloned()
-                && let Some(removed) = inner.map.remove(&key)
-            {
-                inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&removed));
+            // Phase 2: confirm-and-remove under the victim shard's write lock.
+            match victim {
+                Some((_, _, idx, key)) => {
+                    if let Ok(mut guard) = self.shards[idx].write()
+                        && let Some(removed) = guard.remove(&key)
+                    {
+                        self.sub_bytes(inv_bytes(&removed.inv));
+                    }
+                    // Removed elsewhere in a race → loop re-checks the budget.
+                }
+                None => break, // cache empty; admit regardless (budget < entry)
             }
-            inner.bytes_used += entry_bytes;
-            inner.map.insert(path, inv);
+        }
+        let tick = self.next_tick();
+        if let Ok(mut shard) = self.shard_for(&path).write() {
+            self.bytes_used.fetch_add(entry_bytes, Ordering::Relaxed);
+            shard.insert(
+                path,
+                CacheEntry {
+                    inv,
+                    last_hit: std::sync::atomic::AtomicU64::new(tick),
+                },
+            );
         }
     }
 
     /// Remove a path (call from flush/compaction when a segment is rewritten).
+    /// Removes both the control entry and the Region-A companion (S2b).
     pub fn invalidate(&self, path: &str) {
-        if let Ok(mut inner) = self.inner.lock()
-            && let Some(removed) = inner.map.remove(path)
+        self.invalidate_entry(path);
+        self.invalidate_entry(&Self::region_entry_key(path));
+    }
+
+    fn invalidate_entry(&self, key: &str) {
+        if let Ok(mut shard) = self.shard_for(key).write()
+            && let Some(removed) = shard.remove(key)
         {
-            inner.bytes_used = inner.bytes_used.saturating_sub(inv_bytes(&removed));
+            self.sub_bytes(inv_bytes(&removed.inv));
         }
     }
+}
+
+/// TD-CACHE-1 S1: prefill a segment's CONTROL-plane invariants (header prefix,
+/// footer index, A0 coarse directory) into the invariants cache WITHOUT
+/// searching — the exact bytes the first query would otherwise fetch as 3
+/// ranged GETs. Region A/B payloads are deliberately NOT prefetched (they
+/// enrich lazily via the search path's cache merge), keeping warming cost to
+/// a few KB per segment. Used by tier-gated boot warming and manifest replay;
+/// never called speculatively for idle collections (co-design: warming is
+/// demand-proven or contract-driven, not a boot sweep).
+///
+/// Best-effort: any error leaves the cache unchanged (first query pays the
+/// legacy path). A non-coalesced/legacy segment (no `PXH1` prefix) is skipped.
+pub async fn prefetch_segment_invariants(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+    cache: &SegmentInvariantsCache,
+) -> anyhow::Result<bool> {
+    use proximadb_storage_common::segment_layout::{
+        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SegmentHeaderPrefix,
+    };
+    if cache.get(path).is_some() {
+        return Ok(false); // already warm
+    }
+    let size = fs
+        .metadata(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("prefetch stat {path}: {e}"))?
+        .size;
+    if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
+        return Ok(false);
+    }
+    let read_len = (SEG_HEADER_PREFIX_V3_LEN as u64).min(size);
+    let header_bytes = fs
+        .read_range(path, 0, read_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("prefetch header {path}: {e}"))?;
+    let Ok(header) = SegmentHeaderPrefix::parse(&header_bytes) else {
+        return Ok(false); // legacy/non-coalesced segment — nothing to warm
+    };
+    let footer_bytes = fs
+        .read_range(path, header.footer_off, header.footer_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("prefetch footer {path}: {e}"))?;
+    let a0_bytes = if header.a0_len > 0 {
+        Some(Arc::from(
+            fs.read_range(path, header.a0_off, header.a0_len)
+                .await
+                .map_err(|e| anyhow::anyhow!("prefetch a0 {path}: {e}"))?
+                .as_slice(),
+        ))
+    } else {
+        None
+    };
+    cache.put(
+        path.to_string(),
+        Arc::new(SegmentInvariants {
+            header_bytes,
+            region_bytes: None,
+            footer_bytes,
+            a0_bytes,
+            rabitq_header_bytes: None,
+        }),
+    );
+    Ok(true)
 }
 
 /// ADR-062 / TD-RDSTRAT-6 **scan-then-rerank** over a coalesced-RaBitQ segment
@@ -878,8 +1251,12 @@ impl SegmentInvariantsCache {
 pub enum CacheTier {
     /// Region A (RaBitQ index scan): ~24 MB, re-read every query (hottest).
     InvariantIndex,
-    /// header / footer / SQ8 params: tiny, always-useful.
+    /// Header / A0 / RaBitQ parameters: the mandatory ANN control prefix.
+    SearchControl,
+    /// Tail footer / block map / SQ8 parameters: tiny, always-useful.
     InvariantMeta,
+    /// Selected Region-A IVF-cell code runs.
+    ProbeIndex,
     /// Region B survivor SQ8 ranges: variable, query-dependent.
     SurvivorPayload,
     /// Region D OID ranges: variable, query-dependent.
@@ -891,7 +1268,9 @@ impl CacheTier {
     pub fn label(self) -> &'static str {
         match self {
             Self::InvariantIndex => "IdxA",
+            Self::SearchControl => "Ctl",
             Self::InvariantMeta => "Meta",
+            Self::ProbeIndex => "ProbeA",
             Self::SurvivorPayload => "Surv",
             Self::ResultPayload => "OID",
         }
@@ -900,10 +1279,10 @@ impl CacheTier {
     /// pinned (a hit saves the most); query-dependent ranges are evicted first.
     pub fn evict_priority(self) -> u8 {
         match self {
-            Self::SurvivorPayload => 0,
+            Self::ProbeIndex | Self::SurvivorPayload => 0,
             Self::ResultPayload => 1,
             Self::InvariantMeta => 2,
-            Self::InvariantIndex => 3,
+            Self::InvariantIndex | Self::SearchControl => 3,
         }
     }
 }
@@ -927,6 +1306,459 @@ pub fn drain_get_trace() -> Vec<(CacheTier, u64)> {
         .map(|mut v| std::mem::take(&mut *v))
         .unwrap_or_default()
 }
+
+/// TD-RDSTRAT-8 PR-B diagnostic: per-query coarse-probe counters
+/// `(cells_total, cells_probed, probed_rows, fetch_rounds)`. The probe path
+/// pushes them when `PROXIMADB_TRACE_GETS` is set; the eval/recall harness drains
+/// them to prove `cells_probed << cells_total` and the GET/byte reduction. Zero
+/// cost off. (Promoting these into the durable Prometheus io_trace surface —
+/// `ivf_cells_total/probed`, `probed_rows`, `fetch_rounds`,
+/// `whole_region_fallback` — is a tracked follow-up.)
+static PROBE_TRACE: std::sync::Mutex<Vec<(u64, u64, u64, u64)>> = std::sync::Mutex::new(Vec::new());
+
+fn record_probe_trace(cells_total: u64, cells_probed: u64, probed_rows: u64, fetch_rounds: u64) {
+    if let Ok(mut v) = PROBE_TRACE.lock() {
+        v.push((cells_total, cells_probed, probed_rows, fetch_rounds));
+    }
+}
+
+/// Record a coarse-probe outcome to BOTH durable surfaces (TD-RDSTRAT-8):
+/// the per-query io_trace → warehouse `VectorAnnPayload` (per-tenant, durable)
+/// and the aggregate Prometheus operator view. Call whenever the probe engages
+/// or armed-but-missed falls back to the whole region scan.
+fn record_ivf_probe_durable(
+    cells_total: u64,
+    cells_probed: u64,
+    probed_rows: u64,
+    fetch_rounds: u64,
+    whole_region_fallback: bool,
+) {
+    crate::observability::io_trace::record_ivf_coarse_probe(
+        cells_total,
+        cells_probed,
+        probed_rows,
+        fetch_rounds,
+        whole_region_fallback,
+    );
+    crate::storage::engines::sst::metrics::record_ivf_coarse_probe(
+        cells_total,
+        cells_probed,
+        probed_rows,
+        fetch_rounds,
+        whole_region_fallback,
+    );
+}
+
+/// Drain the recorded coarse-probe counters (empty when trace off / no probe).
+pub fn drain_probe_trace() -> Vec<(u64, u64, u64, u64)> {
+    PROBE_TRACE
+        .lock()
+        .map(|mut v| std::mem::take(&mut *v))
+        .unwrap_or_default()
+}
+
+// ── Coarse-probe (IVF) settings: TOML (`SstConfig.coarse_probe`) → OnceLock ──
+// The env-only free fns below consult this static as the FALLBACK default; env
+// vars still win (read at call time). Initialized once at SstEngine boot from
+// the parsed TOML (src/storage/engines/sst/core.rs), mirroring
+// SHARED_INVARIANTS_CACHE. COGS arc: IVF is the master cost lever (~4× per-tenant
+// COGS cut vs full-scan, recall ~0.98).
+
+/// Resolved coarse-probe settings (TOML-derived; env overrides applied at call
+/// sites, not here). Defaults replicate `CoarseProbeConfig::default()`.
+#[derive(Debug, Clone, Copy)]
+pub struct CoarseProbeSettings {
+    pub enable_read_probe: bool,
+    pub enable_write_train: bool,
+    pub nprobe_multiplier: f32,
+    pub nprobe_min: usize,
+    pub nprobe_max: usize,
+}
+
+// TD-COMPACT-9: overwritable, NOT first-wins. Every production `SstEngine::new()`
+// (shared_services.rs, factory.rs, legacy.rs) is built with `SstConfig::default()`
+// (coarse_probe = None), so an OnceLock first-wins seeded the DEFAULT and the
+// real `[storage.sst_config.coarse_probe]` TOML was silently ignored (measured:
+// nprobe_multiplier=1.5 had no effect while env nprobe DID). An RwLock lets a
+// REAL (Some) config — set authoritatively from the loaded server Config in
+// `ProximaDB::start` — override the default regardless of construction order.
+static SHARED_COARSE_PROBE: std::sync::RwLock<Option<CoarseProbeSettings>> =
+    std::sync::RwLock::new(None);
+
+/// Seed the coarse-probe settings. A real (`Some`) config ALWAYS wins (the
+/// authoritative call from server startup); a `None` call (a default-config
+/// `SstEngine::new()`) only fills the default if nothing real was set yet.
+/// Poison-safe (no-panic mandate #4).
+pub fn init_coarse_probe_settings(cfg: Option<&crate::core::config::CoarseProbeConfig>) {
+    if let Ok(mut g) = SHARED_COARSE_PROBE.write() {
+        match cfg {
+            Some(c) => *g = Some(c.clone().into()),
+            None => {
+                g.get_or_insert_with(CoarseProbeSettings::default);
+            }
+        }
+    }
+}
+
+impl Default for CoarseProbeSettings {
+    fn default() -> Self {
+        crate::core::config::CoarseProbeConfig::default().into()
+    }
+}
+
+impl From<crate::core::config::CoarseProbeConfig> for CoarseProbeSettings {
+    fn from(c: crate::core::config::CoarseProbeConfig) -> Self {
+        Self {
+            enable_read_probe: c.enable_read_probe,
+            enable_write_train: c.enable_write_train,
+            nprobe_multiplier: c.nprobe_multiplier,
+            nprobe_min: c.nprobe_min,
+            nprobe_max: c.nprobe_max,
+        }
+    }
+}
+
+pub(crate) fn coarse_probe_settings() -> CoarseProbeSettings {
+    SHARED_COARSE_PROBE
+        .read()
+        .ok()
+        .and_then(|g| *g)
+        .unwrap_or_default()
+}
+
+/// Geometric nprobe: `ceil(sqrt(k_c) × multiplier)`, clamped to `[min, max]`
+/// then to `k_c`. Sub-linear in corpus (V^0.25): ~56× fewer ranks than full-scan
+/// at 1M, recall ~0.98 at multiplier 1.0. Bump `nprobe_multiplier` (TOML) for
+/// higher recall. The max-then-min ordering avoids the `clamp(min, k_c)` panic
+/// when `k_c < min` (no-panic mandate #4).
+fn geometric_nprobe(k_c: usize, s: CoarseProbeSettings) -> usize {
+    let raw = ((k_c as f32).sqrt() * s.nprobe_multiplier).ceil() as usize;
+    let floored = raw.max(s.nprobe_min);
+    let bounded = if s.nprobe_max > 0 {
+        floored.min(s.nprobe_max)
+    } else {
+        floored
+    };
+    bounded.min(k_c.max(1))
+}
+
+/// TD-RDSTRAT-8 PR-B gate: engage the Region-A0 coarse probe on v3 segments.
+/// Default **ON** since 2026-07-26 — the flip precondition was met by the
+/// nprobe sweep (fixed-slice recall@10 0.9860–0.9870 ≥ the 0.984 ratchet at
+/// the default nprobe, with 81 GETs / 92 ms vs 108 GETs / 144 ms unprobed:
+/// strictly better on every axis; ledger claim `nprobe_sweep_trained_1m`).
+/// Precedence: env kill-switch (`PROXIMADB_PAX_READ_COARSE_PROBE=0|off|false|no`)
+/// → else TOML `[storage.sst_config.coarse_probe] enable_read_probe`.
+/// Mixed-safe: v1 / A0-less segments never probe regardless.
+/// (Retired alias name: `PROXIMADB_IVF2_PROBE` — TD-ENVGATE-1.)
+pub fn coarse_probe_enabled() -> bool {
+    match std::env::var("PROXIMADB_PAX_READ_COARSE_PROBE") {
+        // Env set: ON unless it's an explicit kill-switch value.
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "no"
+        ),
+        // Env unset: fall back to the TOML/config default.
+        Err(_) => coarse_probe_settings().enable_read_probe,
+    }
+}
+
+/// Number of coarse cells to probe. Precedence: env
+/// `PROXIMADB_PAX_READ_COARSE_NPROBE` (explicit) → else the geometric default
+/// `ceil(sqrt(k_c) × multiplier)` from the TOML config
+/// (`[storage.sst_config.coarse_probe] nprobe_multiplier/min/max`), clamped to
+/// `k_c`. `>= k_c` is exact mode (every cell).
+fn coarse_probe_nprobe(k_c: usize) -> usize {
+    std::env::var("PROXIMADB_PAX_READ_COARSE_NPROBE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| geometric_nprobe(k_c, coarse_probe_settings()))
+        .min(k_c.max(1))
+}
+
+/// Outcome of a coarse probe: the global survivor rows plus the io_trace
+/// counters (`ivf_cells_total/probed`, `probed_rows`, `fetch_rounds`).
+struct CoarseProbeResult {
+    survivors: Vec<usize>,
+    cells_total: u64,
+    cells_probed: u64,
+    probed_rows: u64,
+    fetch_rounds: u64,
+    a0_bytes: Arc<[u8]>,
+    rabitq_header_bytes: Arc<[u8]>,
+}
+
+fn prefetched_slice(prefix: &[u8], offset: u64, len: u64) -> Option<&[u8]> {
+    let start = usize::try_from(offset).ok()?;
+    let len = usize::try_from(len).ok()?;
+    let end = start.checked_add(len)?;
+    prefix.get(start..end)
+}
+
+fn prefix_prefetch_bytes() -> Option<u64> {
+    std::env::var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|bytes| *bytes > 0)
+}
+
+fn split_probe_metadata_cache_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "on" | "yes")
+    )
+}
+
+/// TD-RDSTRAT-8 PR-B: compute survivors from ONLY the `nprobe` nearest coarse
+/// cells — rank the persisted `k_c` centroids in RAM, then ranged-read just those
+/// cells' Region-A code extents (`a_off/a_len`). The whole Region A is never
+/// fetched, so cold-query GETs/bytes drop from O(N) to O(nprobe). Returns `None`
+/// to fall back to the single-level whole-region scan (fail-safe: A0
+/// missing/corrupt, dim mismatch, or degenerate directory).
+async fn coarse_probe_survivors(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+    header: &proximadb_storage_common::segment_layout::SegmentHeaderPrefix,
+    query: &[f32],
+    metric: RankMetric,
+    k: usize,
+    trace_on: bool,
+    cached: Option<&SegmentInvariants>,
+    prefix: &[u8],
+    survivor_cache: Option<&SurvivorRangeCache>,
+) -> Result<Option<CoarseProbeResult>> {
+    use proximadb_storage_common::coarse_directory::{CoarseDirectory, project_with_model};
+
+    let dim = query.len();
+    if dim == 0 || header.a0_len == 0 {
+        return Ok(None);
+    }
+
+    // 1. Region A0 (small, immediately after the header) — one ranged GET.
+    let a0_bytes: Arc<[u8]> = if let Some(bytes) = cached.and_then(|inv| inv.a0_bytes.clone()) {
+        bytes
+    } else if let Some(bytes) = prefetched_slice(prefix, header.a0_off, header.a0_len) {
+        Arc::from(bytes.to_vec())
+    } else {
+        let bytes = fs
+            .read_range(path, header.a0_off, header.a0_len)
+            .await
+            .map_err(|e| anyhow::anyhow!("coarse-probe A0 {path}: {e}"))?;
+        if trace_on {
+            record_get(CacheTier::SearchControl, header.a0_len);
+        }
+        Arc::from(bytes)
+    };
+    let Ok(dir) = CoarseDirectory::parse(&a0_bytes) else {
+        return Ok(None);
+    };
+    let k_c = dir.model.k_c();
+    let n_comp = dir.model.n_comp as usize;
+    if k_c == 0 || dir.cells.len() != k_c || n_comp == 0 || dir.model.dim as usize != dim {
+        return Ok(None);
+    }
+
+    // 2. Rank the k_c centroids in RAM; select the nprobe nearest NON-EMPTY cells
+    //    (project the query with the SAME persisted f32 model the writer used).
+    let q_proj = project_with_model(
+        &dir.model.pca_mean,
+        &dir.model.pca_components,
+        n_comp,
+        query,
+    );
+    if q_proj.len() != n_comp {
+        return Ok(None);
+    }
+    let mut cell_dist: Vec<(usize, f32)> = (0..k_c)
+        .map(|c| {
+            let cen = &dir.model.centroids[c * n_comp..(c + 1) * n_comp];
+            let d: f32 = q_proj.iter().zip(cen).map(|(a, b)| (a - b) * (a - b)).sum();
+            (c, d)
+        })
+        .collect();
+    cell_dist.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let nprobe = coarse_probe_nprobe(k_c);
+    let mut probed: Vec<usize> = cell_dist
+        .iter()
+        .filter(|(c, _)| dir.cells[*c].row_end > dir.cells[*c].row_begin)
+        .take(nprobe)
+        .map(|(c, _)| *c)
+        .collect();
+    if probed.is_empty() {
+        return Ok(None);
+    }
+    // File (a_off) order so physically-adjacent probed cells coalesce.
+    probed.sort_by_key(|&c| dir.cells[c].a_off);
+
+    // 3. Region-A header (params + centroid) — one small ranged GET.
+    let hdr_len = proximadb_block_format::region_header_len(dim as u32) as u64;
+    let hdr_bytes: Arc<[u8]> =
+        if let Some(bytes) = cached.and_then(|inv| inv.rabitq_header_bytes.clone()) {
+            bytes
+        } else if let Some(bytes) = prefetched_slice(prefix, header.rabitq_off, hdr_len) {
+            Arc::from(bytes.to_vec())
+        } else {
+            let bytes = fs
+                .read_range(path, header.rabitq_off, hdr_len)
+                .await
+                .map_err(|e| anyhow::anyhow!("coarse-probe region header {path}: {e}"))?;
+            if trace_on {
+                record_get(CacheTier::SearchControl, hdr_len);
+            }
+            Arc::from(bytes)
+        };
+    let Ok(rq_header) = proximadb_block_format::CoalescedRaBitQHeader::parse(&hdr_bytes) else {
+        return Ok(None);
+    };
+
+    // 4. Ranged-read the probed cells' Region-A code extents. The default
+    //    remains gap-zero. The proof gate can admit bounded gap over-read, but
+    //    the ranker receives only the selected slices so nprobe never changes.
+    let stride = proximadb_block_format::code_stride(dim as u32) as u64;
+    let selected: Vec<ProbeCellSlice> = probed
+        .iter()
+        .map(|&cell_index| {
+            let cell = &dir.cells[cell_index];
+            ProbeCellSlice {
+                start: cell.a_off,
+                end: cell.a_off + cell.a_len,
+                row_start: cell.row_begin as usize,
+            }
+        })
+        .collect();
+    let max_gap_bytes = env_u64_or("PROXIMADB_PAX_VECTOR_COALESCE_GAP", 0);
+    let max_range_bytes = std::env::var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(0);
+    let policy =
+        crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+            max_gap_bytes,
+            max_range_bytes,
+        };
+    let fetches = plan_probe_cell_ranges(&selected, &policy);
+    let mut fetched = Vec::with_capacity(fetches.len());
+    let probed_rows: u64 = selected
+        .iter()
+        .map(|cell| (cell.end - cell.start) / stride)
+        .sum();
+    for fetch in fetches {
+        let len = fetch.end - fetch.start;
+        // TD-CACHE-6: probed-cell ranges MUST flow through the tenant-keyed
+        // survivor-cache seam — identical repeat queries probe identical
+        // cells, and a direct read made the hot path pay these GETs every
+        // time (the probe-armed default bypassed the warm tier entirely).
+        let bytes: Vec<u8> = if let Some(sc) = survivor_cache {
+            sc.get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
+                let b = fs
+                    .read_range(path, fetch.start, len)
+                    .await
+                    .map_err(std::io::Error::other)?;
+                if trace_on {
+                    record_get(CacheTier::ProbeIndex, len);
+                }
+                Ok(b)
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?
+            .to_vec()
+        } else {
+            let b = fs
+                .read_range(path, fetch.start, len)
+                .await
+                .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?;
+            if trace_on {
+                record_get(CacheTier::ProbeIndex, len);
+            }
+            b
+        };
+        fetched.push((fetch, bytes));
+    }
+    let mut runs: Vec<(usize, &[u8])> = Vec::with_capacity(selected.len());
+    for (fetch, bytes) in &fetched {
+        for cell in &fetch.selected {
+            let rel = usize::try_from(cell.start.saturating_sub(fetch.start))
+                .map_err(|_| anyhow::anyhow!("coarse-probe slice offset exceeds usize"))?;
+            let len = usize::try_from(cell.end.saturating_sub(cell.start))
+                .map_err(|_| anyhow::anyhow!("coarse-probe slice length exceeds usize"))?;
+            let end = rel
+                .checked_add(len)
+                .ok_or_else(|| anyhow::anyhow!("coarse-probe slice end overflow"))?;
+            let slice = bytes
+                .get(rel..end)
+                .ok_or_else(|| anyhow::anyhow!("coarse-probe selected slice outside fetch"))?;
+            runs.push((cell.row_start, slice));
+        }
+    }
+    let pool = pax_rabitq_pool_for_top_k(k, probed_rows as usize);
+    let survivors =
+        proximadb_block_format::rank_probed_rows(&rq_header, &runs, query, metric, pool.max(k))?;
+
+    Ok(Some(CoarseProbeResult {
+        survivors,
+        cells_total: k_c as u64,
+        cells_probed: probed.len() as u64,
+        probed_rows,
+        fetch_rounds: fetched.len() as u64,
+        a0_bytes,
+        rabitq_header_bytes: hdr_bytes,
+    }))
+}
+
+/// TD-SEARCH-2 S2: multi-core Stage-A rank. The whole-region RaBitQ scan is
+/// the dominant cold-CPU term (~hundreds of ms at 500k rows/segment); split
+/// the rows into `morsel_degree()` chunks ranked on `spawn_blocking` threads
+/// (real cores — the tokio workers stay free for I/O), then merge the
+/// per-chunk `(row, score)` lists by score. Exactly equivalent to a full
+/// sequential rank (each chunk keeps its own top-`pool`; the global
+/// top-`pool` is a subset of their union). Small regions and degree 1 keep
+/// the sequential path — no task overhead where there is nothing to win.
+const MORSEL_MIN_ROWS: usize = 65_536;
+
+async fn rank_region_morsels(
+    region: proximadb_block_format::RaBitQRegion,
+    query: &[f32],
+    metric: RankMetric,
+    pool: usize,
+) -> Vec<usize> {
+    let degree = crate::storage::engines::sst::search::morsel_degree();
+    let n_rows = region.n_rows();
+    if degree <= 1 || n_rows < MORSEL_MIN_ROWS {
+        return region.rank(query, metric, pool);
+    }
+    let region = std::sync::Arc::new(region);
+    let chunk = n_rows.div_ceil(degree);
+    let tasks: Vec<_> = (0..degree)
+        .map(|i| {
+            let region = region.clone();
+            let query = query.to_vec();
+            let rows = (i * chunk)..(((i + 1) * chunk).min(n_rows));
+            tokio::task::spawn_blocking(move || {
+                region.rank_range_scored(&query, metric, pool, rows)
+            })
+        })
+        .collect();
+    let mut merged: Vec<(usize, f32)> = Vec::with_capacity(pool * degree);
+    for t in tasks {
+        match t.await {
+            Ok(part) => merged.extend(part),
+            // A cancelled/panicked worker degrades to a partial pool — the
+            // remaining chunks still rank; never fail the query for it.
+            Err(e) => tracing::warn!("morsel rank worker failed (partial pool): {e}"),
+        }
+    }
+    merged.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    merged.truncate(pool);
+    merged.into_iter().map(|(i, _)| i).collect()
+}
+
 pub async fn rabitq_search_segment_coalesced(
     fs: &dyn proximadb_storage_filesystem_types::FileSystem,
     path: &str,
@@ -938,18 +1770,33 @@ pub async fn rabitq_search_segment_coalesced(
 ) -> Result<Option<Vec<CascadeHit>>> {
     use proximadb_block_format::{PaxBlockReader, RaBitQRegion, coalesced_sq8, col_id};
     use proximadb_storage_common::segment_layout::{
-        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
+        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL,
+        SegmentFooterIndex, SegmentHeaderPrefix,
     };
 
     // ADR-065 co-design diagnostic: per-GET size trace. When PROXIMADB_TRACE_GETS
     // is set, every read_range in this path records its on-disk byte length; the
     // eval drains it to print the distribution (GET count = the same-region
     // billing metric; GET sizes = the latency metric). Off by default (zero cost).
-    let trace_on = std::env::var_os("PROXIMADB_TRACE_GETS").is_some();
+    let trace_on = std::env::var_os("PROXIMADB_TRACE_GETS").is_some()
+        || std::env::var_os("PROXIMADB_TRACE_PAX_STAGES").is_some();
 
     // PR2: check the per-segment invariants cache. On hit, skip the 3
     // read_range calls (header + region + footer) → 3 GETs → 0 (hot path).
     let cached = cache.and_then(|c| c.get(path));
+    // TD-METRICS-1: this lookup is the cache's only read boundary — count
+    // hit/miss here (a hit means 3 GETs avoided) and sample resident bytes.
+    if cache.is_some() {
+        if cached.is_some() {
+            crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.inc();
+        } else {
+            crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_MISSES_TOTAL.inc();
+        }
+        if let Some(c) = cache {
+            crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_BYTES
+                .set(c.bytes_used() as i64);
+        }
+    }
 
     // 1. Header-prefix → region/footer extents. From cache (hot) or read (cold).
     let header_bytes: Vec<u8> = if let Some(inv) = cached.as_ref() {
@@ -966,9 +1813,18 @@ pub async fn rabitq_search_segment_coalesced(
         // TD-RDSTRAT-8: fetch the v3 prefix length unconditionally (clamped to
         // file size) — the 16 extra bytes ride the same GET and cover both the
         // v1 (56 B) and v3 (72 B) forms; `parse` branches on the version byte.
-        fs.read_range(path, 0, (SEG_HEADER_PREFIX_V3_LEN as u64).min(size))
+        let read_len = prefix_prefetch_bytes()
+            .unwrap_or(SEG_HEADER_PREFIX_V3_LEN as u64)
+            .max(SEG_HEADER_PREFIX_V3_LEN as u64)
+            .min(size);
+        let bytes = fs
+            .read_range(path, 0, read_len)
             .await
-            .map_err(|e| anyhow::anyhow!("coalesced scan header {path}: {e}"))?
+            .map_err(|e| anyhow::anyhow!("coalesced scan header {path}: {e}"))?;
+        if trace_on {
+            record_get(CacheTier::SearchControl, bytes.len() as u64);
+        }
+        bytes
     };
     // A v3 (two-level) segment parses here too and falls through to the same
     // single-level whole-region scan: Regions A/B are byte-identical in format
@@ -980,20 +1836,81 @@ pub async fn rabitq_search_segment_coalesced(
         Err(_) => return Ok(None), // not coalesced → don't cache
     };
 
-    // 2. Scan the RaBitQ region (cold: 1 GET; hot: 0 — Arc clone, no data copy).
-    let region_bytes: Arc<[u8]> = if let Some(inv) = cached.as_ref() {
-        inv.region_bytes.clone()
-    } else {
-        Arc::from(
-            fs.read_range(path, header.rabitq_off, header.rabitq_len)
-                .await
-                .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?,
+    // 2. Survivors. TD-RDSTRAT-8 PR-B: on a v3 segment with the coarse probe
+    //    armed, rank the persisted centroids in RAM and ranged-read only the
+    //    nprobe nearest cells (whole Region A never fetched); else the
+    //    single-level whole-region scan (cold: 1 GET; hot: 0 — Arc clone). Any
+    //    probe miss falls through, fail-safe, to the whole-region path.
+    let probe_armed = header.layout_version == SEG_LAYOUT_VERSION_TWO_LEVEL
+        && header.a0_len > 0
+        && coarse_probe_enabled();
+    let probe = if probe_armed {
+        coarse_probe_survivors(
+            fs,
+            path,
+            &header,
+            query,
+            metric,
+            k,
+            trace_on,
+            cached.as_deref(),
+            &header_bytes,
+            survivor_cache,
         )
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
     };
-    let region = RaBitQRegion::from_bytes(&region_bytes)?;
-    // ADR-062 PR2: adaptive survivor pool — scale M with the segment's row count.
-    let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
-    let survivors = region.rank(query, metric, pool.max(k));
+    let (survivors, region_bytes): (Vec<usize>, Option<Arc<[u8]>>) = if let Some(r) = &probe {
+        if trace_on {
+            record_probe_trace(r.cells_total, r.cells_probed, r.probed_rows, r.fetch_rounds);
+        }
+        // TD-RDSTRAT-8: durable per-query probe outcome → warehouse `VectorAnnPayload`
+        // (always-on when an io_trace scope is active; no-ops otherwise). The dominant
+        // cloud cost term is GET round-trips — recording the probe's cut per query is
+        // what makes nprobe/spill tuning evidence-led ("trace before you tune").
+        record_ivf_probe_durable(
+            r.cells_total,
+            r.cells_probed,
+            r.probed_rows,
+            r.fetch_rounds,
+            false,
+        );
+        (r.survivors.clone(), None)
+    } else {
+        // Armed probe that missed → whole-Region-A fallback (the GET budget the probe
+        // exists to avoid). Record the miss so it is observable; a non-v3 / probe-off
+        // read records nothing (no IVF occurred).
+        if probe_armed {
+            record_ivf_probe_durable(0, 0, 0, 0, true);
+        }
+        let region_bytes: Arc<[u8]> =
+            if let Some(bytes) = cached.as_ref().and_then(|inv| inv.region_bytes.clone()) {
+                bytes
+            } else {
+                let bytes = fs
+                    .read_range(path, header.rabitq_off, header.rabitq_len)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?;
+                // Trace the whole-region cost so the coarse probe's Region-A saving is
+                // observable (co-design: trace before you tune). Diagnostic-only.
+                if trace_on {
+                    record_get(CacheTier::InvariantIndex, header.rabitq_len);
+                }
+                Arc::from(bytes)
+            };
+        // TD-RDSTRAT-8 PR-C1: record the whole-Region-A (RaBitQ) physical bytes
+        // fetched — the GET budget the armed probe exists to avoid. Region B
+        // (SQ8) is not read in this path. Cache hits still report Region-A length.
+        crate::observability::io_trace::record_pax_region_bytes(region_bytes.len() as u64, 0);
+        let region = RaBitQRegion::from_bytes(&region_bytes)?;
+        // ADR-062 PR2: adaptive survivor pool — scale M with the segment's rows.
+        let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
+        let survivors = rank_region_morsels(region, query, metric, pool.max(k)).await;
+        (survivors, Some(region_bytes))
+    };
     if survivors.is_empty() {
         return Ok(Some(Vec::new()));
     }
@@ -1002,23 +1919,51 @@ pub async fn rabitq_search_segment_coalesced(
     let footer_bytes: Vec<u8> = if let Some(inv) = cached.as_ref() {
         inv.footer_bytes.clone()
     } else {
-        fs.read_range(path, header.footer_off, header.footer_len)
+        let bytes = fs
+            .read_range(path, header.footer_off, header.footer_len)
             .await
-            .map_err(|e| anyhow::anyhow!("coalesced scan footer {path}: {e}"))?
+            .map_err(|e| anyhow::anyhow!("coalesced scan footer {path}: {e}"))?;
+        if trace_on {
+            record_get(CacheTier::InvariantMeta, bytes.len() as u64);
+        }
+        bytes
     };
     let footer = SegmentFooterIndex::parse(&footer_bytes)?;
 
-    // PR2: populate the cache on miss (the invariants parsed successfully →
-    // worth caching for hot repeat queries).
-    if cached.is_none()
-        && let Some(c) = cache
-    {
+    // Cache tiny ANN control metadata independently from the whole Region A.
+    // Probe queries therefore warm header/A0/RaBitQ params/footer without
+    // admitting a 24+ MiB invariant body they intentionally did not read.
+    let split_probe_meta = split_probe_metadata_cache_enabled();
+    let probe_a0 = if split_probe_meta {
+        probe.as_ref().map(|result| result.a0_bytes.clone())
+    } else {
+        None
+    };
+    let probe_rabitq_header = if split_probe_meta {
+        probe
+            .as_ref()
+            .map(|result| result.rabitq_header_bytes.clone())
+    } else {
+        None
+    };
+    let cached_region = cached.as_ref().and_then(|entry| entry.region_bytes.clone());
+    let cached_a0 = cached.as_ref().and_then(|entry| entry.a0_bytes.clone());
+    let cached_rabitq_header = cached
+        .as_ref()
+        .and_then(|entry| entry.rabitq_header_bytes.clone());
+    let cache_changed = (probe.is_none() && cached.is_none())
+        || (cached_region.is_none() && region_bytes.is_some())
+        || (cached_a0.is_none() && probe_a0.is_some())
+        || (cached_rabitq_header.is_none() && probe_rabitq_header.is_some());
+    if cache_changed && let Some(c) = cache {
         c.put(
             path.to_string(),
             Arc::new(SegmentInvariants {
                 header_bytes,
-                region_bytes,
+                region_bytes: region_bytes.or(cached_region),
                 footer_bytes,
+                a0_bytes: probe_a0.or(cached_a0),
+                rabitq_header_bytes: probe_rabitq_header.or(cached_rabitq_header),
             }),
         );
     }
@@ -1051,14 +1996,39 @@ pub async fn rabitq_search_segment_coalesced(
         // over-read >= the whole Region B — fetch it in one GET instead (fewer GETs,
         // no more bytes). decode_row extracts only the survivors. (Tight survivor
         // ranges — the full ~5x bytes win — need IVF/Hilbert locality: follow-up.)
-        let region_bytes = fs
-            .read_range(path, header.sq8_off, header.sq8_len)
+        // TD-CACHE-6: the whole-Region-B fallback is ONE well-known range —
+        // cache it through the seam so hot repeats stop re-paying the
+        // largest GET on the path (admission/floors decide residency).
+        let region_arc: Arc<[u8]> = if let Some(sc) = survivor_cache {
+            sc.get_or_fetch(
+                CacheKind::QuantizedCodes,
+                path,
+                header.sq8_off,
+                header.sq8_len,
+                || async {
+                    let b = fs
+                        .read_range(path, header.sq8_off, header.sq8_len)
+                        .await
+                        .map_err(std::io::Error::other)?;
+                    if trace_on {
+                        record_get(CacheTier::SurvivorPayload, header.sq8_len);
+                    }
+                    Ok(b)
+                },
+            )
             .await
-            .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?;
-        if trace_on {
-            record_get(CacheTier::SurvivorPayload, header.sq8_len);
-        }
-        let region = coalesced_sq8::Sq8Region::from_bytes(&region_bytes)?;
+            .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?
+        } else {
+            let b = fs
+                .read_range(path, header.sq8_off, header.sq8_len)
+                .await
+                .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?;
+            if trace_on {
+                record_get(CacheTier::SurvivorPayload, header.sq8_len);
+            }
+            Arc::from(b)
+        };
+        let region = coalesced_sq8::Sq8Region::from_bytes(&region_arc)?;
         for &g in &survivors {
             if let Some(v) = region.decode_row(g) {
                 scored.push((g, rerank_distance(metric, query, &v)));
@@ -1221,6 +2191,214 @@ pub async fn rabitq_search_segment_coalesced(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cp_cfg(mult: f32) -> crate::core::config::CoarseProbeConfig {
+        crate::core::config::CoarseProbeConfig {
+            enable_read_probe: true,
+            enable_write_train: true,
+            nprobe_multiplier: mult,
+            nprobe_min: 3,
+            nprobe_max: 0,
+        }
+    }
+
+    /// TD-COMPACT-9: a REAL (Some) coarse-probe config must WIN and must NOT be
+    /// clobbered by a later default-config `SstEngine::new()` init(None) — the
+    /// bug that made `[storage.sst_config.coarse_probe] nprobe_multiplier`
+    /// silently dead in production. Also verifies the multiplier reaches
+    /// geometric_nprobe. (nextest = process isolation; the static won't leak.)
+    #[test]
+    fn toml_coarse_probe_config_wins_over_default_init() {
+        // Simulate a default-config engine seeding first...
+        init_coarse_probe_settings(None);
+        // ...then the authoritative TOML config (server startup) — must override.
+        init_coarse_probe_settings(Some(&cp_cfg(1.5)));
+        assert!((coarse_probe_settings().nprobe_multiplier - 1.5).abs() < 1e-6);
+        // A later default-config engine init(None) must NOT clobber it.
+        init_coarse_probe_settings(None);
+        assert!((coarse_probe_settings().nprobe_multiplier - 1.5).abs() < 1e-6);
+        // The multiplier actually reaches nprobe: sqrt(64)*1.5 = 12 vs *1.0 = 8.
+        assert_eq!(geometric_nprobe(64, coarse_probe_settings()), 12);
+        assert_eq!(geometric_nprobe(64, cp_cfg(1.0).into()), 8);
+    }
+
+    /// TD-CACHE-2 S2b: Region A and control bytes are separate eviction
+    /// units — a put with a region splits into two entries; invalidate
+    /// removes both; a region-only shed leaves control serving (recomposed
+    /// get degrades to control-only, never a full miss).
+    #[test]
+    fn invariants_split_region_from_control() {
+        let cache = SegmentInvariantsCache::new(1024 * 1024);
+        let region: Arc<[u8]> = Arc::from(vec![7u8; 64 * 1024].as_slice());
+        cache.put(
+            "seg.pax".to_string(),
+            Arc::new(SegmentInvariants {
+                header_bytes: vec![1; 72],
+                region_bytes: Some(region),
+                footer_bytes: vec![2; 128],
+                a0_bytes: None,
+                rabitq_header_bytes: None,
+            }),
+        );
+        // Recomposed hit carries the region.
+        let inv = cache.get("seg.pax").expect("hit");
+        assert!(
+            inv.region_bytes.is_some(),
+            "recomposed get carries Region A"
+        );
+        assert_eq!(inv.header_bytes.len(), 72);
+        // Shed ONLY the region companion (simulating per-class eviction).
+        cache.invalidate(&SegmentInvariantsCache::region_entry_key("seg.pax"));
+        let inv = cache.get("seg.pax").expect("control must still serve");
+        assert!(
+            inv.region_bytes.is_none(),
+            "region shed, control-only hit (3 control GETs still saved)"
+        );
+        assert_eq!(inv.footer_bytes.len(), 128);
+        // Full invalidate removes both and frees all bytes.
+        cache.put(
+            "seg.pax".to_string(),
+            Arc::new(SegmentInvariants {
+                header_bytes: vec![1; 72],
+                region_bytes: Some(Arc::from(vec![7u8; 1024].as_slice())),
+                footer_bytes: vec![2; 128],
+                a0_bytes: None,
+                rabitq_header_bytes: None,
+            }),
+        );
+        cache.invalidate("seg.pax");
+        assert!(cache.get("seg.pax").is_none());
+        assert_eq!(cache.bytes_used(), 0, "all bytes credited back");
+    }
+
+    /// TD-CACHE-2 S1 verification: over-budget insertion mixing tiers must
+    /// shed meta-only entries before Region-A-bearing ones, ties by recency —
+    /// never an arbitrary victim.
+    #[test]
+    fn invariants_cache_evicts_priority_then_recency() {
+        fn region_entry(bytes: usize) -> Arc<SegmentInvariants> {
+            Arc::new(SegmentInvariants {
+                header_bytes: Vec::new(),
+                region_bytes: Some(Arc::from(vec![0u8; bytes].as_slice())),
+                footer_bytes: Vec::new(),
+                a0_bytes: None,
+                rabitq_header_bytes: None,
+            })
+        }
+        fn meta_entry(bytes: usize) -> Arc<SegmentInvariants> {
+            Arc::new(SegmentInvariants {
+                header_bytes: vec![0u8; bytes],
+                region_bytes: None,
+                footer_bytes: Vec::new(),
+                a0_bytes: None,
+                rabitq_header_bytes: None,
+            })
+        }
+
+        let cache = SegmentInvariantsCache::new(1000);
+        cache.put("regionA1".into(), region_entry(400));
+        cache.put("regionA2".into(), region_entry(400));
+        cache.put("meta1".into(), meta_entry(150));
+        assert_eq!(cache.bytes_used(), 950);
+
+        // Touch regionA1 so it is more recent than regionA2.
+        assert!(cache.get("regionA1").is_some());
+
+        // Over budget by 100: the meta entry (lower priority) must be the
+        // victim — NOT either Region A entry.
+        cache.put("meta2".into(), meta_entry(150));
+        assert!(cache.get("meta1").is_none(), "meta-only evicted first");
+        assert!(cache.get("regionA1").is_some());
+        assert!(cache.get("regionA2").is_some());
+        assert!(cache.get("meta2").is_some());
+
+        // Re-touch regionA1 (the assertion `get`s above stamped recency too,
+        // leaving regionA2 fresher) so regionA2 is deterministically the
+        // least-recent Region A entry.
+        assert!(cache.get("regionA1").is_some());
+
+        // Force a Region-A eviction: meta2 goes first (priority), then the
+        // LEAST-RECENT Region A entry (regionA2 — regionA1 was touched).
+        cache.put("regionA3".into(), region_entry(400));
+        assert!(
+            cache.get("meta2").is_none(),
+            "meta evicted before any region"
+        );
+        // S2b per-class semantics: the least-recent Region A COMPANION is the
+        // victim — its control anchor still hits (control-only, region shed).
+        assert!(
+            cache
+                .get("regionA2")
+                .is_none_or(|inv| inv.region_bytes.is_none()),
+            "least-recent Region A shed on priority tie"
+        );
+        assert!(
+            cache
+                .get("regionA1")
+                .is_some_and(|inv| inv.region_bytes.is_some()),
+            "recency-protected survivor keeps its region"
+        );
+        assert!(
+            cache
+                .get("regionA3")
+                .is_some_and(|inv| inv.region_bytes.is_some())
+        );
+        assert!(cache.bytes_used() <= 1000);
+    }
+
+    #[test]
+    fn pax_write_trace_defaults_off() {
+        // TD-COMPACT-1 S1: the write-path phase timer MUST be off in prod (env
+        // unset) so the eprintln + Instant bookkeeping never fires on the hot
+        // write path. Default-off is the safety property; the on-path is
+        // exercised end-to-end by setting PROXIMADB_TRACE_PAX_WRITE at the bench.
+        // No test in this binary sets the var, so the default read is deterministic.
+        assert!(
+            !pax_write_trace(),
+            "PROXIMADB_TRACE_PAX_WRITE must be unset by default"
+        );
+    }
+
+    #[test]
+    fn probe_range_coalescing_keeps_only_selected_cell_slices() {
+        let selected = vec![
+            ProbeCellSlice {
+                start: 100,
+                end: 200,
+                row_start: 0,
+            },
+            ProbeCellSlice {
+                start: 250,
+                end: 350,
+                row_start: 10,
+            },
+            ProbeCellSlice {
+                start: 900,
+                end: 1_000,
+                row_start: 20,
+            },
+        ];
+        let policy =
+            crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+                max_gap_bytes: 64,
+                max_range_bytes: 512,
+            };
+
+        let planned = plan_probe_cell_ranges(&selected, &policy);
+
+        assert_eq!(planned.len(), 2, "the 50-byte gap should merge");
+        assert_eq!((planned[0].start, planned[0].end), (100, 350));
+        assert_eq!(planned[0].selected, selected[..2]);
+        assert_eq!(planned[1].selected, selected[2..]);
+        let fetched: u64 = planned.iter().map(|range| range.end - range.start).sum();
+        let useful: u64 = planned
+            .iter()
+            .flat_map(|range| &range.selected)
+            .map(|cell| cell.end - cell.start)
+            .sum();
+        assert_eq!(useful, 300);
+        assert_eq!(fetched - useful, 50, "only the merged gap is over-read");
+    }
     use crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig;
     use proximadb_records::{EmbeddingCell, EmbeddingValues};
 
@@ -1891,6 +3069,106 @@ mod tests {
         );
     }
 
+    /// TD-CACHE-1 S1: `prefetch_segment_invariants` warms the CONTROL plane
+    /// (header/footer/A0) so a subsequent cold search issues fewer control
+    /// GETs than a fully cold one — without touching Region A/B payloads.
+    #[tokio::test]
+    async fn prefetch_invariants_reduces_first_search_control_gets() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::FileSystem;
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        const DIM: usize = 64;
+        const N: usize = 300;
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 37 + d * 13) % 199) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("p{i}"), 2000 + i as i64, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefetch.pax");
+        write_pax_segment(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            Some(16 * 1024),
+        )
+        .unwrap();
+
+        let local = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let counters = global_counters();
+        let fs: Arc<dyn FileSystem> =
+            Arc::new(CountingFileSystem::new(Arc::new(local), counters.clone()));
+        let path_str = path.to_str().unwrap();
+
+        // Cold search WITHOUT any cache: baseline GET count.
+        let before = counters.range_reads.load(Ordering::Relaxed);
+        rabitq_search_segment_coalesced(
+            fs.as_ref(),
+            path_str,
+            &corpus[42],
+            5,
+            RankMetric::L2,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("cold search hits");
+        let cold_gets = counters.range_reads.load(Ordering::Relaxed) - before;
+
+        // Prefetch into a fresh invariants cache (control plane only).
+        let cache = SegmentInvariantsCache::new(8 * 1024 * 1024);
+        let warmed = prefetch_segment_invariants(fs.as_ref(), path_str, &cache)
+            .await
+            .unwrap();
+        assert!(warmed, "coalesced segment should prefill");
+        let inv = cache.get(path_str).expect("invariants cached");
+        assert!(!inv.header_bytes.is_empty());
+        assert!(!inv.footer_bytes.is_empty());
+        assert!(inv.region_bytes.is_none(), "payload must NOT be prefetched");
+        // Idempotent: second prefetch is a no-op.
+        assert!(
+            !prefetch_segment_invariants(fs.as_ref(), path_str, &cache)
+                .await
+                .unwrap()
+        );
+
+        // First search WITH the prefilled cache: fewer GETs than fully cold.
+        let before = counters.range_reads.load(Ordering::Relaxed);
+        rabitq_search_segment_coalesced(
+            fs.as_ref(),
+            path_str,
+            &corpus[42],
+            5,
+            RankMetric::L2,
+            Some(&cache),
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("warm search hits");
+        let warm_gets = counters.range_reads.load(Ordering::Relaxed) - before;
+        assert!(
+            warm_gets < cold_gets,
+            "prefetch must elide control GETs (cold={cold_gets}, warm={warm_gets})"
+        );
+    }
+
     /// ADR-065 Q3: the survivor-range cache turns a hot repeat query into cache
     /// hits. The second identical search issues strictly fewer ranged GETs — the
     /// survivor (Region B) + OID (Region D) ranges are served from RAM, never
@@ -1996,12 +3274,120 @@ mod tests {
     }
 
     /// TD-RDSTRAT-8 PR-A (rev 3): `write_pax_segment_compacted` emits the
-    /// persisted-IVF-probe (v3) layout ONLY under `PROXIMADB_IVF2=1` (default-OFF,
-    /// compaction-only), and the current binary reads a v3 segment through the
-    /// SAME single-level scan path with full parity (correctness before the PR-B
-    /// probe reader lands): search recall holds, and `read_segment_records`
+    /// persisted-IVF-probe (v3) layout when write training is enabled (default
+    /// ON, compaction-only). The current binary probes v3 by default; the
+    /// read-side kill-switch serves it through the same single-level scan path
+    /// with full parity: search recall holds, and `read_segment_records`
     /// reconstructs every row WITH its Region-B vectors (the compaction/recovery
     /// inverse — a v3 segment must never silently drop vectors when re-compacted).
+    /// TD-CACHE-6: the PROBE-ARMED path must serve hot repeats from the
+    /// survivor-cache seam — an identical second search issues strictly
+    /// fewer ranged GETs (probed cells + any Region-B fetch cached) and
+    /// returns identical results. Before the fix, probe fetches read the fs
+    /// directly and every repeat re-paid the full GET chain.
+    #[tokio::test]
+    async fn probe_path_hot_repeat_served_from_cache_seam() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        const DIM: usize = 64;
+        const N: usize = 400;
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+            std::env::set_var("PROXIMADB_IVF_K", "4");
+        }
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("v3probe.pax");
+        write_pax_segment_compacted(
+            &seg,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+        let counters = global_counters();
+        let counting = CountingFileSystem::new(
+            std::sync::Arc::new(LocalFileSystem::new(LocalConfig::default()).await.unwrap()),
+            counters.clone(),
+        );
+        let survivor = SurvivorRangeCache::new(64 * 1024 * 1024);
+        let path = seg.to_string_lossy().to_string();
+        let query = corpus[7].clone();
+
+        let before = counters
+            .range_reads
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let first = rabitq_search_segment_coalesced(
+            &counting,
+            &path,
+            &query,
+            5,
+            RankMetric::L2,
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap()
+        .expect("probe search hits");
+        let cold_gets = counters
+            .range_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
+            - before;
+
+        let mid = counters
+            .range_reads
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let second = rabitq_search_segment_coalesced(
+            &counting,
+            &path,
+            &query,
+            5,
+            RankMetric::L2,
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap()
+        .expect("repeat search hits");
+        let hot_gets = counters
+            .range_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
+            - mid;
+
+        assert_eq!(
+            first.iter().map(|h| &h.oid).collect::<Vec<_>>(),
+            second.iter().map(|h| &h.oid).collect::<Vec<_>>(),
+            "repeat must return identical results"
+        );
+        assert!(
+            hot_gets < cold_gets,
+            "hot repeat must be served from the cache seam (cold={cold_gets}, hot={hot_gets})"
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_IVF_K");
+        }
+    }
+
     #[tokio::test]
     async fn ivf_probe_compaction_gate_and_v3_read_compat() {
         enable_coalesced_rabitq();
@@ -2017,7 +3403,7 @@ mod tests {
         // Small k (the shared IOP-derived override) so the tiny fixture still
         // forms multiple cells — the natural N·dim/IOP count would be ~2 here.
         unsafe {
-            std::env::set_var("PROXIMADB_IVF2", "1");
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
             std::env::set_var("PROXIMADB_IVF_K", "4");
         }
 
@@ -2052,7 +3438,7 @@ mod tests {
         let h = SegmentHeaderPrefix::parse(&v3_bytes).unwrap();
         assert_eq!(
             h.layout_version, SEG_LAYOUT_VERSION_TWO_LEVEL,
-            "PROXIMADB_IVF2=1 compaction must emit the v3 layout"
+            "PROXIMADB_PAX_WRITE_A0_TRAIN=1 compaction must emit the v3 layout"
         );
         let a0 =
             CoarseDirectory::parse(&v3_bytes[h.a0_off as usize..(h.a0_off + h.a0_len) as usize])
@@ -2061,8 +3447,11 @@ mod tests {
         assert_eq!(a0.model.dim as usize, DIM);
 
         // Flag OFF ⇒ same records compact to the v1 (single-level) layout.
+        // #1234: PROXIMADB_PAX_WRITE_A0_TRAIN is now default-ON; explicitly
+        // set "0" to test the OFF -> v1 path (remove_var would fall back to
+        // the CoarseProbeConfig default, which is ON).
         unsafe {
-            std::env::remove_var("PROXIMADB_IVF2");
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "0");
         }
         let v1_path = dir.path().join("v1.pax");
         write_pax_segment_compacted(
@@ -2079,7 +3468,7 @@ mod tests {
         let h1 = SegmentHeaderPrefix::parse(&std::fs::read(&v1_path).unwrap()).unwrap();
         assert_eq!(
             h1.layout_version, SEG_LAYOUT_VERSION,
-            "without PROXIMADB_IVF2 the compaction layout is unchanged (v1)"
+            "without PROXIMADB_PAX_WRITE_A0_TRAIN the compaction layout is unchanged (v1)"
         );
 
         // v3 read-compat: the coalesced cascade searches the v3 segment with
@@ -2128,6 +3517,337 @@ mod tests {
         );
         unsafe {
             std::env::remove_var("PROXIMADB_IVF_K");
+        }
+    }
+
+    /// TD-RDSTRAT-8 PR-B (the deferred PR-A recall/GET gate): the coarse probe
+    /// (`PROXIMADB_PAX_READ_COARSE_PROBE=1`) ranks the persisted centroids in RAM and reads
+    /// only the nprobe nearest cells — holding recall on clustered data while
+    /// reading materially fewer bytes than the whole-region single-level scan.
+    #[tokio::test]
+    async fn coarse_probe_holds_recall_and_cuts_bytes() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 32;
+        const G: usize = 8; // clusters (each centred on its own axis)
+        const PER: usize = 64; // members per cluster
+        const N: usize = G * PER;
+        const K: usize = 10;
+
+        // Deterministic pseudo-random component in [-1, 1].
+        let pseudo = |i: usize, d: usize| -> f32 {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add((d as u64).wrapping_mul(0x632B_E59B_D9B4_E019));
+            s ^= s >> 29;
+            s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            s ^= s >> 27;
+            ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+        // Widely-separated clusters (each centred at 50 on its own axis) with
+        // members at a monotonically increasing radius — so the true top-K are
+        // DISTINGUISHABLE (non-degenerate full-scan recall) AND concentrated in
+        // one cluster → a few probed cells capture them.
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                let (g, j) = (i / PER, i % PER);
+                let radius = 0.1 + j as f32 * 0.03;
+                (0..DIM)
+                    .map(|d| (if d == g { 50.0 } else { 0.0 }) + radius * pseudo(i, d))
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("probe.pax");
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+            std::env::set_var("PROXIMADB_IVF_K", "16");
+        }
+        write_pax_segment_compacted(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+        }
+
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+        // The exact centre of cluster 0 — its nearest members are the smallest
+        // radii (r0, r1, …), a distinguishable top-K all inside one cluster.
+        let query: Vec<f32> = (0..DIM).map(|d| if d == 0 { 50.0 } else { 0.0 }).collect();
+
+        // Brute-force truth (top-K by L2).
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+        let mut idx: Vec<usize> = (0..N).collect();
+        idx.sort_by(|&a, &b| {
+            l2(&corpus[a], &query)
+                .partial_cmp(&l2(&corpus[b], &query))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let truth: std::collections::HashSet<String> =
+            idx.iter().take(K).map(|i| format!("r{i}")).collect();
+        let recall = |hits: &[CascadeHit]| {
+            let got: std::collections::HashSet<String> =
+                hits.iter().map(|h| h.oid.clone()).collect();
+            truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32
+        };
+
+        unsafe {
+            std::env::set_var("PROXIMADB_TRACE_GETS", "1");
+        }
+
+        // Baseline: probe OFF → whole-region single-level scan over the v3 segment.
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
+        }
+        let _ = drain_get_trace();
+        let _ = drain_probe_trace();
+        let base = rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let base_bytes: u64 = drain_get_trace().iter().map(|(_, b)| b).sum();
+        assert!(drain_probe_trace().is_empty(), "probe OFF must not probe");
+        let base_recall = recall(&base);
+        assert!(
+            base_recall >= 0.5,
+            "baseline full-scan recall@{K} = {base_recall:.2} (sanity floor)"
+        );
+
+        // Probe ON: nprobe=6 of 16 cells.
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_NPROBE", "6");
+        }
+        let _ = drain_get_trace();
+        let _ = drain_probe_trace();
+        let (probe, probe_snapshot) = crate::observability::io_trace::scope(async {
+            let hits =
+                rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            let snapshot = crate::observability::io_trace::snapshot()
+                .expect("reader probe test runs inside an io_trace scope");
+            (hits, snapshot)
+        })
+        .await;
+        let probe_gets = drain_get_trace();
+        let probe_bytes: u64 = probe_gets.iter().map(|(_, b)| b).sum();
+        let ptrace = drain_probe_trace();
+
+        // 1. The probe engaged: cells_probed strictly inside (0, cells_total).
+        assert_eq!(ptrace.len(), 1, "exactly one probe recorded");
+        let (cells_total, cells_probed, probed_rows, fetch_rounds) = ptrace[0];
+        assert_eq!(cells_total, 16, "16 coarse cells");
+        assert!(
+            cells_probed > 0 && cells_probed <= 6,
+            "probed {cells_probed} cells (0 < c <= nprobe=6)"
+        );
+        assert!(
+            probed_rows > 0 && probed_rows < N as u64,
+            "probed {probed_rows} of {N} rows (a strict subset)"
+        );
+        assert!(fetch_rounds >= 1, "at least one Region-A ranged GET");
+        assert_eq!(probe_snapshot.ivf_cells_total, cells_total);
+        assert_eq!(probe_snapshot.ivf_cells_probed, cells_probed);
+        assert_eq!(probe_snapshot.ivf_probed_rows, probed_rows);
+        assert_eq!(probe_snapshot.ivf_fetch_rounds, fetch_rounds);
+        assert_eq!(probe_snapshot.ivf_whole_region_fallback, 0);
+
+        // 2. Materially fewer bytes than the whole-region baseline.
+        assert!(
+            probe_bytes < base_bytes,
+            "probe {probe_bytes} B must read fewer than baseline {base_bytes} B"
+        );
+
+        // 3. Recall held vs the full scan: probing the query's cluster loses
+        //    essentially nothing (the meaningful PR-B claim — robust to the
+        //    absolute RaBitQ recall level, which the corpus/quantizer set).
+        let probe_recall = recall(&probe);
+        assert!(
+            probe_recall >= base_recall - 0.1,
+            "probe recall@{K} = {probe_recall:.2} must hold vs baseline {base_recall:.2} (nprobe=6/16)"
+        );
+
+        // PR-C2 proof: bounded Region-A gap over-read may reduce physical
+        // ranges, but it must rank exactly the same selected cells and rows.
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP", "1048576");
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE", "4194304");
+        }
+        let _ = drain_get_trace();
+        let _ = drain_probe_trace();
+        let (coalesced, coalesced_snapshot) = crate::observability::io_trace::scope(async {
+            let hits =
+                rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            let snapshot = crate::observability::io_trace::snapshot()
+                .expect("coalescing proof runs inside an io_trace scope");
+            (hits, snapshot)
+        })
+        .await;
+        let _ = drain_get_trace();
+        let _ = drain_probe_trace();
+        assert_eq!(
+            coalesced.iter().map(|hit| &hit.oid).collect::<Vec<_>>(),
+            probe.iter().map(|hit| &hit.oid).collect::<Vec<_>>(),
+            "physical gap over-read must not change logical survivors/results"
+        );
+        assert_eq!(coalesced_snapshot.ivf_cells_probed, cells_probed);
+        assert_eq!(coalesced_snapshot.ivf_probed_rows, probed_rows);
+        assert!(
+            coalesced_snapshot.ivf_fetch_rounds <= fetch_rounds,
+            "cost coalescing cannot add Region-A reads"
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
+        }
+
+        // PR-C2 proof: a bounded prefix read must replace the separate header,
+        // A0 and RaBitQ-parameter GETs with one physical control GET.
+        let baseline_control_gets = probe_gets
+            .iter()
+            .filter(|(tier, _)| *tier == CacheTier::SearchControl)
+            .count();
+        assert!(
+            baseline_control_gets >= 3,
+            "control baseline needs header+A0+params"
+        );
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", "65536");
+        }
+        let _ = drain_get_trace();
+        let prefetched =
+            rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+                .await
+                .unwrap()
+                .unwrap();
+        let prefix_gets = drain_get_trace();
+        let _ = drain_probe_trace();
+        assert_eq!(
+            prefetched.iter().map(|hit| &hit.oid).collect::<Vec<_>>(),
+            probe.iter().map(|hit| &hit.oid).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            prefix_gets
+                .iter()
+                .filter(|(tier, _)| *tier == CacheTier::SearchControl)
+                .count(),
+            1,
+            "one prefix GET supplies header+A0+RaBitQ parameters"
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+        }
+
+        // PR-C2 proof: metadata warms independently even though the probe never
+        // admits the complete Region A into the invariant cache.
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "1");
+        }
+        let invariants = SegmentInvariantsCache::new(8 * 1024 * 1024);
+        let _ = drain_get_trace();
+        let _ = rabitq_search_segment_coalesced(
+            &fs,
+            p,
+            &query,
+            K,
+            RankMetric::L2,
+            Some(&invariants),
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let first_cached = drain_get_trace();
+        let _ = drain_probe_trace();
+        let _ = rabitq_search_segment_coalesced(
+            &fs,
+            p,
+            &query,
+            K,
+            RankMetric::L2,
+            Some(&invariants),
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let second_cached = drain_get_trace();
+        let _ = drain_probe_trace();
+        assert!(
+            first_cached.iter().any(|(tier, _)| matches!(
+                tier,
+                CacheTier::SearchControl | CacheTier::InvariantMeta
+            )),
+            "cold cache population reads control metadata"
+        );
+        assert!(
+            second_cached.iter().all(|(tier, _)| !matches!(
+                tier,
+                CacheTier::SearchControl | CacheTier::InvariantMeta
+            )),
+            "warm probe must not re-read cached control metadata"
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
+        }
+
+        // 4. Corrupt A0 fails closed to the canonical whole-Region-A scan and
+        //    makes that fallback visible in the durable query trace.
+        let mut corrupt = std::fs::read(&path).unwrap();
+        let corrupt_header = SegmentHeaderPrefix::parse(&corrupt).unwrap();
+        corrupt[corrupt_header.a0_off as usize] ^= 0x01;
+        std::fs::write(&path, corrupt).unwrap();
+        let (fallback, fallback_snapshot) = crate::observability::io_trace::scope(async {
+            let hits =
+                rabitq_search_segment_coalesced(&fs, p, &query, K, RankMetric::L2, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            let snapshot = crate::observability::io_trace::snapshot()
+                .expect("reader fallback test runs inside an io_trace scope");
+            (hits, snapshot)
+        })
+        .await;
+        assert!(
+            !fallback.is_empty(),
+            "A0 corruption fails closed, not empty"
+        );
+        assert_eq!(fallback_snapshot.ivf_cells_total, 0);
+        assert_eq!(fallback_snapshot.ivf_cells_probed, 0);
+        assert_eq!(fallback_snapshot.ivf_whole_region_fallback, 1);
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
+            std::env::remove_var("PROXIMADB_TRACE_GETS");
+            std::env::remove_var("PROXIMADB_IVF_K");
+            std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
+            std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
         }
     }
 }

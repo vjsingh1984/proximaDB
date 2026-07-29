@@ -314,7 +314,7 @@ fn bench_all_engines_search(c: &mut Criterion) {
                         let search_params = Arc::new(SearchParams {
                             vector: Some(query.clone()),
                             query_vectors: Some(vec![query.clone()]),  // SST expects query_vectors
-                            top_k: Some(top_k),
+                            top_k: Some(top_k as u16),
                             distance_metric: Some(DistanceMetric::Euclidean),
                             filter_expression: None,
                             filters: None,

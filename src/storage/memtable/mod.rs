@@ -303,13 +303,17 @@ impl MemtableFactory {
     //     specialized::SpecializedMemtableFactory::create_skiplist_for_sst(config)
     // }
 
-    /// Create specific memtable type for testing/benchmarking
+    /// Create a specific memtable type for testing/benchmarking.
+    ///
+    /// Returns `None` for every type except `GlobalPartitioned` (all others are
+    /// disabled — production uses [`create_for_wal`](Self::create_for_wal)). This
+    /// returns `None` rather than panicking so a future config-driven caller of
+    /// [`auto_select`](Self::auto_select) degrades gracefully instead of crashing.
     #[expect(clippy::match_single_binding)] // Only GlobalPartitioned is used in production
-    #[expect(clippy::panic)] // Test function - unused types intentionally panic
     pub fn create_typed<K, V>(
         memtable_type: MemtableType,
         _config: MemtableConfig,
-    ) -> Box<dyn MemtableCore<K, V> + Send + Sync>
+    ) -> Option<Box<dyn MemtableCore<K, V> + Send + Sync>>
     where
         K: Clone + Ord + std::hash::Hash + Send + Sync + std::fmt::Debug + AsRef<[u8]> + 'static,
         V: Clone + Send + Sync + std::fmt::Debug + 'static,
@@ -317,23 +321,26 @@ impl MemtableFactory {
         match memtable_type {
             // 🔴 UNUSED MEMTABLE TYPES - COMMENTED OUT FOR REMOVAL
             // These implementations are never actually instantiated in production
-            // MemtableType::BTree => Box::new(BTreeMemtable::new(true)),
-            // MemtableType::BPlusTree => Box::new(BPlusTreeMemtable::new()),
-            // MemtableType::SkipList => Box::new(SkipListMemtable::new()),
-            // MemtableType::HashMap => Box::new(HashMapMemtable::new()),
-            // MemtableType::DashMap => Box::new(DashMapMemtable::new()),
-            // MemtableType::ART => Box::new(BTreeMemtable::new(false)), // Temporarily use BTree instead of ART
+            // MemtableType::BTree => Some(Box::new(BTreeMemtable::new(true))),
+            // MemtableType::BPlusTree => Some(Box::new(BPlusTreeMemtable::new())),
+            // MemtableType::SkipList => Some(Box::new(SkipListMemtable::new())),
+            // MemtableType::HashMap => Some(Box::new(HashMapMemtable::new())),
+            // MemtableType::DashMap => Some(Box::new(DashMapMemtable::new())),
+            // MemtableType::ART => Some(Box::new(BTreeMemtable::new(false))),
 
-            // Return error for now - only GlobalPartitioned is used
-            _ => panic!("Unused memtable type requested: {:?}", memtable_type),
+            // Only GlobalPartitioned is wired; every other type is unavailable.
+            _ => None,
         }
     }
 
-    /// Auto-select best memtable type based on workload analysis
+    /// Auto-select best memtable type based on workload analysis.
+    ///
+    /// Returns `None` when the recommended type is not one of the wired
+    /// implementations (see [`create_typed`](Self::create_typed)).
     pub fn auto_select<K, V>(
         workload: WorkloadCharacteristics,
         config: MemtableConfig,
-    ) -> Box<dyn MemtableCore<K, V> + Send + Sync>
+    ) -> Option<Box<dyn MemtableCore<K, V> + Send + Sync>>
     where
         K: Clone + Ord + std::hash::Hash + Send + Sync + std::fmt::Debug + AsRef<[u8]> + 'static,
         V: Clone + Send + Sync + std::fmt::Debug + 'static,
@@ -363,8 +370,13 @@ where
         let mut implementations = Vec::new();
 
         for memtable_type in MemtableType::all() {
-            let implementation = MemtableFactory::create_typed(memtable_type, config.clone());
-            implementations.push((memtable_type, implementation));
+            // Only wired types yield an implementation; skip the rest (all
+            // non-GlobalPartitioned types are currently disabled).
+            if let Some(implementation) =
+                MemtableFactory::create_typed(memtable_type, config.clone())
+            {
+                implementations.push((memtable_type, implementation));
+            }
         }
 
         Self {
@@ -700,6 +712,26 @@ mod tests {
         assert_eq!(
             MemtableType::recommended_for_workload(WorkloadCharacteristics::HighConcurrency),
             MemtableType::DashMap
+        );
+    }
+
+    #[test]
+    fn create_typed_returns_none_for_disabled_types_instead_of_panicking() {
+        let config = MemtableConfig::default();
+        // Every type is currently disabled (only the WAL global-partitioned
+        // memtable is wired, via `create_for_wal`). `create_typed` must return
+        // `None` — never panic — so a future config-driven `auto_select`
+        // caller degrades gracefully.
+        for memtable_type in MemtableType::all() {
+            assert!(
+                MemtableFactory::create_typed::<String, String>(memtable_type, config.clone())
+                    .is_none(),
+                "no type is wired via create_typed yet: {memtable_type:?}"
+            );
+        }
+        assert!(
+            MemtableFactory::auto_select::<String, String>(WorkloadCharacteristics::WAL, config)
+                .is_none()
         );
     }
 

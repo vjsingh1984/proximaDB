@@ -357,9 +357,14 @@ impl VectorWriteCoordinator {
                     ));
                 }
                 warn!("WAL batch insert failed: {}", e);
+                // ADR-069 S4: preserve the `WalBackpressure` discriminant
+                // (→ "WAL_BACKPRESSURE") so the REST/gRPC boundary surfaces a
+                // retryable 429 / RESOURCE_EXHAUSTED instead of a non-retryable
+                // 400/500. Other errors keep the generic `WAL_WRITE_ERROR` code.
+                let error_code = crate::storage::persistence::write_ahead_log::flush_policy::write_batch_error_code(&e, "WAL_WRITE_ERROR");
                 Ok(BatchOperationResult::failure(
                     format!("Batch insert failed: {}", e),
-                    "WAL_WRITE_ERROR".to_string(),
+                    error_code,
                 ))
             }
         }

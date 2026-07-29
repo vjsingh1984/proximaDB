@@ -114,6 +114,17 @@ pub struct ApiConfig {
     #[serde(default)]
     pub pg_port: Option<u16>,
 
+    /// Optional override for the unified-mode internal multiplexer upstream
+    /// port (the loopback gRPC + Arrow Flight listener the TCP multiplexer
+    /// forwards HTTP/2 to). When `None` (the default), the port is resolved
+    /// from the `PROXIMADB_INTERNAL_MUX_PORT` env var, else derived as
+    /// `unified_port + 10001` (5678 → 15679, the historical constant), so
+    /// co-hosted instances with distinct unified ports get distinct internal
+    /// upstreams instead of hijacking each other's gRPC/Flight traffic
+    /// (TD-NET-1).
+    #[serde(default)]
+    pub internal_mux_port: Option<u16>,
+
     /// Optional port for the reference MCP (Model Context Protocol) surface
     /// (ADR-037 Decision 5). When `None` (the default) the MCP transport is
     /// **off** — it is bound only when a port is configured here (or via the
@@ -191,6 +202,7 @@ impl Default for ApiConfig {
             http2_max_concurrent_streams: 1000,
             max_connections: 10000,
             pg_port: None,
+            internal_mux_port: None,
             mcp_port: None,
             transport: default_transport(),
             socket_dir: None,
@@ -274,6 +286,26 @@ pub struct AdminUiConfig {
     /// (`bool::default()`).
     #[serde(default)]
     pub enabled: bool,
+
+    /// Enable client-side auto-refresh of the dashboard. Default: `false`
+    /// (`bool::default()`). When `false`, the auto-refresh toggle in the UI is
+    /// rendered **disabled** (greyed out) and the page only refreshes on an
+    /// explicit click — an operator must opt in here to allow live polling.
+    /// The setting is server-injected into the page; it does not persist per
+    /// user session beyond the configured default.
+    #[serde(default)]
+    pub auto_refresh: bool,
+
+    /// Auto-refresh poll interval in seconds. Default: `30`. Only takes effect
+    /// when `auto_refresh = true`. Clamped to a minimum of `5` at serve time so
+    /// a misconfigured tiny interval cannot DoS the diagnostic endpoints.
+    #[serde(default = "default_admin_refresh_interval")]
+    pub refresh_interval_seconds: u32,
+}
+
+/// Default admin-dashboard auto-refresh interval (seconds).
+fn default_admin_refresh_interval() -> u32 {
+    30
 }
 
 /// Request-tenant resolution mode encoded in TOML.
@@ -916,6 +948,16 @@ pub struct OptimizationConfig {
     pub enable_zone_map_pruning: bool,
 
     /// Enable AXIS indexes for approximate nearest neighbor search.
+    ///
+    /// Default is `false` per ADR-070: the co-design PAX scan + survivor cache
+    /// is the default ANN path (recall@10=0.999, ~0.5ms hot for ~600 MB RAM
+    /// per collection, vs AXIS at ~1ms for ~8.6 GB RAM). AXIS remains
+    /// available per collection via `index_configs` (the #1145 gate:
+    /// `pax_off || !index_configs.is_empty()`), independent of this flag.
+    /// NOTE (TD-AXIS-2): this flag is not yet wired to boot-time AxisManager
+    /// initialization — the manager still constructs at startup either way;
+    /// the per-collection gate is what keeps AXIS cost off co-design
+    /// collections today.
     #[serde(default = "default_enable_axis_indexes")]
     pub enable_axis_indexes: bool,
 
@@ -941,7 +983,8 @@ fn default_enable_zone_map_pruning() -> bool {
 }
 
 fn default_enable_axis_indexes() -> bool {
-    true
+    // ADR-070: co-design (PAX scan + survivor cache) is the default ANN path.
+    false
 }
 
 fn default_index_type() -> String {
@@ -1277,6 +1320,33 @@ mod tests {
         assert!(config.enable_arrow_flight);
         assert_eq!(config.http2_max_concurrent_streams, 1000);
         assert_eq!(config.max_connections, 10000);
+        assert_eq!(config.pg_port, None);
+        assert_eq!(config.internal_mux_port, None);
+    }
+
+    /// TD-NET-1 S1: `[api] internal_mux_port` deserializes when present and
+    /// defaults to `None` when absent (same optional-port pattern as
+    /// `pg_port`).
+    #[test]
+    fn api_internal_mux_port_parses_and_defaults_none() {
+        let mut value = serde_json::to_value(ApiConfig::default())
+            .unwrap_or_else(|e| panic!("default api config must serialize: {e}"));
+        let obj = value
+            .as_object_mut()
+            .unwrap_or_else(|| panic!("api config must serialize to a JSON object"));
+
+        obj.insert("internal_mux_port".to_string(), serde_json::json!(25679));
+        let parsed: ApiConfig = serde_json::from_value(value.clone())
+            .unwrap_or_else(|e| panic!("api config with internal_mux_port must parse: {e}"));
+        assert_eq!(parsed.internal_mux_port, Some(25679));
+
+        let obj = value
+            .as_object_mut()
+            .unwrap_or_else(|| panic!("api config must serialize to a JSON object"));
+        obj.remove("internal_mux_port");
+        let absent: ApiConfig = serde_json::from_value(value)
+            .unwrap_or_else(|e| panic!("api config without internal_mux_port must parse: {e}"));
+        assert_eq!(absent.internal_mux_port, None);
     }
 
     #[test]
@@ -1400,7 +1470,8 @@ mod tests {
 
         assert!(config.enable_mmap);
         assert!(config.enable_zone_map_pruning);
-        assert!(config.enable_axis_indexes);
+        // ADR-070: AXIS is opt-in; co-design PAX + survivor cache is the default.
+        assert!(!config.enable_axis_indexes);
         assert_eq!(config.default_index_type, "hnsw");
         assert!(config.enable_progressive_search);
         assert!(config.enable_bloom_filters);

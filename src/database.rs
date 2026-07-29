@@ -198,7 +198,18 @@ impl ProximaDB {
         )
         .map_err(anyhow::Error::msg)?
         {
+            // S4b: run the background warehouse compactor when both an object-store
+            // dispatch target and a compaction interval are configured (the compactor
+            // reads the object-store segments). Capture before `sink_cfg` is moved.
+            let warehouse_trigger = sink_cfg
+                .object_store_uri
+                .clone()
+                .zip(sink_cfg.warehouse_compaction_interval_s);
             crate::observability::io_trace_sink::install(sink_cfg).map_err(anyhow::Error::msg)?;
+            if let Some((uri, interval_s)) = warehouse_trigger {
+                crate::observability::io_trace_warehouse::install(uri, interval_s)
+                    .map_err(anyhow::Error::msg)?;
+            }
         }
         // Co-design C5 (integration): register the tenant→tier Port to read the
         // header-fed tier registry (`X-Tenant-Tier` → `record_store::TENANT_TIERS`),
@@ -255,11 +266,11 @@ impl ProximaDB {
         //
         //   1. **Prometheus level gauge** — in-memory `.set()` of the resident level
         //      that Prometheus integrates downstream. Default 5min (env
-        //      `PROXIMADB_KSU_GAUGE_INTERVAL_SECS`); storage doesn't move faster, so
+        //      `PROXIMADB_METERING_KSU_GAUGE_INTERVAL_SECS`); storage doesn't move faster, so
         //      a per-minute poll only multiplied the list-collections work.
         {
             let cs = collection_service.clone();
-            let interval_secs = std::env::var("PROXIMADB_KSU_GAUGE_INTERVAL_SECS")
+            let interval_secs = std::env::var("PROXIMADB_METERING_KSU_GAUGE_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .filter(|s| *s > 0)
@@ -379,16 +390,17 @@ impl ProximaDB {
                         resolver_cache,
                     ),
                 );
-                if storage_engine
-                    .compaction_manager()
-                    .set_precision_resolver(resolver.clone())
-                    .is_ok()
-                {
-                    tracing::info!(
-                        "✅ Compaction wired with CanonicalPrecisionResolver — \
-                         fp16 collections will preserve precision through compaction"
-                    );
-                }
+                // TD-PRECISE-GLOBAL: arm the process-global resolver so EVERY
+                // Compaction stamps precision_hint — including the per-collection
+                // SstEngines the boot path can't individually wire. The former
+                // `storage_engine.compaction_manager().set_precision_resolver(..)`
+                // targeted the StorageEngine's idle instance, so fp16/bf16/int8
+                // collections silently degraded to fp32 at compaction.
+                crate::storage::engines::sst::set_global_precision_resolver(resolver.clone());
+                tracing::info!(
+                    "✅ Global compaction precision resolver armed — fp16/bf16/int8 \
+                     collections preserve precision through compaction"
+                );
                 // Also wire the resolver into the REST/gRPC vector
                 // batch path so direct inserts coerce to the
                 // collection's canonical precision (matches what the
@@ -446,7 +458,11 @@ impl ProximaDB {
             .grpc(|g| g.bind_address(grpc_addr))
             .with_api_config(config.api.clone())
             .with_data_dir(config.server.data_dir.clone())
-            .with_admin_ui_enabled(config.server.admin_ui.enabled);
+            .with_admin_ui_enabled(config.server.admin_ui.enabled)
+            .with_admin_ui_refresh(
+                config.server.admin_ui.auto_refresh,
+                config.server.admin_ui.refresh_interval_seconds,
+            );
 
         // Add TLS configuration if enabled
         if config.api.enable_tls.unwrap_or(false) {
@@ -733,6 +749,21 @@ impl ProximaDB {
     pub async fn start(&mut self) -> anyhow::Result<()> {
         tracing::info!("🚀 ProximaDB::start - Starting database services...");
 
+        // TD-COMPACT-9: seed the coarse-probe (IVF) settings AUTHORITATIVELY from
+        // the loaded server config. Production `SstEngine::new()` uses
+        // `SstConfig::default()` (coarse_probe = None), so without this the
+        // `[storage.sst_config.coarse_probe]` TOML surface (nprobe_multiplier,
+        // enable_read_probe/write_train) was silently ignored. The overwritable
+        // seed (a `Some` config always wins) makes the TOML effective regardless
+        // of engine-construction order; env vars still override at call time.
+        crate::storage::engines::sst::segment_format::init_coarse_probe_settings(
+            self._config
+                .storage
+                .sst_config
+                .as_ref()
+                .and_then(|sst| sst.coarse_probe.as_ref()),
+        );
+
         // Step 1: Start the storage engine. It restores the catalog, registers
         // collection storage engines, and replays WAL in that dependency order.
         tracing::info!(
@@ -790,6 +821,87 @@ impl ProximaDB {
                 })?;
         }
 
+        // TD-CACHE-1 S2: background restart warming — replay per-tenant
+        // warm-set manifests (demand-proven hot ranges from the previous
+        // instance) + control-invariants prefill for the referenced segments.
+        // Background task: boot latency unaffected; tenants without manifests
+        // cost one negative read each. Gated by PROXIMADB_CACHE_PREFILL.
+        {
+            let base_url = self._config.storage.storage_urls().into_iter().next();
+            if let Some(base_url) = base_url {
+                tokio::spawn(async move {
+                    let factory = match crate::storage::persistence::filesystem::FilesystemFactory::create_default().await {
+                        Ok(f) => std::sync::Arc::new(f),
+                        Err(e) => {
+                            tracing::warn!("cache warming skipped (fs init): {e}");
+                            return;
+                        }
+                    };
+                    // Small grace so engine arming (which registers the cache
+                    // handles) has completed before replay looks them up.
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    // Tenants = catalog-tagged tenant ids ∪ the single-tenant
+                    // default — manifests are keyed by the REQUEST tenant, which
+                    // is "default" for untagged/single-tenant deployments.
+                    let mut tenant_set: std::collections::HashSet<String> =
+                        crate::storage::persistence::write_ahead_log::list_collections_from_catalog()
+                            .await
+                            .iter()
+                            .filter_map(proximadb_tenant::tenant_id_of)
+                            .collect();
+                    tenant_set.insert("default".to_string());
+                    let tenants: Vec<String> = tenant_set.into_iter().collect();
+                    crate::storage::engines::sst::warming::boot_warm(factory, base_url, tenants)
+                        .await;
+                });
+            }
+        }
+
+        // TD-CACHE-1 S4: eviction-notice fast-drain — opt-in IMDS watch
+        // (`PROXIMADB_EVICTION_WATCH=azure|aws|gcp`). On the Spot notice
+        // (which precedes SIGTERM and may be followed by a hard kill),
+        // persist the warm manifests and flush the memtable early.
+        if let Ok(provider) = std::env::var("PROXIMADB_EVICTION_WATCH") {
+            let provider = provider.trim().to_ascii_lowercase();
+            if !provider.is_empty() && provider != "0" && provider != "off" {
+                let base_url = self._config.storage.storage_urls().into_iter().next();
+                if let Some(base_url) = base_url {
+                    let storage = self.storage.clone();
+                    tokio::spawn(async move {
+                        let factory = match crate::storage::persistence::filesystem::FilesystemFactory::create_default().await {
+                            Ok(f) => std::sync::Arc::new(f),
+                            Err(e) => {
+                                tracing::warn!("eviction watch skipped (fs init): {e}");
+                                return;
+                            }
+                        };
+                        let flush: std::sync::Arc<
+                            dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync,
+                        > = std::sync::Arc::new(move || {
+                            let storage = storage.clone();
+                            Box::pin(async move {
+                                let engine = storage.read().await;
+                                match engine.flush_memtable_to_storage().await {
+                                    Ok(r) => tracing::info!(
+                                        collections = r.collections_flushed,
+                                        vectors = r.total_vectors_flushed,
+                                        "fast-drain memtable flush complete"
+                                    ),
+                                    Err(e) => {
+                                        tracing::warn!("fast-drain memtable flush failed: {e}")
+                                    }
+                                }
+                            })
+                        });
+                        crate::storage::engines::sst::warming::eviction_watch(
+                            provider, factory, base_url, flush,
+                        )
+                        .await;
+                    });
+                }
+            }
+        }
+
         // Step 5: Initialize RL Query Planner (if enabled)
         tracing::info!("🎯 ProximaDB::start - Step 5: Initializing RL Query Planner...");
         self.init_rl_planner().await?;
@@ -816,6 +928,14 @@ impl ProximaDB {
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
         info!("Graceful shutdown requested");
 
+        // TD-LIFECYCLE-1: signal every registered background loop FIRST so
+        // cooperative exits overlap the rest of the shutdown sequence (no
+        // in-flight discovery/observer pass outlives the runtime).
+        let fired = crate::services::shutdown_registry::fire_all();
+        if fired > 0 {
+            tracing::info!(loops = fired, "background loops signaled to stop");
+        }
+
         // Persist the learned route cost model so measured history survives the
         // restart (best-effort; off the hot path, on graceful shutdown only).
         crate::query::route_cost_model::persist_cost_model(&self._config.server.data_dir);
@@ -823,6 +943,7 @@ impl ProximaDB {
         // TD-TRACE-2: flush + stop the durable io_trace sink so buffered trace
         // segments are sealed to disk (no-op if the sink was not installed).
         crate::observability::io_trace_sink::shutdown().await;
+        crate::observability::io_trace_warehouse::shutdown().await;
 
         // 1a. Stop the async-ingest drainer first so it stops consuming
         //     before we shut down the storage layer it inserts into.
@@ -875,6 +996,53 @@ impl ProximaDB {
                 Ok(Ok(())) => tracing::debug!("Graph WAL flush complete"),
                 Ok(Err(e)) => tracing::warn!("Graph WAL flush error: {}", e),
                 Err(_) => tracing::warn!("Graph WAL flush timeout - forcing continuation"),
+            }
+        }
+
+        // TD-FLUSH-4: await in-flight inline size-flushes FIRST — a triggered
+        // materialize takes tens of seconds (measured 43.9s at 884k entries)
+        // and must complete + rename into place before teardown; killing it
+        // strands a __flush/ staging file that startup cleanup deletes.
+        let stragglers = crate::storage::persistence::write_ahead_log::drain_inline_flushes(
+            std::time::Duration::from_secs(90),
+        )
+        .await;
+        if stragglers > 0 {
+            tracing::warn!(
+                stragglers,
+                "in-flight flush(es) did not finish before shutdown"
+            );
+        }
+
+        // TD-CACHE-1 S2: persist per-tenant warm-set manifests so the next
+        // boot (Spot replacement) replays the measured hot set instead of
+        // paying the cold herd. Best-effort with a hard timeout — shutdown
+        // never blocks on the object store.
+        {
+            let base_url = self._config.storage.storage_urls().into_iter().next();
+            if let Some(base_url) = base_url {
+                match crate::storage::persistence::filesystem::FilesystemFactory::create_default()
+                    .await
+                {
+                    Ok(factory) => {
+                        let factory = std::sync::Arc::new(factory);
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(10),
+                            crate::storage::engines::sst::warming::emit_warm_manifests(
+                                &factory, &base_url,
+                            ),
+                        )
+                        .await
+                        {
+                            Ok(n) if n > 0 => {
+                                tracing::info!("🔥 {n} warm manifest(s) persisted for next boot")
+                            }
+                            Ok(_) => {}
+                            Err(_) => tracing::warn!("warm manifest emit timed out (skipped)"),
+                        }
+                    }
+                    Err(e) => tracing::warn!("warm manifest emit skipped (fs init): {e}"),
+                }
             }
         }
 

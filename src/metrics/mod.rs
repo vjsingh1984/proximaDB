@@ -26,6 +26,7 @@ pub mod collectors;
 pub mod consumption_metrics;
 pub mod io_trace_sink_metrics;
 pub mod metering_writer;
+pub mod operational_metrics;
 pub mod query_service;
 pub mod store;
 #[cfg(test)]

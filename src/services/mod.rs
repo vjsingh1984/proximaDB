@@ -168,6 +168,7 @@
 //! - Cache hit rates
 
 pub mod advisor_observations;
+pub mod agent_checkpoint;
 pub mod agent_memory;
 pub mod audit_sink;
 pub mod bulk_load;
@@ -196,6 +197,7 @@ pub mod record_store;
 pub mod scan_cursor;
 pub mod schema;
 pub mod search;
+pub mod shutdown_registry;
 pub mod snapshot;
 pub mod system_catalog;
 pub mod system_catalog_state;

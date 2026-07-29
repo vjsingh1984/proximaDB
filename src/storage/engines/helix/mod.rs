@@ -1406,16 +1406,17 @@ impl UnifiedStorageFormat for HelixEngine {
                 .push(metadata.clone());
         }
 
-        // Notify EventLog for AXIS indexing
-        let flush_handler = eventlog_integration::HelixFlushHandler::new();
-        flush_handler
-            .notify_flush_complete(
-                params,
-                vec![file_path.to_string_lossy().to_string()],
-                &sorted_records,
-                hilbert_range,
-            )
-            .await?;
+        // Index the just-flushed vectors into AXIS directly (ADR-078). The
+        // former queue hop re-read these vectors back out of storage; they are
+        // already on `params`. `hilbert_range` is not carried across: AXIS never
+        // consumed it (the DataFusion HELIX adapter derives its own via
+        // `estimate_hilbert_range`).
+        crate::storage::common::axis_flush_hook::index_flushed_into_axis(
+            self.axis_manager().cloned(),
+            params,
+            vec![file_path.to_string_lossy().to_string()],
+        )
+        .await;
 
         // Update metrics
         {

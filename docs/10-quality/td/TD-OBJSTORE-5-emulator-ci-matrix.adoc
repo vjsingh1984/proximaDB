@@ -3,7 +3,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **S1 + S3 + S4 LANDED (2026-07-17); S2 open.** S1 PR-tier Azurite restart gate = #1072 (path-gated `object-store-restart-recovery` job, `--restart` scope; the batch-3 zero-vector arm flipped INTO the gate once TD-OBJSTORE-4 greened it). S3 QA tier = `--qa` scope + `objstore-restart-qa-tier` job in qa-gate.yml: one `cloud-full` build, restart proofs on Azure then S3 (Azurite stopped before the S3 group — cross-store leakage fails loudly), cold recall ratchet (`cold_recall_ratchet_survives_restart`, recall@5 ≥ 0.9 vs brute force) on Azure. S4 nightly = `--nightly` scope + `objstore-nightly.yml` (scheduled, GCS/fake-gcs best-effort, never a gate). The 90m QA cap is a measured ratchet — record the first cold-cache wall time here and tighten. **S2 LANDED** (`tests/objstore_backend_contract_test.rs`, wired into the `--restart` tier): per-primitive contract tests on the production root FileSystem backends — PUT→prefix-LIST sees the object, prefix-`exists()` is false while LIST is positive (the flat-keyspace fact behind the forbidden prefix-exists gate), exact-key `exists()` true, and GCS multi-page LIST returns all objects (page size pinned to 2). Azure + S3 strict; GCS best-effort (skips if the backend does not register). Plus `armed_compaction_on_object_store_preserves_all_records` (from the #1082 staged-I/O review): a 3-boot armed-compaction e2e (flush ×2 → inline compaction → fresh-disk readback of BOTH batches, no URL-as-local-path artifact) proving the staged compaction write on cloud.
+| Status | **Core S1–S4 matrix and S2 contract LANDED; cost ratchet incomplete (reconciled 2026-07-21).** #1072 is the path-gated strict Azurite restart job; #1080 is the sequential Azure+S3 QA tier plus Azure recall ratchet and nightly best-effort GCS; #1088 adds production-backend prefix/LIST/exact-HEAD/GCS-pagination contracts and the cloud-compaction e2e; #1129 adds strict Azure/S3 `write_if_absent` conflict tests and caching/encryption decorator guards. fake-gcs remains correctly best-effort because it does not enforce `ifGenerationMatch=0`. This TD remains open because the first cold-cache QA wall time has not been recorded to turn the 90-minute cap into a measured ratchet.
 | Severity | High — object-store durability regressions currently surface only on the live anvaiops testbed (days-long feedback loop); batch 3 proved a class of bug the file:// suites structurally cannot catch.
 | Component | `scripts/run_cloud_emulator_tests.sh`, `.github/workflows/ci.yml` (`object-store-emulator-tests`), `.github/workflows/qa-gate.yml`, `apps/proximadb-server/tests/object_store_restart_recovery.rs`
 | Relates | ADR-063 (D8), TD-OBJSTORE-1/2/4, TD-168 (Cool-tier emulator validation)
@@ -80,7 +80,10 @@ failure is reproducible on a workstation with Docker (single source of truth).
 == Gates
 
 * S1 red-first on develop, green with TD-OBJSTORE-4 — proving the gate bites.
-* S2 contract tests strict on all three emulators (they need no server).
+* S2 contract tests strict on Azure + S3 and best-effort on GCS (they need no
+  server), including create-only conflict semantics through the production root
+  backend and caching/encryption wrappers. Prefix/LIST/pagination landed in #1088;
+  `write_if_absent` conformance landed in #1129.
 * S3 recall within ratchet tolerance of the file:// baseline.
 * Script exits non-zero on any strict-tier failure; GCS/nightly failures warn + file.
 

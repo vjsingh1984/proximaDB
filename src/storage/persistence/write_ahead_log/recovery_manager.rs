@@ -154,6 +154,9 @@ impl RecoveryManager {
             "🔄 Starting WAL recovery using global manifest (mode: {:?})",
             self.recovery_mode
         );
+        // TD-WAL-1 S6: measure this boot's replay wall-clock for the
+        // `proximadb_wal_replay_duration_seconds` gauge.
+        let replay_started_at = std::time::Instant::now();
 
         // Get the recovery thread pool
         let thread_pool = get_recovery_thread_pool();
@@ -207,6 +210,9 @@ impl RecoveryManager {
         if collections.is_empty() {
             // Recovery phase complete
             recovery_guard.complete(0, 0).await;
+            crate::metrics::wal_flush_metrics::set_replay_duration(
+                replay_started_at.elapsed().as_secs_f64(),
+            );
             return Ok(WalRecoveryStats::default());
         }
 
@@ -327,6 +333,9 @@ impl RecoveryManager {
             info!("🧹 Removed {} flushed manifest entries", removed);
         }
 
+        crate::metrics::wal_flush_metrics::set_replay_duration(
+            replay_started_at.elapsed().as_secs_f64(),
+        );
         Ok(stats)
     }
 
@@ -631,6 +640,24 @@ impl RecoveryManager {
             anyhow::bail!("recovery materialization failed for collection {collection_id}");
         }
 
+        // Test-only crash-point seam (default unset ⇒ normal retirement, no runtime cost
+        // on the hot path — recovery is infrequent). Simulates a process crash at a
+        // precise point in the post-materialization retirement sequence so the two
+        // recovery double-replay crash windows are deterministically reproducible in the
+        // full-server restart harness (TD-OBJSTORE-4 S3). `after_materialize` = crash right
+        // after the segment `write_if_absent` commit, before the manifest is marked flushed
+        // (W1: next boot re-replays → `AlreadyExists` idempotency).
+        let recovery_crash_point =
+            std::env::var("PROXIMADB_TEST_RECOVERY_CRASH_POINT").unwrap_or_default();
+        if recovery_crash_point == "after_materialize" {
+            warn!(
+                collection = %collection_id,
+                "PROXIMADB_TEST_RECOVERY_CRASH_POINT=after_materialize: skipping manifest \
+                 mark-flushed and WAL retirement to simulate a crash after materialization"
+            );
+            return Ok((vectors.len() as u64, replay.len() as u64));
+        }
+
         if crate::storage::persistence::write_ahead_log::manifest::get_service().is_some() {
             for object in replay.iter().filter(|object| !object.manifested) {
                 let file_name = object
@@ -662,6 +689,17 @@ impl RecoveryManager {
                 .await?;
         } else if crate::storage::persistence::write_ahead_log::recovery_token::certified_mode() {
             anyhow::bail!("certified recovery cannot repair an uninitialized manifest cache");
+        }
+        // W2: crash after the manifest is marked flushed but before WAL retirement — next
+        // boot sees the WAL present + manifest `Flushed` and skips it via the durable
+        // skip-list, retiring the stranded object. Test-only (default unset ⇒ normal path).
+        if recovery_crash_point == "after_mark_flushed" {
+            warn!(
+                collection = %collection_id,
+                "PROXIMADB_TEST_RECOVERY_CRASH_POINT=after_mark_flushed: skipping WAL \
+                 retirement to simulate a crash after mark-flushed"
+            );
+            return Ok((vectors.len() as u64, replay.len() as u64));
         }
         for object in &replay {
             if let Err(error) = disk_manager
@@ -701,6 +739,13 @@ impl RecoveryManager {
                 bases.push(normalized);
             }
         };
+        // ADR-069 S1: when an opt-in local WAL root is set (PROXIMADB_WAL_LOCAL_DIR),
+        // the write path roots the WAL there — prepend it as a candidate base so
+        // replay lists it (otherwise the .bcwal on /waldisk is missed → restart data
+        // loss). Listed FIRST so a present local WAL short-circuits the union.
+        if let Some(local) = crate::storage::persistence::write_ahead_log::local_wal_dir_env() {
+            push_base(&mut bases, &local);
+        }
         if let Some(base) = catalog_base {
             push_base(&mut bases, base);
         }

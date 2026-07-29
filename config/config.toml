@@ -18,6 +18,12 @@ default_tenant = "default"
 # See docs/04-operations/admin-dashboard.adoc.
 [server.admin_ui]
 enabled = false
+# Client-side auto-refresh of the dashboard. When false (default) the
+# auto-refresh toggle in the UI is rendered disabled (greyed out) and the page
+# only refreshes on an explicit click. Set true to allow live polling.
+auto_refresh = false
+# Auto-refresh poll interval in seconds (only effective when auto_refresh = true).
+refresh_interval_seconds = 30
 
 [storage]
 # Metadata storage (collection definitions, schemas)
@@ -50,8 +56,10 @@ tags = ["local", "disk3"]
 enable_mmap = true
 # Enable zone map pruning to skip irrelevant blocks (30-50% faster search)
 enable_zone_map_pruning = true
-# Enable AXIS indexes for approximate nearest neighbor search
-enable_axis_indexes = true
+# Enable AXIS indexes for approximate nearest neighbor search.
+# ADR-070: false by default — the co-design PAX scan + survivor cache is the
+# default ANN path; collections opt into AXIS per-collection via index_configs.
+enable_axis_indexes = false
 # Default index type for new collections: flat, hnsw, ivf, lsh
 default_index_type = "hnsw"
 # Enable progressive quantization search (Binary → INT8 → FP32)
@@ -178,6 +186,10 @@ enabled = false
 # compression = "zstd"
 # format = "jsonl"
 # spool_max_bytes = 268435456      # 256 MiB; drop-oldest on overflow
+# object_store_uri = "az://acct/container"   # S2 dispatch target (else local-only)
+# access_tier = "cold"                        # S2 at-rest tier (hot/cool/cold/archive)
+# warehouse_compaction_interval_s = 900       # S4b: compact envelopes → Iceberg Parquet
+                                              #      every N s (0/unset = off; needs object_store_uri)
 
 # ==============================================================================
 # LLM Integration Configuration (Q4 2025)
@@ -286,6 +298,21 @@ collection_affinity = true
 # cold_age_threshold_days = 7                # demote to Cold after this many days
 # archive_age_threshold_days = 30            # archive after this many days
 # hot_access_threshold = 100                 # promote to Hot after N accesses
+
+# PAX coarse-probe (IVF) — the master cloud-cost lever. Compaction trains +
+# emits the A0 coarse directory; search probes the nearest `nprobe` cells
+# instead of full-scanning. Cuts GETs/query ~4x and per-tenant COGS ~4x vs
+# full-scan (COGS measurement arc), recall ~0.98. Env overrides still win:
+# PROXIMADB_PAX_READ_COARSE_PROBE, PROXIMADB_PAX_READ_COARSE_NPROBE,
+# PROXIMADB_PAX_WRITE_A0_TRAIN.
+# Default: all ON, geometric nprobe (sqrt(ncells) x multiplier).
+#
+# [storage.sst_config.coarse_probe]
+# enable_read_probe = true                   # search probes A0 (kill-switch)
+# enable_write_train = true                  # compaction emits v3/A0 (the COGS unblock)
+# nprobe_multiplier = 1.0                    # nprobe = ceil(sqrt(ncells) x mult); 1.5 = higher recall
+# nprobe_min = 3
+# nprobe_max = 0                             # 0 = unlimited (capped at ncells)
 
 # [storage.viper_config]
 # row_group_size = 100000

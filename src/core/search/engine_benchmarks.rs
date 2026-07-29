@@ -400,7 +400,7 @@ impl StorageEngineBenchmark {
 
         let search_params = Arc::new(SearchParams {
             query_vectors: Some(vec![query_vector]),
-            top_k: Some(top_k),
+            top_k: Some(top_k as u16),
             distance_metric: Some(DistanceMetric::Cosine),
             filter_expression: None,
             custom_hints: Some(HashMap::new()),

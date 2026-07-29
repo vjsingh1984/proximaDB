@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use super::filter_lattice::{SecurityFilter, unsatisfiable_expression};
 use super::policy::{FilterOperator, Operation, RLSPolicy, SecurityPredicate, ValueSource};
 use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::security::rbac_service::UnifiedUserContext;
@@ -66,11 +67,17 @@ impl RLSFilterResult {
         }
     }
 
-    /// Create a result indicating access is denied
+    /// Create a result indicating access is denied.
+    ///
+    /// The filter is an **explicitly unsatisfiable expression**, not `None`.
+    /// `None` here used to mean "no restriction", so a consumer that forwarded
+    /// `.filter` to a scan without also checking `access_denied` read the full
+    /// table on the denial path. Defense in depth: honouring either field alone
+    /// now yields zero rows.
     pub fn denied(reason: impl Into<String>) -> Self {
         Self {
-            filters_applied: false,
-            filter: None,
+            filters_applied: true,
+            filter: Some(unsatisfiable_expression()),
             applied_policies: Vec::new(),
             access_denied: true,
             denial_reason: Some(reason.into()),
@@ -219,19 +226,20 @@ impl CollectionRLS {
             return Ok(Arc::new(RLSFilterResult::no_filters()));
         }
 
-        // Build combined filter from all applicable policies
-        let mut filters = Vec::new();
+        // Lower every applicable policy, then AND them in the lattice: all
+        // policies must be satisfied, and one `Unsatisfiable` denies the read.
+        let mut lowered = Vec::with_capacity(applicable_policies.len());
         let mut applied_policy_names = Vec::new();
 
         for policy in applicable_policies {
             match self.build_filter(&policy.predicate, user_context) {
-                Ok(Some(filter)) => {
-                    filters.push(filter);
-                    applied_policy_names.push(policy.name.clone());
-                }
-                Ok(None) => {
-                    // AlwaysAllow - no filter needed
-                    continue;
+                Ok(filter) => {
+                    // An `Unrestricted` policy contributes no name — it applied
+                    // but restricted nothing.
+                    if !matches!(filter, SecurityFilter::Unrestricted) {
+                        applied_policy_names.push(policy.name.clone());
+                    }
+                    lowered.push(filter);
                 }
                 Err(e) => {
                     if self.config.debug_logging {
@@ -246,19 +254,12 @@ impl CollectionRLS {
             }
         }
 
-        let result = if filters.is_empty() {
-            RLSFilterResult::no_filters()
-        } else {
-            // Combine all filters with AND (all policies must be satisfied)
-            let combined_filter = if filters.len() == 1 {
-                filters.into_iter().next().ok_or_else(|| {
-                    anyhow!("Failed to extract filter from non-empty filters vector")
-                })?
-            } else {
-                FilterExpression::And(filters)
-            };
-
-            RLSFilterResult::with_filter(combined_filter, applied_policy_names)
+        let combined = SecurityFilter::all(lowered);
+        let result = match combined.into_expression() {
+            // `None` is now reachable only when every applicable policy genuinely
+            // permitted everything.
+            None => RLSFilterResult::no_filters(),
+            Some(expr) => RLSFilterResult::with_filter(expr, applied_policy_names),
         };
 
         let result = Arc::new(result);
@@ -278,30 +279,36 @@ impl CollectionRLS {
         Ok(result)
     }
 
-    /// Build a filter expression from a security predicate
+    /// Lower a security predicate into the total, deny-biased [`SecurityFilter`]
+    /// lattice (FA-a / TF-2 S1–S2).
+    ///
+    /// The old signature was `Result<Option<FilterExpression>>`, where `None`
+    /// meant *no restriction* — and so gave `Not` an inversion channel, because
+    /// `AlwaysAllow` and "nothing to say" produced the same `None`. Every arm now
+    /// returns an explicit lattice point; `Err` is reserved for a genuine
+    /// evaluation failure (a missing subject attribute), which the caller turns
+    /// into a denial.
     fn build_filter(
         &self,
         predicate: &SecurityPredicate,
         user_context: &UnifiedUserContext,
-    ) -> Result<Option<FilterExpression>> {
+    ) -> Result<SecurityFilter> {
         match predicate {
-            SecurityPredicate::OwnerOnly { metadata_field } => {
-                Ok(Some(FilterExpression::Comparison {
-                    field: metadata_field.clone(),
-                    operator: ComparisonOperator::Equals,
-                    value: serde_json::Value::String(user_context.user_id.clone()),
-                }))
-            }
+            SecurityPredicate::OwnerOnly { metadata_field } => Ok(SecurityFilter::comparison(
+                metadata_field.clone(),
+                ComparisonOperator::Equals,
+                serde_json::Value::String(user_context.user_id.clone()),
+            )),
 
             SecurityPredicate::TenantIsolation {
                 record_tenant_field,
             } => {
                 match &user_context.tenant_id {
-                    Some(tenant_id) => Ok(Some(FilterExpression::Comparison {
-                        field: record_tenant_field.clone(),
-                        operator: ComparisonOperator::Equals,
-                        value: serde_json::Value::String(tenant_id.clone()),
-                    })),
+                    Some(tenant_id) => Ok(SecurityFilter::comparison(
+                        record_tenant_field.clone(),
+                        ComparisonOperator::Equals,
+                        serde_json::Value::String(tenant_id.clone()),
+                    )),
                     None => {
                         // No tenant context - deny access to tenant-isolated collections
                         Err(anyhow!("Tenant context required for tenant-isolated data"))
@@ -319,16 +326,15 @@ impl CollectionRLS {
                     .any(|v| user_context.roles.contains(v));
 
                 if has_access {
-                    // User has required role - no additional filter needed
-                    Ok(None)
+                    // The role is held: this predicate restricts nothing.
+                    Ok(SecurityFilter::Unrestricted)
                 } else {
-                    // User lacks required role - filter to empty set
-                    // Use an impossible filter (field equals impossible value)
-                    Ok(Some(FilterExpression::Comparison {
-                        field: metadata_field.clone(),
-                        operator: ComparisonOperator::Equals,
-                        value: serde_json::Value::String("__rls_access_denied__".to_string()),
-                    }))
+                    // The role is not held: admit nothing. This replaces a
+                    // `metadata_field == "__rls_access_denied__"` sentinel — a
+                    // *value* comparison, so a record that happened to carry that
+                    // literal string satisfied the denial filter and leaked.
+                    let _ = metadata_field;
+                    Ok(SecurityFilter::Unsatisfiable)
                 }
             }
 
@@ -341,20 +347,20 @@ impl CollectionRLS {
                     anyhow!("User department attribute '{}' not found", user_dept_field)
                 })?;
 
-                Ok(Some(FilterExpression::Comparison {
-                    field: record_dept_field.clone(),
-                    operator: ComparisonOperator::Equals,
-                    value: serde_json::Value::String(user_dept.clone()),
-                }))
+                Ok(SecurityFilter::comparison(
+                    record_dept_field.clone(),
+                    ComparisonOperator::Equals,
+                    serde_json::Value::String(user_dept.clone()),
+                ))
             }
 
             SecurityPredicate::TimeBasedAccess { expiry_field } => {
                 let now = Utc::now().timestamp();
-                Ok(Some(FilterExpression::Comparison {
-                    field: expiry_field.clone(),
-                    operator: ComparisonOperator::GreaterThan,
-                    value: serde_json::Value::Number(now.into()),
-                }))
+                Ok(SecurityFilter::comparison(
+                    expiry_field.clone(),
+                    ComparisonOperator::GreaterThan,
+                    serde_json::Value::Number(now.into()),
+                ))
             }
 
             SecurityPredicate::ClassificationBased {
@@ -381,11 +387,11 @@ impl CollectionRLS {
                     .map(|s| serde_json::Value::String(s.clone()))
                     .collect();
 
-                Ok(Some(FilterExpression::Comparison {
-                    field: record_field.clone(),
-                    operator: ComparisonOperator::In,
-                    value: serde_json::Value::Array(accessible_levels),
-                }))
+                Ok(SecurityFilter::comparison(
+                    record_field.clone(),
+                    ComparisonOperator::In,
+                    serde_json::Value::Array(accessible_levels),
+                ))
             }
 
             SecurityPredicate::CustomFilter {
@@ -396,58 +402,42 @@ impl CollectionRLS {
                 let value = self.resolve_value_source(value_source, user_context)?;
                 let comp_operator = self.convert_operator(operator);
 
-                Ok(Some(FilterExpression::Comparison {
-                    field: field.clone(),
-                    operator: comp_operator,
+                Ok(SecurityFilter::comparison(
+                    field.clone(),
+                    comp_operator,
                     value,
-                }))
+                ))
             }
 
             SecurityPredicate::And(predicates) => {
-                let mut filters = Vec::new();
+                let mut parts = Vec::with_capacity(predicates.len());
                 for predicate in predicates {
-                    if let Some(filter) = self.build_filter(predicate.as_ref(), user_context)? {
-                        filters.push(filter);
-                    }
+                    parts.push(self.build_filter(predicate.as_ref(), user_context)?);
                 }
-
-                match filters.len() {
-                    0 => Ok(None),
-                    1 => Ok(Some(filters.into_iter().next().ok_or_else(|| {
-                        anyhow!("Failed to extract filter from non-empty filters vector")
-                    })?)),
-                    _ => Ok(Some(FilterExpression::And(filters))),
-                }
+                Ok(SecurityFilter::all(parts))
             }
 
             SecurityPredicate::Or(predicates) => {
-                let mut filters = Vec::new();
+                let mut parts = Vec::with_capacity(predicates.len());
                 for predicate in predicates {
-                    if let Some(filter) = self.build_filter(predicate.as_ref(), user_context)? {
-                        filters.push(filter);
-                    }
+                    parts.push(self.build_filter(predicate.as_ref(), user_context)?);
                 }
-
-                match filters.len() {
-                    0 => Ok(None),
-                    1 => Ok(Some(filters.into_iter().next().ok_or_else(|| {
-                        anyhow!("Failed to extract filter from non-empty filters vector")
-                    })?)),
-                    _ => Ok(Some(FilterExpression::Or(filters))),
-                }
+                Ok(SecurityFilter::any(parts))
             }
 
-            SecurityPredicate::Not(inner) => {
-                if let Some(inner_filter) = self.build_filter(inner, user_context)? {
-                    Ok(Some(FilterExpression::Not(Box::new(inner_filter))))
-                } else {
-                    Ok(None)
-                }
-            }
+            // Negation is where the old shape inverted: an inner `None` had
+            // nothing to negate, so `Not(AlwaysAllow)` — deny-all — returned the
+            // full table. The lattice negates `Unrestricted` to `Unsatisfiable`
+            // and null-guards a restriction's complement (S2).
+            SecurityPredicate::Not(inner) => Ok(self.build_filter(inner, user_context)?.negate()),
 
-            SecurityPredicate::AlwaysAllow => Ok(None),
+            SecurityPredicate::AlwaysAllow => Ok(SecurityFilter::Unrestricted),
 
-            SecurityPredicate::AlwaysDeny => Err(anyhow!("Access denied by security policy")),
+            // Was `Err`, which denied the whole read rather than composing: an
+            // `Or([AlwaysDeny, P])` collapsed to a denial instead of `P`. As a
+            // lattice point it composes correctly and still admits nothing on its
+            // own.
+            SecurityPredicate::AlwaysDeny => Ok(SecurityFilter::Unsatisfiable),
         }
     }
 

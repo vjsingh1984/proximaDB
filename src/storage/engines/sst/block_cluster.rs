@@ -262,6 +262,31 @@ fn ivf_fine_cell_count(n_usable: usize, dim: usize) -> usize {
         .unwrap_or_else(|| ((n_usable * dim) / iop_target.max(1)).clamp(2, 4096))
 }
 
+/// k-means convergence floor: enough samples per centroid to estimate a stable
+/// centroid in the (low) PCA-projected dimension. k-means is well-converged by
+/// ~tens of samples/centroid; 64 is a generous margin.
+const IVF_MIN_SAMPLES_PER_CENTROID: usize = 64;
+
+/// Upper bound on the default train sample to keep PCA-fit + k-means cost
+/// bounded at extreme scale (cluster time is ~19% of compaction; finalize
+/// dominates, but we still don't want the sample to grow without limit).
+const IVF_TRAIN_SAMPLE_CAP: usize = 200_000;
+
+/// TD-COMPACT-1: default IVF train-sample floor, SCALED with the cell count `k`.
+/// Because `k ∝ N` ([`ivf_fine_cell_count`], one cell ≈ one IOP-sized block), a
+/// fixed sample means samples-per-centroid DECAYS as the LSM tree grows
+/// (L0→L1→L2…): at ~26M usable rows a fixed 50k sample drops below the k-means
+/// convergence floor and centroids become underrepresented → worse ordering →
+/// worse block-centroid prune → more GETs. Scaling the floor with `k` holds
+/// samples/centroid stable across levels. At small `k` this is just the 50k
+/// baseline (behavior unchanged for ≤~26M); at large `k` (higher levels / larger
+/// collections) it grows, capped to bound PCA/k-means cost.
+fn default_train_sample(k: usize) -> usize {
+    (50_000)
+        .max(k.saturating_mul(IVF_MIN_SAMPLES_PER_CENTROID))
+        .min(IVF_TRAIN_SAMPLE_CAP)
+}
+
 /// TD-WLP-4b: PCA projection dimensionality = max of two logarithmic terms
 /// (`a·log2 dim` intrinsic-dim, `b·log2 k` partition-granularity insurance),
 /// env-tunable (`PROXIMADB_IVF_NCOMP[_A|_B]`). See the sweep notes at the
@@ -370,11 +395,17 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
     // then project + assign ALL rows. Cuts pca_fit + kmeans ~N/sample (~20x at
     // SIFT1M) with negligible recall impact; project/assign still cover all N.
     // Deterministic stride (a physical layout must not depend on RNG).
+    //
+    // TD-COMPACT-1: the default floor scales with `k` (via
+    // [`default_train_sample`]) so samples-per-centroid stays above the k-means
+    // convergence floor as the LSM tree grows — a fixed 50k would underrepresent
+    // centroids at higher levels (k ∝ N). `PROXIMADB_IVF_TRAIN_SAMPLE` still
+    // overrides absolutely.
     let train_sample = std::env::var("PROXIMADB_IVF_TRAIN_SAMPLE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n > 0)
-        .unwrap_or(50_000)
+        .unwrap_or_else(|| default_train_sample(k))
         .min(usable.len());
     let sample_step = if usable.len() > train_sample {
         (usable.len() / train_sample).max(1)
@@ -434,22 +465,37 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
     Some(ClusterPlan { order, runs })
 }
 
-/// TD-RDSTRAT-8 (rev 3): opt-in gate for the persisted-IVF-probe v3 compaction
-/// layout (the IOP-derived plan written into Region A0). Default **OFF**
-/// (`PROXIMADB_IVF2=1` to enable) until the recall/GET eval gates pass;
-/// mixed-read-safe beside single-level segments either way. The env keeps its
-/// shipped `IVF2` name (the successor IVF layout), though rev 3 dropped the
-/// second `sqrt(N)` level the name originally implied.
+/// TD-RDSTRAT-8 (rev 3): gate for the persisted-IVF-probe v3 compaction layout
+/// (the IOP-derived plan written into Region A0). Default **ON** (the COGS-arc
+/// flip — IVF cuts GETs/query ~4× and per-tenant COGS ~4× vs full-scan; the
+/// recall/GET eval gates passed: ledger `nprobe_sweep_trained_1m`). Precedence:
+/// env `PROXIMADB_PAX_WRITE_A0_TRAIN` (truthy `1|true|on|yes` ⇒ on; set to
+/// anything else ⇒ off) → else TOML `[storage.sst_config.coarse_probe]
+/// enable_write_train`. Mixed-read-safe beside single-level segments either way.
+/// Pre-GA clean rename (TD-ENVGATE-1): the former `PROXIMADB_IVF2` name is
+/// RETIRED (ENV_GATE_REGISTRY "Retired names" — reserved, never repurposed).
 pub fn ivf_probe_enabled() -> bool {
-    matches!(
-        std::env::var("PROXIMADB_IVF2")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-            .map(|v| v.to_ascii_lowercase())
-            .as_deref(),
-        Some("1") | Some("true") | Some("on") | Some("yes")
-    )
+    match std::env::var("PROXIMADB_PAX_WRITE_A0_TRAIN") {
+        // Env set: honor the truthy/non-truthy value.
+        Ok(_) => env_gate_on("PROXIMADB_PAX_WRITE_A0_TRAIN"),
+        // Env unset: fall back to the TOML/config default.
+        Err(_) => {
+            crate::storage::engines::sst::segment_format::coarse_probe_settings().enable_write_train
+        }
+    }
+}
+
+/// Boolean gate read: truthy = `1|true|on|yes`.
+pub(crate) fn env_gate_on(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            )
+        })
+        .unwrap_or(false)
 }
 
 /// The persisted IVF probe directory compaction plan (rev 3): the physical row
@@ -730,6 +776,28 @@ fn sign_gray_key(v: &[f32], mean: &[f64]) -> Vec<u8> {
 mod tests {
     use super::*;
     use proximadb_records::EmbeddingCell;
+
+    #[test]
+    fn default_train_sample_scales_with_k_and_caps() {
+        // Small k (low LSM levels, ≤~26M rows): unchanged 50k baseline — the
+        // existing SIFT1M behavior is preserved.
+        assert_eq!(default_train_sample(16), 50_000);
+        assert_eq!(default_train_sample(100), 50_000);
+        assert_eq!(default_train_sample(500), 50_000);
+        // Large k (higher levels / bigger collections): scales so that
+        // samples-per-centroid stays ≥ the convergence floor.
+        for k in [1_000usize, 2_000, 3_000] {
+            let s = default_train_sample(k);
+            assert!(
+                s / k >= IVF_MIN_SAMPLES_PER_CENTROID,
+                "k={k}: sample={s} → {}/centroid < floor",
+                s / k
+            );
+        }
+        // Extreme k: capped to bound PCA/k-means cost.
+        assert_eq!(default_train_sample(10_000), IVF_TRAIN_SAMPLE_CAP);
+        assert!(default_train_sample(100_000) <= IVF_TRAIN_SAMPLE_CAP);
+    }
 
     fn rec(oid: &str, vec: Vec<f32>) -> ProximaRecord {
         let dim = vec.len() as u32;

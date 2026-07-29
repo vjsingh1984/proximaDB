@@ -53,6 +53,10 @@ impl TenantManager {
             status: TenantStatus::Active,
             domains: Arc::new(DashMap::new()),
             resource_limits: config.resource_limits.clone(),
+            account_id: None,
+            tenant_stable_id: None,
+            namespace_id: None,
+            namespace_stable_id: None,
         };
 
         // Initialize resource tracker - convert ResourceLimits from context to resources

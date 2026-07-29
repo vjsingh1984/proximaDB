@@ -515,7 +515,12 @@ async fn ingest_documents_inner(
             };
             Ok((status, response))
         }
-        Err(e) => Err(ApiError::Internal(format!("Insert failed: {e}"))),
+        // ADR-069 S4: a WalBackpressure in the error chain maps to a retryable
+        // status (429 / RESOURCE_EXHAUSTED); anything else stays a 500. NOTE: the
+        // primary batch path folds WAL-lane rejections into Ok(success=false)
+        // (#951), so this arm sees backpressure only on Err-propagating inserts —
+        // end-to-end 429 for the batch path is the TD-WAL-1 S4 residual.
+        Err(e) => Err(ApiError::from_write_error("Insert failed", e)),
     }
 }
 
@@ -635,9 +640,15 @@ fn batch_failure_to_api_error(
     };
     match resp.error_code.as_deref() {
         Some("NOT_FOUND") => ApiError::NotFound(format!("Collection '{collection}' not found")),
-        Some("SCHEMA_VALIDATION_FAILED") | Some("INSERT_CONFLICT") | Some("WAL_LANE_REJECTED") => {
+        Some("SCHEMA_VALIDATION_FAILED") | Some("INSERT_CONFLICT") => {
             ApiError::InvalidArgument(detail)
         }
+        // ADR-069 S4: write-admission backpressure — the batch was shed at the
+        // critical watermark (`WAL_BACKPRESSURE`, raised inside the write path) or
+        // the write lane rejected it pre-write (`WAL_LANE_REJECTED`, #951). Both
+        // are *retryable*: surface 429 / RESOURCE_EXHAUSTED so the client backs off
+        // instead of treating a shed write as a hard 400/500.
+        Some("WAL_BACKPRESSURE") | Some("WAL_LANE_REJECTED") => ApiError::ResourceExhausted(detail),
         // Dimension violations surface as RECORD_INSERT_FAILED with the
         // validator's message — a client error, not a server fault.
         _ if detail.contains("dimension") => ApiError::InvalidArgument(detail),

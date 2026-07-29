@@ -86,12 +86,9 @@ use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 /// centralized so the gap is greppable and the eventual fix has one call site.
 pub(crate) const DEFAULT_TENANT_PLACEHOLDER: &str = "default_tenant";
 
-/// Well-known, rename-stable `namespace_id` for the embedded / single-tenant path
-/// (no catalog namespace with its own id). Single-tenant is a degenerate
-/// multi-tenant: it resolves the same canonical DrPath layout as any real
-/// namespace, just under this fixed id. Matches the record-store write path, which
-/// already addresses the default namespace as `ns_default`.
-pub(crate) const DEFAULT_NAMESPACE_ID: &str = "ns_default";
+// The single-tenant default namespace id now lives on the path contract
+// (DrPathBuilder, ADR-074 S1) — the local const duplicate was removed so the
+// default has ONE source.
 
 /// Resolve the tenant-isolated object prefix (no trailing `/`) for a warehouse
 /// snapshot: the single canonical **DrPath** layout
@@ -101,7 +98,7 @@ pub(crate) const DEFAULT_NAMESPACE_ID: &str = "ns_default";
 ///
 /// There is exactly one layout. Every namespace carries a `namespace_id` — real
 /// namespaces get one at create (`NativeCatalog`), and the embedded / single-tenant
-/// path uses the well-known [`DEFAULT_NAMESPACE_ID`] (`ns_default`), the same id the
+/// path uses the well-known [`DrPathBuilder::DEFAULT_NAMESPACE_ID`] (`ns_default`), the same id the
 /// record-store write path already uses. The caller resolves `namespace_id`
 /// (real-or-`ns_default`) and passes it here, so single-tenant is just a degenerate
 /// multi-tenant — no legacy `data/{tenant}/{ns.join}/{table}` fork, no special case.
@@ -819,6 +816,12 @@ pub struct DmlService {
     /// Optional tenant-scoped DML lock service. When absent, DML executes with
     /// the legacy local behavior.
     dml_lock_service: Option<Arc<DmlLockService>>,
+    /// F2 (ADR-072 D3/D5): when present, composite-PK uniqueness is enforced by a
+    /// fenced `put_if_absent` at write time instead of the check-then-act
+    /// `get_by_key` probe. `None` (the default) keeps the legacy probe path;
+    /// a store is wired only at the composition root under the `oltp-integrity`
+    /// feature, so default builds are behaviorally unchanged.
+    conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
 }
 
 /// ADR-025: `DmlService` is the authoritative post-snapshot delta source for the
@@ -994,7 +997,20 @@ impl DmlService {
             record_store,
             table_write_executor,
             dml_lock_service: None,
+            conditional_key_store: None,
         }
+    }
+
+    /// F2 (ADR-072 D3/D5): wire a fenced `ConditionalKeyStore` so composite-PK
+    /// uniqueness is enforced atomically at write time rather than by the
+    /// check-then-act probe. Injected at the composition root under the
+    /// `oltp-integrity` feature; absent by default.
+    pub fn with_conditional_key_store(
+        mut self,
+        store: Arc<dyn proximadb_storage_ports::ConditionalKeyStore>,
+    ) -> Self {
+        self.conditional_key_store = Some(store);
+        self
     }
 
     /// T4.1: Get the canonical table-record store.
@@ -1170,7 +1186,7 @@ impl DmlService {
         };
 
         if namespace.is_empty() {
-            DEFAULT_NAMESPACE_ID.to_string()
+            DrPathBuilder::DEFAULT_NAMESPACE_ID.to_string()
         } else {
             namespace.join(".")
         }
@@ -1552,7 +1568,7 @@ impl DmlService {
             ns_meta
                 .as_ref()
                 .and_then(|n| n.namespace_id.as_deref())
-                .unwrap_or(DEFAULT_NAMESPACE_ID),
+                .unwrap_or(DrPathBuilder::DEFAULT_NAMESPACE_ID),
             ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
             ns_meta
                 .as_ref()
@@ -2386,7 +2402,7 @@ impl DmlService {
             ns_meta
                 .as_ref()
                 .and_then(|n| n.namespace_id.as_deref())
-                .unwrap_or(DEFAULT_NAMESPACE_ID),
+                .unwrap_or(DrPathBuilder::DEFAULT_NAMESPACE_ID),
             ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
             ns_meta
                 .as_ref()
@@ -3018,20 +3034,59 @@ impl DmlService {
                         key
                     ));
                 }
-                let existing = self
-                    .record_store
-                    .get_by_key(
-                        &table_schema,
-                        TableRecordGetRequest {
-                            table_id: table_id.name.clone(),
-                            key: key.clone(),
-                            include_vector: false,
-                            include_props: false,
-                        },
-                        None,
+                // F2 (ADR-072 D3): when a fenced ConditionalKeyStore is wired, claim
+                // the PK atomically (oid == primary_key_string, so the row is keyed by
+                // its own PK) — a live holder is a duplicate. Otherwise fall back to the
+                // legacy check-then-act `get_by_key` probe. The op-lock is still held for
+                // cascade ordering (D3). NB: the claim and the later `write_mutations`
+                // row write are not yet a single atomic apply — that is the D11
+                // append-only-MVCC follow-up; recovery treats a claimed-but-rowless key
+                // as dead.
+                let is_duplicate = if let Some(cks) = &self.conditional_key_store {
+                    use proximadb_storage_ports::{Generation, Identity, Oid, PutOutcome};
+                    // Key on the F0 typed, order-preserving codec (length-delimited,
+                    // NULL-explicit, no separator collision) built from the row's typed
+                    // PK value and its tenant/keyspace scope — not the legacy oid string
+                    // (ADR-072 D9). Single-column PK matches this block's scope; the oid
+                    // it maps to stays the row's PK-string identity.
+                    let pk_value = match record.props.get(&pk_column) {
+                        Some(ProximaTreeNode::Value(v)) => v.clone(),
+                        _ => {
+                            return Err(anyhow!(
+                                "primary key column '{}' missing from record for '{}' on table '{}'",
+                                pk_column,
+                                key,
+                                table_schema.name
+                            ));
+                        }
+                    };
+                    let id =
+                        Identity::from_bytes(proximadb_data_model::key_codec::encode_identity(
+                            &record.tenant_id,
+                            &table_schema.name,
+                            std::slice::from_ref(&pk_value),
+                        )?);
+                    matches!(
+                        cks.put_if_absent(&id, &Oid(key.clone()), Generation(0))
+                            .await?,
+                        PutOutcome::Conflict { .. }
                     )
-                    .await?;
-                if existing.is_some() {
+                } else {
+                    self.record_store
+                        .get_by_key(
+                            &table_schema,
+                            TableRecordGetRequest {
+                                table_id: table_id.name.clone(),
+                                key: key.clone(),
+                                include_vector: false,
+                                include_props: false,
+                            },
+                            None,
+                        )
+                        .await?
+                        .is_some()
+                };
+                if is_duplicate {
                     return Err(anyhow!(
                         "duplicate key value violates primary key '{}' on table '{}': '{}' already exists",
                         pk_column,
@@ -3370,6 +3425,35 @@ impl DmlService {
             .iter()
             .map(|id| Self::build_delete_tombstone_record(id, &table_schema, now_ns))
             .collect::<Result<Vec<_>>>()?;
+        // F5: capture the fenced-store PK identities from these tombstone records
+        // (same insert-path builder → matching tenant_id + typed PK), applied
+        // after the record store confirms the delete. Single-column PKs only.
+        let cks_tombstone_ids: Vec<proximadb_storage_ports::Identity> =
+            if self.conditional_key_store.is_some() {
+                let pk_cols = Self::primary_key_columns(&table_schema);
+                if pk_cols.len() == 1 {
+                    tombstones
+                        .iter()
+                        .filter_map(|rec| {
+                            let pk_value = match rec.props.get(&pk_cols[0]) {
+                                Some(ProximaTreeNode::Value(v)) => v.clone(),
+                                _ => return None,
+                            };
+                            proximadb_data_model::key_codec::encode_identity(
+                                &rec.tenant_id,
+                                &table_schema.name,
+                                std::slice::from_ref(&pk_value),
+                            )
+                            .ok()
+                            .map(proximadb_storage_ports::Identity::from_bytes)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
         let deleted_count = ids_to_delete.len();
         let mutations = tombstones
             .into_iter()
@@ -3388,6 +3472,22 @@ impl DmlService {
                     .cloned()
                     .unwrap_or_else(|| "unknown error".to_string())
             ));
+        }
+
+        // F5 (ADR-072): keep the fenced ConditionalKeyStore consistent with the
+        // delete — tombstone each removed row's PK Identity so FK existence
+        // (`cks.get`, the insert-path slice) and PK re-insert (`put_if_absent`)
+        // reflect the deletion. Without it a deleted parent stays "live": a child
+        // FK to it would wrongly succeed, and re-inserting the same PK would
+        // wrongly conflict. The identities are derived from the SAME tombstone
+        // records above (which go through the insert-path record builder), so the
+        // `tenant_id` + typed PK match the CKS registration exactly. Single-column
+        // PKs only (F2's fencing scope).
+        if let Some(cks) = &self.conditional_key_store {
+            for id in &cks_tombstone_ids {
+                cks.tombstone(id, proximadb_storage_ports::Generation(0))
+                    .await?;
+            }
         }
 
         info!(
@@ -4824,20 +4924,43 @@ impl DmlService {
                 // Encode with the same encoder that built the parent oids so the
                 // point lookup matches exactly (single- or multi-column).
                 let key = encode_primary_key_tuple(&values)?;
-                let referenced_exists = self
-                    .record_store
-                    .get_by_key(
-                        &parent_schema,
-                        TableRecordGetRequest {
-                            table_id: parent_table_id.name.clone(),
-                            key: key.clone(),
-                            include_vector: false,
-                            include_props: false,
-                        },
-                        tenant_context,
-                    )
-                    .await?
-                    .is_some();
+                // F5 (ADR-072): when the fenced ConditionalKeyStore is wired,
+                // resolve FK existence against the SAME store that fences the
+                // parent's PK uniqueness (its `get` was designed for exactly this
+                // — "foreign-key existence checks (phase 2) ride this method"),
+                // instead of a check-then-act probe on the record store. This
+                // makes the child-insert see the authoritative uniqueness index
+                // and closes the TOCTOU with a concurrent parent delete. Only the
+                // single-column case is CKS-fenced today (F2 registers one PK
+                // value), so multi-column FKs keep the record-store probe.
+                let referenced_exists = if let Some(cks) = self
+                    .conditional_key_store
+                    .as_ref()
+                    .filter(|_| values.len() == 1)
+                {
+                    let id = proximadb_storage_ports::Identity::from_bytes(
+                        proximadb_data_model::key_codec::encode_identity(
+                            &record.tenant_id,
+                            &parent_schema.name,
+                            &values,
+                        )?,
+                    );
+                    cks.get(&id).await?.is_some()
+                } else {
+                    self.record_store
+                        .get_by_key(
+                            &parent_schema,
+                            TableRecordGetRequest {
+                                table_id: parent_table_id.name.clone(),
+                                key: key.clone(),
+                                include_vector: false,
+                                include_props: false,
+                            },
+                            tenant_context,
+                        )
+                        .await?
+                        .is_some()
+                };
                 if !referenced_exists {
                     return Err(anyhow!(
                         "FOREIGN KEY ({}) on table '{}' violates reference: '{}' is not present in {}({})",

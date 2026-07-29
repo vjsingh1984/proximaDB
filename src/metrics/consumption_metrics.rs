@@ -24,15 +24,21 @@ use tracing::error;
 // sanctioned panic site per vec type instead of repeating it at every metric.
 fn registered_counter_vec(name: &'static str, help: &'static str, labels: &[&str]) -> CounterVec {
     register_counter_vec!(Opts::new(name, help), labels).unwrap_or_else(|err| {
-        error!("failed to register {}: {}", name, err);
-        CounterVec::new(Opts::new(name, ""), labels).unwrap()
+        // No-panic mandate #4: registration can fail (e.g. a duplicate name).
+        // The fallback MUST NOT reuse an empty help — prometheus rejects that
+        // too, so the old `""` here panicked the tokio worker on the first
+        // search (an unregistered-but-usable vec is the correct degradation).
+        error!("failed to register {name} (using unregistered fallback): {err}");
+        CounterVec::new(Opts::new(name, help), labels)
+            .expect("counter descriptor with non-empty help is always valid")
     })
 }
 
 fn registered_gauge_vec(name: &'static str, help: &'static str, labels: &[&str]) -> GaugeVec {
     register_gauge_vec!(Opts::new(name, help), labels).unwrap_or_else(|err| {
-        error!("failed to register {}: {}", name, err);
-        GaugeVec::new(Opts::new(name, ""), labels).unwrap()
+        error!("failed to register {name} (using unregistered fallback): {err}");
+        GaugeVec::new(Opts::new(name, help), labels)
+            .expect("gauge descriptor with non-empty help is always valid")
     })
 }
 
@@ -59,6 +65,41 @@ lazy_static! {
     pub static ref OBJECT_STORE_BYTES_READ_TOTAL: CounterVec = registered_counter_vec(
         "proximadb_object_store_bytes_read_total",
         "Per-tenant physical object-store bytes read (TD-IOTRACE-2, KRU physical)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_CELLS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_cells_total",
+        "Persisted-IVF cells considered by vector queries (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_CELLS_PROBED_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_cells_probed_total",
+        "Persisted-IVF cells probed by vector queries (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_PROBED_ROWS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_probed_rows_total",
+        "Rows covered by persisted-IVF probes (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_REGION_A_BYTES_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_region_a_bytes_read_total",
+        "Physical PAX Region-A (RaBitQ) bytes read by vector queries (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_REGION_B_BYTES_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_region_b_bytes_read_total",
+        "Physical PAX Region-B (SQ8) bytes read by vector queries (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_FETCH_ROUNDS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_fetch_rounds_total",
+        "Coalesced Region-A probe ranged-read runs (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_WHOLE_REGION_FALLBACK_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_whole_region_fallback_total",
+        "Armed v3 probes that fell back to a whole Region-A scan (TD-RDSTRAT-8)",
         &["tenant_id"]
     );
     pub static ref STORAGE_BYTES_SECONDS: GaugeVec = registered_gauge_vec(
@@ -710,6 +751,25 @@ pub fn install_billing_observer() {
                 .with_label_values(&[t_id])
                 .inc_by(snap.bytes_read as f64);
         }
+        // TD-RDSTRAT-8 PR-C1: persisted-IVF coarse-probe physical meters (neutral
+        // counts; AnvaiOps applies the $/rate-card). Region-A/B bytes are the
+        // tier-split physical read cost the probe paid.
+        for (counter, value) in [
+            (&*IVF_CELLS_TOTAL, snap.ivf_cells_total),
+            (&*IVF_CELLS_PROBED_TOTAL, snap.ivf_cells_probed),
+            (&*IVF_PROBED_ROWS_TOTAL, snap.ivf_probed_rows),
+            (&*IVF_REGION_A_BYTES_TOTAL, snap.ivf_region_a_bytes),
+            (&*IVF_REGION_B_BYTES_TOTAL, snap.ivf_region_b_bytes),
+            (&*IVF_FETCH_ROUNDS_TOTAL, snap.ivf_fetch_rounds),
+            (
+                &*IVF_WHOLE_REGION_FALLBACK_TOTAL,
+                snap.ivf_whole_region_fallback,
+            ),
+        ] {
+            if value > 0 {
+                counter.with_label_values(&[t_id]).inc_by(value as f64);
+            }
+        }
     })));
 }
 
@@ -1062,6 +1122,9 @@ mod tests {
         io_trace::instrument(Some(tenant.to_string()), "test.iotrace2", async {
             io_trace::record_range_gets(7);
             io_trace::record_bytes_read(4096);
+            io_trace::record_ivf_coarse_probe(64, 8, 4096, 3, false);
+            io_trace::record_ivf_coarse_probe(0, 0, 0, 0, true); // armed-but-missed fallback
+            io_trace::record_pax_region_bytes(200_000, 800_000);
         })
         .await;
         assert_eq!(
@@ -1073,6 +1136,34 @@ mod tests {
                 .with_label_values(&[tenant])
                 .get(),
             4096.0
+        );
+        // TD-RDSTRAT-8 PR-C1: IVF coarse-probe physical meters.
+        assert_eq!(IVF_CELLS_TOTAL.with_label_values(&[tenant]).get(), 64.0);
+        assert_eq!(
+            IVF_CELLS_PROBED_TOTAL.with_label_values(&[tenant]).get(),
+            8.0
+        );
+        assert_eq!(
+            IVF_PROBED_ROWS_TOTAL.with_label_values(&[tenant]).get(),
+            4096.0
+        );
+        assert_eq!(
+            IVF_REGION_A_BYTES_TOTAL.with_label_values(&[tenant]).get(),
+            200_000.0
+        );
+        assert_eq!(
+            IVF_REGION_B_BYTES_TOTAL.with_label_values(&[tenant]).get(),
+            800_000.0
+        );
+        assert_eq!(
+            IVF_FETCH_ROUNDS_TOTAL.with_label_values(&[tenant]).get(),
+            3.0
+        );
+        assert_eq!(
+            IVF_WHOLE_REGION_FALLBACK_TOTAL
+                .with_label_values(&[tenant])
+                .get(),
+            1.0
         );
         // Restore global observer state for the rest of the suite.
         io_trace::set_billing_observer(None);

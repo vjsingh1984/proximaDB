@@ -431,8 +431,12 @@ pub struct UnifiedSearchParams {
     /// Single query vector (alternative to query_vectors for single queries)
     pub vector: Option<Vec<f32>>,
 
-    /// Number of results to return
-    pub top_k: Option<usize>,
+    /// Number of results to return. `u16` — top_k is a small result count
+    /// (realistic ≤ ~10⁴, well under u16's 65 535 cap), and this shrinks the
+    /// per-query field from `Option<usize>` (16 B) to `Option<u16>` (4 B).
+    /// Cast to `usize` only at genuine size-boundaries (Vec::truncate, heap
+    /// capacity, loop bounds); TD-SEARCH-2 S3.
+    pub top_k: Option<u16>,
 
     /// Distance metric to use for similarity calculation
     #[serde(skip)]
@@ -450,8 +454,10 @@ pub struct UnifiedSearchParams {
     /// Include expired vectors in results
     pub include_expired: Option<bool>,
 
-    /// Search timeout in milliseconds
-    pub timeout_ms: Option<u64>,
+    /// Search timeout in milliseconds. `u32` (not `u64`) — 4B ms ≈ 49 days is
+    /// far beyond any query timeout; halves the field (Option<u64> 16B →
+    /// Option<u32> 8B). Convert at use sites (`as u64`); TD-SEARCH-2 S3.
+    pub timeout_ms: Option<u32>,
 
     /// Enable two-stage search with quantization
     pub enable_two_stage: Option<bool>,
@@ -500,15 +506,9 @@ pub struct UnifiedSearchParams {
     /// Enable progressive quantization-aware search
     pub enable_progressive_search: Option<bool>,
 
-    /// Progressive search scenario (high_recall, balanced, high_speed, low_memory)
-    pub progressive_scenario: Option<String>,
-
     /// Custom recall rates for progressive stages
     #[serde(skip)]
     pub progressive_recalls: Option<ProgressiveRecalls>,
-
-    /// Optimization hint for search strategy
-    pub optimization_hint: Option<String>,
 
     /// Search mode for accuracy vs speed tradeoff (LanceDB-inspired IVF optimization)
     /// Defaults to Exact (100% recall). Use Approximate for faster queries with ~95-98% recall.
@@ -542,8 +542,8 @@ impl Default for UnifiedSearchParams {
             timeout_ms: Some(5000),
             enable_two_stage: Some(true),
             enable_vectorized_execution: Some(false), // Disabled by default (TD-041)
-            enable_parallel_morsels: Some(false),     // Disabled by default (TD-039)
-            enable_pipeline_execution: Some(false),   // Disabled by default (TD-031)
+            enable_parallel_morsels: Some(false), // Intra-file parallelism (TD-039); inter-file is config-driven (search_parallel_files)
+            enable_pipeline_execution: Some(false), // Disabled by default (TD-031)
             quantization_hint: None,
             enable_clustering_hint: Some(true),
             enable_metadata_filtering_hint: Some(true),
@@ -551,9 +551,7 @@ impl Default for UnifiedSearchParams {
             requires_ordering: None,
             runtime_hints: None,
             enable_progressive_search: Some(false),
-            progressive_scenario: None,
             progressive_recalls: None,
-            optimization_hint: None,
             search_mode: SearchMode::default(), // cost-adaptive by default (TD-165); exact when cheap
             block_prune: BlockPruneConfig::default(),
             text_query: None,

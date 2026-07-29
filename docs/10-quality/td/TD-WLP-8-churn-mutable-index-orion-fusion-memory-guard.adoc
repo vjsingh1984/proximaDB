@@ -5,8 +5,8 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Done.** Part 8a working-set gauge + edge-triggered soft-ceiling warning shipped 2026-07-15. Part 8b dedicated mutable index is **retired, not built**: the unflushed delta is already backpressure-bounded (~2 MiB default) and TD-WLP-5 Strong-merges it correctly. ORION `oid` fusion already ships through TD-045 `/rag`. Residuals are link:TD-WLP-10-churn-evidence-gated-flush-threshold.adoc[TD-WLP-10] (only with evidence) and link:TD-ORION-1-oid-node-index-and-vector-graph-fusion.adoc[TD-ORION-1] (relevance eval). Do not implement the historical Part 8b scope below.
-| Priority | Done — no open implementation in this TD.
+| Status | **Resolved (2026-07-15).** Part 8a working-set gauge + edge-triggered soft-ceiling warning shipped. Part 8b dedicated mutable index is **retired, not built**: the unflushed delta is already backpressure-bounded (~2 MiB default) and TD-WLP-5 Strong-merges it correctly. ORION `oid` fusion already ships through TD-045 `/rag`. Residuals are link:TD-WLP-10-churn-evidence-gated-flush-threshold.adoc[TD-WLP-10] (only with evidence) and link:TD-ORION-1-oid-node-index-and-vector-graph-fusion.adoc[TD-ORION-1] (relevance eval). Do not implement the historical Part 8b scope below.
+| Priority | Closed — no open implementation in this TD.
 | Severity | Resolved — observability is best-effort; no new mutable index or authority was added.
 | Component | `proximadb_churn_collection_working_set_bytes`, `PROXIMADB_CHURN_WORKING_SET_MB`, TD-WLP-5 Strong delta merge
 | Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D4)

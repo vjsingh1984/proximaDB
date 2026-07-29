@@ -543,7 +543,7 @@ impl AxisManager {
     /// `index_persist_url`/`index_persist_dir` conventions in
     /// [`index_fs_and_path`](Self::index_fs_and_path), so the index path is
     /// authoritative-from-catalog (relocatable/tierable per projection). The boot
-    /// adapter computes this via `DrResolvedPath::resolve_index_location`
+    /// adapter computes this via `DrCollectionPath::resolve_index_location`
     /// (projection `location`, else the derived `indexes/<projection>/` default).
     ///
     /// `&self` + async because the location memo is interior-mutable (filled at
@@ -1707,7 +1707,7 @@ impl AxisManager {
                 // this site built `AxisHnswConfig { distance_metric,
                 // ..Default::default() }`, ignoring the strategy spec's
                 // m / ef_construction / ef_search entirely. Customers
-                // (and the bench) had to use the PROXIMADB_BENCH_HNSW_EF
+                // (and the bench) had to use the (un-prefixed) BENCH_HNSW_EF
                 // env override to influence search behaviour because
                 // the `IndexAlgorithm::HNSW { m, ef_construction,
                 // ef_search, max_elements }` fields they put in their
@@ -1919,27 +1919,17 @@ impl AxisManager {
             Arc::new(HashMap::new())
         };
 
-        let predicate_id_filters = query.id_filters.clone();
+        // F7 / TD-HYBRID-1 D2: one compiled predicate (id filters + metadata
+        // expression) shared by the traversal closure below and the residual
+        // re-filter further down, replacing three hand-rolled copies.
+        let compiled_filter = crate::core::search::CompiledGlobalFilter::new(
+            query.id_filters.clone(),
+            metadata_expression.clone(),
+        );
         let predicate_metadata = Arc::clone(&metadata_by_id);
-        let predicate_expression = metadata_expression.clone();
-        let predicate = move |id: &str| -> bool {
-            if !predicate_id_filters.is_empty()
-                && !predicate_id_filters
-                    .iter()
-                    .any(|filter_id| filter_id.as_str() == id)
-            {
-                return false;
-            }
-
-            let Some(expr) = &predicate_expression else {
-                return true;
-            };
-            let Some(metadata) = predicate_metadata.get(id) else {
-                return false;
-            };
-
-            crate::core::search::json_comparison::evaluate_filter(expr, metadata)
-        };
+        let predicate_filter = compiled_filter.clone();
+        let predicate =
+            move |id: &str| -> bool { predicate_filter.matches(id, predicate_metadata.get(id)) };
 
         // TD-064 / ADR-011 §4.3: oversample to absorb post-filter recall loss.
         // PostFilter uses the catalog policy's effective_top_k_for_post_filter
@@ -1980,20 +1970,7 @@ impl AxisManager {
         let metric = index.distance_metric();
         let results: Vec<ScoredResult> = raw
             .into_iter()
-            .filter(|(id, _)| {
-                if !query.id_filters.is_empty() && !query.id_filters.contains(id) {
-                    return false;
-                }
-
-                let Some(expr) = &metadata_expression else {
-                    return true;
-                };
-                let Some(metadata) = metadata_by_id.get(id) else {
-                    return false;
-                };
-
-                crate::core::search::json_comparison::evaluate_filter(expr, metadata)
-            })
+            .filter(|(id, _)| compiled_filter.matches(id, metadata_by_id.get(id)))
             .take(query.top_k)
             .map(|(id, raw_distance)| {
                 let raw_for_similarity = if metric.is_similarity() {
@@ -4384,18 +4361,18 @@ impl AxisManager {
         } else {
             Some(self.metadata_filters_to_expression(&query.metadata_filters))
         };
+        // F7 / TD-HYBRID-1 D2: same compiled predicate as the Inline path — the
+        // exact branch applies it to every record, id filter then metadata.
+        let compiled_filter = crate::core::search::CompiledGlobalFilter::new(
+            query.id_filters.clone(),
+            metadata_expression,
+        );
 
         let mut results = Vec::new();
 
         for record in records {
-            if !query.id_filters.is_empty() && !query.id_filters.contains(&record.oid) {
-                continue;
-            }
-
             let metadata = self.record_filter_metadata(&record);
-            if let Some(expr) = &metadata_expression
-                && !crate::core::search::json_comparison::evaluate_filter(expr, &metadata)
-            {
+            if !compiled_filter.matches(&record.oid, Some(&metadata)) {
                 continue;
             }
 

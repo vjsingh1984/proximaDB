@@ -352,6 +352,13 @@ pub struct SharedServices {
     /// (graph: tracing-only; pgwire: opens its own appender locally).
     pub canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
 
+    /// Experimental transactional ledger store (ADR-071 / TD-LEDGER-1) — the durable, tenant-scoped
+    /// ledger port shared with the gRPC `ProximaLedgerService`. Node-level (one store per node;
+    /// tenants are namespaced *inside* the keys, not by separate stores), with its WAL on local disk
+    /// (ADR-069). Present only under the `experimental-ledger` feature.
+    #[cfg(feature = "experimental-ledger")]
+    pub ledger_store: Arc<proximadb_ledger::LedgerService<proximadb_ledger::DurableLedger>>,
+
     /// The single canonical WAL-backed record store, built + WAL-recovered ONCE here and
     /// shared across ALL surfaces — the REST/gRPC `DmlService` and the pgwire direct-write
     /// path both route relational tables through this instance — so a write on any protocol
@@ -361,6 +368,14 @@ pub struct SharedServices {
     /// without `opt_config` (each consumer falls back to its own store).
     pub canonical_record_store:
         Option<Arc<crate::services::record_store::DirectWalTableRecordStore>>,
+
+    /// F5 / TD-OLTP-WIRING-1: the process-shared fenced `ConditionalKeyStore`
+    /// (ADR-072). `Some` only under the `oltp-integrity` feature with a durable
+    /// `data_dir`. Held here as the single source of truth so pgwire
+    /// (`multi_server.rs`) threads the SAME instance — one uniqueness index across
+    /// every write surface (two stores would corrupt one WAL or fence
+    /// inconsistently across gRPC vs pgwire).
+    pub conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
 
     /// Process-wide recall-probe gate (TD-064 / LLD §5). The gate enables
     /// the quantized candidate route only after the recall-probe set passes
@@ -468,6 +483,46 @@ impl SharedServices {
 }
 
 impl SharedServices {
+    /// Open the ONE process-shared fenced `ConditionalKeyStore`
+    /// (TD-OLTP-WIRING-1 / ADR-072). Returns `Some` only when the
+    /// `oltp-integrity` feature is compiled AND a durable `data_dir` is
+    /// configured — an in-memory store would lose uniqueness across restart. The
+    /// WAL is replayed by `open`, so PK/FK fencing state survives a restart.
+    /// `None` on default builds and embedded/ephemeral paths (unchanged behavior).
+    fn open_shared_conditional_key_store(
+        opt_config: Option<&crate::core::config::Config>,
+    ) -> Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>> {
+        #[cfg(not(feature = "oltp-integrity"))]
+        {
+            let _ = opt_config;
+            None
+        }
+        #[cfg(feature = "oltp-integrity")]
+        {
+            let data_dir = opt_config?.server.data_dir.clone();
+            let path = std::path::Path::new(&data_dir).join("oltp-cks.wal");
+            match proximadb_cks_local::LocalWalKeyStore::open(
+                &path,
+                proximadb_cks_local::SyncPolicy::PerOp,
+            ) {
+                Ok(store) => {
+                    tracing::info!(
+                        "oltp-integrity: fenced ConditionalKeyStore active at {}",
+                        path.display()
+                    );
+                    Some(Arc::new(store) as Arc<dyn proximadb_storage_ports::ConditionalKeyStore>)
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "oltp-integrity: failed to open ConditionalKeyStore at {}: {e}; fencing DISABLED",
+                        path.display()
+                    );
+                    None
+                }
+            }
+        }
+    }
+
     /// Create shared services with full business logic configuration
     /// SharedServices owns all business logic and configuration decisions
     /// Returns (SharedServices, CollectionService) - the collection service is needed by StorageEngine
@@ -590,7 +645,7 @@ impl SharedServices {
                 // operator control-plane prefix (`_operator/catalog/…`) so
                 // catalog I/O honours the structural-isolation mandate instead
                 // of a raw `{base}/system-catalog.wal`. Flag-gated + inert by
-                // default (mirrors `PROXIMADB_WAREHOUSE_DRPATH`): the local path
+                // default (mirrors the warehouse DrPath opt-in pattern): the local path
                 // is unchanged until a deployment opts in, keeping existing
                 // on-disk catalog state in place. The catalog is `Operator`-roled.
                 let wal_path = if std::env::var("PROXIMADB_CATALOG_DRPATH").is_ok() {
@@ -1043,21 +1098,12 @@ impl SharedServices {
         // Phase 5 freshness LSN source.
         debug!("🔧 SharedServices::new - Creating WAL manager for two-stage search...");
         let wal_manager = {
-            use crate::storage::persistence::write_ahead_log::{
-                WALBatchFactory, WriteAheadLogManager,
-            };
+            use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
-            // Create WAL batch strategy
-            let strategy_type = crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
-            let strategy = WALBatchFactory::create_batch_serialization_strategy(
-                strategy_type,
-                &wal_config,
-                filesystem_factory.clone(),
-            )
-            .await?;
-
-            // Create WAL manager directly
-            Arc::new(WriteAheadLogManager::new(strategy, wal_config.clone()).await?)
+            // Create WAL manager directly. The batch-serialization strategy
+            // stack was removed — the manager routes on `config.strategy_type`
+            // plus the global write buffer, never a `WALBatchStrategy` object.
+            Arc::new(WriteAheadLogManager::new(wal_config.clone()).await?)
         };
         debug!("✅ SharedServices::new - WAL manager created successfully");
 
@@ -1241,6 +1287,12 @@ impl SharedServices {
             "✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search"
         );
 
+        // ADR-078: register the same manager for the shared flush→AXIS hook.
+        // VIPER/HELIX/NOVA construct `axis_manager: None` and nothing ever set
+        // it, which is precisely why they routed flush notifications through the
+        // AXIS queue instead of indexing directly. This gives them a handle.
+        crate::storage::common::axis_flush_hook::set_flush_axis_manager(axis_manager.clone());
+
         // Create VectorOperationsService with optimized architecture and two-stage search
         debug!(
             "🔧 SharedServices::new - About to create VectorOperationsService with two-stage search..."
@@ -1301,9 +1353,9 @@ impl SharedServices {
             // This polls the EventLog and builds AXIS indexes when flush events occur
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-            // Store shutdown sender for graceful shutdown (could be stored in SharedServices if needed)
-            // For now, the consumer will run until the process exits
-            std::mem::forget(shutdown_tx); // Prevent sender from being dropped
+            // TD-LIFECYCLE-1: registered (not leaked) so a clean shutdown
+            // can stop the loop; see services::shutdown_registry.
+            crate::services::shutdown_registry::register("axis-eventlog-consumer", shutdown_tx);
 
             if let Some(event_log_service) = crate::services::events::log::event_log_service() {
                 let _consumer_handle =
@@ -1601,6 +1653,56 @@ impl SharedServices {
             None
         };
 
+        // Experimental transactional ledger store (ADR-071 / TD-LEDGER-1): a node-level durable
+        // ledger shared with the gRPC `ProximaLedgerService`. Its WAL lives on LOCAL disk (ADR-069:
+        // the per-write log belongs on a reattachable local volume, not object storage); when the
+        // metadata store is object-backed (no `file://`), the ledger WAL falls back to a local
+        // `data/ledger` directory. One store per node — tenants are namespaced inside the keys.
+        #[cfg(feature = "experimental-ledger")]
+        let ledger_store = {
+            let ledger_url = join_storage_url(&storage_config.metadata_url, "ledger/ledger.wal");
+            let ledger_path = match ledger_url.strip_prefix("file://") {
+                Some(local) => std::path::PathBuf::from(local),
+                None => std::path::PathBuf::from("data/ledger/ledger.wal"),
+            };
+            if let Some(parent) = ledger_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating ledger WAL dir {}", parent.display()))?;
+            }
+            let durable = proximadb_ledger::DurableLedger::open(
+                &ledger_path,
+                proximadb_ledger::SyncPolicy::PerOp,
+            )
+            .with_context(|| format!("opening ledger WAL at {}", ledger_path.display()))?;
+            info!(
+                "✅ SharedServices: experimental ledger store opened at {}",
+                ledger_path.display()
+            );
+            Arc::new(proximadb_ledger::LedgerService::new(durable))
+        };
+
+        // Timed TTL reclaim (ADR-071 / TD-LEDGER-1, invariant C2): sweep expired ledger leases on a
+        // fixed cadence so a crashed reserver's held capacity is freed even when no request touches
+        // the scope. Server profile only; the sweep is idempotent and O(held leases) — cheap.
+        #[cfg(feature = "experimental-ledger")]
+        if profile.is_server() {
+            let sweeper = ledger_store.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+                loop {
+                    tick.tick().await;
+                    let now_ns = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
+                        .unwrap_or(0);
+                    let reclaimed = sweeper.reclaim_expired(now_ns);
+                    if reclaimed > 0 {
+                        tracing::debug!("ledger sweeper reclaimed {reclaimed} expired lease(s)");
+                    }
+                }
+            });
+        }
+
         // Create GraphOperationsService for native graph database operations
         // IMPORTANT: Pass the shared GraphCollectionService instance
         debug!(
@@ -1812,10 +1914,15 @@ impl SharedServices {
                 "eventlog".to_string(),
             ),
         );
-        let event_log = match crate::storage::engines::eventlog::EventLogEngine::new(
+        // `open` (not `new`) — recovers the sequence counter and index from what
+        // is already persisted. `new` alone would restart the counter at 0 and
+        // silently overwrite prior events (TD-EVENTLOG-1).
+        let event_log = match crate::storage::engines::eventlog::EventLogEngine::open(
             event_log_config,
             event_log_filesystem,
-        ) {
+        )
+        .await
+        {
             Ok(engine) => Some(Arc::new(engine)),
             Err(e) => {
                 warn!("Failed to create EventLogEngine for audit trails: {}", e);
@@ -2192,6 +2299,16 @@ impl SharedServices {
                 ) as Arc<dyn crate::storage::write_fence::StorageWriteFence>
             });
 
+        // F5 / TD-OLTP-WIRING-1: open the ONE process-shared fenced
+        // ConditionalKeyStore (durable at <data_dir>/oltp-cks.wal; WAL-replayed on
+        // restart), threaded into this gRPC/REST `base_dml` and into pgwire via
+        // `multi_server`. Feature-gated (`oltp-integrity`) AND requires a
+        // `data_dir` — an in-memory store would silently lose uniqueness across a
+        // restart, worse than the honest legacy probe. `None` otherwise ⇒ default
+        // builds and embedded/ephemeral paths are byte-for-byte unchanged.
+        let conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>> =
+            Self::open_shared_conditional_key_store(opt_config);
+
         let base_dml = match canonical_record_store.clone() {
             Some(store) => DmlService::with_direct_record_storage(
                 catalog_manager.clone(),
@@ -2199,6 +2316,10 @@ impl SharedServices {
                 store,
             ),
             None => DmlService::new(catalog_manager.clone(), vector_operations_service.clone()),
+        };
+        let base_dml = match &conditional_key_store {
+            Some(cks) => base_dml.with_conditional_key_store(cks.clone()),
+            None => base_dml,
         };
         let dml_service_for_grpc = Arc::new(match dml_lock_service {
             Some(lock_service) => base_dml.with_dml_lock_service(lock_service),
@@ -2354,7 +2475,7 @@ impl SharedServices {
                 .with_vector_ops(vector_operations_service.clone()),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("discovery-executor", shutdown_tx);
             // The discovery executor is a long-running background task; we
             // intentionally drop the JoinHandle so it runs for the process
             // lifetime. `spawn_discovery_executor` spawns its own task
@@ -2386,7 +2507,7 @@ impl SharedServices {
                 .with_discovery(discovery_service.clone()),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("recall-observer", shutdown_tx);
             #[allow(clippy::let_underscore_future)]
             let _ = crate::services::recall_observer::spawn_recall_observer(
                 observer,
@@ -2419,7 +2540,7 @@ impl SharedServices {
                 ),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("drift-watcher", shutdown_tx);
             #[allow(clippy::let_underscore_future)]
             let _ = crate::services::discovery::spawn_drift_watcher(
                 watcher,
@@ -2445,7 +2566,7 @@ impl SharedServices {
                 ),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("drift-observer", shutdown_tx);
             #[allow(clippy::let_underscore_future)]
             let _ = crate::services::recall_drift_sweeper::spawn_recall_drift_sweeper(
                 sweeper,
@@ -2563,6 +2684,9 @@ impl SharedServices {
                 // share the same next_sequence counter.
                 canonical_wal_appender,
                 canonical_record_store,
+                conditional_key_store,
+                #[cfg(feature = "experimental-ledger")]
+                ledger_store,
                 // TD-064 / LLD §5: per-collection recall-probe gate. Empty
                 // at startup; populated as the stats refresher / search path
                 // observe probe outcomes. Route-health surfaces per-scope
@@ -2774,11 +2898,45 @@ impl SharedServices {
             // ADR-069/TD-WAL-1: the tiered-flush knobs (time RPO floor + capacity
             // watermarks) — the live server path where they actually reach the engine.
             flush_interval_secs: toml_config.flush_interval_secs,
+            // TD-FLUSH-3 S1: the predicted-segment flush floor.
+            flush_floor_predicted_mb: toml_config.flush_floor_predicted_mb,
             wal_max_bytes: toml_config.wal_max_bytes,
             high_watermark_pct: toml_config.high_watermark_pct,
             critical_watermark_pct: toml_config.critical_watermark_pct,
             ..Default::default()
         };
+
+        // ADR-069 S1 guardrail: the WAL belongs on a local reattachable disk
+        // (object-store WAL was the pre-pivot architecture and pays an I/O
+        // round-trip per append). Warn — at `error` level when a durability-
+        // sensitive `sync_mode` is also set, because an object store does not
+        // honour `fsync` the way a local block device does, so a remote WAL +
+        // PerBatch/Always makes a durability claim that does not hold. A bare
+        // path (no `scheme://`) is local (resolved to `file://`).
+        {
+            let dir = toml_config.write_buffer_directory.trim();
+            let is_remote = dir.contains("://") && !dir.starts_with("file:");
+            if is_remote {
+                let sync = toml_config.sync_mode.to_lowercase();
+                if matches!(sync.as_str(), "perbatch" | "always") {
+                    tracing::error!(
+                        wal_dir = %dir,
+                        sync_mode = %toml_config.sync_mode,
+                        "ADR-069 S1: WAL write_buffer_directory is on a remote (object-store) \
+                         scheme with a durability-sensitive sync_mode — object stores do not \
+                         honour fsync like a local disk, so the durability claim is not trustworthy. \
+                         Move the WAL to a local file:// path."
+                    );
+                } else {
+                    tracing::warn!(
+                        wal_dir = %dir,
+                        "ADR-069 S1: WAL write_buffer_directory is on a remote (object-store) \
+                         scheme; ADR-069 places the WAL on local disk. Remote WAL pays an I/O \
+                         round-trip per append."
+                    );
+                }
+            }
+        }
 
         // Create memtable config
         let memtable = MemTableConfig {
@@ -2807,6 +2965,9 @@ impl SharedServices {
             enable_background_compaction: true, // Enable background compaction
             enable_optimized_writer: toml_config.enable_wal, // Use enable_wal to control optimized writer
             global_manifest_url: toml_config.global_manifest_url.clone(),
+            // ADR-069 S1: opt-in local WAL root (TOML `[storage.wal_config]
+            // .wal_local_dir`); env `PROXIMADB_WAL_LOCAL_DIR` overrides at read time.
+            wal_local_dir: toml_config.wal_local_dir.clone(),
             ..Default::default()
         }
     }

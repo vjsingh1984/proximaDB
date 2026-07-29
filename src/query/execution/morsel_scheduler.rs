@@ -14,7 +14,7 @@
 //! Phase 4.0 scope (this file): parallelize the **source decode**; the downstream
 //! operators (filter/project/aggregate) run serially over the merged stream. That
 //! closes the decode-bound gap without partial/final aggregation. NUMA pinning is
-//! Phase 4.1 (gated `PROXIMADB_NATIVE_MORSEL_NUMA`, not built here). Gated
+//! Phase 4.1 (NUMA binding — not built here; will get its own registered gate when it lands). Gated
 //! `PROXIMADB_NATIVE_MORSEL` (default OFF); a non-splittable source → serial, so
 //! the scheduler is additive and never a correctness dependency.
 

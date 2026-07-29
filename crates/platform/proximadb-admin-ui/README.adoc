@@ -27,6 +27,8 @@ diagnostic endpoints:
 * `GET /health`, `GET /health/ready` — liveness / readiness
 * `GET /api/v2/_meta/capabilities` — build + capability summary
 * `GET /api/v2/collections` and `GET /api/v2/collections/{id}` — collections + detail
+* `GET /metrics/prometheus` — Prometheus text exposition, parsed client-side to
+  drive the Cache / Storage / Query / I/O-Trace charts (no data leaves the browser)
 * `GET /metrics/json` — numeric metrics (when the metrics collector is enabled)
 
 It renders no create/update/delete controls, so it cannot mutate state. A crate
@@ -37,8 +39,8 @@ URLs, and no write verbs in the page.
 
 [source,rust]
 ----
-// in the REST router assembly:
-base_router = base_router.merge(proximadb_admin_ui::admin_router());
+// in the REST router assembly (opts: AdminUiOptions from [server.admin_ui]):
+base_router = base_router.merge(proximadb_admin_ui::admin_router_if(opts));
 ----
 
 == Enabling (off by default)
@@ -50,12 +52,20 @@ for Kubernetes pods and embedded/UDS mode):
 ----
 [server.admin_ui]
 enabled = true
+# Client-side auto-refresh (default false). When false the UI toggle is greyed
+# out and the page only refreshes on an explicit click.
+auto_refresh = false
+# Auto-refresh poll interval in seconds (only effective when auto_refresh = true).
+refresh_interval_seconds = 30
 ----
 
-The router-build path always merges `admin_router_if(enabled)`; the toggle decides
-whether `/admin` actually exists. The flag flows
-`[server.admin_ui] enabled` → `ServerConfig` → `MultiServerBuilder::with_admin_ui_enabled`
-→ `MultiServerConfig::admin_ui_enabled` → `build_router_for_unified(.., admin_ui_enabled)`.
+The router-build path always merges `admin_router_if(AdminUiOptions { .. })`; the
+`enabled` toggle decides whether `/admin` actually exists. The config flows
+`[server.admin_ui]` → `ServerConfig::admin_ui` (`AdminUiConfig`) →
+`MultiServerBuilder::with_admin_ui_enabled` + `with_admin_ui_refresh` →
+`MultiServerConfig` → `build_router_for_unified(..)` → `AdminUiOptions` →
+`render_admin_html`, which injects the `auto_refresh` / `refresh_interval_seconds`
+defaults into the page (the toggle is greyed out when `auto_refresh = false`).
 
 == Accessing
 

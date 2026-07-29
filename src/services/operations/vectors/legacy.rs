@@ -77,6 +77,19 @@ use super::write::{
     insert_existing_record_conflict_result, insert_only_lock_key, tombstone_records_for_ids,
 };
 
+/// ADR-070 / ADR-081: AXIS is a configured projection, not an automatic cost
+/// paid by every vector collection. PAX-only collections carry no index config;
+/// the explicit RawF32 compatibility tag retains the established AXIS path.
+fn collection_uses_axis_indexes(collection: &Collection) -> bool {
+    collection.config.as_ref().is_some_and(|config| {
+        !config.index_configs.is_empty()
+            || config
+                .tags
+                .iter()
+                .any(|tag| tag.trim().eq_ignore_ascii_case("pax_vector_format:off"))
+    })
+}
+
 // Import vector query service contract (Phase 2.1)
 use proximadb_vector_query::{VectorQueryRequest, VectorQueryService, VectorSearchResult};
 
@@ -715,6 +728,29 @@ impl VectorOperationsService {
     /// lowering stays inside the vector service until storage/index search
     /// paths accept rich predicates natively.
     pub async fn search_records_with_tenant_context(
+        &self,
+        request: RichSearchRequest,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<RichSearchResponse> {
+        // TD-METRICS-1: this — not the query-facade adapter — is the entry the
+        // canonical REST v2 record search actually traverses (verified live:
+        // the adapter-side counters never moved during the SIFT ratchet run).
+        // Count + time here; the adapter keeps its own increments for the
+        // facade surfaces, which do not route through this method.
+        let om_start = std::time::Instant::now();
+        crate::metrics::operational_metrics::QUERIES_TOTAL.inc();
+        let result = self
+            .search_records_with_tenant_context_inner(request, tenant_context)
+            .await;
+        if result.is_err() {
+            crate::metrics::operational_metrics::QUERIES_FAILED_TOTAL.inc();
+        }
+        crate::metrics::operational_metrics::SEARCH_LATENCY_SECONDS
+            .observe(om_start.elapsed().as_secs_f64());
+        result
+    }
+
+    async fn search_records_with_tenant_context_inner(
         &self,
         request: RichSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
@@ -1711,7 +1747,14 @@ impl VectorOperationsService {
             return Ok((optimized_results, None));
         }
 
-        let distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
+        // Use the COLLECTION's configured metric for the WAL delta re-score.
+        // This was hardcoded Cosine, which put delta scores on a different
+        // scale than the directory/storage results (Euclidean = 1/(1+L2) ≈
+        // 0.005 vs cosine ≈ 0.9 on SIFT-like data) — so ANY unflushed record
+        // displaced EVERY flushed result in the merged top-k and recall
+        // collapsed to the memtable fraction of the corpus (TD-RECALL-1).
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let distance_metric = Self::collection_distance_metric(&collection);
         // Slice 5.10: fetch both LSN and ns watermarks so BoundedStale
         // can apply its time-bound check. When unavailable, fall back
         // to (0, 0) — the scan helper treats ns=0 as "time unknown"
@@ -2513,7 +2556,7 @@ impl VectorOperationsService {
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             ..Default::default()
         };
         let optimization_goal = config
@@ -2656,7 +2699,7 @@ impl VectorOperationsService {
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             ..Default::default()
         };
         let optimization_goal = config
@@ -2909,7 +2952,7 @@ impl VectorOperationsService {
         // Run the optimizer on the EXPLAIN path (non-hot) to surface ADR-011 filtering mode.
         let collection = self.get_or_load_collection(collection_id).await?;
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             filter_expression: filter.clone(),
             ..Default::default()
         };
@@ -2967,9 +3010,7 @@ impl VectorOperationsService {
             filter_expression: filter.clone(),
             requires_ordering: Some(true),
             enable_progressive_search: Some(true),
-            progressive_scenario: config.scenario.clone(),
             progressive_recalls: config.progressive_recalls.clone(),
-            optimization_hint: config.scenario.clone(),
             ..Default::default()
         };
 
@@ -3037,9 +3078,8 @@ impl VectorOperationsService {
         // Create unified context (combines what used to be two separate contexts)
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            top_k: Some(top_k),
+            top_k: Some(top_k as u16),
             filter_expression: filter.clone(),
-            optimization_hint: Some(optimization_goal.to_string()),
             enable_progressive_search: Some(true), // Enable by default if quantization available
             ..Default::default()
         };
@@ -3161,7 +3201,7 @@ impl VectorOperationsService {
         // Run the optimizer on the EXPLAIN path (non-hot) to surface ADR-011 filtering mode.
         let collection = self.get_or_load_collection(collection_id).await?;
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             filter_expression: filter.clone(),
             ..Default::default()
         };
@@ -3445,6 +3485,27 @@ impl VectorOperationsService {
         Ok(())
     }
 
+    /// Resolve a collection's configured distance metric (Cosine when unset /
+    /// Unspecified). Single source of truth for every internal search stage —
+    /// Stage-1 WAL, Stage-2 AXIS, Stage-3 storage, and the freshness delta
+    /// re-score MUST all rank on this same metric, or their normalized scores
+    /// land on incomparable scales and the cross-stage merge is garbage.
+    fn collection_distance_metric(
+        collection: &Collection,
+    ) -> crate::proto::proximadb_v1::DistanceMetric {
+        match collection.config.as_ref() {
+            Some(cfg) => match cfg.distance_metric.and_then(|metric| {
+                crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
+            }) {
+                Some(crate::proto::proximadb_v1::DistanceMetric::Unspecified) | None => {
+                    crate::proto::proximadb_v1::DistanceMetric::Cosine
+                }
+                Some(metric) => metric,
+            },
+            None => crate::proto::proximadb_v1::DistanceMetric::Cosine,
+        }
+    }
+
     async fn execute_two_stage_search_with_mode(
         &self,
         collection_id: &str,
@@ -3466,17 +3527,7 @@ impl VectorOperationsService {
 
         // Get collection for distance metric
         let collection = self.get_or_load_collection(collection_id).await?;
-        let distance_metric = match collection.config.as_ref() {
-            Some(cfg) => match cfg.distance_metric.and_then(|metric| {
-                crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
-            }) {
-                Some(crate::proto::proximadb_v1::DistanceMetric::Unspecified) | None => {
-                    crate::proto::proximadb_v1::DistanceMetric::Cosine
-                }
-                Some(metric) => metric,
-            },
-            None => crate::proto::proximadb_v1::DistanceMetric::Cosine,
-        };
+        let distance_metric = Self::collection_distance_metric(&collection);
 
         // Execute Stage 1 and Stage 2 in PARALLEL for maximum performance
         debug!(
@@ -3488,7 +3539,7 @@ impl VectorOperationsService {
         // Prepare storage search context first
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            top_k: Some(candidates),
+            top_k: Some(candidates as u16),
             distance_metric: Some(distance_metric),
             filter_expression: filter.clone(), // Pass the same FilterExpression to storage engine
             include_expired: Some(false),
@@ -3541,66 +3592,87 @@ impl VectorOperationsService {
             "🔍 Stage 2: Searching AXIS HNSW index for {}",
             collection_id
         );
-        let axis_optimized_results = match build_axis_hybrid_query_with_policy(
-            // TD-AXIS-1: use the collection's canonical id (UUID) — NOT the
-            // caller's collection_id (which may be the human-readable NAME).
-            // enable_hmgi registered the UUID in hmgi_enabled_collections;
-            // passing the name caused is_hmgi_enabled to return false → HMGI
-            // skipped → IVF fallback → 0 results (ANN index not serving).
-            // ADR-031 follow-up: migrate hmgi_enabled_collections to the stable
-            // object_id (base62) and use that here instead of the UUID.
-            &collection.id,
-            &axis_search_params,
-            ann_filtering_mode,
-            ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
-            ann_filtering_selectivity,
-        ) {
-            Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
-                Ok(result) => {
-                    // TD-064(a): stop dropping `predicate_shortfall` /
-                    // `selected_filtering_mode`. Carry the AXIS-stage shortfall
-                    // onto the per-request diagnostics bus here (explicit
-                    // carrier — the value is then recomputed against the FINAL
-                    // WAL+AXIS+storage merge at the response boundary in
-                    // `search_records_with_tenant_context`, which clears any
-                    // post-merge false positive). `selected_filtering_mode` is
-                    // already reflected in the shortfall's `ann_filtering_mode`
-                    // label, so bind it to document it is captured, not
-                    // silently discarded.
-                    let axis_shortfall = result.predicate_shortfall;
-                    let _selected_filtering_mode = result.selected_filtering_mode;
-                    crate::observability::predicate_diagnostics::set_shortfall(axis_shortfall);
-                    let records: Vec<crate::core::search::results::OptimizedSearchRecord> = result
-                        .results
-                        .into_iter()
-                        .map(|r| {
-                            crate::core::search::results::OptimizedSearchRecord::new(
-                                r.vector_id,
-                                r.similarity,
-                            )
-                        })
-                        .collect();
-                    debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
-                    records
-                }
+        // Co-design: skip the in-memory AXIS (HNSW/IVF) query entirely for
+        // collections that have no index_configs. The PAX scan (RaBitQ + SQ8 +
+        // A0 coarse-probe) in the SST engine handles the search — the segment IS
+        // the index. This avoids the 8.6GB RSS + minutes of IVF training for
+        // cost-optimized, object-storage-backed collections.
+        let collection_has_axis_indexes = collection_uses_axis_indexes(&collection);
+        let axis_optimized_results = if !collection_has_axis_indexes {
+            info!(
+                "🔍 Co-design: skipping AXIS for collection {} (no index_configs) — \
+                 using PAX scan path",
+                collection_id
+            );
+            Vec::new()
+        } else {
+            match build_axis_hybrid_query_with_policy(
+                // TD-AXIS-1: use the collection's canonical id (UUID) — NOT the
+                // caller's collection_id (which may be the human-readable NAME).
+                // enable_hmgi registered the UUID in hmgi_enabled_collections;
+                // passing the name caused is_hmgi_enabled to return false → HMGI
+                // skipped → IVF fallback → 0 results (ANN index not serving).
+                // ADR-031 follow-up: migrate hmgi_enabled_collections to the stable
+                // object_id (base62) and use that here instead of the UUID.
+                &collection.id,
+                &axis_search_params,
+                ann_filtering_mode,
+                ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
+                ann_filtering_selectivity,
+            ) {
+                Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
+                    Ok(result) => {
+                        // TD-064(a): stop dropping `predicate_shortfall` /
+                        // `selected_filtering_mode`. Carry the AXIS-stage shortfall
+                        // onto the per-request diagnostics bus here (explicit
+                        // carrier — the value is then recomputed against the FINAL
+                        // WAL+AXIS+storage merge at the response boundary in
+                        // `search_records_with_tenant_context`, which clears any
+                        // post-merge false positive). `selected_filtering_mode` is
+                        // already reflected in the shortfall's `ann_filtering_mode`
+                        // label, so bind it to document it is captured, not
+                        // silently discarded.
+                        let axis_shortfall = result.predicate_shortfall;
+                        let _selected_filtering_mode = result.selected_filtering_mode;
+                        crate::observability::predicate_diagnostics::set_shortfall(axis_shortfall);
+                        let records: Vec<crate::core::search::results::OptimizedSearchRecord> =
+                            result
+                                .results
+                                .into_iter()
+                                .map(|r| {
+                                    crate::core::search::results::OptimizedSearchRecord::new(
+                                        r.vector_id,
+                                        r.similarity,
+                                    )
+                                })
+                                .collect();
+                        debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
+                        records
+                    }
+                    Err(e) => {
+                        debug!("Stage 2 AXIS search failed: {}", e);
+                        Vec::new()
+                    }
+                },
                 Err(e) => {
-                    debug!("Stage 2 AXIS search failed: {}", e);
+                    warn!(
+                        "Stage 2 AXIS search skipped for collection {}: {}",
+                        collection_id, e
+                    );
                     Vec::new()
                 }
-            },
-            Err(e) => {
-                warn!(
-                    "Stage 2 AXIS search skipped for collection {}: {}",
-                    collection_id, e
-                );
-                Vec::new()
             }
         };
 
-        // Stage 3: Storage engine search - ONLY if we need more results
-        // Skip if WAL + AXIS already have enough high-quality results
+        // Stage 3: Storage engine search - ONLY if we need more results.
+        // Skip when WAL + AXIS already cover the candidate pool -- but that's only true
+        // when the collection USES AXIS (AXIS indexes the flushed vectors). For co-design
+        // collections (no index_configs) the flushed data lives ONLY in storage segments,
+        // so WAL alone is insufficient and storage must always be searched; otherwise the
+        // entire flushed set is never seen and recall collapses to the tiny WAL window.
         let total_indexed_results = wal_optimized_results.len() + axis_optimized_results.len();
-        let storage_results = if total_indexed_results >= candidates {
+        let storage_results = if collection_has_axis_indexes && total_indexed_results >= candidates
+        {
             debug!(
                 "Stage 3: Skipping storage search (have {} results from WAL+AXIS)",
                 total_indexed_results
@@ -3880,10 +3952,9 @@ impl VectorOperationsService {
         // Convert IndexLookupParams to SearchParams
         let search_params = crate::core::search::SearchParams {
             query_vectors: params.query_vector.map(|v| vec![v]),
-            top_k: Some(params.top_k),
+            top_k: Some(params.top_k as u16),
             filter_expression: params.filter,
             include_expired: Some(false),
-            optimization_hint: Some(format!("IndexLookup:{:?}", index_type)),
             ..Default::default()
         };
 
@@ -4050,28 +4121,39 @@ impl VectorOperationsService {
             .write_vector_batch_native_arc(collection_id, Arc::new(vectors.clone()))
             .await?;
 
-        let axis_start = std::time::Instant::now();
-        for record in vectors.iter() {
-            if let Err(e) = self
-                .axis_index_manager
-                .insert_record(collection_id, record)
-                .await
-            {
-                tracing::warn!(
-                    "Failed to index vector {} in AXIS: {} (search will use linear scan)",
-                    record.oid,
-                    e
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let axis_duration = if collection_uses_axis_indexes(&collection) {
+            let axis_start = std::time::Instant::now();
+            for record in vectors.iter() {
+                if let Err(e) = self
+                    .axis_index_manager
+                    .insert_record(collection_id, record)
+                    .await
+                {
+                    tracing::warn!(
+                        "Failed to index vector {} in AXIS: {} (search will use storage)",
+                        record.oid,
+                        e
+                    );
+                }
+            }
+            let axis_duration = axis_start.elapsed();
+            if axis_duration.as_millis() > 10 {
+                tracing::debug!(
+                    "AXIS indexing for {} vectors took {:?}",
+                    vectors.len(),
+                    axis_duration
                 );
             }
-        }
-        let axis_duration = axis_start.elapsed();
-        if axis_duration.as_millis() > 10 {
+            axis_duration
+        } else {
             tracing::debug!(
-                "AXIS indexing for {} vectors took {:?}",
-                vectors.len(),
-                axis_duration
+                collection_id,
+                records = vectors.len(),
+                "ADR-081: skipping AXIS insert feed because collection has no index_configs"
             );
-        }
+            std::time::Duration::ZERO
+        };
 
         let duration_micros = start.elapsed().as_micros() as i64;
         let bytes_written = vectors
@@ -4366,9 +4448,11 @@ impl VectorOperationsService {
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
         let metadata = crate::core::search::results::proxima_map_to_sql(result.metadata.clone());
 
-        // Use normalized similarity score for user-facing display (0-1 range, higher = better)
-        // Internal sorting uses result.score (raw distance), but users should see normalized values
-        let display_score = result.similarity.unwrap_or(0.0) as f64;
+        // Use normalized similarity score for user-facing display (0-1 range, higher = better).
+        // Fall back to `score` (the cross-engine normalized similarity used for ranking) when
+        // a producer didn't populate the optional `similarity` field — a 0.0 fallback rendered
+        // every such hit as "no match" at the API boundary.
+        let display_score = result.similarity.unwrap_or(result.score) as f64;
 
         // DEBUG: Log the values to understand what's happening
         tracing::debug!(
@@ -4989,18 +5073,9 @@ mod index_first_search_tests {
         let sst_engine = Arc::new(crate::storage::engines::sst::SstEngine::new().await?);
 
         let wal_config = crate::storage::persistence::write_ahead_log::WALConfig::default();
-        let strategy_type =
-            crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
-        let strategy = crate::storage::persistence::write_ahead_log::WALBatchFactory::create_batch_serialization_strategy(
-            strategy_type,
-            &wal_config,
-            filesystem.clone()
-        ).await?;
         let wal_manager = Arc::new(
-            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(
-                strategy, wal_config,
-            )
-            .await?,
+            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(wal_config)
+                .await?,
         );
 
         let axis_manager = Arc::new(
@@ -6144,5 +6219,47 @@ mod recompute_merged_shortfall_tests {
         assert!(recompute_merged_shortfall(10, 10, true, Some(&ctx)).is_none());
         // also: more than requested (cap) is not a shortfall
         assert!(recompute_merged_shortfall(10, 12, true, Some(&ctx)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod axis_insert_gate_tests {
+    use super::collection_uses_axis_indexes;
+    use crate::proto::proximadb_v1::{Collection, CollectionConfig, IndexConfig};
+
+    #[test]
+    fn empty_index_configs_do_not_feed_axis() {
+        let collection = Collection {
+            config: Some(CollectionConfig {
+                index_configs: Vec::new(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!collection_uses_axis_indexes(&collection));
+    }
+
+    #[test]
+    fn configured_index_feeds_axis() {
+        let collection = Collection {
+            config: Some(CollectionConfig {
+                index_configs: vec![IndexConfig::default()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(collection_uses_axis_indexes(&collection));
+    }
+
+    #[test]
+    fn raw_f32_compatibility_tag_feeds_axis() {
+        let collection = Collection {
+            config: Some(CollectionConfig {
+                tags: vec!["pax_vector_format:off".to_string()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(collection_uses_axis_indexes(&collection));
     }
 }

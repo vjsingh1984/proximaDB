@@ -228,6 +228,7 @@ pub mod error;
 pub mod extraction;
 pub mod filter_methods;
 pub mod flush_eventlog_integration;
+pub mod metrics; // TD-RDSTRAT-8: IVF coarse-probe operator metrics
 pub(crate) mod staged_write;
 // Quantization now handled by unified compute module
 pub mod compactor_impl;
@@ -256,17 +257,20 @@ pub mod pca_manager; // PCA caching for Z-Order spatial encoding
 pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod search;
 pub mod segment_format; // P3 Phase A: mixed-format (ProximaBlocks/PAX) read primitives
-pub mod survivor_range_cache; // ADR-065 Q3: ranged RAM cache for survivor/OID byte ranges
+pub mod survivor_range_cache;
 pub mod text_column_support; // TEXT column storage integration
 pub mod tiering_integration;
 pub mod trait_impl;
-pub mod utils; // Tiered storage integration (opt-in)
+pub mod utils;
+pub mod warming; // ADR-065 Q3: ranged RAM cache for survivor/OID byte ranges // Tiered storage integration (opt-in)
 
 // Re-export main types
 pub use bloom_filter::{
     BloomFilterStats, HierarchicalBloomConfig, SerializedSstableBloomFilter, SstableBloomFilter,
 };
-pub use compaction::{Compaction, CompactionPriority, CompactionStats, CompactionTask};
+pub use compaction::{
+    Compaction, CompactionPriority, CompactionStats, CompactionTask, set_global_precision_resolver,
+};
 pub use compactor_impl::{CompactionSortStrategy, SstCompactor, ZeroCopyCompactionStats};
 pub use readers::UnifiedSstableReader;
 

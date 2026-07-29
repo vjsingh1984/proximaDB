@@ -34,9 +34,7 @@ use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::metadata::store::MetadataCacheConfig;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::config::WriteBufferStrategyType;
-use proximadb::storage::persistence::write_ahead_log::{
-    WALBatchFactory, WALConfig, WriteAheadLogManager,
-};
+use proximadb::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 use proximadb_data_model::ProximaValue;
 use proximadb_records::ProximaRecord;
@@ -177,13 +175,7 @@ impl UnifiedTestEnvironment {
         let sst_engine = Arc::new(SstEngine::new().await?);
 
         let wal_config = WALConfig::default();
-        let strategy = WALBatchFactory::create_batch_serialization_strategy(
-            WriteBufferStrategyType::BincodeBatch,
-            &wal_config,
-            self.filesystem.clone(),
-        )
-        .await?;
-        let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
+        let wal_manager = Arc::new(WriteAheadLogManager::new(wal_config).await?);
 
         let axis_manager = Arc::new(AxisManager::new(AxisConfig::default()).await?);
 
@@ -713,6 +705,8 @@ impl UnifiedTestEnvironment {
             // Tier-migration integration — disabled in tests so the
             // SST engine doesn't pull in the tiering policy engine.
             tiering: None,
+
+            ..Default::default()
         }
     }
 
@@ -900,7 +894,7 @@ pub mod operations {
         let search_params = Arc::new(proximadb::core::search::SearchParams {
             vector: Some(query_vector.to_vec()),
             query_vectors: None,
-            top_k: Some(top_k),
+            top_k: Some(top_k as u16),
             distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
             filter_expression: None,
             timeout_ms: None,
@@ -957,7 +951,7 @@ pub mod operations {
         let collection = Arc::new(environment.create_test_collection());
         let search_params = Arc::new(proximadb::core::search::SearchParams {
             vector: Some(query_vector.to_vec()),
-            top_k: Some(top_k),
+            top_k: Some(top_k as u16),
             distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
             ..Default::default()
         });

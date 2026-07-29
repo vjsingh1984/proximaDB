@@ -38,6 +38,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use proximadb_block_format::coalesced_rabitq::{
@@ -50,12 +51,12 @@ use proximadb_block_format::{
     BlockCompression, BlockMode, BlockStats, BlockZoneSource, ColumnMeta, FlatRow, PaxBlockReader,
     PaxBlockWriter, RowGroupBlock, VectorQuant, col_id, header::fnv1a_hash,
 };
-use proximadb_records::{EmbeddingValues, ProximaRecord};
+use proximadb_records::ProximaRecord;
 use serde::{Deserialize, Serialize};
 
 use crate::coarse_directory::{CoarseCellEntry, CoarseDirectory, CoarseModel};
 use crate::engine_constants::{
-    DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES, DEFAULT_TARGET_BLOCK_SIZE_BYTES,
+    DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES, DEFAULT_TARGET_BLOCK_SIZE_BYTES, MAX_BLOCK_ROWS,
     MAX_TARGET_BLOCK_SIZE_BYTES,
 };
 use crate::segment_layout::{
@@ -517,6 +518,36 @@ struct TwoLevelState {
     cell_end_blocks: Vec<u32>,
 }
 
+/// TD-COMPACT-1 S2: cumulative writer sub-phase timers, allocated only when
+/// `PROXIMADB_TRACE_PAX_WRITE` is set at writer construction. Buckets cover the
+/// per-record `add_record` work plus the finish-time coalesced region encodes;
+/// one summary line is emitted from [`PaxSegmentWriter::finish`]. Near-zero cost
+/// when the env is unset: a single `Option` discriminant check per span.
+#[derive(Default)]
+struct WriteTraceStats {
+    /// Coalesced Region A: per-record f32 buffering for `rabitq_vectors` +
+    /// the finish-time `encode_region` (fit + rotation + per-vector encode).
+    rabitq_encode: Duration,
+    /// Coalesced Region B: the finish-time `encode_sq8_region` (SQ8 rerank tier).
+    rerank_encode: Duration,
+    /// `PaxBlockWriter::add_record` row buffering (FlatRow extraction, msgpack
+    /// props, embedding clones, column pushes).
+    raw_buffer: Duration,
+    /// Every `flush_current_block` body: block serialize (stripes + codecs),
+    /// re-open for stats/zone summaries, and `file_buf` append.
+    block_cut_compress: Duration,
+    /// Centroid/radius accumulation (`accumulate_centroid`).
+    cluster_bookkeeping: Duration,
+    /// `add_record` remainder (size estimate, two-level boundary checks, ...).
+    other: Duration,
+    /// Blocks cut so far (size-triggered + cell-boundary + final flushes).
+    blocks_cut: u64,
+    /// Running f32 bytes buffered in `rabitq_vectors` for the coalesced regions.
+    rabitq_buf_bytes: usize,
+    /// Peak of `file_buf` + coalesced vector buffer observed at block cuts.
+    peak_buffered_bytes: usize,
+}
+
 pub struct PaxSegmentWriter {
     path: PathBuf,
     mode: BlockMode,
@@ -590,6 +621,20 @@ pub struct PaxSegmentWriter {
     /// dim + the quant/f32_tier/embedding_count config). Replaces the flat 1024
     /// that overestimated SQ8 blocks by ~4.5×. 0 = not yet computed.
     per_row_estimate: usize,
+    /// TD-DELVEC-1 WI-2b: when true, capture each record's canonical oid in
+    /// add_record (stream) order into `oids`, and expose it via
+    /// [`PaxSegmentWriter::oid_resolver_bytes`] as a serialized
+    /// `OidPositionResolver` (WI-2c persists it as a footer region inside the segment).
+    /// Default OFF — zero cost; the default flush path is byte-for-byte unchanged.
+    compute_oid_resolver: bool,
+    /// Captured canonical oids in add_record (stream) order, one per record,
+    /// populated only when `compute_oid_resolver` is on. Position `i` here is the
+    /// segment's footer-block position `i` (verified: `add_record` call-order is
+    /// the on-disk order; TD-DELVEC-1 §9.2).
+    oids: Vec<String>,
+    /// TD-COMPACT-1 S2: `Some` iff `PROXIMADB_TRACE_PAX_WRITE` was set when the
+    /// writer was constructed (read ONCE, here) — cumulative sub-phase timers.
+    write_trace: Option<Box<WriteTraceStats>>,
 }
 
 impl PaxSegmentWriter {
@@ -649,6 +694,11 @@ impl PaxSegmentWriter {
             rabitq_vectors: Vec::new(),
             two_level: None,
             per_row_estimate: 0,
+            compute_oid_resolver: false,
+            oids: Vec::new(),
+            write_trace: std::env::var_os("PROXIMADB_TRACE_PAX_WRITE")
+                .is_some()
+                .then(|| Box::new(WriteTraceStats::default())),
         }
     }
 
@@ -661,6 +711,32 @@ impl PaxSegmentWriter {
     pub fn with_block_centroids(mut self, enabled: bool) -> Self {
         self.compute_centroids = enabled;
         self
+    }
+
+    /// TD-DELVEC-1 WI-2b: opt in to capturing the segment's oid→footer-block
+    /// position resolver. When on, `add_record` records each canonical oid in
+    /// stream order; [`PaxSegmentWriter::oid_resolver_bytes`] then serializes a
+    /// CRC32'd `ORP1` resolver (WI-2c persists it as a footer region inside
+    /// the segment). Default OFF — pre-existing callers pay nothing. Builder form
+    /// mirroring [`with_block_centroids`]; no block-writer rebuild needed.
+    pub fn with_oid_resolver(mut self, enabled: bool) -> Self {
+        self.compute_oid_resolver = enabled;
+        self
+    }
+
+    /// TD-DELVEC-1 WI-2b: serialize the captured oid→footer-block-position
+    /// resolver (CRC32'd `ORP1`), or `Ok(None)` if `with_oid_resolver` was not
+    /// enabled. The oids are complete once every record is added, so call this
+    /// BEFORE [`finish`](Self::finish) consumes the writer; the flush path
+    /// (WI-2c) persists the bytes as a footer region inside the segment.
+    pub fn oid_resolver_bytes(&self) -> Result<Option<Vec<u8>>, crate::bitmap::BitmapError> {
+        if !self.compute_oid_resolver {
+            return Ok(None);
+        }
+        let bytes =
+            crate::oid_position_resolver::OidPositionResolver::from_stream_order(self.oids.clone())
+                .serialize()?;
+        Ok(Some(bytes))
     }
 
     /// Set the vector quantization strategy for this segment (P3 Phase D). Builder form
@@ -821,19 +897,56 @@ impl PaxSegmentWriter {
     ///
     /// Flushes the block automatically when it exceeds `block_size_threshold`.
     pub fn add_record(&mut self, record: &ProximaRecord) -> Result<()> {
+        // TD-COMPACT-1 S2: per-span timers, active only when the writer was
+        // constructed with `PROXIMADB_TRACE_PAX_WRITE` set (plain bool check +
+        // no `Instant::now` otherwise). Spans are accumulated into locals and
+        // merged into `write_trace` once at the end of this call.
+        let trace_on = self.write_trace.is_some();
+        let t_total = trace_on.then(Instant::now);
+        let flush_before = self
+            .write_trace
+            .as_deref()
+            .map(|tr| tr.block_cut_compress)
+            .unwrap_or_default();
+        let mut d_raw = Duration::ZERO;
+        let mut d_cluster = Duration::ZERO;
+        let mut d_rabitq = Duration::ZERO;
+        let mut rabitq_bytes = 0usize;
+
+        let t = trace_on.then(Instant::now);
         self.current_writer.add_record(record)?;
         self.row_count += 1;
+        if let Some(t) = t {
+            d_raw = t.elapsed();
+        }
         if self.compute_centroids {
+            let t = trace_on.then(Instant::now);
             self.accumulate_centroid(record);
+            if let Some(t) = t {
+                d_cluster = t.elapsed();
+            }
+        }
+        // TD-DELVEC-1 WI-2b: capture the canonical oid in add_record (stream)
+        // order — the only point that sees post-cluster-reorder footer-block
+        // order (verified: call-order == on-disk position; §9.2). Default off;
+        // mirrors the centroid opt-in above.
+        if self.compute_oid_resolver {
+            self.oids.push(record.oid.clone());
         }
         // ADR-062: buffer the embedding-0 f32 vector (in cluster/add order) for
         // the segment-level RaBitQ region. The caller has already reordered
         // records by `cluster_order_pca_ivf`, so this preserves survivor locality.
         if self.coalesced_rabitq {
-            let v = record.embeddings.first().and_then(|e| match &e.values {
-                EmbeddingValues::Fp32(v) => Some(v.clone()),
-                _ => None,
-            });
+            // Dequantize ANY EmbeddingValues variant (Fp32/Fp16/Bf16/Int8/UInt8) to
+            // f32 for the RaBitQ+SQ8 segment-level quantization. The old Fp32-only
+            // extraction silently dropped non-Fp32 embeddings (e.g. after ingest-time
+            // canonical-precision coercion) → garbage SQ8 params → 0.35% recall.
+            let t = trace_on.then(Instant::now);
+            let v = record.embeddings.first().map(|e| e.values.to_fp32_owned());
+            if let Some(t) = t {
+                d_rabitq = t.elapsed();
+                rabitq_bytes = v.as_ref().map_or(0, |v| v.len() * 4);
+            }
             self.rabitq_vectors.push(v);
         }
 
@@ -842,10 +955,7 @@ impl PaxSegmentWriter {
         // (from the first record). This replaces the flat 1024 B/row estimate
         // that overestimated SQ8 blocks by ~4.5× (actual ~228 B/row for 128d).
         if self.per_row_estimate == 0
-            && let Some(dim) = record.embeddings.first().and_then(|e| match &e.values {
-                EmbeddingValues::Fp32(v) => Some(v.len()),
-                _ => None,
-            })
+            && let Some(dim) = record.embeddings.first().map(|e| e.dim as usize)
         {
             self.per_row_estimate = self.estimate_per_row_bytes(dim);
         }
@@ -861,7 +971,14 @@ impl PaxSegmentWriter {
         let metadata_bytes = self.current_writer.accumulated_metadata_bytes();
         let block_overhead = 1024; // header(64B) + footer(32B) + column footer — amortized
         let total = vector_bytes + metadata_bytes + block_overhead;
-        if total >= self.block_size_threshold {
+        // TD-COMPACT-2: ALSO cut on a hard row bound. The byte cut works off the
+        // modeled `per_row` estimate; when it under-counts (coalesced mode hoists
+        // vectors out of blocks → ~200 B/row modeled), a giant two-level cell
+        // would otherwise become one giant block whose cut-time stripe assembly
+        // is the untracked memory/latency spike. Cell alignment is preserved: a
+        // mid-cell cut just makes the cell span more whole blocks, which the A0
+        // directory's `d_block_begin..d_block_end` range already represents.
+        if total >= self.block_size_threshold || self.current_writer.row_count() >= MAX_BLOCK_ROWS {
             self.flush_current_block()?;
         }
         // TD-RDSTRAT-8: pad/flush at every coarse-cell boundary so blocks never
@@ -884,6 +1001,20 @@ impl PaxSegmentWriter {
                 tl.next_boundary += 1;
             }
         }
+        // TD-COMPACT-1 S2: merge this call's spans. Block flushes triggered above
+        // accounted themselves into `block_cut_compress` (see
+        // `flush_current_block`), so `other` = total − spans − flush delta:
+        // the size-estimate arithmetic + boundary checks + anything unattributed.
+        if let (Some(t0), Some(tr)) = (t_total, self.write_trace.as_deref_mut()) {
+            tr.raw_buffer += d_raw;
+            tr.cluster_bookkeeping += d_cluster;
+            tr.rabitq_encode += d_rabitq;
+            tr.rabitq_buf_bytes += rabitq_bytes;
+            let flush_delta = tr.block_cut_compress.saturating_sub(flush_before);
+            tr.other += t0
+                .elapsed()
+                .saturating_sub(d_raw + d_cluster + d_rabitq + flush_delta);
+        }
         Ok(())
     }
 
@@ -892,9 +1023,11 @@ impl PaxSegmentWriter {
     /// representation contributes; other variants are skipped (the block's
     /// centroid is the mean over its Fp32 rows).
     fn accumulate_centroid(&mut self, record: &ProximaRecord) {
-        let Some(EmbeddingValues::Fp32(v)) = record.embeddings.first().map(|e| &e.values) else {
+        // Dequantize ANY variant to f32 for the centroid sum (was Fp32-only).
+        let Some(cell) = record.embeddings.first() else {
             return;
         };
+        let v = cell.as_fp32_cow();
         if v.is_empty() {
             return;
         }
@@ -903,7 +1036,7 @@ impl PaxSegmentWriter {
         }
         if self.cur_centroid_sum.len() == v.len() {
             let mut norm_sq = 0f64;
-            for (s, &x) in self.cur_centroid_sum.iter_mut().zip(v) {
+            for (s, &x) in self.cur_centroid_sum.iter_mut().zip(v.iter()) {
                 let x = x as f64;
                 *s += x;
                 norm_sq += x * x;
@@ -952,6 +1085,9 @@ impl PaxSegmentWriter {
         if self.current_writer.is_empty() {
             return Ok(());
         }
+        // TD-COMPACT-1 S2: everything in this body (block serialize + codecs +
+        // stats/zone re-open + file_buf append) is the `block_cut_compress` bucket.
+        let t_flush = self.write_trace.is_some().then(Instant::now);
         // Capture timestamp bounds before flush (flush does not reset internal state).
         let min_ts = self.current_writer.min_ts();
         let max_ts = self.current_writer.max_ts();
@@ -997,6 +1133,17 @@ impl PaxSegmentWriter {
         // Reset writer for the next block (preserving the segment's quant + f32-tier +
         // rerank + shred-spec strategy — see `fresh_block_writer`).
         self.current_writer = self.fresh_block_writer();
+        if let Some(t) = t_flush {
+            let file_len = self.file_buf.len();
+            if let Some(tr) = self.write_trace.as_deref_mut() {
+                tr.block_cut_compress += t.elapsed();
+                tr.blocks_cut += 1;
+                let buffered = file_len + tr.rabitq_buf_bytes;
+                if buffered > tr.peak_buffered_bytes {
+                    tr.peak_buffered_bytes = buffered;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1023,11 +1170,44 @@ impl PaxSegmentWriter {
             .map(|v| v.len())
             .unwrap_or(0) as u32;
 
-        if self.coalesced_rabitq && coalesced_dim > 0 {
+        let result = if self.coalesced_rabitq && coalesced_dim > 0 {
             self.finish_coalesced(coalesced_dim)
         } else {
             self.finish_legacy()
+        };
+        self.emit_write_trace();
+        result
+    }
+
+    /// TD-COMPACT-1 S2: emit ONE cumulative sub-phase summary line for this
+    /// segment write. No-op unless `PROXIMADB_TRACE_PAX_WRITE` was set when the
+    /// writer was constructed. Mirrored to stderr so it interleaves with the
+    /// S1 `[PAX write]` phase timers emitted by the flush/compaction entry.
+    fn emit_write_trace(&mut self) {
+        let row_count = self.row_count;
+        let file_len = self.file_buf.len();
+        let Some(tr) = self.write_trace.as_deref_mut() else {
+            return;
+        };
+        let buffered = file_len + tr.rabitq_buf_bytes;
+        if buffered > tr.peak_buffered_bytes {
+            tr.peak_buffered_bytes = buffered;
         }
+        let ms = |d: Duration| d.as_secs_f64() * 1e3;
+        let line = format!(
+            "[PAX write detail] records={} blocks_cut={} rabitq={:.0} ms rerank={:.0} ms raw_buffer={:.0} ms block={:.0} ms cluster={:.0} ms other={:.0} ms peak_buffered_bytes={}",
+            row_count,
+            tr.blocks_cut,
+            ms(tr.rabitq_encode),
+            ms(tr.rerank_encode),
+            ms(tr.raw_buffer),
+            ms(tr.block_cut_compress),
+            ms(tr.cluster_bookkeeping),
+            ms(tr.other),
+            tr.peak_buffered_bytes,
+        );
+        tracing::info!("{line}");
+        eprintln!("{line}");
     }
 
     /// Legacy `[blocks][SegmentIndex][SEGMENT_MAGIC]` layout (readability-preserving
@@ -1224,10 +1404,21 @@ impl PaxSegmentWriter {
         //    blocks at 0-based offsets (relative to the blocks region).
         let refs: Vec<Option<&[f32]>> = self.rabitq_vectors.iter().map(|o| o.as_deref()).collect();
         let seed = RABITQ_SEED_BASE ^ (col_id::EMBED_BASE as u64);
+        // TD-COMPACT-1 S2: the finish-time Region A encode (fit + rotation +
+        // per-vector RaBitQ) accumulates into the `rabitq` bucket, Region B
+        // (segment-level SQ8) into `rerank`.
+        let t = self.write_trace.is_some().then(Instant::now);
         let (region_bytes, _centroid) = encode_region(&refs, dim, seed)?;
+        if let (Some(t), Some(tr)) = (t, self.write_trace.as_deref_mut()) {
+            tr.rabitq_encode += t.elapsed();
+        }
         // ADR-065 Region B: the SQ8 rerank tier, hoisted out of blocks so survivor
         // rerank fetches read pure dense SQ8 (one segment-level Sq8Params fit).
+        let t = self.write_trace.is_some().then(Instant::now);
         let (sq8_region_bytes, sq8_params) = encode_sq8_region(&refs, dim)?;
+        if let (Some(t), Some(tr)) = (t, self.write_trace.as_deref_mut()) {
+            tr.rerank_encode += t.elapsed();
+        }
 
         // TD-RDSTRAT-8: geometry first — A0's byte length is deterministic from
         // (k_c, dim, n_comp), so every downstream offset is known BEFORE A0's
@@ -1272,8 +1463,19 @@ impl PaxSegmentWriter {
         let rabitq_len = region_bytes.len() as u64;
         let sq8_off = rabitq_off + rabitq_len;
         let sq8_len = sq8_region_bytes.len() as u64;
-        // Blocks (Region D) begin after header [+ A0] + Region A + Region B.
+        // Resolver region (TD-DELVEC-1 WI-2c): the OID→position resolver is an
+        // immutable write-time component → a region *inside* the segment (atomic
+        // with it on the single PUT), not a sidecar. It sits between Region B
+        // (SQ8) and the blocks, so the block table's absolute offsets
+        // (data_offset + b.offset below) account for its space. Absent
+        // (opr_off/opr_len = 0) when `with_oid_resolver` is off or no oids were
+        // captured — the segment is then byte-identical to the pre-WI-2c form.
+        let opr_bytes = self.oid_resolver_bytes()?;
+        // Blocks (Region D) begin after header [+ A0] + Region A + Region B [+ resolver].
         let data_offset = sq8_off + sq8_len;
+        let opr_off = data_offset;
+        let opr_len = opr_bytes.as_ref().map_or(0u64, |b| b.len() as u64);
+        let data_offset = data_offset + opr_len;
 
         // Serialize A0 (v3 only). Per-cell extents are ABSOLUTE file offsets
         // into the fixed-stride code payloads of Regions A/B (the writer owns
@@ -1363,6 +1565,8 @@ impl PaxSegmentWriter {
             block_tier_assignments,
             a0_off,
             a0_len,
+            opr_off,
+            opr_len,
         };
         let footer_body = footer.to_bytes()?;
         let footer_off = data_offset + self.file_buf.len() as u64;
@@ -1387,6 +1591,7 @@ impl PaxSegmentWriter {
                 + a0_len as usize
                 + region_bytes.len()
                 + sq8_region_bytes.len()
+                + opr_len as usize
                 + self.file_buf.len()
                 + footer_body.len()
                 + 16,
@@ -1397,6 +1602,9 @@ impl PaxSegmentWriter {
         }
         out.extend_from_slice(&region_bytes);
         out.extend_from_slice(&sq8_region_bytes);
+        if let Some(opr) = &opr_bytes {
+            out.extend_from_slice(opr);
+        }
         out.extend_from_slice(&self.file_buf);
         out.extend(segment_tail(&footer_body));
 
@@ -1824,6 +2032,85 @@ mod tests {
         Ok(())
     }
 
+    /// TD-DELVEC-1 WI-2c: a coalesced segment written with `with_oid_resolver(true)`
+    /// embeds the OID→position resolver as a **footer region** — locatable via
+    /// `SegmentFooterIndex::locate_in_segment`, fetchable by `(opr_off, opr_len)`,
+    /// and round-tripping through `OidPositionResolver::deserialize` with the oids
+    /// in add_record (stream) order. With the opt-in OFF, no resolver region is
+    /// emitted (`opr_len == 0`) — the segment is byte-for-byte the pre-WI-2c form.
+    #[test]
+    fn coalesced_segment_embeds_oid_resolver_footer_region() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        const DIM: usize = 32;
+        let oids: Vec<String> = (0..8).map(|i| format!("oid-{i}")).collect();
+
+        let write_segment = |path: &std::path::Path, resolver: bool| -> Result<()> {
+            let mut writer = PaxSegmentWriter::new(
+                path,
+                BlockMode::Pax,
+                BlockCompression::None,
+                "col",
+                0,
+                1,
+                Some(8 * 2 * 1024),
+            )
+            .with_quant(VectorQuant::RaBitQ)
+            .with_coalesced_rabitq(true);
+            if resolver {
+                writer = writer.with_oid_resolver(true);
+            }
+            for oid in &oids {
+                let mut record = make_record(oid, "t", 1);
+                record.embeddings.push(EmbeddingCell {
+                    modality: "dense".into(),
+                    dim: DIM as u32,
+                    values: EmbeddingValues::Fp32(vec![0.5; DIM]),
+                    ..Default::default()
+                });
+                writer.add_record(&record)?;
+            }
+            writer.finish()?;
+            Ok(())
+        };
+
+        let dir = tempfile::tempdir()?;
+
+        // Opt-in ON → resolver region present, locatable, and round-trips with the
+        // oids in add_record (stream) order.
+        let on_path = dir.path().join("resolver-on.pax");
+        write_segment(&on_path, true)?;
+        let segment = std::fs::read(&on_path)?;
+        let footer = SegmentFooterIndex::locate_in_segment(&segment)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        assert!(
+            footer.opr_len > 0,
+            "resolver region must be present when opted in"
+        );
+        let region = &segment[footer.opr_off as usize..(footer.opr_off + footer.opr_len) as usize];
+        let resolver = crate::oid_position_resolver::OidPositionResolver::deserialize(region)?;
+        assert_eq!(resolver.len(), oids.len() as u32);
+        for (i, oid) in oids.iter().enumerate() {
+            assert_eq!(
+                resolver.position_of(oid),
+                Some(i as u32),
+                "oid must map to its add_record (stream) position"
+            );
+        }
+
+        // Opt-in OFF → no resolver region (opr_off/opr_len == 0); segment parses.
+        let off_path = dir.path().join("resolver-off.pax");
+        write_segment(&off_path, false)?;
+        let footer_off = SegmentFooterIndex::locate_in_segment(&std::fs::read(&off_path)?)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        assert_eq!(footer_off.opr_off, 0);
+        assert_eq!(
+            footer_off.opr_len, 0,
+            "no resolver region when the opt-in is off"
+        );
+        Ok(())
+    }
+
     /// TD-RDSTRAT-5 S1: with `with_block_centroids(true)`, the segment writer
     /// returns one centroid per block = the exact mean of that block's embedding-0
     /// f32 vectors. Block-cutting is by current-block row count (`row_count*1024 >=
@@ -1886,6 +2173,84 @@ mod tests {
             vec![11.0, 11.0],
             "mean of [10,10],[12,12]"
         );
+    }
+
+    /// TD-DELVEC-1 WI-2b: with `with_oid_resolver(true)`, the writer captures
+    /// each record's canonical oid in add_record (stream) order and exposes a
+    /// CRC32'd `ORP1` resolver whose positions match that order. Default OFF ⇒
+    /// `oid_resolver_bytes()` is `Ok(None)` (the default flush path is unchanged).
+    /// The footer-block-order property (capture order == on-disk scan order) is
+    /// verified by code read (§9.2) + a WI-2c scan integration test.
+    #[test]
+    fn oid_resolver_captures_stream_order_and_is_off_by_default() {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        let rec = |oid: &str| {
+            let mut r = ProximaRecord {
+                oid: oid.into(),
+                tenant_id: "t".into(),
+                created_at_ns: 1,
+                updated_at_ns: 1,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: 1,
+                values: EmbeddingValues::Fp32(vec![0.0]),
+                ..Default::default()
+            });
+            r
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+
+        // Default OFF: no resolver captured.
+        let mut w0 = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RawF32);
+        w0.add_record(&rec("x")).unwrap();
+        assert!(
+            w0.oid_resolver_bytes().unwrap().is_none(),
+            "default off ⇒ no resolver bytes"
+        );
+
+        // Opt in: capture oids in add_record order, round-trip through ORP1+CRC.
+        let mut w = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RawF32)
+        .with_oid_resolver(true);
+        for oid in ["a", "b", "", "d"] {
+            w.add_record(&rec(oid)).unwrap();
+        }
+        let bytes = w
+            .oid_resolver_bytes()
+            .unwrap()
+            .expect("captured when enabled");
+        let resolver =
+            crate::oid_position_resolver::OidPositionResolver::deserialize(&bytes).unwrap();
+        assert_eq!(resolver.len(), 4);
+        assert_eq!(resolver.position_of("a"), Some(0));
+        assert_eq!(resolver.position_of("b"), Some(1));
+        assert_eq!(
+            resolver.position_of(""),
+            Some(2),
+            "an empty oid is kept at its position (append-only rows are non-addressable, harmless)"
+        );
+        assert_eq!(resolver.position_of("d"), Some(3));
+        assert_eq!(resolver.oid_at(1), Some("b"));
     }
 
     /// TD-WLP-3 (TD-RDSTRAT-5 lever-3): the writer emits one RMS radius per
@@ -2684,6 +3049,145 @@ mod tests {
         let h1 = SegmentHeaderPrefix::parse(&v1_bytes)?;
         assert_eq!(h1.layout_version, SEG_LAYOUT_VERSION);
         assert_eq!((h1.a0_off, h1.a0_len), (0, 0));
+        Ok(())
+    }
+
+    /// TD-COMPACT-2: a two-level cell far past the hard row bound must NOT
+    /// become one giant block. The writer cuts at `MAX_BLOCK_ROWS` mid-cell;
+    /// blocks stay aligned to cell boundaries (a cell = whole D-blocks, now
+    /// possibly several); the persisted probe directory maps every cell to its
+    /// exact row/byte/block ranges; and the persisted layout round-trips every
+    /// record's id + vector.
+    #[test]
+    fn two_level_row_bound_splits_giant_cells() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        const DIM: usize = 8;
+        // One cell well past the row bound + a small trailing cell.
+        let cell_rows = vec![MAX_BLOCK_ROWS as u64 + 700, 300];
+        let n_rows = MAX_BLOCK_ROWS + 700 + 300;
+
+        let model = CoarseModel {
+            dim: DIM as u32,
+            n_comp: 1,
+            pca_mean: vec![0.0; DIM],
+            pca_components: vec![0.1; DIM],
+            centroids: vec![0.5; 2],
+            radii: vec![1.0, 1.0],
+            cell_rows: cell_rows.clone(),
+            seed: 7,
+            trained_on: n_rows as u64,
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("giant.pax");
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            // Largest allowed byte target: the byte cut alone would admit ~19k
+            // rows at the coalesced ~200 B/row model, so only the row bound can
+            // split the giant cell below.
+            Some(MAX_TARGET_BLOCK_SIZE_BYTES),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_two_level(model);
+        let vec_for = |row: usize| -> Vec<f32> {
+            (0..DIM)
+                .map(|d| ((row * 7 + d) % 13) as f32 - 6.0)
+                .collect()
+        };
+        for row in 0..n_rows {
+            let mut r = make_record(&format!("r{row:05}"), "t", 1);
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(vec_for(row)),
+                ..Default::default()
+            });
+            writer.add_record(&r)?;
+        }
+        let meta = writer.finish()?;
+        let bytes = std::fs::read(&path)?;
+
+        // (a) Every block's row count respects the bound; the giant cell split.
+        let footer = SegmentFooterIndex::locate_in_segment(&bytes)?
+            .ok_or_else(|| anyhow::anyhow!("v3 segment must carry a footer-index"))?;
+        assert_eq!(footer.row_count, n_rows as u64);
+        assert!(
+            meta.block_count >= 3,
+            "giant cell must split into multiple blocks (got {})",
+            meta.block_count
+        );
+        for (i, b) in footer.blocks.iter().enumerate() {
+            assert!(
+                (b.row_count as usize) <= MAX_BLOCK_ROWS,
+                "block {i} rows {} exceed MAX_BLOCK_ROWS {MAX_BLOCK_ROWS}",
+                b.row_count
+            );
+        }
+
+        // (b)+(d) The probe directory still maps every cell to exact row/byte
+        // extents and WHOLE-block ranges; the over-bound cell spans several.
+        let h = SegmentHeaderPrefix::parse(&bytes)?;
+        let a0 = CoarseDirectory::parse(&bytes[h.a0_off as usize..(h.a0_off + h.a0_len) as usize])?;
+        assert_eq!(a0.model.cell_rows, cell_rows);
+        let stride_a = 8 + DIM.div_ceil(8);
+        let codes_base_a =
+            h.rabitq_off as usize + rabitq_region_header_len(DIM as u32) + n_rows.div_ceil(8);
+        let codes_base_b = h.sq8_off as usize + sq8_codes_offset(n_rows);
+        let mut row = 0u64;
+        for (i, cell) in a0.cells.iter().enumerate() {
+            assert_eq!(cell.row_begin, row, "cell {i} row_begin");
+            assert_eq!(cell.row_end - cell.row_begin, cell_rows[i], "cell {i} rows");
+            assert_eq!(cell.a_off as usize, codes_base_a + row as usize * stride_a);
+            assert_eq!(cell.a_len as usize, cell_rows[i] as usize * stride_a);
+            assert_eq!(cell.b_off as usize, codes_base_b + row as usize * DIM);
+            assert_eq!(cell.b_len as usize, cell_rows[i] as usize * DIM);
+            let (d0, d1) = (cell.d_block_begin as usize, cell.d_block_end as usize);
+            assert!(d0 < d1 && d1 <= footer.blocks.len(), "cell {i} d-range");
+            let rows_before: u64 = footer.blocks[..d0].iter().map(|b| b.row_count as u64).sum();
+            let rows_in: u64 = footer.blocks[d0..d1]
+                .iter()
+                .map(|b| b.row_count as u64)
+                .sum();
+            assert_eq!(
+                rows_before, cell.row_begin,
+                "cell {i} starts on a block edge"
+            );
+            assert_eq!(rows_in, cell_rows[i], "cell {i} = whole blocks");
+            row = cell.row_end;
+        }
+        let big = &a0.cells[0];
+        assert!(
+            big.d_block_end - big.d_block_begin >= 2,
+            "the over-bound cell must span multiple whole blocks"
+        );
+
+        // (c) Round-trip: block rows preserve add (cluster) order and ids, and
+        // Region B row i is row i's vector (the overlay contract the production
+        // inverse `read_segment_records` relies on), within SQ8 tolerance.
+        let mut scanner = PaxSegmentScanner::from_bytes(bytes.clone(), ScanPredicate::default())?;
+        let recs = scanner.read_records(&[], &[], None)?;
+        assert_eq!(recs.len(), n_rows, "scanner must read every row");
+        let sq8 = proximadb_block_format::coalesced_sq8::Sq8Region::from_bytes(
+            &bytes[h.sq8_off as usize..(h.sq8_off + h.sq8_len) as usize],
+        )?;
+        for (i, rec) in recs.iter().enumerate() {
+            assert_eq!(rec.oid, format!("r{i:05}"), "row {i} id");
+            let v = sq8
+                .decode_row(i)
+                .ok_or_else(|| anyhow::anyhow!("row {i} missing from Region B"))?;
+            for (got, exp) in v.iter().zip(vec_for(i).iter()) {
+                assert!(
+                    (got - exp).abs() <= 0.05,
+                    "row {i}: SQ8 vector {got} not within 0.05 of {exp}"
+                );
+            }
+        }
         Ok(())
     }
 

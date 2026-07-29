@@ -34,7 +34,7 @@ impl Default for WalEncryptionConfig {
     fn default() -> Self {
         Self {
             enabled: false, // Disabled by default for backward compatibility
-            master_key_env_var: "PROXIMADB_MASTER_KEY".to_string(),
+            master_key_env_var: "PROXIMADB_CRYPTO_MASTER_KEY".to_string(),
             key_rotation_interval_secs: 30 * 24 * 3600, // 30 days
             chunk_size: 4096,                           // 4KB
         }
@@ -127,6 +127,14 @@ pub struct WalPerformanceConfig {
     /// The RPO floor: bounds worst-case loss on volume loss to this interval.
     pub flush_interval_secs: u64,
 
+    /// TD-FLUSH-3 S1 — minimum PREDICTED segment bytes (MB) before the size
+    /// trigger may flush; 0 = floor disabled. Predicted = Σ_records
+    /// (dim × 9/8 + 8) — the RaBitQ+SQ8 bytes the segment will occupy (the
+    /// f32 tier, when tagged on, makes this an under-prediction → segments
+    /// only get LARGER, which is the safe direction). Time (RPO) and capacity
+    /// triggers override the floor.
+    pub flush_floor_predicted_mb: u64,
+
     /// ADR-069 D6 — per-collection WAL size budget (bytes) for the capacity flush +
     /// backpressure watermarks; 0 = disabled.
     pub wal_max_bytes: usize,
@@ -157,9 +165,12 @@ impl Default for WalPerformanceConfig {
             enable_optimized_write_buffer_writer: Some(false), // Disabled by default for gradual rollout
             background_writer_threads: None, // Will use 2 by default in optimized writer
             write_buffer_batch_size: None,   // Will use 100 by default in optimized writer
-            // ADR-069 / TD-WAL-1 S1: config surface; triggers default DISABLED (0) — S2 (time)
-            // and S3 (capacity) activate them and set their live defaults. No behavior change here.
-            flush_interval_secs: 0,
+            // ADR-069 D2: time floor defaults to 300s (RPO safety net). The live server
+            // also derives this from WriteBufferUserConfig (toml) via to_engine_config();
+            // kept in sync here so programmatic WALConfig::default()/tests agree.
+            // wal_max_bytes stays 0 → S4 write-shedding admission control stays OFF.
+            flush_interval_secs: 300,
+            flush_floor_predicted_mb: 128,
             wal_max_bytes: 0,
             high_watermark_pct: 0.80,
             critical_watermark_pct: 0.95,
@@ -328,6 +339,17 @@ pub struct WALConfig {
     /// - "s3://bucket/wal-global" (cloud-based for distributed deployments)
     pub global_manifest_url: Option<String>,
 
+    /// ADR-069 S1: opt-in local WAL root (e.g. `file:///waldisk`). When set, the
+    /// per-collection WAL is written under `{dir}/{collection_id}/wal/` on this
+    /// local reattachable disk, DECOUPLED from the collection's object-store data
+    /// assignment — WAL is high-frequency small appends (each an object-store
+    /// PUT), so a local disk avoids that cost while data stays on object store.
+    /// TOML `[storage.wal_config].wal_local_dir`; overridden by env
+    /// `PROXIMADB_WAL_LOCAL_DIR`. None ⇒ legacy WAL-co-located-with-data.
+    /// The location resolves through the FilesystemFactory scheme, so a future
+    /// value could be `s3://…` (S3 Express) or another backend.
+    pub wal_local_dir: Option<String>,
+
     /// Compression settings
     pub compression: WalCompressionConfig,
 
@@ -371,6 +393,7 @@ impl Default for WALConfig {
             strategy_type: WriteBufferStrategyType::default(), // Bincode for maximum vector ingestion performance
             memtable: MemTableConfig::default(), // ART for metadata filtering efficiency
             multi_disk: MultiDiskConfig::default(), // LoadBalanced for bulk insert optimization
+            wal_local_dir: None,                 // ADR-069 S1: opt-in; None = legacy WAL-with-data
             compression: WalCompressionConfig::default(), // Snappy for balanced performance
             encryption: WalEncryptionConfig::default(), // Encryption disabled by default (TD-016)
             performance: WalPerformanceConfig::default(), // Optimized for large vectors and bulk processing
@@ -913,10 +936,12 @@ mod tests {
     }
 
     #[test]
-    fn wal_performance_defaults_disable_flush_triggers() {
-        // ADR-069 / TD-WAL-1 S1: new flush triggers ship DISABLED so S1 is behavior-neutral.
+    fn wal_performance_defaults_arm_time_trigger() {
+        // ADR-069 D2: the 300s time floor is armed by default (RPO safety net) so the
+        // auto-flush driver spawns and segments materialize while the server runs.
+        // wal_max_bytes stays 0 → S4 capacity/backpressure trigger stays OFF.
         let p = WalPerformanceConfig::default();
-        assert_eq!(p.flush_interval_secs, 0, "time-based flush off by default");
+        assert_eq!(p.flush_interval_secs, 300, "time floor armed by default");
         assert_eq!(p.wal_max_bytes, 0, "capacity budget off by default");
         assert_eq!(p.high_watermark_pct, 0.80);
         assert_eq!(p.critical_watermark_pct, 0.95);
@@ -925,9 +950,10 @@ mod tests {
     #[test]
     fn wal_storage_config_overrides_flush_triggers() {
         use crate::core::config::WalStorageConfig;
-        // Absent overrides (None) leave the runtime performance defaults intact.
+        // Absent overrides (None) leave the runtime performance defaults intact
+        // (the 300s time floor — ADR-069 D2).
         let base = WALConfig::from(&WalStorageConfig::default());
-        assert_eq!(base.performance.flush_interval_secs, 0);
+        assert_eq!(base.performance.flush_interval_secs, 300);
         assert_eq!(base.performance.wal_max_bytes, 0);
         assert_eq!(base.performance.high_watermark_pct, 0.80);
         assert_eq!(base.performance.critical_watermark_pct, 0.95);
@@ -959,6 +985,7 @@ mod tests {
                 collection_affinity: true,
             },
             global_manifest_url: None,
+            wal_local_dir: None,
             memtable: MemTableConfig {
                 memtable_type: MemTableType::SkipList,
                 global_memory_limit: 256 * 1024 * 1024,
@@ -989,6 +1016,7 @@ mod tests {
                 background_writer_threads: None,
                 write_buffer_batch_size: None,
                 flush_interval_secs: 0,
+                flush_floor_predicted_mb: 0,
                 wal_max_bytes: 0,
                 high_watermark_pct: 0.80,
                 critical_watermark_pct: 0.95,
@@ -1043,6 +1071,7 @@ mod tests {
                 collection_affinity: true,
             },
             global_manifest_url: None,
+            wal_local_dir: None,
             memtable: MemTableConfig {
                 memtable_type: MemTableType::Art,
                 global_memory_limit: 512 * 1024 * 1024,
@@ -1489,6 +1518,7 @@ mod tests {
             background_writer_threads: None,
             write_buffer_batch_size: None, // corrected field name
             flush_interval_secs: 0,
+            flush_floor_predicted_mb: 0,
             wal_max_bytes: 0,
             high_watermark_pct: 0.80,
             critical_watermark_pct: 0.95,

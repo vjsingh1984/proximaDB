@@ -18,7 +18,8 @@
 //! MultiServer::start()
 //!     ↓ unified mode
 //! TCP mux (port 5678) → REST on 127.0.0.1:15678 (HTTP/1.1)
-//!                     → gRPC on 127.0.0.1:15679 (HTTP/2)
+//!                     → gRPC on 127.0.0.1:15679 (HTTP/2; port resolved per
+//!                       instance: config > env > unified_port+10001, TD-NET-1)
 //!     ↓ multi-port mode
 //! REST on :5678 | gRPC on :5679 | Arrow Flight on :5680 | pgwire on :5433
 //! ```
@@ -198,6 +199,19 @@ impl MultiServer {
         .into_server()
     }
 
+    /// Build the canonical v2 ledger gRPC service (ADR-071 / TD-LEDGER-1). Experimental — compiled
+    /// only under the `experimental-ledger` feature. Shares the node-level ledger port constructed
+    /// once in `SharedServices`.
+    #[cfg(feature = "experimental-ledger")]
+    fn canonical_ledger_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_ledger_service_server::ProximaLedgerServiceServer<
+        crate::network::grpc::v2::ProximaLedgerServiceImpl,
+    > {
+        crate::network::grpc::v2::ProximaLedgerServiceImpl::new(services.ledger_store.clone())
+            .into_server()
+    }
+
     /// Build the canonical v2 entity gRPC service.
     ///
     /// EntityService is an orchestration facade over graph + vector + document,
@@ -311,7 +325,8 @@ impl MultiServer {
                 "🐘 pgwire reusing shared canonical record store (unified cross-surface relational state)"
             );
             return Ok(Some(
-                crate::network::postgres::DirectPgwireWriteServices::new(store),
+                crate::network::postgres::DirectPgwireWriteServices::new(store)
+                    .with_conditional_key_store(self.shared_services.conditional_key_store.clone()),
             ));
         }
 
@@ -382,7 +397,8 @@ impl MultiServer {
         );
 
         Ok(Some(
-            crate::network::postgres::DirectPgwireWriteServices::new(canonical_store),
+            crate::network::postgres::DirectPgwireWriteServices::new(canonical_store)
+                .with_conditional_key_store(self.shared_services.conditional_key_store.clone()),
         ))
     }
 
@@ -622,6 +638,13 @@ impl MultiServer {
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(standard_health_server);
+
+            // Experimental transactional ledger service (ADR-071 / TD-LEDGER-1): registered only
+            // under the `experimental-ledger` feature (off by default).
+            #[cfg(feature = "experimental-ledger")]
+            {
+                server = server.add_service(Self::canonical_ledger_grpc_service(&services));
+            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
@@ -946,12 +969,32 @@ impl MultiServer {
 
         // Internal addresses for REST and gRPC servers
         // These are only accessible via the TCP multiplexer
-        let internal_rest_addr: std::net::SocketAddr = "127.0.0.1:15678"
-            .parse()
-            .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 15678)));
-        let internal_grpc_addr: std::net::SocketAddr = "127.0.0.1:15679"
-            .parse()
-            .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 15679)));
+        // TD-NET-1 S2: the internal REST port is derived per-instance from
+        // `unified_port + 10000` (5678 → 15678 = historical constant; 5679 →
+        // 15679), mirroring the gRPC derivation below, so co-hosted instances
+        // with distinct unified ports never bind the same internal REST listener
+        // (the foreign-server hijack landmine surfaced by the recall
+        // adjudication — a second server's mux forwarded queries to the first
+        // server's internal REST at the shared 15678 port).
+        let internal_rest_port = self.config.unified_port.saturating_add(10000);
+        let internal_rest_addr = SocketAddr::from(([127, 0, 0, 1], internal_rest_port));
+        // TD-NET-1 S1: the internal gRPC/Arrow-Flight upstream port is resolved
+        // per-instance (config `[api] internal_mux_port` > env
+        // `PROXIMADB_INTERNAL_MUX_PORT` > derived `unified_port + 10001`,
+        // 5678 → 15679 = the historical constant) instead of a hardcoded 15679,
+        // so co-hosted instances with distinct unified ports never forward
+        // HTTP/2 traffic into each other's internal listener. Resolved ONCE
+        // here; the internal listener bind and the multiplexer upstream below
+        // both use this same address.
+        let internal_grpc_port = resolve_internal_mux_port(
+            self.config
+                .api_config
+                .as_ref()
+                .and_then(|api| api.internal_mux_port),
+            std::env::var("PROXIMADB_INTERNAL_MUX_PORT").ok().as_deref(),
+            self.config.unified_port,
+        );
+        let internal_grpc_addr = SocketAddr::from(([127, 0, 0, 1], internal_grpc_port));
 
         let mut handles = Vec::new();
 
@@ -1057,6 +1100,8 @@ impl MultiServer {
                     self.tenant_deployment_mode.clone(),
                 ),
                 self.config.admin_ui_enabled,
+                self.config.admin_ui_auto_refresh,
+                self.config.admin_ui_refresh_interval_seconds,
             );
 
             info!(
@@ -1137,6 +1182,13 @@ impl MultiServer {
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
+            // Experimental transactional ledger service (ADR-071 / TD-LEDGER-1): registered only
+            // under the `experimental-ledger` feature (off by default).
+            #[cfg(feature = "experimental-ledger")]
+            {
+                server = server.add_service(Self::canonical_ledger_grpc_service(&services));
+            }
+
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
                 debug!("Adding gRPC reflection service (unified mode)");
@@ -1147,6 +1199,24 @@ impl MultiServer {
             info!(
                 "🔗 gRPC + Arrow Flight Server starting on {} (internal)",
                 internal_grpc_addr
+            );
+
+            // TD-NET-1 S2 (fail-closed): the spawned tonic serve below detaches
+            // its bind result into a task, so a bind failure used to be
+            // log-only while the multiplexer kept forwarding HTTP/2 to whatever
+            // foreign process owned the port. Pre-flight the bind so startup
+            // fails instead of silently routing to another instance.
+            drop(
+                std::net::TcpListener::bind(internal_grpc_addr).map_err(|e| {
+                    anyhow::anyhow!(
+                        "TD-NET-1: cannot bind the internal gRPC/Arrow-Flight upstream {} for the \
+                     unified-port multiplexer ({}). The port is likely owned by another \
+                     process/instance; set [api] internal_mux_port or \
+                     PROXIMADB_INTERNAL_MUX_PORT to a free port. Refusing to start fail-open.",
+                        internal_grpc_addr,
+                        e
+                    )
+                })?,
             );
 
             let grpc_handle = tokio::spawn(async move {
@@ -1480,6 +1550,13 @@ impl MultiServer {
                 .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(standard_health_server);
 
+            // Experimental transactional ledger service (ADR-071 / TD-LEDGER-1): registered only
+            // under the `experimental-ledger` feature (off by default).
+            #[cfg(feature = "experimental-ledger")]
+            {
+                server = server.add_service(Self::canonical_ledger_grpc_service(&services));
+            }
+
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
                 debug!("Adding gRPC reflection service (cluster mode)");
@@ -1761,6 +1838,71 @@ fn build_grpc_reflection_service() -> Result<
         .register_encoded_file_descriptor_set(include_bytes!("../proto/proximadb_descriptor.bin"))
         .build_v1()
         .context("failed to build gRPC reflection service")
+}
+
+/// TD-NET-1 S1: resolve the unified-mode internal gRPC/Arrow-Flight upstream
+/// port (the loopback listener the TCP multiplexer forwards HTTP/2 to).
+///
+/// Precedence: explicit `[api] internal_mux_port` config > the
+/// `PROXIMADB_INTERNAL_MUX_PORT` env var (invalid values are warned about and
+/// ignored) > derived `unified_port + 10001` (5678 → 15679, bit-identical to
+/// the historical hardcoded constant). If the derivation would overflow `u16`,
+/// fall back to the legacy 15679.
+fn resolve_internal_mux_port(
+    configured: Option<u16>,
+    env_override: Option<&str>,
+    unified_port: u16,
+) -> u16 {
+    if let Some(port) = configured {
+        return port;
+    }
+    if let Some(raw) = env_override {
+        match raw.trim().parse::<u16>() {
+            Ok(port) => return port,
+            Err(_) => warn!(
+                "Ignoring invalid PROXIMADB_INTERNAL_MUX_PORT={raw:?} (expected a u16 port); using the derived default"
+            ),
+        }
+    }
+    u16::try_from(u32::from(unified_port) + 10001).unwrap_or(15679)
+}
+
+#[cfg(test)]
+mod internal_mux_port_tests {
+    use super::resolve_internal_mux_port;
+
+    #[test]
+    fn derived_default_matches_legacy_constant() {
+        // unified_port 5678 must yield exactly the historical 15679.
+        assert_eq!(resolve_internal_mux_port(None, None, 5678), 15679);
+        // A co-hosted instance on a different unified port gets a distinct upstream.
+        assert_eq!(resolve_internal_mux_port(None, None, 6678), 16679);
+    }
+
+    #[test]
+    fn config_beats_env_beats_derived() {
+        assert_eq!(
+            resolve_internal_mux_port(Some(25000), Some("26000"), 5678),
+            25000
+        );
+        assert_eq!(resolve_internal_mux_port(None, Some("26000"), 5678), 26000);
+    }
+
+    #[test]
+    fn invalid_env_is_ignored_with_derived_fallback() {
+        assert_eq!(
+            resolve_internal_mux_port(None, Some("not-a-port"), 5678),
+            15679
+        );
+        // Out of u16 range → invalid → derived default.
+        assert_eq!(resolve_internal_mux_port(None, Some("70000"), 5678), 15679);
+    }
+
+    #[test]
+    fn derived_overflow_falls_back_to_legacy_15679() {
+        assert_eq!(resolve_internal_mux_port(None, None, u16::MAX), 15679);
+        assert_eq!(resolve_internal_mux_port(None, None, 60000), 15679);
+    }
 }
 
 // Deferred: Re-add TTL sweeper code in proper function context if needed

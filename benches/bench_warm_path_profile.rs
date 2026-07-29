@@ -894,7 +894,7 @@ async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize
         // applies sqrt-based centroid pruning and skips most blocks.
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector.clone()),
-            top_k: Some(cfg.top_k),
+            top_k: Some(cfg.top_k as u16),
             search_mode: SearchMode::Exact,
             ..Default::default()
         });
@@ -925,7 +925,7 @@ async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize
         // costing at scale.
         let force_exact_params = Arc::new(SearchParams {
             vector: Some(query_vector.clone()),
-            top_k: Some(cfg.top_k),
+            top_k: Some(cfg.top_k as u16),
             search_mode: SearchMode::Exact,
             block_prune: force_exact_block_prune.clone(),
             ..Default::default()
@@ -1140,7 +1140,7 @@ async fn run_one_query(setup: &SetupResult, cfg: &BenchConfig) -> u64 {
     };
     let search_params = Arc::new(SearchParams {
         vector: Some(query_vector),
-        top_k: Some(cfg.top_k),
+        top_k: Some(cfg.top_k as u16),
         search_mode,
         enable_vectorized_execution: if cfg.vectorized { Some(true) } else { None },
         ..Default::default()

@@ -1,0 +1,84 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-AXIS-4: No reconciliation between manifest segments and AXIS index coverage — silent recall loss after an unclean restart
+:status: Open
+:date: 2026-07-28
+:dim: D4 (compute-per-modality)
+:pillar: REL
+:realizes: ADR-078 D4
+:relates-to: TD-AXIS-3 (convergence + queue removal), TD-112 (index-on-flush), TD-AXIS-2 (enable-axis-indexes flag not wired to boot)
+
+[cols="1,3"]
+|===
+| Field | Value
+
+| Status
+| **Open** — the one genuine gap left after ADR-078. Predates that work; the retired AXIS queue never addressed it either.
+
+| Priority
+| P2 — silent, and it degrades rather than fails.
+
+| Severity
+| Medium — **recall**, not durability. The vectors remain durable and correct; they are simply not searchable.
+
+| Component
+| `src/index/axis/storage/recovery.rs` (`IndexRecoveryManager` — currently dead), `src/index/axis/integration/memory_tracker.rs` (`load_index_from_disk` — currently dead), `src/index/axis/management/manager.rs` (`load_ivf_whole_file`, the lazy warm-load).
+|===
+
+toc::[]
+
+== 1. Problem
+
+A segment that is **flushed but not yet indexed** when the process dies is never
+re-indexed:
+
+* the in-flight indexing work is lost with the process,
+* the persisted `ivf.bin` predates that segment,
+* and **nothing reconciles the manifest's segment set against what AXIS actually
+  covers**.
+
+Those vectors stay durable and correct but **silently unsearchable, indefinitely**.
+Recall degrades; nothing errors, and no metric reports it — which is why it has
+survived.
+
+Note this is *not* what the AXIS queue protected against. AXIS restart recovery
+never consulted the queue: it lazily warm-loads its persisted `ivf.bin` on the
+next query (`manager.rs`, "the next query (or `resume_collection`) warm-loads
+it"). The queue was in-process coordination only.
+
+== 2. Existing machinery — check before building
+
+The pieces for this appear to have been built and **never wired**. Evaluate reuse
+before writing anything new:
+
+* `IndexRecoveryManager` (`src/index/axis/storage/recovery.rs`) exposes
+  `recover_all_collections` and `recover_collection`, and is re-exported from
+  `src/index/axis/mod.rs` — **zero callers**.
+* `load_index_from_disk` (`integration/memory_tracker.rs`) — **zero callers**.
+
+(Do not confuse these with the WAL `recovery_manager`, which *is* wired at
+`src/storage/engine.rs` and returns `WalRecoveryStats` — a different component.)
+
+== 3. Next action
+
+. **Reproduce first (TDD).** End-to-end: ingest → flush → kill the process before
+  indexing completes → restart → query, and assert the flushed vectors are
+  searchable. No current test covers this.
+. **Diff manifest segments against index coverage** and re-index the delta.
+. **Trigger lazily**, alongside the existing cold `ivf.bin` warm-load
+  (`load_ivf_whole_file`), rather than eagerly at boot. Matches the current
+  lazy-recovery posture and avoids an O(N) boot scan — which on object storage is
+  the dominant cost term (`CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`).
+. **Emit a metric** for segments found un-indexed. The defining property of this
+  bug is that it is invisible; a fix that stays invisible is half a fix.
+
+== 4. Watch out
+
+* `FileSystem::list` is **not uniform across backends** — local is `fs::read_dir`
+  (single level, directory entries), object stores do a recursive prefix listing
+  with no delimiter (leaves only, `is_directory` always `false`). A local-only
+  test passes while production silently no-ops. This already bit the audit-log
+  recovery scan (TD-EVENTLOG-1 §4); any traversal added here must handle both.
+* Sizing depends on the `ivf.bin` persist cadence — how often it is written bounds
+  how wide the un-indexed window actually is. Measure before assuming the gap is
+  large or small.

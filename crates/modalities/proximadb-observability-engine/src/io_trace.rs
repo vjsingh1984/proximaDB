@@ -149,6 +149,25 @@ pub struct IoTrace {
     /// (`centroid_pruned_blocks > 0`) rather than silently falling back to a full scan.
     centroid_total_blocks: AtomicU64,
     centroid_pruned_blocks: AtomicU64,
+    /// TD-RDSTRAT-8 two-level IVF coarse-probe outcome (durable — lands in the
+    /// warehouse `VectorAnnPayload` satellite via `TracePayload::classify`). The
+    /// coarse probe ranks `k_c` centroids in RAM and ranged-reads only `nprobe`
+    /// cells, cutting the dominant per-query cost term (GET round-trips). These
+    /// counters make that cut observable per-query so nprobe/spill tuning is
+    /// evidence-led ("trace before you tune"), not asserted.
+    /// `ivf_whole_region_fallback` counts segments where the probe was armed but
+    /// missed and the read fell back to the whole Region-A scan.
+    ivf_cells_total: AtomicU64,
+    ivf_cells_probed: AtomicU64,
+    ivf_probed_rows: AtomicU64,
+    ivf_fetch_rounds: AtomicU64,
+    ivf_whole_region_fallback: AtomicU64,
+    /// Physical PAX Region-A (RaBitQ) and Region-B (SQ8) bytes fetched by the
+    /// coarse probe (TD-RDSTRAT-8 PR-C1). Metadata/A0/footer bytes stay in the
+    /// universal `bytes_read`; these are the vector-body bytes the probe paid
+    /// for. Cache hits contribute zero.
+    ivf_region_a_bytes: AtomicU64,
+    ivf_region_b_bytes: AtomicU64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): how often the probe scan's
     /// `wait_complete()` rendezvous resolved with the filter arrived (pruning
     /// enabled) vs timed out (filterless, conservative), plus the wall ms spent
@@ -260,6 +279,13 @@ pub struct IoTrace {
     /// join key for the future warehouse header↔satellite tables. `None` until
     /// stamped (e.g. a raw `IoTrace::new()` outside `instrument`).
     query_id: Mutex<Option<String>>,
+    /// TD-CACHE-3 S1: the requesting tenant, stamped at `instrument()` scope
+    /// entry. Ambient carrier for engine-side per-tenant consumers (survivor
+    /// cache fair-share keys, billing labels) — the same task-local scope that
+    /// already wraps every instrumented request, so no per-call threading.
+    /// Absent outside an instrumented scope (or across un-propagated spawns —
+    /// the same constraint all io_trace metering already has).
+    tenant_id: Mutex<Option<String>>,
 }
 
 /// Neutral primitive tuple carrying one operator's metered actuals into
@@ -299,6 +325,19 @@ impl IoTrace {
     /// Stamp the stable per-query id (TD-TRACE-2). Set once at `instrument()` entry.
     pub fn set_query_id(&self, id: String) {
         *self.query_id.lock().unwrap_or_else(|p| p.into_inner()) = Some(id);
+    }
+
+    /// Stamp the requesting tenant for this scope (TD-CACHE-3 S1).
+    pub fn set_tenant(&self, tenant: Option<String>) {
+        *self.tenant_id.lock().unwrap_or_else(|p| p.into_inner()) = tenant;
+    }
+
+    /// The stamped tenant, if any.
+    pub fn tenant(&self) -> Option<String> {
+        self.tenant_id
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// The stamped per-query id, if any.
@@ -383,6 +422,44 @@ impl IoTrace {
             .fetch_add(total, Ordering::Relaxed);
         self.centroid_pruned_blocks
             .fetch_add(pruned, Ordering::Relaxed);
+    }
+
+    /// Record a TD-RDSTRAT-8 two-level IVF coarse-probe outcome for the active
+    /// query: of `cells_total` persisted coarse centroids, `cells_probed` were
+    /// ranked in RAM and `probed_rows` rows read across `fetch_rounds` coalesced
+    /// Region-A ranged-reads. `whole_region_fallback = true` marks a segment where
+    /// the probe was armed but missed and the read fell back to the whole Region-A
+    /// scan (the GET budget the probe exists to avoid). Lands in the warehouse
+    /// `VectorAnnPayload` via `TracePayload::classify`.
+    pub fn record_ivf_coarse_probe(
+        &self,
+        cells_total: u64,
+        cells_probed: u64,
+        probed_rows: u64,
+        fetch_rounds: u64,
+        whole_region_fallback: bool,
+    ) {
+        self.ivf_cells_total
+            .fetch_add(cells_total, Ordering::Relaxed);
+        self.ivf_cells_probed
+            .fetch_add(cells_probed, Ordering::Relaxed);
+        self.ivf_probed_rows
+            .fetch_add(probed_rows, Ordering::Relaxed);
+        self.ivf_fetch_rounds
+            .fetch_add(fetch_rounds, Ordering::Relaxed);
+        if whole_region_fallback {
+            self.ivf_whole_region_fallback
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Record physical bytes fetched from PAX Region A (RaBitQ) and Region B
+    /// (SQ8) during the coarse probe. Additive; cache hits contribute zero.
+    pub fn record_pax_region_bytes(&self, region_a: u64, region_b: u64) {
+        self.ivf_region_a_bytes
+            .fetch_add(region_a, Ordering::Relaxed);
+        self.ivf_region_b_bytes
+            .fetch_add(region_b, Ordering::Relaxed);
     }
 
     /// Record a runtime-filter wait outcome (ADR-056 AQE-S11): `arrived` = the
@@ -566,6 +643,13 @@ impl IoTrace {
             splits_pruned: self.splits_pruned.load(Ordering::Relaxed),
             centroid_total_blocks: self.centroid_total_blocks.load(Ordering::Relaxed),
             centroid_pruned_blocks: self.centroid_pruned_blocks.load(Ordering::Relaxed),
+            ivf_cells_total: self.ivf_cells_total.load(Ordering::Relaxed),
+            ivf_cells_probed: self.ivf_cells_probed.load(Ordering::Relaxed),
+            ivf_probed_rows: self.ivf_probed_rows.load(Ordering::Relaxed),
+            ivf_fetch_rounds: self.ivf_fetch_rounds.load(Ordering::Relaxed),
+            ivf_whole_region_fallback: self.ivf_whole_region_fallback.load(Ordering::Relaxed),
+            ivf_region_a_bytes: self.ivf_region_a_bytes.load(Ordering::Relaxed),
+            ivf_region_b_bytes: self.ivf_region_b_bytes.load(Ordering::Relaxed),
             runtime_filter_arrived: self.runtime_filter_arrived.load(Ordering::Relaxed),
             runtime_filter_timed_out: self.runtime_filter_timed_out.load(Ordering::Relaxed),
             runtime_filter_wait_ms: self.runtime_filter_wait_ms.load(Ordering::Relaxed),
@@ -645,6 +729,24 @@ pub struct IoTraceSnapshot {
     pub centroid_total_blocks: u64,
     #[serde(default)]
     pub centroid_pruned_blocks: u64,
+    /// TD-RDSTRAT-8 two-level IVF coarse-probe outcome (durable warehouse
+    /// satellite — see `VectorAnnPayload`).
+    #[serde(default)]
+    pub ivf_cells_total: u64,
+    #[serde(default)]
+    pub ivf_cells_probed: u64,
+    #[serde(default)]
+    pub ivf_probed_rows: u64,
+    #[serde(default)]
+    pub ivf_fetch_rounds: u64,
+    #[serde(default)]
+    pub ivf_whole_region_fallback: u64,
+    /// Physical PAX Region-A (RaBitQ) / Region-B (SQ8) bytes fetched by the
+    /// coarse probe (TD-RDSTRAT-8 PR-C1). Cache hits contribute zero.
+    #[serde(default)]
+    pub ivf_region_a_bytes: u64,
+    #[serde(default)]
+    pub ivf_region_b_bytes: u64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): arrived vs timed-out +
     /// the wall ms spent waiting. `arrived / (arrived + timed_out)` is the
     /// per-workload signal the route cost model learns to tune the wait budget.
@@ -885,6 +987,34 @@ pub fn record_splits(total: u64, pruned: u64) {
 /// probe. Silently no-ops outside an active scope.
 pub fn record_centroid_prune(total: u64, pruned: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_centroid_prune(total, pruned));
+}
+
+/// Record a TD-RDSTRAT-8 two-level IVF coarse-probe outcome for the active
+/// query (durable — lands in the warehouse `VectorAnnPayload`). See
+/// [`IoTrace::record_ivf_coarse_probe`]. Silently no-ops outside an active scope.
+pub fn record_ivf_coarse_probe(
+    cells_total: u64,
+    cells_probed: u64,
+    probed_rows: u64,
+    fetch_rounds: u64,
+    whole_region_fallback: bool,
+) {
+    let _ = IO_TRACE.try_with(|t| {
+        t.record_ivf_coarse_probe(
+            cells_total,
+            cells_probed,
+            probed_rows,
+            fetch_rounds,
+            whole_region_fallback,
+        )
+    });
+}
+
+/// Record physical PAX Region-A (RaBitQ) / Region-B (SQ8) bytes fetched by the
+/// coarse probe for the active query (TD-RDSTRAT-8 PR-C1). No-ops outside a
+/// query scope. See [`IoTrace::record_pax_region_bytes`].
+pub fn record_pax_region_bytes(region_a: u64, region_b: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_pax_region_bytes(region_a, region_b));
 }
 
 /// Record a runtime-filter wait outcome for the active query (ADR-056 AQE-S11).
@@ -1165,6 +1295,14 @@ pub async fn scope<F: std::future::Future>(future: F) -> F::Output {
 /// snapshot as a [`TARGET`] event labelled by `tenant_id`/`route`. This is the
 /// one call a request handler adds at the query boundary — co-locate it with
 /// the existing `predicate_diagnostics::scope`.
+/// TD-CACHE-3 S1: the ambient tenant of the current instrumented request
+/// scope, if any. Engine-side per-tenant consumers (survivor-cache fair-share
+/// keys) read this instead of threading tenant through every search
+/// signature. `None` outside a scope — callers must fall back gracefully.
+pub fn current_tenant() -> Option<String> {
+    IO_TRACE.try_with(|t| t.tenant()).ok().flatten()
+}
+
 pub async fn instrument<F>(
     tenant_id: Option<String>,
     route: impl Into<String>,
@@ -1180,6 +1318,9 @@ where
             // trace sink can identify (and later join) every query's record. One
             // UUID + one lock set per query — negligible, and off any row loop.
             let _ = IO_TRACE.try_with(|t| t.set_query_id(uuid::Uuid::new_v4().to_string()));
+            // TD-CACHE-3 S1: stamp the tenant into the scope so engine-side
+            // consumers (per-tenant cache keys) can read it ambiently.
+            let _ = IO_TRACE.try_with(|t| t.set_tenant(tenant_id.clone()));
             let out = future.await;
             // Still inside the scope: read and emit before the binding drops.
             if let Ok((snap, stamped_route)) = IO_TRACE.try_with(|t| (t.snapshot(), t.route())) {
@@ -1333,6 +1474,24 @@ mod tests {
         assert_eq!(s.total_compute_ms(), 17);
         assert_eq!(s.compute_ms.get("volcano"), Some(&7));
         assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn ivf_coarse_probe_record_populates_snapshot() {
+        // TD-RDSTRAT-8: record_ivf_coarse_probe must populate all five durable
+        // counters so the warehouse VectorAnnPayload captures the probe outcome.
+        let t = IoTrace::new();
+        t.record_ivf_coarse_probe(64, 8, 4096, 3, false);
+        t.record_ivf_coarse_probe(0, 0, 0, 0, true); // armed-but-missed fallback
+        t.record_pax_region_bytes(200_000, 800_000); // physical PAX tier bytes
+        let s = t.snapshot();
+        assert_eq!(s.ivf_cells_total, 64);
+        assert_eq!(s.ivf_cells_probed, 8);
+        assert_eq!(s.ivf_probed_rows, 4096);
+        assert_eq!(s.ivf_fetch_rounds, 3);
+        assert_eq!(s.ivf_whole_region_fallback, 1);
+        assert_eq!(s.ivf_region_a_bytes, 200_000);
+        assert_eq!(s.ivf_region_b_bytes, 800_000);
     }
 
     #[test]

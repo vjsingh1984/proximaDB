@@ -202,32 +202,19 @@ impl BulkWriteRouter {
 
     /// Estimate the size of a batch of canonical records in bytes.
     ///
-    /// Counts all embeddings and approximates rich property payloads so
-    /// relational, document, graph, and observability rows can use the same
-    /// large-batch routing surface as vector-only records.
+    /// TD-WAL-2 V1: delegates to the single canonical owner
+    /// [`WALVectorBatch::estimate_records_size`] so the router's routing
+    /// estimate can never drift from the WAL batch's own size accounting.
+    /// The owner is **precision-aware** (fp16/bf16/int8 counted at their real
+    /// byte width via `EmbeddingCell::values_byte_size`, not fp32's fixed
+    /// 4 bytes/elem — the former local copy over-counted half/quantized
+    /// precisions by up to 2×). The router keeps only its own routing
+    /// *thresholds*; it no longer owns the byte math. Empty batch ⇒ 0
+    /// (the owner's `.sum()` over no records).
     pub fn estimate_record_batch_size(&self, records: &[ProximaRecord]) -> usize {
-        if records.is_empty() {
-            return 0;
-        }
-
-        const PROPERTY_OVERHEAD_PER_RECORD: usize = 256;
-        const ID_OVERHEAD_PER_RECORD: usize = 64;
-        const F32_SIZE: usize = 4;
-
-        records
-            .iter()
-            .map(|record| {
-                let embedding_size: usize = record
-                    .embeddings
-                    .iter()
-                    .map(|embedding| embedding.values.len() * F32_SIZE)
-                    .sum();
-                let props_size = record.props.len() * 96 + PROPERTY_OVERHEAD_PER_RECORD;
-                let id_size = record.oid.len() + ID_OVERHEAD_PER_RECORD;
-
-                embedding_size + props_size + id_size
-            })
-            .sum()
+        crate::storage::memtable::specialized::wal_behavior::WALVectorBatch::estimate_records_size(
+            records,
+        )
     }
 
     /// Quick estimate based on vector count and dimension
@@ -334,6 +321,61 @@ mod tests {
         assert!(decision.use_bulk_lane);
         assert_eq!(decision.vector_count, 1);
         assert!(decision.estimated_size_bytes >= 512 * 4);
+    }
+
+    #[test]
+    fn test_estimate_delegates_to_canonical_owner_fp16() {
+        // TD-WAL-2 V1: the router's batch-size estimate is no longer a
+        // duplicate — it delegates to the single canonical, precision-aware
+        // owner `WALVectorBatch::estimate_records_size`. The former fp32-only
+        // math (`values.len() * 4`) over-counted half-precision embeddings by
+        // 2×; for an fp16 cell the embedding must contribute `dim * 2` bytes.
+        use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+
+        let dim = 1024usize;
+        let mut record = ProximaRecord {
+            oid: "fp16_rec".to_string(),
+            embeddings: vec![EmbeddingCell::new_typed(
+                "m",
+                "text",
+                dim as u32,
+                proximadb_records::EmbeddingValues::from_fp32_lossy(
+                    &vec![0.0f32; dim],
+                    proximadb_records::EmbeddingScalarType::Fp16,
+                ),
+            )],
+            ..ProximaRecord::default()
+        };
+        record.props.insert(
+            "category".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("bulk".to_string())),
+        );
+        let records = vec![record];
+
+        let router = BulkWriteRouter::new();
+        assert_eq!(
+            router.estimate_record_batch_size(&records),
+            WALVectorBatch::estimate_records_size(&records),
+            "router estimate must delegate to the canonical precision-aware owner"
+        );
+        // fp16 = 2 bytes/elem: the embedding contributes dim*2, not fp32's dim*4.
+        assert!(
+            router.estimate_record_batch_size(&records) < dim * 4,
+            "fp16 embedding must be counted at 2 bytes/elem, not fp32's 4"
+        );
+    }
+
+    #[test]
+    fn test_estimate_delegates_to_canonical_owner_fp32() {
+        // Regression guard: for fp32 (the common case) the dedup is
+        // behavior-neutral — both estimators already agreed on 4 bytes/elem.
+        use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+        let records = vec![create_test_record("fp32_rec", 512)];
+        let router = BulkWriteRouter::new();
+        assert_eq!(
+            router.estimate_record_batch_size(&records),
+            WALVectorBatch::estimate_records_size(&records),
+        );
     }
 
     #[test]

@@ -96,9 +96,9 @@ impl ToPathSegment for u32 {
 ///
 /// This is a **pure value type** — it carries the typed IDs only. Full
 /// object-store path construction (`accounts/{base62}/…/`) lives in
-/// `DrPathBuilder` / `DrResolvedPath` (the SaaS mandate: every object-store
+/// `DrPathBuilder` / `DrCollectionPath` (the SaaS mandate: every object-store
 /// write is prefixed via DrPathBuilder, the single allowlisted path builder).
-/// DrResolvedPath consumes a `CollectionIdentity` via `build_from_identity`.
+/// DrCollectionPath consumes a `CollectionIdentity` via `build_from_identity`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CollectionIdentity {
     pub account_id: AccountId,
@@ -109,9 +109,9 @@ pub struct CollectionIdentity {
 impl CollectionIdentity {
     /// The three zero-padded base62 path segments, in path order
     /// `(account, namespace, collection)`. Composed into the full prefix by
-    /// `DrResolvedPath::typed_root_prefix` — kept here only so the encoding
+    /// `DrCollectionPath::typed_root_prefix` — kept here only so the encoding
     /// (segment width / zero-pad contract) is testable at the type layer
-    /// without a `DrResolvedPath`.
+    /// without a `DrCollectionPath`.
     pub fn path_segments(&self) -> (String, String, String) {
         (
             self.account_id.to_path_segment(),
@@ -163,7 +163,7 @@ mod tests {
 
     // ── CollectionIdentity segment-encoding tests ───────────────────────
     // (Full-path construction tests live in path_resolver.rs, where
-    // DrResolvedPath::typed_root_prefix composes the canonical prefix.)
+    // DrCollectionPath::typed_root_prefix composes the canonical prefix.)
     // (Per-scope minting tests live in the catalog crate's id_allocator.rs.)
 
     #[test]

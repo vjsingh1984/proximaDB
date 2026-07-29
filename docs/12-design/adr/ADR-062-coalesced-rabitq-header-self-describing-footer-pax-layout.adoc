@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 = ADR-062: Coalesced RaBitQ-header + self-describing footer PAX layout — scan-then-rerank over the logical-file unit (TD-RDSTRAT-6)
 
-:status: Accepted (2026-07-15, review-approved)
+:status: Accepted (2026-07-15; implementation reconciled through 2026-07-28)
 :date: 2026-07-15
 :deciders: architecture
 :relates-to: ADR-061 (profile/authority core; D3/D5/D7 superseded), ADR-052 (round-trips dominate the cost term), ADR-047/046/045 (schema authority / PAX durable-core / mixed-read), ADR-036 (per-object access tier / storage profile), ADR-020 (WAL is the durable authority; the segment/footer is advisory), ADR-026 (PAX canonical vector path), link:ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065 (Region-B extension)], link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6 (core implementation)], link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7 (lossless bytes)], link:../../10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc[TD-RDSTRAT-8 (large-segment probing)], link:../../10-quality/td/TD-RDSTRAT-9-collection-read-cost-envelope.adoc[TD-RDSTRAT-9 (collection control)], link:../../10-quality/td/TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (rerank substrate), link:../../10-quality/td/TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4]/link:../../10-quality/td/TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[5] (historical block-prune), link:../../_internal/status/SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc[the PR1 measured eval]
@@ -11,9 +11,13 @@
 == Status
 
 **Accepted and current base contract** (2026-07-15, implementation reconciled through
-2026-07-21). ADR-065 extends this ADR with Region B; TD-RDSTRAT-8 extends it with a default-OFF
-large-segment probe directory; neither replaces the one-object/header-first/self-describing-footer
-decisions. TD-RDSTRAT-9 owns collection file/cache/compaction policy outside the segment.
+2026-07-28). ADR-065 extends this ADR with Region B; TD-RDSTRAT-8 extends it with the
+mixed-read-safe v3/A0 large-segment probe directory. The trained compaction writer and
+coarse-probe reader are now default ON (#1210/#1234, with the config wiring corrected in
+#1252); their environment variables are kill-switches. #1227 routes probe-path Region-A
+reads and whole-Region-B fallbacks through the byte-budgeted survivor cache. None of these
+changes replaces the one-object/header-first/self-describing-footer decisions.
+TD-RDSTRAT-9 owns the still-open collection file/cache/compaction policy outside a segment.
 
 The original comprehensive review (against then-current `develop`,
 commits `f1075d46f` spec + `df8c0e591` spec-accuracy fixes) returned **✅ Accept — code PR1 may
@@ -23,8 +27,21 @@ via `put_if_absent`+Iceberg) were applied and verified; 2 stale-checkout false a
 (`cluster_order_pca_ivf`, `PROXIMADB_PAX_FLUSH_CLUSTER`) were retracted (both shipped #995/#1015).
 All 7 initial open questions were answered. Core layout/read path #1019, adaptive-M/cache/IOP
 cost control #1060, default-on canonical route #1024, lossless scalar bytes #1064, Region B/range
-cache #1069, and bounded-parallel reads #1094 have shipped. Point-lookup Bloom remains open.
-Successor layouts/encodings retain independent mixed-read, recall, and cost gates.
+cache #1069, bounded-parallel reads #1094, v3/A0 selective probing #1128/#1135, durable probe
+telemetry/evidence #1144/#1148, layout proof #1153, default promotion #1210/#1234, cache-path
+closure #1227, and config-path correction #1252 have shipped. Point-lookup Bloom remains open.
+The prefix-prefetch, split-metadata-cache, and wider Region-A coalescing experiments from #1153
+remain independently gated and default OFF. Successor encodings retain independent mixed-read,
+recall, and cost gates.
+
+TD-RDSTRAT-10's proposed two-object temperature split is **not an accepted extension** of this
+ADR: as filed it contradicts D1's one-object atomicity decision. Reconsidering it requires a
+superseding ADR with multi-object publication/recovery evidence, not implementation under this
+contract.
+
+The cross-record status matrix and merged chronology are captured in
+link:../../_internal/status/ADR_TD_TRUTH_RECONCILIATION_2026_07_28.adoc[the
+2026-07-28 ADR/TD truth reconciliation].
 
 == Context
 
@@ -127,41 +144,45 @@ coalescing win is the policy's, not `read_ranges`' (a backend may override `read
 true batched/multipart as a follow-on). fp32 finalized for top-k only. Net: ~1 RaBitQ GET/file
 (cached) + a few coalesced survivor GETs, vs today's ~4-5 × every selected block.
 
-=== D4 — Parquet-style self-describing footer-index; clean footer v2
+=== D4 — Parquet-style self-describing footer-index; one pre-GA footer version
 
-The footer-index is the metadata hub: **schema snapshot** (field-ids, types, column order —
-self-describing; catalog stays the write authority, footer is the segment's physical
-self-description), block offset table, per-block per-column **stats**, per-stripe **encoding
-map**, rabitq_off/len, row_count. **Encoding control lives in the footer** (Parquet-style),
-not in segment magic — magic stays format-family-only.
+The footer-index is the metadata hub: the physical vector-schema summary needed
+to decode the current file (with a full schema snapshot remaining the target),
+block offset table, per-block **stats**, per-stripe **encoding map**, region
+extents, and row count. The catalog stays the logical write authority.
+**Encoding control lives in the footer** (Parquet-style), not in segment magic —
+magic stays format-family-only.
 
-PR1's footer v1 is readable input, not the byte-layout base for unreleased follow-on writers.
-It contains the RaBitQ extent mirror, row/dimension summary, legacy `embed_quant_tag`,
-f32-presence flag, and block extents. The bytes phase introduces a clean footer v2:
+**As-built pre-GA reconciliation (2026-07-28).** No released footer population
+required a second compatibility version. #1064/#1069 therefore evolved the
+unreleased footer in place and retained `FOOTER_V1 = 1`. A sectionless footer
+stays byte-identical to the original form; typed additions use the existing
+optional-section envelope:
 
 ```
-[footer_version:u8 = 2]
-[row_count | rabitq_off/len | embed_dim/count]
-[required block table]
+[footer_version:u8 = 1]
+[row_count | Region-A/B extents | SQ8 decode parameters | embed_dim/count]
+[legacy embed_quant_tag | f32-presence | required block table/stats]
 [section_count:u16][typed sections]
 section = { tag:u8, version:u8, len:u32, payload }
 ```
 
-Initial sections are `SchemaSnapshot`, `StripeEncodingMap`, `BlockColumnStats`, and
-`AuxRegionDirectory`. The existing footer tail already supplies the total footer length, so v2
-does not add a second extension length/magic. New readers dispatch on footer version: v1 parses
-the PR1 core and synthesizes its legacy interpretation; v2 parses typed sections and skips
-unknown optional section tags/versions after validating lengths. A malformed recognized
-section fails closed. The segment/header magic is unchanged; the footer version changes because
-the footer layout changes.
+Implemented optional sections include the `StripeEncodingMap`, the Region-A0
+extent mirror, and the OID-position-resolver extent mirror. The existing footer
+tail supplies total footer length, so no nested length/magic or footer-version
+bump is needed. Readers validate lengths, parse recognized section versions,
+and skip unknown optional section tags. A malformed recognized section fails
+closed. A new data encoding is a registered descriptor/tag in the encoding map,
+not a footer or segment magic bump.
 
-The schema snapshot contains the immutable physical facts required to interpret the file:
-schema fingerprint/version and ordered fields `{ CatalogColumn.id (stable physical field-id),
-physical_column_id, name, physical/logical type, nullable, role }`. Catalog `object_id`,
-defaults, comments, indexes, and mutable properties remain catalog-only. Tier stripes
-(RaBitQ index, SQ8 rerank projection, exact f32) are physical representations of one logical
-vector field and therefore belong in the encoding map, not as duplicate logical schema
-fields. Full schema-*evolution* reconciliation remains TD-TBL-4 / ADR-047.
+The implemented base footer carries the physical vector summary needed by the
+current PAX reader (`embed_dim`, `embed_count`, representation presence and
+decode parameters), not the originally proposed full catalog-schema snapshot.
+Tier stripes (RaBitQ index, SQ8 rerank projection, exact f32) are physical
+representations of one logical vector field and belong in the encoding map, not
+as duplicate logical fields. Full schema snapshot/evolution remains TD-TBL-4 /
+ADR-047; catalog `object_id`, defaults, comments, indexes, and mutable properties
+remain catalog-only.
 
 The footer encoding map is a descriptor table, not one file-global codec choice. It declares
 `{ descriptor_id, logical_field_id, physical_column_id, tier_role, value_codec_tag/version,
@@ -184,21 +205,23 @@ cataloged outside the file (for example WAL lineage). It is not a stripe descrip
 be used to claim exact reconstruction from that object; `0` remains reserved for an in-file
 canonical descriptor itself.
 
-Each immutable file also records the vector field's `metric_epoch`, the metric under which
-estimator-specific tiers were built, and its normalization contract (`none` or enforced
-unit-L2). Runtime metric support is derived from the registered
+**Unimplemented descriptor tail.** The accepted target also records the vector
+field's `metric_epoch`, the metric under which estimator-specific tiers were
+built, and its normalization contract (`none` or enforced unit-L2). Those fields
+are not serialized by `StripeEncodingDescriptor` as of 2026-07-28 and remain
+TD-RDSTRAT-7 work. Runtime metric support must be derived from the registered
 `(value_codec_tag, value_codec_version, vector_transform)` implementation rather than trusting a serialized
 "supported metrics" claim. A catalog distance-metric change advances the metric epoch and
 requires compatibility validation or a rebuild before the file can serve the new estimator
 path.
 
-Compatibility distinguishes legacy metadata from unknown data bytes: a v1 footer uses the PR1
-block-local SQ8 path, but a v2 footer requires its encoding map. An explicitly unknown value
-codec/version is never reinterpreted as SQ8. An unknown transform or compressor on a canonical
-stripe fails closed; an unknown optional projection may be bypassed only when a declared
-canonical source can satisfy the request. Unknown optional metadata sections may be ignored.
-Because this phase is unreleased, old PR1 binaries are not required to read v2; footer-v2 writes
-stay default-OFF until new readers are deployed.
+Compatibility distinguishes an absent encoding-map section from unknown data
+bytes. A sectionless footer uses the legacy SQ8 interpretation. When an encoding
+map is present, an explicitly unknown value codec/version is never
+reinterpreted as SQ8. An unknown transform or compressor on a canonical stripe
+fails closed; an unknown optional projection may be bypassed only when a
+declared canonical source can satisfy the request. Unknown optional metadata
+sections may be ignored.
 
 === D5 — Per-block stats: typed slot in v1; optional OID Bloom activation in PR3
 
@@ -325,8 +348,9 @@ recall `0.921` and `0.917`. At genuine N=1M the flat control itself fell to reca
 durable tag. Its evidence sizes survivor and geometry prerequisites; it does not authorize
 another lossy storage tier.
 
-**Implementation reconciliation (2026-07-17).** #1064 shipped the footer-v2 and
-shared-codec foundation plus an independently gated, lossless scalar arm. Scalar
+**Implementation reconciliation (2026-07-28).** #1064 shipped the single-version
+footer's typed encoding-map section and shared-codec foundation plus an
+independently gated, lossless scalar arm. Scalar
 all-null elision and post-codec LZ4 reduced the same SIFT N=100k end-to-end
 counter from `32,020,233` to `25,067,186` bytes/query (-21.7%) at recall `0.991`,
 19 GETs/query, and unchanged p95. The clustered SQ8 transform also shipped
@@ -494,8 +518,8 @@ inconsistency, separate cleanup, not a spec error.)
 After PR1 #1019 landed and measured recall `0.984`, `20` range GETs/query, and `31.7 MB`
 read/query, link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7]
 audited the shared codec, ProximaBlocks prior art, PAX `ColumnMeta`/`VectorParamBlock`, and Bloom
-implementations. D4/D5/D8 now fix the implementation seams: a clean typed footer v2 with a v1
-read fallback;
+implementations. D4/D5/D8 now fix the implementation seams: one pre-GA footer
+version with typed optional sections and a sectionless legacy interpretation;
 stable physical field IDs with catalog/footer/block authority separation; skippable optional
 metadata but fail-closed unknown data encodings; auxiliary-region Bloom references; and a
 default-OFF lossless clustered transform/compression layer in the shared codec, consumed first
@@ -505,7 +529,7 @@ decision and precision of existing query projections are unchanged.
 == Scale/bake-off amendment (2026-07-16)
 
 The serialized release bake-off rejected residual SQ6, TurboQuant4, and
-multi-bit RaBitQ4; no footer-v2 data encoding ships. A verified full TEXMEX
+multi-bit RaBitQ4; no new lossy data encoding ships. A verified full TEXMEX
 N=1M run then showed that the flat control also misses the recall and GET gates.
 D6/D8 sequencing is amended accordingly: adaptive survivor M, realized-byte
 `IopsBudget` geometry, and scalable deterministic cluster fitting precede any

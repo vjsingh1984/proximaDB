@@ -14,6 +14,11 @@ remains the home of the existing entries (referenced ~900× across the codebase;
 `td-adr-unique` CI guard treats these rows as declarations too, so ids stay unique across both.
 Canonical convention: link:../12-design/HOW_TO_FILE_TD_AND_ADR.adoc[HOW_TO_FILE_TD_AND_ADR].
 
+CAUTION: This legacy register was last code-reconciled on 2026-06-24. Its rows are structurally
+status-checked, but they are not freshness-certified current-state claims. Re-verify an individual
+row against code before using it for implementation planning; newer per-file TDs supersede broader
+legacy wording where scopes overlap.
+
 [IMPORTANT]
 ====
 This register tracks _implementation state_, not _product-support level_.
@@ -148,7 +153,7 @@ Phase 1+ of `CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc` — one calibrated fuse-by
 | TD-140 | Edge-grain fusion | LOW | Open | D4 | PERF
 | Optional edge/relationship-grain fusion unit (edge-level carries 6–12% more signal than node-level). Differentiator; gate behind query class.
 
-| TD-143 | Retire weak proto fusion path | LOW | Deprecated | D4 | OE
+| TD-143 | Retire weak proto fusion path | LOW | Partial | D4 | OE
 | Deprecated 2026-06-25: `#[deprecated]` + runtime `warn!` on the inherent `execute_hybrid_query` and both port traits (`ApiHandlersPort`/`GraphPort`); `#[allow(deprecated)]` at the three internal v1-compat forwarders (gRPC `GraphService`, the `ApiHandlersPort` impl, the platform `GraphPort` shim). Hard removal deferred — a faithful v2 *redirect* is impossible: (1) the path is dormant (only reachable via `enable_grpc_v1_compat`, default OFF; REST v1 surface is a mock); (2) semantically distinct from v2 — its `combination_strategy` is a sequential vector→graph pipeline, not the PIT-calibrated score-fusion of `graph_fusion_search`; (3) type-mismatched — v1 returns graph `nodes`/`edges`/`paths`, v2 returns fused `FusedItem`s, no 1:1 mapping; (4) not tenant-scoped. Redirect target: v2 `POST /api/v2/graphs/\{graph_id}/fusion-search` or gRPC `ProximaFusionService.FusionSearch`. Remove when the v1 compat surface sunsets; do not extend or add strategies.
 
 | TD-062 | Hybrid retrieval + reranking planner surface | HIGH | Open | D4 | PERF
@@ -413,7 +418,7 @@ PR #265). Moved to the closed archive.
 | Zone maps are single-level per-block `ColumnMeta` (`crates/storage/proximadb-block-format/src/stripe.rs`); fold NOVA's hierarchical SuperBlock-stats idea: add optional segment/row-group-level aggregates + teach `evaluate_block` multi-level skip. Mixed-read-safe via version bump; absent stats -> single-level fallback. See ADR-026 (fold from NOVA).
 | TD-155 | Per-collection VectorQuant config (catalog -> flush) | MED | Resolved | D1 | FEAT
 | *Resolved (landed PR #388):* per-collection `VectorQuant` is threaded catalog schema → flush with precedence (per-collection > env > default-off). Pending archive move. Original plan: The named productionization follow-up (`sst/flush/mod.rs:433`): quant is env-only today. Thread a per-collection `VectorQuant`/`pax` preference from catalog schema through the flush path with precedence (per-collection > env > default-off), so opt-in is per-collection, not global. See ADR-026.
-| TD-156 | Configurable PAX block / row-group / stripe geometry | MED | Done | D1 | PERF
+| TD-156 | Configurable PAX block / row-group / stripe geometry | MED | Resolved | D1 | PERF
 | Shipped PR #349: `write_pax_segment` now takes `target_block: Option<usize>`; the SST flush arm reads `PROXIMADB_PAX_BLOCK_SIZE` (default None = unchanged, mixed-read-safe). Measured (new test): 8 KiB → 64 blocks, 256 KiB → 2 blocks (32× fewer per-block GETs). Per-collection config (TD-155) + object-store-aware default remain open follow-ups. See ADR-026.
 | TD-157 | Adaptive storage tuning from the measured I/O trace | HIGH | Open | D1 | PERF
 | Layer (2) of the ADR-026 tuning hierarchy: the system picks geometry/quant/nprobe/ef from the observed per-query trace + workload (quant <- recall target + size + dim; block size <- storage class), via the co-design `Cost(q)` loop — "cost from measured quantities, not static heuristics." Substrate: `SegmentReadStats` + `io_trace`. Recall ratchet is the safety floor. (Learned/RL tuning, layer 3, is a separate future ADR.) See ADR-026.

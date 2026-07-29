@@ -927,6 +927,10 @@ mod tests {
                 tmp.path()
                     .join(EMBED_INGEST_TOPIC)
                     .join(partition.to_string())
+                    // Q1 (ADR-079): committed offsets are per consumer group —
+                    // {partition}/{group}/offset.meta. The drainer's default
+                    // group is "embed-drainer" (EmbeddingDrainerConfig::default).
+                    .join("embed-drainer")
                     .join("offset.meta")
                     .exists()
             });

@@ -92,7 +92,7 @@ pub mod reasons {
     /// lives on SST (ADR-028).
     pub const POLICY_FORCE_SST_INDEX: &str = "index_policy_mode_index_route_sst";
     /// `index_policy.mode == "auto"` + quantization, and the
-    /// `PROXIMADB_AUTOROUTE_QUANT_HELIX` bake flag is on — route the quantized
+    /// `PROXIMADB_ROUTER_QUANT_HELIX` bake flag is on — route the quantized
     /// vector collection to HELIX (quantization-native, rebuild-free cold)
     /// instead of the SST cold path (ADR-028 auto-router improvement).
     pub const AUTOROUTE_QUANT_HELIX: &str = "autoroute_quant_route_helix";
@@ -104,7 +104,7 @@ pub mod reasons {
 /// recall, so this is an optimization, not a correctness fix). Owners can always
 /// force HELIX explicitly via `index_policy.mode = "helix"`.
 fn autoroute_quant_to_helix_enabled() -> bool {
-    std::env::var_os("PROXIMADB_AUTOROUTE_QUANT_HELIX").is_some()
+    std::env::var_os("PROXIMADB_ROUTER_QUANT_HELIX").is_some()
 }
 
 /// Map an `index_policy.mode` string to a forced engine, if the mode names one.

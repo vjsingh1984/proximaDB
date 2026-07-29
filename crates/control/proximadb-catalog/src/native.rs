@@ -1458,13 +1458,19 @@ impl Catalog for NativeCatalog {
         schema: CatalogTableSchema,
     ) -> Result<CatalogTableSchema> {
         // Validate schema
+        // ADR-077 M1: normalize BEFORE validating. A creation path may legitimately
+        // hand us a UNIQUE recorded only in the projection — `CREATE TABLE … UNIQUE(x)`
+        // lowers to `relational_capabilities.unique_indexes` — and rejecting that would
+        // break table creation. Folding it into the canonical field first is what makes
+        // the invariant hold by construction rather than by rejecting real schemas.
+        let mut schema = schema;
+        crate::schema::normalize_identity(&mut schema);
         validate_schema(&schema)?;
 
         // ADR-031 / TD-181: mint stable object_ids for the table and every
         // catalog object carried in its schema — columns and indexes — from the
         // one system-wide sequence. `mint_object_id` allocates when unset and
         // adopts-without-reuse a caller-supplied id (import/migration/CTAS).
-        let mut schema = schema;
         schema.object_id = Some(self.mint_object_id(schema.object_id));
         for column in &mut schema.columns {
             column.object_id = Some(self.mint_object_id(column.object_id));

@@ -13,7 +13,7 @@ pub mod pgvector_params;
 /// PostgreSQL Protocol v3.0 message parsing and encoding
 pub mod protocol;
 /// Bridge to the new relational pipeline (algebra → planner →
-/// executor → engine). Opt-in via PROXIMADB_NEW_RELATIONAL_PIPELINE.
+/// executor → engine). Opt-in via PROXIMADB_PGWIRE_RELATIONAL_PIPELINE.
 pub mod relational_pipeline;
 /// Session management for PostgreSQL client connections
 pub mod session;
@@ -49,6 +49,12 @@ pub struct DirectPgwireWriteServices {
     /// pgwire connections so their in-memory partitions hold one authoritative
     /// state.
     canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
+
+    /// F5 / TD-OLTP-WIRING-1: the SAME process-shared fenced `ConditionalKeyStore`
+    /// held by `SharedServices` (set via [`Self::with_conditional_key_store`]).
+    /// Threaded into the pgwire `DmlService` so PK/FK uniqueness is fenced
+    /// identically across pgwire and gRPC/REST. `None` ⇒ unfenced legacy probe.
+    conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
 }
 
 impl DirectPgwireWriteServices {
@@ -56,7 +62,21 @@ impl DirectPgwireWriteServices {
     pub fn new(
         canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
     ) -> Self {
-        Self { canonical_store }
+        Self {
+            canonical_store,
+            conditional_key_store: None,
+        }
+    }
+
+    /// Attach the process-shared fenced `ConditionalKeyStore` (the ONE instance
+    /// from `SharedServices`), so pgwire writes fence PK/FK uniqueness on the same
+    /// store as gRPC/REST.
+    pub fn with_conditional_key_store(
+        mut self,
+        cks: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
+    ) -> Self {
+        self.conditional_key_store = cks;
+        self
     }
 }
 
@@ -377,8 +397,11 @@ impl PostgresServer {
         )
         .with_session_manager(session_manager.clone());
         let mut protocol = if let Some(direct_write_services) = direct_write_services {
-            protocol
-                .with_direct_catalog_manager(catalog_manager, direct_write_services.canonical_store)
+            protocol.with_direct_catalog_manager(
+                catalog_manager,
+                direct_write_services.canonical_store,
+                direct_write_services.conditional_key_store,
+            )
         } else {
             protocol.with_catalog_manager(catalog_manager)
         };

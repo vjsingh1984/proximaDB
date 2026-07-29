@@ -19,6 +19,13 @@
 //!   * `proximadb_wal_last_flush_timestamp_seconds{collection}`   — gauge, unixtime of last OK flush (age = `time()-metric`)
 //!   * `proximadb_wal_backpressure_active{collection}`            — gauge, 1 while a write is being throttled
 //!   * `proximadb_wal_backpressure_total{collection}`             — counter, backpressure engagements
+//!   * `proximadb_wal_flush_admission_total{collection,result}`    — counter, admission verdicts
+//!   * `proximadb_wal_flush_admitted_in_flight`                    — gauge, globally admitted jobs
+//!   * `proximadb_wal_flush_admission_wait_seconds`                — histogram, global permit wait
+//!   * `proximadb_wal_flush_claimed_batches{collection}`           — gauge, exact source batches owned
+//!   * `proximadb_wal_flush_claim_rollback_batches_total{collection}` — counter, batches returned
+//!   * `proximadb_wal_truncation_segments_reclaimed_total`        — counter, WAL segments reclaimed below the canonical marker (TD-WAL-1 S6)
+//!   * `proximadb_wal_replay_duration_seconds`                    — gauge, last boot's WAL replay wall-clock (TD-WAL-1 S6)
 //!
 //! Wiring mirrors [`crate::wal_scan_metrics`]: a *private* Prometheus registry
 //! (no boot init required) whose [`scrape_text`] is appended to the
@@ -94,6 +101,44 @@ lazy_static! {
         "proximadb_wal_backpressure_total",
         "Count of write-backpressure engagements at the critical watermark, per collection (ADR-069 D3)",
         &["collection"],
+    );
+    static ref FLUSH_ADMISSION_TOTAL: IntCounterVec = build_counter(
+        "proximadb_wal_flush_admission_total",
+        "Flush pre-materialization admission verdicts (ADR-081)",
+        &["collection", "result"],
+    );
+    static ref FLUSH_ADMITTED_IN_FLIGHT: IntGaugeVec = build_gauge(
+        "proximadb_wal_flush_admitted_in_flight",
+        "Globally admitted flush jobs currently holding a resource permit (ADR-081)",
+        &[],
+    );
+    static ref FLUSH_ADMISSION_WAIT: HistogramVec = build_histogram(
+        "proximadb_wal_flush_admission_wait_seconds",
+        "Time a collection-admitted flush waits for a global resource permit (ADR-081)",
+        &[],
+    );
+    static ref FLUSH_CLAIMED_BATCHES: IntGaugeVec = build_gauge(
+        "proximadb_wal_flush_claimed_batches",
+        "Exact WAL source batches currently claimed by a flush job (ADR-081)",
+        &["collection"],
+    );
+    static ref FLUSH_CLAIM_ROLLBACK_BATCHES: IntCounterVec = build_counter(
+        "proximadb_wal_flush_claim_rollback_batches_total",
+        "WAL source batches returned after flush error, cancellation, or keep-WAL completion (ADR-081)",
+        &["collection"],
+    );
+    // TD-WAL-1 S6 residuals. Both are boot/compaction-wide aggregates (no
+    // collection label) — the per-collection + per-tenant durable attribution
+    // lives in the io_trace warehouse surface (ADR-066), not Prometheus.
+    static ref TRUNCATION_SEGMENTS_RECLAIMED: IntCounterVec = build_counter(
+        "proximadb_wal_truncation_segments_reclaimed_total",
+        "WAL segments reclaimed by `truncate_through_canonical_marker` (below the canonical-emission marker), boot/compaction-wide (TD-WAL-1 S6)",
+        &[],
+    );
+    static ref REPLAY_DURATION: IntGaugeVec = build_gauge(
+        "proximadb_wal_replay_duration_seconds",
+        "Wall-clock seconds spent replaying the WAL on the last boot (TD-WAL-1 S6)",
+        &[],
     );
 }
 
@@ -215,6 +260,62 @@ pub fn inc_backpressure(collection: &str) {
     BACKPRESSURE_TOTAL.with_label_values(&[collection]).inc();
 }
 
+/// Record an engine admission verdict before source records are materialized.
+pub fn record_admission(collection: &str, admitted: bool) {
+    FLUSH_ADMISSION_TOTAL
+        .with_label_values(&[collection, if admitted { "admitted" } else { "rejected" }])
+        .inc();
+}
+
+pub fn inc_admitted_in_flight() {
+    FLUSH_ADMITTED_IN_FLIGHT
+        .with_label_values::<&str>(&[])
+        .inc();
+}
+
+pub fn dec_admitted_in_flight() {
+    FLUSH_ADMITTED_IN_FLIGHT
+        .with_label_values::<&str>(&[])
+        .dec();
+}
+
+pub fn record_admission_wait(seconds: f64) {
+    FLUSH_ADMISSION_WAIT
+        .with_label_values::<&str>(&[])
+        .observe(seconds.max(0.0));
+}
+
+pub fn set_claimed_batches(collection: &str, batches: i64) {
+    FLUSH_CLAIMED_BATCHES
+        .with_label_values(&[collection])
+        .set(batches.max(0));
+}
+
+pub fn record_claim_rollback(collection: &str, batches: u64) {
+    if batches > 0 {
+        FLUSH_CLAIM_ROLLBACK_BATCHES
+            .with_label_values(&[collection])
+            .inc_by(batches);
+    }
+}
+
+/// Count WAL segments reclaimed by canonical-marker truncation (TD-WAL-1 S6).
+/// Boot/compaction-wide aggregate — no collection label.
+pub fn inc_truncation_segments_reclaimed(n: u64) {
+    if n > 0 {
+        TRUNCATION_SEGMENTS_RECLAIMED
+            .with_label_values::<&str>(&[])
+            .inc_by(n);
+    }
+}
+
+/// Record the wall-clock duration of the last WAL replay on boot (TD-WAL-1 S6).
+pub fn set_replay_duration(seconds: f64) {
+    REPLAY_DURATION
+        .with_label_values::<&str>(&[])
+        .set(seconds.max(0.0) as i64);
+}
+
 /// Prometheus text exposition for this family. Empty until the first emit,
 /// appended to `/metrics/prometheus`.
 pub fn scrape_text() -> String {
@@ -299,5 +400,28 @@ mod tests {
         assert!(text.contains("proximadb_wal_size_bytes"), "{text}");
         assert!(text.contains("col_scrape"), "{text}");
         assert!(text.contains("reason=\"size\""), "{text}");
+    }
+
+    #[test]
+    fn s6_truncation_and_replay_metrics_round_trip() {
+        inc_truncation_segments_reclaimed(3);
+        inc_truncation_segments_reclaimed(0); // no-op guard
+        set_replay_duration(1.5); // truncated to whole seconds
+        assert_eq!(
+            TRUNCATION_SEGMENTS_RECLAIMED
+                .with_label_values::<&str>(&[])
+                .get(),
+            3
+        );
+        assert_eq!(REPLAY_DURATION.with_label_values::<&str>(&[]).get(), 1);
+        let text = scrape_text();
+        assert!(
+            text.contains("proximadb_wal_truncation_segments_reclaimed_total"),
+            "{text}"
+        );
+        assert!(
+            text.contains("proximadb_wal_replay_duration_seconds"),
+            "{text}"
+        );
     }
 }

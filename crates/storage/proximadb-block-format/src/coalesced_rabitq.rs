@@ -117,6 +117,24 @@ impl CoalescedRaBitQHeader {
 ///
 /// Reuses the canonical codec ([`fit_params`] → [`build_rotation`] → [`encode`])
 /// — no hand-rolled quantizer.
+/// TD-FLUSH-5: encode-pool width. Default HALF the cores (min 2) so a flush
+/// never starves concurrent queries (the search morsels own the other half —
+/// co-design headroom, mirroring TD-SEARCH-2's adaptive degree).
+/// `PROXIMADB_PAX_ENCODE_THREADS` overrides (1 = sequential).
+pub(crate) fn encode_pool_threads() -> usize {
+    if let Ok(v) = std::env::var("PROXIMADB_PAX_ENCODE_THREADS")
+        && let Ok(n) = v.trim().parse::<usize>()
+        && n > 0
+    {
+        return n;
+    }
+    (std::thread::available_parallelism()
+        .map(|c| c.get())
+        .unwrap_or(2)
+        / 2)
+    .max(2)
+}
+
 pub fn encode_region(
     vectors: &[Option<&[f32]>],
     dim: u32,
@@ -156,15 +174,53 @@ pub fn encode_region(
             buf[bitmap_off + (i >> 3)] |= 1u8 << (i & 7);
         }
     }
-    for v in vectors {
-        match v {
-            Some(vec) => {
-                let code = encode(vec, &params, &rotation);
-                buf.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
-                buf.extend_from_slice(&code.inv_factor.to_le_bytes());
-                buf.extend_from_slice(&code.bits);
+    // TD-FLUSH-5: pass 2 (per-row encode) is embarrassingly parallel — row
+    // i's bytes depend only on vectors[i] + the shared immutable
+    // params/rotation fit in pass 1 (which stays sequential so the float
+    // reductions are bit-stable). Ordered par_iter + in-order concat is
+    // byte-identical to the sequential loop (pinned by the unit test). The
+    // rotation apply is O(dim²)/row — the measured 43.9 s / 884k-row flush
+    // hotspot. Small regions keep the sequential loop (no pool overhead).
+    const PAR_ENCODE_MIN_ROWS: usize = 4096;
+    if n >= PAR_ENCODE_MIN_ROWS && encode_pool_threads() > 1 {
+        use rayon::prelude::*;
+        // BOUNDED scoped pool (not the global pool): flush encode must leave
+        // headroom for concurrent queries — the same co-design rule as the
+        // TD-SEARCH-2 search morsels. Default cores/2 (min 2), env-tunable.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(encode_pool_threads())
+            .build()
+            .map_err(|e| anyhow::anyhow!("encode pool: {e}"))?;
+        let rows: Vec<Vec<u8>> = pool.install(|| {
+            vectors
+                .par_iter()
+                .map(|v| match v {
+                    Some(vec) => {
+                        let code = encode(vec, &params, &rotation);
+                        let mut row = Vec::with_capacity(stride);
+                        row.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
+                        row.extend_from_slice(&code.inv_factor.to_le_bytes());
+                        row.extend_from_slice(&code.bits);
+                        row
+                    }
+                    None => vec![0u8; stride],
+                })
+                .collect()
+        });
+        for row in rows {
+            buf.extend_from_slice(&row);
+        }
+    } else {
+        for v in vectors {
+            match v {
+                Some(vec) => {
+                    let code = encode(vec, &params, &rotation);
+                    buf.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
+                    buf.extend_from_slice(&code.inv_factor.to_le_bytes());
+                    buf.extend_from_slice(&code.bits);
+                }
+                None => buf.extend(std::iter::repeat_n(0u8, stride)),
             }
-            None => buf.extend(std::iter::repeat_n(0u8, stride)),
         }
     }
     Ok((buf, params.centroid))
@@ -214,6 +270,114 @@ impl RaBitQRegion {
     pub fn code(&self, idx: usize) -> Option<&RaBitQCode> {
         self.codes.get(idx).and_then(|c| c.as_ref())
     }
+
+    /// TD-SEARCH-2 S2: rank a **row range** of the region, returning up to
+    /// `pool` `(global_row, score)` pairs nearest-first (ascending score, the
+    /// shared "lower = nearer" order for both metrics). Morsel workers each
+    /// rank a disjoint range; merging the per-range results by score and
+    /// truncating to `pool` is EXACTLY equivalent to [`Self::rank`] over the
+    /// whole region (the global top-`pool` is a subset of the union of
+    /// per-range top-`pool`s). The ~50µs LUT build repeats per call — noise
+    /// against the per-row scan it accelerates.
+    pub fn rank_range_scored(
+        &self,
+        query: &[f32],
+        metric: RankMetric,
+        pool: usize,
+        rows: std::ops::Range<usize>,
+    ) -> Vec<(usize, f32)> {
+        use proximadb_codec::baseline::functions::rabitq::QueryLut;
+        let params = self.header.to_params();
+        let rotation = build_rotation_cached(params.dim, params.seed);
+        let q_rotated = rotate_query(query, &params, &rotation);
+        let lut = QueryLut::build(&q_rotated);
+        let start = rows.start.min(self.codes.len());
+        let end = rows.end.min(self.codes.len());
+        let mut scored: Vec<(usize, f32)> = self.codes[start..end]
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                c.as_ref().map(|c| {
+                    let score = match metric {
+                        RankMetric::L2 => lut.l2_rank_score(c),
+                        RankMetric::Cosine | RankMetric::DotProduct => lut.ip_rank_score(c),
+                    };
+                    (start + i, score)
+                })
+            })
+            .collect();
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(pool);
+        scored
+    }
+}
+
+/// Per-row code stride in a coalesced region: `dist f32 | inv f32 | bits`.
+pub fn code_stride(dim: u32) -> usize {
+    8 + (dim as usize).div_ceil(8)
+}
+
+/// TD-RDSTRAT-8 PR-B coarse probe: rank a **subset** of rows without reading the
+/// whole region. `header` comes from a small ranged GET of the region header
+/// (`[rabitq_off, rabitq_off + region_header_len(dim))`); `runs` are the probed
+/// cells' code bytes fetched via ranged GETs into their `a_off/a_len` extents.
+/// Each run is `(global_row_start, bytes)` where `bytes` is exactly
+/// `rows × code_stride(dim)` contiguous row codes starting at `global_row_start`
+/// (byte-identical to that slice of the region's code area).
+///
+/// Probed rows are **always present** — A0 cells cover only usable (embedded)
+/// rows, whose validity bits are all 1 — so a synthetic all-ones bitmap lets the
+/// canonical [`parse_rabitq_codes`] decode each run unchanged (no bitmap GET, no
+/// hand-rolled decoder). Returns up to `pool` **global** row indices
+/// nearest-first (same estimator + rotation as [`RaBitQRegion::rank`]).
+pub fn rank_probed_rows(
+    header: &CoalescedRaBitQHeader,
+    runs: &[(usize, &[u8])],
+    query: &[f32],
+    metric: RankMetric,
+    pool: usize,
+) -> Result<Vec<usize>> {
+    let dim = header.dim as usize;
+    if dim == 0 {
+        bail!("coarse-probe rank: region dim is 0");
+    }
+    let stride = code_stride(header.dim);
+    // Decode each probed run (all present) and remember each row's GLOBAL index.
+    let mut codes: Vec<Option<RaBitQCode>> = Vec::new();
+    let mut global: Vec<usize> = Vec::new();
+    for &(row_start, bytes) in runs {
+        if bytes.len() % stride != 0 {
+            bail!(
+                "coarse-probe run bytes {} not a multiple of code stride {stride}",
+                bytes.len()
+            );
+        }
+        let rows = bytes.len() / stride;
+        if rows == 0 {
+            continue;
+        }
+        // Synthesize the all-ones validity bitmap the canonical parser expects,
+        // then the run's code bytes verbatim → reuse the block decoder as-is.
+        let mut payload = vec![0xFFu8; rows.div_ceil(8)];
+        payload.extend_from_slice(bytes);
+        let run_codes = parse_rabitq_codes(&payload, rows, dim)?;
+        for (j, c) in run_codes.into_iter().enumerate() {
+            codes.push(c);
+            global.push(row_start + j);
+        }
+    }
+    if codes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let params = header.to_params();
+    let rotation = build_rotation_cached(params.dim, params.seed);
+    let q_rotated = rotate_query(query, &params, &rotation);
+    let local = match metric {
+        RankMetric::L2 => rank_candidates(&q_rotated, &codes, pool),
+        RankMetric::Cosine | RankMetric::DotProduct => rank_candidates_ip(&q_rotated, &codes, pool),
+    };
+    // Map local (subset) indices back to global row indices.
+    Ok(local.into_iter().map(|l| global[l]).collect())
 }
 
 #[cfg(test)]
@@ -258,6 +422,155 @@ mod tests {
         assert!(
             parsed.code(ranked[0]).is_some(),
             "top survivor must be present"
+        );
+    }
+
+    /// TD-FLUSH-5: the parallel pass-2 encode (n >= 4096 -> rayon) must be
+    /// BYTE-IDENTICAL to the sequential reference — same header, bitmap, and
+    /// per-row codes in row order. The reference is built inline with the
+    /// same pass-1 params + per-row `encode` calls.
+    #[test]
+    fn parallel_encode_region_is_byte_identical() {
+        const DIM: usize = 32;
+        const N: usize = 5000; // above PAR_ENCODE_MIN_ROWS
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| synth_vec(i as u64, DIM)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                if i % 97 == 13 {
+                    None
+                } else {
+                    Some(v.as_slice())
+                }
+            })
+            .collect();
+        let seed = RABITQ_SEED_BASE ^ 99;
+        let (region, _) = encode_region(&vectors, DIM as u32, seed).unwrap();
+
+        // sequential reference
+        let present: Vec<&[f32]> = vectors.iter().filter_map(|o| *o).collect();
+        let params = fit_params(&present, DIM, seed);
+        let rotation = build_rotation(DIM, seed);
+        let stride = 8 + DIM.div_ceil(8);
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&(N as u32).to_le_bytes());
+        expected.extend_from_slice(&(DIM as u32).to_le_bytes());
+        expected.extend_from_slice(&seed.to_le_bytes());
+        for &c in &params.centroid {
+            expected.extend_from_slice(&c.to_le_bytes());
+        }
+        let bitmap_off = expected.len();
+        expected.resize(expected.len() + N.div_ceil(8), 0u8);
+        for (i, v) in vectors.iter().enumerate() {
+            if v.is_some() {
+                expected[bitmap_off + (i >> 3)] |= 1u8 << (i & 7);
+            }
+        }
+        for v in &vectors {
+            match v {
+                Some(vec) => {
+                    let code = encode(vec, &params, &rotation);
+                    expected.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
+                    expected.extend_from_slice(&code.inv_factor.to_le_bytes());
+                    expected.extend_from_slice(&code.bits);
+                }
+                None => expected.extend(std::iter::repeat_n(0u8, stride)),
+            }
+        }
+        assert_eq!(region, expected, "parallel encode must be byte-identical");
+    }
+
+    /// TD-SEARCH-2 S2: morsel equivalence — merging per-chunk
+    /// `rank_range_scored` results by score and truncating to `pool`
+    /// reproduces the sequential `rank` over the whole region exactly, for
+    /// any chunking and both metric families.
+    #[test]
+    fn chunked_rank_range_scored_matches_full_rank() {
+        const DIM: usize = 64;
+        const N: usize = 300;
+        const POOL: usize = 40;
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| synth_vec(i as u64, DIM)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let (region, _) = encode_region(&vectors, DIM as u32, RABITQ_SEED_BASE ^ 7).unwrap();
+        let parsed = RaBitQRegion::from_bytes(&region).unwrap();
+        let query = synth_vec(9_999, DIM);
+
+        for metric in [RankMetric::L2, RankMetric::Cosine] {
+            let sequential = parsed.rank(&query, metric, POOL);
+            for degree in [2usize, 3, 7] {
+                let chunk = N.div_ceil(degree);
+                let mut merged: Vec<(usize, f32)> = Vec::new();
+                for i in 0..degree {
+                    let rows = (i * chunk)..(((i + 1) * chunk).min(N));
+                    merged.extend(parsed.rank_range_scored(&query, metric, POOL, rows));
+                }
+                merged.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                merged.truncate(POOL);
+                let chunked: Vec<usize> = merged.into_iter().map(|(i, _)| i).collect();
+                assert_eq!(
+                    chunked, sequential,
+                    "degree {degree} {metric:?}: chunked merge must equal sequential rank"
+                );
+            }
+        }
+    }
+
+    /// TD-RDSTRAT-8 PR-B: the subset ranker reproduces the full-region ranking
+    /// when handed all rows, and restricts to the probed rows for a sub-run —
+    /// same estimator, same order, global indices mapped back correctly.
+    #[test]
+    fn rank_probed_rows_matches_region_rank() {
+        const DIM: usize = 64;
+        const N: usize = 256;
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| synth_vec(i as u64, DIM)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let seed = RABITQ_SEED_BASE ^ 20;
+        let (region, _c) = encode_region(&vectors, DIM as u32, seed).unwrap();
+        let header = CoalescedRaBitQHeader::parse(&region).unwrap();
+        let parsed = RaBitQRegion::from_bytes(&region).unwrap();
+        let query = corpus[10].clone();
+
+        let stride = code_stride(DIM as u32);
+        let codes_base = region_header_len(DIM as u32) + N.div_ceil(8);
+        let full = parsed.rank(&query, RankMetric::L2, N);
+
+        // One run over ALL rows must reproduce the full-region ranking exactly
+        // (same codes, same order, same estimator).
+        let all_bytes = &region[codes_base..codes_base + N * stride];
+        let probed_all =
+            rank_probed_rows(&header, &[(0, all_bytes)], &query, RankMetric::L2, N).unwrap();
+        assert_eq!(probed_all, full, "one run over all rows == region.rank");
+
+        // A subset run returns only rows in that subset, nearest-first; its top
+        // survivor equals the best full-rank survivor within the subset.
+        let (lo, hi) = (10usize, 40usize);
+        let sub_bytes = &region[codes_base + lo * stride..codes_base + hi * stride];
+        let probed =
+            rank_probed_rows(&header, &[(lo, sub_bytes)], &query, RankMetric::L2, hi - lo).unwrap();
+        assert!(
+            probed.iter().all(|&r| (lo..hi).contains(&r)),
+            "probed survivors stay within the probed rows"
+        );
+        let best_in_sub = full
+            .iter()
+            .copied()
+            .find(|&r| (lo..hi).contains(&r))
+            .expect("some full-rank survivor lies in the subset");
+        assert_eq!(
+            probed[0], best_in_sub,
+            "subset top == full-rank best within the subset"
+        );
+
+        // Two disjoint runs (mimicking two probed cells) cover their union.
+        let r1 = &region[codes_base..codes_base + 5 * stride];
+        let r2 = &region[codes_base + 100 * stride..codes_base + 110 * stride];
+        let two =
+            rank_probed_rows(&header, &[(0, r1), (100, r2)], &query, RankMetric::L2, 15).unwrap();
+        assert!(
+            two.iter()
+                .all(|&r| (0..5).contains(&r) || (100..110).contains(&r)),
+            "two-run survivors stay within the two probed cells"
         );
     }
 

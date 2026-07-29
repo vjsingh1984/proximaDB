@@ -203,23 +203,10 @@ mod tests {
         TempDir,
     )> {
         let temp_dir = TempDir::new()?;
-        let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::create(Default::default())
-                .await?,
-        );
         let wal_config = crate::storage::persistence::write_ahead_log::WALConfig::default();
-        let strategy =
-            crate::storage::persistence::write_ahead_log::WALBatchFactory::create_batch_serialization_strategy(
-                crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch,
-                &wal_config,
-                filesystem,
-            )
-            .await?;
         let wal_manager = Arc::new(
-            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(
-                strategy, wal_config,
-            )
-            .await?,
+            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(wal_config)
+                .await?,
         );
 
         let metadata_url = format!("file://{}", temp_dir.path().join("metadata").display());

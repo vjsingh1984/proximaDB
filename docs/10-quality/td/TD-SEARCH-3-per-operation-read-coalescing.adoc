@@ -1,0 +1,120 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-SEARCH-3: Per-operation read coalescing — Azure charges per GET, not per byte
+:status: Open
+:dim: D1
+:pillar: PERF
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open.** Design identified 2026-07-29. Follow-up to TD-COMPACT-10 (the segment-count fix). Independent — can ship before or after.
+| Priority | **P2** — saves ~1-2 GETs/segment/query (modest but compounds with segment-count reduction). The architectural insight (per-operation billing) is P0 for all future GET-reduction work.
+| Component | `src/storage/engines/sst/segment_format.rs` (PaxSegmentScanner, `plan_probe_cell_ranges`); `crates/storage/proximadb-storage-filesystem-types/src/counting.rs` (CountingFileSystem).
+| Evidence | 2026-07-29 SIFT1M benchmark: 205 GETs/query at 9 segments = ~23 GETs/segment (including header/A0/footer as separate GETs). Azure Blob charges $0.0065/10K **operations** — a 72-byte GET costs the same as a 24MB GET.
+|===
+
+== The architectural insight
+
+**Azure Blob Storage (and S3, GCS) charge per read OPERATION, not per byte.** A 72-byte
+ranged GET costs the same as a 24MB ranged GET: $0.00000065 (at $0.0065/10K ops).
+
+This means **coalescing adjacent reads into fewer operations is the #1 GET-reduction
+lever** (after segment count). Two 72-byte reads = 2 operations = 2× the cost of one
+coalesced 144-byte read.
+
+== Current state — 3 separate reads for header + A0 + Region A
+
+The PAX segment layout is sequential:
+
+```
+[Header 72B] [A0 ~KB] [Region A RaBitQ ~24MB] [Region B SQ8 ~128MB] [Blocks D] [Footer ~KB]
+              ←── contiguous ──→
+```
+
+The first query per segment reads:
+. Header (72B) — MUST read first to discover offsets. 1 GET.
+. A0 coarse directory (~KB) — discovered via header. 1 GET.
+. Region A probed cells (~3MB) — discovered via header + A0. 1-2 GETs (coalesced by
+  `plan_probe_cell_ranges`).
+. Footer (~KB). 1 GET.
+
+= 4-5 GETs for the control plane + Region A. **The header → A0 → Region A transition
+is 3 separate GETs even though the regions are CONTIGUOUS.**
+
+== The optimization
+
+After the first query, the header + A0 + footer are cached in `SegmentInvariantsCache`.
+The offsets are known. The scanner can:
+
+. **Coalesce A0 + first Region A range**: if A0 and the first probed cell's RaBitQ
+  range are contiguous (which they are by the sequential layout), issue ONE ranged GET
+  covering both. Saves 1 GET per segment per query (after cache warm).
+
+. **Pre-read A0 into the coarse-probe planner**: the A0 directory (~KB) is tiny. On
+  a cold query (cache miss), read it together with the header in a single GET covering
+  [0, a0_off + a0_len]. The header is 72B; A0 is ~KB; together they're still <16KB —
+  one small GET instead of two.
+
+. **Coalesce footer with the last Region B range**: if the footer is adjacent to the
+  last SQ8 survivor range, merge them into one GET. Saves 1 GET per segment.
+
+== Savings model
+
+|===
+| Scenario | Current GETs/segment | After coalescing | Savings
+
+| Cold (first query, cache empty)
+| ~7-8 (header + A0 + A + B + D + footer)
+| ~5-6 (header+A0 coalesced, footer+B coalesced)
+| ~2 GETs/segment
+
+| Warm (header/A0/footer cached)
+| ~3-6 (A + B + D)
+| ~3-5 (A0+A coalesced where applicable, but A0 is cached so this is marginal)
+| ~0-1 GETs/segment
+
+| At 2 segments (post-TD-COMPACT-10 fix)
+| ~14-16 cold
+| ~10-12 cold
+| ~25% additional reduction
+|===
+
+Combined with the segment-count fix (TD-COMPACT-10: 205 → ~25 GETs/query), this
+coalescing optimization brings cold GETs/query to **~18-22** — further improving the
+retrieval margin from 67% to ~72-75%.
+
+== Implementation notes
+
+. Extend `plan_probe_cell_ranges()` in `segment_format.rs` to accept an optional
+  "prefix range" (the A0 directory extent) and coalesce it with the first cell range
+  if contiguous.
+
+. The cold-path header read can be extended to cover A0: `read_range(0,
+  a0_off + a0_len)` instead of `read_range(0, 72)`. The extra bytes (~KB) are
+  negligible vs the saved operation.
+
+. The CountingFileSystem (`PROXIMADB_COUNT_FS_IO=1`) already counts per
+  `read_range()` call, so the metering automatically reflects the reduced GET count.
+
+== Metering correctness
+
+The metering chain maps 1:1 to Azure billing:
+
+```
+read_range() call → CountingFileSystem +1 GET → Prometheus counter → KRU billing
+```
+
+Each `read_range()` = 1 GET = 1 Azure read operation. Coalescing two ranges into one
+`read_range()` call = 1 GET instead of 2. **The metering is per-operation, matching
+Azure's per-operation billing model exactly.**
+
+No metering gap. The optimization reduces BOTH the real cost AND the billed cost
+identically.
+
+== Related
+
+link:TD-COMPACT-10-l2-segment-consolidation-gap.adoc[TD-COMPACT-10] (the segment-count fix),
+link:../12-design/adr/ADR-080-vector-search-compaction-tuning.adoc[ADR-080],
+link:../12-design/adr/ADR-065-*.adoc[ADR-065] (the PAX region layout + cache tiers),
+link:../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (GETs dominate the cost spine).

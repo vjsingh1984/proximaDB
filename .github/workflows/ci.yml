@@ -572,13 +572,22 @@ jobs:
           prefix-key: "v1-rust-sdk-codegen-drift"
           workspaces: clients/rust/codegen
       - name: Regenerate the Rust REST transport from the OpenAPI spec
+        # ADR-068 D6: regeneration is ADVISORY here. progenitor 0.14 panics on
+        # some inline-structured OpenAPI responses (`response_types.len() <= 1`,
+        # the #1103 class) — a generator TOOLING limit unrelated to real drift.
+        # `continue-on-error` stops that panic red-PR'ing spec-evolution work;
+        # the merge-blocking SDK gate is the live round-trip (python-sdk-round-trip).
+        continue-on-error: true
         env:
           PYTHON: python
         run: make gen-rust-sdk
-      - name: Fail on uncommitted drift in the generated Rust client
+      - name: Report uncommitted drift in the generated Rust client (advisory)
+        # ADR-068 D6: advisory — `::warning::`, never fails the job. Real drift is
+        # caught by the blocking round-trip gate, not by a text diff.
+        continue-on-error: true
         run: |
           git diff --exit-code -- clients/rust/src/genrest.rs \
-            || (echo "::error::clients/rust/src/genrest.rs has drifted from the OpenAPI spec. Run 'make gen-rust-sdk' and commit the result." && exit 1)
+            || (echo "::warning::clients/rust/src/genrest.rs has drifted from the OpenAPI spec (advisory under ADR-068 D6). Run 'make gen-rust-sdk' and commit the result when intentional." && true)
 
   # TD-126 Phase 4 (spec-driven SDK, Python): the Python REST transport's wire
   # plumbing (clients/python/src/proximadb_sdk/_generated/rest) is GENERATED from
@@ -612,6 +621,55 @@ jobs:
         run: |
           git diff --exit-code -- clients/python/src/proximadb_sdk/_generated/ \
             || (echo "::error::clients/python/src/proximadb_sdk/_generated has drifted from the OpenAPI spec. Run 'make gen-python-sdk' and commit the result." && exit 1)
+
+  # ADR-068 D5 — the BLOCKING behavioral SDK gate: drive the shipped Python
+  # facade through the real REST transport against a live server (create→insert→
+  # search→get→delete). The codegen-drift gates cannot see facade bugs (S2a/S2b
+  # shipped undetected); this one can. Regeneration is advisory (D6); this is
+  # blocking. Promoted once #1141 (the S2b search() fix it enforces) landed on
+  # develop. Proven correct: passes with the S2b fix, fails (search returns [])
+  # without it.
+  python-sdk-round-trip:
+    name: Python SDK round-trip (ADR-068 D5)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config curl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-python-sdk-round-trip"
+      - name: Build server binary
+        run: cargo build --release --package proximadb-server --bin proximadb-server
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install SDK + pytest
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e clients/python
+          pip install pytest
+      - name: Start server (background) + wait for health
+        run: |
+          ./target/release/proximadb-server -c config/config.toml -d /tmp/proxima-rt -p 5678 > /tmp/server.log 2>&1 &
+          echo $! > /tmp/server.pid
+          for i in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:5678/health >/dev/null 2>&1; then echo "server ready"; exit 0; fi
+            sleep 1
+          done
+          echo "::error::server did not become healthy in 90s"; cat /tmp/server.log; exit 1
+      - name: Round-trip gate
+        run: pytest clients/python/tests/test_round_trip.py -v
+        env:
+          PROXIMADB_REST_URL: http://127.0.0.1:5678
+      - name: Stop server
+        if: always()
+        run: kill $(cat /tmp/server.pid) 2>/dev/null || true
 
   panic-policy-report:
     name: Panic Policy Report (WS-2 Stage 1)
@@ -760,11 +818,24 @@ jobs:
           # Other gated surfaces invisible to default CI:
           - { label: "cluster",             pkg: proximadb,        args: "--features cluster" }
           - { label: "enterprise-catalogs", pkg: proximadb,        args: "--features enterprise-catalogs" }
+          # Ledger modality durable backend (S2, ADR-071) — the WAL-backed impl is behind the
+          # non-default `durable` feature, so it is invisible to the default workspace check.
+          - { label: "ledger-durable",      pkg: proximadb-ledger, args: "--features durable" }
+          # Ledger modality gRPC service (S3, ADR-071) — the ProximaLedgerService + its port wiring
+          # are behind the non-default `experimental-ledger` feature on the root crate.
+          - { label: "experimental-ledger", pkg: proximadb,        args: "--features experimental-ledger" }
+          # F2 (ADR-072 D3/D5): the fenced ConditionalKeyStore in the relational insert
+          # path is behind the non-default `oltp-integrity` feature; check it compiles so
+          # cfg drift in that path is caught (the feature-gated test executes locally).
+          - { label: "oltp-integrity",       pkg: proximadb,        args: "--features oltp-integrity" }
           # Refactor/move coverage: these configurations catch cfg drift hidden
           # by the default build. Keep them in the same mandatory matrix rather
           # than relying on a PR being correctly labelled as mechanical.
           - { label: "no-default-features",  pkg: proximadb,        args: "--no-default-features" }
           - { label: "experimental-engines", pkg: proximadb,        args: "--features experimental-engines" }
+          # F3v (TD-DELVEC-1): cold-tier deletion vectors — feature-gated PAX flush-path
+          # resolver capture. Check it compiles so cfg drift in that path is caught.
+          - { label: "cold-deletion-vectors", pkg: proximadb,      args: "--features cold-deletion-vectors" }
           # Embedded crate (default, no language bindings) — validates the extracted
           # crate compiles against root at every tier. Python-feature + wheel build
           # is a qa→main (FULL) concern (heavy pyo3/numpy deps).
@@ -1171,6 +1242,8 @@ jobs:
       # merge. Convention: docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc.
       - name: Check TD/ADR id uniqueness
         run: python3 scripts/check_td_adr_unique.py
+      - name: Check ADR/TD status coverage and index agreement
+        run: python3 scripts/check_design_status_index.py
       - name: Check resolved TD status/body consistency
         run: python3 scripts/check_td_status_consistency.py
       - name: Check documentation links
@@ -1493,7 +1566,14 @@ jobs:
   object-store-restart-recovery:
     name: Object-store restart recovery (Azurite)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # The `--restart` scope (scripts/run_cloud_emulator_tests.sh) builds 3 test
+    # targets across distinct cloud feature sets (azure; aws,azure,gcp) at
+    # CARGO_BUILD_JOBS=1 (OOM-safe on the 16GB runner). No other CI job builds
+    # these feature sets, so they are always a COLD compile (~85-90 min) — the
+    # prior 90-min budget timed out at the edge. Bumped to 150 for reliable
+    # headroom. (Efficiency follow-up: warm these feature sets in a shared
+    # earlier job, or split the contract test out of --restart.)
+    timeout-minutes: 150
     needs: [changes]
     if: |
       !inputs.skip_tests &&
@@ -1513,6 +1593,24 @@ jobs:
             /usr/local/.ghcup \
             /usr/local/share/boost || true
           echo "Disk after reclaim:"; df -h /
+      # The `--restart` scope compiles the full root `proximadb` crate as
+      # `proximadb-server` under a single rustc invocation (CARGO_BUILD_JOBS=1).
+      # Its peak (type-check + monomorphization + codegen of the 940-file crate
+      # with the azure object_store generics) exceeds the runner's 16GB RAM, and
+      # ubuntu-latest ships with NO swap — so the peak OOM-kills mid-compile
+      # (observed: dies ~64 min in, still compiling dev-deps, test never runs).
+      # Root cause is the monolithic root crate (tracked for decomposition); the
+      # immediate mitigation mirrors the unit-matrix job (the "Add swap headroom"
+      # step below this): 12G of swap on the big ephemeral /mnt disk turns the
+      # residual spike into a slowdown instead of a dead runner. jobs stays 1
+      # (the established OOM-safe setting; jobs=2 would re-risk the kill).
+      - name: Add swap headroom
+        run: |
+          sudo fallocate -l 12G /mnt/swapfile-ci
+          sudo chmod 600 /mnt/swapfile-ci
+          sudo mkswap /mnt/swapfile-ci
+          sudo swapon /mnt/swapfile-ci
+          free -h
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
@@ -1522,6 +1620,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-objstore-restart"
+          # This job is compile-bound and sits at the edge of its 90-minute
+          # budget: a WARM run finishes in ~75 min, a COLD one does not finish at
+          # all (observed: 72 min in, still emitting compile warnings, then
+          # killed). rust-cache saves `target/` only on success by default, so a
+          # single failure starts a loop it cannot leave — the run fails, saves
+          # nothing, and the next run is cold again and fails for the same
+          # reason. Caching on failure persists the partial `target/` so the next
+          # attempt starts warm and completes. (`CARGO_BUILD_JOBS=1` is already
+          # set inside run_cloud_emulator_tests.sh for the memory cliff; this is
+          # the other half.)
+          cache-on-failure: true
       - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: actions/cache@v4
         with:
@@ -1632,6 +1741,15 @@ jobs:
       # PROXIMADB_OLAP_DELTA_MERGE process env between awaited queries, so they
       # must not run concurrently within one process.
       - name: Run pgwire accuracy e2e
+        env:
+          # TD-STACK-1 mitigation: the document/JSON pgwire path carries a latent
+          # ~2 MB-deep recursion that overflows tokio's default worker stacks
+          # (document_json_pgwire_e2e + events_tsbs_pgwire_e2e SIGABRT; bisect
+          # landed on a pure-function commit — a code-layout straw, not the
+          # cause). tokio workers are std threads and honor RUST_MIN_STACK when
+          # no explicit stack size is set; 16 MiB is empirically green. Remove
+          # once the recursion itself is fixed (see TD-STACK-1).
+          RUST_MIN_STACK: "16777216"
         run: |
           for test_name in \
             pgwire_fk_referential_actions_e2e \
@@ -2253,6 +2371,60 @@ jobs:
           fi
 
   # ============================================================================
+  # SIFT PAX CASCADE RECALL RATCHET (feat→develop tier)
+  # Catches flush/cascade/segment regressions BEFORE they reach develop — the
+  # gap that let TD-FLUSH-4 (zero .pax files) land undetected. Path-filtered
+  # (only fires on search/WAL/PAX changes), N=10k (fast), floor 0.85.
+  # The qa-gate runs the full N=100k version; this is the early-warning tripwire.
+  # ============================================================================
+  sift-recall-ratchet:
+    name: SIFT PAX recall ratchet (N=10k)
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # only run when search/flush/WAL/PAX/cascade code changes
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (needs.changes.outputs.storage_changes == 'true')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-sift-ratchet"
+      - name: Cache SIFT corpus
+        uses: actions/cache@v4
+        with:
+          path: ~/sift1m
+          key: sift1m-texmem-fvecs-v1
+      - name: Download SIFT corpus (first-time only, cached after)
+        run: |
+          mkdir -p "$HOME/sift1m"
+          cd "$HOME/sift1m"
+          base=https://huggingface.co/datasets/qbo-odp/sift1m/resolve/main
+          for f in sift_base.fvecs sift_query.fvecs sift_groundtruth.ivecs; do
+            if [ ! -s "$f" ]; then
+              curl -L --fail --retry 3 -o "$f" "$base/$f"
+            fi
+          done
+      - name: Build ratchet binary
+        env:
+          CARGO_BUILD_JOBS: "4"
+        run: cargo test --release --test sift_pax_recall_ratchet_test --no-run
+      - name: Run SIFT PAX recall ratchet (N=10000, floor=0.85)
+        env:
+          PROXIMADB_SIFT_DATASET_DIR: /home/runner/sift1m
+          PROXIMADB_SIFT_N: "10000"
+          PROXIMADB_SIFT_QUERIES: "100"
+          PROXIMADB_SIFT_RECALL_FLOOR: "0.85"
+          PROXIMADB_RECALL_DATASET_REQUIRED: "1"
+        run: cargo test --release --test sift_pax_recall_ratchet_test -- --nocapture
+
+  # ============================================================================
   # SUMMARY - Final status check
   # ============================================================================
   ci-success:
@@ -2297,6 +2469,7 @@ jobs:
       - nodejs-lint
       - ts-sdk-codegen-drift
       - python-sdk-codegen-drift
+      - python-sdk-round-trip
       - rust-sdk-lint
       - sdk-security-scan
       - sdk-contract-gates
@@ -2306,6 +2479,8 @@ jobs:
       # gates that encode load-bearing decisions as checks
       - docs-authority
       - risk-coverage
+      # SIFT PAX cascade recall ratchet (path-filtered — skips on non-search PRs)
+      - sift-recall-ratchet
       # promotion correctness — a promotion PR must not be a stale snapshot
       - promotion-freshness
     if: always()

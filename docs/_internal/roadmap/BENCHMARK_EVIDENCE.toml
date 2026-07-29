@@ -30,6 +30,172 @@ header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_202
 # ---------------------------------------------------------------------------
 
 [[claims]]
+id = "warmtier_flushfloor_1m_e2e"
+claim = "The #1179 warm-tier/flush-floor package, measured REST-e2e at SIFT 1M on one box across three builds: the TD-FLUSH-3 predicted-bytes floor (128MB) cuts L0 segments 10 -> 2 with ZERO compactions needed and recall@10 0.9865; armed warm-tier caches serve the invariants control plane at 99.9% hit (1,838/2); cold c=16 ceiling 18.2 -> 38.6 QPS (+112%); hot repeats 4,085 QPS p50 3.8ms; operational counters (proximadb_queries_total et al.) live on the serving path. Interim 4-segment datapoint: cold c=16 59.4 QPS — file count trades inter-file parallelism against GETs; 2 segments optimizes the billed GET dimension (TD-SEARCH-2 S2 is the latency answer)."
+metric = "L0 segment count + recall@10 + cold c1/c8/c16 QPS + hot QPS + invariants-cache hit rate"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-FLUSH-3-segment-size-emergent-from-backend-latency.adoc",
+  "docs/10-quality/td/TD-CACHE-4-warm-tier-caches-never-armed.adoc",
+  "docs/10-quality/td/TD-CACHE-2-evict-priority-enum-unwired.adoc",
+  "docs/10-quality/td/TD-COMPACT-1-slow-recluster-compaction.adoc",
+]
+bench_source = "scripts/bench/sift_rest_warmtier_sweep.py"
+bench_command = "python3 scripts/bench/sift_rest_warmtier_sweep.py  # server on :5678, bench config + PROXIMADB_PAX_COALESCED_RABITQ=1 PROXIMADB_PAX_VECTOR_QUANT=rabitq"
+artifact = "docs/_internal/status/WARMTIER_FLUSHFLOOR_1M_EVIDENCE_2026_07_24.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release runs, no competing workload"
+date = "2026-07-24"
+version = "feat/warm-tier-flush-floor-codesign -> develop @ c6865cd78 (#1179)"
+notes = "Three-build ladder on identical protocol (paced streaming ingest, disjoint query sets, full-1M brute-force GT). Cold-QPS scaling efficiency 47% -> 58%; the remaining gap is intra-query single-task CPU (TD-SEARCH-2 S2 gate: >=70%). Floor memtable residency ~11GB transient at 1M ingest (bounded; documented). Compaction-health companion measurement (#1175 verification: 9 compactions 19.7s total, RSS 7.4GB) posted on that PR from the same bed. Indicative dev-machine runs, not an SLA."
+
+[[claims]]
+id = "restart_resilience_100k_e2e"
+claim = "Restart-under-load, SIFT 100k REST-e2e, one box: SIGTERM under c=8 load persists a demand-proven warm manifest (579-1,092 hot ranges, tenant-keyed under the DrPath manifests prefix); relaunch under immediate c=8 load recovers to p95 <= 2x steady-state in the FIRST 1s window (steady 3,701 QPS p50 1.9ms / p95 3.7ms; post-restart window-0 p95 3.2ms, 0 errors); boot replay re-loads all manifest ranges inside the tenant io_trace scope and prefills segment control invariants; process exits cleanly after SIGTERM (TD-LIFECYCLE-1 bounded teardown). Local-SSD bed verifies mechanics; the object-store win is the bounded replay GET budget vs an unbounded cold herd."
+metric = "recovery window (s) + steady/post-restart p50/p95 + manifest entries replayed + clean-exit"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-CACHE-1-restart-cache-warming-cold-herd.adoc",
+  "docs/10-quality/td/TD-CACHE-3-hot-tier-per-tenant-enforcement.adoc",
+  "docs/10-quality/td/TD-LIFECYCLE-1-shutdown-leaked-background-senders.adoc",
+]
+bench_source = "scripts/bench/restart_under_load_verify.py"
+bench_command = "python3 scripts/bench/restart_under_load_verify.py target/release/proximadb-server /tmp/restart-bed.toml /tmp/pdb-restart-bed 5678  # PROXIMADB_PAX_COALESCED_RABITQ=1 PROXIMADB_PAX_VECTOR_QUANT=rabitq set by harness"
+artifact = "docs/_internal/status/RESTART_RESILIENCE_VERIFICATION_2026_07_24.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release run, no competing workload"
+date = "2026-07-24"
+version = "feat/restart-resilience -> develop (#1187)"
+
+[[claims]]
+id = "morsel_rank_lone_query_cold_1m"
+claim = "TD-SEARCH-2 S2 lone-query multi-core rank, SIFT 1M / 3-segment flush-floor bed, REST e2e: cold c=1 5.8-5.9 -> 10.4-10.7 QPS, mean 174/168 -> 96/93 ms (~1.8x, stable across 3 sessions). Adaptive posture ships morsels ONLY when the scan is alone in flight (INFLIGHT_SCANS==1 -> all cores; else sequential baseline) because every concurrency-sharing formula tried was inside the box's +/-30% run-to-run variance with matched-pair regressions. Recall 0.9860-0.9880 (tie-boundary wiggle, both clear the 0.984 ratchet); chunk-merge == sequential rank unit-proven."
+metric = "cold c=1 QPS + mean/p95 latency, A/B via PROXIMADB_SEARCH_MORSEL_DEGREE"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-SEARCH-2-parallel-morsel-search.adoc",
+]
+bench_source = "scripts/bench/morsel_cold_sweep.py"
+bench_command = "python3 scripts/bench/morsel_cold_sweep.py target/release/proximadb-server /tmp/morsel-bed.toml /tmp/pdb-morsel-bed 5678 <ingest|degree1|adaptive>"
+artifact = "docs/_internal/status/MORSEL_RANK_COLD_SWEEP_2026_07_25.adoc"
+hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build; NOTE +/-30% run-to-run throughput variance at c>=8 (thermal), lone-query numbers stable"
+date = "2026-07-25"
+version = "feat/search-multicore -> develop"
+
+[[claims]]
+id = "training_compaction_cold_ladder_1m"
+claim = "TD-COMPACT-5 + TD-FLUSH-4 fixes, SIFT-1M REST e2e cold ladder (novel queries, file:// bed): untrained 179.7 GETs / 104.3 MB / ~140ms -> trained-unprobed 108.5 / 88.0 / 144ms -> probe-armed (PROXIMADB_IVF2_PROBE=1) 82.9 / 77.5 / 76ms mean, 90ms p95, probe 16 cells/q with zero whole-region fallbacks. Recall@10: 0.9840 trained-unprobed (ratchet held); 0.9780 probe-armed at default nprobe (below ratchet -> reader gate stays default-OFF pending nprobe tuning). Flush lifecycle: inline trigger at the 884k floor crossing, 43.9s materialize (TD-FLUSH-5), drain-at-shutdown leaves zero __flush stragglers."
+metric = "cold GETs/query + bytes/query + latency across training states; recall@10; probe telemetry"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-COMPACT-5-training-compaction-trigger.adoc",
+  "docs/10-quality/td/TD-FLUSH-4-ingest-flush-triggers-dead-timer-only.adoc",
+  "docs/10-quality/td/TD-FLUSH-5-flush-encode-single-threaded.adoc",
+]
+bench_source = "scripts/bench/recall_adjudicate.py"
+bench_command = "flush_e2e_verify + trained_band probes (session scratchpad, promoted protocol in scripts/bench/recall_adjudicate.py); PROXIMADB_L0_COMPACTION_ENABLED=1 PROXIMADB_PAX_WRITE_A0_TRAIN=1 [PROXIMADB_PAX_READ_COARSE_PROBE=1]"
+artifact = "docs/10-quality/td/TD-COMPACT-5-training-compaction-trigger.adoc"
+hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build, serialized runs"
+date = "2026-07-25"
+version = "feat/flush-triggers -> develop (#1207)"
+notes = "PRE-ASYNC measurement: the compaction trigger was INLINE (run_due_compaction, awaited by flush). Post-async (#1253, 2026-07-28): compaction is now enqueued to background workers (D1) — flush returns immediately after the L0 write. See async_compaction_1m_e2e for the post-async 1M measurement. The recall/GET numbers here are valid for the pre-async code state."
+
+[[claims]]
+id = "nprobe_sweep_trained_1m"
+claim = "TD-RDSTRAT-8 nprobe sweep on the all-trained 1M bed (fixed 100-query recall slice, 60 novel cold queries/point): nprobe=8 (default) 81.4 GETs / 75.3 MB / 92 ms mean, recall@10 0.9860; nprobe=12 103.3 / 94.5 / 86 ms mean / 104 ms p95, 0.9870; recall plateaus 0.986-0.987 from nprobe>=8; nprobe=4 drops to 0.9780. The earlier probe-armed 0.9780 reading was 50-query slice noise. Probe-on dominates unprobed (108.5 GETs / 144 ms / 0.9840) on every axis -> reader gate PROXIMADB_PAX_READ_COARSE_PROBE flipped DEFAULT-ON (kill-switch semantics); mixed-safe (A0-less segments never probe)."
+metric = "GETs/query + bytes/query + latency + recall@10 across nprobe; flip evidence"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc",
+  "docs/10-quality/td/TD-COMPACT-5-training-compaction-trigger.adoc",
+]
+bench_source = "scripts/bench/nprobe_sweep.py"
+bench_command = "python3 scripts/bench/nprobe_sweep.py <bin> <cfg> <bed> 5879 1 4,8,12,16,24,32,48  # PROXIMADB_PAX_WRITE_A0_TRAIN=1 PROXIMADB_L0_COMPACTION_ENABLED=1 set by harness"
+artifact = "docs/10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc"
+hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build, serialized runs"
+date = "2026-07-26"
+version = "feat/nprobe-tuning -> develop"
+
+[[claims]]
+id = "flush_encode_parallel_1m"
+claim = "TD-FLUSH-5 S1: rayon-parallel pass-2 encode (RaBitQ O(dim^2)/row rotation + SQ8) cuts the 1M flush materialize from 43.9s to 8.962s at full width (10 threads) / 26.2s at the shipped bounded default (cores/2 scoped pool leaving query headroom; PROXIMADB_PAX_ENCODE_THREADS tunes) — 884k entries / 235MB, 10-core box with BYTE-IDENTICAL output (full-region equality unit tests vs sequential reference, nulls included; pass-1 param fits stay sequential for bit-stable floats). Flush now completes ~4s after ingest end; clean shutdown, zero __flush stragglers; recall unchanged (0.9820 untrained cold)."
+metric = "1M flush materialize wall time; byte-identity; recall"
+status = "measured"
+asserted_in = ["docs/10-quality/td/TD-FLUSH-5-flush-encode-single-threaded.adoc"]
+bench_source = "scripts/bench/recall_adjudicate.py"
+bench_command = "flush_e2e_verify protocol (1M REST ingest, floor config); flush time from the 'inline size-flush ... in Xs' completion line"
+artifact = "docs/10-quality/td/TD-FLUSH-5-flush-encode-single-threaded.adoc"
+hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build"
+date = "2026-07-26"
+version = "feat/overnight-followups -> develop"
+notes = "PRE-ASYNC measurement: 'Flush now completes ~4s after ingest end' included the inline compaction wait. Post-async (#1253): flush returns immediately after the L0 write (does not await compaction). See async_compaction_1m_e2e."
+
+
+[[claims]]
+id = "io_trace_sink_hotpath_p95"
+claim = "ADR-066 trace-sink observer closure (the only synchronous query-path work: TraceEnvelope::from_snapshot + serde_json::to_vec + bounded Spool::push) adds a bounded ~16 us p95 / ~14 us p50 per query and is CPU-only — no fsync, network upload, or zstd compression on the query path (those run in the background Worker). Satisfies ADR-066 §6 acceptance #3 (the Proposed → Accepted blocker)."
+metric = "per-query observer-closure latency p50/p95/p99 + envelope bytes"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-066-structured-io-trace-etl-sink.adoc",
+  "docs/10-quality/td/TD-TRACE-2-structured-io-trace-etl-sink.adoc",
+]
+bench_source = "src/observability/io_trace_sink.rs"
+bench_command = "cargo nextest run --lib observer_closure_hot_path_is_bounded --run-ignored only --nocapture"
+artifact = "docs/12-design/runtime-evidence/IO_TRACE_SINK_HOT_PATH_P50_P95_2026_07_22.md"
+hardware = "Local macOS arm64 (Apple Silicon), serialized run, no competing workload"
+date = "2026-07-22"
+version = "feat/adr066-hotpath-evidence off develop @ f5246f5d2"
+notes = "N=20000 representative vector-ANN envelopes (585 bytes each): p50=13959ns p95=15959ns p99=58666ns. Closure sanity guard p95<100us holds with ~6x headroom. Micro-bench isolates the sink's INCREMENTAL cost (the snapshot is taken unconditionally at instrument() exit, sink ON or OFF); a full-query-path latency distribution OFF-vs-ON is the follow-up strengthening. Indicative dev-machine run, not an SLA."
+
+[[claims]]
+id = "rdstrat8_sift_ivf2_coarse_probe"
+claim = "Historical PR-B landing-state measurement: the then-default-OFF two-level IVF coarse probe on a v3 segment built by the production compaction trigger HOLDS recall and CUTS bytes, but does NOT cut GETs at N=100k. SIFT N=100000 (100 queries, top-10, Euclidean, brute-force GT, IVF_K=64, nprobe=16): baseline (probe OFF, whole-region) recall@10=0.9820, range_gets/q=13, bytes/q=6,258,456; probe (ON) recall@10=0.9800 (drop 0.002 — recall held), bytes/q=3,820,034 (-39%), range_gets/q=22 (UP — the probe fragments Region-A into more, smaller ranged reads; the coalesced baseline is already GET-optimal at this scale). Probe engaged on 100/100 queries (Σcells_total=6400 Σcells_probed=1600 Σfetch_rounds=799). At that code state default-on was not justified at 100k; later 1M evidence in nprobe_sweep_trained_1m justified the current default-on reader."
+metric = "recall@10 + range_gets_per_query + bytes_read_per_query + probe engagement"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_ivf2_coarse_probe_recall_ratchet -- --ignored --nocapture"
+artifact = "docs/_internal/status/RDSTRAT8_SIFT_IVF2_COARSE_PROBE_2026_07_22.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), serialized release run, no competing workload"
+date = "2026-07-22"
+version = "feat/rdstrat8-sift-ivf2-gate off develop @ 1a8404b62"
+notes = "Historical snapshot, not the current default. v3 segment built via the production compaction trigger (workload_profile:append + l0_threshold:2 -> inline compaction on 2nd flush under the retired PROXIMADB_IVF2 name), not a direct write_pax_segment_compacted call. Co-design finding: the coarse probe is recall-neutral + bytes-positive (-39%) but GET-negative at 100k single-file because the coalesced whole-region baseline is already GET-optimal there. The later 1M nprobe sweep supplied the gated default-on evidence. Indicative dev-machine run, not an SLA."
+
+[[claims]]
+id = "adr069_s7_wal_backpressure_soak"
+claim = "ADR-069 S7 / TD-WAL-1 S7: under sustained write load the write-path critical-watermark backpressure ENGAGES without crashing, the WAL footprint stays BOUNDED (steady-state, not unbounded growth), and the insert rate stays flat. 10-min bounded soak (scripts/soak_wal_backpressure.py, wal_max_bytes=512KB, high/critical 0.80/0.95, flush_interval 2s, ~5000 vec/s target, dim=64 cosine): 2,611,000 inserts accepted (~4,350/s sustained flat), backpressure_total +5 engagements, wal_size_bytes plateaued at 46.6MB (flush+compaction reclaim at ingestion rate), 0 non-429 failures, server up the full 600s. Backpressure is default-OFF in production; armed here via the small budget."
+metric = "sustained inserts/s + backpressure engagements + WAL on-disk footprint + crash-free uptime"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-069-wal-local-disk-tiered-flush.adoc",
+  "docs/10-quality/td/TD-WAL-1-wal-local-disk-tiered-flush.adoc",
+]
+bench_source = "scripts/soak_wal_backpressure.py"
+bench_command = "PYTHONPATH=clients/python/src scripts/soak_wal_backpressure.py --server-binary ./target/release/proximadb-server --base-config config/config.toml --duration-s 600 --rate-per-s 5000 --batch 500"
+artifact = "docs/_internal/status/ADR069_S7_WAL_BACKPRESSURE_SOAK_2026_07_22.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), serialized run"
+date = "2026-07-22"
+version = "feat/adr069-s7-soak off develop @ 7d5a9e2cb"
+notes = "10-min bounded run (harness parameterized for multi-hour/nightly via --duration-s). wal_size_bytes is the cumulative on-disk WAL (plateaued = steady-state); the bounding input the gate guards is the unflushed memtable, which the backpressure engagements prove stayed within the critical line. Engagements concentrated in the warmup burst (steady-state flushes then kept up). Server exit was a clean flush-on-stop (slow shutdown, non-fatal). Indicative dev-machine evidence, not an SLA."
+
+[[claims]]
+id = "rdstrat8_ivf2_layout_coalescing_sift1m"
+claim = "TD-RDSTRAT-8 PR-C2 closes the v3 control/A0/Region-A GET fragmentation without changing recall. On full SIFT1M (100 official queries, top-10, Euclidean), the retained default-OFF policy combines a 64 KiB bounded prefix, independently cached probe metadata, and 1 MiB Region-A gap coalescing (4 MiB max range). Single-file nprobe=6 recall remains 0.985 while GETs/q fall 33 to 30 cold and 24 to 19 warm; four-file nprobe=3 recall remains 0.982 while GETs/q fall 75 to 65 cold and 62 to 44 warm. The object-store score 20*GET + 5*MiB improves 6.1-24.0%. A 4 MiB gap is rejected as a non-robust ~0.1% score gain that adds 3.59 MB/q in four-file geometry and worsens the single-file cold tail."
+metric = "recall@10 + physical range_gets_per_query + bytes_read_per_query by PAX region + cold/warm p50/p95 + object-store score"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-8-two-level-ivf-coarse-probe.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "Single: PROXIMADB_SIFT_DATASET_DIR=<verified-sift> PROXIMADB_SIFT_IVF2_FILE_COUNTS=1 PROXIMADB_SIFT_IVF2_NPROBE_SWEEP=6 PROXIMADB_SIFT_IVF2_LAYOUT_PROOF=1 PROXIMADB_SIFT_IVF2_A_GAP_SWEEP=1048576 cargo test --release --test sift_pax_recall_ratchet_test sift_ivf2_probe_release_bakeoff_eval -- --ignored --nocapture; four-file: same with FILE_COUNTS=4 NPROBE_SWEEP=3"
+artifact = "docs/_internal/status/RDSTRAT8_IVF2_LAYOUT_COALESCING_SIFT1M_2026_07_22.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), release profile; candidate arms serialized over the same generated files and 100 queries"
+date = "2026-07-22"
+version = "merged #1153 @ 0ed422c7b"
+notes = "Full TEXMEX SIFT1M (1,000,000 x 128d), first 100 official queries, supplied full-corpus GT. Retained 1 MiB combined arm: single cold baseline/treatment 33/30 GETs, 26,728,854/27,130,193 bytes, score 793.453/744.967, p50/p95 18,208/22,207 vs 17,182/22,817 us; single warm 24/19 GETs, 17,973,196/18,307,400 bytes, score 568.103/479.296. Four cold 75/65 GETs, 56,390,706/57,570,090 bytes, score 1777.692/1594.116, p50/p95 44,040/83,653 vs 47,074/61,607 us; four warm 62/44 GETs, 40,629,552/41,545,058 bytes, score 1434.537/1089.702. Recall is bit-identical per geometry; probe engaged; zero fallback. Region bytes are computed from the physical per-stage GET trace; durable query telemetry separately records IVF engagement/fallback. The component prefix/split-cache/gap gates remain default OFF even though the implementation PR merged. Indicative dev-machine run, not an SLA."
+
+[[claims]]
 id = "object_economy_cpu_cost"
 claim = "Object-economy vector route building-block CPU costs (100/1K/10K/100K records) non-regression baseline"
 metric = "cpu_cost_ms"
@@ -510,3 +676,82 @@ hardware = "WSL2 Linux 5.15, 32 cores, 78 GB RAM, in-process memory:// object-st
 date = "2026-07-07"
 version = "v0.2"
 notes = "P-Trace (ADR-055 first phase; trace before you tune). 500-doc corpus, one PAX segment: point_get.bytes_read = filtered_scan.bytes_read = 329,111 B (get_ops=1, range_gets=0), write.bytes_written=329,111 (put_ops=1). A document read fetches the ENTIRE segment whether it wants 1 or 500 records — no block/zone-map pruning, no ranged reads. Wired the write-side put_pax hook (record_bytes_written at the object-store PUT in record_store.rs; shared with vectors); reads already record fetch_pax+bytes_read. range_gets is io-trace-feature-gated but legitimately 0 (whole-segment fetch path). Target for P-Pushdown: a filtered query reads strictly < 329,111 B with range_gets>0, results identical."
+
+[[claims]]
+id = "warm_manifest_object_store_roundtrip"
+claim = "TD-CACHE-7: restart-warming manifest write+read round-trips correctly on object storage (Azurite azure:// via the production FilesystemFactory path): manifest_url builds a well-formed cloud URL (container preserved, no // run, tenant-scoped _cache/ prefix, not the legacy manifests/), and factory.write(create_dirs)->read->deserialize succeeds. Empirically confirms current develop is CORRECT on cloud (the 2026-07-26 two-tenant bed failure was a stale binary), and locks the boundary that silently regressed 3x (TD-FLUSH-6 container-strip, TD-CACHE-5 malformed prefix, bed) with an always-on URL guard + a cloud-emulator-tier round-trip."
+metric = "well-formed cloud manifest URL + write/read/deserialize round-trip on object storage"
+status = "measured"
+asserted_in = ["docs/10-quality/td/TD-CACHE-7-restart-warming-object-store-coverage.adoc"]
+bench_source = "src/storage/engines/sst/warming.rs"
+bench_command = "PROXIMADB_AZURE_EMULATOR=1 AZURITE_BLOB_STORAGE_URL=http://127.0.0.1:11000 AZURE_STORAGE_ACCOUNT=devstoreaccount1 PROXIMADB_OBJECT_STORE_URL=azure://benchbucket/objtier cargo test -p proximadb --features azure --lib warm_manifest_round_trips_on_object_store -- --ignored"
+artifact = "docs/10-quality/td/TD-CACHE-7-restart-warming-object-store-coverage.adoc"
+hardware = "Local macOS arm64, Azurite 3.36 blob emulator on localhost:11000"
+date = "2026-07-26"
+version = "fix/warm-manifest-azure-path -> develop"
+
+[[claims]]
+id = "hot_tier_diverse_query_getcost"
+claim = "TD-CACHE-8: under REALISTIC diverse (never-repeated) query load — 1,200 unique SIFT queries, 200k trained collection, probe-armed, 256MB survivor budget — GETs/query stays FLAT at ~18 and survivor-cache hit-rate PLATEAUS at ~33%, NOT converging toward 0-GET. The prior 'hot ~0 GETs / 2,602 QPS' headline was a query-RESULT-cache (vector_hash-keyed) artifact of identical-query testing. Corrected hot economics: ~18 GETs/query ~= $0.7/M queries (Azure GET rate), an order below cold but NOT free. Root cause: query-specific coalesced SQ8 ranges do not reuse (cells do, ~33% floor); whole-region SQ8 caching is the lever (region fits budget). Also confirmed TD-METRICS-3 fix: 1,200 searches, zero panics."
+metric = "GETs/query + survivor hit% across a diverse (unique) query stream"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-CACHE-8-hot-tier-value-diverse-queries.adoc",
+  "docs/10-quality/td/TD-METRICS-3-duplicate-ivf-metric-registration-panic.adoc",
+]
+bench_source = "scripts/bench/diverse_query_bed.py"
+bench_command = "python3 scripts/bench/diverse_query_bed.py <bin> <cfg> <bed> 5879  # probe+train env set by harness"
+artifact = "docs/10-quality/td/TD-CACHE-8-hot-tier-value-diverse-queries.adoc"
+hardware = "Local macOS arm64 (10-core Apple Silicon, 64GB), release build"
+date = "2026-07-26"
+version = "fix/td-metrics-2-ivf-dup-panic -> develop"
+
+[[claims]]
+id = "two_tenant_fairness_azurite"
+claim = "TD-CACHE-3 sale-gate bed (Azurite, two tenants, 32MB survivor pool, pin reserve 0.4): tenant A (enterprise) pinned 13.24MB = 98.7% of its 13.42MB entitlement and the floor stayed BYTE-IDENTICAL through tenant B's churn (9,162 admissions, 16.9MB shared-pool, 0 pinned) — residency contract PROVEN with the S3 pinned-vs-entitled gauges as evidence. Latency isolation inconclusive at emulator speed (p95 3->10ms = co-located CPU contention; nothing evicted). BLOCKER: A recorded 12,554 misses / 0 hits on identical repeat queries -> TD-CACHE-6 (probe-armed default path appears to bypass the survivor cache)."
+metric = "pinned vs entitled bytes through churn; per-tenant hit/miss; p95 ratio"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-CACHE-3-hot-tier-per-tenant-enforcement.adoc",
+  "docs/10-quality/td/TD-CACHE-6-survivor-cache-bypassed-on-probe-path.adoc",
+]
+bench_source = "scripts/bench/two_tenant_bed.py"
+bench_command = "python3 scripts/bench/two_tenant_bed.py <bin --features azure> /tmp/tt-server.toml <bed> 5891  # azurite on 11000; env in harness"
+artifact = "docs/10-quality/td/TD-CACHE-6-survivor-cache-bypassed-on-probe-path.adoc"
+hardware = "Local macOS arm64, Azurite 3.36 blob emulator on localhost:11000"
+date = "2026-07-26"
+version = "feat/tt-bed-evidence -> develop"
+
+[[claims]]
+id = "async_compaction_1m_e2e"
+claim = "ADR-076 D1+D2 post-merge verification, SIFT 1M REST e2e on merged develop: async compaction (workers reuse the persistent Compaction — no per-task cold temp_manager) + L0 admission watermarks (stop=10, slowdown=6). Ingest throughput 36,818 vec/s (1M in 27s — flush no longer blocks on compaction; was ~1 flush/35s inline). 6/6 compaction tasks completed by the async worker pool (~2.1–2.7s each, non-blocking). L0 bounded: D2 STOP engaged 146x (flushes deferred + retried; data safe in WAL); steady-state 4 L0 + 6 L1 segments. recall@10 = 0.9875 (200 queries, full 1M brute-force GT, ratchet held). Cold latency p50 255.8ms / p95 270.7ms. D3 training debounce: 0 redundant training-arm fires (count arm handled compaction; write-train default-ON produced trained L1). The 89 'flush failures' are D2-stop deferrals (backpressure), NOT errors."
+metric = "ingest throughput + recall@10 + compaction completions + L0 segment count + D2 backpressure count"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-076-async-compaction-admission-control.adoc",
+  "docs/10-quality/td/TD-COMPACT-6-async-compaction.adoc",
+  "docs/10-quality/td/TD-COMPACT-7-l0-admission-control-watermarks.adoc",
+]
+bench_source = "scripts/bench/async_compaction_1m_verify.py"
+bench_command = "python3 scripts/bench/async_compaction_1m_verify.py  # server on :5678, flush_interval=12s, PROXIMADB_L0_COMPACTION_ENABLED=1"
+artifact = "docs/_internal/status/ASYNC_COMPACTION_1M_EVIDENCE_2026_07_28.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release run"
+date = "2026-07-28"
+version = "develop @ 99b84be1a (post-merge of #1253 + #1265 + #1271)"
+notes = "Post-merge of the async-compaction arc (D3 #1241, D0 #1242, D1+D2 #1253, follow-ups #1265, CI fix #1271). The prior compaction entries (training_compaction_cold_ladder_1m, flush_encode_parallel_1m) measured the PRE-ASYNC inline path; this entry measures the ASYNC path. Recall/GET numbers from the pre-async entries are still valid for that code state; the async change eliminated the ~35s inline flush block (D1) and added bounded L0 backpressure (D2)."
+
+[[claims]]
+id = "cache_hot_vs_cold_1m_post_compaction"
+claim = "Phase 2 cache measurement (hot vs cold) on merged develop's trained v3/A0 segment layout, SIFT 1M REST e2e: COLD first-access p50=131.6ms / p95=142.2ms (segment scan, caches empty after restart); HOT repeat p50=0.4ms / p95=0.7ms (result cache, 323x speedup). Segment invariants cache 99.96% hit rate during cold sweep (segment-level — loaded once per segment, shared across queries). Survivor range cache 38.2% hit rate (query-level — cell overlap across diverse queries, consistent with TD-CACHE-8's ~33%). The trained v3/A0 layout (post-async-compaction) has similar cache dynamics to the pre-compaction layout — the A0 coarse directory adds a cached region but overall hit patterns are unchanged. Discovered the D2 restart-recovery deadlock (fixed in #1294)."
+metric = "cold/hot p50/p95 latency + cache hit% (survivor + invariants)"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/CACHE_HOT_VS_COLD_1M_EVIDENCE_2026_07_28.adoc",
+]
+bench_source = "scripts/bench/cache_hot_vs_cold_1m.py"
+bench_command = "python3 scripts/bench/cache_hot_vs_cold_1m.py  # restart server first to clear caches; PROXIMADB_L0_STOP_TRIGGER=0 if l0>=10 (D2 bug, #1294)"
+artifact = "docs/_internal/status/CACHE_HOT_VS_COLD_1M_EVIDENCE_2026_07_28.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release run, server restarted to clear caches"
+date = "2026-07-28"
+version = "develop @ 79209453a (merged #1253)"
+notes = "The HOT 0.4ms is the result cache (vector-hash-keyed), not the segment caches — the same known TD-CACHE-8 behavior. The segment cache value is in the COLD sweep: invariants ~100% (eliminates per-query segment-metadata re-reads) + survivor ~38% (reduces per-query SQ8 range GETs via cell overlap). Phase 3 (budget sweep) follows once the D2 restart-recovery fix (#1294) enables multi-config restarts."

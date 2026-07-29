@@ -970,6 +970,17 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Search for similar vectors within a specific collection using configurable distance metric
+    /// Brute-force memtable search over a collection's unflushed batches.
+    ///
+    /// TD-SEARCH-1: the LIVE serving path is
+    /// `WriteAheadLogManager::search_unflushed_vectors` (write_ahead_log/mod.rs),
+    /// which scans `get_unflushed_batches` with deferred materialization and
+    /// tombstone handling. This method is retained as the unit-test harness for
+    /// the partition-level MVCC/tombstone/TTL semantics exercised by this
+    /// module's tests; the consolidation direction is one shared scoring core.
+    /// The dead wrappers that used to sit above it (per-strategy
+    /// `search_vectors_similarity`, `WALBehaviorWrapper::search_unflushed_vectors`)
+    /// were removed — do not reintroduce a parallel search path here.
     pub async fn search_vectors(
         &self,
         query_vector: &[f32],
@@ -1442,7 +1453,12 @@ impl GlobalPartitionedMemtable {
 
             // Remove from vector index
             for vector_record in removed_batch.vector_records.iter() {
-                if !vector_record.oid.is_empty() {
+                if !vector_record.oid.is_empty()
+                    && partition
+                        .vector_id_index
+                        .get(&vector_record.oid)
+                        .is_some_and(|indexed_batch| indexed_batch == batch_id)
+                {
                     partition.vector_id_index.remove(&vector_record.oid);
                 }
             }
@@ -1471,6 +1487,74 @@ impl GlobalPartitionedMemtable {
             batch_id,
             collection_id
         ))
+    }
+
+    /// Remove an exact set of batches after a flush has durably published.
+    ///
+    /// The complete set is validated before mutation, so a stale or foreign
+    /// claim cannot partially clear a collection. Concurrently appended batches
+    /// have different IDs and are preserved.
+    pub async fn remove_batches_exact(
+        &self,
+        collection_id: &str,
+        batch_ids: &[String],
+    ) -> Result<usize> {
+        let mut collections = self.collections.write().await;
+        let Some(partition) = collections.get_mut(collection_id) else {
+            anyhow::bail!("collection '{}' has no WAL partition", collection_id);
+        };
+        if let Some(missing) = batch_ids
+            .iter()
+            .find(|batch_id| !partition.wal_batches.contains_key(*batch_id))
+        {
+            anyhow::bail!(
+                "claimed batch '{}:{}' is absent from the WAL partition",
+                collection_id,
+                missing
+            );
+        }
+
+        let mut removed_records = 0usize;
+        for batch_id in batch_ids {
+            let removed_batch = partition.wal_batches.remove(batch_id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "claimed batch '{}:{}' disappeared during exact retirement",
+                    collection_id,
+                    batch_id
+                )
+            })?;
+            removed_records += removed_batch.vector_records.len();
+            partition.vector_count = partition
+                .vector_count
+                .saturating_sub(removed_batch.vector_records.len());
+            partition.total_size = partition
+                .total_size
+                .saturating_sub(removed_batch.total_size_bytes);
+            partition.batch_count = partition.batch_count.saturating_sub(1);
+
+            for record in removed_batch.vector_records.iter() {
+                if !record.oid.is_empty()
+                    && partition
+                        .vector_id_index
+                        .get(&record.oid)
+                        .is_some_and(|indexed_batch| indexed_batch == batch_id)
+                {
+                    partition.vector_id_index.remove(&record.oid);
+                }
+            }
+        }
+        partition.scan_index = None;
+        drop(collections);
+
+        let mut metrics = self.metrics.write().await;
+        metrics.entry_count = metrics.entry_count.saturating_sub(removed_records);
+        tracing::debug!(
+            collection_id,
+            batches = batch_ids.len(),
+            removed_records,
+            "retired exact WAL batch set after flush"
+        );
+        Ok(removed_records)
     }
 
     /// Clear all vectors and batches

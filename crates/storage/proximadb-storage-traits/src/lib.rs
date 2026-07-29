@@ -535,6 +535,16 @@ pub trait UnifiedStorageFormat: Send + Sync {
     /// Core flush operation - engine-specific implementation (required)
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult>;
 
+    /// Lightweight admission check performed before a caller materializes or
+    /// clones a flush's record payload.
+    ///
+    /// Engines without backlog admission return `Ok(())`. LSM engines override
+    /// this to inspect bounded metadata (for example, L0 watermarks) and reject
+    /// work before sorting, clustering, encoding, or uploading records.
+    async fn preflight_flush(&self, _params: &FlushParameters) -> Result<()> {
+        Ok(())
+    }
+
     /// Core compaction operation - engine-specific implementation (required)
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult>;
 

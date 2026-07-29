@@ -27,8 +27,8 @@ dev = [
 ]
 
 [tool.maturin]
-# Build the queue crate directly (it lives under crates/modalities/).
-manifest-path = "../../crates/modalities/proximadb-queue/Cargo.toml"
+# Build the queue crate directly (it lives under crates/horizontal/).
+manifest-path = "../../crates/horizontal/proximadb-queue/Cargo.toml"
 features = ["proximadb-queue/python"]
 python-source = "src"
 module-name = "proximadb_queue_embedded._native"

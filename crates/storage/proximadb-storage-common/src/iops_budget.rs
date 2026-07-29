@@ -100,8 +100,22 @@ impl IopsBudget {
             Some("s3" | "http" | "https") => Self::S3,
             // GCS: same as S3.
             Some("gs") => Self::GCS,
-            // Local / MinIO / bare path: no round-trip cost.
-            Some("file" | "minio") | None => Self::LOCAL,
+            // Local / MinIO / bare path: no round-trip cost. ADR-073: an
+            // HDD-backed location (500 IOPS, seek-bound) must coalesce like a
+            // cloud store — the measured sweep puts the LOCAL profile at ~191
+            // reads/query (≈2.6 QPS on HDD) vs ~41 with the CLOUD profile
+            // (≈12 QPS). `PROXIMADB_DISK_CLASS=hdd` is the deploy-time hint
+            // (per-location tags don't reach this leaf crate).
+            Some("file" | "minio") | None => {
+                if std::env::var("PROXIMADB_DISK_CLASS")
+                    .map(|v| v.trim().eq_ignore_ascii_case("hdd"))
+                    .unwrap_or(false)
+                {
+                    Self::CLOUD
+                } else {
+                    Self::LOCAL
+                }
+            }
             Some(_) => Self::DEFAULT,
         }
     }
@@ -146,6 +160,28 @@ impl Default for IopsBudget {
 
 #[cfg(test)]
 mod tests {
+    /// ADR-073: the HDD disk-class hint swaps LOCAL for the CLOUD profile on
+    /// file:// paths; unset/other values keep LOCAL. (nextest = process-per-
+    /// test, so the env mutation cannot leak.)
+    #[test]
+    fn disk_class_hdd_selects_cloud_profile_for_local_paths() {
+        unsafe { std::env::set_var("PROXIMADB_DISK_CLASS", "hdd") };
+        assert_eq!(
+            super::IopsBudget::for_path("file:///tmp/x.pax").target,
+            super::IopsBudget::CLOUD.target
+        );
+        unsafe { std::env::set_var("PROXIMADB_DISK_CLASS", "ssd") };
+        assert_eq!(
+            super::IopsBudget::for_path("file:///tmp/x.pax").target,
+            super::IopsBudget::LOCAL.target
+        );
+        // Cloud schemes unaffected by the hint.
+        assert_eq!(
+            super::IopsBudget::for_path("s3://b/k").target,
+            super::IopsBudget::S3.target
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -160,13 +196,13 @@ mod tests {
 
     #[test]
     fn for_path_resolves_by_scheme() {
-        assert_eq!(IopsBudget::for_path("s3://bucket/key"), IopsBudget::CLOUD);
+        assert_eq!(IopsBudget::for_path("s3://bucket/key"), IopsBudget::S3);
         assert_eq!(
             IopsBudget::for_path("abfs://container/path"),
-            IopsBudget::CLOUD
+            IopsBudget::AZURE
         );
-        assert_eq!(IopsBudget::for_path("adls://acct/fs"), IopsBudget::CLOUD);
-        assert_eq!(IopsBudget::for_path("gs://b/o"), IopsBudget::CLOUD);
+        assert_eq!(IopsBudget::for_path("adls://acct/fs"), IopsBudget::AZURE);
+        assert_eq!(IopsBudget::for_path("gs://b/o"), IopsBudget::GCS);
         assert_eq!(IopsBudget::for_path("/var/data/seg.pax"), IopsBudget::LOCAL);
         assert_eq!(
             IopsBudget::for_path("file:///var/data/seg.pax"),

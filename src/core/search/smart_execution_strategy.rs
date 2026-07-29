@@ -389,7 +389,7 @@ impl SmartExecutionStrategy {
         QueryAnalysis {
             has_filters: params.filter_expression.is_some() || params.filters.is_some(),
             filter_selectivity: self.estimate_filter_selectivity(params),
-            top_k: params.top_k.unwrap_or(10),
+            top_k: params.top_k.unwrap_or(10) as usize,
             is_batch: params.is_batch_search(),
             batch_size: params.query_vectors.as_ref().map_or(1, |v| v.len()),
             requires_vectors: true,  // Would check if vectors are needed

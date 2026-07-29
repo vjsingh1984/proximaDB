@@ -131,7 +131,16 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .thread_stack_size(32 * 1024 * 1024)
         .build()?;
-    runtime.block_on(run())
+    let result = runtime.block_on(run());
+    // TD-LIFECYCLE-1: several always-on background loops leak their shutdown
+    // senders by design (discovery executor, recall observer — see
+    // shared_services.rs), so a plain Runtime drop can block forever on an
+    // in-flight blocking pass and the process never exits after a clean
+    // SIGTERM shutdown. All durable state is already persisted by
+    // `ProximaDB::shutdown` before we get here; bound the teardown instead of
+    // inheriting drop's wait-for-everything semantics.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(5));
+    result
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -214,6 +223,13 @@ async fn run() -> anyhow::Result<()> {
 
     // Override with CLI arguments
     if let Some(data_dir) = args.data_dir {
+        // TD-PATH-1: `-d` must also rebase the storage/metadata locations that
+        // are still at their BUILT-IN cwd-relative defaults — otherwise every
+        // instance launched from one working directory shares `<cwd>/data` +
+        // `<cwd>/metadata` (one catalog, one collection-id space) regardless
+        // of `-d`, and instances cross-contaminate (observed 2026-07-25).
+        // Explicitly configured URLs are never touched (mixed-safe).
+        rebase_default_relative_paths(&mut config, &data_dir);
         config.server.data_dir = data_dir;
     }
     if let Some(port) = args.port {
@@ -342,4 +358,64 @@ async fn run() -> anyhow::Result<()> {
 
     info!("ProximaDB server stopped");
     Ok(())
+}
+
+/// TD-PATH-1: when `-d <dir>` is given, rewrite any storage/metadata location
+/// still at its built-in cwd-relative default so it lives under `<dir>`.
+/// Explicit (non-default) configuration is left untouched.
+fn rebase_default_relative_paths(
+    config: &mut proximadb::core::config::Config,
+    data_dir: &std::path::Path,
+) {
+    let base = data_dir.display();
+    let rebased = |suffix: &str| format!("file://{base}/{suffix}");
+    for loc in &mut config.storage.storage_locations {
+        if loc.url == "file://./data" || loc.url == "./data" {
+            loc.url = rebased("data");
+            tracing::info!(url = %loc.url, "rebased default storage location under -d");
+        }
+    }
+    if config.storage.metadata_url == "file://./metadata"
+        || config.storage.metadata_url == "./metadata"
+    {
+        config.storage.metadata_url = rebased("metadata");
+        tracing::info!(url = %config.storage.metadata_url, "rebased default metadata_url under -d");
+    }
+    let wal_dir = &mut config.storage.wal_config.write_buffer_directory;
+    if wal_dir == "./data/write_buffer" || wal_dir == "file://./data/write_buffer" {
+        *wal_dir = rebased("data/write_buffer");
+        tracing::info!(url = %wal_dir, "rebased default WAL directory under -d");
+    }
+    if let Some(viper) = config.storage.viper_config.as_mut()
+        && viper.data_directory == "./data/viper_data"
+    {
+        viper.data_directory = format!("{base}/data/viper_data");
+        tracing::info!(dir = %viper.data_directory, "rebased default viper directory under -d");
+    }
+}
+
+#[cfg(test)]
+mod path_rebase_tests {
+    use super::*;
+
+    /// TD-PATH-1: `-d` rebases built-in relative defaults; explicit URLs stay.
+    #[test]
+    fn rebase_touches_only_builtin_defaults() {
+        let mut config = proximadb::core::config::Config::default();
+        // defaults are the cwd-relative built-ins
+        rebase_default_relative_paths(&mut config, std::path::Path::new("/tmp/x"));
+        assert!(
+            config
+                .storage
+                .storage_locations
+                .iter()
+                .all(|l| l.url == "file:///tmp/x/data")
+        );
+        assert_eq!(config.storage.metadata_url, "file:///tmp/x/metadata");
+
+        let mut explicit = proximadb::core::config::Config::default();
+        explicit.storage.metadata_url = "file:///somewhere/else".into();
+        rebase_default_relative_paths(&mut explicit, std::path::Path::new("/tmp/x"));
+        assert_eq!(explicit.storage.metadata_url, "file:///somewhere/else");
+    }
 }

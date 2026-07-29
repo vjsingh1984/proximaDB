@@ -151,6 +151,10 @@ pub struct IoTraceSinkConfig {
     pub partition_by: Option<String>,
     /// Retention days for object-store lifecycle GC (S2).
     pub retention_days: Option<u64>,
+    /// TD-TRACE-2 S4b: interval (seconds) for the background warehouse compactor that
+    /// projects the durable envelopes into Iceberg-managed Parquet. `None`/`0` ⇒ off;
+    /// requires `object_store_uri` (the compactor reads the object-store segments).
+    pub warehouse_compaction_interval_s: Option<u64>,
 }
 
 impl IoTraceSinkConfig {
@@ -240,6 +244,13 @@ impl IoTraceSinkConfig {
             None => ObjectAccessTier::Cold,
         };
 
+        // S4b: background warehouse compaction interval. Env over TOML; `0` normalizes
+        // to `None` (off). Only meaningful with an `object_store_uri`.
+        let warehouse_compaction_interval_s =
+            env_u64("PROXIMADB_IO_TRACE_SINK_WAREHOUSE_COMPACTION_INTERVAL_S")
+                .or(from_toml.warehouse_compaction_interval_s)
+                .filter(|s| *s > 0);
+
         Ok(Some(ResolvedIoTraceSinkConfig {
             local_dir,
             segment_bytes,
@@ -250,6 +261,7 @@ impl IoTraceSinkConfig {
             format,
             object_store_uri,
             access_tier,
+            warehouse_compaction_interval_s,
         }))
     }
 }
@@ -270,6 +282,9 @@ pub struct ResolvedIoTraceSinkConfig {
     pub object_store_uri: Option<String>,
     /// Per-object access tier for the object-store PUT (S2). Default `Cold`.
     pub access_tier: ObjectAccessTier,
+    /// S4b background warehouse-compaction interval (seconds). `None` ⇒ off (also off
+    /// unless `object_store_uri` is set).
+    pub warehouse_compaction_interval_s: Option<u64>,
 }
 
 /// Queue subsystem runtime configuration. Lives at the `[queue]` TOML
@@ -445,6 +460,7 @@ mod queue_config_tests {
         // S2 defaults: no object store (local-only), Cold tier.
         assert_eq!(r.object_store_uri, None);
         assert_eq!(r.access_tier, ObjectAccessTier::Cold);
+        assert_eq!(r.warehouse_compaction_interval_s, None);
     }
 
     #[test]
@@ -1009,11 +1025,38 @@ pub struct WriteBufferUserConfig {
     /// Global manifest location (optional)
     pub global_manifest_url: Option<String>,
 
-    /// ADR-069 D2 — time-based WAL flush interval (seconds); 0 = disabled. The RPO
-    /// floor: bounds worst-case loss on volume loss to this interval for low-traffic
-    /// collections that never reach `memory_flush_size_bytes`.
+    /// ADR-069 S1 — opt-in local WAL root, e.g. `file:///waldisk`. When set, the
+    /// per-collection WAL is written under `{dir}/{collection_id}/wal/` on a local
+    /// reattachable disk, decoupled from the collection's object-store data
+    /// assignment (WAL = high-frequency small appends; each object-store PUT is a
+    /// paid write-txn). Resolves through the FilesystemFactory scheme, so a future
+    /// value could be `s3://…` (S3 Express) etc. Overridden by env
+    /// `PROXIMADB_WAL_LOCAL_DIR`. `None`/unset ⇒ legacy WAL-co-located-with-data.
     #[serde(default)]
+    pub wal_local_dir: Option<String>,
+
+    /// ADR-069 D2 — time-based WAL flush interval (seconds); 0 = disabled. The RPO
+    /// floor: bounds worst-case loss on permanent local-volume loss to this interval for
+    /// low-traffic collections that never reach the inline size trigger
+    /// (`memory_flush_size_bytes`). With `sync_mode = "PerBatch"` (default) acknowledged
+    /// writes are fsync'd, so process-kill RPO is 0 and this only bounds volume-loss RPO.
+    /// Defaults to 300s so the inline size trigger (throughput) dominates and this stays
+    /// a coarse safety net (fewer/larger segments → fewer object-store PUTs).
+    #[serde(default = "default_flush_interval_secs")]
     pub flush_interval_secs: u64,
+    /// TD-FLUSH-3 S1 — minimum PREDICTED segment size (MB) before the inline
+    /// size trigger may flush; 0 = floor disabled (legacy behavior). Predicted
+    /// bytes = Σ_records dim × k with k = 1/8 (RaBitQ) + 1 (SQ8) [+ 4 when the
+    /// f32 tier is enabled] — i.e. the bytes the segment will actually occupy,
+    /// NOT the serialized-record bytes `memory_flush_size_bytes` counts
+    /// (~1.6 KB/record, which made "16 MB" ≈ 5 MB raw and produced the 104
+    /// tiny Azurite segments → 1,812 GETs/query). The RPO timer
+    /// (`flush_interval_secs`) and the capacity watermarks OVERRIDE the floor
+    /// (a trickle collection still drains). Default 128 (≈0.9M vectors/segment
+    /// at 128d) tuned for object-store reads; set 32 for local-disk-only
+    /// deployments (per-scheme auto-detection is a follow-up).
+    #[serde(default = "default_flush_floor_predicted_mb")]
+    pub flush_floor_predicted_mb: u64,
     /// ADR-069 D6 — per-collection WAL size budget (bytes) for the capacity flush +
     /// backpressure watermarks; 0 = disabled.
     #[serde(default)]
@@ -1036,6 +1079,24 @@ fn default_critical_watermark_pct() -> f64 {
     0.95
 }
 
+/// Serde default for [`WriteBufferUserConfig::flush_interval_secs`] (ADR-069 D2). The
+/// RPO floor — coarse on purpose so the inline size trigger dominates throughput and this
+/// only bounds volume-loss RPO for trickle workloads. See the field doc for rationale.
+/// TD-FLUSH-3 demotion: this timer is explicitly NOT a durability mechanism (the WAL
+/// replays on restart) and NOT a segment-sizing mechanism (`flush_floor_predicted_mb`
+/// governs that) — it exists solely to bound restart replay time / volume-loss RPO for
+/// collections that never reach the size floor.
+fn default_flush_interval_secs() -> u64 {
+    300
+}
+
+/// Serde default for [`WriteBufferUserConfig::flush_floor_predicted_mb`] (TD-FLUSH-3 S1).
+/// 128 MB predicted ≈ 0.9M vectors/segment at 128d RaBitQ+SQ8 — the Parquet-convention
+/// band that keeps cold GETs/query (∝ file count × ~26) bounded on object storage.
+fn default_flush_floor_predicted_mb() -> u64 {
+    128
+}
+
 impl Default for WriteBufferUserConfig {
     fn default() -> Self {
         Self {
@@ -1047,8 +1108,11 @@ impl Default for WriteBufferUserConfig {
             write_buffer_directory: "./data/write_buffer".to_string(),
             enable_wal: true,
             global_manifest_url: None,
-            // ADR-069 tiered-flush knobs — disabled by default (behavior-neutral).
-            flush_interval_secs: 0,
+            wal_local_dir: None,
+            // ADR-069 D2: time floor defaults to 300s (RPO safety net; the inline
+            // size trigger handles throughput). wal_max_bytes stays 0 → S4 backpressure OFF.
+            flush_interval_secs: default_flush_interval_secs(),
+            flush_floor_predicted_mb: default_flush_floor_predicted_mb(),
             wal_max_bytes: 0,
             high_watermark_pct: default_high_watermark_pct(),
             critical_watermark_pct: default_critical_watermark_pct(),
@@ -1076,6 +1140,7 @@ impl WriteBufferUserConfig {
             performance: PerformanceConfig {
                 memory_flush_size_bytes: self.memory_flush_size_bytes,
                 flush_interval_secs: self.flush_interval_secs,
+                flush_floor_predicted_mb: self.flush_floor_predicted_mb,
                 wal_max_bytes: self.wal_max_bytes,
                 high_watermark_pct: self.high_watermark_pct,
                 critical_watermark_pct: self.critical_watermark_pct,
@@ -1086,6 +1151,7 @@ impl WriteBufferUserConfig {
             enable_background_compaction: true,
             collection_overrides: std::collections::HashMap::new(),
             global_manifest_url: self.global_manifest_url.clone(),
+            wal_local_dir: self.wal_local_dir.clone(),
             enable_optimized_writer: false,
             optimized_writer_batch_size: None,
             optimized_writer_batch_timeout_ms: None,
@@ -1133,6 +1199,24 @@ pub struct SstConfig {
     pub bloom_filter_config: Option<BloomFilterConfig>,
     /// Cache size for SST blocks in MB
     pub cache_size_mb: u64,
+    /// TD-CACHE-4: budget (MB) for the per-segment invariants cache — the
+    /// ADR-065 warm tier holding Region A (RaBitQ codes, `d/8+8` B/vector →
+    /// ~24 MB per 1M vectors at 128d) + control prefix + footer; a hit elides
+    /// the 3 control GETs per segment per query. Priority-then-recency
+    /// eviction (TD-CACHE-2). 256 MB pins ~10× 1M-vector or ~100× 100k-vector
+    /// collections. 0 disables. Env override:
+    /// `PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB`. Distinct from `cache_size_mb`
+    /// (legacy SST block cache) and `decompression_cache_config` (decompressed
+    /// block LRU).
+    pub segment_invariants_cache_mb: u64,
+    /// TD-CACHE-4 + ADR-065 update: budget (MB) for the survivor/OID range
+    /// cache (Region B SQ8 rerank ranges, `d` B/vector, + Region D OID
+    /// ranges). DEFAULT-ON at 1024 MB (decision 2026-07-24: ADR-065's
+    /// default-OFF predated sound eviction (TD-CACHE-2) and was never armed in
+    /// production anyway (TD-CACHE-4) — with it off, every novel query re-pays
+    /// the full ranged-GET chain). 0 disables. Env override:
+    /// `PROXIMADB_SURVIVOR_CACHE_BUDGET_MB`.
+    pub survivor_cache_mb: u64,
     /// Maximum files per level
     pub max_files_per_level: u32,
     /// Size multiplier between levels
@@ -1141,6 +1225,26 @@ pub struct SstConfig {
     pub max_levels: u8,
     /// Number of background compaction threads
     pub background_thread_count: u32,
+    /// TD-COMPACT-7 (ADR-076 D2): L0 admission **slowdown** watermark. When the
+    /// live L0 file count for a collection reaches this, the flush path inserts
+    /// a brief (~1ms) delay before writing the next L0, giving the async
+    /// background compaction (TD-COMPACT-6) headroom to drain L0. This is the
+    /// soft backpressure half of the producer/consumer rate-control loop.
+    /// Default 6 — below `max_files_per_level` (10) so the `l0_stop_trigger`,
+    /// not this, is the hard ceiling. 0 disables the slowdown. Env override:
+    /// `PROXIMADB_L0_SLOWDOWN_TRIGGER`.
+    #[serde(default = "default_l0_slowdown_trigger")]
+    pub l0_slowdown_trigger: u32,
+    /// TD-COMPACT-7 (ADR-076 D2): L0 admission **stop** watermark — the hard
+    /// ceiling. When the live L0 file count reaches this, the flush refuses to
+    /// write a new L0 and returns backpressure (the memtable retains the data,
+    /// durable in the WAL; the write path slows until compaction drains L0).
+    /// This is the hard backpressure half that bounds unbounded L0 growth during
+    /// sustained ingest that outpaces compaction. Default = `max_files_per_level`
+    /// (10); must be ≤ `max_files_per_level`. 0 disables the stop (flush always
+    /// proceeds). Env override: `PROXIMADB_L0_STOP_TRIGGER`.
+    #[serde(default = "default_l0_stop_trigger")]
+    pub l0_stop_trigger: u32,
     /// Data directory for SST files
     pub data_directory: String,
     /// Enable memory-mapped I/O for SST files
@@ -1273,6 +1377,70 @@ pub struct SstConfig {
     /// Default: `None` (disabled).
     #[serde(default)]
     pub tiering: Option<crate::storage::engines::sst::tiering_integration::SstTieringConfig>,
+
+    /// TD-SEARCH-2: inter-file search parallelism degree.
+    /// `0` = 50% of CPU cores (wise default — leaves cores for flush/compaction).
+    /// `1` = sequential (debugging).
+    /// `n > 1` = exactly n concurrent segment-file scans.
+    /// Hot-path override: `PROXIMADB_SEARCH_PARALLEL_FILES` env var.
+    #[serde(default)]
+    pub search_parallel_files: u16,
+
+    /// TD-RDSTRAT-8 / COGS: the PAX coarse-probe (IVF) system — compaction
+    /// trains + emits the A0 coarse directory (`enable_write_train`) and search
+    /// probes the nearest cells (`enable_read_probe`, geometric `nprobe`).
+    /// Configure under `[storage.sst_config.coarse_probe]` in TOML. Env overrides
+    /// still win (`PROXIMADB_PAX_READ_COARSE_PROBE`, `..._NPROBE`,
+    /// `PROXIMADB_PAX_WRITE_A0_TRAIN`). Default: `None` ⇒ `CoarseProbeConfig::default()`.
+    #[serde(default)]
+    pub coarse_probe: Option<CoarseProbeConfig>,
+}
+
+/// PAX coarse-probe (IVF) configuration — the master cloud-cost lever (COGS
+/// measurement arc: IVF cuts GETs/query ~4× and per-tenant COGS ~4× vs full-scan,
+/// recall ~0.98). Compaction trains + emits the A0 coarse directory when
+/// `enable_write_train` is on; search probes the nearest `nprobe` cells when
+/// `enable_read_probe` is on. `nprobe` defaults to the geometric
+/// `ceil(sqrt(ncells) × multiplier)` (sub-linear in corpus: V^0.25; ~56× fewer
+/// ranks than full-scan at 1M), clamped to `[nprobe_min, nprobe_max]`. Env vars
+/// override per-field at call time (see `segment_format.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoarseProbeConfig {
+    /// READ kill-switch: search probes the A0 coarse directory. Default ON.
+    pub enable_read_probe: bool,
+    /// WRITE gate: compaction trains + emits the v3/A0 coarse directory. Default
+    /// ON (the unblock — was OFF; mixed-read-safe: v1/v3 coexist, the read path
+    /// probes only when `a0_len > 0`). Env: `PROXIMADB_PAX_WRITE_A0_TRAIN`.
+    pub enable_write_train: bool,
+    /// Geometric nprobe multiplier: `nprobe = ceil(sqrt(ncells) × multiplier)`.
+    /// Default 1.0 (recall ~0.98; bump to 1.5 for higher recall at more cost).
+    #[serde(default = "default_nprobe_multiplier")]
+    pub nprobe_multiplier: f32,
+    /// Minimum nprobe (floor). Default 3.
+    #[serde(default = "default_nprobe_min")]
+    pub nprobe_min: usize,
+    /// Maximum nprobe (0 = unlimited; capped at ncells anyway). Default 0.
+    #[serde(default)]
+    pub nprobe_max: usize,
+}
+
+fn default_nprobe_multiplier() -> f32 {
+    1.0
+}
+fn default_nprobe_min() -> usize {
+    3
+}
+
+impl Default for CoarseProbeConfig {
+    fn default() -> Self {
+        Self {
+            enable_read_probe: true,
+            enable_write_train: true, // FLIP: emit A0 at compaction by default (COGS lever)
+            nprobe_multiplier: default_nprobe_multiplier(),
+            nprobe_min: default_nprobe_min(),
+            nprobe_max: 0,
+        }
+    }
 }
 
 fn default_block_format() -> String {
@@ -1325,6 +1493,30 @@ fn default_vector_encoding_strategy() -> String {
     "FullVector".to_string() // Default to FullVector (best for vector databases - WORM workloads)
 }
 
+/// Default background compaction thread count: 50% of available cores,
+/// clamped to [1, 4].
+///
+/// `available_parallelism()` respects cgroup CPU limits, so a container
+/// capped at 4 vCPUs (e.g. an Azure B4ms node with a 3.5-CPU pod limit)
+/// gets 2 compaction threads — a fixed 4 was measured to saturate small
+/// nodes and starve concurrent search/gRPC/REST. The cap keeps the
+/// pre-existing ceiling of 4 on large hosts, where compaction parallelism
+/// beyond that showed no benefit and steals cores from queries.
+fn default_l0_slowdown_trigger() -> u32 {
+    6
+}
+
+fn default_l0_stop_trigger() -> u32 {
+    10
+}
+
+fn default_background_thread_count() -> u32 {
+    std::thread::available_parallelism()
+        .map(|n| n.get() as u32 / 2)
+        .unwrap_or(2)
+        .clamp(1, 4)
+}
+
 // BloomFilterConfig moved to core::bloom module for polymorphic design
 // Re-export for backward compatibility
 pub use crate::core::bloom::BloomFilterConfig;
@@ -1341,10 +1533,15 @@ impl Default for SstConfig {
             compression_level: 3,           // LZ4 compression level
             bloom_filter_config: Some(BloomFilterConfig::default()),
             cache_size_mb: 128,
+            segment_invariants_cache_mb: 256,
+            survivor_cache_mb: 1024,
             max_files_per_level: 10,
             level_size_multiplier: 10.0,
             max_levels: 7,
-            background_thread_count: 4,
+            background_thread_count: default_background_thread_count(),
+            // TD-COMPACT-7 D2: L0 admission watermarks (soft + hard backpressure).
+            l0_slowdown_trigger: default_l0_slowdown_trigger(),
+            l0_stop_trigger: default_l0_stop_trigger(),
             data_directory: "./sst_data".to_string(),
             mmap_enabled: true,
             prefetch_enabled: true,
@@ -1354,7 +1551,9 @@ impl Default for SstConfig {
             ),
             vector_encoding_strategy: default_vector_encoding_strategy(),
             block_format: default_block_format(),
-            tiering: None, // Default: tier-migration disabled
+            tiering: None,            // Default: tier-migration disabled
+            search_parallel_files: 0, // TD-SEARCH-2: 0 = 50% of CPU cores
+            coarse_probe: None,       // CoarseProbeConfig::default() applied at SstEngine init
         }
     }
 }

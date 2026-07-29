@@ -1,6 +1,6 @@
 //! M1-3 (ADR-049) — kill-switch → RawF32-PAX → exact read end-to-end.
 //!
-//! Pre-M1-3 the global kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE`
+//! Pre-M1-3 the global kill-switch `PROXIMADB_PAX_QUANT_DISABLE`
 //! forced the retired legacy `.sst` streaming format. Post-M1-3 flush ALWAYS
 //! writes PAX, so the kill-switch instead selects the recall-exact `RawF32`
 //! quant: the flushed segment is still `.pax`, but it carries raw f32 vectors
@@ -27,7 +27,7 @@ use tempfile::TempDir;
 
 const DIM: usize = 4;
 const TOP_K: usize = 3;
-const KILL_SWITCH: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE";
+const KILL_SWITCH: &str = "PROXIMADB_PAX_QUANT_DISABLE";
 
 /// Query = [1, 0, 0, 0]. Vectors at DISTINCT Euclidean distances from the query:
 ///   v0 = [1, 0, 0, 0]  (L2 = 0)
@@ -178,7 +178,7 @@ async fn kill_switch_flushes_rawf32_pax_and_reads_back_exact() {
     let ctx = StorageQueryContext {
         search_params: Arc::new(SearchParams {
             query_vectors: Some(vec![QUERY.to_vec()]),
-            top_k: Some(TOP_K),
+            top_k: Some(TOP_K as u16),
             distance_metric: Some(DistanceMetric::Euclidean),
             block_prune: BlockPruneConfig {
                 radius_k: 0.0,

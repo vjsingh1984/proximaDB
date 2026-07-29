@@ -86,6 +86,10 @@ pub struct MetricsService {
 impl MetricsService {
     /// Create new metrics service
     pub fn new(config: MetricsServiceConfig, metrics_collector: Arc<MetricsCollector>) -> Self {
+        // TD-METRICS-1: force-register every lazy operational-metric family so
+        // /metrics/prometheus scrapes them as 0 before their first event
+        // (absent-vs-zero ambiguity cost a diagnostic cycle in the ratchet run).
+        crate::metrics::operational_metrics::touch();
         Self {
             config,
             metrics_collector,
@@ -96,9 +100,15 @@ impl MetricsService {
     pub fn create_router(&self) -> Router {
         let mut router = Router::new();
 
-        // Main metrics endpoint (supports multiple formats)
+        // TD-METRICS-2: the bare `/metrics` route (struct-exporter only, no real
+        // prometheus registries) was removed — it rendered stale/zero counters
+        // and misled operators. Redirect to the real endpoint; all consumers
+        // (admin UI included) use `/metrics/prometheus` + `/metrics/json`.
         if self.config.enable_prometheus || self.config.enable_json {
-            router = router.route("/", get(metrics_endpoint));
+            router = router.route(
+                "/",
+                get(|| async { axum::response::Redirect::permanent("/metrics/prometheus") }),
+            );
         }
 
         // JSON-specific metrics endpoint
@@ -124,28 +134,6 @@ impl MetricsService {
         }
 
         router.with_state(self.metrics_collector.clone())
-    }
-}
-
-/// Main metrics endpoint with format detection
-async fn metrics_endpoint(
-    Query(params): Query<MetricsQuery>,
-    State(metrics_collector): State<Arc<MetricsCollector>>,
-) -> Result<String, StatusCode> {
-    let format = params.format.unwrap_or_else(|| "prometheus".to_string());
-
-    match format.as_str() {
-        "json" => {
-            let metrics = metrics_collector.current_metrics().await;
-            serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-        }
-        _ => {
-            let metrics = metrics_collector.current_metrics().await;
-            let exporter = PrometheusExporter::new();
-            exporter
-                .export_system_metrics(&metrics)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-        }
     }
 }
 

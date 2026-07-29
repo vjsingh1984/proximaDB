@@ -87,73 +87,16 @@ impl PrometheusExporter {
             metrics.server.uptime_seconds
         )?;
 
-        // Storage metrics
-        writeln!(
-            output,
-            "# HELP proximadb_vectors_total Total number of vectors stored"
-        )?;
-        writeln!(output, "# TYPE proximadb_vectors_total gauge")?;
-        writeln!(
-            output,
-            "proximadb_vectors_total {}",
-            metrics.storage.total_vectors
-        )?;
-
-        writeln!(
-            output,
-            "# HELP proximadb_collections_total Total number of collections"
-        )?;
-        writeln!(output, "# TYPE proximadb_collections_total gauge")?;
-        writeln!(
-            output,
-            "proximadb_collections_total {}",
-            metrics.storage.total_collections
-        )?;
-
-        writeln!(
-            output,
-            "# HELP proximadb_storage_bytes Total storage size in bytes"
-        )?;
-        writeln!(output, "# TYPE proximadb_storage_bytes gauge")?;
-        writeln!(
-            output,
-            "proximadb_storage_bytes {}",
-            metrics.storage.storage_size_bytes
-        )?;
-
-        // Query metrics
-        writeln!(
-            output,
-            "# HELP proximadb_queries_total Total number of queries processed"
-        )?;
-        writeln!(output, "# TYPE proximadb_queries_total counter")?;
-        writeln!(
-            output,
-            "proximadb_queries_total {}",
-            metrics.query.total_queries
-        )?;
-
-        writeln!(
-            output,
-            "# HELP proximadb_queries_failed_total Total number of failed queries"
-        )?;
-        writeln!(output, "# TYPE proximadb_queries_failed_total counter")?;
-        writeln!(
-            output,
-            "proximadb_queries_failed_total {}",
-            metrics.query.failed_queries
-        )?;
-
-        writeln!(
-            output,
-            "# HELP proximadb_query_latency_p99_ms 99th percentile query latency in milliseconds"
-        )?;
-        writeln!(output, "# TYPE proximadb_query_latency_p99_ms gauge")?;
-        writeln!(
-            output,
-            "proximadb_query_latency_p99_ms {}",
-            metrics.query.p99_latency_ms
-        )?;
+        // TD-METRICS-1/2: the stale hand-written `proximadb_vectors_total` /
+        // `proximadb_collections_total` / `proximadb_storage_bytes` /
+        // `proximadb_queries_total` / `proximadb_queries_failed_total` /
+        // `proximadb_query_latency_p99_ms` stanzas were removed here. Their
+        // struct sources (QueryMetrics/StorageMetrics) are never incremented on
+        // the live paths, so they rendered zeros/config defaults — and they
+        // collided by name with the REAL prometheus counters registered in the
+        // default registry (src/metrics/), which /metrics/prometheus appends
+        // via prometheus::gather(). The structs remain (served by
+        // /metrics/json) until their fields are wired or retired.
 
         // Index metrics
         writeln!(

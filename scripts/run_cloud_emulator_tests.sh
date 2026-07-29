@@ -91,7 +91,13 @@ curl -sf -X POST "http://127.0.0.1:4443/storage/v1/b?project=proximadb" \
 
 echo "==> Running object-store tier integration tests (scope: $SCOPE)"
 # Azure (Azurite) + S3 (MinIO) through the production from_url + env path; GCS via builder.
-export AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
+# Both emulator env vars are hoisted here (global) so EVERY Azure-touching test in
+# every scope honors Azurite — including the --qa backend-contract test (#1129),
+# which runs BEFORE the --qa restart section's own PROXIMADB_AZURE_EMULATOR export.
+# The engine's azure_config_from_env reads PROXIMADB_AZURE_EMULATOR (not the
+# object_store-convention AZURE_STORAGE_USE_EMULATOR); without it, the contract
+# test built real Azure → OIDC "Identity not found" (the qa-gate failure).
+export PROXIMADB_AZURE_EMULATOR=1 AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
 export AWS_ENDPOINT=http://127.0.0.1:9000 AWS_ALLOW_HTTP=true AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false
 export AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin AWS_REGION=us-east-1
 export PROXIMADB_GCS_TEST_ENDPOINT=http://127.0.0.1:4443
@@ -118,14 +124,19 @@ if [ "$SCOPE" = "restart" ]; then
   CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features azure \
     --test object_store_restart_recovery \
     -- --ignored --nocapture --test-threads=1
-  # TD-OBJSTORE-5 S2: per-primitive contract tests against the PRODUCTION root
-  # FileSystem backends (PUT->prefix-LIST, prefix-exists-false, multi-page LIST).
-  # Azure + S3 strict; GCS best-effort (skips if the backend does not register).
-  echo "==> TD-OBJSTORE-5 S2: backend contract tests (Azure/S3 strict, GCS best-effort)"
-  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features aws,azure,gcp \
-    --test objstore_backend_contract_test \
+  # TD-CACHE-7: restart-warming manifest write/read round-trip on object storage
+  # — the boundary that repeatedly regressed with zero coverage (container-strip
+  # / malformed prefix). Reuses the exported PROXIMADB_OBJECT_STORE_URL.
+  echo "==> TD-CACHE-7: warm-manifest round-trip over Azurite (adls://)"
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features azure --lib \
+    warm_manifest_round_trips_on_object_store \
     -- --ignored --nocapture --test-threads=1
-  echo "==> Restart-recovery + contract validation complete (cleanup trap tears emulators down)"
+  # TD-OBJSTORE-5 S2 (backend contract tests) moved to --qa — see below.
+  # Keeping it here forced a 3rd cold feature-set compile (aws,azure,gcp)
+  # that, combined with the two azure builds above, exceeded the job's timeout
+  # budget. In --qa it's a near-free incremental build on the existing
+  # cloud-full artifact (cloud-full = aws+azure+gcp — identical feature set).
+  echo "==> Restart-recovery validation complete (cleanup trap tears emulators down)"
   exit 0
 fi
 
@@ -142,6 +153,15 @@ if [ "$SCOPE" = "qa" ]; then
   echo "==> TD-OBJSTORE-5 QA tier: build server (cloud-full) before emulator runs"
   CARGO_BUILD_JOBS=1 cargo test -p proximadb-server --features cloud-full \
     --test object_store_restart_recovery --no-run
+
+  # TD-OBJSTORE-5 S2: backend contract tests (moved from --restart to --qa for
+  # compile efficiency). cloud-full (= aws+azure+gcp) is already built above;
+  # this is a near-free incremental build + run. Emulators (Azurite/MinIO/gcs)
+  # are started by the setup trap before this scope runs.
+  echo "==> TD-OBJSTORE-5 S2: backend contract tests (Azure/S3 strict, GCS best-effort)"
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features cloud-full \
+    --test objstore_backend_contract_test \
+    -- --ignored --nocapture --test-threads=1
 
   echo "==> QA tier [1/2]: Azure (Azurite, adls://) — restart proofs + recall ratchet"
   export PROXIMADB_AZURE_EMULATOR=1 AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true

@@ -952,7 +952,7 @@ impl ModularBlockReader {
             Vec::new();
 
         // Source all data blocks. Precedence: kill-switch (PROXIMADB_DISABLE_SST_SCAN_COALESCE) →
-        // per-block; cost-driven chooser (PROXIMADB_READ_STRATEGY_CHOOSER) → choose_read_strategy;
+        // per-block; cost-driven chooser (PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER) → choose_read_strategy;
         // default → always-coalesce (slice 2). All paths produce byte-identical ProximaDataBlocks
         // (both parse [4-byte len][ProximaDataBlock::deserialize]). (TD-RDSTRAT-1 slice 3b wiring.)
         let kill = std::env::var_os("PROXIMADB_DISABLE_SST_SCAN_COALESCE").is_some();
@@ -2353,7 +2353,7 @@ impl UnifiedSstableReader {
         let params = SearchParams {
             vector: Some(query_vector.to_vec()),
             filter_expression: filter.clone(),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             distance_metric: Some(distance_metric),
             block_prune: block_prune.clone(),
             ..Default::default()
@@ -2489,7 +2489,7 @@ impl UnifiedSstableReader {
         let params = SearchParams {
             vector: Some(query_vector.to_vec()),
             filter_expression: filter.clone(),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             distance_metric: Some(distance_metric),
             block_prune: block_prune.clone(),
             ..Default::default()
@@ -2618,7 +2618,7 @@ impl UnifiedSstableReader {
         let params = SearchParams {
             vector: Some(query_vector.to_vec()),
             filter_expression: filter.clone(),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             distance_metric: Some(distance_metric),
             block_prune: block_prune.clone(),
             ..Default::default()
@@ -2781,7 +2781,7 @@ impl UnifiedSstableReader {
         let params = SearchParams {
             vector: Some(query_vector.to_vec()),
             filter_expression: filter.clone(),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             distance_metric: Some(distance_metric),
             block_prune: block_prune.clone(),
             ..Default::default()
@@ -3671,7 +3671,7 @@ impl UnifiedSstableReader {
             .first_query_vector()
             .ok_or_else(|| anyhow::anyhow!("Query vector required"))?;
 
-        let k = params.top_k.unwrap_or(10);
+        let k = params.top_k.unwrap_or(10) as usize;
         let distance_metric = params.distance_metric;
 
         debug!(
@@ -6279,7 +6279,7 @@ impl UnifiedSstableReader {
             )
             .await?;
 
-        let k = search_params.top_k.unwrap_or(10).max(1);
+        let k = search_params.top_k.unwrap_or(10).max(1) as usize;
         let threshold = vector_bounds_provisional_threshold(&blocks, query, k);
 
         // Pass 2: prune the remainder against τ, then read the survivors.

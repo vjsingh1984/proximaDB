@@ -1,0 +1,183 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-080: Vector-search compaction tuning — segment count is the GET multiplier
+:status: Proposed
+:date: 2026-07-29
+:authors: co-design session 2026-07-29
+
+[cols="1,3"]
+|===
+| Status | **Proposed.** Design decided 2026-07-29 (TD-COMPACT-10). Pending implementation + verification.
+| Date | 2026-07-29
+| Deciders | Vijaykumar Singh
+| Relates to | ADR-076 (async compaction — the D1+D2 arc), ADR-052 (co-design cost spine — GETs dominate), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (the dominant at-rest+read cost term is GET round-trips)
+| Tracked by | TD-COMPACT-10 (L2 segment consolidation gap — Implemented pending)
+| Supersedes | —
+|===
+
+== Context
+
+The SIFT1M end-to-end benchmark (2026-07-29, post-async-compaction develop)
+measured **205 GETs/query** cold — 10× the competitive threshold (~20). This
+makes retrieval COGS ($141.83/M queries on Azure) exceed the rate-card KRU
+($50/M) by 2.8× → negative margin. At 33% margin the price would be $211/mo —
+uncompetitive with Turbopuffer ($16) or S3 Vectors ($2.53).
+
+Root cause: **9 segments** (3 L0 + 1 L1 + 5 L2). Each segment adds ~7-8 reads
+per cold query (header + A0 + probed RaBitQ subset + footer + SQ8 ranges +
+OIDs). The 5 L2 segments (~1GB total) never merge because the compaction
+framework's `level_multiplier = 2.0` sets the L2 threshold to 20 files (5 ×
+2² = 20) — unreachable with only 5 files.
+
+== Decision
+
+**Tune the compaction for GET-count minimization, not write-amplification
+minimization.**
+
+RocksDB's `level_multiplier = 2.0` is tuned for write amplification (each level
+holds ~2× the data of the one below → fewer total rewrites). For ProximaDB's
+vector search over object storage, the dominant cost is **GET round-trips per
+query** (the co-design cost spine, ADR-052), not write amplification. Fewer
+segments = proportionally fewer GETs, regardless of write cost.
+
+=== D1 — `level_multiplier: 1.0` (the core lever)
+
+Change `CompactionConfig.level_multiplier` default from `2.0` to `1.0`. Every
+level compacts at the same file threshold (`l0_file_threshold`).
+
+Effect at 1M scale:
+- L2 threshold drops from 20 → 5 files → the 5 existing L2 files trigger
+  compaction → merge into 1-2 segments.
+- Segment count: 9 → 1-3.
+- GETs/query: 205 → ~25-35.
+
+The default MUST carry a strong comment explaining the co-design rationale so
+future agentic sessions don't "fix" it back to 2.0:
+
+```rust
+/// Vector-search compaction level multiplier.
+///
+/// Controls how aggressively higher LSM levels (L1, L2, ...) compact relative
+/// to L0. The file-count threshold at level N is:
+///   threshold_N = l0_file_threshold × level_multiplier^N
+///
+/// DEFAULT: 1.0 — every level compacts at the SAME file threshold.
+///
+/// WHY 1.0 for vector search (not RocksDB's 2.0):
+///   The dominant cloud cost for a vector DB is GET round-trips per query
+///   (ADR-052). Each PAX segment adds ~7-8 GETs per cold query. With
+///   multiplier=2.0, the L2 threshold = 5×2² = 20 files — unreachable for
+///   a 1M collection with 5 L2 segments → segments accumulate → GETs/query
+///   balloons (measured: 205 at 1M with 9 segments).
+///
+///   At 1.0: every level merges at the same threshold (5 files) → L2
+///   segments merge into 1-2 → GETs/query drops to ~25 → retrieval margin
+///   goes from −183% to +67% at the $50/M KRU rate.
+///
+///   Write amplification is negligible ($0.0065 per L2 merge on Azure;
+///   amortized over millions of queries).
+///
+/// BOUNDED [1.0, 1.5]: the config validator WARNS if the value is outside
+/// this range. Below 1.0 = over-compaction (every new file triggers a merge —
+/// wasteful CPU churn). Above 1.5 = segment accumulation (L2 threshold > 11
+/// files — defeats the purpose). TOML override CAN exceed the bound but gets
+/// a loud warning.
+pub level_multiplier: f64,  // default: 1.0
+```
+
+**Bounding rationale [1.0, 1.5]:**
+
+[cols="1,2,2"]
+|===
+| Value | L2 threshold (5 × val²) | Recommendation
+
+| 0.5 | 1.25 | ❌ Over-compaction — every new file triggers a merge. CPU churn.
+| 1.0 | 5 | ✅ **Default** — sweet spot. Every level at the same threshold.
+| 1.25 | 7.8 | ✅ Acceptable — slightly conservative for write-heavy workloads.
+| 1.5 | 11.2 | ⚠️ Upper bound — segments accumulate faster between merges.
+| 2.0 | 20 | ❌ RocksDB default — optimizes write amp, NOT GET count.
+|===
+
+=== D2 — Post-ingest settle pass
+
+During sustained ingest, the L0 early-return (`compaction_utils.rs:264`) starves
+the higher-level loop. Add a "quiescence" check in the auto-flush driver: if no
+new L0 files appeared since the last tick, force `check_compaction_needed` to
+skip the L0 check and run the higher-level loop. This ensures L2+ merges happen
+during quiet periods (post-ingest steady state).
+
+=== D3 — TOML-controllable + config validator WARN
+
+`level_multiplier` is already in `CompactionConfig` (TOML-controllable). Add a
+config-validation WARN (not error) if the value is outside [1.0, 1.5]. Document
+the recommendation (`1.0`) in the config template + the ENV_GATE_REGISTRY.
+
+== Co-design analysis
+
+The dominant at-rest + read cost term for a cloud DB is **I/O round-trips +
+egress**, not CPU (ADR-052). For vector search on Azure Blob:
+
+- Each GET costs $0.0065/10K operations.
+- Each segment adds ~7-8 GETs per cold query.
+- Write amplification (PUT cost) is negligible: $0.065/10K PUTs × 1 merge per
+  ingest batch → ~$0.0065 per merge. Amortized over M queries → noise.
+
+Therefore: **minimize segments, accept write amplification.** The level_multiplier
+= 1.0 trades ~2× more frequent L2 merges (cheap) for ~5× fewer segments (the GET
+multiplier).
+
+== GET model
+
+[cols="3,2,3,2"]
+|===
+| Segments | Cold GETs/query | Retrieval COGS/M | Margin @ $50/M KRU
+
+| 9 (current)
+| ~205
+| $141
+| −183%
+
+| 3 (D1, mid-settle)
+| ~35
+| $23
+| 54%
+
+| 2 (D1, settled)
+| ~25
+| $16
+| 67%
+
+| 1 (ideal)
+| ~15
+| $10
+| 80%
+|===
+
+At 2 segments + 33% margin: price = **$24/mo** → undercuts Turbopuffer ($16
+floor, close) and decisively beats Qdrant ($250) / Pinecone ($350).
+
+== Extreme co-design pressure test
+
+. **Scale to 10M**: segments still 1-2 (larger files, same threshold logic).
+  Coarse probe reads only nprobe cells' RaBitQ (~15MB per segment). GETs/query
+  unchanged. **Scales.**
+. **Cache budget = 0**: 2 segments × 8 = 16 GETs/query. Still competitive.
+  Caches are a bonus, not the foundation. **Robust without caches.**
+. **Write amplification**: L2→L2 merge rewrites ~1GB = 100 PUTs = $0.0065.
+  One merge per ingest batch → negligible. **Write cost is noise.**
+. **Recall**: merging L2 segments re-trains PCA/IVF on the full merged corpus →
+  more representative model → recall likely improves (0.978 → 0.985+). **Recall
+  benefits.**
+. **Compaction CPU**: each merge ~2.5s (measured). With multiplier=1.0, more
+  frequent but smaller merges. Async workers handle it. **No flush blocking.**
+. **L0 starvation during ingest**: the settle pass (D2) ensures L2+ merges
+  during quiet periods. During sustained ingest, L2 grows; post-ingest, it
+  settles. Acceptable — the steady state (post-ingest) is the pricing basis.
+
+== Acceptance criteria
+
+. `level_multiplier` = 1.0 (default) + TOML-controllable.
+. After 1M SIFT ingest + 120s settle: ≤3 segments (not 9).
+. Cold GETs/query ≤ 30 (not 205).
+. Recall@10 ≥ 0.98 maintained.
+. Retrieval margin > 50% at $50/M KRU.

@@ -173,8 +173,10 @@ pub struct RelationalPayload {
     pub runtime_filter_wait_ms: u64,
 }
 
-/// Vector-ANN modality payload — PAX centroid block-prune (TD-RDSTRAT-5) and the
-/// logical striped-read projection (ADR-057 / TD-RDSTRAT-3).
+/// Vector-ANN modality payload — PAX centroid block-prune (TD-RDSTRAT-5), the
+/// logical striped-read projection (ADR-057 / TD-RDSTRAT-3), and the two-level
+/// IVF coarse-probe outcome (TD-RDSTRAT-8). Each field defaults to 0 so an older
+/// reader deserializes a newer writer's envelope losslessly.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VectorAnnPayload {
     #[serde(default)]
@@ -185,6 +187,29 @@ pub struct VectorAnnPayload {
     pub logical_striped_bytes: u64,
     #[serde(default)]
     pub logical_striped_gets: u64,
+    /// TD-RDSTRAT-8 two-level IVF coarse probe: of `ivf_cells_total` persisted
+    /// coarse centroids, `ivf_cells_probed` were ranked in RAM and
+    /// `ivf_probed_rows` rows read across `ivf_fetch_rounds` coalesced Region-A
+    /// ranged-reads. `ivf_whole_region_fallback` counts segments where the armed
+    /// probe missed and the read fell back to the whole Region-A scan (the GET
+    /// budget the probe exists to avoid). The dominant cloud cost term is GET
+    /// round-trips — these make the probe's cut observable per-query.
+    #[serde(default)]
+    pub ivf_cells_total: u64,
+    #[serde(default)]
+    pub ivf_cells_probed: u64,
+    #[serde(default)]
+    pub ivf_probed_rows: u64,
+    #[serde(default)]
+    pub ivf_fetch_rounds: u64,
+    #[serde(default)]
+    pub ivf_whole_region_fallback: u64,
+    /// Physical PAX Region-A (RaBitQ) / Region-B (SQ8) bytes fetched by the
+    /// coarse probe (TD-RDSTRAT-8 PR-C1). Cache hits contribute zero.
+    #[serde(default)]
+    pub ivf_region_a_bytes: u64,
+    #[serde(default)]
+    pub ivf_region_b_bytes: u64,
 }
 
 /// Embedding modality payload — KEU token counts.
@@ -247,12 +272,23 @@ impl TracePayload {
         if snap.centroid_total_blocks > 0
             || snap.logical_striped_gets > 0
             || snap.logical_striped_bytes > 0
+            || snap.ivf_cells_total > 0
+            || snap.ivf_whole_region_fallback > 0
+            || snap.ivf_region_a_bytes > 0
+            || snap.ivf_region_b_bytes > 0
         {
             TracePayload::VectorAnn(VectorAnnPayload {
                 centroid_total_blocks: snap.centroid_total_blocks,
                 centroid_pruned_blocks: snap.centroid_pruned_blocks,
                 logical_striped_bytes: snap.logical_striped_bytes,
                 logical_striped_gets: snap.logical_striped_gets,
+                ivf_cells_total: snap.ivf_cells_total,
+                ivf_cells_probed: snap.ivf_cells_probed,
+                ivf_probed_rows: snap.ivf_probed_rows,
+                ivf_fetch_rounds: snap.ivf_fetch_rounds,
+                ivf_whole_region_fallback: snap.ivf_whole_region_fallback,
+                ivf_region_a_bytes: snap.ivf_region_a_bytes,
+                ivf_region_b_bytes: snap.ivf_region_b_bytes,
             })
         } else if snap.plan_nodes > 0
             || snap.plan_depth > 0
@@ -411,6 +447,35 @@ mod tests {
             TracePayload::classify(&snap),
             TracePayload::Embedding(_)
         ));
+    }
+
+    #[test]
+    fn classify_packs_ivf_coarse_probe_into_vector_ann() {
+        // TD-RDSTRAT-8: an IVF coarse-probe outcome (no centroid/striped signal)
+        // must classify as VectorAnn and carry all five durable fields, so the
+        // warehouse satellite captures the probe's GET cut per query.
+        let snap = IoTraceSnapshot {
+            ivf_cells_total: 64,
+            ivf_cells_probed: 8,
+            ivf_probed_rows: 4096,
+            ivf_fetch_rounds: 3,
+            ivf_whole_region_fallback: 1,
+            ivf_region_a_bytes: 200_000,
+            ivf_region_b_bytes: 800_000,
+            ..Default::default()
+        };
+        match TracePayload::classify(&snap) {
+            TracePayload::VectorAnn(v) => {
+                assert_eq!(v.ivf_cells_total, 64);
+                assert_eq!(v.ivf_cells_probed, 8);
+                assert_eq!(v.ivf_probed_rows, 4096);
+                assert_eq!(v.ivf_fetch_rounds, 3);
+                assert_eq!(v.ivf_whole_region_fallback, 1);
+                assert_eq!(v.ivf_region_a_bytes, 200_000);
+                assert_eq!(v.ivf_region_b_bytes, 800_000);
+            }
+            other => panic!("expected VectorAnn, got {other:?}"),
+        }
     }
 
     #[test]

@@ -337,12 +337,12 @@ mod tests {
         // Set test master key
         unsafe {
             env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
-        let km = KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap();
+        let km = KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY").unwrap();
         assert_eq!(km.current_version(), 0);
     }
 
@@ -350,12 +350,12 @@ mod tests {
     fn test_context_key_derivation() {
         unsafe {
             env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
-        let km = KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap();
+        let km = KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY").unwrap();
         let key1 = km.derive_context_key(b"context1");
         let key2 = km.derive_context_key(b"context1");
         let key3 = km.derive_context_key(b"context2");
@@ -369,12 +369,12 @@ mod tests {
     fn test_key_rotation() {
         unsafe {
             env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
-        let km = KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap();
+        let km = KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY").unwrap();
         assert_eq!(km.current_version(), 0);
 
         let new_version = km.rotate_key().unwrap();

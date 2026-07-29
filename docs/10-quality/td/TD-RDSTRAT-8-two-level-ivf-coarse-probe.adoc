@@ -5,14 +5,34 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — **rev 3 (2026-07-17): first-principles/code reconciliation.** Reuse and persist SST's existing compaction-time, IOP-derived PCA/IVF plan; do not train a second `sqrt(N)` quantizer. Host remains SST. Layout prototype + representative evidence are required before this architectural change is promoted to an ADR. **rev 3.1 (2026-07-20): PR-A landed, write path reconciled to rev 3** — A0 serde + header-prefix `layout_version=3` + additive footer section + compaction-only write path (`cluster_plan_ivf_probe` **persists the existing IOP-derived plan**; NO second `sqrt(N)` quantizer) + production-trigger route proof; default-OFF `PROXIMADB_IVF2=0` (see §As-built delta). Reads serve v3 through the order-agnostic single-level scan until the PR-B probe reader ranks the persisted centroids.
-| Priority | P2 → **P1 once any collection approaches ~2M vectors** — downstream, AnvaiOps ADR-0044 forbids >~5M-vector pooled onboarding until this re-measures (revenue + latency gate, successor to TD-RDSTRAT-6's role).
-| Severity | n/a (new capability, no regression). Default-OFF until gates pass.
+| Status | **Core implemented and default ON (reconciled 2026-07-28).** #1128 added mixed-safe v3/A0 persistence, #1135 the selective reader, #1144/#1148 durable telemetry and SIFT gates, and #1153 the independently gated PR-C2 layout proof. The trained compaction writer and reader were promoted in #1210/#1234 after ledgered `nprobe_sweep_trained_1m` held recall `0.986-0.987` and improved the unprobed control (`81.4` vs `108.5` GETs/query; `92` vs `144` ms). #1227 closed the probe cache bypass and #1252 corrected TOML/config wiring. `PROXIMADB_PAX_WRITE_A0_TRAIN=0` and `PROXIMADB_PAX_READ_COARSE_PROBE=0` are kill-switches. PR-C2 prefix/split-cache/wider-coalescing controls remain default OFF.
+| Priority | **P1 hardening at 10M/high dimension/multiple metrics and on production object stores.** These measurements refine calibration; they do not make the shipped 1M-trained path default OFF.
+| Severity | Current capability with mixed-read fallback and kill-switches. Residual risk is scale/distribution calibration, not format rollout.
 | Component | `src/storage/engines/sst/` — `segment_format.rs` (writer/reader), `block_cluster.rs` (clustering), `compaction.rs`/`compactor_impl.rs` (the only write path that clusters), `crates/storage/proximadb-storage-common/src/pax_block.rs` + `segment_layout.rs` (regions/footer), coalesce policy + `IopsBudget`. **NOVA is explicitly NOT the host** (rev 2).
 | Governs | The large-segment choice between many ranged GETs and whole-region O(N) bytes, plus the unconditional Region-A scan bytes. Target: bounded probed cells and bytes per live segment; collection cost still multiplies by live segment count.
 | Relates to | ADR-062/ADR-065 (regions; this extends the region layout with a coarse directory), TD-RDSTRAT-6 (measured baseline), TD-WLP-4b (PCA/sample-train/NEON — reused; its deferred "persist the PCA model" item becomes REQUIRED here), TD-WLP-9 (fail-closed recall gate pattern), AnvaiOps ADR-0044 (downstream gate).
 | Pillar | COST (billing) / PERF (latency).
 |===
+
+== Current serving contract (2026-07-28)
+
+The normative state is:
+
+* compaction emits v3/A0 by default when it has a trainable clustered plan;
+* the reader probes A0 by default when a v3 segment declares a non-empty A0
+  extent, otherwise it uses the v1/full-region path;
+* unset configuration uses
+  `nprobe = ceil(sqrt(ivf_cells_total) * nprobe_multiplier)`, with multiplier
+  `1.0`, minimum `3`, and no configured maximum beyond the cell count;
+* `PROXIMADB_PAX_WRITE_A0_TRAIN=0` and
+  `PROXIMADB_PAX_READ_COARSE_PROBE=0` disable the write and read sides;
+* unknown/legacy layout, missing A0, or a safe fallback condition never assumes
+  probing; the durable `ivf_*`, region-byte, fetch-round, and fallback telemetry
+  proves which route ran.
+
+The revision chronology below records how the implementation arrived here.
+Any “default OFF” wording inside that chronology describes the landing state of
+that revision, not the current default.
 
 == Why (measured, with the current-reader asymptote corrected)
 
@@ -161,12 +181,13 @@ GET; eviction and many live segments mean it is not assumed permanently resident
    proves its over-read dominates the write amplification.
 5. Write the successor header + regions + footer through the existing staged one-object
    `write_if_absent` publication and manifest advance.
-6. **Spill (deferred):** boundary rows with `d_2nd/d_1st < τ` (env
-   `PROXIMADB_IVF2_SPILL_TAU`, default off) get their **Region-A code only** duplicated
+6. **Spill (deferred):** boundary rows with `d_2nd/d_1st < τ` could get their
+   **Region-A code only** duplicated
    into the runner-up cell. A spilled code must carry its original global row ordinal so a
    hit addresses the one Region-B/D row; implicit code-position→row mapping is no longer
    valid for that cell. The mapping bytes and duplicate-candidate dedup are charged in the
-   gate. B/C/D are never duplicated.
+   gate. B/C/D are never duplicated. No spill environment gate is currently
+   registered; file one only with an implementation/evidence PR.
 
 === Read path (query)
 
@@ -202,13 +223,14 @@ the directory/A/B/D rounds, so GET-budget compaction remains part of the accepta
 * Successor magic/layout version in the header-prefix; `PXH1` readers reject cleanly,
   and the new reader handles `PXH1` segments via the existing full-scan/fallback path.
   Per-segment dispatch is mandatory; mixed collections are normal during rollout.
-* Default **OFF**: `PROXIMADB_IVF2=0`. Enablement = flip env + normal compaction rewrites
-  segments to the successor layout on their usual cadence. No migration event, no engine
-  change, no re-ingest.
-* Auto-threshold (later phase): compactor writes the successor only when segment rows ≥
-  `PROXIMADB_IVF2_MIN_ROWS` (default 500 000) — small segments keep `PXH1`.
+* Current default **ON**: normal compaction emits v3/A0 and the reader probes it.
+  Operators can independently disable write training or read probing with the
+  canonical kill-switches above. Existing v1 segments need no migration event,
+  engine change, or re-ingest.
+* The retired `PROXIMADB_IVF2*` names are historical only; the environment-gate
+  registry is authoritative for current names and defaults.
 
-== As-built delta (PR-A) — layout versioning + the rev-3 write-path reconciliation
+== Historical as-built delta (PR-A) — layout versioning + the rev-3 write-path reconciliation
 
 *Write path reuses the existing IOP-derived plan (rev 3 — not a second `sqrt(N)`
 quantizer).* An earlier PR-A cut trained a fresh coarse k-means at
@@ -247,11 +269,11 @@ the query path uses — no f64-train vs f32-read drift at cell boundaries.
 Vectors stay f32 end-to-end; only dot-product accumulators widen transiently to
 f64 (cancellation-safe accumulation, never stored).
 
-*Read-compat shipped in PR-A, probe reader in PR-B.* The current binary parses
-v3 and serves it through the existing single-level whole-region scan (Regions
-A/B are byte-identical in format; a full scan over cell-ordered rows is
-order-agnostic) — correct results at v2 GET cost until PR-B lands the A0
-probe. `read_segment_records` handles v3 (incl. the Region-B vector overlay),
+*Read compatibility shipped in PR-A; the probe reader shipped in PR-B.* The
+current binary parses v3 and probes A0 by default. Disabling the read probe
+serves the same v3 segment through the existing whole-region scan (Regions A/B
+are byte-identical in format; a full scan over cell-ordered rows is
+order-agnostic). `read_segment_records` handles v3 (including the Region-B vector overlay),
 so re-compaction/recovery of v3 segments never drops vectors. Version-1-only
 binaries reject v3 at the prefix version check (fail-closed; contract pinned
 by `v1_only_reader_rejects_v3_prefix`).
@@ -273,11 +295,11 @@ is written **only** by `write_pax_segment_compacted` — so without explicit
 wiring no eval would ever measure a v3 segment:
 
 * The recall/GET ratchet reaches v3 via the **direct compaction-writer route**
-  — the harness calls `write_pax_segment_compacted()` under `PROXIMADB_IVF2=1`,
+  — the harness calls `write_pax_segment_compacted()` with write training enabled,
   byte-identical to the production compaction product (and/or the established
   `PROXIMADB_PAX_FLUSH_CLUSTER=ivf`-style eval-knob pattern for
-  flush-reachable measurement). Production policy is unchanged:
-  compaction-only, default-OFF.
+  flush-reachable measurement). Production policy remains compaction-only and
+  is now default ON.
 * One **production-trigger route proof** exists as of PR-A:
   `tests/sst_ivf2_compaction_route_proof_test.rs` (mirrors the TD-WLP-7
   execution gate) — armed AppendBulk flush past L0 threshold ⇒ inline
@@ -290,15 +312,92 @@ wiring no eval would ever measure a v3 segment:
   same gate runs unconditionally and the SIFT run stays `#[ignore]`d for the
   quiet-machine eval; record which one is the CI authority here when wired.
 
-*PR-A landed surface (all default-OFF):* `PROXIMADB_IVF2` (gate) is the only new
-env; the probe plan reuses the single-level IVF knobs — `PROXIMADB_IVF_K`
+*PR-A landing surface (historical default-OFF state):* the probe plan reuses the
+single-level IVF knobs — `PROXIMADB_IVF_K`
 overrides the IOP-derived cell count, `PROXIMADB_IVF_TRAIN_SAMPLE` the
 sample-train — seed `0x5041_585F_4956_4631`, 15 iterations, with **no separate
 `sqrt(N)` surface** (`PROXIMADB_IVF2_KC` / `_TRAIN_SAMPLE` removed in the rev-3
 reconciliation). Determinism, cell-extent exactness, cell-boundary block
 padding, mixed-read, and the flag gates are unit/e2e tested (`pax_block.rs`,
 `segment_layout.rs`, `coarse_directory.rs`, `block_cluster.rs`,
-`segment_format.rs`, route-proof test).
+`segment_format.rs`, route-proof test). The canonical write kill-switch is now
+`PROXIMADB_PAX_WRITE_A0_TRAIN`; retired `PROXIMADB_IVF2*` names must not be used.
+
+== Historical PR-B delta (the A0 coarse-probe reader, rev 3.2)
+
+*The probe reader.* `rabitq_search_segment_coalesced` gained a v3 branch
+(initially gated OFF, now default ON): parse Region A0, project the query with the persisted f32 model,
+**rank the `k_c` centroids in RAM**, select the `nprobe` nearest non-empty cells,
+ranged-read ONLY those cells' Region-A code extents (`a_off/a_len`), and rank
+that subset. The whole Region A is never fetched, so cold GETs/bytes drop from
+O(N) toward O(nprobe). Survivors (global rows) then feed the **unchanged** SQ8
+rerank + OID-fetch tail — because those steps are already survivor-driven and
+ranged, fewer/cluster-local survivors shrink the Region-B/D reads for free.
+
+* *Subset rank without the whole region.* New `coalesced_rabitq::rank_probed_rows`
+  ranks a set of probed row-runs given the region header (one small ranged GET of
+  `[rabitq_off, rabitq_off + region_header_len(dim))`). Probed rows are **always
+  present** (A0 cells cover only usable rows), so a synthesized all-ones bitmap
+  lets the canonical `parse_rabitq_codes` + `rank_candidates` decode/score each
+  run unchanged — no hand-rolled decoder, no bitmap GET. Unit-gated
+  (`rank_probed_rows_matches_region_rank`: one run over all rows reproduces
+  `RaBitQRegion::rank` exactly; sub-runs restrict + map global indices).
+* *Coalescing.* The PR-B baseline merges only strict physical adjacency
+  (gap 0). PR-C2 adds a default-OFF, cost-aware range planner: it may physically
+  over-read a bounded gap while passing only the selected cell slices to the
+  ranker, so logical `nprobe`, rows, and results cannot change. Hilbert
+  emission order already clusters near cells, so the nprobe nearest usually
+  collapse to a few contiguous runs.
+* *Cache chronology.* The initial probe deliberately bypassed the
+  whole-Region-A invariants entry because its purpose is selective cell reads.
+  #1227 later routed those probed Region-A ranges and the whole-Region-B
+  fallback through `SurvivorRangeCache`; control metadata remains in the
+  invariants surface. Recall is independent of cache residency.
+* *Current configuration:* `PROXIMADB_PAX_READ_COARSE_PROBE` is a kill-switch;
+  `PROXIMADB_PAX_READ_COARSE_NPROBE` is the explicit eval override. Unset uses
+  the geometric TOML/default formula in the current serving contract above.
+* *Gate.* `coarse_probe_holds_recall_and_cuts_bytes` (per-PR lib test, so it runs
+  in the LIGHT tier) writes a v3 segment via the compaction writer, then asserts
+  the probe **engaged** (`0 < cells_probed <= nprobe`), read **materially fewer
+  bytes** than the whole-region baseline, and **held recall vs the full scan**
+  (probe recall ≥ baseline − 0.1 on clustered data). Diagnostic counters ride
+  `PROXIMADB_TRACE_GETS` (`drain_get_trace` / `drain_probe_trace`).
+* *Completed follow-ups:* #1144 promoted `ivf_cells_total/probed`,
+  `ivf_probed_rows`, `ivf_fetch_rounds`, and `ivf_whole_region_fallback` into
+  durable io-trace/Prometheus surfaces; #1148 landed the SIFT ratchets/evidence.
+  #1153 measured A0/header prefixing, split metadata caching, and Region-A
+  coalescing; those component controls remain independently default OFF.
+  #1210/#1234 promoted the trained writer/reader, #1227 closed the probe-path
+  survivor-cache seam, and #1252 fixed authoritative TOML wiring. Production
+  object-store and scale/high-dimension/multi-metric runs remain hardening.
+
+== PR-C2 delta (trace-derived control and Region-A layout proof, rev 3.4)
+
+PR-C1's full SIFT1M trace separated the v3 request budget into search control,
+footer metadata, Region A, Region B, and Region D. It showed that the v3 probe
+moved bytes but paid three small control reads per file and one Region-A read per
+selected cell. PR-C2 tests three independently gated reader changes:
+
+* a bounded prefix range supplies the prefix, A0, and RaBitQ parameters when
+  their extents fit, without moving the fixed-offset header contract;
+* small search-control/footer invariants may populate the byte-budgeted cache
+  even though the probe never fetches the complete Region A; and
+* `ObjectRangeCoalescePolicy` merges selected Region-A extents across a bounded
+  gap, retaining exact selected slices so over-read cannot broaden ranking.
+
+The release-profile 100-query SIFT1M proof retains the combined 64 KiB prefix +
+split metadata cache + 1 MiB Region-A gap (4 MiB maximum range). Recall is
+unchanged: `0.985` single-file (`nprobe=6`) and `0.982` four-file (`nprobe=3`).
+GETs/query move `33→30` cold and `24→19` warm single-file; `75→65` cold and
+`62→44` warm four-file. Under `20×GET + 5×MiB`, score improves 6.1–24.0%.
+A 4 MiB gap is rejected as non-robust: it buys at most one additional four-file
+warm GET while adding 3.59 MB/query and worsening the single-file cold tail.
+See `RDSTRAT8_IVF2_LAYOUT_COALESCING_SIFT1M_2026_07_22.adoc` and evidence claim
+`rdstrat8_ivf2_layout_coalescing_sift1m`.
+
+The trace also identifies the next independent term: Region B still consumes
+`22–42` GETs/query. Any successor work must optimize survivor-run geometry at
+fixed recall/`nprobe`; file count remains the collection-level GET knob.
 
 == Eval gates (ADR-062 pattern; eval doc in `docs/_internal/status/`)
 
@@ -328,7 +427,7 @@ distance kernels), with pure prefetch allowed a higher in-flight cap. Env:
 independently of the successor layout. Acceptance: SIFT1M cold p50 improves ≥2× at equal GETs;
 io_trace gains `fetch_rounds` + `max_inflight` fields.
 
-== Execution plan (sized for agents / junior devs; each PR lands green + default-off)
+== Historical execution plan and remaining hardening
 
 [cols="1,3,3", options="header"]
 |===
@@ -336,7 +435,7 @@ io_trace gains `fetch_rounds` + `max_inflight` fields.
 | **A — plan+format** | Extend `ClusterPlan` with the existing PCA model/centroids/runs; A0 serde; successor header/footer; no second k-means and no mandatory D-block padding | byte round-trip, deterministic segment, checked offsets, old/new dispatch, clean unsupported-version error, gate OFF emits byte-identical `PXH1`
 | **B — reader, fixed nprobe** | successor branch in `rabitq_search_segment_coalesced`; pure sub-range RaBitQ-rank primitive; A0 rank → Region-A/B subreads; trace fields; exact mode probes all | sub-range rank parity with whole `RaBitQRegion`; SIFT100k parity/recall; mixed collection correct; corrupt/mismatched A0-footer fails closed; no whole-read masquerading as probed success
 | **C — collection economics** | invariants/survivor cache interaction; bounded-parallel reads; multi-file compaction budget; measured `nprobe` profiles | SIFT1M representative cold/warm traces meet the table above; trace reconciles physical backend counters
-| **D — scale + promotion** | 10M + high-dim/multi-metric evals; auto-threshold; optional spill only if measured; dated evidence + ledger | gates green; promote the architectural decision to the next ADR only then; downstream onboarding gate re-measured
+| **D — scale hardening** | 10M + high-dim/multi-metric evals; optional spill only if measured; dated evidence + ledger | preserve or raise the current recall/cost ratchets; recalibrate defaults only from measured evidence
 |===
 
 == Open questions (narrowed from rev 1)

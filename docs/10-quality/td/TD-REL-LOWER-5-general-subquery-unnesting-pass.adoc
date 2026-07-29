@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **In progress** (2026-07-16) — filed under link:../../12-design/adr/ADR-064-query-engine-pipeline-decision-dispatch-lowering-trace.adoc[ADR-064] (Decision 2), Phase-2 of the ADR-064 rollout. (Fills the free TD-REL-LOWER-5 slot between -4 and -6.) **Approach: incremental per-family** — an Explore sweep found the 4 declines are 3 distinct mechanisms with NO `DependentJoin`/`Apply`/`MarkJoin` primitive today, so each family lands behind the ratchet rather than a large general Neumann-Kemper pass. **Slice 1 — Q2** multi-table correlated scalar subquery (extract `lower_from`; multi-table body through `lower_correlated_scalar_aggregate`), PR #1053 (merged). **Slice 2 — Q11** HAVING-aggregate + uncorrelated scalar subquery in HAVING (this PR): a new `lower_having` extracts HAVING aggregates INTO the Aggregate and hoists the scalar subquery as a `LEFT JOIN`, applying HAVING as a post-aggregate `Filter` (was declined `HAVING with aggregate calls`); native TPC-H 19 → 20/22. **Remaining (measured 2026-07-16, `lower_sql` probe with Slice 2 present):** the Slice-2 HAVING-aggregate support *cascades* through the IN-lifting — an uncorrelated `IN (SELECT … GROUP BY … HAVING sum(...)>k)` now lowers — so **Q18** (its `IN` is a top-level WHERE conjunct, real blocker was the HAVING-aggregate body, NOT "expression position") is likely already unblocked → verify on the real 8-table TPC-H (expect 20 → 21/22). **Slice 3 — Q20** (this PR): an isolation probe confirmed Q20's true blocker is its innermost correlated scalar carrying TWO correlation keys (`l_partkey = ps_partkey AND l_suppkey = ps_suppkey`), declined by `lower_correlated_scalar_aggregate`'s single-key MVP — the full-query decline `EXISTS / IN subquery in expression position` was a *mask* (the outer `IN`'s fallback when its body fails to lower). Fix = extend correlated-scalar decorrelation to **N keys** (`group_key: Option` → `Vec`; GROUP BY every inner key; LEFT JOIN ON all `outer_i = inner_i` pairs ANDed) — a bounded frontend change, NOT a mark-join rewrite. With Slice 3, the full real Q20 lowers. **Net toward 22/22:** Q18 rides Slice 2's HAVING cascade (→ 21/22, row-exact TBD) and Q20 lands with Slice 3 (→ 22/22).
+| Status | **Resolved for its measured gate (2026-07-17).** Q2 landed in #1053, Q11/HAVING in #1058, two-key Q20 decorrelation in #1066, and #1068 proves Q18+Q20 row-exact on the native route; native TPC-H reached 22/22. The implementation deliberately used bounded composable families because the codebase still has no `DependentJoin`/`Apply`/`MarkJoin`. Therefore the title's “general pass” is **not** a shipped universal unnesting claim; file a new TD only when a new unsupported family supplies evidence that the general algebra is cheaper than another bounded rule.
 | Priority | P1 — the remaining native TPC-H declines are ALL subquery-shaped and the hand-written machinery does not compose; a general pass closes them together instead of four more bespoke arms.
 | Component | `crates/query/proximadb-relational-frontend` — the subquery lowering (`lower_subquery_join_parts`, `lower_scalar_subquery`, `lower_correlated_scalar_aggregate`) + a new dependent-join / unnesting pass.
 | Evidence | A direct `lower_sql` probe (2026-07-16, develop): remaining declines are **Q2** `Unsupported("correlated scalar subquery")` (multi-table subquery body), **Q11** `Unsupported("HAVING with aggregate calls")` (aggregate-HAVING + scalar subquery), **Q18/Q20** `Unsupported("EXISTS / IN subquery in expression position")` (groupby-having / nested IN). Today's helpers handle only narrow shapes: uncorrelated IN/EXISTS lift, single-table correlated scalar aggregate (TD-REL-LOWER-8 added the arithmetic wrapper), scalar-in-WHERE. Native is 18/22.
@@ -18,14 +18,16 @@ do not generalize: a correlated scalar aggregate with a *multi-table* body (Q2),
 HAVING compared to a subquery (Q11), or an IN with a GROUP BY/HAVING or nested IN (Q18/Q20) each needs
 its own new arm. This is the arithmetic-of-diminishing-returns the arc reached (18/22 via 6 arms).
 
-== Direction (per ADR-064 §2.2)
+== Originally proposed direction; actual closure
 
-Introduce the **standard general unnesting** algorithm — Neumann & Kemper, "Unnesting Arbitrary
+The filing proposed the **standard general unnesting** algorithm — Neumann & Kemper, "Unnesting Arbitrary
 Queries" (BTW 2015): represent a correlated subquery as a **dependent join**, then push the dependency
 down with algebraic equivalences until it becomes an ordinary (semi/anti/left/inner) join over a
 `GROUP BY` — decorrelating *any* subquery shape (scalar, IN/EXISTS, correlated, nested) with one pass
-rather than shape-by-shape. Landed as the first `Rule` of the ADR-064 lowering rule-seam; the existing
-narrow decorrelators become special-cased fast paths (or are subsumed).
+rather than shape-by-shape. That universal rule seam did **not** land. The four measured blockers
+closed through the bounded families listed in the status row, with row-exact gates. This is an
+important scope correction: 22/22 is evidence for the measured corpus, not proof of arbitrary
+subquery unnesting.
 
 == Gate
 

@@ -21,7 +21,6 @@
 //! ## Key Components
 //!
 //! - **WriteAheadLogManager**: Core manager coordinating all WAL operations
-//! - **WALBatchStrategy**: Strategy pattern for different serialization formats (Proto/Avro/Bincode)
 //! - **MemtableManager**: In-memory buffer for fast vector access
 //! - **DiskManager**: Persistent WAL file management with multi-disk support
 //! - **FlushCoordinator**: Orchestrates flushing from WAL to storage engines
@@ -84,19 +83,13 @@ use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::traits::{FlushResult, UnifiedStorageFormat};
 use proximadb_distance_kernel::DistanceMetric;
 use proximadb_distance_kernel::engine::{DistanceComputeProvider, UnifiedDistanceCompute};
-use proximadb_records::{
-    EmbeddingCell, ProximaRecord, ProximaTreeNode, conversions::sql_value_to_proxima,
-};
+use proximadb_records::ProximaRecord;
 // DIP: CollectionPathResolver is re-exported below via pub use
 
 // Sub-modules
-pub mod avro_serialization_strategy; // Clean architecture avro implementation
 pub mod background_manager;
 pub mod backup; // Incremental backup coordinator
-pub mod batch_factory;
-pub mod batch_strategy;
 pub mod batch_sync_coordinator;
-pub mod bincode_serialization_strategy; // Clean architecture bincode implementation
 pub mod collection_path;
 pub mod compact_batch_id;
 pub mod compaction_axis_integration;
@@ -112,7 +105,6 @@ pub mod memtable_manager; // New centralized memtable operations
 pub mod optimized_write_buffer_writer;
 pub mod parallel_search;
 pub mod pitr; // Point-in-Time Recovery manager
-pub mod proto_serialization_strategy; // Clean architecture proto implementation
 pub mod recovery_manager; // New centralized recovery operations
 pub mod recovery_thread_pool; // Thread pool for parallel recovery
 pub mod recovery_token;
@@ -129,18 +121,48 @@ pub mod v2_segment_header;
 // MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver
 // pub mod atomic_write_buffer_sync;
 
-// Unit tests
-#[cfg(test)]
-mod batch_strategy_tests;
+/// ADR-069 S1 opt-in local WAL root (`PROXIMADB_WAL_LOCAL_DIR`). When set to a
+/// directory/URL (e.g. `file:///waldisk`), the per-collection WAL is written
+/// under `{dir}/{collection_id}/wal/` on that local reattachable disk instead of
+/// the collection's object-store data assignment — WAL is high-frequency small
+/// appends, each of which is a paid object-store PUT, so a local disk avoids that
+/// cost while data/segments stay on object store. Governs BOTH the write path
+/// (`resolve_collection_base_location`) and recovery replay so recovery is
+/// consistent. Read once (process-global). Empty/unset ⇒ `None` ⇒ legacy
+/// WAL-co-located-with-data behavior. Registered: docs/12-design/ENV_GATE_REGISTRY.adoc.
+pub(crate) fn local_wal_dir(config: &config::WALConfig) -> Option<String> {
+    // Precedence (codebase convention): env override > TOML config > None.
+    if let Some(dir) = local_wal_dir_env() {
+        return Some(dir);
+    }
+    config
+        .wal_local_dir
+        .as_ref()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// ADR-069 S1: the env-only local WAL root (`PROXIMADB_WAL_LOCAL_DIR`), for
+/// recovery/replay paths that are free functions without a `WALConfig` handle
+/// (the recovery manager is threaded with a `disk_manager`, not config). Env is
+/// the per-pod override and the highest-precedence source, so for full write
+/// and replay consistency an operator sets the env. Shares the same OnceLock as
+/// [`local_wal_dir`] so the two never disagree when the env is set.
+pub(crate) fn local_wal_dir_env() -> Option<String> {
+    static ENV: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    ENV.get_or_init(|| {
+        std::env::var("PROXIMADB_WAL_LOCAL_DIR")
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty())
+    })
+    .clone()
+}
 
 // Re-exports
-pub use avro_serialization_strategy::AvroSerializationStrategy;
 pub use background_manager::{
     BackgroundMaintenanceManager, BackgroundMaintenanceStats, BackgroundTaskStatus,
 };
-pub use batch_factory::{StrategyComparison, StrategyInfo, WALBatchFactory};
-pub use batch_strategy::WALBatchStrategy;
-pub use bincode_serialization_strategy::BincodeSerializationStrategy;
 pub use compaction_axis_integration::{CompactionAxisUpdater, CompactionIndexStats};
 pub use compaction_coordinator::{
     CollectionCompactionState, CompactionConfig, CompactionCoordinator, CompactionResult,
@@ -154,7 +176,6 @@ pub use flush_coordinator::{
     WALFlushCoordinator,
 };
 pub use memtable_manager::{MemtableManager, MemtableStats};
-pub use proto_serialization_strategy::ProtoSerializationStrategy;
 pub use recovery_manager::{ParallelRecoveryManager, RecoveryManager, RecoveryMode, RecoveryStats};
 pub use recovery_thread_pool::{
     RecoveryPoolStats, RecoveryThreadPool, get_recovery_thread_pool,
@@ -405,8 +426,6 @@ pub struct WriteAheadLogManagerRegistry {
     pool_config: WriteAheadLogManagerPoolConfig,
     /// WAL configuration for creating new managers
     wal_config: config::WALConfig,
-    /// Strategy type for creating new managers
-    strategy_type: config::WriteBufferStrategyType,
     /// Next manager ID for creating new instances
     next_manager_id: Arc<tokio::sync::Mutex<u64>>,
 }
@@ -618,7 +637,6 @@ impl WriteAheadLogManagerRegistry {
             manager_pool: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             pool_config,
             wal_config: config::WALConfig::default(),
-            strategy_type: config::WriteBufferStrategyType::AvroBatch,
             next_manager_id: Arc::new(tokio::sync::Mutex::new(1)),
         }
     }
@@ -678,9 +696,9 @@ impl WriteAheadLogManagerRegistry {
     /// Ensure initial pool of WalManagers exists
     async fn ensure_initial_pool(
         &self,
-        strategy_type: crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType,
+        _strategy_type: crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType,
         config: &WALConfig,
-        filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+        _filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     ) -> Result<()> {
         let pool = self.manager_pool.read().await;
         if !pool.is_empty() {
@@ -702,19 +720,8 @@ impl WriteAheadLogManagerRegistry {
         for i in 0..self.pool_config.initial_pool_size {
             let manager_id = format!("write_buffer_manager_pool_{}", i + 1);
 
-            let strategy = WALBatchFactory::create_batch_serialization_strategy(
-                strategy_type,
-                config,
-                filesystem.clone(),
-            )
-            .await?;
             let manager = Arc::new(
-                WriteAheadLogManager::new_pool_manager(
-                    strategy,
-                    config.clone(),
-                    manager_id.clone(),
-                )
-                .await?,
+                WriteAheadLogManager::new_pool_manager(config.clone(), manager_id.clone()).await?,
             );
 
             let entry = WriteAheadLogManagerPoolEntry {
@@ -840,21 +847,9 @@ impl WriteAheadLogManagerRegistry {
         );
 
         // Use registry-level config for dynamic managers
-        let strategy_type = self.strategy_type;
         let config = &self.wal_config;
-        let filesystem_config =
-            crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
-                .await?,
-        );
-
-        let strategy =
-            WALBatchFactory::create_batch_serialization_strategy(strategy_type, config, filesystem)
-                .await?;
         let manager = Arc::new(
-            WriteAheadLogManager::new_pool_manager(strategy, config.clone(), manager_id.clone())
-                .await?,
+            WriteAheadLogManager::new_pool_manager(config.clone(), manager_id.clone()).await?,
         );
 
         let entry = WriteAheadLogManagerPoolEntry {
@@ -1145,6 +1140,113 @@ pub fn get_global_write_buffer_behavior()
         .cloned()
 }
 
+/// ADR-069 D2 inline size-trigger: fire-and-forget a `materialize_collection` for the
+/// collection. ADR-081's canonical materializer gate collapses a burst for this
+/// collection. Reuses the exact `AutoFlushDriver` recipe (same globals, same plan
+/// shape via `flush_plan_from_collection_meta`) — ONE materialization path; the
+/// inline trigger only adds *when* to fire (a size crossing on the live write path,
+/// vs. the driver's periodic tick).
+/// TD-FLUSH-4: count of inline size-flush materializations currently in
+/// flight. Shutdown MUST await these — a large-memtable materialize takes
+/// tens of seconds (measured 43.9s for 884k entries) and killing it at
+/// teardown leaves a `__flush/` staging straggler that startup cleanup
+/// deletes, so the next boot comes up segment-less (WAL-safe but cold).
+static INLINE_FLUSHES_IN_FLIGHT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// TD-FLUSH-4: await in-flight inline flushes (bounded). Called from
+/// `ProximaDB::shutdown` BEFORE the storage engine stops, so triggered
+/// materializations complete and rename into place instead of dying mid-
+/// staging. Returns the number still in flight at timeout (0 = clean).
+pub async fn drain_inline_flushes(timeout: std::time::Duration) -> usize {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let inflight = INLINE_FLUSHES_IN_FLIGHT.load(std::sync::atomic::Ordering::Acquire);
+        if inflight == 0 {
+            return 0;
+        }
+        if std::time::Instant::now() >= deadline {
+            tracing::warn!(
+                inflight,
+                "shutdown: inline flush(es) still in flight at drain timeout"
+            );
+            return inflight;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+struct InlineFlushTicket;
+
+impl InlineFlushTicket {
+    fn new() -> Self {
+        INLINE_FLUSHES_IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        InlineFlushTicket
+    }
+}
+
+impl Drop for InlineFlushTicket {
+    fn drop(&mut self) {
+        INLINE_FLUSHES_IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+fn spawn_inline_flush(collection_id: String) {
+    use crate::storage::flush_materializer::{
+        flush_plan_from_collection_meta, materialize_collection_if_idle,
+    };
+
+    tokio::spawn(async move {
+        let _ticket = InlineFlushTicket::new();
+
+        let Some(write_buffer) = get_global_write_buffer_behavior() else {
+            return;
+        };
+        let axis = crate::index::get_global_axis_manager();
+        let catalog = list_collections_from_catalog().await;
+        let Some(meta) = catalog.iter().find(|c| c.id == collection_id) else {
+            tracing::warn!(
+                "inline size-flush: no catalog metadata for '{}', skipping",
+                collection_id
+            );
+            return;
+        };
+        let plan = flush_plan_from_collection_meta(meta);
+
+        // TD-FLUSH-4: announce the start — a large-memtable materialize runs
+        // tens of seconds and segments only become visible on completion
+        // (staged under `__flush/` then renamed); without this line the flush
+        // is invisible until it lands and "no segments yet" is unreadable.
+        tracing::info!(
+            collection_id,
+            "🚿 inline size-flush starting (segments appear on completion)"
+        );
+        let start = std::time::Instant::now();
+        match materialize_collection_if_idle(
+            &write_buffer,
+            &plan,
+            None,
+            None,
+            true,
+            axis.as_deref(),
+        )
+        .await
+        {
+            Ok(Some(outcome)) => tracing::info!(
+                "✅ inline size-flush '{}': {} entries, {} bytes in {:.3}s",
+                collection_id,
+                outcome.entries_flushed,
+                outcome.bytes,
+                start.elapsed().as_secs_f64()
+            ),
+            Ok(None) => {
+                // nothing unflushed — a concurrent driver tick already flushed it
+            }
+            Err(e) => tracing::warn!("⚠️ inline size-flush '{}' failed: {}", collection_id, e),
+        }
+    });
+}
+
 /// Get the global WriteAheadLogManager registry
 pub fn get_write_ahead_log_manager_registry() -> &'static WriteAheadLogManagerRegistry {
     WAL_MANAGER_REGISTRY.get().get_or_init(|| {
@@ -1264,9 +1366,9 @@ pub struct WriteAheadLogManagerPoolStats {
 
 impl WriteAheadLogManager {
     /// Create new WriteAheadLogManager
-    pub async fn new(strategy: Box<dyn WALBatchStrategy>, config: WALConfig) -> Result<Self> {
+    pub async fn new(config: WALConfig) -> Result<Self> {
         // Use new_pool_manager with a default manager ID for backwards compatibility
-        Self::new_pool_manager(strategy, config, "default_manager".to_string()).await
+        Self::new_pool_manager(config, "default_manager".to_string()).await
     }
 
     /// Create new WriteAheadLogManager for specific collections with shared global memtable
@@ -1428,11 +1530,7 @@ impl WriteAheadLogManager {
     }
 
     /// Create new WriteAheadLogManager for pool with empty collection set
-    pub async fn new_pool_manager(
-        _strategy: Box<dyn WALBatchStrategy>,
-        config: WALConfig,
-        manager_id: String,
-    ) -> Result<Self> {
+    pub async fn new_pool_manager(config: WALConfig, manager_id: String) -> Result<Self> {
         tracing::debug!(
             "🏊 Creating pool WriteAheadLogManager {} (shared global memtable)",
             manager_id
@@ -1493,18 +1591,17 @@ impl WriteAheadLogManager {
 
     /// Create new WAL manager using the factory (recommended)
     pub async fn create_with_factory(
-        strategy_type: crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType,
+        _strategy_type: crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType,
         config: WALConfig,
-        filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+        _filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     ) -> Result<Self> {
-        // Use the new batch serialization strategies for better separation of concerns
-        let strategy = WALBatchFactory::create_batch_serialization_strategy(
-            strategy_type,
-            &config,
-            filesystem,
-        )
-        .await?;
-        Self::new(strategy, config).await
+        // The batch-serialization strategy object was constructed here and then
+        // dropped by the manager (which routes on `config.strategy_type` + the
+        // global write buffer, never a `WALBatchStrategy`); the whole stack was
+        // removed. `strategy_type`/`filesystem` are retained on the signature for
+        // the live callers (engine.rs, metadata/write_ahead_log.rs) that pass an
+        // enum, but are no longer needed to construct the manager.
+        Self::new(config).await
     }
 
     /// Create new WAL manager using the batch factory (alias for modern naming)
@@ -1571,6 +1668,22 @@ impl WriteAheadLogManager {
     /// * `Ok(String)` - The resolved base location path
     /// * `Err` - If path cannot be resolved (e.g., collection not found)
     async fn resolve_collection_base_location(&self, collection_id: &str) -> Result<String> {
+        // ADR-069 S1: an explicit local WAL directory (PROXIMADB_WAL_LOCAL_DIR)
+        // DECOUPLES the WAL from the collection's (object-store) data assignment.
+        // WAL is high-frequency small appends — each object-store PUT is a paid
+        // write-txn — so a local reattachable disk avoids that cost while
+        // data/segments stay on object store. This precedes the resolver +
+        // catalog so it governs both the write path and replay consistently.
+        // Default unset ⇒ legacy behavior (WAL co-located with data).
+        if let Some(dir) = local_wal_dir(&self.config) {
+            tracing::debug!(
+                "WAL base via local WAL dir (ADR-069 S1): {} -> {}",
+                collection_id,
+                dir
+            );
+            return Ok(dir);
+        }
+
         // DIP: If a path_resolver is injected, use it directly (no 100ms wait needed)
         if let Some(ref resolver) = self.path_resolver {
             match resolver.resolve_base_location(collection_id).await {
@@ -1670,12 +1783,49 @@ impl WriteAheadLogManager {
     }
 
     /// Insert a single canonical record (converted to batch of 1 via WALVectorBatch).
+    /// ADR-069 S4 write-admission gate. Inert unless capacity backpressure is
+    /// armed (`wal_max_bytes > 0`); when armed it rejects the write with a
+    /// retryable [`WalBackpressure`] once the collection's unflushed memtable
+    /// reaches the critical watermark, so ingest sheds load instead of driving the
+    /// bounded local WAL disk into an ENOSPC crash. The high-watermark force-flush
+    /// (auto-flush driver) drains the memtable back under the line so writes resume.
+    ///
+    /// **Client ingest only.** Recovery replay materializes SST directly and never
+    /// routes through the insert methods, so replay is never backpressured.
+    async fn admit_write(&self, collection_id: &str) -> Result<()> {
+        use crate::storage::persistence::write_ahead_log::flush_policy::{
+            FlushPolicy, WalBackpressure,
+        };
+        let policy = FlushPolicy::from_performance(&self.config.performance);
+        // Default-OFF: no capacity budget ⇒ gate inert, zero cost on the hot path.
+        if policy.capacity_budget_bytes == 0 {
+            return Ok(());
+        }
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let mem_bytes: u64 = wal_behavior
+            .get_unflushed_batches(collection_id)
+            .await
+            .map(|batches| batches.iter().map(|b| b.total_size_bytes as u64).sum())
+            .unwrap_or(0);
+        if let Some(fill_pct) = policy.write_admission_reject_pct(mem_bytes) {
+            crate::metrics::wal_flush_metrics::inc_backpressure(collection_id);
+            return Err(anyhow::Error::new(WalBackpressure {
+                collection_id: collection_id.to_string(),
+                fill_pct,
+            }));
+        }
+        Ok(())
+    }
+
     pub async fn insert_record(
         &self,
         collection_id: String,
         record_id: VectorId,
         record: ProximaRecord,
     ) -> Result<u64> {
+        // ADR-069 S4: shed load at the critical watermark before appending.
+        self.admit_write(&collection_id).await?;
         let start_time = std::time::Instant::now();
 
         debug!(
@@ -2009,6 +2159,42 @@ impl WriteAheadLogManager {
             }
         }?;
 
+        // ADR-069 D2 inline size-trigger — the responsive throughput path (the 300s
+        // periodic AutoFlushDriver is the RPO floor). After a successful append, if the
+        // collection's unflushed data crosses the size target, fire-and-forget a flush.
+        // Skipped for insert-only (tombstone/delete) writes so deletes never trigger a
+        // segment flush. ONE materialization path (spawn_inline_flush reuses the driver
+        // recipe); per-collection guarded so a burst of writes collapses to one flush.
+        if !insert_only && let Some(write_buffer) = get_global_write_buffer_behavior() {
+            use crate::storage::persistence::write_ahead_log::flush_policy::{
+                FlushPolicy, FlushReason,
+            };
+            // Lean per-write size check (sums sizes under the lock, no batch clone —
+            // get_unflushed_batches clones every batch and regressed write throughput).
+            let mem_bytes = write_buffer.unflushed_bytes(collection_id).await;
+            // TD-FLUSH-3 S1: the predicted-segment-bytes floor input (Σ dim×9/8+8 —
+            // what the segment will occupy, vs mem_bytes' serialized-record size).
+            let predicted_bytes = write_buffer.unflushed_predicted_bytes(collection_id).await;
+            let policy = FlushPolicy::from_performance(&self.config.performance);
+            if matches!(
+                policy
+                    .evaluate_with_predicted(mem_bytes, 0, predicted_bytes)
+                    .reason,
+                Some(FlushReason::Size)
+            ) {
+                // TD-FLUSH-3 S2: attribute the trigger in the log so segment-size
+                // regressions are diagnosable from the flush line alone.
+                tracing::debug!(
+                    collection_id,
+                    mem_bytes,
+                    predicted_bytes,
+                    floor_bytes = policy.floor_predicted_bytes,
+                    "inline flush trigger: reason=size (predicted >= floor)"
+                );
+                spawn_inline_flush(collection_id.to_string());
+            }
+        }
+
         // Then, persist to disk if sync mode requires it
         if self.should_sync_to_disk(collection_id).await? {
             info!(
@@ -2218,6 +2404,9 @@ impl WriteAheadLogManager {
             return Ok(Vec::new());
         }
 
+        // ADR-069 S4: shed load at the critical watermark before appending.
+        self.admit_write(&collection_id).await?;
+
         // Create batch
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
         use crate::storage::persistence::write_ahead_log::BatchId;
@@ -2349,61 +2538,6 @@ impl WriteAheadLogManager {
         wal_behavior.vector_by_id(collection_id, vector_id).await
     }
 
-    /// Similarity search for canonical records.
-    pub async fn search_vectors_similarity(
-        &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: Option<proximadb_distance_kernel::DistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, ProximaRecord)>> {
-        {
-            let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-            let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            let metric =
-                distance_metric.unwrap_or(proximadb_distance_kernel::DistanceMetric::Cosine);
-            let results = wal_behavior
-                .search_unflushed_vectors(
-                    collection_id,
-                    query_vector,
-                    k,
-                    metric,
-                    None, // no metadata filters
-                    true, // include vectors
-                    true, // include metadata
-                )
-                .await?;
-
-            Ok(results
-                .into_iter()
-                .map(|r| {
-                    let vector_id = r.id.clone();
-                    let dim = r.vector.len() as u32;
-                    let record = ProximaRecord {
-                        oid: r.id.clone(),
-                        record_version: r.version.unwrap_or_default() as u64,
-                        created_at_ns: r.timestamp.unwrap_or_default() * 1_000_000,
-                        props: r
-                            .metadata
-                            .into_iter()
-                            .map(|(key, value)| {
-                                (key, ProximaTreeNode::Value(sql_value_to_proxima(&value)))
-                            })
-                            .collect(),
-                        embeddings: vec![EmbeddingCell {
-                            model_id: "wal".to_string(),
-                            modality: "dense_vector".to_string(),
-                            dim,
-                            values: proximadb_records::EmbeddingValues::Fp32(r.vector),
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    };
-                    (vector_id, r.score as f32, record)
-                })
-                .collect())
-        }
-    }
     /// TD-WLP-8 (ADR-061 D4): current resident **working-set bytes** for a
     /// collection — the sum of its unflushed WAL/memtable batch sizes. This is
     /// the same quantity `MemtableManager::get_collection_memory_usage` reports
@@ -3335,6 +3469,7 @@ mod wal_manager_infra_tests {
     use crate::storage::persistence::write_ahead_log::config::{
         WALConfig, WriteBufferStrategyType,
     };
+    use proximadb_records::EmbeddingCell;
 
     #[tokio::test]
     async fn test_wal_manager_creation() {
@@ -3507,6 +3642,39 @@ mod wal_manager_infra_tests {
 }
 
 #[cfg(test)]
+mod inline_flush_drain_tests {
+    use super::*;
+
+    /// TD-FLUSH-4: drain_inline_flushes returns 0 immediately when idle,
+    /// blocks while a ticket is held, and reports stragglers at timeout —
+    /// the shutdown-await contract that keeps a 40s materialize from being
+    /// killed mid-staging.
+    #[tokio::test]
+    async fn drain_awaits_inflight_tickets_and_times_out() {
+        assert_eq!(
+            drain_inline_flushes(std::time::Duration::from_millis(50)).await,
+            0,
+            "idle drain is immediate"
+        );
+        let ticket = InlineFlushTicket::new();
+        assert_eq!(
+            drain_inline_flushes(std::time::Duration::from_millis(300)).await,
+            1,
+            "held ticket reported as straggler at timeout"
+        );
+        let waiter =
+            tokio::spawn(async { drain_inline_flushes(std::time::Duration::from_secs(5)).await });
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        drop(ticket);
+        assert_eq!(
+            waiter.await.unwrap(),
+            0,
+            "drain completes when ticket drops"
+        );
+    }
+}
+
+#[cfg(test)]
 mod optimization_validation_tests {
     use super::*;
     use crate::storage::background_flush_context::{
@@ -3516,6 +3684,26 @@ mod optimization_validation_tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// ADR-069 S1: with the env override unset (guaranteed under nextest's
+    /// process-per-test isolation), `local_wal_dir` resolves from the TOML
+    /// `wal_local_dir` field and trims a trailing slash; `None` config ⇒ `None`
+    /// (legacy WAL-co-located-with-data). The env-override branch is covered by
+    /// the file:// + Azurite e2e beds (a process-global OnceLock can't be
+    /// re-toggled within one process).
+    #[test]
+    fn local_wal_dir_resolves_from_config_when_env_unset() {
+        assert!(
+            std::env::var("PROXIMADB_WAL_LOCAL_DIR").is_err(),
+            "test process must not have the env override set"
+        );
+        let mut cfg = config::WALConfig::default();
+        assert_eq!(local_wal_dir(&cfg), None);
+        cfg.wal_local_dir = Some("file:///waldisk/".to_string());
+        assert_eq!(local_wal_dir(&cfg), Some("file:///waldisk".to_string()));
+        cfg.wal_local_dir = Some("   ".to_string());
+        assert_eq!(local_wal_dir(&cfg), None, "blank config value is ignored");
+    }
 
     struct MockCollectionService {
         call_count: Arc<AtomicU32>,

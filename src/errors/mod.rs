@@ -106,6 +106,25 @@ impl ApiError {
     pub fn from_anyhow(err: anyhow::Error) -> Self {
         ApiError::Internal(err.to_string())
     }
+
+    /// Map an anyhow error from the write/ingest path to an `ApiError`, promoting
+    /// an ADR-069 S4 `WalBackpressure` found anywhere in the error chain to a
+    /// **retryable** `ResourceExhausted` (HTTP 429 / gRPC RESOURCE_EXHAUSTED) so
+    /// clients back off instead of treating a shed write as a non-retryable 500.
+    /// Any other error maps to `Internal` under the `context` prefix. Walking the
+    /// chain keeps the mapping robust to `.context(..)` wrapping by intermediate
+    /// layers.
+    pub fn from_write_error(context: &str, err: anyhow::Error) -> Self {
+        use crate::storage::persistence::write_ahead_log::flush_policy::WalBackpressure;
+        if let Some(bp) = err
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<WalBackpressure>())
+        {
+            ApiError::ResourceExhausted(bp.to_string())
+        } else {
+            ApiError::Internal(format!("{context}: {err}"))
+        }
+    }
 }
 
 /// Convert ApiError to gRPC Status
@@ -520,5 +539,28 @@ mod tests {
 
         assert_eq!(status.code(), tonic::Code::NotFound);
         assert!(status.message().contains("c1"));
+    }
+
+    #[test]
+    fn from_write_error_promotes_wal_backpressure_to_retryable() {
+        use crate::storage::persistence::write_ahead_log::flush_policy::WalBackpressure;
+        let bp = WalBackpressure {
+            collection_id: "c1".to_string(),
+            fill_pct: 97.0,
+        };
+        // Wrapped in context by intermediate layers — the chain-walk still finds it
+        // and promotes it to the retryable ResourceExhausted (RESOURCE_EXHAUSTED).
+        let wrapped = anyhow::Error::new(bp)
+            .context("wal append")
+            .context("insert path");
+        let mapped = ApiError::from_write_error("Insert failed", wrapped);
+        assert!(matches!(&mapped, ApiError::ResourceExhausted(_)));
+        assert_eq!(
+            tonic::Status::from(mapped).code(),
+            tonic::Code::ResourceExhausted
+        );
+        // A plain error stays a non-retryable Internal.
+        let other = ApiError::from_write_error("Insert failed", anyhow::anyhow!("disk gone"));
+        assert!(matches!(other, ApiError::Internal(_)));
     }
 }

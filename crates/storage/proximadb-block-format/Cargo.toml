@@ -22,6 +22,7 @@ rmp-serde.workspace = true
 
 # Codec layer: encoding schemes for column stripes
 proximadb-codec = { workspace = true }
+rayon = { workspace = true }
 
 # Type system: ProximaValue, ProximaType for column value encoding
 proximadb-data-model = { workspace = true }

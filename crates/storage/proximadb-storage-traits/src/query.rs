@@ -299,12 +299,17 @@ impl StorageQueryContext {
         let metadata = StorageQueryMetadata {
             collection_id: collection.id.clone(),
             use_axis_indexes: config
-                .and_then(|c| {
-                    if c.index_configs.is_empty() {
-                        None
-                    } else {
-                        Some(true)
-                    }
+                .map(|c| {
+                    // AXIS when the collection has index_configs OR has opted out of
+                    // the co-designed PAX scan (`pax_vector_format:off`). index_configs
+                    // alone is too narrow a proxy: a collection that disables PAX falls
+                    // back to the legacy .sst + AXIS path, so the gate must not skip
+                    // AXIS for it (otherwise its AXIS store is never rebuilt from SST).
+                    let pax_off = c
+                        .tags
+                        .iter()
+                        .any(|t| t.trim().eq_ignore_ascii_case("pax_vector_format:off"));
+                    pax_off || !c.index_configs.is_empty()
                 })
                 .unwrap_or(false),
             has_quantization: config.and_then(|c| c.quantization.as_ref()).is_some(),
@@ -387,6 +392,14 @@ impl StorageQueryContext {
         }
     }
 
+    /// TD-CACHE-3 S1: attach the requesting tenant so engine-side consumers
+    /// (per-tenant cache fair-share, RLS, billing labels) receive the real
+    /// tenant instead of `None`. Builder-style; absent ⇒ legacy behavior.
+    pub fn with_tenant_context(mut self, tenant_context: Option<TenantContext>) -> Self {
+        self.tenant_context = tenant_context;
+        self
+    }
+
     /// Get the query vector (convenience method).
     pub fn query_vector(&self) -> Option<&[f32]> {
         if let Some(ref vector) = self.search_params.vector {
@@ -402,7 +415,7 @@ impl StorageQueryContext {
 
     /// Get top_k value with fallback to default.
     pub fn top_k(&self) -> usize {
-        self.search_params.top_k.unwrap_or(10)
+        self.search_params.top_k.unwrap_or(10) as usize
     }
 
     /// Get distance metric (pre-computed from collection config).

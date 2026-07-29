@@ -85,15 +85,31 @@ struct ServerProcess {
 
 impl ServerProcess {
     async fn start(root: &str, data_dir: &Path, config_path: &Path) -> anyhow::Result<Self> {
+        Self::start_with_env(root, data_dir, config_path, &[]).await
+    }
+
+    /// Like [`start`], but injects extra environment variables into the spawned server
+    /// process. Used to arm the `PROXIMADB_TEST_RECOVERY_CRASH_POINT` seam for a specific
+    /// boot when reproducing recovery crash windows (TD-OBJSTORE-4 S3).
+    async fn start_with_env(
+        root: &str,
+        data_dir: &Path,
+        config_path: &Path,
+        extra_env: &[(&str, &str)],
+    ) -> anyhow::Result<Self> {
         let ports = [free_port(), free_port(), free_port(), free_port()];
         write_config(config_path, data_dir, root, ports);
-        let child = Command::new(env!("CARGO_BIN_EXE_proximadb-server"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_proximadb-server"));
+        command
             .arg("--config")
             .arg(config_path)
             .env("RUST_LOG", "info")
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()?;
+            .stderr(Stdio::inherit());
+        for (key, value) in extra_env {
+            command.env(key, value);
+        }
+        let child = command.spawn()?;
         let server = Self {
             child,
             base_url: format!("http://127.0.0.1:{}", ports[0]),
@@ -793,5 +809,253 @@ async fn armed_compaction_on_object_store_preserves_all_records() -> anyhow::Res
         "compaction created a literal local '{}' directory (URL-as-local-path)",
         scheme_dir.display()
     );
+    Ok(())
+}
+
+/// LIST the collections prefix (flat keyspace) and return the materialized vector
+/// segment blobs (`.pax`/`.sst` under a `.../data/` key). With a unique per-test
+/// `root`, every such blob belongs to this test's single collection, so the count
+/// is a structural duplicate detector independent of any read-path de-duplication.
+async fn list_segment_blobs(root: &str) -> anyhow::Result<Vec<String>> {
+    let factory = std::sync::Arc::new(
+        proximadb::storage::persistence::filesystem::FilesystemFactory::create(
+            proximadb::storage::persistence::filesystem::FilesystemConfig::default(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("filesystem factory: {e}"))?,
+    );
+    let collections_prefix = format!("{root}/collections");
+    let fs = factory
+        .get_filesystem(&collections_prefix)
+        .map_err(|e| anyhow::anyhow!("get_filesystem: {e}"))?;
+    let entries = fs
+        .list(&collections_prefix)
+        .await
+        .map_err(|e| anyhow::anyhow!("LIST {collections_prefix}: {e}"))?;
+    Ok(entries
+        .into_iter()
+        .map(|e| e.url)
+        .filter(|u| u.contains("/data/") && (u.ends_with(".pax") || u.ends_with(".sst")))
+        .collect())
+}
+
+/// TD-OBJSTORE-4 S3 double-replay crash-window idempotency. Reproduces a crash in
+/// the post-materialization recovery-retirement sequence (via the
+/// `PROXIMADB_TEST_RECOVERY_CRASH_POINT` seam), then a clean restart over the same
+/// object store, and proves that re-processing the still-present WAL is idempotent:
+/// the data survives and **exactly one** materialized segment exists (no duplicate
+/// segment, no duplicate records).
+///
+/// Two crash windows, two idempotency mechanisms, both must hold:
+/// * `after_materialize` (W1): segment committed but manifest not yet flushed → the
+///   restart re-replays and hits `write_if_absent` → `AlreadyExists` (the ADR-063
+///   commit-record).
+/// * `after_mark_flushed` (W2): manifest flushed but WAL not yet deleted → the
+///   restart skips the batch via the durable skip-list and retires the stray WAL.
+async fn run_double_replay(crash_point: &str) -> anyhow::Result<()> {
+    let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
+    anyhow::ensure!(
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
+    );
+    let root = format!(
+        "{}/td-objstore-double-replay/{}",
+        base.trim_end_matches('/'),
+        uuid::Uuid::new_v4().simple()
+    );
+    let tmp = tempfile::tempdir()?;
+    let collection = format!("dblreplay_{}", uuid::Uuid::new_v4().simple());
+    let dirs: Vec<_> = (0..3).map(|i| tmp.path().join(format!("vm{i}"))).collect();
+    for d in &dirs {
+        std::fs::create_dir_all(d)?;
+    }
+
+    // Boot 1: seed dim-8 records, then SIGKILL before any flush (WAL-only durability).
+    let b1 = ServerProcess::start(&root, &dirs[0], &tmp.path().join("vm0.toml")).await?;
+    create_and_insert(&b1.base_url, &collection, "sst").await?;
+    b1.crash()?;
+
+    // Boot 2: startup recovery materializes the segment, then the seam stops at the
+    // crash point — leaving the WAL present. This is the exact crash-window state.
+    let b2 = ServerProcess::start_with_env(
+        &root,
+        &dirs[1],
+        &tmp.path().join("vm1.toml"),
+        &[("PROXIMADB_TEST_RECOVERY_CRASH_POINT", crash_point)],
+    )
+    .await?;
+    assert_recovered(&b2.base_url, &collection, &format!("{crash_point} boot 2")).await?;
+    let after_boot2 = list_segment_blobs(&root).await?;
+    anyhow::ensure!(
+        after_boot2.len() == 1,
+        "{crash_point}: recovery must materialize exactly one segment, got {after_boot2:?}"
+    );
+    b2.crash()?;
+
+    // Boot 3: clean restart re-processes the still-present WAL. Re-materialization
+    // must be idempotent — no duplicate segment, no duplicate records.
+    let b3 = ServerProcess::start(&root, &dirs[2], &tmp.path().join("vm2.toml")).await?;
+    assert_recovered(&b3.base_url, &collection, &format!("{crash_point} boot 3")).await?;
+    let http = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    for id in ["durable-0", "durable-1"] {
+        let r = http
+            .get(format!(
+                "{}/api/v2/collections/{collection}/records/{id}",
+                b3.base_url
+            ))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            r.status().is_success(),
+            "{crash_point}: {id} not readable after double replay ({})",
+            r.status()
+        );
+    }
+    // Core idempotency invariant: STILL exactly one materialized segment — the
+    // re-replay hit AlreadyExists / the durable skip-list, not a duplicate write.
+    let after_boot3 = list_segment_blobs(&root).await?;
+    anyhow::ensure!(
+        after_boot3.len() == 1,
+        "{crash_point}: double replay created a DUPLICATE segment — expected 1, got {after_boot3:?}"
+    );
+    b3.crash()?;
+    Ok(())
+}
+
+/// W1: crash after the `write_if_absent` segment commit, before manifest mark-flushed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn double_replay_after_materialize_is_idempotent() -> anyhow::Result<()> {
+    run_double_replay("after_materialize").await
+}
+
+/// W2: crash after manifest mark-flushed, before WAL retirement.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn double_replay_after_mark_flushed_is_idempotent() -> anyhow::Result<()> {
+    run_double_replay("after_mark_flushed").await
+}
+
+/// TD-OBJSTORE-4 S3 recovery-compaction-suppression: a recovery flush that
+/// materializes an orphan WAL range with per-collection compaction ARMED must NOT
+/// compact inline until the WAL is retired (`suppress_compaction_until_wal_retired`,
+/// set in `recovery_manager.rs`, honored at `sst/flush/mod.rs`). Otherwise inline
+/// compaction could consume the deterministic `L0_recovery` commit-record segment
+/// before WAL retirement — and a crash there would re-replay and duplicate records.
+///
+/// Boot 1 flushes batch A into a normal segment (WAL A retired, one L0 segment). Boot
+/// 2 seeds batch B WAL-only and SIGKILLs. Boot 3 startup recovery materializes batch B
+/// into an `L0_recovery` segment; with two L0 segments now present and `l0_threshold:2`
+/// armed, compaction WOULD run inline — suppression must instead leave the `L0_recovery`
+/// segment intact and lose no records from either batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires PROXIMADB_OBJECT_STORE_URL (adls://Azurite, s3://MinIO, gs://fake-gcs, or real cloud)"]
+async fn recovery_suppresses_compaction_until_wal_retired() -> anyhow::Result<()> {
+    let base = std::env::var("PROXIMADB_OBJECT_STORE_URL")?;
+    anyhow::ensure!(
+        base.starts_with("s3://")
+            || base.starts_with("adls://")
+            || base.starts_with("az://")
+            || base.starts_with("gs://"),
+        "test URL must use s3://, adls://, az:// or gs:// (got {base})"
+    );
+    let root = format!(
+        "{}/td-objstore-recovery-compaction/{}",
+        base.trim_end_matches('/'),
+        uuid::Uuid::new_v4().simple()
+    );
+    let tmp = tempfile::tempdir()?;
+    let collection = format!("recomp_{}", uuid::Uuid::new_v4().simple());
+    let dirs: Vec<_> = (0..3).map(|i| tmp.path().join(format!("vm{i}"))).collect();
+    for d in &dirs {
+        std::fs::create_dir_all(d)?;
+    }
+    let http = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    // Boot 1: create with ARMED compaction (l0_threshold:2), seed batch A, graceful
+    // flush — one L0 segment, WAL A retired.
+    let b1 = ServerProcess::start(&root, &dirs[0], &tmp.path().join("vm0.toml")).await?;
+    let response = http
+        .post(format!("{}/api/v2/collections", b1.base_url))
+        .json(&json!({
+            "name": collection,
+            "dimension": 8,
+            "engine": "sst",
+            "distance_metric": "cosine",
+            "canonical_embedding_precision": "fp32",
+            "enable_proxima_record": false,
+            "tags": ["compaction:on", "l0_threshold:2"]
+        }))
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "compaction create failed");
+    let batch_a: Vec<Value> = (0..8)
+        .map(|i| json!({ "id": format!("a-{i}"), "vector": vec![0.1_f32 * (i as f32 + 1.0); 8] }))
+        .collect();
+    let response = http
+        .post(format!(
+            "{}/api/v2/collections/{collection}/records/batch",
+            b1.base_url
+        ))
+        .json(&json!({ "records": batch_a }))
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "batch A insert failed");
+    b1.graceful()?;
+
+    // Boot 2: seed batch B WAL-only, SIGKILL before any flush.
+    let b2 = ServerProcess::start(&root, &dirs[1], &tmp.path().join("vm1.toml")).await?;
+    let batch_b: Vec<Value> = (0..8)
+        .map(|i| json!({ "id": format!("b-{i}"), "vector": vec![0.05_f32 * (i as f32 + 1.0); 8] }))
+        .collect();
+    let response = http
+        .post(format!(
+            "{}/api/v2/collections/{collection}/records/batch",
+            b2.base_url
+        ))
+        .json(&json!({ "records": batch_b }))
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "batch B insert failed");
+    b2.crash()?;
+
+    // Boot 3: startup recovery materializes batch B into an `L0_recovery` segment with
+    // compaction armed. Suppression must keep that segment and every record.
+    let b3 = ServerProcess::start(&root, &dirs[2], &tmp.path().join("vm2.toml")).await?;
+    for id in (0..8)
+        .map(|i| format!("a-{i}"))
+        .chain((0..8).map(|i| format!("b-{i}")))
+    {
+        let response = http
+            .get(format!(
+                "{}/api/v2/collections/{collection}/records/{id}",
+                b3.base_url
+            ))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "record {id} unreadable after recovery with armed compaction ({})",
+            response.status()
+        );
+    }
+    // The deterministic recovery segment must still be present — inline compaction was
+    // suppressed and did not consume it before WAL retirement.
+    let segments = list_segment_blobs(&root).await?;
+    anyhow::ensure!(
+        segments.iter().any(|u| u.contains("L0_recovery")),
+        "recovery segment was consumed by inline compaction — suppression failed \
+         (segments: {segments:?})"
+    );
+    b3.crash()?;
     Ok(())
 }

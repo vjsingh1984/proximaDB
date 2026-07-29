@@ -45,9 +45,11 @@ pub const SEG_LAYOUT_VERSION: u8 = 1;
 /// `[prefix][Region A0 coarse directory][A][B][D][footer]`, rows ordered by
 /// coarse cell, regions cell-contiguous. The byte value 3 matches the TD/ADR
 /// "v3 layout" name (2 is intentionally skipped/reserved so code, docs, and
-/// on-disk bytes all say the same number). Written only by compaction under
-/// `PROXIMADB_IVF2=1`; version-1 readers reject it cleanly (fail-closed
-/// version check), v3-aware readers handle version-1 segments unchanged.
+/// on-disk bytes all say the same number). Written only by compaction when
+/// A0 training is enabled (default ON;
+/// `PROXIMADB_PAX_WRITE_A0_TRAIN=0` is the kill-switch). Version-1 readers
+/// reject it cleanly (fail-closed version check); v3-aware readers handle
+/// version-1 segments unchanged.
 pub const SEG_LAYOUT_VERSION_TWO_LEVEL: u8 = 3;
 
 /// v1: `[magic 4][version 1][pad 3][rabitq_off 8][rabitq_len 8][sq8_off 8][sq8_len 8][footer_off 8][footer_len 8]`.
@@ -287,7 +289,7 @@ pub mod compression_flags {
 /// lineage). Such a file cannot independently serve exact reconstruction.
 pub const EXTERNAL_CANONICAL_SOURCE_ID: u16 = u16::MAX;
 
-/// One footer-v2 physical stripe descriptor.
+/// One typed-footer physical stripe descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StripeEncodingDescriptor {
     pub descriptor_id: u16,
@@ -324,13 +326,22 @@ const ASSIGNMENT_SIZE: usize = 11;
 const SECTION_STRIPE_ENCODING_MAP: u8 = 2;
 /// Optional footer section mirroring the Region A0 (coarse directory) extent
 /// (TD-RDSTRAT-8). Additive: parsers that predate it skip unknown section tags
-/// (pinned by `footer_v2_unknown_optional_section_is_skipped`), so the footer
+/// (pinned by `typed_footer_unknown_optional_section_is_skipped`), so the footer
 /// stays single-version — layout versioning lives in the header-prefix.
 const SECTION_COARSE_DIRECTORY: u8 = 3;
 const SECTION_VERSION_V1: u8 = 1;
 const FOOTER_V1: u8 = 1;
 /// `[a0_off u64][a0_len u64]`.
 const COARSE_DIRECTORY_SECTION_LEN: usize = 16;
+/// Optional footer section mirroring the OID→position resolver region extent
+/// (TD-DELVEC-1 WI-2c). The resolver is an immutable write-time component, so it
+/// is persisted as a region *inside* the segment (atomic with it), not a sidecar.
+/// Additive: parsers that predate it skip unknown section tags. `opr_len == 0`
+/// ⇒ no resolver region ⇒ WI-3 tombstone fallback. The region payload is a
+/// self-CRC'd `ORP1` blob (`OidPositionResolver::serialize`).
+const SECTION_OID_RESOLVER: u8 = 4;
+/// `[opr_off u64][opr_len u64]`.
+const OID_RESOLVER_SECTION_LEN: usize = 16;
 
 /// The self-describing footer-index (Parquet-style metadata hub): block table +
 /// schema snapshot + per-stripe encoding map + RaBitQ mirror + row count. Located
@@ -372,15 +383,24 @@ pub struct SegmentFooterIndex {
     pub has_f32_tier: bool,
     /// The block table (block 0..K in emission/cluster order).
     pub blocks: Vec<FooterBlockEntry>,
-    /// Footer-v2 physical encoding descriptors. Empty means emit footer v1.
+    /// Typed-footer physical encoding descriptors. Empty means emit the
+    /// sectionless legacy form.
     pub encoding_map: Vec<StripeEncodingDescriptor>,
-    /// Per-block descriptor selections for footer v2.
+    /// Per-block descriptor selections for the typed encoding-map section.
     pub block_tier_assignments: Vec<BlockTierAssignment>,
     /// Region A0 (coarse directory) extent mirror (TD-RDSTRAT-8; also in the
     /// v3 header-prefix). `0/0` = no coarse level (v1 segments). Serialized as
     /// an optional trailing section, so v1 footers are byte-unchanged.
     pub a0_off: u64,
     pub a0_len: u64,
+    /// OID→position resolver region extent (TD-DELVEC-1 WI-2c). The resolver is
+    /// an immutable write-time component persisted as a region *inside* the
+    /// segment (atomic with it on the single PUT), not a sidecar. `0/0` = no
+    /// resolver (legacy/non-coalesced segments, or `with_oid_resolver` off) ⇒
+    /// WI-3 tombstone fallback. Serialized as an optional trailing section
+    /// (forward-compatible — old parsers skip the unknown tag).
+    pub opr_off: u64,
+    pub opr_len: u64,
 }
 
 /// `[footer_len u64][SEGMENT_MAGIC 8B]` — the 16 B tail that locates the footer.
@@ -628,7 +648,7 @@ fn read_u64(input: &[u8], position: &mut usize) -> Result<u64> {
 }
 
 #[cfg(test)]
-fn footer_v2_first_descriptor_offset(bytes: &[u8]) -> Result<usize> {
+fn typed_footer_first_descriptor_offset(bytes: &[u8]) -> Result<usize> {
     if bytes.first().copied() != Some(FOOTER_V1) {
         bail!("not a footer v1 payload");
     }
@@ -645,23 +665,23 @@ fn footer_v2_first_descriptor_offset(bytes: &[u8]) -> Result<usize> {
     }
     let section_count = read_u16(bytes, &mut position)?;
     if section_count == 0 {
-        bail!("footer v2 has no sections");
+        bail!("typed footer has no sections");
     }
     let section_tag = read_u8(bytes, &mut position)?;
     let _ = read_u8(bytes, &mut position)?;
     let _ = read_u32(bytes, &mut position)?;
     if section_tag != SECTION_STRIPE_ENCODING_MAP {
-        bail!("first footer v2 section is not the encoding map");
+        bail!("first typed-footer section is not the encoding map");
     }
     let descriptor_count = read_u16(bytes, &mut position)?;
     if descriptor_count == 0 {
-        bail!("footer v2 encoding map has no descriptors");
+        bail!("typed-footer encoding map has no descriptors");
     }
     Ok(position)
 }
 
 #[cfg(test)]
-fn footer_v2_section_count_offset(bytes: &[u8]) -> Result<usize> {
+fn typed_footer_section_count_offset(bytes: &[u8]) -> Result<usize> {
     if bytes.first().copied() != Some(FOOTER_V1) {
         bail!("not a footer v1 payload");
     }
@@ -726,6 +746,12 @@ impl SegmentFooterIndex {
             payload.extend_from_slice(&self.a0_len.to_le_bytes());
             sections.push((SECTION_COARSE_DIRECTORY, payload));
         }
+        if self.opr_len > 0 {
+            let mut payload = Vec::with_capacity(OID_RESOLVER_SECTION_LEN);
+            payload.extend_from_slice(&self.opr_off.to_le_bytes());
+            payload.extend_from_slice(&self.opr_len.to_le_bytes());
+            sections.push((SECTION_OID_RESOLVER, payload));
+        }
         if !sections.is_empty() {
             let section_count = u16::try_from(sections.len())
                 .map_err(|_| anyhow::anyhow!("footer section count exceeds u16"))?;
@@ -765,7 +791,7 @@ impl SegmentFooterIndex {
 
     fn validate_encoding_map(&self) -> Result<()> {
         if self.encoding_map.is_empty() {
-            bail!("footer v2 requires a non-empty stripe encoding map");
+            bail!("typed footer requires a non-empty stripe encoding map");
         }
         let mut descriptors = HashMap::with_capacity(self.encoding_map.len());
         for descriptor in &self.encoding_map {
@@ -865,6 +891,8 @@ impl SegmentFooterIndex {
         let mut block_tier_assignments = Vec::new();
         let mut a0_off = 0u64;
         let mut a0_len = 0u64;
+        let mut opr_off = 0u64;
+        let mut opr_len = 0u64;
         if p != body.len() {
             let section_count = read_u16(body, &mut p)? as usize;
             if section_count > body.len().saturating_sub(p) / 6 {
@@ -893,6 +921,15 @@ impl SegmentFooterIndex {
                     }
                     a0_off = u64::from_le_bytes(section[..8].try_into()?);
                     a0_len = u64::from_le_bytes(section[8..16].try_into()?);
+                } else if tag == SECTION_OID_RESOLVER {
+                    if version != SECTION_VERSION_V1 {
+                        bail!("unsupported oid-resolver section version {version}");
+                    }
+                    if section.len() != OID_RESOLVER_SECTION_LEN {
+                        bail!("oid-resolver section has wrong length");
+                    }
+                    opr_off = u64::from_le_bytes(section[..8].try_into()?);
+                    opr_len = u64::from_le_bytes(section[8..16].try_into()?);
                 }
             }
             if p != body.len() {
@@ -916,6 +953,8 @@ impl SegmentFooterIndex {
             block_tier_assignments,
             a0_off,
             a0_len,
+            opr_off,
+            opr_len,
         })
     }
 
@@ -971,6 +1010,8 @@ mod tests {
             block_tier_assignments: Vec::new(),
             a0_off: 0,
             a0_len: 0,
+            opr_off: 0,
+            opr_len: 0,
             blocks: vec![
                 FooterBlockEntry {
                     offset: 152_056,
@@ -988,7 +1029,7 @@ mod tests {
         }
     }
 
-    fn sample_v2_footer() -> SegmentFooterIndex {
+    fn sample_typed_footer() -> SegmentFooterIndex {
         let mut footer = sample_footer();
         footer.encoding_map = vec![
             StripeEncodingDescriptor {
@@ -1227,12 +1268,12 @@ mod tests {
         assert_eq!(parsed.a0_len, 123_456);
         assert_eq!(parsed.blocks.len(), 2);
         // Coexists with the encoding-map section (two sections).
-        let mut v2 = sample_v2_footer();
-        v2.a0_off = 72;
-        v2.a0_len = 99;
-        let bytes2 = v2.to_bytes().unwrap();
+        let mut typed = sample_typed_footer();
+        typed.a0_off = 72;
+        typed.a0_len = 99;
+        let bytes2 = typed.to_bytes().unwrap();
         let parsed2 = SegmentFooterIndex::parse(&bytes2).unwrap();
-        assert_eq!(parsed2.encoding_map, v2.encoding_map);
+        assert_eq!(parsed2.encoding_map, typed.encoding_map);
         assert_eq!(parsed2.a0_len, 99);
         // Absent A0 (a0_len == 0) ⇒ byte-identical to the sectionless footer
         // (v1 segments unchanged on disk by this feature).
@@ -1246,6 +1287,45 @@ mod tests {
         let reparsed = SegmentFooterIndex::parse(&plain.to_bytes().unwrap()).unwrap();
         assert_eq!(reparsed.a0_off, 0);
         assert_eq!(reparsed.a0_len, 0);
+    }
+
+    #[test]
+    fn footer_oid_resolver_section_round_trips() {
+        // TD-DELVEC-1 WI-2c: the OID→position resolver region extent is an
+        // optional footer section (tag 4), mirroring the coarse-directory
+        // section. Round-trips, coexists with other sections, and is absent
+        // (byte-identical to the sectionless footer) when opr_len == 0.
+        let mut footer = sample_footer();
+        footer.opr_off = 500_000;
+        footer.opr_len = 7_777;
+        let bytes = footer.to_bytes().unwrap();
+        let parsed = SegmentFooterIndex::parse(&bytes).unwrap();
+        assert_eq!(parsed.opr_off, 500_000);
+        assert_eq!(parsed.opr_len, 7_777);
+        assert_eq!(parsed.blocks.len(), 2);
+        // Coexists with the encoding-map + coarse-directory sections (three).
+        let mut typed = sample_typed_footer();
+        typed.a0_off = 72;
+        typed.a0_len = 99;
+        typed.opr_off = 8_000;
+        typed.opr_len = 4_000;
+        let parsed2 = SegmentFooterIndex::parse(&typed.to_bytes().unwrap()).unwrap();
+        assert_eq!(parsed2.encoding_map, typed.encoding_map);
+        assert_eq!(parsed2.a0_len, 99);
+        assert_eq!(parsed2.opr_off, 8_000);
+        assert_eq!(parsed2.opr_len, 4_000);
+        // Absent resolver (opr_len == 0) ⇒ byte-identical to the sectionless
+        // footer (v1 / non-coalesced segments unchanged on disk by this feature).
+        let plain = sample_footer();
+        assert_eq!(plain.to_bytes().unwrap(), {
+            let mut same = sample_footer();
+            same.opr_off = 999; // off without len must NOT emit a section
+            same.opr_len = 0;
+            same.to_bytes().unwrap()
+        });
+        let reparsed = SegmentFooterIndex::parse(&plain.to_bytes().unwrap()).unwrap();
+        assert_eq!(reparsed.opr_off, 0);
+        assert_eq!(reparsed.opr_len, 0);
     }
 
     #[test]
@@ -1306,8 +1386,8 @@ mod tests {
     }
 
     #[test]
-    fn footer_v2_encoding_map_round_trips() -> Result<()> {
-        let footer = sample_v2_footer();
+    fn typed_footer_encoding_map_round_trips() -> Result<()> {
+        let footer = sample_typed_footer();
         let bytes = footer.to_bytes()?;
         assert_eq!(bytes[0], 1);
 
@@ -1322,27 +1402,27 @@ mod tests {
     }
 
     #[test]
-    fn footer_v2_rejects_lossy_canonical_descriptor() {
-        let mut footer = sample_v2_footer();
+    fn typed_footer_rejects_lossy_canonical_descriptor() {
+        let mut footer = sample_typed_footer();
         footer.encoding_map[2].source_fidelity = SourceFidelity::Lossy;
         assert!(footer.to_bytes().is_err());
     }
 
     #[test]
-    fn footer_v2_unknown_required_transform_fails_closed() -> Result<()> {
-        let footer = sample_v2_footer();
+    fn typed_footer_unknown_required_transform_fails_closed() -> Result<()> {
+        let footer = sample_typed_footer();
         let mut bytes = footer.to_bytes()?;
-        let transform_offset = footer_v2_first_descriptor_offset(&bytes)? + 13;
+        let transform_offset = typed_footer_first_descriptor_offset(&bytes)? + 13;
         bytes[transform_offset] = 0xfe;
         assert!(SegmentFooterIndex::parse(&bytes).is_err());
         Ok(())
     }
 
     #[test]
-    fn footer_v2_unknown_optional_section_is_skipped() -> Result<()> {
-        let footer = sample_v2_footer();
+    fn typed_footer_unknown_optional_section_is_skipped() -> Result<()> {
+        let footer = sample_typed_footer();
         let mut bytes = footer.to_bytes()?;
-        let section_count_offset = footer_v2_section_count_offset(&bytes)?;
+        let section_count_offset = typed_footer_section_count_offset(&bytes)?;
         bytes[section_count_offset..section_count_offset + 2].copy_from_slice(&2u16.to_le_bytes());
         bytes.push(0xfe);
         bytes.push(1);

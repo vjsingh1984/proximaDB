@@ -134,7 +134,7 @@ async fn flush_batch(engine: &SstEngine, collection: &Collection, batch: Vec<Vec
 async fn search(engine: &SstEngine, collection: &Collection, query: Vec<f32>) -> Vec<String> {
     let params = Arc::new(SearchParams {
         query_vectors: Some(vec![query]),
-        top_k: Some(TOP_K),
+        top_k: Some(TOP_K as u16),
         distance_metric: Some(DistanceMetric::Euclidean),
         // TD-184: use Approximate so the search takes the AXIS/orchestrated path,
         // which triggers the rebuild-from-SST when the in-memory index is absent.
@@ -157,6 +157,13 @@ async fn search(engine: &SstEngine, collection: &Collection, query: Vec<f32>) ->
         collection: Arc::new(collection.clone()),
         metadata: StorageQueryMetadata {
             collection_id: collection.id.clone(),
+            // This test drives the SST engine directly, bypassing the service-layer
+            // context builder where the per-collection gate infers use_axis_indexes
+            // from index_configs / the pax_vector_format tag. These collections opt
+            // out of PAX and run the legacy .sst + AXIS path, so opt into AXIS here:
+            // with search_mode=Approximate this routes through the orchestrated path
+            // that rebuilds AXIS from SST on a miss (the behavior under test).
+            use_axis_indexes: true,
             ..Default::default()
         },
         user_context: None,

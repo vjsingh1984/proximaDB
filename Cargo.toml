@@ -55,6 +55,7 @@ members = [
     "crates/foundation/proximadb-tenant",
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
+    "crates/control/proximadb-abac",
     "crates/control/proximadb-catalog",
     "crates/control/proximadb-metrics",
     "crates/horizontal/proximadb-codec",
@@ -80,7 +81,8 @@ members = [
     "crates/modalities/proximadb-observability",
     "crates/modalities/proximadb-observability-engine",
     "crates/modalities/proximadb-embedding",
-    "crates/modalities/proximadb-queue",
+    "crates/horizontal/proximadb-queue",
+    "crates/modalities/proximadb-ledger",
     "crates/modalities/proximadb-rank-core",
     "crates/modalities/proximadb-rank-features",
     "crates/modalities/proximadb-rank-expr",
@@ -91,6 +93,8 @@ members = [
     "crates/storage/proximadb-raptor-engine",
     "crates/storage/proximadb-storage-common",
     "crates/storage/proximadb-storage-ports",
+    "crates/storage/proximadb-cks-local",
+    "crates/storage/proximadb-cks-objectstore",
     "crates/storage/proximadb-storage-traits",
     "crates/storage/proximadb-storage-encryption",
     "crates/storage/proximadb-block-format",
@@ -210,6 +214,7 @@ proximadb-relational-planner = { path = "crates/query/proximadb-relational-plann
 proximadb-relational-executor = { path = "crates/query/proximadb-relational-executor" }
 proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
+proximadb-abac = { path = "crates/control/proximadb-abac" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 arc-swap = "1.7"
@@ -358,6 +363,7 @@ proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-abac = { path = "crates/control/proximadb-abac", optional = true }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
@@ -392,8 +398,14 @@ proximadb-orion-engine = { workspace = true }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-observability-engine = { path = "crates/modalities/proximadb-observability-engine" }
+# Optional: the experimental transactional Ledger modality (gated by `experimental-ledger`).
+proximadb-ledger = { path = "crates/modalities/proximadb-ledger", optional = true }
+# F2 (ADR-072 D3/D5): the generation-fenced local-WAL ConditionalKeyStore impl,
+# wired into the relational insert path for atomic composite-PK uniqueness under
+# the `oltp-integrity` feature. Optional → default builds are byte-for-byte unchanged.
+proximadb-cks-local = { path = "crates/storage/proximadb-cks-local", optional = true }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
-proximadb-queue = { path = "crates/modalities/proximadb-queue" }
+proximadb-queue = { path = "crates/horizontal/proximadb-queue" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
 proximadb-rank-features = { path = "crates/modalities/proximadb-rank-features" }
 proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
@@ -689,6 +701,25 @@ tenant_access = []
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.
 experimental-engines = ["proximadb-raptor-engine/experimental-engines"]
+# Experimental transactional Ledger modality (ADR-071 / TD-LEDGER-1): the durable atomic-CAS
+# KV + TTL-lease OLTP surface. Off by default; enables the durable backend + its gRPC service.
+experimental-ledger = ["dep:proximadb-ledger", "proximadb-ledger/durable"]
+# F2 (ADR-072 D3/D5): enable the fenced ConditionalKeyStore in the relational insert
+# path. Off by default → the existing check-then-act PK-uniqueness probe runs unchanged;
+# on, a LocalWalKeyStore is wired in and enforces composite-PK uniqueness atomically.
+oltp-integrity = ["dep:proximadb-cks-local"]
+# FA (TD-FOUNDATION-3): enable ABAC row-level enforcement. Off by default → the
+# read primitives run unchanged; on, the compile bridge + admits_with_security
+# filter rows by the subject's policy. The abac crate itself stays un-gated
+# (a security substrate that never compiles is never tested).
+abac-policy = ["dep:proximadb-abac"]
+# F3v (TD-DELVEC-1 / ADR-072 D14): enable cold-tier deletion vectors. Off by
+# default → the default flush path is byte-for-byte unchanged; on, PAX segment
+# writes capture the OID→position resolver (footer region, WI-2c) so a
+# cold-resident delete (WI-3b) can set a deletion-vector bit without rewriting
+# the segment. Pure gate (no dep) — the storage-common primitives
+# (VersionedDeletionVector, OidPositionResolver, footer region) are unconditional.
+cold-deletion-vectors = []
 # Experimental SIMD path; not enabled by default
 simd-experimental = ["proximadb-codec/simd-experimental"]
 # TD-160 / ADR-027 / ADR-030: gate the PERF-CLASS I/O-trace *emission* (the

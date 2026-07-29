@@ -110,7 +110,7 @@ async fn search_with_filter(
 ) -> Result<Vec<proximadb::core::search::results::OptimizedSearchRecord>> {
     let search_params = Arc::new(SearchParams {
         vector: Some(query_vector.to_vec()),
-        top_k: Some(top_k),
+        top_k: Some(top_k as u16),
         distance_metric: Some(DistanceMetric::Cosine),
         filter_expression,
         ..SearchParams::default()

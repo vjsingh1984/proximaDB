@@ -60,6 +60,32 @@ pub fn get_sst_axis_manager() -> Option<Arc<dyn IndexEngine>> {
     GLOBAL_SST_AXIS_MANAGER.get().cloned()
 }
 
+/// TD-CACHE-1: process-global handles to the warm-tier caches, registered at
+/// engine arming so the boot warm task and the shutdown manifest emitter
+/// (database.rs) can reach them without threading engine handles. Same
+/// OnceLock pattern as the AXIS registry above; None until an engine arms.
+static GLOBAL_WARM_TIER_CACHES: std::sync::OnceLock<(
+    Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+)> = std::sync::OnceLock::new();
+
+/// Register the armed warm-tier caches (first engine wins — the server builds
+/// one SST engine; tests building more are no-ops here).
+pub fn set_warm_tier_caches(
+    invariants: Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    survivor: Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+) {
+    let _ = GLOBAL_WARM_TIER_CACHES.set((invariants, survivor));
+}
+
+/// The registered warm-tier caches, if any engine has armed them.
+pub fn get_warm_tier_caches() -> Option<(
+    Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+)> {
+    GLOBAL_WARM_TIER_CACHES.get().cloned()
+}
+
 // Global PCA model cache for Z-Order spatial encoding
 // Uses lazy_static for thread-safe initialization
 lazy_static::lazy_static! {
@@ -141,6 +167,17 @@ pub struct SstEngine {
     ///
     /// None during initialization, Some after start_compaction() called
     compaction_manager: Option<Arc<Compaction>>,
+
+    /// TD-COMPACT-8: per-collection `training_in_flight` guard. When a TD-COMPACT-5
+    /// training compaction is running for a collection, its `storage_url` is inserted
+    /// here. `should_trigger_compaction` arm 2 checks this set and skips re-arming
+    /// while a training pass is in-flight — eliminating the redundant re-training loop
+    /// (up to N-1 wasted cycles per ingest batch, each costing N GETs + PCA + PUT +
+    /// DELETEs on object storage). The flag is set by the flush caller before
+    /// `enqueue_due_compaction` and cleared by the background worker once the
+    /// compaction completes (the flush caller also clears it on the no-worker
+    /// paths: nothing-due `Ok(false)`, or enqueue `Err`).
+    pub(crate) training_in_flight: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 
     /// **Filesystem Factory**
     ///
@@ -337,6 +374,11 @@ pub struct SstEngine {
     freshness_lsn_source: Option<
         Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
     >,
+
+    /// ADR-081 regression hook: rejected preflights must not reach the
+    /// vector-proportional sort boundary.
+    #[cfg(test)]
+    pub(crate) flush_sort_invocations: std::sync::atomic::AtomicU64,
 }
 
 impl SstEngine {
@@ -403,10 +445,48 @@ impl SstEngine {
         // Register cache providers with orchestrator
         let orchestrator = Self::register_cache_providers(decompression_cache.clone()).await?;
 
-        // Initialize compaction manager (always enabled)
-        let compaction_manager = Some(Arc::new(Compaction::new(config.clone()).await.map_err(
-            |e| SstError::Internal(format!("Failed to create compaction manager: {}", e)),
-        )?));
+        // Initialize compaction manager (always enabled) — TD-COMPACT-6 D0: start
+        // background workers on THIS instance (the one the flush path uses via
+        // self.compaction_manager()). Without this, schedule_compaction enqueues to
+        // a workerless queue — the 2 workers at engine.rs:212 run on a DIFFERENT
+        // Compaction instance (the StorageEngine's), leaving the SstEngine's
+        // task_queue with zero consumers. Wire the worker count to the existing
+        // SstConfig.background_thread_count (was hardcoded 2 at engine.rs:212;
+        // the config field existed but was unused at the spawn site).
+        //
+        // TD-COMPACT-6 D1: the training_in_flight guard is created HERE and
+        // shared (same Arc) between this SstEngine and its Compaction, so the
+        // background workers can clear a collection's entry once the async
+        // compaction completes (re-arming the flush path's training trigger).
+        // It MUST be linked before start_workers, which clones the handle into
+        // each worker task.
+        let training_in_flight: Arc<std::sync::Mutex<std::collections::HashSet<String>>> =
+            Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        // TD-COMPACT-6 D1: construct via with_atomic_coordinator so the
+        // background workers carry the SAME atomic coordinator the flush path
+        // uses — preserving the ADR-046 LSN-coherent atomic-swap publish.
+        let mut compaction =
+            Compaction::with_atomic_coordinator(config.clone(), Some(atomic_coordinator.clone()))
+                .await
+                .map_err(|e| {
+                    SstError::Internal(format!("Failed to create compaction manager: {}", e))
+                })?;
+        compaction.set_training_in_flight(training_in_flight.clone());
+        // Wrap in Arc BEFORE start_workers: start_workers takes `self: &Arc<Self>`
+        // so each worker can clone the Arc and reuse THIS persistent instance
+        // (warmed reader/compactor/factory) instead of building a cold
+        // `temp_manager` per task.
+        let compaction: Arc<Compaction> = Arc::new(compaction);
+        compaction
+            .start_workers(config.background_thread_count as usize)
+            .await
+            .map_err(|e| {
+                SstError::Internal(format!(
+                    "Failed to start {} compaction workers: {}",
+                    config.background_thread_count, e
+                ))
+            })?;
+        let compaction_manager = Some(compaction);
 
         // Initialize universal performance optimization
         let universal_optimizer =
@@ -425,9 +505,104 @@ impl SstEngine {
             info!("🔗 SST Engine: AXIS manager integration enabled (HNSW/IVF indexes available)");
         }
 
+        // TD-CACHE-4: ARM the warm-tier caches at construction. The builder
+        // setters below (`with_segment_invariants_cache` / `with_survivor_cache`)
+        // had ZERO production callers, so both caches stayed `None` on the live
+        // serving path and every novel query re-paid the full GET chain (the
+        // ADR-065 #32-35 warm tier was dead code; found when the TD-METRICS-1
+        // hit/miss counters scraped 0 across a 920-query 1M run).
+        //
+        // Budgets are config-first (`SstConfig.segment_invariants_cache_mb` =
+        // 256 MB / `survivor_cache_mb` = 1024 MB — the 2026-07-24 sizing
+        // decision that also updated ADR-065's survivor default-OFF), env
+        // override wins, 0 disables either.
+        // PROCESS-GLOBAL singletons: the engine is constructed once per
+        // collection/location, but the warm tier is one budget pool per
+        // process — N instances would multiply the configured budget by N and
+        // leave the boot-warm/shutdown-emit hooks (which see one registered
+        // pair) pointed at a cache no query ever touches.
+
+        // TD-RDSTRAT-8 / COGS: initialize the coarse-probe (IVF) settings ONCE
+        // from the TOML config (`SstConfig.coarse_probe` →
+        // `[storage.sst_config.coarse_probe]`). Env overrides apply at the call
+        // sites in segment_format.rs (probe/nprobe) + block_cluster.rs (write-train).
+        crate::storage::engines::sst::segment_format::init_coarse_probe_settings(
+            config.coarse_probe.as_ref(),
+        );
+
+        static SHARED_INVARIANTS_CACHE: std::sync::OnceLock<
+            Option<Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>>,
+        > = std::sync::OnceLock::new();
+        let segment_invariants_cache = SHARED_INVARIANTS_CACHE
+            .get_or_init(|| {
+                let mb = std::env::var("PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(config.segment_invariants_cache_mb);
+                (mb > 0).then(|| {
+                    Arc::new(
+                        crate::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
+                            (mb as usize) * 1024 * 1024,
+                        ),
+                    )
+                })
+            })
+            .clone();
+        static SHARED_SURVIVOR_CACHE: std::sync::OnceLock<
+            Option<Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>>,
+        > = std::sync::OnceLock::new();
+        let survivor_cache = SHARED_SURVIVOR_CACHE.get_or_init(|| {
+            let mb = std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(config.survivor_cache_mb);
+            (mb > 0).then(|| {
+                // TD-CACHE-3 S1: per-tenant tier floors/weights via the same
+                // PROXIMADB_CACHE_TIERS_PATH policy the footer/index caches use
+                // (tenant→tier resolved live through the auth-stamped registry).
+                let budget_bytes = mb * 1024 * 1024;
+                let resolver = std::env::var("PROXIMADB_CACHE_TIERS_PATH")
+                    .ok()
+                    .and_then(|path| std::fs::read_to_string(&path).ok())
+                    .and_then(|json| proximadb_cache::TierPolicy::from_json(&json).ok())
+                    .map(|policy| {
+                        let policy = std::sync::Arc::new(policy);
+                        let default_tier = policy.default_tier.clone();
+                        let tenant_to_tier: std::sync::Arc<
+                            dyn Fn(&str) -> String + Send + Sync,
+                        > = std::sync::Arc::new(move |t: &str| {
+                            crate::services::record_store::tenant_tier(t)
+                                .unwrap_or_else(|| default_tier.clone())
+                        });
+                        policy.resolver(budget_bytes, tenant_to_tier)
+                    });
+                Arc::new(
+                    crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::with_resolver(
+                        budget_bytes,
+                        resolver,
+                    ),
+                )
+            })
+        }).clone();
+        if segment_invariants_cache.is_some() || survivor_cache.is_some() {
+            info!(
+                "🧠 SST warm-tier caches armed: invariants={} survivor={}",
+                segment_invariants_cache.is_some(),
+                survivor_cache.is_some()
+            );
+            // TD-CACHE-1: publish the handles for the boot warm task + the
+            // shutdown manifest emitter.
+            if let (Some(inv), Some(surv)) = (&segment_invariants_cache, &survivor_cache) {
+                set_warm_tier_caches(inv.clone(), surv.clone());
+            }
+        }
+
         Ok(Self {
             config,
             compaction_manager,
+            // TD-COMPACT-6 D1: the same Arc linked into the Compaction above —
+            // the flush path sets/reads it, the workers clear it on completion.
+            training_in_flight,
             filesystem,
             unified_fs: None, // Created per collection
             atomic_coordinator,
@@ -441,10 +616,12 @@ impl SstEngine {
             axis_manager,
             pca_model_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             directory_cache: None,
-            segment_invariants_cache: None,
-            survivor_cache: None,
+            segment_invariants_cache,
+            survivor_cache,
             tiering_integration: None,
             freshness_lsn_source: None,
+            #[cfg(test)]
+            flush_sort_invocations: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
