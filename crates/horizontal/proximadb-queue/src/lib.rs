@@ -1,9 +1,15 @@
 //! # ProximaDB Tiered Persistent Queue
 //!
-//! A queue subsystem designed for write-many-read-once async ingest. Separate
-//! from ProximaDB's collection WAL because the access patterns and stability
-//! requirements diverge — see the rationale in
-//! `~/.claude/plans/jaunty-pondering-cook.md`.
+//! A segment-based, tiered persistent queue — ProximaDB's durable append-only
+//! log primitive (`crates/horizontal/`). It serves two roles: the user-facing
+//! Queue *modality* (write-many-read-once async ingest) AND the internal
+//! coordination/audit substrate (AXIS index events, audit log, agent state)
+//! that were previously siloed across several "EventLog" implementations. See
+//! `docs/12-design/adr/ADR-079-segment-queue-primitive.adoc`.
+//!
+//! It is deliberately separate from the collection WAL: the WAL is the
+//! write-path durability floor with different stability/access semantics
+//! (ADR-071); this crate is the async/coordination plane.
 //!
 //! ## Three storage tiers
 //!
@@ -13,8 +19,8 @@
 //! - **Memory**: lock-free `crossbeam::queue::ArrayQueue<Message>` per
 //!   partition. Provides fast consumer reads and backpressure signaling.
 //! - **Object store** (recovery + cold archive): sealed disk segments are
-//!   uploaded via the existing `FilesystemFactory` (`adls://`, `s3://`,
-//!   `gcs://`, `file://`).
+//!   uploaded via the injected `QueueFs` adapter (`adls://`, `s3://`,
+//!   `gcs://`, `file://`); the reaper deletes the local copy once acked past.
 //!
 //! ## Per-tenant partitioning
 //!
@@ -23,12 +29,23 @@
 //! the same partition → per-tenant FIFO is preserved. Per-partition
 //! exclusive consumer leases prevent competing consumers and duplicate work.
 //!
-//! ## Phase 1B scaffold
+//! ## Status
 //!
-//! This commit ships the public API + memory-tier round-trip. Disk tier,
-//! object tier, group-commit fsync, partition leases, and crash recovery
-//! land as focused follow-up commits (the module files exist with their
-//! types but bodies are TODO-marked).
+//! All three tiers, group-commit fsync, per-partition leases, the atomic
+//! offset store, the reaper, and crash recovery (replay sealed segments +
+//! resume per-partition offsets) are implemented and covered by the crate's
+//! test suite (round-trip, restart, archive-recovery, lease renew/reclaim).
+//!
+//! ## Semantics
+//!
+//! **Producer/consumer** (competing consumers): today each partition carries
+//! a single exclusive lease + a single committed offset, so within a topic
+//! messages are delivered to exactly one consumer — the work-queue / Kafka
+//! single-group case. **Pub/sub** (fan-out: multiple independent subscribers
+//! each consuming all messages) is the next step — keying leases + offsets by
+//! `(group, topic, partition)` so different consumer groups read the same
+//! partition independently (ADR-079 §Semantics). Point-to-point is then the
+//! one-group degenerate case.
 
 pub mod config;
 pub mod consumer;

@@ -265,10 +265,10 @@ impl Consumer {
         Ok(())
     }
 
-    /// Negative ack — return messages to the front of their partition for
-    /// retry with incremented `attempt_count`. Phase 1B scaffold drops them
-    /// (no requeue) and just clears the in-flight tracker; full retry +
-    /// DLQ promotion lands with the disk tier.
+    /// Negative ack. Currently equivalent to `ack` — messages are cleared
+    /// from the in-flight tracker without requeue or dead-letter promotion.
+    /// Real requeue-to-front + attempt-count retry + DLQ is future work;
+    /// callers needing at-least-once retry must re-send.
     pub async fn nack(&self, message_ids: &[MessageId]) -> Result<()> {
         self.ack(message_ids).await
     }

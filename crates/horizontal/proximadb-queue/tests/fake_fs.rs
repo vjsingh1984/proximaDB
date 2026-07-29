@@ -1,7 +1,7 @@
-//! Test fixture: an in-memory `QueueFs` impl with controllable behavior
+//! Test fixture: an in-memory `QueueFs` impl with controllable behavior:
 //! - inject slow fsync, failing fsync, failing append, etc. Used by the
-//! disk_tier tests to verify Strict-mode semantics without depending on
-//! real disk I/O timing.
+//!   disk_tier tests to verify Strict-mode semantics without depending on
+//!   real disk I/O timing.
 //!
 //! Lives under `tests/` (not `src/`) because it's only useful to test
 //! consumers; the production code path always uses `LocalFs`.

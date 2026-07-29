@@ -4,11 +4,12 @@
 //!
 //! Walks each topic's partition directories, reads framed messages from
 //! every `.qseg` file in segment-id order, and pushes them into the
-//! topic's `PartitionMemory` ring buffer. Phase 2B does not yet consult
-//! the per-partition committed offset (that's Phase 2C's `offset_store`);
-//! every persisted message that hasn't been deleted off disk is replayed.
-//! Once 2C lands, recovery will skip messages with `offset <=
-//! committed_offset`.
+//! topic's `PartitionMemory` ring buffer, skipping any message whose offset
+//! is `<=` the per-partition committed offset (`offset_store`) so already-
+//! acked work is not redelivered (pinned by `restart_skips_already_acked_
+//! messages`). Today recovery reads the single default-group offset; once
+//! offsets are keyed per consumer group (ADR-079 §Semantics), it will resume
+//! each group's cursor independently.
 //!
 //! Crash-safety: each message frame is `[4 BE: payload_len][bincode bytes]`.
 //! A truncated final frame (process killed mid-fsync before
