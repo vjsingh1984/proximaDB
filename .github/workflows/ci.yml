@@ -833,6 +833,9 @@ jobs:
           # than relying on a PR being correctly labelled as mechanical.
           - { label: "no-default-features",  pkg: proximadb,        args: "--no-default-features" }
           - { label: "experimental-engines", pkg: proximadb,        args: "--features experimental-engines" }
+          # F3v (TD-DELVEC-1): cold-tier deletion vectors — feature-gated PAX flush-path
+          # resolver capture. Check it compiles so cfg drift in that path is caught.
+          - { label: "cold-deletion-vectors", pkg: proximadb,      args: "--features cold-deletion-vectors" }
           # Embedded crate (default, no language bindings) — validates the extracted
           # crate compiles against root at every tier. Python-feature + wheel build
           # is a qa→main (FULL) concern (heavy pyo3/numpy deps).
