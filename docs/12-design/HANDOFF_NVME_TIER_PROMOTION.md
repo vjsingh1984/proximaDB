@@ -126,6 +126,55 @@ At billion-scale with a 4GB DRAM instance: DRAM holds ~20 segments' invariants +
 | DRAM + NVMe (100M warm) | 15% | **75%** | 10% | **~10** | **$5.0** | **90%** |
 | DRAM + NVMe (1B warm) | 5% | **80%** | 15% | **~15** | **$7.5** | **85%** |
 
+### Attribution — survivors dominate the reduction, not invariants
+
+A common misread of this table: "cache the invariants (Region A + control
+plane) and GETs drop ~10×." That overstates the invariants tier. Decomposing the
+measured 48.5 GETs/query (2 segments) by PAX region — the 48.5 total is
+*measured*; the per-region split is *model-derived (approximate)*, traced from
+`rabitq_search_segment_coalesced` in `segment_format.rs`:
+
+| Region | What | Covering cache | ~GETs/q (2 segs) | Share |
+|---|---|---|---|---|
+| Control plane | header + A0 + RaBitQ-hdr + footer | SegmentInvariantsCache | ~8–13 | ~20–25% |
+| Region A probed cells | RaBitQ, nprobe≈14 cells | SurvivorRangeCache (`Other`) | ~10–16 | ~25% |
+| **Region B SQ8 survivors** | the rerank payload | SurvivorRangeCache (`QuantizedCodes`) | **~16–24** | **~40–50%** |
+| Region D OIDs | top-k metadata blocks | SurvivorRangeCache (`Other`) | ~2–4 | ~5% |
+
+The 48.5 → ~5.8 projection is driven by the **survivor cache + NVMe** (~40–50%
+of GETs), *not* invariants (~20–25%). Invariants caching alone takes 48.5 → ~38.
+The full warm-tier stack (both caches + NVMe) is what reaches ~5.8. All six PAX
+regions route through one of the two warm-tier caches, so the NVMe plan (D1 into
+`TenantCache`→SurvivorRangeCache, D2 into SegmentInvariantsCache) covers the
+entire read path — including Region D OIDs
+(`survivor_cache.get_or_fetch(CacheKind::Other, …)`, `segment_format.rs:2111`).
+
+## Prerequisite — fix the 0% SegmentInvariantsCache hit (blocks D2)
+
+The `level_multiplier=1.0` benchmark measured the invariants cache at **0% hit**
+(vs 99.96% in the earlier Phase-2 run). This is not a side note — **it gates
+D2.** NVMe sits *behind* the invariants cache: on an L1 miss the code checks L2
+(NVMe), but L2 is only populated by L1-eviction spill. If L1 never successfully
+inserts (the 0%-hit symptom), **L2 stays empty too → D2 delivers ~zero
+benefit.** Fix this *before* investing in D2.
+
+Code trace (`segment_format.rs`, `core.rs:531`):
+- The cache **is armed** (process-wide `OnceLock`, `Some` when
+  `segment_invariants_cache_mb > 0`). Not an arming bug.
+- Lookup `c.get(path)` and insert `c.put(path, …)` use the same key. Not a key
+  mismatch.
+- The insert is gated by a `cache_changed` flag that is **false on the
+  coarse-probe path** unless `a0_bytes`/`rabitq_header_bytes` were newly filled.
+  Leading hypothesis: on probe-armed segments the insert conditions don't fire →
+  entries never populate → 0% hit.
+- **Needs an instrumented re-run to confirm** (`PROXIMADB_TRACE_GETS` + the
+  `SEGMENT_INVARIANTS_CACHE_HITS/MISSES_TOTAL` counters). Code-reading says
+  "should hit"; the measurement says "doesn't" — close the gap with a
+  measurement, not more reading.
+
+Acceptance: invariants-cache hit rate **≥ 90% on warm repeat queries at 1M**
+(measured via the Prometheus counters) before D2 is considered done.
+
 ## Azure Economics (why this beats Turbopuffer)
 
 | Component | Turbopuffer (AWS) | ProximaDB (Azure) |
@@ -165,8 +214,34 @@ The existing `TenantCache` per-tenant fair-sharing (TD-CACHE-3: floors, ceilings
 - `docs/12-design/adr/ADR-065-*.adoc` — the PAX region layout + the warm-tier cache design (A in DRAM, B in DRAM/NVMe, D streamed).
 - `docs/12-design/HANDOFF_L2_COMPACTION_GET_REDUCTION.md` — the original Codex handoff for the L2 compaction fix.
 
+## Next reductions beyond caching (the post-NVMe levers)
+
+Once D1–D6 land, the warm-tier seam is complete — **caching is near-maxed**.
+The next 2–3× comes from model quality and I/O coalescing, not more cache tiers:
+
+1. **Per-operation coalescing (TD-SEARCH-3, designed not built).** Azure bills
+   per *operation* — a 72B GET and a 16KB GET cost the same ($0.005/10K).
+   Coalesce header+A0 into one GET, footer+last-SQ8-range into one GET.
+   ~2–4 GETs/query cold. Independent of caching; stacks on top of it.
+2. **nprobe reduction — the multiplicative lever.** `nprobe = √k_c ×
+   multiplier`; at 2 large segments it's ~14 each. Region A *and* Region B reads
+   both scale with nprobe, so **halving nprobe cuts ~25 GETs/query** — bigger
+   than the entire invariants tier. Model-quality lever (better IVF training →
+   fewer cells for same recall). Deepest lever; compounds with everything.
+   Candidate TD-SEARCH-4.
+3. **Concurrent-read dedup.** N queries probing one segment each re-read Region
+   A. An in-flight `read_range` coalescer dedups identical concurrent reads —
+   marginal in a single-query bench, real under production load.
+
+Caching gets GETs/query to ~5–15 depending on scale. Coalescing + nprobe is the
+path to <5.
+
 ## Acceptance Criteria
 
+0. **(Prerequisite, blocks D2)** SegmentInvariantsCache hit rate ≥ 90% on warm
+   repeat queries at 1M (Prometheus `SEGMENT_INVARIANTS_CACHE_HITS_TOTAL` /
+   misses). Fix the measured 0% hit *before* wiring NVMe behind it — otherwise
+   D2 is dead weight. See "Prerequisite" section above.
 1. NVMe L2 is optional (env-gated, unset = current behavior, zero regression).
 2. Both `SurvivorRangeCache` AND `SegmentInvariantsCache` spill to NVMe on DRAM eviction.
 3. Both promote from NVMe to DRAM on L2 hit.
