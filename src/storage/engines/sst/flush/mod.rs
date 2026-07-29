@@ -119,7 +119,15 @@ impl SstEngine {
             collection_storage_url, collection_id
         );
 
+        // ADR-081 D3: admission is the first vector-path boundary. Direct
+        // `do_flush` callers reach this check here; the WAL materializer also
+        // invokes the same preflight before it claims/clones source records.
+        self.preflight_flush_implementation(params).await?;
+
         // Sort canonical records for optimal SSTable encoding.
+        #[cfg(test)]
+        self.flush_sort_invocations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (sorted_vectors, sort_stats) = self
             .sort_vectors_for_sstable_encoding(params.vector_records.clone())
             .await?;
@@ -199,7 +207,8 @@ impl SstEngine {
         // already have the persisted PCA/IVF model in the A0 region, and re-training loads
         // the entire dataset into RAM (5.7 GB for 1M vectors, 100% CPU for minutes).
         // The cascade reader loads centroids lazily from A0 at search time.
-        if params.vector_records.len() >= 100 && params.collection_config.is_some() {
+        let needs_flush_pca = crate::storage::common::axis_flush_hook::axis_needed(params);
+        if params.vector_records.len() >= 100 && needs_flush_pca {
             // Only train with enough samples
             match self
                 .train_and_cache_pca_model(
@@ -279,6 +288,85 @@ impl SstEngine {
 
     // Removed duplicate sort_vectors_for_sstable_encoding method - using the one from utils.rs
 
+    /// ADR-081 D3: bounded metadata-only admission for an SST flush.
+    ///
+    /// This method must remain independent of `vector_records`: the WAL
+    /// materializer calls it before claiming or cloning record payloads.
+    pub(crate) async fn preflight_flush_implementation(
+        &self,
+        params: &FlushParameters,
+    ) -> Result<()> {
+        let recovery_materialization = params
+            .hints
+            .get("recovery_materialization_id")
+            .and_then(|value| value.as_str());
+
+        // Recovery must complete even while the normal live L0 backlog is at
+        // STOP, otherwise boot can deadlock before compaction workers run.
+        if self.compaction_manager().is_none() || recovery_materialization.is_some() {
+            return Ok(());
+        }
+
+        let cfg = self.config();
+        let stop_trigger = std::env::var("PROXIMADB_L0_STOP_TRIGGER")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(cfg.l0_stop_trigger);
+        let slowdown_trigger = std::env::var("PROXIMADB_L0_SLOWDOWN_TRIGGER")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(cfg.l0_slowdown_trigger);
+        if stop_trigger == 0 && slowdown_trigger == 0 {
+            return Ok(());
+        }
+
+        let storage_url = Self::get_collection_storage_url_from_params(params)?;
+        let files = self
+            .discover_sstable_files(&storage_url)
+            .await
+            .map_err(|error| {
+                SstError::Flush(format!(
+                    "ADR-081: cannot evaluate L0 admission for '{}': {}",
+                    storage_url, error
+                ))
+            })?;
+        // ADR-081 corrects TD-COMPACT-7's all-level count. The admission
+        // backlog is L0 only; stable L1/L2 objects must not stall new flushes.
+        let l0_count = files
+            .iter()
+            .filter(|path| {
+                path.rsplit('/')
+                    .next()
+                    .is_some_and(|name| name.starts_with("L0_"))
+            })
+            .count() as u32;
+
+        if stop_trigger > 0 && l0_count >= stop_trigger {
+            tracing::warn!(
+                collection = %storage_url,
+                l0_count,
+                stop_trigger,
+                "ADR-081: L0 admission STOP before record materialization"
+            );
+            return Err(SstError::Flush(format!(
+                "ADR-081: L0 admission stop — {l0_count} L0 files >= stop_trigger \
+                 {stop_trigger}; flush rejected before record materialization"
+            ))
+            .into());
+        }
+
+        if slowdown_trigger > 0 && l0_count >= slowdown_trigger {
+            tracing::debug!(
+                collection = %storage_url,
+                l0_count,
+                slowdown_trigger,
+                "ADR-081: L0 admission SLOWDOWN before record materialization"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        Ok(())
+    }
+
     /// Perform atomic flush operation with staging
     async fn perform_atomic_flush(
         &self,
@@ -305,69 +393,6 @@ impl SstEngine {
         };
 
         tracing::debug!(storage_url = %storage_url, filename = %filename, "Starting flush operation");
-
-        // TD-COMPACT-7 (ADR-076 D2): L0 admission watermarks — the CONSUMER
-        // half of the producer/consumer rate-control loop. TD-COMPACT-6 D1 made
-        // compaction async, so flush can outrun compaction during sustained
-        // ingest; these watermarks feed backpressure from the L0 backlog into
-        // the flush rate. Checked before writing a new L0, using the same file
-        // count `should_trigger_compaction` reasons over:
-        //  - STOP (hard):    l0_count >= stop_trigger    → defer the flush
-        //    (return Err). `materialize_collection`'s `?` returns before its
-        //    `free_wal` block, so the data stays durable in the WAL and the
-        //    auto-flush driver retries next tick. Bounds unbounded L0 growth.
-        //  - SLOWDOWN (soft): l0_count >= slowdown_trigger → yield ~1ms so the
-        //    background compaction workers get headroom to drain L0.
-        // Both default-OFF via 0; env-overridable. Only armed when a compaction
-        // manager exists (no point bounding L0 for a collection that can't
-        // compact it).
-        //
-        // SKIP during WAL recovery (`recovery_materialization.is_some()`):
-        // recovery flushes MUST complete regardless of L0 count — the watermark
-        // would deadlock (the flush can't proceed AND the compaction workers
-        // can't drain L0 because the server isn't fully started). Discovered by
-        // the Phase 2 cache sweep (server restart with l0_count=10 →
-        // stop_trigger=10 → D2 blocks → WAL recovery fails → server can't boot).
-        if self.compaction_manager().is_some() && recovery_materialization.is_none() {
-            let cfg = self.config();
-            let stop_trigger = std::env::var("PROXIMADB_L0_STOP_TRIGGER")
-                .ok()
-                .and_then(|v| v.parse::<u32>().ok())
-                .unwrap_or(cfg.l0_stop_trigger);
-            let slowdown_trigger = std::env::var("PROXIMADB_L0_SLOWDOWN_TRIGGER")
-                .ok()
-                .and_then(|v| v.parse::<u32>().ok())
-                .unwrap_or(cfg.l0_slowdown_trigger);
-            if stop_trigger > 0 || slowdown_trigger > 0 {
-                let l0_count = self
-                    .discover_sstable_files(storage_url)
-                    .await
-                    .unwrap_or_default()
-                    .len() as u32;
-                if stop_trigger > 0 && l0_count >= stop_trigger {
-                    tracing::warn!(
-                        collection = %storage_url,
-                        l0_count, stop_trigger,
-                        "TD-COMPACT-7: L0 admission STOP — deferring flush (WAL retained); \
-                         background compaction must drain L0 first"
-                    );
-                    return Err(SstError::Flush(format!(
-                        "TD-COMPACT-7: L0 admission stop — {l0_count} L0 files >= stop_trigger \
-                         {stop_trigger}; deferring flush so background compaction can drain L0 \
-                         (data is durable in the WAL)"
-                    ))
-                    .into());
-                }
-                if slowdown_trigger > 0 && l0_count >= slowdown_trigger {
-                    tracing::debug!(
-                        collection = %storage_url,
-                        l0_count, slowdown_trigger,
-                        "TD-COMPACT-7: L0 admission SLOWDOWN — yielding ~1ms for compaction"
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                }
-            }
-        }
 
         let atomic_op = if recovery_materialization.is_some() {
             // Recovery publishes directly to the deterministic final object via
@@ -1501,6 +1526,10 @@ mod tests {
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
+        create_test_engine_with_config(config).await
+    }
+
+    async fn create_test_engine_with_config(config: SstConfig) -> SstEngine {
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
@@ -1526,6 +1555,85 @@ mod tests {
             }],
             ..ProximaRecord::default()
         }
+    }
+
+    #[tokio::test]
+    async fn adr081_l0_stop_rejects_before_sort_and_ignores_stable_levels() {
+        use crate::proto::proximadb_v1::{
+            Collection, CollectionConfig, StorageAssignment, StorageEngine,
+        };
+        use crate::storage::traits::UnifiedStorageFormat;
+
+        let mut config = SstConfig::default();
+        config.l0_stop_trigger = 1;
+        config.l0_slowdown_trigger = 0;
+        config.background_thread_count = 1;
+        let engine = create_test_engine_with_config(config).await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let collection_id = "adr081_preflight";
+        let data_dir = StoragePath::collection_data_path(
+            temp_dir.path().to_string_lossy().as_ref(),
+            collection_id,
+        );
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(
+            std::path::Path::new(&data_dir).join("L1_20260729T000000_stable.pax"),
+            b"stable",
+        )
+        .unwrap();
+
+        let collection = Collection {
+            id: collection_id.to_string(),
+            config: Some(CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 2,
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: temp_dir.path().to_string_lossy().into_owned(),
+                engine: StorageEngine::Sst as i32,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            vector_records: vec![create_test_vector("v0", vec![1.0, 0.0])],
+            force: true,
+            synchronous: true,
+            collection_config: Some(collection),
+            ..Default::default()
+        };
+
+        engine
+            .preflight_flush(&params)
+            .await
+            .expect("a stable L1 segment must not consume the L0 admission budget");
+        std::fs::write(
+            std::path::Path::new(&data_dir).join("L0_20260729T000001_blocked.pax"),
+            b"l0",
+        )
+        .unwrap();
+
+        let before = engine
+            .flush_sort_invocations
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let error = engine
+            .do_flush(&params)
+            .await
+            .expect_err("L0 stop watermark must reject the flush");
+        let after = engine
+            .flush_sort_invocations
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            error.to_string().contains("L0 admission stop"),
+            "unexpected rejection: {error:#}"
+        );
+        assert_eq!(
+            after, before,
+            "admission rejection must occur before vector sorting"
+        );
     }
 
     /// TD-112: the LIVE flush path (`do_flush` -> `flush_implementation`) must

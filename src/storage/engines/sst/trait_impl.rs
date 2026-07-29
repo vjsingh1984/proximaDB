@@ -45,6 +45,10 @@ impl UnifiedStorageFormat for SstEngine {
         StorageFormatStrategy::Sst
     }
 
+    async fn preflight_flush(&self, params: &FlushParameters) -> Result<()> {
+        self.preflight_flush_implementation(params).await
+    }
+
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         info!("🚀 SST: Starting flush operation");
         // Use the flush module implementation directly

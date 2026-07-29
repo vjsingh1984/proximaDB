@@ -9,8 +9,8 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::RwLock;
 
 use crate::core::bloom::strategies::composite::CompositeBloomFilter;
@@ -150,6 +150,116 @@ impl WALVectorBatch {
     }
 }
 
+/// Exact, cancellation-safe ownership of immutable WAL batches for one flush.
+///
+/// Dropping an unfinished claim releases its batch IDs synchronously, including
+/// when the owning future is cancelled. Claimed batches remain visible to WAL
+/// reads until [`WALBehaviorWrapper::complete_flush_claim`] retires them after a
+/// successful segment publication.
+#[derive(Debug)]
+pub struct WALFlushBatchClaim {
+    collection_id: String,
+    claim_id: u64,
+    batch_ids: Vec<String>,
+    batches: Vec<WALVectorBatch>,
+    registry: Arc<StdMutex<FlushClaimRegistry>>,
+    finalized: bool,
+}
+
+impl WALFlushBatchClaim {
+    pub fn collection_id(&self) -> &str {
+        &self.collection_id
+    }
+
+    pub fn claim_id(&self) -> u64 {
+        self.claim_id
+    }
+
+    pub fn batch_ids(&self) -> &[String] {
+        &self.batch_ids
+    }
+
+    pub fn batches(&self) -> &[WALVectorBatch] {
+        &self.batches
+    }
+
+    fn finalize(&mut self) -> Result<()> {
+        let mut registry = self.registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "flush claim registry poisoned while finalizing collection '{}'",
+                self.collection_id
+            )
+        })?;
+        registry.release(&self.collection_id, self.claim_id, &self.batch_ids);
+        self.finalized = true;
+        Ok(())
+    }
+}
+
+impl Drop for WALFlushBatchClaim {
+    fn drop(&mut self) {
+        if self.finalized {
+            return;
+        }
+        match self.registry.lock() {
+            Ok(mut registry) => {
+                registry.release(&self.collection_id, self.claim_id, &self.batch_ids);
+            }
+            Err(_) => {
+                tracing::error!(
+                    collection_id = %self.collection_id,
+                    claim_id = self.claim_id,
+                    "flush claim registry poisoned; cancellation rollback could not run"
+                );
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct FlushClaimRegistry {
+    /// collection -> batch id -> claim id
+    claimed: HashMap<String, HashMap<String, u64>>,
+}
+
+impl FlushClaimRegistry {
+    fn is_claimed(&self, collection_id: &str, batch_id: &str) -> bool {
+        self.claimed
+            .get(collection_id)
+            .is_some_and(|claims| claims.contains_key(batch_id))
+    }
+
+    fn insert(&mut self, collection_id: &str, batch_id: String, claim_id: u64) {
+        self.claimed
+            .entry(collection_id.to_string())
+            .or_default()
+            .insert(batch_id, claim_id);
+    }
+
+    fn owns_all(&self, collection_id: &str, claim_id: u64, batch_ids: &[String]) -> bool {
+        self.claimed.get(collection_id).is_some_and(|claims| {
+            batch_ids
+                .iter()
+                .all(|batch_id| claims.get(batch_id) == Some(&claim_id))
+        })
+    }
+
+    fn release(&mut self, collection_id: &str, claim_id: u64, batch_ids: &[String]) {
+        let mut remove_collection = false;
+        if let Some(claims) = self.claimed.get_mut(collection_id) {
+            for batch_id in batch_ids {
+                if claims.get(batch_id) == Some(&claim_id) {
+                    claims.remove(batch_id);
+                }
+            }
+            remove_collection = claims.is_empty();
+        }
+        if remove_collection {
+            self.claimed.remove(collection_id);
+        }
+    }
+}
+
 /// Write Buffer-specific batch coordinator
 #[derive(Debug)]
 struct BatchCoordinator {
@@ -249,6 +359,62 @@ impl BatchCoordinator {
         } else {
             Vec::new()
         }
+    }
+
+    fn unflushed_batch_count(&self, collection_id: &str) -> usize {
+        self.batches
+            .get(collection_id)
+            .map(|batches| batches.values().filter(|batch| !batch.is_flushed).count())
+            .unwrap_or(0)
+    }
+
+    fn validate_batches_exact(&self, collection_id: &str, batch_ids: &[String]) -> Result<()> {
+        let Some(collection_batches) = self.batches.get(collection_id) else {
+            anyhow::bail!("collection '{}' has no WAL batches", collection_id);
+        };
+        if let Some(missing) = batch_ids
+            .iter()
+            .find(|batch_id| !collection_batches.contains_key(*batch_id))
+        {
+            anyhow::bail!(
+                "claimed batch '{}:{}' disappeared before flush retirement",
+                collection_id,
+                missing
+            );
+        }
+        Ok(())
+    }
+
+    /// Remove an exact, pre-validated set of batches as one coordinator update.
+    fn remove_batches_exact(&mut self, collection_id: &str, batch_ids: &[String]) -> Result<usize> {
+        self.validate_batches_exact(collection_id, batch_ids)?;
+
+        let mut removed_records = 0usize;
+        for batch_id in batch_ids {
+            let removed = self
+                .batches
+                .get_mut(collection_id)
+                .and_then(|batches| batches.remove(batch_id))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "claimed batch '{}:{}' disappeared during flush retirement",
+                        collection_id,
+                        batch_id
+                    )
+                })?;
+            removed_records += removed.vector_records.len();
+            for record in removed.vector_records.iter() {
+                let owned_by_removed_batch = self
+                    .vector_index
+                    .get(&record.oid)
+                    .is_some_and(|(_, indexed_batch, _)| indexed_batch == batch_id);
+                if owned_by_removed_batch {
+                    self.vector_index.remove(&record.oid);
+                }
+            }
+            self.credit_predicted(collection_id, batch_id);
+        }
+        Ok(removed_records)
     }
 
     /// Sum the unflushed bytes for a collection WITHOUT cloning the batches. The
@@ -389,6 +555,13 @@ pub struct WALBehaviorWrapper {
     #[allow(dead_code)]
     flush_state: Arc<RwLock<FlushState>>,
 
+    /// ADR-081: exact source ownership for in-flight materializations. This is
+    /// a synchronous mutex so a cancelled future's claim can roll back in Drop.
+    flush_claims: Arc<StdMutex<FlushClaimRegistry>>,
+
+    /// Monotonic process-local claim epoch.
+    flush_claim_sequence: Arc<AtomicU64>,
+
     /// Distributed mode: idempotency tokens per collection
     idempotency_tokens:
         Arc<RwLock<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
@@ -408,6 +581,8 @@ impl WALBehaviorWrapper {
             mvcc_versions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             wal_metrics: Arc::new(RwLock::new(WriteBufferMetrics::default())),
             flush_state: Arc::new(RwLock::new(FlushState::default())),
+            flush_claims: Arc::new(StdMutex::new(FlushClaimRegistry::default())),
+            flush_claim_sequence: Arc::new(AtomicU64::new(1)),
             idempotency_tokens: Arc::new(RwLock::new(std::collections::HashMap::new())),
             partition_sequences: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
@@ -703,6 +878,148 @@ impl WALBehaviorWrapper {
             .collect();
 
         Ok(unflushed_batches)
+    }
+
+    /// Atomically claim every currently unclaimed WAL batch in one collection.
+    ///
+    /// The returned batches are ordered by `(timestamp, batch_id)` so one source
+    /// set has a deterministic materialization order. New batches appended after
+    /// the snapshot remain unclaimed for the next flush epoch.
+    pub async fn claim_unflushed_batches(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<WALFlushBatchClaim>> {
+        // Hold the coordinator read guard through the process-local ownership
+        // transition. Otherwise a legacy retirement/drop path could remove a
+        // batch between the snapshot and registry insertion, producing a claim
+        // for a source that no longer exists. Cloning a WALVectorBatch is cheap
+        // because the record payload is Arc-backed; the synchronous claim lock
+        // is held only for map lookups/inserts and never across an await.
+        let coordinator = self.batch_coordinator.read().await;
+        let mut candidates: Vec<WALVectorBatch> = coordinator
+            .get_unflushed_batches(collection_id)
+            .into_iter()
+            .cloned()
+            .collect();
+        candidates.sort_by(|left, right| {
+            left.timestamp
+                .cmp(&right.timestamp)
+                .then_with(|| left.batch_id.to_base62().cmp(&right.batch_id.to_base62()))
+        });
+
+        let claim_id = self.flush_claim_sequence.fetch_add(1, Ordering::Relaxed);
+        let mut registry = self.flush_claims.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "flush claim registry poisoned while claiming collection '{}'",
+                collection_id
+            )
+        })?;
+
+        let mut batches = Vec::new();
+        let mut batch_ids = Vec::new();
+        for batch in candidates {
+            let batch_id = batch.batch_id.to_base62();
+            if registry.is_claimed(collection_id, &batch_id) {
+                continue;
+            }
+            registry.insert(collection_id, batch_id.clone(), claim_id);
+            batch_ids.push(batch_id);
+            batches.push(batch);
+        }
+        drop(registry);
+        drop(coordinator);
+
+        if batches.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(WALFlushBatchClaim {
+            collection_id: collection_id.to_string(),
+            claim_id,
+            batch_ids,
+            batches,
+            registry: self.flush_claims.clone(),
+            finalized: false,
+        }))
+    }
+
+    /// Retire exactly the source batches owned by a successfully published
+    /// flush. Batches appended while encoding was in flight are untouched.
+    pub async fn complete_flush_claim(&self, claim: &mut WALFlushBatchClaim) -> Result<usize> {
+        if !Arc::ptr_eq(&self.flush_claims, &claim.registry) {
+            anyhow::bail!(
+                "flush claim for '{}' belongs to a different WAL behavior",
+                claim.collection_id
+            );
+        }
+        {
+            let registry = self.flush_claims.lock().map_err(|_| {
+                anyhow::anyhow!(
+                    "flush claim registry poisoned while completing collection '{}'",
+                    claim.collection_id
+                )
+            })?;
+            if !registry.owns_all(&claim.collection_id, claim.claim_id, &claim.batch_ids) {
+                anyhow::bail!(
+                    "flush claim {} no longer owns every source batch for '{}'",
+                    claim.claim_id,
+                    claim.collection_id
+                );
+            }
+        }
+
+        // Lock and validate the coordinator before mutating the inner store.
+        // Holding this guard across the inner retirement ensures the second
+        // mirror cannot change between validation and removal. If inner
+        // retirement rejects, neither mirror is changed; if it succeeds, the
+        // already-validated coordinator removal cannot fail due to a race.
+        let mut coordinator = self.batch_coordinator.write().await;
+        coordinator.validate_batches_exact(&claim.collection_id, &claim.batch_ids)?;
+        let removed = self
+            .inner
+            .remove_batches_exact(&claim.collection_id, &claim.batch_ids)
+            .await?;
+        let coordinator_removed =
+            coordinator.remove_batches_exact(&claim.collection_id, &claim.batch_ids)?;
+        if coordinator_removed != removed {
+            tracing::warn!(
+                collection_id = %claim.collection_id,
+                claim_id = claim.claim_id,
+                inner_records = removed,
+                coordinator_records = coordinator_removed,
+                "flush retirement stores reported different record counts"
+            );
+        }
+        drop(coordinator);
+        claim.finalize()?;
+        Ok(removed)
+    }
+
+    /// Number of source batches currently owned by in-flight flush jobs.
+    pub fn claimed_flush_batch_count(&self, collection_id: &str) -> Result<usize> {
+        let registry = self.flush_claims.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "flush claim registry poisoned while reading collection '{}'",
+                collection_id
+            )
+        })?;
+        Ok(registry
+            .claimed
+            .get(collection_id)
+            .map(HashMap::len)
+            .unwrap_or(0))
+    }
+
+    /// Count unflushed source batches without cloning their record payloads.
+    ///
+    /// This is the admission fast path. A count is used instead of byte sum
+    /// because tombstone/legacy batches may legitimately report zero bytes and
+    /// still require durable retirement.
+    pub async fn unflushed_batch_count(&self, collection_id: &str) -> usize {
+        self.batch_coordinator
+            .read()
+            .await
+            .unflushed_batch_count(collection_id)
     }
 
     /// Sum unflushed bytes for a collection without cloning batches (hot-path
@@ -1002,7 +1319,12 @@ impl WALBehaviorWrapper {
         {
             // Remove vector index entries for this batch
             for vector_record in removed_batch.vector_records.iter() {
-                if !vector_record.oid.is_empty() {
+                if !vector_record.oid.is_empty()
+                    && coordinator
+                        .vector_index
+                        .get(&vector_record.oid)
+                        .is_some_and(|(_, indexed_batch, _)| indexed_batch == batch_id)
+                {
                     coordinator.vector_index.remove(&vector_record.oid);
                 }
             }
@@ -1457,5 +1779,85 @@ mod tests {
             .filter(|(_, record)| record.oid == vector_id)
             .collect();
         assert!(!found_vectors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn adr081_flush_claim_drop_releases_exact_source_batches() {
+        let wal = WALBehaviorWrapper::new(MemtableConfig::default());
+        wal.add_vector_batch(
+            "claim_drop",
+            test_wal_batch(vec![test_vector_record("v1", vec![1.0, 0.0])]),
+        )
+        .await
+        .unwrap();
+
+        let claim = wal
+            .claim_unflushed_batches("claim_drop")
+            .await
+            .unwrap()
+            .expect("first claim");
+        assert_eq!(claim.batch_ids().len(), 1);
+        assert_eq!(wal.claimed_flush_batch_count("claim_drop").unwrap(), 1);
+        assert!(
+            wal.claim_unflushed_batches("claim_drop")
+                .await
+                .unwrap()
+                .is_none(),
+            "a claimed source must not be served to another flush"
+        );
+
+        drop(claim);
+        assert_eq!(wal.claimed_flush_batch_count("claim_drop").unwrap(), 0);
+        assert!(
+            wal.claim_unflushed_batches("claim_drop")
+                .await
+                .unwrap()
+                .is_some(),
+            "drop/cancellation must return the exact source claim"
+        );
+    }
+
+    #[tokio::test]
+    async fn adr081_exact_flush_retirement_preserves_batch_appended_after_claim() {
+        let wal = WALBehaviorWrapper::new(MemtableConfig::default());
+        wal.add_vector_batch(
+            "claim_exact",
+            test_wal_batch(vec![test_vector_record("old", vec![1.0, 0.0])]),
+        )
+        .await
+        .unwrap();
+        let mut claim = wal
+            .claim_unflushed_batches("claim_exact")
+            .await
+            .unwrap()
+            .expect("source claim");
+
+        wal.add_vector_batch(
+            "claim_exact",
+            test_wal_batch(vec![test_vector_record("new", vec![0.0, 1.0])]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            wal.complete_flush_claim(&mut claim).await.unwrap(),
+            1,
+            "only the claimed record is retired"
+        );
+        let remaining = wal.get_unflushed_batches("claim_exact").await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].vector_records[0].oid, "new");
+        assert!(
+            wal.vector_by_id("claim_exact", "old")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            wal.vector_by_id("claim_exact", "new")
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 }

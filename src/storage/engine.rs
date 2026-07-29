@@ -22,6 +22,7 @@ use tracing::{debug, error, info, warn};
 pub struct StorageEngine {
     config: StorageConfig,
     sst_storages: Arc<DashMap<String, Arc<SstEngine>>>,
+    canonical_sst_storage: Arc<SstEngine>,
     #[allow(dead_code)]
     disk_manager: Arc<DiskManager>,
     write_ahead_log_manager: Arc<WriteAheadLogManager>,
@@ -143,30 +144,42 @@ impl StorageEngine {
         crate::index::set_global_axis_manager(axis_index_manager.clone());
         info!("✅ AXIS manager registered with SST engine for HNSW/IVF search");
 
-        // Initialize compaction manager with default config if not provided
+        // Build the one configured SST instance used by every flush and its
+        // background compaction. Keeping this Arc prevents the worker-owning
+        // instance from being discarded and a second default engine from being
+        // constructed by the materializer.
         let sst_config = config.sst_config.clone().unwrap_or_default();
-        let compaction_manager = Arc::new(Compaction::new(sst_config).await?);
-
-        // Create singleton SST storage instance
-        let _sst_config_for_storage = config.sst_config.clone().unwrap_or_default();
-        let _sst_storage = Arc::new(SstEngine::new().await.map_err(|e| {
-            proximadb_kernel::error::StorageError::SstEngine(format!(
-                "Failed to create SST storage: {}",
-                e
-            ))
-        })?);
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
+        let canonical_sst_storage = Arc::new(
+            SstEngine::new_with_config(sst_config, filesystem.clone(), distance_compute.clone())
+                .await
+                .map_err(|e| {
+                    proximadb_kernel::error::StorageError::SstEngine(format!(
+                        "Failed to create SST storage: {}",
+                        e
+                    ))
+                })?,
+        );
+        let compaction_manager = canonical_sst_storage
+            .compaction_manager()
+            .cloned()
+            .ok_or_else(|| {
+                proximadb_kernel::error::StorageError::SstEngine(
+                    "canonical SST storage did not initialize compaction".to_string(),
+                )
+            })?;
 
         Ok(Self {
             config,
             sst_storages: Arc::new(DashMap::new()), // Now uses DashMap for per-collection storages
+            canonical_sst_storage,
             disk_manager,
             write_ahead_log_manager,
             axis_index_manager,
             compaction_manager,
             filesystem,
-            distance_compute: Arc::new(
-                proximadb_distance_kernel::engine::UnifiedDistanceCompute::default(),
-            ),
+            distance_compute,
             storage_write_fence: None,
         })
     }
@@ -189,6 +202,21 @@ impl StorageEngine {
     pub async fn start(&mut self) -> crate::storage::Result<()> {
         tracing::info!("🚀 STORAGE_ENGINE: Starting storage engine");
 
+        // ADR-081: establish the one process-wide flush admission domain before
+        // recovery or any live trigger can resolve a materializer.
+        crate::storage::flush_materializer::configure_flush_admission(
+            self.config
+                .sst_config
+                .as_ref()
+                .map(|config| config.background_thread_count as usize)
+                .unwrap_or_else(crate::storage::flush_materializer::default_parallel_flushes),
+        );
+        crate::storage::flush_materializer::register_flush_engine(
+            crate::proto::proximadb_v1::StorageEngine::Sst,
+            self.canonical_sst_storage.clone(),
+        )
+        .await;
+
         // Load the durable catalog before WAL replay. Recovery flushes each WAL
         // batch through the collection's assigned storage engine, so those
         // engines must be registered first (especially after a cold restart,
@@ -205,17 +233,9 @@ impl StorageEngine {
         self.recover_from_wal().await?;
         tracing::info!("✅ STORAGE_ENGINE: WAL recovery completed, starting compaction workers");
 
-        // The StorageEngine holds a Compaction handle ONLY for
-        // `set_precision_resolver` (database.rs) + shutdown — it is NEVER
-        // enqueued to (the flush path uses the SstEngine's own Compaction,
-        // started with workers in core.rs). So this instance starts NO workers
-        // (the former `start_workers` here spawned 4 idle, never-fed workers —
-        // pure proliferation). The precision-resolver wiring is a separate
-        // follow-up (it currently targets this idle instance, not the one that
-        // compacts).
-        let sst_config = self.config.sst_config.clone().unwrap_or_default();
-        let temp_manager = Arc::new(Compaction::new(sst_config).await?);
-        self.compaction_manager = temp_manager;
+        // `compaction_manager` is the handle owned by canonical_sst_storage.
+        // Flush scheduling and bootstrap resolver wiring therefore target the
+        // same queue/workers rather than an idle look-alike instance.
 
         // ADR-069/TD-WAL-1: spawn the live auto-flush driver. The default config arms the
         // 300s time floor so the driver spawns and segments materialize while the server

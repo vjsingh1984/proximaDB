@@ -399,6 +399,10 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Vector-search compaction tuning — segment count is the GET multiplier
 | Proposed (2026-07-29)
 | The SIFT1M benchmark measured 205 GETs/query (9 segments × ~8 reads each) — 10× the competitive threshold. The compaction framework's `level_multiplier=2.0` (RocksDB-style scaling for write-amplification) sets the L2 threshold to 20 files — unreachable for a 1M collection with 5 L2 segments. For vector search, the dominant cloud cost is GET round-trips (not write amplification). Decision: `level_multiplier=1.0` (every level compacts at the same threshold; 5 L2 files → merge into 1-2), plus a post-ingest settle pass + production flush_floor (128MB). Target: ≤30 GETs/query cold (2-3 segments), retrieval margin >50% at $50/M KRU. Tracked: TD-COMPACT-10.
+| link:ADR-081-admission-first-flush-ownership.adoc[ADR-081]
+| Admission-first flush ownership and exact WAL batch claims
+| Accepted (2026-07-29)
+| Makes all materialization triggers share one process-wide engine per format, one operation gate per collection, and bounded cross-collection admission. Exact cancellation-safe WAL batch claims remain readable until publication and retire by ID, preserving writes that arrive during a flush. SST L0 admission moves before clone/sort/train/encode and counts only L0 segments. TD-FLUSH-5 encoding morsels remain within one admitted segment; empty-index collections do not feed AXIS. Tracked: TD-FLUSH-7.
 |===
 
 The index is complete and is enforced by `scripts/check_design_status_index.py`.
