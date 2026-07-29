@@ -161,7 +161,18 @@ async fn get_collection_entanglement(
 
     // Load records from collection.
     let records = vector_ops
-        .unified_search_native(&collection_id, vec![], limit, None, None)
+        .unified_search_native(
+            &collection_id,
+            vec![],
+            limit,
+            None,
+            None,
+            #[cfg(feature = "abac-policy")]
+            &proximadb_abac::ReadContext::system(
+                proximadb_abac::SystemReadReason::Statistics,
+                "rest::analytics [CLIENT-PLACEHOLDER]",
+            ),
+        )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 

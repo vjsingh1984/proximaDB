@@ -341,6 +341,11 @@ impl StreamingSearchService {
                     search_k,
                     None, // No filter
                     None, // Default config
+                    #[cfg(feature = "abac-policy")]
+                    &proximadb_abac::ReadContext::system(
+                        proximadb_abac::SystemReadReason::Statistics,
+                        "streaming [CLIENT-PLACEHOLDER]",
+                    ),
                 )
                 .await?;
 

@@ -114,6 +114,11 @@ pub use agent_memory::{
 pub use streaming::{EmbeddedSearchIterator, StreamingSearchConfig, StreamingSearchResult};
 
 use proximadb::core::config::{AdvancedPruneConfig, PruneModeConfig};
+// FA-b: only referenced on the `#[cfg(feature = "abac-policy")]` trailing arg of
+// `unified_search_native`. Embedded mode is abac-OFF by default; this import is
+// gated to match (the `proximadb-abac` dep is optional, behind the same feature).
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::{ReadContext, SystemReadReason};
 
 /// Embedded database configuration for multi-disk support
 #[derive(Debug, Clone)]
@@ -1867,7 +1872,18 @@ impl EmbeddedProximaDB {
             let results = self
                 .shared_services
                 .vector_operations_service
-                .unified_search_native(collection, query_vector, fetch_k, None, Some(config))
+                .unified_search_native(
+                    collection,
+                    query_vector,
+                    fetch_k,
+                    None,
+                    Some(config),
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::Statistics,
+                        "embedded [CLIENT-PLACEHOLDER]",
+                    ),
+                )
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))
