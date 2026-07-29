@@ -315,11 +315,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: llvm-tools-preview
-      - name: Install system deps + cargo-llvm-cov
+      - name: Install system deps + cargo-llvm-cov + cargo-nextest
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
           cargo install cargo-llvm-cov --locked
+          cargo install cargo-nextest --locked
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-qa-llvmcov"
@@ -327,7 +328,16 @@ jobs:
         env:
           CARGO_BUILD_JOBS: "1"
         run: |
-          cargo llvm-cov --lib --no-report -p proximadb
+          # Run under nextest (process-per-test isolation), NOT libtest's shared
+          # process. Four lib tests that touch process-global singletons
+          # (axis_flush_hook boot-global, eventlog restart/recovery, datafusion
+          # document-pax ranged-pushdown) flake under shared-process
+          # `cargo test --lib` — verified locally: 7424 pass / 4 fail under
+          # `cargo test --lib`; the SAME 4 PASS under `cargo nextest`. Matching
+          # every other CI job (which already uses nextest, mandate #11) removes
+          # the intermittent gate failure and is the prerequisite to flipping
+          # this job from continue-on-error to required.
+          cargo llvm-cov nextest --lib --no-report -p proximadb
           cargo llvm-cov report --json --output-path /tmp/llvm-cov.json
           python3 scripts/coverage_ratchet.py normalize --rust /tmp/llvm-cov.json -o /tmp/rust-current.json
           # Seed the baseline if absent (first run), else ratchet-check.
