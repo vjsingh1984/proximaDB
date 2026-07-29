@@ -372,6 +372,14 @@ fn write_pax_segment_ordered(
     // ADR-061 pre-GA in-place amendment; `PROXIMADB_PAX_COALESCED_RABITQ=0` opts
     // out to the legacy in-block RaBitQ layout for mixed-read / measurement).
     .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled());
+    // TD-DELVEC-1 WI-3a: capture the OID→position resolver (footer region, WI-2c)
+    // so a cold-resident delete (WI-3b) can set a deletion-vector bit without
+    // rewriting the segment. Feature-gated; default builds are byte-for-byte
+    // unchanged (the resolver is emitted only when this feature is on).
+    #[cfg(feature = "cold-deletion-vectors")]
+    {
+        writer = writer.with_oid_resolver(true);
+    }
     // TD-RDSTRAT-8 rev 3: the persisted IVF probe directory (v3 layout) — the
     // plan's runs are its IOP-derived cells, so the writer pads blocks at the
     // same boundaries the model's cell_rows describe (a cell = whole D-blocks).

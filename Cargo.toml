@@ -713,6 +713,13 @@ oltp-integrity = ["dep:proximadb-cks-local"]
 # filter rows by the subject's policy. The abac crate itself stays un-gated
 # (a security substrate that never compiles is never tested).
 abac-policy = ["dep:proximadb-abac"]
+# F3v (TD-DELVEC-1 / ADR-072 D14): enable cold-tier deletion vectors. Off by
+# default → the default flush path is byte-for-byte unchanged; on, PAX segment
+# writes capture the OID→position resolver (footer region, WI-2c) so a
+# cold-resident delete (WI-3b) can set a deletion-vector bit without rewriting
+# the segment. Pure gate (no dep) — the storage-common primitives
+# (VersionedDeletionVector, OidPositionResolver, footer region) are unconditional.
+cold-deletion-vectors = []
 # Experimental SIMD path; not enabled by default
 simd-experimental = ["proximadb-codec/simd-experimental"]
 # TD-160 / ADR-027 / ADR-030: gate the PERF-CLASS I/O-trace *emission* (the
