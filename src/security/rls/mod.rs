@@ -25,5 +25,8 @@ pub use policy::{
 };
 pub use service::{CollectionRLS, RLSConfig, RLSFilterResult};
 
+#[cfg(feature = "abac-policy")]
+mod abac_adapter;
+
 #[cfg(all(test, feature = "abac-policy"))]
 mod abac_enforcement_tests;
