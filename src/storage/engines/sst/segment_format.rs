@@ -761,6 +761,24 @@ fn env_u64_or(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+/// Backend-derived Region-A probe coalescing policy.
+///
+/// Region A previously defaulted to gap-zero even though Regions B/D already
+/// used the backend I/O budget. That paid one operation per selected IVF cell
+/// on Azure. Selected logical slices are retained separately, so bridging a
+/// bounded gap changes only bytes transferred, never the rows passed to the
+/// ranker or recall.
+fn default_probe_range_policy(
+    path: &str,
+) -> crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+    let target =
+        proximadb_storage_common::iops_budget::IopsBudget::for_path(path).target_block_bytes();
+    crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+        max_gap_bytes: (target / 4).max(64 * 1024),
+        max_range_bytes: target,
+    }
+}
+
 /// A coalesced ranged GET over one or more survivor data blocks.
 struct CoalescedFetch {
     start: u64,
@@ -1820,9 +1838,10 @@ pub(crate) fn coarse_probe_settings() -> CoarseProbeSettings {
 
 /// Geometric nprobe: `ceil(sqrt(k_c) × multiplier)`, clamped to `[min, max]`
 /// then to `k_c`. Sub-linear in corpus (V^0.25): ~56× fewer ranks than full-scan
-/// at 1M, recall ~0.98 at multiplier 1.0. Bump `nprobe_multiplier` (TOML) for
-/// higher recall. The max-then-min ordering avoids the `clamp(min, k_c)` panic
-/// when `k_c < min` (no-panic mandate #4).
+/// at 1M. The default multiplier 2.0 is recall-ratcheted by the settled
+/// one-segment SIFT1M geometry (11/30 cells, recall@10 >= 0.98); operators may
+/// trade quality for fewer bytes via TOML. The max-then-min ordering avoids the
+/// `clamp(min, k_c)` panic when `k_c < min` (no-panic mandate #4).
 fn geometric_nprobe(k_c: usize, s: CoarseProbeSettings) -> usize {
     let raw = ((k_c as f32).sqrt() * s.nprobe_multiplier).ceil() as usize;
     let floored = raw.max(s.nprobe_min);
@@ -2030,16 +2049,14 @@ async fn coarse_probe_survivors(
             }
         })
         .collect();
-    let max_gap_bytes = env_u64_or("PROXIMADB_PAX_VECTOR_COALESCE_GAP", 0);
-    let max_range_bytes = std::env::var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(0);
+    let defaults = default_probe_range_policy(path);
     let policy =
         crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
-            max_gap_bytes,
-            max_range_bytes,
+            max_gap_bytes: env_u64_or("PROXIMADB_PAX_VECTOR_COALESCE_GAP", defaults.max_gap_bytes),
+            max_range_bytes: env_u64_or(
+                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+                defaults.max_range_bytes,
+            ),
         };
     let fetches = plan_probe_cell_ranges(&selected, &policy);
     let mut fetched = Vec::with_capacity(fetches.len());
@@ -2625,6 +2642,25 @@ mod tests {
             nprobe_min: 3,
             nprobe_max: 0,
         }
+    }
+
+    #[test]
+    fn default_probe_quality_and_backend_ranges_match_sift_acceptance() {
+        let defaults: CoarseProbeSettings =
+            crate::core::config::CoarseProbeConfig::default().into();
+        assert_eq!(
+            geometric_nprobe(30, defaults),
+            11,
+            "the one-segment SIFT1M geometry needs 11/30 cells for recall@10 >= 0.98"
+        );
+
+        let azure = default_probe_range_policy("azure://container/segment.pax");
+        assert_eq!(azure.max_gap_bytes, 1024 * 1024);
+        assert_eq!(azure.max_range_bytes, 4 * 1024 * 1024);
+
+        let local = default_probe_range_policy("file:///data/segment.pax");
+        assert_eq!(local.max_gap_bytes, 256 * 1024);
+        assert_eq!(local.max_range_bytes, 1024 * 1024);
     }
 
     #[test]

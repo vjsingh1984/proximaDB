@@ -1477,7 +1477,14 @@ pub struct CoarseProbeConfig {
     /// probes only when `a0_len > 0`). Env: `PROXIMADB_PAX_WRITE_A0_TRAIN`.
     pub enable_write_train: bool,
     /// Geometric nprobe multiplier: `nprobe = ceil(sqrt(ncells) × multiplier)`.
-    /// Default 1.0 (recall ~0.98; bump to 1.5 for higher recall at more cost).
+    ///
+    /// Default 2.0. The settled one-segment SIFT1M geometry has 30 cells:
+    /// multiplier 1.0 probes 6 and missed the recall@10 ratchet (0.9786), while
+    /// multiplier 2.0 probes 11 and cleared the hardest measured 1,000-query
+    /// acceptance slice. Backend-bounded range coalescing absorbs the added
+    /// cell fanout (15.90 GET/query under the Azure policy); the full
+    /// three-phase harness remains the release gate. Operators may lower this
+    /// only with a representative recall gate.
     #[serde(default = "default_nprobe_multiplier")]
     pub nprobe_multiplier: f32,
     /// Minimum nprobe (floor). Default 3.
@@ -1521,7 +1528,7 @@ impl CacheOnWritePolicy {
 }
 
 fn default_nprobe_multiplier() -> f32 {
-    1.0
+    2.0
 }
 fn default_nprobe_min() -> usize {
     3
