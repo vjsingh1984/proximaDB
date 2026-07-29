@@ -527,13 +527,22 @@ generation)` — `deletion_vector.rs:142`; hook point `legacy.rs:1110-1116`.)
 * **WI-3a — plumbing (no behavior change).** `cold-deletion-vectors` feature gate
   + flush-path resolver capture — **landed** (#1306). Remaining 3a: WAL-LSN
   plumbing + the CAS'd DV manifest store.
-* **WI-3c — oid→segment resolution (the gate).** **Decision: bloom-prefixed
-  footer scan** — for each candidate segment, probe its bloom (oid maybe-present)
-  → on hit, read the footer resolver (`opr_off/opr_len`) →
-  `OidPositionResolver::position_of(oid)`. O(segments) bloom probes + O(hits)
-  footer reads per delete; uses existing blooms + the WI-2c resolver, **no new
-  index**. A greenfield oid→segment reverse index (O(1)) is deferred unless
-  measured delete latency at scale demands it.
+* **WI-3c — oid→segment resolution (the gate).** **Decision: in-memory resolver
+  cache** (rev-8 correction; rev-7's bloom-scan was abandoned — the cold-tier
+  bloom check is a stub, `collections.rs:213 → Ok(true)`, so bloom-prefixed
+  pruning doesn't exist). Cache each segment's parsed `OidPositionResolver` in
+  memory (a sibling `OidResolverCache` on the `SstEngine`, NOT `SegmentRegistry`
+  — the registry is a fire-and-forget `/tmp` metadata projection for Iceberg REST,
+  not the real cold segments, and isn't rehydrated on restart). A delete is
+  O(segments) in-memory `position_of(oid)` probes (cache hits); on miss,
+  lazy-load the footer region (`fs.read_range(path, opr_off, opr_len)` →
+  `OidPositionResolver::deserialize`, mirroring Region-A/B). Byte-budgeted +
+  recency-LRU (independent budget; mirrors `SegmentInvariantsCache`).
+  Compaction-invalidated on retire. **No new index** (memoization of the
+  footer-resolver fetch). A greenfield oid→segment reverse index (O(1)) is
+  deferred unless delete latency at scale demands it. Implementation: 3c-1
+  (cache primitive + resolve API) → 3c-2 (flush pre-warm + compaction
+  invalidation) → 3c-3 (= WI-3b delete wiring, blocked on 3a-remaining).
 * **WI-3b — the delete wiring.** At `legacy.rs:1110`, under
   `cold-deletion-vectors`: determine cold-residency (memtable miss), resolve
   oid→segment→position (WI-3c), `VersionedDeletionVector::mark_deleted(position,
@@ -542,7 +551,7 @@ generation)` — `deletion_vector.rs:142`; hook point `legacy.rs:1110-1116`.)
 
 === 11.3 Sequence
 
-WI-3a-remaining (DV store + LSN plumbing) → WI-3c (bloom-scan resolution) →
+WI-3a-remaining (DV store + LSN plumbing) → WI-3c (resolver cache + resolve API) →
 WI-3b (delete wiring) → WI-4 (merge-on-read) → WI-5/6/7. The WI-3a-remaining +
 WI-3c slices are decision-independent groundwork (additive primitives); WI-3b is
 where the behavior lands.
