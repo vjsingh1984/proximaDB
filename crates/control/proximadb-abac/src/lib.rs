@@ -62,5 +62,5 @@ pub use cache_key::{InMemoryPolicyEpochs, PolicyEpoch, PolicyEpochSource, Subjec
 pub use compile::{InMemoryPredicateObjectStore, PredicateObjectStore, compile_security_filter};
 pub use context::{
     AuthorizedReadContext, ClientServable, ColumnDecision, DenyReason, ForbiddenColumn,
-    ReadDecision, SystemReadContext, SystemReadReason,
+    ReadContext, ReadDecision, SystemReadContext, SystemReadReason,
 };

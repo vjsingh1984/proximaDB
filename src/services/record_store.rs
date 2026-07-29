@@ -16,7 +16,17 @@ use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 use arrow_schema::Schema as ArrowSchema;
 use async_trait::async_trait;
+// FA-b (Phase 4): the required read context. Only referenced on read
+// primitives' `#[cfg(feature = "abac-policy")]` trailing parameter, so the
+// import is gated to match — the default build never touches the type.
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::ReadContext;
+// `SystemReadReason` is only constructed at record-store *test* call sites (the
+// impls thread the param through unchanged), so it is test-gated to avoid an
+// unused-import warning in the non-test lib build.
 use futures::StreamExt;
+#[cfg(all(test, feature = "abac-policy"))]
+use proximadb_abac::SystemReadReason;
 use proximadb_block_format::{BlockCompression, BlockMode};
 use proximadb_catalog::{
     CatalogPhysicalFormat, CatalogStorageLayout, CatalogStorageSpecialization, CatalogTableSchema,
@@ -507,6 +517,29 @@ fn change_row_from_entry(
     }
 }
 
+#[cfg(feature = "abac-policy")]
+pub mod fa_b_bypass_does_not_compile {
+    //! FA-b compile-time guard (Phase 4).
+    //!
+    //! Asserts that a client read which omits the required `ReadContext`
+    //! argument does not compile. The carrier module is cfg-gated, so the
+    //! `compile_fail` doctest runs **only** when the `read_context` parameter
+    //! exists; under the default (feature-off) build the parameter is absent and
+    //! a 3-argument call would compile, which would make a bare `compile_fail`
+    //! doctest pass *vacuously*. Gating the carrier makes the assertion
+    //! meaningful.
+    //!
+    //! ```compile_fail
+    //! use proximadb::services::record_store::TableRecordStore;
+    //!
+    //! // FA-b: omitting the 4th `read_context` argument → E0061. Bypass is a
+    //! // compile error, not a code-review convention.
+    //! fn no_read_context<S: TableRecordStore>(store: &S) {
+    //!     let _ = store.get_by_key(todo!(), todo!(), todo!());
+    //! }
+    //! ```
+}
+
 #[async_trait]
 pub trait TableRecordStore: Send + Sync {
     /// Write catalog-validated record mutations.
@@ -518,11 +551,18 @@ pub trait TableRecordStore: Send + Sync {
     ) -> Result<TableRecordWriteResult>;
 
     /// Get the current visible record for a key.
+    ///
+    /// `read_context` (present only under `abac-policy`) is the FA-b required
+    /// authorization context: a client read resolves `AuthorizedReadContext`;
+    /// an internal read (FK resolution, index build, recovery) supplies
+    /// `ReadContext::system(reason, origin)`. A call that omits it does not
+    /// compile when the feature is on — ABAC bypass is a compile error.
     async fn get_by_key(
         &self,
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse>;
 
     /// Scan current visible records for a cataloged table.
@@ -1050,9 +1090,16 @@ impl TableRecordStore for CatalogRoutingTableRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         self.store_for_schema(table_schema)
-            .get_by_key(table_schema, request, tenant_context)
+            .get_by_key(
+                table_schema,
+                request,
+                tenant_context,
+                #[cfg(feature = "abac-policy")]
+                read_context,
+            )
             .await
     }
 
@@ -1149,6 +1196,7 @@ impl TableRecordStore for VectorOpsTableRecordStore {
         _table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         self.vector_ops
             .get_record_with_tenant_context(
@@ -1257,6 +1305,7 @@ impl TableRecordStore for RecordStorageTableRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         _tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         let record = self
             .storage
@@ -2046,6 +2095,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         // Pass `None`: the partition already scopes the tenant structurally, so
         // no per-record tenant filter is needed (TD-064).
@@ -2053,19 +2103,37 @@ impl TableRecordStore for DirectWalTableRecordStore {
         let (primary, legacy) = self.partitions_for(&tenant, table_schema);
         let Some(legacy) = legacy else {
             return RecordStorageTableRecordStore::new(primary)
-                .get_by_key(table_schema, request, None)
+                .get_by_key(
+                    table_schema,
+                    request,
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    read_context,
+                )
                 .await;
         };
         // O3 cutover window: the primary (post-flip) partition wins; fall back to
         // the legacy name-keyed partition for records not yet migrated-on-write.
         let primary_res = RecordStorageTableRecordStore::new(primary)
-            .get_by_key(table_schema, request.clone(), None)
+            .get_by_key(
+                table_schema,
+                request.clone(),
+                None,
+                #[cfg(feature = "abac-policy")]
+                read_context,
+            )
             .await?;
         if primary_res.is_some() {
             return Ok(primary_res);
         }
         RecordStorageTableRecordStore::new(legacy)
-            .get_by_key(table_schema, request, None)
+            .get_by_key(
+                table_schema,
+                request,
+                None,
+                #[cfg(feature = "abac-policy")]
+                read_context,
+            )
             .await
     }
 
@@ -2400,7 +2468,13 @@ mod tests {
         // Dual-read: under the oid gate, get + scan still see the legacy record.
         assert!(
             store
-                .get_by_key(&schema, get("r1"), None)
+                .get_by_key(
+                    &schema,
+                    get("r1"),
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
+                )
                 .await
                 .unwrap()
                 .is_some(),
@@ -2456,7 +2530,13 @@ mod tests {
             .unwrap();
         assert!(
             store
-                .get_by_key(&schema, get("r1"), None)
+                .get_by_key(
+                    &schema,
+                    get("r1"),
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
+                )
                 .await
                 .unwrap()
                 .is_none(),
@@ -2793,6 +2873,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -2838,6 +2920,8 @@ mod tests {
                         include_props: true,
                     },
                     None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
                 )
                 .await
                 .unwrap()
@@ -3340,6 +3424,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -3433,6 +3519,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -3520,6 +3608,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -3782,6 +3872,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -3889,6 +3981,8 @@ mod tests {
                     include_props: false,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -3998,6 +4092,8 @@ mod tests {
                         include_props: true,
                     },
                     None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
                 )
                 .await
                 .expect("get_by_key");
@@ -4223,6 +4319,7 @@ impl TableRecordStore for ObjectStoreIcebergRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         _tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         let records = self.read_all_records(table_schema, _tenant_context).await?;
         let found = records.into_iter().find(|record| record.oid == request.key);
@@ -4561,6 +4658,7 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         _tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         let records = self.read_all_records(table_schema, _tenant_context).await?;
         let found = records.into_iter().find(|record| record.oid == request.key);
