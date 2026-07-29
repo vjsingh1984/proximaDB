@@ -80,7 +80,7 @@ impl Producer {
         // that same offset so MessageId is stable across crash/replay.
         let outcome = disk_writer.append(&message).await?;
 
-        let mut to_send = message;
+        let to_send = message;
         let (entry, backpressure_hint) = match part
             .enqueue_with_offset(to_send.clone(), outcome.offset)
             .await

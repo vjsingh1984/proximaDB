@@ -54,6 +54,11 @@ struct RenewerHandle {
 struct InFlight {
     /// Messages handed out via `poll` that haven't been ack'd or nack'd.
     pending: Vec<MemoryEntry>,
+    /// This group's read cursor — the next offset to deliver. Advanced on
+    /// delivery (not ack), so a second `poll` doesn't re-deliver within a
+    /// session. Initialized from the group's committed offset on `subscribe`;
+    /// restart resumes there because ack persists it via `offset_store`.
+    next_read_offset: u64,
 }
 
 impl Consumer {
@@ -103,10 +108,22 @@ impl Consumer {
             // touch this partition.
             crate::leases::try_acquire(&fs, &root, topic, p, &self.inner.group_id, &holder_id, lease_duration).await?;
 
+            // Initialize this group's read cursor from its committed offset
+            // (None → 0, cold start). Restart resumes at the persisted cursor.
+            let committed = crate::offset_store::read(&fs, &root, topic, p, &self.inner.group_id)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(0);
             self.inner
                 .in_flight
                 .entry((topic.to_string(), p))
-                .or_insert_with(|| Mutex::new(InFlight::default()));
+                .or_insert_with(|| {
+                    Mutex::new(InFlight {
+                        pending: Vec::new(),
+                        next_read_offset: committed,
+                    })
+                });
 
             // Spawn a renewer task — every lease_duration/2 it re-runs
             // try_acquire to push the expiry forward. On Consumer drop
@@ -193,9 +210,17 @@ impl Consumer {
                 if remaining == 0 {
                     break;
                 }
-                let batch = part.try_pop_batch(remaining).await;
+                // Cursor-based read: `read_from` is NON-consuming, so other
+                // consumer groups see the same messages (pub/sub). Advance THIS
+                // group's read cursor past the delivered batch so the next poll
+                // doesn't re-deliver within a session.
+                let mut tracker = entry.value().lock().await;
+                let cursor = tracker.next_read_offset;
+                let batch = part.read_from(cursor, remaining).await;
                 if !batch.is_empty() {
-                    let mut tracker = entry.value().lock().await;
+                    if let Some(last) = batch.last() {
+                        tracker.next_read_offset = last.offset + 1;
+                    }
                     for memo in &batch {
                         tracker.pending.push(memo.clone());
                     }

@@ -322,11 +322,12 @@ async fn poll_without_subscription_returns_empty_quickly() {
     );
 }
 
-/// Multiple consumers in the SAME group on the same partition share the
-/// in-flight tracker — once one polls a message, the other won't see it.
-/// (Phase 1B in-process leasing; cross-process disk leases land later.)
+/// A consumer does not re-receive messages it already polled — the group's
+/// read cursor advances past delivered messages within a session (the
+/// within-group, no-re-delivery property; cross-group fan-out is covered by
+/// pubsub_ratchet). Two polls return disjoint message sets.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn second_consumer_sees_remaining_messages_after_first_drains() {
+async fn poll_does_not_redeliver_within_a_session() {
     let (_tmp, cfg) = cfg("t", 1, 16);
     let client = QueueClient::open(cfg).await.unwrap();
     let producer = client.producer();
@@ -337,19 +338,19 @@ async fn second_consumer_sees_remaining_messages_after_first_drains() {
             .unwrap();
     }
 
-    let c1 = client.consumer("g");
-    c1.subscribe("t", &[0]).await.unwrap();
-    let batch1 = c1.poll(4, Duration::from_millis(50)).await.unwrap();
+    let c = client.consumer("g");
+    c.subscribe("t", &[0]).await.unwrap();
+    let batch1 = c.poll(4, Duration::from_millis(50)).await.unwrap();
     assert_eq!(batch1.len(), 4);
 
-    let c2 = client.consumer("g");
-    c2.subscribe("t", &[0]).await.unwrap();
-    let batch2 = c2.poll(8, Duration::from_millis(50)).await.unwrap();
-    assert_eq!(
-        batch2.len(),
-        4,
-        "second consumer should see the remaining 4"
-    );
+    let batch2 = c.poll(8, Duration::from_millis(50)).await.unwrap();
+    assert_eq!(batch2.len(), 4, "second poll delivers the NEXT 4, not re-delivered");
+
+    // No overlap between the two batches.
+    let mut ids: Vec<&proximadb_queue::MessageId> = batch1.iter().map(|d| &d.message_id).collect();
+    ids.extend(batch2.iter().map(|d| &d.message_id));
+    let unique: std::collections::HashSet<_> = ids.into_iter().collect();
+    assert_eq!(unique.len(), 8, "8 distinct messages across the two polls");
 }
 
 /// Shutdown is idempotent and doesn't panic when called twice.

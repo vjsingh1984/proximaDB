@@ -361,7 +361,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(replayed, 1);
-        let restored = state.memory[0].try_pop_batch(10).await;
+        let restored = state.memory[0].read_from(0, 10).await;
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].message.payload, b"survives");
     }

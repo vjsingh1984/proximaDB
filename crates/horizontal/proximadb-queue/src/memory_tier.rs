@@ -189,26 +189,6 @@ impl PartitionMemory {
         // reassigning keeps the >= half, dropping the trimmed prefix.
         buf.entries = buf.entries.split_off(&watermark);
     }
-
-    /// Compat shim for the pop-once consumer path: read from the head and trim
-    /// past it. Retained until the consumer migrates to cursor-based `read_from`
-    /// (slice 4); the reaper then owns trimming (min across groups).
-    pub async fn try_pop_batch(self: &Arc<Self>, max: usize) -> Vec<MemoryEntry> {
-        let base = self
-            .buf
-            .lock()
-            .await
-            .entries
-            .keys()
-            .next()
-            .copied()
-            .unwrap_or(0);
-        let out = self.read_from(base, max).await;
-        if let Some(last) = out.last() {
-            self.trim_below(last.offset + 1).await;
-        }
-        out
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -251,7 +231,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enqueue_assigns_partition_scoped_ids_and_pop_preserves_fifo_order() {
+    async fn enqueue_assigns_partition_scoped_ids_and_read_preserves_fifo_order() {
         let memory = Arc::new(PartitionMemory::new(5, 4));
 
         let (first, hint) = memory.try_enqueue(message(1)).await.unwrap();
@@ -263,11 +243,12 @@ mod tests {
         assert!(hint.is_none());
         assert_eq!(memory.depth().await, 2);
 
-        let popped = memory.try_pop_batch(10).await;
-        assert_eq!(popped.len(), 2);
-        assert_eq!(popped[0].message.payload, vec![1]);
-        assert_eq!(popped[1].message.payload, vec![2]);
-        assert_eq!(memory.depth().await, 0);
+        let read = memory.read_from(0, 10).await;
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[0].message.payload, vec![1]);
+        assert_eq!(read[1].message.payload, vec![2]);
+        // Non-consuming — depth unchanged (pub/sub).
+        assert_eq!(memory.depth().await, 2);
     }
 
     #[tokio::test]
@@ -306,16 +287,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pop_batch_respects_max_and_empty_queue_returns_empty_vec() {
+    async fn read_from_respects_max_and_range_bounds() {
         let memory = Arc::new(PartitionMemory::new(0, 3));
-        memory.try_enqueue(message(1)).await.unwrap();
-        memory.try_enqueue(message(2)).await.unwrap();
-        memory.try_enqueue(message(3)).await.unwrap();
+        memory.try_enqueue(message(1)).await.unwrap(); // offset 0
+        memory.try_enqueue(message(2)).await.unwrap(); // offset 1
+        memory.try_enqueue(message(3)).await.unwrap(); // offset 2
 
-        assert_eq!(memory.try_pop_batch(0).await.len(), 0);
-        assert_eq!(memory.try_pop_batch(2).await.len(), 2);
-        assert_eq!(memory.try_pop_batch(2).await.len(), 1);
-        assert!(memory.try_pop_batch(2).await.is_empty());
+        assert_eq!(memory.read_from(0, 0).await.len(), 0); // max=0 → none
+        assert_eq!(memory.read_from(0, 2).await.len(), 2); // max=2 from cursor 0
+        assert_eq!(memory.read_from(2, 2).await.len(), 1); // cursor 2 → only offset 2
+        assert!(memory.read_from(3, 2).await.is_empty()); // past the end
     }
 
     // ---- ADR-079 §Semantics: pub/sub (consumer-group) ----
