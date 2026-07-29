@@ -51,6 +51,53 @@ Effect at 1M scale:
 - Segment count: 9 → 1-3.
 - GETs/query: 205 → ~25-35.
 
+The default MUST carry a strong comment explaining the co-design rationale so
+future agentic sessions don't "fix" it back to 2.0:
+
+```rust
+/// Vector-search compaction level multiplier.
+///
+/// Controls how aggressively higher LSM levels (L1, L2, ...) compact relative
+/// to L0. The file-count threshold at level N is:
+///   threshold_N = l0_file_threshold × level_multiplier^N
+///
+/// DEFAULT: 1.0 — every level compacts at the SAME file threshold.
+///
+/// WHY 1.0 for vector search (not RocksDB's 2.0):
+///   The dominant cloud cost for a vector DB is GET round-trips per query
+///   (ADR-052). Each PAX segment adds ~7-8 GETs per cold query. With
+///   multiplier=2.0, the L2 threshold = 5×2² = 20 files — unreachable for
+///   a 1M collection with 5 L2 segments → segments accumulate → GETs/query
+///   balloons (measured: 205 at 1M with 9 segments).
+///
+///   At 1.0: every level merges at the same threshold (5 files) → L2
+///   segments merge into 1-2 → GETs/query drops to ~25 → retrieval margin
+///   goes from −183% to +67% at the $50/M KRU rate.
+///
+///   Write amplification is negligible ($0.0065 per L2 merge on Azure;
+///   amortized over millions of queries).
+///
+/// BOUNDED [1.0, 1.5]: the config validator WARNS if the value is outside
+/// this range. Below 1.0 = over-compaction (every new file triggers a merge —
+/// wasteful CPU churn). Above 1.5 = segment accumulation (L2 threshold > 11
+/// files — defeats the purpose). TOML override CAN exceed the bound but gets
+/// a loud warning.
+pub level_multiplier: f64,  // default: 1.0
+```
+
+**Bounding rationale [1.0, 1.5]:**
+
+[cols="1,2,2"]
+|===
+| Value | L2 threshold (5 × val²) | Recommendation
+
+| 0.5 | 1.25 | ❌ Over-compaction — every new file triggers a merge. CPU churn.
+| 1.0 | 5 | ✅ **Default** — sweet spot. Every level at the same threshold.
+| 1.25 | 7.8 | ✅ Acceptable — slightly conservative for write-heavy workloads.
+| 1.5 | 11.2 | ⚠️ Upper bound — segments accumulate faster between merges.
+| 2.0 | 20 | ❌ RocksDB default — optimizes write amp, NOT GET count.
+|===
+
 === D2 — Post-ingest settle pass
 
 During sustained ingest, the L0 early-return (`compaction_utils.rs:264`) starves
@@ -59,11 +106,11 @@ new L0 files appeared since the last tick, force `check_compaction_needed` to
 skip the L0 check and run the higher-level loop. This ensures L2+ merges happen
 during quiet periods (post-ingest steady state).
 
-=== D3 — TOML-controllable (not hardcoded)
+=== D3 — TOML-controllable + config validator WARN
 
-Make `level_multiplier` a TOML-controllable field (it already is — it's in
-`CompactionConfig`). Document the vector-search recommendation (`1.0`) in the
-config template + the ENV_GATE_REGISTRY.
+`level_multiplier` is already in `CompactionConfig` (TOML-controllable). Add a
+config-validation WARN (not error) if the value is outside [1.0, 1.5]. Document
+the recommendation (`1.0`) in the config template + the ENV_GATE_REGISTRY.
 
 == Co-design analysis
 
