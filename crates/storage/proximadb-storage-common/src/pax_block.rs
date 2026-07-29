@@ -624,7 +624,7 @@ pub struct PaxSegmentWriter {
     /// TD-DELVEC-1 WI-2b: when true, capture each record's canonical oid in
     /// add_record (stream) order into `oids`, and expose it via
     /// [`PaxSegmentWriter::oid_resolver_bytes`] as a serialized
-    /// `OidPositionResolver` (the flush path writes a `.opr` sidecar in WI-2c).
+    /// `OidPositionResolver` (WI-2c persists it as a footer region inside the segment).
     /// Default OFF — zero cost; the default flush path is byte-for-byte unchanged.
     compute_oid_resolver: bool,
     /// Captured canonical oids in add_record (stream) order, one per record,
@@ -716,8 +716,8 @@ impl PaxSegmentWriter {
     /// TD-DELVEC-1 WI-2b: opt in to capturing the segment's oid→footer-block
     /// position resolver. When on, `add_record` records each canonical oid in
     /// stream order; [`PaxSegmentWriter::oid_resolver_bytes`] then serializes a
-    /// CRC32'd `ORP1` resolver (the flush path writes it as a `.opr` sidecar in
-    /// WI-2c). Default OFF — pre-existing callers pay nothing. Builder form
+    /// CRC32'd `ORP1` resolver (WI-2c persists it as a footer region inside
+    /// the segment). Default OFF — pre-existing callers pay nothing. Builder form
     /// mirroring [`with_block_centroids`]; no block-writer rebuild needed.
     pub fn with_oid_resolver(mut self, enabled: bool) -> Self {
         self.compute_oid_resolver = enabled;
@@ -728,7 +728,7 @@ impl PaxSegmentWriter {
     /// resolver (CRC32'd `ORP1`), or `Ok(None)` if `with_oid_resolver` was not
     /// enabled. The oids are complete once every record is added, so call this
     /// BEFORE [`finish`](Self::finish) consumes the writer; the flush path
-    /// (WI-2c) writes the bytes as a `.opr` sidecar beside the segment.
+    /// (WI-2c) persists the bytes as a footer region inside the segment.
     pub fn oid_resolver_bytes(&self) -> Result<Option<Vec<u8>>, crate::bitmap::BitmapError> {
         if !self.compute_oid_resolver {
             return Ok(None);
@@ -1463,8 +1463,19 @@ impl PaxSegmentWriter {
         let rabitq_len = region_bytes.len() as u64;
         let sq8_off = rabitq_off + rabitq_len;
         let sq8_len = sq8_region_bytes.len() as u64;
-        // Blocks (Region D) begin after header [+ A0] + Region A + Region B.
+        // Resolver region (TD-DELVEC-1 WI-2c): the OID→position resolver is an
+        // immutable write-time component → a region *inside* the segment (atomic
+        // with it on the single PUT), not a sidecar. It sits between Region B
+        // (SQ8) and the blocks, so the block table's absolute offsets
+        // (data_offset + b.offset below) account for its space. Absent
+        // (opr_off/opr_len = 0) when `with_oid_resolver` is off or no oids were
+        // captured — the segment is then byte-identical to the pre-WI-2c form.
+        let opr_bytes = self.oid_resolver_bytes()?;
+        // Blocks (Region D) begin after header [+ A0] + Region A + Region B [+ resolver].
         let data_offset = sq8_off + sq8_len;
+        let opr_off = data_offset;
+        let opr_len = opr_bytes.as_ref().map_or(0u64, |b| b.len() as u64);
+        let data_offset = data_offset + opr_len;
 
         // Serialize A0 (v3 only). Per-cell extents are ABSOLUTE file offsets
         // into the fixed-stride code payloads of Regions A/B (the writer owns
@@ -1554,6 +1565,8 @@ impl PaxSegmentWriter {
             block_tier_assignments,
             a0_off,
             a0_len,
+            opr_off,
+            opr_len,
         };
         let footer_body = footer.to_bytes()?;
         let footer_off = data_offset + self.file_buf.len() as u64;
@@ -1578,6 +1591,7 @@ impl PaxSegmentWriter {
                 + a0_len as usize
                 + region_bytes.len()
                 + sq8_region_bytes.len()
+                + opr_len as usize
                 + self.file_buf.len()
                 + footer_body.len()
                 + 16,
@@ -1588,6 +1602,9 @@ impl PaxSegmentWriter {
         }
         out.extend_from_slice(&region_bytes);
         out.extend_from_slice(&sq8_region_bytes);
+        if let Some(opr) = &opr_bytes {
+            out.extend_from_slice(opr);
+        }
         out.extend_from_slice(&self.file_buf);
         out.extend(segment_tail(&footer_body));
 
@@ -2012,6 +2029,85 @@ mod tests {
                 && assignment.descriptor_id == transformed.descriptor_id
         }));
         assert_eq!(transformed.rebuild_source_id, EXTERNAL_CANONICAL_SOURCE_ID);
+        Ok(())
+    }
+
+    /// TD-DELVEC-1 WI-2c: a coalesced segment written with `with_oid_resolver(true)`
+    /// embeds the OID→position resolver as a **footer region** — locatable via
+    /// `SegmentFooterIndex::locate_in_segment`, fetchable by `(opr_off, opr_len)`,
+    /// and round-tripping through `OidPositionResolver::deserialize` with the oids
+    /// in add_record (stream) order. With the opt-in OFF, no resolver region is
+    /// emitted (`opr_len == 0`) — the segment is byte-for-byte the pre-WI-2c form.
+    #[test]
+    fn coalesced_segment_embeds_oid_resolver_footer_region() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        const DIM: usize = 32;
+        let oids: Vec<String> = (0..8).map(|i| format!("oid-{i}")).collect();
+
+        let write_segment = |path: &std::path::Path, resolver: bool| -> Result<()> {
+            let mut writer = PaxSegmentWriter::new(
+                path,
+                BlockMode::Pax,
+                BlockCompression::None,
+                "col",
+                0,
+                1,
+                Some(8 * 2 * 1024),
+            )
+            .with_quant(VectorQuant::RaBitQ)
+            .with_coalesced_rabitq(true);
+            if resolver {
+                writer = writer.with_oid_resolver(true);
+            }
+            for oid in &oids {
+                let mut record = make_record(oid, "t", 1);
+                record.embeddings.push(EmbeddingCell {
+                    modality: "dense".into(),
+                    dim: DIM as u32,
+                    values: EmbeddingValues::Fp32(vec![0.5; DIM]),
+                    ..Default::default()
+                });
+                writer.add_record(&record)?;
+            }
+            writer.finish()?;
+            Ok(())
+        };
+
+        let dir = tempfile::tempdir()?;
+
+        // Opt-in ON → resolver region present, locatable, and round-trips with the
+        // oids in add_record (stream) order.
+        let on_path = dir.path().join("resolver-on.pax");
+        write_segment(&on_path, true)?;
+        let segment = std::fs::read(&on_path)?;
+        let footer = SegmentFooterIndex::locate_in_segment(&segment)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        assert!(
+            footer.opr_len > 0,
+            "resolver region must be present when opted in"
+        );
+        let region = &segment[footer.opr_off as usize..(footer.opr_off + footer.opr_len) as usize];
+        let resolver = crate::oid_position_resolver::OidPositionResolver::deserialize(region)?;
+        assert_eq!(resolver.len(), oids.len() as u32);
+        for (i, oid) in oids.iter().enumerate() {
+            assert_eq!(
+                resolver.position_of(oid),
+                Some(i as u32),
+                "oid must map to its add_record (stream) position"
+            );
+        }
+
+        // Opt-in OFF → no resolver region (opr_off/opr_len == 0); segment parses.
+        let off_path = dir.path().join("resolver-off.pax");
+        write_segment(&off_path, false)?;
+        let footer_off = SegmentFooterIndex::locate_in_segment(&std::fs::read(&off_path)?)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        assert_eq!(footer_off.opr_off, 0);
+        assert_eq!(
+            footer_off.opr_len, 0,
+            "no resolver region when the opt-in is off"
+        );
         Ok(())
     }
 
