@@ -91,7 +91,13 @@ curl -sf -X POST "http://127.0.0.1:4443/storage/v1/b?project=proximadb" \
 
 echo "==> Running object-store tier integration tests (scope: $SCOPE)"
 # Azure (Azurite) + S3 (MinIO) through the production from_url + env path; GCS via builder.
-export AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
+# Both emulator env vars are hoisted here (global) so EVERY Azure-touching test in
+# every scope honors Azurite — including the --qa backend-contract test (#1129),
+# which runs BEFORE the --qa restart section's own PROXIMADB_AZURE_EMULATOR export.
+# The engine's azure_config_from_env reads PROXIMADB_AZURE_EMULATOR (not the
+# object_store-convention AZURE_STORAGE_USE_EMULATOR); without it, the contract
+# test built real Azure → OIDC "Identity not found" (the qa-gate failure).
+export PROXIMADB_AZURE_EMULATOR=1 AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
 export AWS_ENDPOINT=http://127.0.0.1:9000 AWS_ALLOW_HTTP=true AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false
 export AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin AWS_REGION=us-east-1
 export PROXIMADB_GCS_TEST_ENDPOINT=http://127.0.0.1:4443
