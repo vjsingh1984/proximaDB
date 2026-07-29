@@ -22,6 +22,7 @@
 //! rename completed). The temp file is cleaned up on the next commit
 //! attempt. We never observe a half-written `offset.meta`.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -146,4 +147,58 @@ pub async fn read(
     // Each group has its own file, so the stored group always matches; keep
     // returning the offset directly.
     Ok(Some(parsed.committed_offset))
+}
+
+const LEASE_FILE_LEAF: &str = "lease.meta";
+
+/// Read EVERY consumer group's committed offset for `(topic, partition)`, used
+/// by the reaper to compute the minimum offset across groups (a disk segment is
+/// only reapable once ALL groups have consumed past it — pub/sub safety).
+///
+/// Handles both `QueueFs::list` shapes:
+/// - local `read_dir` returns the group subdirectories (single level) — descend
+///   into each to confirm it holds an `offset.meta`;
+/// - object stores return recursive-prefix leaves like `<group>/offset.meta`
+///   (and `<group>/lease.meta`) — the group is the entry's parent dir name.
+pub async fn read_all_groups(
+    fs: &Arc<dyn QueueFs>,
+    root: &Path,
+    topic: &str,
+    partition: PartitionId,
+) -> crate::Result<Vec<(String, u64)>> {
+    let partition_dir = root.join(topic).join(partition.to_string());
+    let mut group_names: HashSet<String> = HashSet::new();
+
+    let entries = fs.list(&partition_dir).await.unwrap_or_default();
+    for entry in entries {
+        let fname = entry.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if fname == META_FILE || fname == LEASE_FILE_LEAF {
+            // Object-store leaf under a group dir → group = parent dir name.
+            if let Some(group) = entry
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+            {
+                group_names.insert(group.to_string());
+            }
+        } else {
+            // Local-shape group subdirectory — confirm it holds an offset.meta.
+            if let Ok(children) = fs.list(&entry).await
+                && children
+                    .iter()
+                    .any(|c| c.file_name().and_then(|n| n.to_str()) == Some(META_FILE))
+                && let Some(group) = entry.file_name().and_then(|n| n.to_str())
+            {
+                group_names.insert(group.to_string());
+            }
+        }
+    }
+
+    let mut out = Vec::with_capacity(group_names.len());
+    for group in group_names {
+        if let Ok(Some(off)) = read(fs, root, topic, partition, &group).await {
+            out.push((group, off));
+        }
+    }
+    Ok(out)
 }
