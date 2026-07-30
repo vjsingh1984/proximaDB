@@ -2089,6 +2089,7 @@ async fn coarse_probe_survivors(
                     .read_range(path, fetch.start, len)
                     .await
                     .map_err(std::io::Error::other)?;
+                crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
                 if trace_on {
                     record_get(CacheTier::ProbeIndex, len);
                 }
@@ -2102,6 +2103,7 @@ async fn coarse_probe_survivors(
                 .read_range(path, fetch.start, len)
                 .await
                 .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?;
+            crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
             if trace_on {
                 record_get(CacheTier::ProbeIndex, len);
             }
@@ -2331,6 +2333,7 @@ pub async fn rabitq_search_segment_coalesced(
                     .read_range(path, header.rabitq_off, header.rabitq_len)
                     .await
                     .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?;
+                crate::observability::io_trace::record_pax_region_bytes(bytes.len() as u64, 0);
                 // Trace the whole-region cost so the coarse probe's Region-A saving is
                 // observable (co-design: trace before you tune). Diagnostic-only.
                 if trace_on {
@@ -2338,10 +2341,6 @@ pub async fn rabitq_search_segment_coalesced(
                 }
                 Arc::from(bytes)
             };
-        // TD-RDSTRAT-8 PR-C1: record the whole-Region-A (RaBitQ) physical bytes
-        // fetched — the GET budget the armed probe exists to avoid. Region B
-        // (SQ8) is not read in this path. Cache hits still report Region-A length.
-        crate::observability::io_trace::record_pax_region_bytes(region_bytes.len() as u64, 0);
         let region = RaBitQRegion::from_bytes(&region_bytes)?;
         // ADR-062 PR2: adaptive survivor pool — scale M with the segment's rows.
         let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
@@ -2450,6 +2449,7 @@ pub async fn rabitq_search_segment_coalesced(
                         .read_range(path, header.sq8_off, header.sq8_len)
                         .await
                         .map_err(std::io::Error::other)?;
+                    crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
                     if trace_on {
                         record_get(CacheTier::SurvivorPayload, header.sq8_len);
                     }
@@ -2463,6 +2463,7 @@ pub async fn rabitq_search_segment_coalesced(
                 .read_range(path, header.sq8_off, header.sq8_len)
                 .await
                 .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?;
+            crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
             if trace_on {
                 record_get(CacheTier::SurvivorPayload, header.sq8_len);
             }
@@ -2494,6 +2495,7 @@ pub async fn rabitq_search_segment_coalesced(
                     header.sq8_len,
                     || async move {
                         let b = fs.read_range(path, start, range_len).await?;
+                        crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
                         if trace_on {
                             record_get(CacheTier::SurvivorPayload, range_len);
                         }
@@ -2506,6 +2508,7 @@ pub async fn rabitq_search_segment_coalesced(
                 let b = fs.read_range(path, start, range_len).await.map_err(|e| {
                     anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}")
                 })?;
+                crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
                 if trace_on {
                     record_get(CacheTier::SurvivorPayload, range_len);
                 }
@@ -4219,6 +4222,26 @@ mod tests {
         assert_eq!(probe_snapshot.ivf_probed_rows, probed_rows);
         assert_eq!(probe_snapshot.ivf_fetch_rounds, fetch_rounds);
         assert_eq!(probe_snapshot.ivf_whole_region_fallback, 0);
+        let traced_region_a_bytes: u64 = probe_gets
+            .iter()
+            .filter(|(tier, _)| matches!(tier, CacheTier::ProbeIndex))
+            .map(|(_, bytes)| bytes)
+            .sum();
+        let traced_region_b_bytes: u64 = probe_gets
+            .iter()
+            .filter(|(tier, _)| matches!(tier, CacheTier::SurvivorPayload))
+            .map(|(_, bytes)| bytes)
+            .sum();
+        assert!(traced_region_a_bytes > 0, "probe must fetch Region A");
+        assert!(traced_region_b_bytes > 0, "rerank must fetch Region B");
+        assert_eq!(
+            probe_snapshot.ivf_region_a_bytes, traced_region_a_bytes,
+            "durable Region-A bytes must equal physical probe reads"
+        );
+        assert_eq!(
+            probe_snapshot.ivf_region_b_bytes, traced_region_b_bytes,
+            "durable Region-B bytes must equal physical rerank reads"
+        );
 
         // 2. Materially fewer bytes than the whole-region baseline.
         assert!(
@@ -4388,6 +4411,14 @@ mod tests {
         assert_eq!(fallback_snapshot.ivf_cells_total, 0);
         assert_eq!(fallback_snapshot.ivf_cells_probed, 0);
         assert_eq!(fallback_snapshot.ivf_whole_region_fallback, 1);
+        assert!(
+            fallback_snapshot.ivf_region_a_bytes > 0,
+            "whole-region fallback must attribute its physical Region-A bytes"
+        );
+        assert!(
+            fallback_snapshot.ivf_region_b_bytes > 0,
+            "fallback rerank must attribute its physical Region-B bytes"
+        );
         unsafe {
             std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
             std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");

@@ -307,6 +307,10 @@ def main() -> int:
                     f"{label}: measured cells/query {actual_cells:.3f} "
                     f"!= expected {expected_cells}"
                 )
+            if attribution_failure := ACCEPTANCE.ivf_byte_attribution_failure(
+                label, point
+            ):
+                result["failures"].append(attribution_failure)
             result["matrix"]["points"].append(point)
 
     for top_k in top_k_values:

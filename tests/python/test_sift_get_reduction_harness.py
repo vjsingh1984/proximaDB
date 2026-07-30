@@ -47,6 +47,26 @@ def test_matrix_contract_rejects_duplicate_probes_and_wrong_geometry() -> None:
         )
 
 
+def test_object_cold_ivf_requires_physical_region_byte_attribution() -> None:
+    result = {
+        "physical_gets": 12,
+        "ivf": {
+            "cells_probed": 20,
+            "region_a_bytes": 0,
+            "region_b_bytes": 0,
+        },
+    }
+    assert (
+        HARNESS.ivf_byte_attribution_failure("object_cold", result)
+        == (
+            "object_cold: IVF probe issued physical GETs but attributed zero "
+            "Region-A/B bytes"
+        )
+    )
+    result["ivf"]["region_b_bytes"] = 4096
+    assert HARNESS.ivf_byte_attribution_failure("object_cold", result) is None
+
+
 def test_a0_geometry_reports_cell_shape_and_verifies_checksum() -> None:
     dimension = 2
     components = 1

@@ -1274,6 +1274,20 @@ def gate_failures(phase: str, result: dict, max_gets: float | None,
     return failures
 
 
+def ivf_byte_attribution_failure(phase: str, result: dict) -> str | None:
+    ivf = result["ivf"]
+    if (
+        ivf["cells_probed"] > 0
+        and result["physical_gets"] > 0
+        and ivf["region_a_bytes"] + ivf["region_b_bytes"] <= 0
+    ):
+        return (
+            f"{phase}: IVF probe issued physical GETs but attributed zero "
+            "Region-A/B bytes"
+        )
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1789,6 +1803,10 @@ def main() -> int:
             args.max_p50_ms,
             require_local_hit=False,
         ))
+        if attribution_failure := ivf_byte_attribution_failure(
+            "object_cold", object_cold
+        ):
+            failures.append(attribution_failure)
         if failures:
             result["gate_failures"] = failures
             raise RuntimeError("; ".join(failures))
