@@ -1,8 +1,6 @@
 //! AI-powered intelligence for Release 2 enterprise platform
 
 pub mod analytics;
-pub mod business_intelligence;
-pub mod executive_dashboard;
 pub mod insights;
 pub mod llm;
 pub mod llm_integration;
@@ -12,11 +10,6 @@ pub mod nlp;
 
 pub use analytics::{
     ConversationalAnalyticsEngine, GovernanceAnalyticsEngine, PredictiveAnalyticsEngine,
-};
-pub use business_intelligence::engine::ExecutiveDashboard;
-pub use business_intelligence::{BusinessInsight, BusinessIntelligenceEngine};
-pub use executive_dashboard::{
-    AIExecutiveDashboard, AIExecutiveDashboardResponse, ExecutiveDashboardRequest,
 };
 pub use insights::{AutomatedInsightEngine, BusinessInsightsGenerator, InsightType};
 pub use llm::{AIIntelligenceFoundation, BusinessIntent, LLMIntegrationEngine};

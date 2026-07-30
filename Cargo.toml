@@ -701,7 +701,6 @@ default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonic
 # path (TD-AXIS-4 Superseded; ADR-052). Pure cfg gate — AXIS lives in the root crate, no dep.
 axis = []
 # Optional surfaces; keep off by default to minimize binary size and public API surface
-ai_endpoints = []
 tenant_access = []
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.

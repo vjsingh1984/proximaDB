@@ -1779,24 +1779,6 @@ pub fn create_router(state: AppState) -> axum::Router {
         // (#949). The hybrid router carries its own v1-compat headers.
         .merge(hybrid_router);
 
-    // Optional AI endpoints (disabled by default; enable with `--features ai_endpoints`)
-    #[cfg(feature = "ai_endpoints")]
-    {
-        use crate::api_handlers::ai_endpoints;
-
-        match tokio::runtime::Runtime::new()
-            .and_then(|rt| rt.block_on(ai_endpoints::initialize_ai_service_state()))
-        {
-            Ok(ai_state) => {
-                router = router.nest("/ai", ai_endpoints::create_ai_router(ai_state));
-                info!("✅ AI endpoints enabled at /ai");
-            }
-            Err(e) => {
-                warn!("AI endpoints disabled (initialization failed): {}", e);
-            }
-        }
-    }
-
     info!("✅ REST API: Router created with canonical v2 routes:");
     info!(
         "   POST   /api/v2/collections/:collection/records/batch (canonical ProximaRecord writes)"
