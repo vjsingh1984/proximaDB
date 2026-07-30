@@ -878,6 +878,9 @@ pub async fn execute_sql(
             sql_params_to_proxima_values(request.parameters.clone()),
             request.collection,
             None,
+            // TD-ABAC-5: REST UnifiedUserContext extractor wiring is a follow-on;
+            // None ⇒ no ABAC enforcement on this surface yet.
+            None,
         )
         .await
     {

@@ -2281,6 +2281,9 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         request: Request<V2QueryRequest>,
     ) -> Result<Response<V2QueryResponse>, Status> {
         let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
+        // TD-ABAC-5: capture the authenticated subject before the request is moved;
+        // threaded to ABAC enforcement at the relational read boundary.
+        let user_id = grpc_auth::user_id(&request);
         let q = request.into_inner();
         let collection = if q.collection_id.is_empty() {
             None
@@ -2289,7 +2292,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         let resp = self
             .api_handlers
-            .execute_sql_v1(q.query, None, collection, Some(tenant_id.as_str()))
+            .execute_sql_v1(
+                q.query,
+                None,
+                collection,
+                Some(tenant_id.as_str()),
+                user_id.as_deref(),
+            )
             .await
             .map_err(|e| {
                 // A DML lock conflict → ABORTED (retryable); other errors → INTERNAL.

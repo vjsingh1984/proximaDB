@@ -410,7 +410,7 @@ pub async fn execute_sql(
 
     match state
         .handlers
-        .execute_sql_v1(query, parameters, request.collection, None)
+        .execute_sql_v1(query, parameters, request.collection, None, None)
         .await
     {
         Ok(v1_resp) => {

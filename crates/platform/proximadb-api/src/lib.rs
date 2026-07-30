@@ -268,6 +268,7 @@ pub(crate) mod test_support {
             parameters: Option<Vec<ProximaValue>>,
             collection: Option<String>,
             _tenant_id: Option<&str>,
+            _subject: Option<&str>,
         ) -> Result<ExecuteQueryResponse> {
             self.calls.lock().unwrap().push(ApiCall::Sql {
                 query,
@@ -391,6 +392,7 @@ pub(crate) mod test_support {
             _query: String,
             _collection: Option<String>,
             _tenant_id: Option<&str>,
+            _subject: Option<&str>,
         ) -> Result<JsonValue> {
             Ok(JsonValue::Array(Vec::new()))
         }
@@ -473,6 +475,7 @@ mod tests {
             "select * from docs".to_string(),
             None,
             Some("docs".to_string()),
+            None,
             None,
         )
         .await
@@ -631,7 +634,7 @@ mod tests {
             .unwrap();
         assert!(
             query
-                .execute_sql("select 1".to_string(), Some("docs".to_string()), None)
+                .execute_sql("select 1".to_string(), Some("docs".to_string()), None, None)
                 .await
                 .unwrap()
                 .is_array()

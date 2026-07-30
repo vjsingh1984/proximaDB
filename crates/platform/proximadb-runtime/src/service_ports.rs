@@ -191,10 +191,15 @@ pub trait QueryAdapterPort: Send + Sync {
     /// `tenant_id` scopes relational SQL to the tenant's partition (TD-064); the
     /// adapter routes relational SELECT through the tenant-scoped relational
     /// pipeline (`try_run_select`, TD-121) before falling back to the facade.
+    ///
+    /// `subject` (TD-ABAC-5) is the authenticated principal id, threaded to ABAC
+    /// enforcement. Opaque `&str` here (runtime layer can't name `SubjectId`);
+    /// the root-crate adapter converts it. `None` ⇒ no enforcement.
     async fn execute_sql(
         &self,
         query: String,
         collection: Option<String>,
         tenant_id: Option<&str>,
+        subject: Option<&str>,
     ) -> Result<JsonValue>;
 }
