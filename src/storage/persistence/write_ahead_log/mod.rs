@@ -116,10 +116,10 @@ pub mod wal_operations; // WAL operations for vector and graph
 
 // Embedding-precision rollout (PR 4 of EMBEDDING_PRECISION_LLD_2026_05_22).
 pub mod v2_segment_header;
-// MARKED FOR REMOVAL: optimized_path_resolver uses assignment_service
-// pub mod optimized_path_resolver;
-// MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver
-// pub mod atomic_write_buffer_sync;
+// RETIRED (#1270 + TD-CONFIG-CONSOLIDATE-1 step 3): optimized_path_resolver +
+// atomic_write_buffer_sync modules + their files deleted. They used the removed
+// assignment_service and were commented out ('MARKED FOR REMOVAL') since #1270;
+// only the dead cross-ref between the two files remained.
 
 /// ADR-069 S1 opt-in local WAL root (`PROXIMADB_WAL_LOCAL_DIR`). When set to a
 /// directory/URL (e.g. `file:///waldisk`), the per-collection WAL is written
