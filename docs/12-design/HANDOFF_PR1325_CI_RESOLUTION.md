@@ -1,8 +1,9 @@
-# Handoff: PR #1325 (feat/nvme-get-reduction-stack) — diagnosis + partial fixes for Codex
+# PR #1325 CI diagnosis and resolution
 
-**From:** Claude session (took over #1325 after Codex credit exhaustion)
 **Date:** 2026-07-30
-**Status:** Partial fixes committed (storage CI failure + flush-plan regression resolved); the **graph/fusion CI failure is precisely diagnosed and handed off** — it is a deeper SST-engine regression on the native-search read path, most likely the new persistent-L2 integration.
+**Status:** Storage and flush-plan failures are fixed in `8fcc57276`. The
+graph/fusion failure was reproduced locally and fixed by preserving the
+collection storage lookup key across the tenant-aware native-search boundary.
 
 ## What #1325 is
 
@@ -12,11 +13,12 @@ caches (D1–D6), admitted flushes with typed WAL backpressure, higher-level
 compaction consolidation, PAX probe-range coalescing, stable-id migration, and
 a hardened SIFT bench harness. +6.5k lines, 65 files.
 
-## CI state when handed back
+## Initial CI state
 
 Two CI jobs were failing: **Rust Integration Tests (storage)** and **Rust
-Integration Tests (graph)**. I fixed the storage one and the flush-plan
-regression; the **graph (fusion) failure remains** and is diagnosed below.
+Integration Tests (graph)**. The storage failure and flush-plan regression were
+fixed first; the graph/fusion failure was then isolated and resolved as
+described below.
 
 ## What I FIXED (committed; build on or rework)
 
@@ -45,7 +47,7 @@ likewise. Unblocks the flush (no longer errors on UUID); compiles clean.
 > (rev2) keys flush/admission on the **composite**; keep this as the derived
 > handle or rework — your call.
 
-## What REMAINS — the graph/fusion CI failure (diagnosed, handed off)
+## Graph/fusion CI failure — root cause and fix
 
 **Tests:** `embedded_code_graph_parity_e2e::embedded_fusion_search_seeds_and_expands`
 + `embedded_fusion_search_document_modality_contributes` — vector modality empty
@@ -64,31 +66,40 @@ likewise. Unblocks the flush (no longer errors on UUID); compiles clean.
   path** that `unified_search_native` invokes, while the `VectorSearchRequest`
   path still works.
 
-### Most likely culprit (fits the symptom exactly)
-The PR's **persistent L2 cache** (`crates/foundation/proximadb-cache/src/persistent_l2.rs`)
-serves empty/stale reads to the **native-search** path; the `VectorSearchRequest`
-path likely does not route through it (or routes differently). I.e. the
-native-read path goes through the new L2 and gets nothing back, while the
-request-read path bypasses it and reads the live memtable. A coalescing /
-compaction read-path change is the secondary suspect.
+### Root cause
+
+`unified_search_native_with_tenant_context` validated the collection and then
+converted the returned numeric `CollectionObjectId` handle to a string before
+calling `unified_search_native`. That handle is valid for in-memory catalog
+indexing and admission, but it is not the collection key used by the
+WAL/memtable/SST read path. Native search therefore selected a different,
+empty storage namespace and returned `Ok([])`.
+
+The fix preserves the storage lookup key: a tenant-scoped call validates access
+and delegates with the tenant-resolved collection id; a single-tenant call
+delegates with the caller's collection key.
 
 ### Ruled out (I verified each)
 - **Engine:** both fusion and test_large_k use `Some("sst")` — not an engine mismatch.
-- **Search-path identity fail-close:** the search path has **no** `parse::<u64>()`
-  / `get_collection_object_id` gate (only the flush plan did). Not an identity fail-close.
 - **`create_graph` flush:** `create_graph` → `create_graph_collection`; it does
   **not** flush `code_vecs`. The vectors stay in `code_vecs`'s memtable.
 - **Error swallowing:** `retry_vector_search` **bails** (propagates) on
   exhaustion — it does not swallow to empty. The search returns `Ok([])`.
+- **Persistent L2:** the failing vectors were never flushed, so no PAX segment
+  or L2 cache lookup could participate in this result.
 
-### Where to look (the fix)
-Trace `unified_search_native_with_tenant_context` → the SST engine's
-**native-search** dispatch, and **diff it against the `VectorSearchRequest`
-search dispatch**. The divergence is the bug — most likely the native path
-reads through the new persistent L2 (empty/stale) while the request path
-doesn't. Check the L2 wiring in the native read path
-(`src/storage/engines/sst/segment_format.rs` native scan + the survivor/invariants
-caches' integration with `persistent_l2.rs`).
+### Regression evidence
+
+Before the fix:
+
+- `embedded_code_graph_parity_e2e`: 2 passed, 2 failed.
+
+After preserving the storage lookup key:
+
+- `embedded_code_graph_parity_e2e`: 4 passed, 0 failed.
+- `sst_compaction_execution_test`: 2 passed, 0 failed.
+- `sst_ivf2_compaction_route_proof_test`: 2 passed, 0 failed.
+- `cargo clippy -p proximadb --lib -- -D warnings`: passed.
 
 ## Also remaining (NOT a CI-gating failure, but real): restart-recovery
 
@@ -120,15 +131,12 @@ fails **after reopen**: `Post-flush k=1000: 1000` ✅ but `Post-reopen k=1000: 0
   the restart-recovery orphaning AND a contributor to the search-resolution
   fragility. The full rev2 stable-composite migration resolves the restart-recovery.
 
-## Recommended next steps (Codex)
+## Remaining work
 
-1. **Fusion (the CI blocker):** trace `unified_search_native` → SST
-   native-search; diff against `VectorSearchRequest`'s SST path; the divergence
-   (likely persistent-L2 on the native-read path) is the bug. This is your SST/L2
-   code — you'll recognize the native-vs-request read divergence fastest.
-2. **Restart-recovery:** key the segment path by the stable composite (rev2),
+1. **Rerun CI:** confirm graph and storage integration jobs on the fix commit.
+2. **Restart recovery:** key the segment path by the stable composite (rev2),
    not the UUID. Confirm whether `embedded_flush_recovery` is CI-gated.
-3. **Decide on my derive-handle** (`stable_collection_handle`): keep as the
+3. **Decide on the derived handle** (`stable_collection_handle`): keep as the
    rev2-D2 derived handle, or rework to composite-keyed per the full migration.
 4. **Rework the storage-test numeric mock** to composite-keyed once rev2 lands.
 
@@ -137,7 +145,6 @@ fails **after reopen**: `Post-flush k=1000: 1000` ✅ but `Post-reopen k=1000: 0
 - `8fcc57276` — fix(tests+storage): storage-test catalog-id mock + flush-plan
   derived-handle (rev2 D2).
 
-My partial fixes are real improvements (storage green; flush-plan unblocked;
-compiles clean) — build on them or rework per rev2. The valuable part of this
-handoff is the **localization** (native-search SST path empty; request path
-works; suspect persistent L2) — that should save you the debugging.
+The storage fixes are retained as a bridge to ADR-0083 rev2. The graph failure
+was an identity-domain mix-up at the search boundary, not a cache-data
+correctness defect.

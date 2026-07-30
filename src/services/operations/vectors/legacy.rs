@@ -2755,11 +2755,11 @@ impl VectorOperationsService {
     }
 
     /// Tenant-aware wrapper over [`unified_search_native`]: validates the tenant's access to the
-    /// collection and resolves it to the tenant's canonical id (mirroring `VectorOpsPort::search`),
-    /// then delegates the actual search using the catalog's stable collection object id.
+    /// collection and resolves it to the tenant's storage lookup key (mirroring
+    /// `VectorOpsPort::search`), then delegates the actual search.
     /// Isolation is clean-name + `TenantContext` (catalog-resolve and record-stamp), never a name
-    /// fold. Multi-tenant mode requires a tenant context; single-tenant mode resolves through the
-    /// same catalog authority before entering the internal search path.
+    /// fold. The catalog object handle is used for in-memory indexing and admission, not as a
+    /// substitute for the collection key used by WAL/memtable/SST reads.
     /// Lets the fusion vector leg read only the tenant's vectors (TD-ENTITY-TENANT-1) without
     /// touching the existing `unified_search_native` call sites.
     pub async fn unified_search_native_with_tenant_context(
@@ -2772,10 +2772,24 @@ impl VectorOperationsService {
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
         #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        let resolved = self
-            .validate_tenant_collection_access(collection_id, tenant_context)
-            .await?
-            .to_string();
+        let resolved = match tenant_context {
+            Some(context) if !context.tenant_id.is_empty() => {
+                self.validate_tenant_collection_access(collection_id, tenant_context)
+                    .await?;
+                self.collection_port
+                    .get_collection(collection_id, Some(&context.tenant_id))
+                    .await?
+                    .map(|collection| collection.id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Collection '{}' is not accessible for tenant '{}'",
+                            collection_id,
+                            context.tenant_id
+                        )
+                    })?
+            }
+            _ => collection_id.to_string(),
+        };
         self.unified_search_native(
             &resolved,
             query_vector,
