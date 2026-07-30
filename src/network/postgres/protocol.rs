@@ -630,6 +630,42 @@ impl PostgresProtocol {
         }
     }
 
+    /// TD-ABAC-3: gate a pgwire SUBJECT assertion (startup `user`) through the
+    /// SAME [`HeaderTrustPolicy`](proximadb_tenant::HeaderTrustPolicy) the tenant
+    /// assertion uses. pgwire is trust auth, so the binding is always `None`;
+    /// under `Open` (the default) the asserted subject is accepted (same trust
+    /// class as the tenant assertion), under a strict policy a bare subject
+    /// assertion is rejected at the handshake so ABAC enforcement is not
+    /// spoofable on a strict deployment. `anonymous`/empty = no assertion.
+    #[cfg(feature = "abac-policy")]
+    fn check_pgwire_subject_assertion(&self, asserted: &str) -> std::result::Result<(), String> {
+        use proximadb_tenant::identity_trust::resolve_tenant_assertion;
+
+        let asserted = asserted.trim();
+        if asserted.is_empty() || asserted == "anonymous" {
+            return Ok(());
+        }
+        // Reuse the shared bare-assertion policy check — its `(Some, None)` arm is
+        // generic over any client-asserted identity with no authenticated binding,
+        // which is exactly the subject case under pgwire trust auth.
+        match resolve_tenant_assertion(Some(asserted), None, self.tenant_header_trust) {
+            Ok(_) => Ok(()),
+            Err(_error) => {
+                warn!(
+                    target: "proximadb::tenant_audit",
+                    surface = "pgwire",
+                    policy = %self.tenant_header_trust,
+                    "rejected bare pgwire subject assertion '{asserted}'"
+                );
+                Err(format!(
+                    "subject '{asserted}' asserted without authenticated credentials; \
+                     this deployment requires a subject-bound credential (header-trust={})",
+                    self.tenant_header_trust
+                ))
+            }
+        }
+    }
+
     /// Attach the durable partition-lease authority to this connection's DDL
     /// service after rank/materializer decoration has finished.
     pub fn with_ddl_lease_manager(
@@ -874,6 +910,19 @@ impl PostgresProtocol {
         {
             self.send_error("FATAL", "28000", &message).await?;
             return Err(anyhow!("pgwire tenant assertion rejected: {message}"));
+        }
+
+        // TD-ABAC-3: gate the startup `user` (the ABAC subject assertion) through
+        // the same trust policy as the tenant — so a strict deployment rejects a
+        // bare, unauthenticated subject at the handshake rather than letting ABAC
+        // enforce against a spoofable id. Default-OFF surface (`abac-policy`);
+        // under `Open` (default) the assertion is accepted like the tenant's.
+        #[cfg(feature = "abac-policy")]
+        if let Some(user) = params.get("user")
+            && let Err(message) = self.check_pgwire_subject_assertion(user)
+        {
+            self.send_error("FATAL", "28000", &message).await?;
+            return Err(anyhow!("pgwire subject assertion rejected: {message}"));
         }
 
         // Store parameters in session
@@ -1757,6 +1806,19 @@ impl PostgresProtocol {
         // to the pre-cache behavior.
         let namespace = self.session.read().await.current_schema();
         let olap_cache = super::relational_pipeline::olap_result_cache();
+        // TD-ABAC-3: build the ABAC subject from the (already trust-gated at the
+        // handshake) connection user. `anonymous`/empty ⇒ no subject ⇒ no
+        // enforcement; otherwise the asserted user becomes the SubjectId ABAC
+        // resolves the row filter against.
+        #[cfg(feature = "abac-policy")]
+        let subject = {
+            let user = self.session.read().await.user.clone();
+            if user.is_empty() || user == "anonymous" {
+                None
+            } else {
+                Some(proximadb_catalog::fc_metamodel::SubjectId(user))
+            }
+        };
         super::relational_pipeline::try_run_select(
             query,
             self.dml_service.as_ref(),
@@ -1775,6 +1837,8 @@ impl PostgresProtocol {
             true,
             Some(namespace.as_str()),
             olap_cache.as_deref(),
+            #[cfg(feature = "abac-policy")]
+            subject,
         )
         .await
     }
