@@ -2872,40 +2872,6 @@ impl SharedServices {
     fn convert_toml_to_wal_config(
         toml_config: &crate::core::config::WriteBufferUserConfig,
     ) -> crate::storage::persistence::write_ahead_log::config::WALConfig {
-        use crate::storage::persistence::write_ahead_log::config::{
-            MemTableConfig, MemTableType, PerformanceConfig, SyncMode, WALConfig,
-        };
-
-        // Create performance config with values from TOML
-        info!(
-            "📋 Converting WALConfig from TOML: memory_flush_size_bytes={} ({}MB), vector_count_threshold={}, write_buffer_size_mb={}MB",
-            toml_config.memory_flush_size_bytes,
-            toml_config.memory_flush_size_bytes / (1024 * 1024),
-            toml_config.vector_count_threshold,
-            toml_config.write_buffer_size_mb
-        );
-
-        let performance = PerformanceConfig {
-            memory_flush_size_bytes: toml_config.memory_flush_size_bytes,
-            global_flush_threshold: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
-            batch_threshold: toml_config.vector_count_threshold,
-            sync_mode: match toml_config.sync_mode.to_lowercase().as_str() {
-                "perbatch" => SyncMode::PerBatch,
-                "periodic" => SyncMode::Periodic,
-                "none" => SyncMode::Never,
-                _ => SyncMode::PerBatch,
-            },
-            // ADR-069/TD-WAL-1: the tiered-flush knobs (time RPO floor + capacity
-            // watermarks) — the live server path where they actually reach the engine.
-            flush_interval_secs: toml_config.flush_interval_secs,
-            // TD-FLUSH-3 S1: the predicted-segment flush floor.
-            flush_floor_predicted_mb: toml_config.flush_floor_predicted_mb,
-            wal_max_bytes: toml_config.wal_max_bytes,
-            high_watermark_pct: toml_config.high_watermark_pct,
-            critical_watermark_pct: toml_config.critical_watermark_pct,
-            ..Default::default()
-        };
-
         // ADR-069 S1 guardrail: the WAL belongs on a local reattachable disk
         // (object-store WAL was the pre-pivot architecture and pays an I/O
         // round-trip per append). Warn — at `error` level when a durability-
@@ -2938,38 +2904,15 @@ impl SharedServices {
             }
         }
 
-        // Create memtable config
-        let memtable = MemTableConfig {
-            global_memory_limit: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
-            memtable_type: match toml_config.memtable_type.to_lowercase().as_str() {
-                "btree" => MemTableType::BTree,
-                "skiplist" => MemTableType::SkipList,
-                _ => MemTableType::BTree,
-            },
-            ..Default::default()
-        };
-
-        // Create multi-disk config with WAL directory
-        let multi_disk = crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
-            data_directories: vec![toml_config.write_buffer_directory.clone()],
-            distribution_strategy: crate::storage::persistence::write_ahead_log::config::DiskDistributionStrategy::RoundRobin,
-            collection_affinity: true,
-        };
-
-        WALConfig {
-            performance,
-            memtable,
-            multi_disk,
-            enable_mvcc: true,                  // Enable MVCC for consistency
-            enable_ttl: true,                   // Enable TTL support
-            enable_background_compaction: true, // Enable background compaction
-            enable_optimized_writer: toml_config.enable_wal, // Use enable_wal to control optimized writer
-            global_manifest_url: toml_config.global_manifest_url.clone(),
-            // ADR-069 S1: opt-in local WAL root (TOML `[storage.wal_config]
-            // .wal_local_dir`); env `PROXIMADB_WAL_LOCAL_DIR` overrides at read time.
-            wal_local_dir: toml_config.wal_local_dir.clone(),
-            ..Default::default()
-        }
+        // TD-CONFIG-CONSOLIDATE-1 step 2: delegate the field-mapping to the SINGLE
+        // canonical conversion (`WriteBufferUserConfig::to_engine_config`), then
+        // apply the one server-only override — the optimized writer follows
+        // `enable_wal` (the embedded path intentionally keeps it off). Removes the
+        // dual-maintenance drift where every new WAL field had to be wired into BOTH
+        // converters (the wal_local_dir near-miss during ADR-069 S1).
+        let mut cfg = toml_config.to_engine_config();
+        cfg.enable_optimized_writer = toml_config.enable_wal;
+        cfg
     }
 }
 
