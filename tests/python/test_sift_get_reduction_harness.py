@@ -140,6 +140,57 @@ def test_explicit_flush_uses_supported_flight_action() -> None:
     assert calls["closed"] is True
 
 
+def test_explicit_compaction_uses_supported_flight_action() -> None:
+    calls = {}
+
+    class FakeLocation:
+        @staticmethod
+        def for_grpc_tcp(host: str, port: int) -> tuple[str, int]:
+            return host, port
+
+    class FakeClient:
+        def __init__(self, location: tuple[str, int]):
+            calls["location"] = location
+
+        def do_action(self, action):
+            calls["action"] = action
+            return [
+                SimpleNamespace(
+                    body=json.dumps(
+                        {
+                            "success": True,
+                            "collection_id": "7",
+                            "operation": "compact",
+                        }
+                    ).encode()
+                )
+            ]
+
+        def close(self) -> None:
+            calls["closed"] = True
+
+    class FakeAction:
+        def __init__(self, action_type: str, body: bytes):
+            self.type = action_type
+            self.body = body
+
+    flight = SimpleNamespace(
+        Location=FakeLocation,
+        FlightClient=FakeClient,
+        Action=FakeAction,
+    )
+
+    response = HARNESS.compact_via_flight(
+        "127.0.0.1", 5690, "7", flight
+    )
+
+    assert response["success"] is True
+    assert calls["location"] == ("127.0.0.1", 5690)
+    assert calls["action"].type == "compact_collection"
+    assert json.loads(calls["action"].body) == {"collection_id": "7"}
+    assert calls["closed"] is True
+
+
 def test_explicit_flush_waits_for_stable_new_pax_epoch() -> None:
     before = {"segments": [], "segment_count": 0, "bytes": 0}
     after = {
@@ -168,7 +219,7 @@ def test_explicit_flush_waits_for_stable_new_pax_epoch() -> None:
         patch.object(HARNESS.time, "sleep") as sleep,
     ):
         geometry = FakeGeometry()
-        elapsed, observed, wal_bytes = HARNESS.wait_for_flush_epoch(
+        elapsed, observed, wal_bytes = HARNESS.wait_for_pax_epoch(
             "http://server", "7", geometry, before
         )
 

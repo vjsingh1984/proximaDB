@@ -831,9 +831,9 @@ class OwnedServer:
         self.process = None
 
 
-def force_flush_via_flight(
-        host: str, port: int, collection_id: str,
-        flight_module=None) -> dict:
+def storage_action_via_flight(
+        host: str, port: int, collection_id: str, action_type: str,
+        expected_operation: str, flight_module=None) -> dict:
     if flight_module is None:
         try:
             import pyarrow.flight as flight_module
@@ -847,7 +847,7 @@ def force_flush_via_flight(
     client = flight_module.FlightClient(location)
     try:
         action = flight_module.Action(
-            "flush_collection",
+            action_type,
             json.dumps({"collection_id": collection_id}).encode(),
         )
         responses = list(client.do_action(action))
@@ -855,16 +855,47 @@ def force_flush_via_flight(
         client.close()
     if len(responses) != 1:
         raise RuntimeError(
-            "Flight flush returned an unexpected response count: "
+            f"Flight {action_type} returned an unexpected response count: "
             f"{len(responses)}"
         )
     payload = json.loads(bytes(responses[0].body))
-    if payload.get("success") is not True:
-        raise RuntimeError(f"Flight flush did not succeed: {payload}")
+    if (
+        payload.get("success") is not True
+        or payload.get("operation") != expected_operation
+    ):
+        raise RuntimeError(
+            f"Flight {action_type} did not succeed as expected: {payload}"
+        )
     return payload
 
 
-def wait_for_flush_epoch(
+def force_flush_via_flight(
+        host: str, port: int, collection_id: str,
+        flight_module=None) -> dict:
+    return storage_action_via_flight(
+        host,
+        port,
+        collection_id,
+        "flush_collection",
+        "flush",
+        flight_module,
+    )
+
+
+def compact_via_flight(
+        host: str, port: int, collection_id: str,
+        flight_module=None) -> dict:
+    return storage_action_via_flight(
+        host,
+        port,
+        collection_id,
+        "compact_collection",
+        "compact",
+        flight_module,
+    )
+
+
+def wait_for_pax_epoch(
         server: str, collection_id: str, geometry: AzureCliPaxGeometry,
         before_inventory: dict, timeout_seconds: int = 300,
 ) -> tuple[float, dict, float | None]:
@@ -898,7 +929,7 @@ def wait_for_flush_epoch(
             return time.monotonic() - started, inventory, wal_bytes
         time.sleep(0.5)
     raise RuntimeError(
-        "explicit flush did not publish a stable PAX epoch within "
+        "storage action did not publish a stable PAX epoch within "
         f"{timeout_seconds}s: collection={collection_id}"
     )
 
@@ -908,7 +939,7 @@ def ingest(
         flight_host: str, flight_port: int,
         explicit_flush_every_rows: int | None,
         explicit_geometry: AzureCliPaxGeometry | None,
-) -> tuple[str, float, dict[int, int], list[dict]]:
+) -> tuple[str, float, dict[int, int], list[dict], dict | None]:
     _, dimension = count_fixed_records(base_path, 4)
     response = request_json(
         server + "/api/v2/collections",
@@ -982,7 +1013,7 @@ def ingest(
                 publish_seconds,
                 inventory_after,
                 wal_after,
-            ) = wait_for_flush_epoch(
+            ) = wait_for_pax_epoch(
                 server,
                 collection_id,
                 explicit_geometry,
@@ -1018,8 +1049,53 @@ def ingest(
         raise RuntimeError(
             f"ingest iterator admitted {inserted} rows, expected {expected_rows}"
         )
+    explicit_compaction = None
+    if explicit_flush_every_rows is not None:
+        if explicit_geometry is None:
+            raise RuntimeError(
+                "explicit compaction requires Azure PAX inventory evidence"
+            )
+        inventory_before = explicit_geometry.inventory()
+        compact_started = time.perf_counter()
+        response = compact_via_flight(
+            flight_host,
+            flight_port,
+            collection_id,
+        )
+        action_seconds = time.perf_counter() - compact_started
+        (
+            publish_seconds,
+            inventory_after,
+            wal_after,
+        ) = wait_for_pax_epoch(
+            server,
+            collection_id,
+            explicit_geometry,
+            inventory_before,
+        )
+        explicit_compaction = {
+            "action_seconds": action_seconds,
+            "publish_seconds": publish_seconds,
+            "wal_bytes_after": wal_after,
+            "segments_before": inventory_before["segments"],
+            "segments_after": inventory_after["segments"],
+            "response": response,
+        }
+        print(
+            "explicit compaction: "
+            f"action={action_seconds:.3f}s "
+            f"publish={publish_seconds:.3f}s "
+            f"segments={inventory_after['segment_count']}",
+            flush=True,
+        )
     elapsed = time.perf_counter() - started
-    return collection_id, elapsed, retry_status_counts, explicit_flushes
+    return (
+        collection_id,
+        elapsed,
+        retry_status_counts,
+        explicit_flushes,
+        explicit_compaction,
+    )
 
 
 def require_empty_directory(path: Path) -> None:
@@ -1448,6 +1524,7 @@ def main() -> int:
             ingest_seconds,
             retry_status_counts,
             explicit_flushes,
+            explicit_compaction,
         ) = ingest(
             server_url,
             base_path,
@@ -1464,6 +1541,7 @@ def main() -> int:
             "vectors_per_second": args.rows / ingest_seconds,
             "retry_status_counts": retry_status_counts,
             "explicit_flushes": explicit_flushes,
+            "explicit_compaction": explicit_compaction,
         }
         geometry = wait_for_materialization(
             root / "data" / "sst",
