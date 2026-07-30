@@ -25,8 +25,8 @@ deleted) and the stale "still named pricing.json" migration comment in
 
 One classification question remains open. `src/ai/executive_dashboard.rs` and
 `src/ai/business_intelligence/` survived B4 because they live under `src/ai/`,
-and they are compiled **ungated** into the OSS binary (`src/ai/mod.rs:5` +
-re-exports at `src/ai/mod.rs:18`). Their *content* is an AI-BI product feature
+and they are compiled **ungated** into the OSS binary (both declared and
+re-exported in `src/ai/mod.rs`; `src/lib.rs` declares `pub mod ai;` ungated). Their *content* is an AI-BI product feature
 (NL querying + automated insight/report generation over the database) — under
 `OPEN_CORE.md` ("features are free"), that is legitimately OSS. But their
 *naming* ("executive dashboard", "business intelligence") is

@@ -6,14 +6,16 @@
 :date: 2026-07-30
 :deciders: owner + architecture
 :relates-to: OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc, ADR-060 (commercial Rust crate seam), OPEN_CORE.md, TD-GST-2, ADR-017 (DR engine surface), ADR-063/ADR-069 (single-node durability)
+:amends: ADR-060 §"Decision" (mechanism-stays-OSS rule) and OSS_ENTERPRISE_BOUNDARY §1 principle — carved out for *multi-node coordination* mechanism only (Decision 2)
 
 == Status
 
 **Proposed** (2026-07-30). Records the placement decisions for the two upcoming
-capabilities that sit closest to the OSS↔commercial seam — **before** either has
-code on `develop`, while the choice is still free. Once a capability ships in an
-Apache-2.0 release its openness is irrevocable; placement must therefore be
-decided at spec time, not implementation time.
+capabilities that sit closest to the OSS↔commercial seam — **before the WORM
+mechanism exists and before any distribution hardening**, while the choice is
+still free. Once a capability ships in an Apache-2.0 release its openness is
+irrevocable; placement must therefore be decided at spec time, not
+implementation time.
 
 == Context
 
@@ -89,9 +91,11 @@ tiers.
 
 **Rejected:**
 
-* *Fully-commercial WORM* — violates the covenant (an engine capability gated on
-  payment) and is technically unworkable: ADR-060 commercial crates are not
-  linked into the engine, and retention enforcement must run on the write path.
+* *Fully-commercial WORM* — violates the covenant (an engine capability gated
+  on payment). It would also require a commercial fork or commercial binary of
+  the engine write path (ADR-060 crates are not loaded by the OSS engine, and
+  retention enforcement must run in that write path), which the no-fork model
+  rules out — but the covenant alone is sufficient grounds.
 * *App-layer chain in AnvaiOps* — the defeatable status quo TD-GST-2 exists to
   kill; puts the integrity root outside the system of record.
 
@@ -116,6 +120,28 @@ The covenant's "full **single-node** engine" scoping is hereby recorded as
   ADR-060 Option A** — depending on OSS crates from outside, never in the OSS
   tree.
 
+**Amendment.** That last point is a deliberate carve-out: ADR-060 defines
+commercial crates as supplying "policy/values/compute — **not** mechanism," and
+the boundary spec's §1 principle is "OSS ships capability + mechanism."
+Multi-node *coordination* (consensus, membership, replication, failover
+orchestration) is mechanism, so this ADR **amends** both — for multi-node
+coordination **only** — on the grounds that the covenant's scope was always the
+single-node engine. Every other mechanism remains OSS under the unamended rule.
+
+**Reconciliation with the covenant.** `OPEN_CORE.md` promises "self-hosting
+ProximaDB at any scale is free" and "nothing is held back for payment," with
+support tiers describing "engineering maturity, not licensing." Both promises
+govern **shipped capability**: everything shipped — including the frozen
+`cluster` flag — stays Apache-2.0, free, and never entitlement-gated, and no
+shipped capability stops working at scale (data scale-out over object storage
+is single-node OSS). What the covenant does **not** promise is future OSS
+engineering investment in every subsystem; D2 is a roadmap-allocation decision
+(where hardening effort goes), not a gate on anything shipped. This reading is
+recorded here precisely because the freeze *is* commercially motivated — if the
+owner prefers the covenant to say it outright, a one-line clarification
+("multi-node coordination is the commercial line") can be added to
+`OPEN_CORE.md` when ratifying this ADR.
+
 **Why:** distribution is where operational value (and the market's willingness
 to pay) concentrates, it is the hardest subsystem to harden, and open-sourcing a
 hardened cluster would hand the top managed-service differentiator to any
@@ -138,8 +164,11 @@ adoption funnel; the covenant already draws this line — this ADR commits to it
   that file is touched (status-as-of guard applies).
 * `check_oss_boundary.py` needs no change — neither decision introduces
   commercial terms, entitlements, or dependency edges into OSS code.
-* `OPEN_CORE.md` needs no change — both decisions are consistent with it by
-  construction; Decision 2 makes its single-node scoping explicit.
+* `OPEN_CORE.md` is unchanged under the reconciliation reading above (nothing
+  shipped is gated or degraded); the optional one-line clarification is the
+  owner's call at ratification.
+* ADR-060 and the boundary spec are **amended** (multi-node-coordination
+  carve-out only) as stated in Decision 2; their rules are otherwise untouched.
 * Everything already shipped under Apache-2.0 stays open (irrevocable); this ADR
   governs **future** placement only.
 
@@ -147,5 +176,6 @@ adoption funnel; the covenant already draws this line — this ADR commits to it
 
 * `python3 scripts/check_td_adr_unique.py` — ADR-084 unique.
 * `python3 scripts/check_oss_boundary.py` — clean (docs are exempt; no code
-  changes).
+  additions — the only code change in the accompanying PR is a dead-file
+  deletion).
 * Index row added to `docs/12-design/adr/README.adoc`.
