@@ -82,9 +82,14 @@ pub enum AbacScanResult {
 #[cfg(feature = "abac-policy")]
 #[allow(dead_code)]
 pub struct AbacEnforcer {
-    authority: Box<dyn AttributeAuthority>,
-    store: Box<dyn PredicateObjectStore>,
-    epochs: Box<dyn PolicyEpochSource>,
+    authority: Box<dyn AttributeAuthority + Send + Sync>,
+    store: Box<dyn PredicateObjectStore + Send + Sync>,
+    epochs: Box<dyn PolicyEpochSource + Send + Sync>,
+    /// The policy bindings this enforcer governs. Holding them makes the enforcer
+    /// a self-contained policy a service can store once and call per-read
+    /// (`predicate_for`); the per-call `scan_predicate_for(.., bindings)` variant
+    /// remains for substrate unit tests.
+    bindings: Vec<PolicyBinding>,
 }
 
 #[cfg(feature = "abac-policy")]
@@ -93,15 +98,37 @@ impl AbacEnforcer {
     /// Construct from the three substrate stores. In production these are the
     /// durable-backed impls; in tests, the in-memory ones.
     pub fn new(
-        authority: Box<dyn AttributeAuthority>,
-        store: Box<dyn PredicateObjectStore>,
-        epochs: Box<dyn PolicyEpochSource>,
+        authority: Box<dyn AttributeAuthority + Send + Sync>,
+        store: Box<dyn PredicateObjectStore + Send + Sync>,
+        epochs: Box<dyn PolicyEpochSource + Send + Sync>,
     ) -> Self {
         Self {
             authority,
             store,
             epochs,
+            bindings: Vec::new(),
         }
+    }
+
+    /// Install the policy bindings this enforcer governs (builder). After this,
+    /// [`predicate_for`](Self::predicate_for) resolves against the held bindings
+    /// — the one call a read-serving service makes per scan.
+    pub fn with_bindings(mut self, bindings: Vec<PolicyBinding>) -> Self {
+        self.bindings = bindings;
+        self
+    }
+
+    /// Resolve `subject`'s authorization for `target` and compile to a scan
+    /// predicate, using the enforcer's **held** bindings (self-contained policy).
+    /// This is the production call site: a service holds the enforcer and invokes
+    /// this per read.
+    pub fn predicate_for(
+        &self,
+        subject: &SubjectId,
+        tenant: u64,
+        target: Target,
+    ) -> AbacScanResult {
+        self.scan_predicate_for(subject, tenant, target, &self.bindings)
     }
 
     /// Resolve `subject`'s authorization for `target` and compile to a scan
