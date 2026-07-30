@@ -27,9 +27,10 @@ These features are enabled by default and represent the core ProximaDB functiona
 These features control optional API surfaces and are kept off by default to minimize binary size:
 
 - **`ai_endpoints`** - AI-specific endpoints and operations
-- **`sales_endpoints`** - Sales analytics and reporting endpoints  
 - **`tenant_access`** - Multi-tenant access control
-- **`executive_intel`** - Executive dashboard and intelligence features
+
+(The former `sales_endpoints` and `executive_intel` features were removed with
+the commercial-surface externalization — boundary-spec phase B4, #437.)
 
 **Production Status**: ⚠️ Beta  
 **Test Coverage**: 60-70%  
@@ -37,7 +38,7 @@ These features control optional API surfaces and are kept off by default to mini
 
 **How to Enable**:
 ```bash
-cargo build --features ai_endpoints,sales_endpoints
+cargo build --features ai_endpoints,tenant_access
 ```
 
 ### 3. Experimental Features

@@ -20,6 +20,12 @@ There is no "community edition" subset, no enterprise-only flag in this
 repository, and no capability that stops working at scale. **Self-hosting
 ProximaDB at any scale is free, and will remain free.**
 
+The single-node scoping above is deliberate: **multi-node coordination**
+(consensus, replication, failover orchestration) is the commercial line, sold
+as operations — while single-node durability and data scale-out over object
+storage remain fully open
+([ADR-084](docs/12-design/adr/ADR-084-oss-commercial-placement-worm-and-distribution.adoc)).
+
 (Support tiers — Supported / Beta / Experimental / Planned — describe
 engineering maturity, not licensing. See
 [docs/SUPPORTED_SURFACE.adoc](docs/SUPPORTED_SURFACE.adoc). Nothing is held
