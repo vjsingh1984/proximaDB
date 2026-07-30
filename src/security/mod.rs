@@ -9,6 +9,7 @@ pub mod auth_service;
 pub mod encryption;
 pub mod monitoring;
 pub mod rbac_service;
+pub mod request_identity;
 pub mod rls;
 pub mod security_coordinator;
 pub mod validation;

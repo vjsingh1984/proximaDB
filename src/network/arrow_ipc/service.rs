@@ -516,16 +516,12 @@ impl ProximaFlightService {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            if let Some(token) = auth_header.strip_prefix("Bearer ") {
-                return Ok(Some(AuthenticationData::JWTToken(token.to_string())));
-            }
-            if let Some(key) = auth_header
-                .strip_prefix("API-Key ")
-                .or_else(|| auth_header.strip_prefix("Api-Key "))
-            {
-                return Ok(Some(AuthenticationData::ApiKey(key.to_string())));
-            }
-            return Ok(Some(AuthenticationData::ApiKey(auth_header.to_string())));
+            // TD-ABAC-6: the shared credential parser — this branch was a
+            // verbatim copy of gRPC's `auth_data_from_headers` and REST's
+            // `map_header_to_auth_data` (same Bearer/API-Key/raw logic).
+            return Ok(Some(
+                crate::security::request_identity::parse_authorization(auth_header),
+            ));
         }
 
         for key in ["x-api-key", "api-key"] {
