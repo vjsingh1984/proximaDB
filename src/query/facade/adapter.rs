@@ -802,6 +802,12 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
                 false,
                 None,
                 olap_result_cache.as_deref(),
+                // TD-ABAC-3: gRPC/REST relational subject threading is a follow-on
+                // (the genuinely-authenticated UnifiedUserContext lives upstream and
+                // does not reach this adapter today); `None` ⇒ no ABAC enforcement
+                // on this surface yet.
+                #[cfg(feature = "abac-policy")]
+                None,
             )
             .await
         {
