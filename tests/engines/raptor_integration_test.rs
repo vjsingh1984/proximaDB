@@ -1,3 +1,4 @@
+#![cfg(feature = "experimental-engines")] // RAPTOR needs the `experimental-engines` feature.
 //! Integration tests for RAPTOR storage engine
 //! 
 //! Tests the complete RAPTOR workflow including:

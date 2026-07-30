@@ -1,3 +1,4 @@
+#![cfg(feature = "experimental-engines")] // RAPTOR needs the `experimental-engines` feature.
 //! Unified Quantization Cache Integration Tests
 //!
 //! Tests the global quantization cache architecture across all storage engines

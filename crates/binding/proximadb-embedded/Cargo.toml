@@ -15,19 +15,14 @@ path = "src/lib.rs"
 
 [dependencies]
 # Depends on the root proximadb library (one-directional: embedded -> root, no cycle).
-# `default-features = false` + the explicit feature set keeps the ANN index engine
-# (AXIS: `axis`) OFF by default — embedded is in-process with few collections, so
-# exact-scan over PAX segments (served from the OS page cache / on-disk) gives 100%
-# recall with no HNSW/IVF training RSS cost (TD-AXIS-4 PAX-exact-scan direction).
-# Apps that want in-memory ANN opt in with the `axis` feature below.
-proximadb = { path = "../../..", default-features = false, features = [
-    "datafusion-integration",
-    "sql_frontend",
-    "canonical-document-store",
-    "graph-first-sks",
-    "unified-facade-routing",
-    "otlp-metering",
-] }
+# NB: embedded pulls the root *default* features (which include `axis`). Making
+# embedded axis-OFF-by-default breaks the `cargo check --workspace` CI build: the
+# root compiles axis-ON (its default + workspace unification) while embedded compiles
+# axis-OFF, and embedded's flush→AXIS projection reap then sees the root's
+# `Option<&AxisManager>` type while passing `Option<&()>` (cfg is per-crate; the type
+# crosses the crate boundary). A cross-crate-stable flush seam (service trait-ify) is
+# the tracked follow-up; until then embedded stays axis-ON for build consistency.
+proximadb = { path = "../../.." }
 # FA-b: optional, behind the `abac-policy` feature. Embedded mode is abac-OFF by
 # design (in-process; the host app owns authorization) — this dep exists only so
 # the abac verification can compile embedded's calls against root's threaded
@@ -65,10 +60,6 @@ napi-derive = { version = "2.14", optional = true }
 
 [features]
 default = []
-# Opt into the in-memory ANN index engine (AXIS: HNSW/IVF/RaBitQ). OFF by default —
-# embedded defaults to exact-scan (see the `proximadb` dependency note above). Enable
-# only when an embedded app needs approximate search over large collections.
-axis = ["proximadb/axis"]
 # FA-b: mirrors root's `abac-policy`. OFF by default — embedded mode is
 # in-process and the host application owns authorization, so ABAC (a server-side
 # multi-tenant concern) does not apply. The feature exists so the abac
