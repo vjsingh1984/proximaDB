@@ -330,14 +330,19 @@ mod tests {
     fn test_factory_create_default_pipeline() {
         let factory = create_test_factory();
 
-        for engine in &[
+        let mut engines = vec![
             ProgressiveEngineType::SST,
             ProgressiveEngineType::HELIX,
             ProgressiveEngineType::VIPER,
             ProgressiveEngineType::SWIFT,
             ProgressiveEngineType::NOVA,
-            ProgressiveEngineType::RAPTOR,
-        ] {
+        ];
+        // RAPTOR's pipeline is `experimental-engines`-gated (it needs AXIS clustering);
+        // only assert its 3-stage default when that feature is on.
+        #[cfg(feature = "experimental-engines")]
+        engines.push(ProgressiveEngineType::RAPTOR);
+
+        for engine in &engines {
             let pipeline = factory.create_default_pipeline(*engine);
             assert_eq!(
                 pipeline.stage_count(),
