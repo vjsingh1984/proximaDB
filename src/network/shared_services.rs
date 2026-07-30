@@ -541,8 +541,8 @@ impl SharedServices {
         opt_config: Option<&crate::core::config::Config>,
     ) -> Option<Arc<crate::security::rls::AbacEnforcer>> {
         use proximadb_abac::{
-            FileSystemAttributeAuthority, FileSystemPolicyBindingStore, InMemoryPolicyEpochs,
-            InMemoryPredicateObjectStore,
+            FileSystemAttributeAuthority, FileSystemPolicyBindingStore,
+            FileSystemPredicateObjectStore, InMemoryPolicyEpochs,
         };
 
         let data_dir = opt_config?.server.data_dir.clone();
@@ -581,14 +581,30 @@ impl SharedServices {
                     return None;
                 }
             };
+        // TD-ABAC-4: durable predicate-object store — resolves the
+        // `PolicyBinding.predicate_ref` ObjectIds to their `FilterExpression`s so
+        // row-level enforcement (not just predicate-free table grants) works in
+        // production. Empty ⇒ every predicate ref resolves fail-closed.
+        let predicate_objects =
+            match FileSystemPredicateObjectStore::open(abac_dir.join("predicate-objects.json")) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(
+                        "abac-policy: failed to open predicate object store at {}: {e}; \
+                     enforcement DISABLED (no enforcer)",
+                        abac_dir.display()
+                    );
+                    return None;
+                }
+            };
 
         tracing::info!(
-            "abac-policy: durable ABAC enforcer active at {} (authority + policy binding store)",
+            "abac-policy: durable ABAC enforcer active at {} (authority + policy binding store + predicate object store)",
             abac_dir.display()
         );
         let enforcer = crate::security::rls::AbacEnforcer::new(
             Box::new(authority),
-            Box::new(InMemoryPredicateObjectStore::new()),
+            Box::new(predicate_objects),
             Box::new(InMemoryPolicyEpochs::new()),
         )
         .with_binding_store(Box::new(bindings));
