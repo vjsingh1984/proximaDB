@@ -101,7 +101,12 @@ impl ProgressivePipelineFactory {
             ProgressiveEngineType::VIPER => self.create_viper_pipeline(stages, hamming_threshold),
             ProgressiveEngineType::SWIFT => self.create_swift_pipeline(stages, hamming_threshold),
             ProgressiveEngineType::NOVA => self.create_nova_pipeline(stages, hamming_threshold),
+            #[cfg(feature = "experimental-engines")]
             ProgressiveEngineType::RAPTOR => self.create_raptor_pipeline(stages, hamming_threshold),
+            // RAPTOR requires `experimental-engines`; unreachable without it, so
+            // return an empty pipeline to keep the match exhaustive.
+            #[cfg(not(feature = "experimental-engines"))]
+            ProgressiveEngineType::RAPTOR => ProgressiveSearchCoordinator::new(),
         }
     }
 
@@ -272,6 +277,7 @@ impl ProgressivePipelineFactory {
         coordinator
     }
 
+    #[cfg(feature = "experimental-engines")]
     fn create_raptor_pipeline(
         &self,
         stages: &[PipelineStage],
@@ -324,14 +330,19 @@ mod tests {
     fn test_factory_create_default_pipeline() {
         let factory = create_test_factory();
 
-        for engine in &[
+        let mut engines = vec![
             ProgressiveEngineType::SST,
             ProgressiveEngineType::HELIX,
             ProgressiveEngineType::VIPER,
             ProgressiveEngineType::SWIFT,
             ProgressiveEngineType::NOVA,
-            ProgressiveEngineType::RAPTOR,
-        ] {
+        ];
+        // RAPTOR's pipeline is `experimental-engines`-gated (it needs AXIS clustering);
+        // only assert its 3-stage default when that feature is on.
+        #[cfg(feature = "experimental-engines")]
+        engines.push(ProgressiveEngineType::RAPTOR);
+
+        for engine in &engines {
             let pipeline = factory.create_default_pipeline(*engine);
             assert_eq!(
                 pipeline.stage_count(),

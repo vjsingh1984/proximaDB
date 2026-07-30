@@ -74,9 +74,12 @@
 //! | Annoy     | O(N log N) | O(log N)   | Medium  | 85-95%    |
 //! | Flat      | O(1)       | O(N)       | High    | 100%      |
 
+#[cfg(feature = "axis")]
 pub mod axis;
 pub mod config;
-/// Enhanced Dense Retrieval with late interaction.
+/// Enhanced Dense Retrieval with late interaction. Implements the AXIS
+/// `AxisVectorIndex` trait + uses AXIS types — gated with `axis`.
+#[cfg(feature = "axis")]
 pub mod edr;
 /// Geo-spatial indexing (geohash-based).
 pub mod geo;
@@ -92,6 +95,7 @@ pub mod turboquant_bridge;
 // The canonical implementations live in `src/index/axis/indexes/`.
 
 // Re-export main types for easier access
+#[cfg(feature = "axis")]
 pub use axis::{AxisConfig, AxisManager, IndexLocationResolver};
 pub use config::{
     IndexUpdateMode, RuntimeHnswConfig, RuntimeIndexConfig, RuntimeIvfConfig, RuntimeLshConfig,
@@ -105,7 +109,10 @@ pub use geo::{
 
 // Placeholder index structures for compilation
 use anyhow::Result;
-use std::sync::{Arc, OnceLock};
+#[cfg(feature = "axis")]
+use std::sync::Arc;
+#[cfg(feature = "axis")]
+use std::sync::OnceLock;
 
 use crate::core::VectorId;
 use proximadb_records::ProximaRecord;
@@ -115,10 +122,12 @@ use proximadb_records::ProximaRecord;
 /// flush trigger resolves it here (mirroring `AutoFlushDriver`'s field) so an inline
 /// size-triggered flush can clear the in-memory AXIS projection exactly like the
 /// periodic/shutdown paths — preventing duplicate results for collections that use AXIS.
+#[cfg(feature = "axis")]
 static GLOBAL_AXIS_MANAGER: OnceLock<Arc<AxisManager>> = OnceLock::new();
 
 /// Set the global concrete `AxisManager` (once, at engine start). Idempotent: a second
 /// call is a no-op (the first wins), matching `OnceLock` semantics.
+#[cfg(feature = "axis")]
 pub fn set_global_axis_manager(manager: Arc<AxisManager>) {
     let _ = GLOBAL_AXIS_MANAGER.set(manager);
 }
@@ -126,6 +135,7 @@ pub fn set_global_axis_manager(manager: Arc<AxisManager>) {
 /// Get the global concrete `AxisManager` if the engine has started. `None` before init
 /// — acceptable for the inline flush trigger, which then flushes without clearing the
 /// AXIS projection (same as if the manager were absent; the periodic driver clears it).
+#[cfg(feature = "axis")]
 pub fn get_global_axis_manager() -> Option<Arc<AxisManager>> {
     GLOBAL_AXIS_MANAGER.get().cloned()
 }
@@ -327,11 +337,14 @@ impl SparseVectorIndex {
 }
 
 /// Placeholder Join Engine
+/// Placeholder Join Engine — only referenced from the AXIS manager (`axis/management/manager.rs`).
+#[cfg(feature = "axis")]
 #[derive(Debug)]
 pub struct JoinEngine {
     // Placeholder implementation
 }
 
+#[cfg(feature = "axis")]
 impl JoinEngine {
     /// Creates a new join engine for hybrid multi-index query execution.
     pub async fn new() -> Result<Self> {

@@ -1641,6 +1641,7 @@ mod tests {
     /// search is served by the ANN index instead of a brute-force segment scan.
     /// (The `FlushCoordinator` is test-only scaffolding; the hook lives on the
     /// real path exercised here.)
+    #[cfg(feature = "axis")]
     #[tokio::test]
     async fn td112_live_flush_indexes_vectors_into_axis() {
         use crate::index::axis::management::manager::AxisManager;

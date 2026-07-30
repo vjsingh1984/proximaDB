@@ -15,6 +15,13 @@ path = "src/lib.rs"
 
 [dependencies]
 # Depends on the root proximadb library (one-directional: embedded -> root, no cycle).
+# NB: embedded pulls the root *default* features (which include `axis`). Making
+# embedded axis-OFF-by-default breaks the `cargo check --workspace` CI build: the
+# root compiles axis-ON (its default + workspace unification) while embedded compiles
+# axis-OFF, and embedded's flush→AXIS projection reap then sees the root's
+# `Option<&AxisManager>` type while passing `Option<&()>` (cfg is per-crate; the type
+# crosses the crate boundary). A cross-crate-stable flush seam (service trait-ify) is
+# the tracked follow-up; until then embedded stays axis-ON for build consistency.
 proximadb = { path = "../../.." }
 # FA-b: optional, behind the `abac-policy` feature. Embedded mode is abac-OFF by
 # design (in-process; the host app owns authorization) — this dep exists only so

@@ -29,7 +29,13 @@ default = [
     "graph-first-sks",
     "unified-facade-routing",
     "otlp-metering",
+    "axis",
 ]
+# In-memory ANN index engine (AXIS: HNSW/IVF/RaBitQ). Default ON for the production
+# server — forwarded explicitly (not via workspace feature-unification) so every
+# build path (Dockerfile, `_shared-build`, release) links it. Turn OFF only for the
+# PAX-exact-scan `no-axis` feature-matrix variant (search then routes to exact scan).
+axis = ["proximadb/axis"]
 # The cross-modal OLAP query plane (pgwire → DataFusion): the DataFusion engine + the
 # cross-modal table functions (vector_search / timeseries_range). Without it, parquet-backed
 # tables route to the native Volcano engine and the cross-modal UDTFs are not registered.

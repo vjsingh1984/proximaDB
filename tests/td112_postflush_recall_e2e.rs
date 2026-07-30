@@ -9,15 +9,22 @@
 //!
 //! The clusters are well-separated so the *expected* recall is high regardless
 //! of the approximate index's internals; the band below is the regression gate.
+//
+// This test exercises the AXIS post-flush indexing path, so the whole file is
+// elided when the `axis` feature is off (PAX-exact-scan build has no AXIS index).
+#![cfg(feature = "axis")]
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchMode, SearchParams};
+#[cfg(feature = "axis")]
 use proximadb::index::axis::management::manager::AxisManager;
+#[cfg(feature = "axis")]
 use proximadb::index::axis::types::AxisConfig;
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, StorageAssignment, StorageEngine, VectorRecord,
 };
 use proximadb::storage::engines::sst::SstEngine;
+#[cfg(feature = "axis")]
 use proximadb::storage::engines::sst::core::set_sst_axis_manager;
 use proximadb::storage::traits::{
     FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
@@ -26,15 +33,21 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+#[cfg(feature = "axis")]
 const DIMENSION: usize = 16;
+#[cfg(feature = "axis")]
 const CLUSTERS: usize = 6;
+#[cfg(feature = "axis")]
 const PER_CLUSTER: usize = 24;
+#[cfg(feature = "axis")]
 const TOP_K: usize = 10;
 /// Conservative recall band: well-separated clusters should give near-perfect
 /// recall; this gate catches a collapse toward zero (e.g. the index never being
 /// populated and search returning nothing useful).
+#[cfg(feature = "axis")]
 const RECALL_BAND: f32 = 0.8;
 
+#[cfg(feature = "axis")]
 fn collection_config(id: &str, temp_dir: &TempDir) -> Collection {
     Collection {
         id: id.to_string(),
@@ -67,6 +80,7 @@ fn collection_config(id: &str, temp_dir: &TempDir) -> Collection {
 /// deterministic per-record perturbation. (All-positive, high-magnitude clusters
 /// collapse under sign quantization — every vector shares one signature — so this
 /// scheme is what gives a *fair* recall measurement of the index.)
+#[cfg(feature = "axis")]
 fn clustered_vectors() -> Vec<VectorRecord> {
     let mut out = Vec::with_capacity(CLUSTERS * PER_CLUSTER);
     for c in 0..CLUSTERS {
@@ -96,11 +110,13 @@ fn clustered_vectors() -> Vec<VectorRecord> {
     out
 }
 
+#[cfg(feature = "axis")]
 fn euclidean_sq(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
 }
 
 /// Exact top-k ids by Euclidean distance — the brute-force oracle.
+#[cfg(feature = "axis")]
 fn oracle_topk(all: &[VectorRecord], query: &[f32], k: usize) -> Vec<String> {
     let mut scored: Vec<(f32, &str)> = all
         .iter()
@@ -114,6 +130,7 @@ fn oracle_topk(all: &[VectorRecord], query: &[f32], k: usize) -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "axis")]
 async fn flush_batch(engine: &SstEngine, collection: &Collection, batch: Vec<VectorRecord>) {
     let params = FlushParameters {
         collection_id: Some(collection.id.clone()),
@@ -131,6 +148,7 @@ async fn flush_batch(engine: &SstEngine, collection: &Collection, batch: Vec<Vec
     assert!(result.success, "flush should succeed");
 }
 
+#[cfg(feature = "axis")]
 async fn search(engine: &SstEngine, collection: &Collection, query: Vec<f32>) -> Vec<String> {
     let params = Arc::new(SearchParams {
         query_vectors: Some(vec![query]),
@@ -181,6 +199,7 @@ async fn search(engine: &SstEngine, collection: &Collection, query: Vec<f32>) ->
 /// Post-flush (≥2 flush cycles + compaction) top-k recall must stay within the
 /// target band against a brute-force oracle, and the query's own vector must be
 /// retrievable — proving flushed vectors are served by the populated ANN index.
+#[cfg(feature = "axis")]
 #[tokio::test]
 async fn postflush_recall_within_band_after_multi_flush_and_compaction() {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
@@ -245,6 +264,7 @@ async fn postflush_recall_within_band_after_multi_flush_and_compaction() {
 /// restart without asserting boot-time prewarm — the next search must rebuild it
 /// from durable local SST segments and recover recall, rather than silently
 /// degrading to a brute-force scan.
+#[cfg(feature = "axis")]
 #[tokio::test]
 async fn axis_index_rebuilt_from_sst_after_loss() {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();

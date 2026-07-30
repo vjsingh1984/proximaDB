@@ -26,7 +26,18 @@ use anyhow::{Context, Result};
 use dashmap::DashMap;
 use tokio::sync::{Mutex, OnceCell, Semaphore};
 
+#[cfg(feature = "axis")]
 use crate::index::AxisManager;
+
+/// Flush-path AXIS projection reap target threaded through the flush entry points.
+/// `Option<&AxisManager>` when AXIS is compiled in (the reap runs); `Option<&()>`
+/// otherwise — the reap is cfg-gated out, so this is always `None` off. Keeping one
+/// alias keeps the entry-point signatures identical across builds so callers don't
+/// branch on the feature.
+#[cfg(feature = "axis")]
+pub(crate) type AxisFlushArg<'a> = Option<&'a AxisManager>;
+#[cfg(not(feature = "axis"))]
+pub(crate) type AxisFlushArg<'a> = Option<&'a ()>;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, StorageAssignment, StorageEngine as ProtoStorageEngine,
 };
@@ -310,7 +321,7 @@ pub async fn materialize_collection(
     fence: Option<&Arc<dyn StorageWriteFence>>,
     fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     free_wal: bool,
-    axis_index_manager: Option<&AxisManager>,
+    axis_index_manager: AxisFlushArg<'_>,
 ) -> Result<Option<CollectionFlushOutcome>> {
     materialize_collection_with_coordinator_mode(
         flush_execution_coordinator(),
@@ -334,7 +345,7 @@ pub async fn materialize_collection_if_idle(
     fence: Option<&Arc<dyn StorageWriteFence>>,
     fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     free_wal: bool,
-    axis_index_manager: Option<&AxisManager>,
+    axis_index_manager: AxisFlushArg<'_>,
 ) -> Result<Option<CollectionFlushOutcome>> {
     materialize_collection_with_coordinator_mode(
         flush_execution_coordinator(),
@@ -363,7 +374,7 @@ async fn materialize_collection_with_coordinator(
     fence: Option<&Arc<dyn StorageWriteFence>>,
     fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     free_wal: bool,
-    axis_index_manager: Option<&AxisManager>,
+    axis_index_manager: AxisFlushArg<'_>,
 ) -> Result<Option<CollectionFlushOutcome>> {
     materialize_collection_with_coordinator_mode(
         coordinator,
@@ -386,7 +397,7 @@ async fn materialize_collection_with_coordinator_mode(
     fence: Option<&Arc<dyn StorageWriteFence>>,
     fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     free_wal: bool,
-    axis_index_manager: Option<&AxisManager>,
+    axis_index_manager: AxisFlushArg<'_>,
     collection_admission: CollectionAdmission,
 ) -> Result<Option<CollectionFlushOutcome>> {
     // A6 storage-write fence — reject a displaced pod before touching storage.
@@ -611,6 +622,7 @@ async fn materialize_collection_with_coordinator_mode(
         .await
         .map(|batches| batches.is_empty())
         .unwrap_or(false);
+    #[cfg(feature = "axis")]
     if collection_wal_empty
         && let Some(axis) = axis_index_manager
         && let Err(e) = axis.clear_collection_vectors(&plan.canonical_id).await
@@ -621,6 +633,10 @@ async fn materialize_collection_with_coordinator_mode(
             e
         );
     }
+    // When AXIS is compiled out there is no in-memory projection to reap; the
+    // durable segment written above is the sole source of truth.
+    #[cfg(not(feature = "axis"))]
+    let _ = (collection_wal_empty, axis_index_manager);
 
     Ok(Some(CollectionFlushOutcome {
         vectors_submitted: vector_count,

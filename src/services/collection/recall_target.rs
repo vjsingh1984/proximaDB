@@ -40,14 +40,15 @@
 //! and why.
 
 use crate::compute::distance_computation::DistanceMetric;
+#[cfg(feature = "axis")]
 use crate::index::axis::management::{
     AnnIndexAdvisor, HnswSizingInput, HnswSizingOutput, advise_hnsw_params,
 };
 #[cfg(test)]
 use crate::proto::proximadb_v1::IndexConfig;
-use crate::proto::proximadb_v1::{
-    CollectionConfig, DistanceMetric as ProtoDistanceMetric, HnswConfig, IndexingAlgorithm,
-};
+use crate::proto::proximadb_v1::{CollectionConfig, DistanceMetric as ProtoDistanceMetric};
+#[cfg(feature = "axis")]
+use crate::proto::proximadb_v1::{HnswConfig, IndexingAlgorithm};
 
 /// Tag key prefix used to encode `recall_target` on
 /// `CollectionConfig.tags`.
@@ -83,6 +84,7 @@ pub fn parse_recall_target(config: &CollectionConfig) -> Option<f32> {
 /// `(index_name, advisor_output)` for every index the advisor wrote
 /// to — empty if nothing changed (no HNSW indexes, all pinned, or
 /// no recall_target set).
+#[cfg(feature = "axis")]
 ///
 /// **Auto-add behavior**: if `config.index_configs` contains *zero*
 /// HNSW entries and there's at least one filterable column or no
@@ -192,6 +194,7 @@ pub const AUTO_HMGI_INDEX_NAME: &str = "auto_hmgi_recall_target";
 /// advisor sized, carrying the discriminator + full
 /// [`AnnAdvisorOutput`] (which itself carries the sized
 /// `IndexAlgorithm` + memory/work estimates + rationale).
+#[cfg(feature = "axis")]
 #[derive(Debug, Clone)]
 pub struct AppliedAdvice {
     /// The IndexConfig name that received the sized params.
@@ -225,6 +228,7 @@ pub struct AppliedAdvice {
 /// delegates to this function and filters the result to HNSW
 /// entries for back-compat with callers that expected
 /// `Vec<(String, HnswSizingOutput)>`.
+#[cfg(feature = "axis")]
 pub fn apply_advisor_to_indexes(
     config: &mut CollectionConfig,
     recall_target: f32,
@@ -532,7 +536,10 @@ pub fn resolve_top_k(config: &CollectionConfig) -> u32 {
 /// `max_ef_search` for HNSW and `max_nprobe` for IVF via per-algo
 /// cost models.
 pub fn parse_max_ef_search(config: &CollectionConfig) -> Option<u32> {
-    use crate::index::axis::management::{EF_SEARCH_MAX, EF_SEARCH_MIN};
+    // Same bounds the AXIS advisor enforces (`EF_SEARCH_MIN/MAX`); defined locally
+    // so this parser stays AXIS-free and compiles in a PAX-exact-scan build.
+    const EF_SEARCH_MIN: u32 = 16;
+    const EF_SEARCH_MAX: u32 = 2048;
     const TAG: &str = "max_ef_search:";
     let mut latest: Option<u32> = None;
     for tag in &config.tags {
@@ -645,6 +652,7 @@ pub fn parse_binary_rerank_allowed(config: &CollectionConfig) -> bool {
     false
 }
 
+#[cfg_attr(not(feature = "axis"), allow(dead_code))]
 fn convert_distance_metric(raw: Option<i32>) -> DistanceMetric {
     match raw.and_then(|v| ProtoDistanceMetric::try_from(v).ok()) {
         Some(ProtoDistanceMetric::Cosine) => DistanceMetric::Cosine,

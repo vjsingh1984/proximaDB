@@ -68,6 +68,7 @@ use crate::query::query_optimizer::{
 
 // Import from sibling submodules
 use super::config::{SearchPlanHints, UnifiedSearchConfig};
+#[cfg(feature = "axis")]
 use super::hybrid::{build_axis_hybrid_query, build_axis_hybrid_query_with_policy};
 use super::search::executor::proto_results_to_vector_records;
 use super::search::pipeline::default_progressive_stages;
@@ -82,6 +83,7 @@ use super::write::{
 /// ADR-070 / ADR-081: AXIS is a configured projection, not an automatic cost
 /// paid by every vector collection. PAX-only collections carry no index config;
 /// the explicit RawF32 compatibility tag retains the established AXIS path.
+#[cfg_attr(not(feature = "axis"), allow(dead_code))]
 fn collection_uses_axis_indexes(collection: &Collection) -> bool {
     collection.config.as_ref().is_some_and(|config| {
         !config.index_configs.is_empty()
@@ -559,6 +561,7 @@ pub struct VectorOperationsService {
     query_cache: Arc<QueryCache>,
 
     /// AXIS index manager for index lookups
+    #[cfg(feature = "axis")]
     axis_index_manager: Arc<crate::index::AxisManager>,
 
     /// Collection port for metadata and configuration (Phase 9 / Task #76)
@@ -616,16 +619,25 @@ impl VectorOperationsService {
     pub fn new_with_context(
         storage_engine: Arc<SstEngine>,
         wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
-        axis_index_manager: Arc<crate::index::AxisManager>,
+        #[cfg(feature = "axis")] axis_index_manager: Arc<crate::index::AxisManager>,
         collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         ctx: &crate::core::context::SharedContext,
     ) -> Self {
-        let mut svc = Self::new(
-            storage_engine,
-            wal_manager,
-            axis_index_manager,
-            collection_port,
-        );
+        let mut svc = {
+            #[cfg(feature = "axis")]
+            {
+                Self::new(
+                    storage_engine,
+                    wal_manager,
+                    axis_index_manager,
+                    collection_port,
+                )
+            }
+            #[cfg(not(feature = "axis"))]
+            {
+                Self::new(storage_engine, wal_manager, collection_port)
+            }
+        };
         svc.orchestrator = ctx.orchestrator.clone();
         // Tenant integration from shared context
         if let Some(ref tenant_manager) = ctx.tenant_manager {
@@ -643,6 +655,7 @@ impl VectorOperationsService {
 
     /// Expose the AXIS index manager for direct index operations
     /// Used by embedded mode to build indexes synchronously after flush
+    #[cfg(feature = "axis")]
     pub fn axis_index_manager(&self) -> Arc<crate::index::AxisManager> {
         self.axis_index_manager.clone()
     }
@@ -1232,6 +1245,7 @@ impl VectorOperationsService {
     /// builds the filter directly from rich `ProximaValue` predicates, bypassing
     /// the lossy v1 `ComparisonOp` round-trip). Keeping one core means both
     /// entry points share the advisor-observability wrap and response assembly.
+    #[cfg_attr(not(feature = "axis"), allow(unused_variables))]
     async fn run_unified_search_v1(
         &self,
         collection_id: String,
@@ -1283,6 +1297,7 @@ impl VectorOperationsService {
         // any lookup failure short-circuits silently to avoid
         // touching the search path's success contract.
         let elapsed_us = search_started_at.elapsed().as_micros() as u64;
+        #[cfg(feature = "axis")]
         observe_advisor_for_search(&collection_id, top_k as u32, elapsed_us).await;
 
         Ok(crate::proto::proximadb_v1::VectorOperationResponse {
@@ -1540,7 +1555,7 @@ impl VectorOperationsService {
     pub fn new(
         storage_engine: Arc<SstEngine>,
         wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
-        axis_index_manager: Arc<crate::index::AxisManager>,
+        #[cfg(feature = "axis")] axis_index_manager: Arc<crate::index::AxisManager>,
         collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     ) -> Self {
         info!(
@@ -1563,6 +1578,7 @@ impl VectorOperationsService {
             query_optimizer: Arc::new(UnifiedQueryOptimizer::new(optimizer_config)),
             collection_cache: Arc::new(dashmap::DashMap::new()),
             query_cache,
+            #[cfg(feature = "axis")]
             axis_index_manager,
             collection_port,
             orchestrator: None,
@@ -3330,14 +3346,10 @@ impl VectorOperationsService {
             filter.as_ref().map(|f| format!("{:?}", f))
         );
 
-        // Resolve ADR-011 filtering mode from the plan's ann_filtering_mode string.
-        let ann_mode = match plan.ann_filtering_mode.as_deref() {
-            Some("Inline") => crate::index::axis::management::manager::AnnFilteringMode::Inline,
-            Some("PreFilter") => {
-                crate::index::axis::management::manager::AnnFilteringMode::PreFilter
-            }
-            _ => crate::index::axis::management::manager::AnnFilteringMode::PostFilter,
-        };
+        // ADR-011 filtering mode, threaded as the raw plan string. The AXIS enum
+        // is resolved inside the (cfg-gated) Stage-2 block below, so this signature
+        // stays AXIS-free and compiles with the `axis` feature off.
+        let ann_filtering_mode = plan.ann_filtering_mode.clone();
         let ann_filtering_selectivity = plan.ann_filtering_selectivity;
 
         let mut results: Vec<crate::core::search::results::OptimizedSearchRecord> = Vec::new();
@@ -3376,7 +3388,7 @@ impl VectorOperationsService {
                     // Execute search with ADR-011 filtering mode threaded through.
                     tracing::debug!(
                         "🔍 About to call execute_two_stage_search_with_mode (mode={:?}) with filter: {:?}",
-                        ann_mode,
+                        ann_filtering_mode,
                         filter.as_ref().map(|f| format!("{:?}", f))
                     );
                     results = self
@@ -3388,7 +3400,7 @@ impl VectorOperationsService {
                             query_vector.clone(),
                             filter.clone(),
                             search_mode.clone(),
-                            ann_mode,
+                            &ann_filtering_mode,
                             ann_filtering_selectivity,
                         )
                         .await?;
@@ -3439,7 +3451,7 @@ impl VectorOperationsService {
                             query_vector.clone(),
                             filter.clone(),
                             search_mode.clone(),
-                            ann_mode,
+                            &ann_filtering_mode,
                             ann_filtering_selectivity,
                         )
                         .await?;
@@ -3448,6 +3460,10 @@ impl VectorOperationsService {
                 }
 
                 // Index lookup optimization
+                // Index lookup optimization (AXIS only — the optimizer never emits
+                // IndexLookup without index_configs, which can't exist with the
+                // `axis` feature off; the `_` arm below is the off-path no-op).
+                #[cfg(feature = "axis")]
                 ExecutionStep::IndexLookup {
                     index_type,
                     mut lookup_params,
@@ -3588,6 +3604,7 @@ impl VectorOperationsService {
         }
     }
 
+    #[cfg_attr(not(feature = "axis"), allow(unused_variables))]
     async fn execute_two_stage_search_with_mode(
         &self,
         collection_id: &str,
@@ -3597,7 +3614,7 @@ impl VectorOperationsService {
         query_vector: Vec<f32>,
         filter: Option<FilterExpression>,
         search_mode: crate::core::search::SearchMode,
-        ann_filtering_mode: crate::index::axis::management::manager::AnnFilteringMode,
+        ann_filtering_mode: &Option<String>,
         ann_filtering_selectivity: Option<f64>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
@@ -3679,7 +3696,12 @@ impl VectorOperationsService {
         // A0 coarse-probe) in the SST engine handles the search — the segment IS
         // the index. This avoids the 8.6GB RSS + minutes of IVF training for
         // cost-optimized, object-storage-backed collections.
+        #[cfg(feature = "axis")]
         let collection_has_axis_indexes = collection_uses_axis_indexes(&collection);
+        #[cfg(not(feature = "axis"))]
+        let collection_has_axis_indexes = false;
+
+        #[cfg(feature = "axis")]
         let axis_optimized_results = if !collection_has_axis_indexes {
             info!(
                 "🔍 Co-design: skipping AXIS for collection {} (no index_configs) — \
@@ -3688,17 +3710,26 @@ impl VectorOperationsService {
             );
             Vec::new()
         } else {
+            // Resolve the ADR-011 filtering enum from the threaded plan string
+            // (kept as a string across the signature so the `axis` feature is optional).
+            let ann_mode_enum = match ann_filtering_mode.as_deref() {
+                Some("Inline") => crate::index::axis::management::manager::AnnFilteringMode::Inline,
+                Some("PreFilter") => {
+                    crate::index::axis::management::manager::AnnFilteringMode::PreFilter
+                }
+                _ => crate::index::axis::management::manager::AnnFilteringMode::PostFilter,
+            };
             match build_axis_hybrid_query_with_policy(
                 // TD-AXIS-1: use the collection's canonical id (UUID) — NOT the
                 // caller's collection_id (which may be the human-readable NAME).
-                // enable_hmgi registered the UUID in hmgi_enabled_collections;
+                // enable_hmgi_enabled registered the UUID in hmgi_enabled_collections;
                 // passing the name caused is_hmgi_enabled to return false → HMGI
                 // skipped → IVF fallback → 0 results (ANN index not serving).
                 // ADR-031 follow-up: migrate hmgi_enabled_collections to the stable
                 // object_id (base62) and use that here instead of the UUID.
                 &collection.id,
                 &axis_search_params,
-                ann_filtering_mode,
+                ann_mode_enum,
                 ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
                 ann_filtering_selectivity,
             ) {
@@ -3745,6 +3776,12 @@ impl VectorOperationsService {
                 }
             }
         };
+        // AXIS compiled out: no in-memory ANN stage — flushed vectors are served by
+        // the PAX exact scan in Stage 3 below.
+        #[cfg(not(feature = "axis"))]
+        let axis_optimized_results: Vec<
+            crate::core::search::results::OptimizedSearchRecord,
+        > = Vec::new();
 
         // Stage 3: Storage engine search - ONLY if we need more results.
         // Skip when WAL + AXIS already cover the candidate pool -- but that's only true
@@ -4020,6 +4057,7 @@ impl VectorOperationsService {
     }
 
     /// Perform a vector or metadata index lookup via the AXIS index manager.
+    #[cfg(feature = "axis")]
     async fn execute_index_lookup(
         &self,
         collection_id: &str,
@@ -4203,7 +4241,9 @@ impl VectorOperationsService {
             .write_vector_batch_native_arc(collection_id, Arc::new(vectors.clone()))
             .await?;
 
+        #[cfg(feature = "axis")]
         let collection = self.get_or_load_collection(collection_id).await?;
+        #[cfg(feature = "axis")]
         let axis_duration = if collection_uses_axis_indexes(&collection) {
             let axis_start = std::time::Instant::now();
             for record in vectors.iter() {
@@ -4236,6 +4276,10 @@ impl VectorOperationsService {
             );
             std::time::Duration::ZERO
         };
+        // AXIS compiled out: no in-memory index feed — flushed records are served
+        // via the PAX exact scan.
+        #[cfg(not(feature = "axis"))]
+        let axis_duration = std::time::Duration::ZERO;
 
         let duration_micros = start.elapsed().as_micros() as i64;
         let bytes_written = vectors
@@ -5122,7 +5166,7 @@ mod migration_example {
 //    - Consistent optimization logic
 //    - Easier to test and debug
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod index_first_search_tests {
     use super::*;
     use crate::compute::distance_computation::DistanceMetric;
@@ -5564,6 +5608,7 @@ mod index_first_search_tests {
         Ok(())
     }
 
+    #[cfg(feature = "axis")]
     #[tokio::test]
     async fn test_metadata_filter_pushdown_to_indexes() -> Result<()> {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
@@ -6130,6 +6175,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
 /// predicted recall + work, and record the observation.
 /// Best-effort — any lookup miss short-circuits silently. The
 /// search path's success contract is unaffected.
+#[cfg(feature = "axis")]
 async fn observe_advisor_for_search(collection_id: &str, top_k: u32, observed_latency_us: u64) {
     // (1) Reach the live AXIS manager to read the active strategy.
     // Absent on HELIX-only deployments — short-circuit gracefully.

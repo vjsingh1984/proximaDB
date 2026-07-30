@@ -1,3 +1,4 @@
+#![cfg(feature = "experimental-engines")] // RAPTOR needs the `experimental-engines` feature.
 #![allow(deprecated)]
 //! RAPTOR Recall Test - Verify 100% recall after close/reopen
 //!

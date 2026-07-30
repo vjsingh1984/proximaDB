@@ -15,6 +15,7 @@
 mod context;
 pub mod dedup;
 pub mod quality;
+#[cfg(feature = "axis")]
 pub mod recluster;
 pub mod trajectory;
 
@@ -32,7 +33,11 @@ use crate::services::discovery::job::{DiscoveryJobKind, DiscoveryJobResult};
 pub(crate) async fn run(kind: DiscoveryJobKind, ctx: &PassContext) -> Result<DiscoveryJobResult> {
     match kind {
         DiscoveryJobKind::Dedup => dedup::run(ctx).await,
+        // Recluster uses AXIS clustering — identity pass when AXIS is compiled out.
+        #[cfg(feature = "axis")]
         DiscoveryJobKind::Recluster => recluster::run(ctx).await,
+        #[cfg(not(feature = "axis"))]
+        DiscoveryJobKind::Recluster => Ok(DiscoveryJobResult::default()),
         DiscoveryJobKind::QualityScan => quality::run(ctx).await,
         DiscoveryJobKind::TrajectoryAnalysis => trajectory::run(ctx).await,
         // re_embed needs an embedding model — identity pass until implemented.

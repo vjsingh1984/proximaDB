@@ -403,6 +403,10 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Admission-first flush ownership and exact WAL batch claims
 | Accepted (2026-07-29)
 | Makes all materialization triggers share one process-wide engine per format, one operation gate per collection, and bounded cross-collection admission. Exact cancellation-safe WAL batch claims remain readable until publication and retire by ID, preserving writes that arrive during a flush. SST L0 admission moves before clone/sort/train/encode and counts only L0 segments. TD-FLUSH-5 encoding morsels remain within one admitted segment; empty-index collections do not feed AXIS. Tracked: TD-FLUSH-7.
+| link:ADR-082-axis-compile-time-feature-gate.adoc[ADR-082]
+| AXIS is a compile-time Cargo feature `axis` (default ON, gateable OFF)
+| Accepted (2026-07-30)
+| Makes `src/index/axis/` a default-ON Cargo feature gateable OFF for PAX-exact-scan builds (off → exact-scan path), realising the TD-AXIS-4 wind-down. Gating is `#[cfg(feature = "axis")]` inline (not trait-ify) so the default-ON build is byte-for-byte identical and the recall path is untouched; off-state fallbacks are no-op/`None`/exact-scan. `proximadb-embedded` becomes axis-optional (default OFF); `proximadb-server` forwards `axis` explicitly. Tracked: PR #1332.
 | link:ADR-0083-consolidated-catalog-identity-model.adoc[ADR-0083]
 | Consolidated catalog identity model — physical key, addressing composite, display name (three layers)
 | Accepted (2026-07-30)

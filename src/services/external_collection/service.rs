@@ -22,14 +22,17 @@ use proximadb_data_model::ProximaType;
 use proximadb_records::ProximaRecord;
 
 use super::registry::ExternalCollectionRegistry;
-use super::source_reader::{
-    read_external_records, read_external_text, read_records_by_ids, snapshot_fingerprint,
-};
+#[cfg(feature = "axis")]
+use super::source_reader::read_external_records;
+use super::source_reader::{read_external_text, read_records_by_ids, snapshot_fingerprint};
 use super::types::{ExternalCollection, ExternalCollectionSpec, ExternalCollectionStatus};
 use crate::catalog::CatalogManager;
 use crate::core::search::hybrid::{BM25Result, FusionStrategy, HybridFusionEngine, VectorResult};
+#[cfg(feature = "axis")]
 use crate::index::AxisManager;
+#[cfg(feature = "axis")]
 use crate::index::axis::management::manager::{AxisHybridQuery, VectorQuery};
+#[cfg(feature = "axis")]
 use crate::index::axis::types::{Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification};
 use crate::storage::engines::core::formats::columnar::fulltext_index::{
     FullTextIndex, TokenizerConfig,
@@ -75,6 +78,7 @@ pub struct RefreshOutcome {
 pub struct ExternalCollectionService {
     registry: Arc<ExternalCollectionRegistry>,
     catalog_manager: Arc<CatalogManager>,
+    #[cfg(feature = "axis")]
     axis_manager: Arc<AxisManager>,
     /// F5 Slice 3: per-collection BM25 inverted index over the source text
     /// column (keyed by collection name). In-memory; built on `build`/`refresh`.
@@ -85,11 +89,12 @@ impl ExternalCollectionService {
     pub fn new(
         registry: Arc<ExternalCollectionRegistry>,
         catalog_manager: Arc<CatalogManager>,
-        axis_manager: Arc<AxisManager>,
+        #[cfg(feature = "axis")] axis_manager: Arc<AxisManager>,
     ) -> Self {
         Self {
             registry,
             catalog_manager,
+            #[cfg(feature = "axis")]
             axis_manager,
             fulltext_indexes: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -280,6 +285,7 @@ impl ExternalCollectionService {
 
     /// Read + build + register-strategy. Separated so `build` can centralize
     /// status/projection transitions around it.
+    #[cfg(feature = "axis")]
     async fn build_inner(&self, ec: &ExternalCollection) -> Result<usize> {
         let records = read_external_records(&ec.spec)?;
         let count = records.len();
@@ -301,6 +307,13 @@ impl ExternalCollectionService {
         // configured) so search can fuse lexical + vector results.
         self.build_fulltext_index(&ec.spec)?;
         Ok(count)
+    }
+
+    /// External collections index into AXIS, so building is unsupported in a
+    /// PAX-exact-scan (`axis` off) build.
+    #[cfg(not(feature = "axis"))]
+    async fn build_inner(&self, _ec: &ExternalCollection) -> Result<usize> {
+        anyhow::bail!("external collections require the `axis` feature (PAX-exact-scan build)")
     }
 
     /// Build (or rebuild) the per-collection BM25 index from the source text
@@ -344,6 +357,7 @@ impl ExternalCollectionService {
     }
 
     /// Register the IVF routing strategy so `AxisManager::query` routes this
+    #[cfg(feature = "axis")]
     /// collection to its (already-built) IVF index. The nlist/nprobe here are
     /// routing hints; the served index keeps the parameters it was built with.
     async fn register_ivf_strategy(
@@ -519,6 +533,7 @@ impl ExternalCollectionService {
 
     /// Run the IVF vector search and federate full records — the shared vector
     /// half of `search`/`hybrid_search`.
+    #[cfg(feature = "axis")]
     async fn vector_hits(
         &self,
         ec: &ExternalCollection,
@@ -560,6 +575,18 @@ impl ExternalCollectionService {
                 ExternalHit { id, score, record }
             })
             .collect())
+    }
+
+    /// External-collection vector search routes through `AxisManager::query`;
+    /// unsupported in a PAX-exact-scan (`axis` off) build.
+    #[cfg(not(feature = "axis"))]
+    async fn vector_hits(
+        &self,
+        _ec: &ExternalCollection,
+        _query: Vec<f32>,
+        _k: usize,
+    ) -> Result<Vec<ExternalHit>> {
+        anyhow::bail!("external collections require the `axis` feature (PAX-exact-scan build)")
     }
 
     /// Look up a registry record by id.
@@ -618,7 +645,7 @@ impl ExternalCollectionService {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod tests {
     use super::*;
     use std::sync::Arc;

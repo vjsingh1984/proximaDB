@@ -31,6 +31,7 @@ use std::time::Instant;
 
 use tokio::sync::RwLock;
 
+#[cfg(feature = "axis")]
 use crate::index::AxisManager;
 use crate::metrics::wal_flush_metrics;
 use crate::storage::flush_materializer::{CollectionFlushPlan, materialize_collection};
@@ -44,6 +45,7 @@ use crate::storage::write_fence::StorageWriteFence;
 /// ADR-069 flush policy.
 pub struct AutoFlushDriver {
     policy: FlushPolicy,
+    #[cfg(feature = "axis")]
     axis_index_manager: Arc<AxisManager>,
     /// A6 storage-write fence (default-OFF). Captured at spawn time; on the live
     /// server it is injected into the storage engine post-construction, so this
@@ -62,7 +64,7 @@ impl AutoFlushDriver {
     /// `flush_interval_secs = 0` and `wal_max_bytes = 0` makes this a no-op.
     pub fn spawn(
         policy: FlushPolicy,
-        axis_index_manager: Arc<AxisManager>,
+        #[cfg(feature = "axis")] axis_index_manager: Arc<AxisManager>,
         storage_write_fence: Option<Arc<dyn StorageWriteFence>>,
     ) {
         if !policy.needs_scheduler() {
@@ -71,6 +73,7 @@ impl AutoFlushDriver {
         let tick = policy.scheduler_tick_secs();
         let driver = Self {
             policy,
+            #[cfg(feature = "axis")]
             axis_index_manager,
             storage_write_fence,
             flush_clock: Arc::new(RwLock::new(HashMap::new())),
@@ -183,18 +186,23 @@ impl AutoFlushDriver {
             // its per-collection gate collapses overlap with inline/shutdown
             // triggers.
             let task_write_buffer = write_buffer.clone();
+            #[cfg(feature = "axis")]
             let task_axis = self.axis_index_manager.clone();
             let task_fence = self.storage_write_fence.clone();
             let reason_label = reason.as_str().to_string();
             pending.spawn(async move {
                 let start = Instant::now();
+                #[cfg(feature = "axis")]
+                let axis_arg: Option<&AxisManager> = Some(&task_axis);
+                #[cfg(not(feature = "axis"))]
+                let axis_arg: Option<&()> = None;
                 let result = materialize_collection(
                     &task_write_buffer,
                     &plan,
                     task_fence.as_ref(),
                     None,
                     true,
-                    Some(&task_axis),
+                    axis_arg,
                 )
                 .await;
                 (

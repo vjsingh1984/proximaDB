@@ -68,6 +68,7 @@ mod legacy;
 
 // Public exports
 pub use config::{SearchPlanHints, UnifiedSearchConfig};
+#[cfg(feature = "axis")]
 pub use hybrid::build_axis_hybrid_query;
 pub(crate) use legacy::rich_filters_to_filter_expression;
 pub use legacy::{
