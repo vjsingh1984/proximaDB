@@ -2868,7 +2868,15 @@ async fn scan_table_relational_pushes_projection_predicate_limit() {
 
     // (a) No predicate / no projection → all rows, full column order [id,status,qty].
     let (schema, rows) = dml
-        .scan_table_relational("inv", None, None, None, None)
+        .scan_table_relational(
+            "inv",
+            None,
+            None,
+            None,
+            None,
+            #[cfg(feature = "abac-policy")]
+            None,
+        )
         .await
         .expect("scan all");
     assert_eq!(schema.columns.len(), 3);
@@ -2880,7 +2888,15 @@ async fn scan_table_relational_pushes_projection_predicate_limit() {
         Ok(matches!(&row[1], ProximaValue::String(s) if s == "active"))
     };
     let (_s, rows) = dml
-        .scan_table_relational("inv", None, Some(&pred), None, None)
+        .scan_table_relational(
+            "inv",
+            None,
+            Some(&pred),
+            None,
+            None,
+            #[cfg(feature = "abac-policy")]
+            None,
+        )
         .await
         .expect("scan predicate");
     let mut ids: Vec<String> = rows
@@ -2901,7 +2917,15 @@ async fn scan_table_relational_pushes_projection_predicate_limit() {
         })
     };
     let err = dml
-        .scan_table_relational("inv", None, Some(&failing_pred), None, None)
+        .scan_table_relational(
+            "inv",
+            None,
+            Some(&failing_pred),
+            None,
+            None,
+            #[cfg(feature = "abac-policy")]
+            None,
+        )
         .await
         .expect_err("a predicate eval error must surface, not silently drop rows");
     assert!(
@@ -2912,7 +2936,15 @@ async fn scan_table_relational_pushes_projection_predicate_limit() {
     // (c) Output projection narrows + orders columns → just [status].
     let cols = vec!["status".to_string()];
     let (_s, rows) = dml
-        .scan_table_relational("inv", Some(&cols), None, None, None)
+        .scan_table_relational(
+            "inv",
+            Some(&cols),
+            None,
+            None,
+            None,
+            #[cfg(feature = "abac-policy")]
+            None,
+        )
         .await
         .expect("scan projection");
     assert_eq!(rows.len(), 4);
@@ -2920,7 +2952,15 @@ async fn scan_table_relational_pushes_projection_predicate_limit() {
 
     // (d) Limit caps the result.
     let (_s, rows) = dml
-        .scan_table_relational("inv", None, None, Some(2), None)
+        .scan_table_relational(
+            "inv",
+            None,
+            None,
+            Some(2),
+            None,
+            #[cfg(feature = "abac-policy")]
+            None,
+        )
         .await
         .expect("scan limit");
     assert_eq!(rows.len(), 2, "limit caps the scan");
@@ -6006,6 +6046,137 @@ fn sql_like_fast_paths_match_dp() {
         assert_eq!(
             fast, dp,
             "LIKE mismatch for value={value:?} pattern={pattern:?}: fast={fast} dp={dp}"
+        );
+    }
+}
+
+#[cfg(all(test, feature = "abac-policy"))]
+mod abac_relational_enforcement_tests {
+    //! FA-c Phase 2 e2e: the ABAC enforcement is wired into `DmlService`. Proves
+    //! a real `DmlService` resolves a client subject's authorization via the
+    //! injected `AbacEnforcer` — a permitted subject ⇒ `Restricted`; an unbound
+    //! subject ⇒ `Denied` (fail-closed); an internal read (no subject) ⇒ no
+    //! enforcement; a legacy table lacking stable ids ⇒ `Denied` (fail-closed,
+    //! never unfiltered). The substrate test proves the compiled predicate then
+    //! filters rows; this module proves the DmlService wiring resolves to the
+    //! right `AbacScanResult`.
+    use super::*;
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+    use crate::security::rls::{AbacEnforcer, AbacScanResult};
+    use crate::storage::tenant::context::TenantContext;
+    use proximadb_abac::{
+        AttributeAuthority, AttributeBinding, InMemoryAttributeAuthority, InMemoryPolicyEpochs,
+        InMemoryPredicateObjectStore,
+    };
+    use proximadb_catalog::fc_metamodel::{AttrValue, Effect, PolicyBinding, Scope, SubjectId};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    const TENANT: u64 = 7;
+    const NS: u16 = 3;
+    const TABLE: u32 = 200;
+
+    /// alice (dept=eng) + a `dept == eng` predicate (obj 42) + a table-scoped
+    /// Permit binding referencing it. Self-contained policy held by the enforcer.
+    fn enforcer() -> AbacEnforcer {
+        let mut authority = InMemoryAttributeAuthority::new();
+        authority.upsert(
+            AttributeBinding::new("alice", TENANT).with_attr("dept", AttrValue::Str("eng".into())),
+        );
+        let mut store = InMemoryPredicateObjectStore::new();
+        store.register(
+            42,
+            FilterExpression::Comparison {
+                field: "dept".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: json!("eng"),
+            },
+        );
+        let bindings = vec![PolicyBinding {
+            object_id: 1,
+            tenant_stable_id: TENANT,
+            scope: Scope::Table(TABLE),
+            effect: Effect::Permit,
+            predicate_ref: Some(42),
+            field_mask: None,
+        }];
+        AbacEnforcer::new(
+            Box::new(authority),
+            Box::new(store),
+            Box::new(InMemoryPolicyEpochs::new()),
+        )
+        .with_bindings(bindings)
+    }
+
+    fn schema_with_stable_ids() -> CatalogTableSchema {
+        let mut s = update_test_schema();
+        s.object_id = Some(TABLE as u64);
+        s.stable_namespace_id = Some(NS);
+        s
+    }
+
+    fn tenant_ctx() -> TenantContext {
+        let mut tc = TenantContext::for_tenant_id("t7");
+        tc.tenant_stable_id = Some(TENANT);
+        tc
+    }
+
+    fn dml_with_enforcer() -> DmlService {
+        DmlService::with_record_store_and_table_write_executor(
+            Arc::new(CatalogManager::new()),
+            Arc::new(ExplainOnlyRecordStore),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        )
+        .with_abac_enforcer(Arc::new(enforcer()))
+    }
+
+    #[test]
+    fn permitted_subject_resolves_restricted() {
+        let dml = dml_with_enforcer();
+        let alice = SubjectId("alice".into());
+        let res = dml.abac_row_filter(Some(&alice), Some(&tenant_ctx()), &schema_with_stable_ids());
+        assert!(
+            matches!(res, Some(AbacScanResult::Restricted(_))),
+            "alice (bound, permitted, dept=eng predicate) must resolve to Restricted"
+        );
+    }
+
+    #[test]
+    fn unbound_subject_is_denied_fail_closed() {
+        let dml = dml_with_enforcer();
+        let mallory = SubjectId("mallory".into());
+        let res = dml.abac_row_filter(
+            Some(&mallory),
+            Some(&tenant_ctx()),
+            &schema_with_stable_ids(),
+        );
+        assert!(
+            matches!(res, Some(AbacScanResult::Denied(_))),
+            "an unbound subject must be Denied (fail-closed), never Restricted"
+        );
+    }
+
+    #[test]
+    fn internal_read_has_no_enforcement() {
+        let dml = dml_with_enforcer();
+        // No subject ⇒ an internal/system read ⇒ no ABAC enforcement applies.
+        let res = dml.abac_row_filter(None, Some(&tenant_ctx()), &schema_with_stable_ids());
+        assert!(
+            res.is_none(),
+            "an internal read (no subject) must not enforce"
+        );
+    }
+
+    #[test]
+    fn legacy_table_without_stable_ids_denies_fail_closed() {
+        let dml = dml_with_enforcer();
+        let alice = SubjectId("alice".into());
+        // `update_test_schema()` has no stable object/namespace ids ⇒ cannot build
+        // a Target ⇒ fail-closed (Denied), never an unfiltered read.
+        let res = dml.abac_row_filter(Some(&alice), Some(&tenant_ctx()), &update_test_schema());
+        assert!(
+            matches!(res, Some(AbacScanResult::Denied(_))),
+            "a legacy table lacking stable ids must deny (fail-closed), not leak"
         );
     }
 }

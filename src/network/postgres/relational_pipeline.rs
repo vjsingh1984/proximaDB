@@ -1781,6 +1781,11 @@ impl RelationalReader for DmlTableReader {
                 row_pred_ref,
                 limit,
                 self.tenant.as_ref(),
+                // FA-c Phase 2: subject not yet plumbed from the pgwire auth
+                // layer (UnifiedUserContext.user_id), so no enforcement here yet;
+                // pass None until handler subject-plumbing lands.
+                #[cfg(feature = "abac-policy")]
+                None,
             )
             .await
             .map_err(|e| ReaderError::Storage(e.to_string()))?;
