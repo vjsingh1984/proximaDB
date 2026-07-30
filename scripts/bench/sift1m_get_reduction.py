@@ -864,27 +864,41 @@ def force_flush_via_flight(
     return payload
 
 
-def wait_for_wal_drain(
-        server: str, collection_id: str, timeout_seconds: int = 300) -> float:
+def wait_for_flush_epoch(
+        server: str, collection_id: str, geometry: AzureCliPaxGeometry,
+        before_inventory: dict, timeout_seconds: int = 300,
+) -> tuple[float, dict, float | None]:
     started = time.monotonic()
     deadline = started + timeout_seconds
+    before_signature = geometry.stable_signature(before_inventory)
+    prior_signature = None
+    stable_observations = 0
     while time.monotonic() < deadline:
+        inventory = geometry.inventory()
+        signature = geometry.stable_signature(inventory)
+        if signature != before_signature:
+            stable_observations = (
+                stable_observations + 1
+                if signature == prior_signature
+                else 1
+            )
+        else:
+            stable_observations = 0
+        prior_signature = signature
         wal_bytes = labelled_metric(
             scrape_text(server),
             "proximadb_wal_size_bytes",
             "collection",
             collection_id,
         )
-        if wal_bytes is None:
-            raise RuntimeError(
-                "explicit flush cannot prove WAL drain: collection gauge absent "
-                f"for {collection_id}"
-            )
-        if wal_bytes == 0:
-            return time.monotonic() - started
-        time.sleep(0.25)
+        if (
+            stable_observations >= 2
+            and (wal_bytes is None or wal_bytes == 0)
+        ):
+            return time.monotonic() - started, inventory, wal_bytes
+        time.sleep(0.5)
     raise RuntimeError(
-        "explicit flush did not drain the collection WAL within "
+        "explicit flush did not publish a stable PAX epoch within "
         f"{timeout_seconds}s: collection={collection_id}"
     )
 
@@ -893,6 +907,7 @@ def ingest(
         server: str, base_path: Path, expected_rows: int, batch_size: int,
         flight_host: str, flight_port: int,
         explicit_flush_every_rows: int | None,
+        explicit_geometry: AzureCliPaxGeometry | None,
 ) -> tuple[str, float, dict[int, int], list[dict]]:
     _, dimension = count_fixed_records(base_path, 4)
     response = request_json(
@@ -945,17 +960,17 @@ def ingest(
             explicit_flush_every_rows is not None
             and inserted % explicit_flush_every_rows == 0
         ):
+            if explicit_geometry is None:
+                raise RuntimeError(
+                    "explicit flush epochs require Azure PAX inventory evidence"
+                )
+            inventory_before = explicit_geometry.inventory()
             wal_before = labelled_metric(
                 scrape_text(server),
                 "proximadb_wal_size_bytes",
                 "collection",
                 collection_id,
             )
-            if wal_before is None or wal_before <= 0:
-                raise RuntimeError(
-                    "explicit flush boundary has no positive unflushed-WAL "
-                    f"gauge: collection={collection_id}, value={wal_before!r}"
-                )
             flush_started = time.perf_counter()
             response = force_flush_via_flight(
                 flight_host,
@@ -963,20 +978,33 @@ def ingest(
                 collection_id,
             )
             action_seconds = time.perf_counter() - flush_started
-            drain_seconds = wait_for_wal_drain(server, collection_id)
+            (
+                publish_seconds,
+                inventory_after,
+                wal_after,
+            ) = wait_for_flush_epoch(
+                server,
+                collection_id,
+                explicit_geometry,
+                inventory_before,
+            )
             explicit_flushes.append(
                 {
                     "after_rows": inserted,
                     "wal_bytes_before": wal_before,
+                    "wal_bytes_after": wal_after,
                     "action_seconds": action_seconds,
-                    "drain_seconds": drain_seconds,
+                    "publish_seconds": publish_seconds,
+                    "segments_before": inventory_before["segments"],
+                    "segments_after": inventory_after["segments"],
                     "response": response,
                 }
             )
             print(
                 f"explicit flush: rows={inserted:,} "
                 f"action={action_seconds:.3f}s "
-                f"drain={drain_seconds:.3f}s",
+                f"publish={publish_seconds:.3f}s "
+                f"segments={inventory_after['segment_count']}",
                 flush=True,
             )
         if inserted % 100_000 == 0:
@@ -1279,6 +1307,14 @@ def main() -> int:
     )
     if azure_geometry is not None:
         azure_geometry.require_empty_prefix()
+    if (
+        args.explicit_flush_every_rows is not None
+        and azure_geometry is None
+    ):
+        raise RuntimeError(
+            "--explicit-flush-every-rows requires Azure/Azurite storage so "
+            "each durable PAX epoch can be proven by blob identity"
+        )
     config = root / "benchmark.toml"
     write_config(
         config,
@@ -1420,6 +1456,7 @@ def main() -> int:
             "127.0.0.1",
             args.port,
             args.explicit_flush_every_rows,
+            azure_geometry,
         )
         result["collection_id"] = collection_id
         result["ingest"] = {

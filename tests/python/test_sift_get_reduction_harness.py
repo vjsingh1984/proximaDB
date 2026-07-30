@@ -140,17 +140,40 @@ def test_explicit_flush_uses_supported_flight_action() -> None:
     assert calls["closed"] is True
 
 
-def test_explicit_flush_waits_for_collection_wal_to_drain() -> None:
-    samples = [
-        'proximadb_wal_size_bytes{collection="7"} 4096\n',
-        'proximadb_wal_size_bytes{collection="7"} 0\n',
-    ]
+def test_explicit_flush_waits_for_stable_new_pax_epoch() -> None:
+    before = {"segments": [], "segment_count": 0, "bytes": 0}
+    after = {
+        "segments": [{"path": "7/data/L0.pax", "bytes": 4096, "etag": "e1"}],
+        "segment_count": 1,
+        "bytes": 4096,
+    }
+
+    class FakeGeometry:
+        def __init__(self):
+            self.calls = 0
+
+        def inventory(self) -> dict:
+            self.calls += 1
+            return after
+
+        @staticmethod
+        def stable_signature(inventory: dict) -> tuple:
+            return tuple(
+                (item["path"], item["bytes"], item["etag"])
+                for item in inventory["segments"]
+            )
 
     with (
-        patch.object(HARNESS, "scrape_text", side_effect=samples),
+        patch.object(HARNESS, "scrape_text", return_value=""),
         patch.object(HARNESS.time, "sleep") as sleep,
     ):
-        elapsed = HARNESS.wait_for_wal_drain("http://server", "7")
+        geometry = FakeGeometry()
+        elapsed, observed, wal_bytes = HARNESS.wait_for_flush_epoch(
+            "http://server", "7", geometry, before
+        )
 
     assert elapsed >= 0
-    sleep.assert_called_once_with(0.25)
+    assert observed == after
+    assert wal_bytes is None
+    assert geometry.calls == 2
+    sleep.assert_called_once_with(0.5)
