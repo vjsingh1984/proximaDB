@@ -1121,24 +1121,57 @@ impl Default for WriteBufferUserConfig {
 }
 
 impl WriteBufferUserConfig {
-    /// Convert user configuration to internal engine configuration
+    /// Convert user configuration to internal engine configuration.
+    ///
+    /// This is the SINGLE canonical `WriteBufferUserConfig -> WALConfig` conversion,
+    /// shared by the embedded/library path (called directly here) and the server
+    /// path (`SharedServices::convert_toml_to_wal_config` delegates to this then
+    /// applies server-only bits). Both paths honor the TOML WAL config identically
+    /// (TD-CONFIG-CONSOLIDATE-1 step 2 — previously the embedded path silently
+    /// ignored sync_mode / memtable_type / flush thresholds / multi_disk).
+    ///
+    /// NOTE: `multi_disk.data_directories` is OVERWRITTEN from `storage_locations`
+    /// by both callers (`database.rs` / `engine.rs`) after this returns, so the
+    /// value set here is a fallback only. `enable_optimized_writer` is `false`
+    /// (embedded default); the server path overrides it to `enable_wal`.
     pub fn to_engine_config(&self) -> crate::storage::persistence::write_ahead_log::WALConfig {
         use crate::storage::persistence::write_ahead_log::{
             WALConfig, WriteBufferStrategyType,
-            config::{CompressionConfig, MemTableConfig, MultiDiskConfig, PerformanceConfig},
+            config::{
+                CompressionConfig, DiskDistributionStrategy, MemTableConfig, MemTableType,
+                MultiDiskConfig, PerformanceConfig, SyncMode,
+            },
         };
-
+        let mib = 1024 * 1024;
         WALConfig {
             strategy_type: WriteBufferStrategyType::default(),
-            memtable: MemTableConfig::default(),
-            multi_disk: MultiDiskConfig::default(),
+            memtable: MemTableConfig {
+                global_memory_limit: self.write_buffer_size_mb as usize * mib,
+                memtable_type: match self.memtable_type.to_lowercase().as_str() {
+                    "btree" => MemTableType::BTree,
+                    "skiplist" => MemTableType::SkipList,
+                    _ => MemTableType::BTree,
+                },
+                ..MemTableConfig::default()
+            },
+            multi_disk: MultiDiskConfig {
+                data_directories: vec![self.write_buffer_directory.clone()],
+                distribution_strategy: DiskDistributionStrategy::RoundRobin,
+                collection_affinity: true,
+            },
             compression: CompressionConfig::default(),
             encryption: Default::default(), // TD-016: Encryption disabled by default
-            // ADR-069/TD-WAL-1: honor the user's flush-policy inputs (size + the
-            // tiered time/capacity knobs) on this path too, so the optimizer is
-            // configurable identically to the shared-services conversion.
             performance: PerformanceConfig {
                 memory_flush_size_bytes: self.memory_flush_size_bytes,
+                global_flush_threshold: self.write_buffer_size_mb as usize * mib,
+                batch_threshold: self.vector_count_threshold,
+                sync_mode: match self.sync_mode.to_lowercase().as_str() {
+                    "perbatch" | "always" => SyncMode::PerBatch,
+                    "periodic" => SyncMode::Periodic,
+                    "none" => SyncMode::Never,
+                    _ => SyncMode::PerBatch,
+                },
+                // ADR-069/TD-WAL-1: the tiered time/capacity flush knobs.
                 flush_interval_secs: self.flush_interval_secs,
                 flush_floor_predicted_mb: self.flush_floor_predicted_mb,
                 wal_max_bytes: self.wal_max_bytes,
@@ -1152,7 +1185,7 @@ impl WriteBufferUserConfig {
             collection_overrides: std::collections::HashMap::new(),
             global_manifest_url: self.global_manifest_url.clone(),
             wal_local_dir: self.wal_local_dir.clone(),
-            enable_optimized_writer: false,
+            enable_optimized_writer: false, // embedded default; server overrides to enable_wal
             optimized_writer_batch_size: None,
             optimized_writer_batch_timeout_ms: None,
             optimized_writer_threads: None,
