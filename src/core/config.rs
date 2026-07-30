@@ -874,10 +874,9 @@ pub struct CoreStorageConfig {
 }
 
 pub use proximadb_config::{
-    AdvancedPruneConfig, AssignmentConfig, AzureConfig, CloudStorageConfig, CompactionConfig,
-    ConsensusConfig, FilesystemOptimizationConfig, GcsConfig, MetadataBackendConfig,
-    MonitoringConfig, OptimizationConfig, PruneModeConfig, S3Config, StorageLocation, TempStrategy,
-    TransactionalOperationsConfig,
+    AdvancedPruneConfig, AssignmentConfig, CompactionConfig, ConsensusConfig,
+    FilesystemOptimizationConfig, MonitoringConfig, OptimizationConfig, PruneModeConfig,
+    StorageLocation, TempStrategy, TransactionalOperationsConfig,
 };
 
 impl StorageConfig {

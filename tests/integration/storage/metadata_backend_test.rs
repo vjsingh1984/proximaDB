@@ -16,7 +16,7 @@
 
 //! Unit tests for filestore metadata backend and dependency injection
 
-use proximadb::core::config::{MetadataBackendConfig, StorageConfig};
+use proximadb::core::config::StorageConfig;
 use proximadb::network::multi_server::{ServiceProfile, SharedServices};
 use proximadb::proto::proximadb_v1::{
     Collection as ProtoCollection, CollectionConfig as ProtoCollectionConfig, CollectionStats,
@@ -42,15 +42,6 @@ async fn test_single_metadata_backend_instance() {
     let metadata_path = temp_dir.path().join("metadata");
     let storage_path = temp_dir.path().join("storage");
 
-    // Create metadata backend config
-    let metadata_config = MetadataBackendConfig {
-        backend_type: "filestore".to_string(),
-        storage_url: format!("file://{}", metadata_path.to_string_lossy()),
-        cache_size_mb: Some(64),
-        cloud_config: None,
-        flush_interval_secs: Some(60),
-    };
-
     // Create storage config with temp directory
     let mut storage_config = StorageConfig::default();
     storage_config.storage_locations = vec![proximadb::core::config::StorageLocation {
@@ -68,7 +59,7 @@ async fn test_single_metadata_backend_instance() {
 
     // Create a minimal StorageConfig with our metadata configuration
     let storage_config = proximadb::core::config::StorageConfig {
-        metadata_url: metadata_config.storage_url.clone(),
+        metadata_url: format!("file://{}", metadata_path.to_string_lossy()),
         ..Default::default()
     };
 
