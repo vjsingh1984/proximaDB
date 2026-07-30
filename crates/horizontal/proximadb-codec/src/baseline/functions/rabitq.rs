@@ -414,14 +414,12 @@ pub fn rank_candidates_lut(
     codes: &[Option<RaBitQCode>],
     pool: usize,
 ) -> Vec<usize> {
-    let mut scored: Vec<(usize, f32)> = codes
+    let scored: Vec<(usize, f32)> = codes
         .iter()
         .enumerate()
         .filter_map(|(i, c)| c.as_ref().map(|c| (i, lut.l2_rank_score(c))))
         .collect();
-    scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-    scored.truncate(pool);
-    scored.into_iter().map(|(i, _)| i).collect()
+    select_top_scores(scored, pool)
 }
 
 /// LUT-accelerated `rank_candidates_ip` — takes a pre-built [`QueryLut`].
@@ -430,13 +428,36 @@ pub fn rank_candidates_ip_lut(
     codes: &[Option<RaBitQCode>],
     pool: usize,
 ) -> Vec<usize> {
-    let mut scored: Vec<(usize, f32)> = codes
+    let scored: Vec<(usize, f32)> = codes
         .iter()
         .enumerate()
         .filter_map(|(i, c)| c.as_ref().map(|c| (i, lut.ip_rank_score(c))))
         .collect();
-    scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-    scored.truncate(pool);
+    select_top_scores(scored, pool)
+}
+
+/// Keep only the best `pool` scores before sorting the retained prefix.
+///
+/// The old ranker fully sorted every probed row even though the cascade keeps
+/// only a small survivor pool (normally 1%). `select_nth_unstable_by` reduces
+/// that work from `O(N log N)` to expected `O(N) + O(pool log pool)`. The row
+/// ordinal is an explicit tie-breaker, preserving the old stable-sort result
+/// for equal finite scores while keeping the optimized result deterministic.
+fn select_top_scores(mut scored: Vec<(usize, f32)>, pool: usize) -> Vec<usize> {
+    let keep = pool.min(scored.len());
+    if keep == 0 {
+        return Vec::new();
+    }
+    let compare = |a: &(usize, f32), b: &(usize, f32)| {
+        a.1.partial_cmp(&b.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    };
+    if keep < scored.len() {
+        scored.select_nth_unstable_by(keep, compare);
+        scored.truncate(keep);
+    }
+    scored.sort_unstable_by(compare);
     scored.into_iter().map(|(i, _)| i).collect()
 }
 
@@ -529,6 +550,28 @@ mod tests {
             near_code.l2_rank_score(&q),
             far_code.l2_rank_score(&q)
         );
+    }
+
+    #[test]
+    fn partial_selection_matches_full_stable_sort() {
+        let scores = (0..10_003)
+            .map(|i| {
+                // Deliberate ties exercise the row-ordinal tie break.
+                let score = ((i * 7919) % 257) as f32;
+                (i, score)
+            })
+            .collect::<Vec<_>>();
+        for pool in [0, 1, 17, 100, scores.len(), scores.len() + 1] {
+            let mut expected = scores.clone();
+            expected.sort_by(|a, b| {
+                a.1.partial_cmp(&b.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            expected.truncate(pool);
+            let expected = expected.into_iter().map(|(i, _)| i).collect::<Vec<_>>();
+            assert_eq!(select_top_scores(scores.clone(), pool), expected);
+        }
     }
 
     #[test]

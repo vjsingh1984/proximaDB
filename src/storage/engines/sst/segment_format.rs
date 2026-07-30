@@ -947,17 +947,23 @@ fn plan_probe_cell_ranges(
     out
 }
 
-/// Per-metric "lower = nearer" rerank score against a reconstructed vector.
-fn rerank_distance(metric: RankMetric, q: &[f32], v: &[f32]) -> f32 {
+/// Score one fixed-stride SQ8 row without materializing a decoded `Vec<f32>`.
+fn rerank_sq8_distance(
+    metric: RankMetric,
+    query: &[f32],
+    codes: &[u8],
+    params: &proximadb_codec::Sq8Params,
+    query_norm_squared: f32,
+) -> Option<f32> {
+    use proximadb_codec::functions::sq8;
+
     match metric {
-        RankMetric::L2 => q.iter().zip(v).map(|(a, b)| (a - b) * (a - b)).sum(),
+        RankMetric::L2 => sq8::l2_squared(codes, query, params),
+        RankMetric::DotProduct => sq8::dot_product(codes, query, params).map(|dot| -dot),
         RankMetric::Cosine => {
-            let dot: f32 = q.iter().zip(v).map(|(a, b)| a * b).sum();
-            let nq: f32 = q.iter().map(|a| a * a).sum::<f32>().sqrt();
-            let nv: f32 = v.iter().map(|a| a * a).sum::<f32>().sqrt();
-            1.0 - dot / (nq * nv + 1e-12)
+            let (dot, norm_squared) = sq8::dot_and_norm_squared(codes, query, params)?;
+            Some(1.0 - dot / ((query_norm_squared * norm_squared).sqrt() + 1e-12))
         }
-        RankMetric::DotProduct => -q.iter().zip(v).map(|(a, b)| a * b).sum::<f32>(),
     }
 }
 
@@ -2411,6 +2417,11 @@ pub async fn rabitq_search_segment_coalesced(
     //    Region-B-header GET — reconstruct the params + codes_base from the footer.
     let dim = footer.embed_dim as usize;
     let sq8_params = coalesced_sq8::params_from_min_scale(footer.sq8_min, footer.sq8_scale);
+    let query_norm_squared = if metric == RankMetric::Cosine {
+        query.iter().map(|value| value * value).sum()
+    } else {
+        0.0
+    };
     let codes_base = header.sq8_off + coalesced_sq8::codes_offset(footer.row_count as usize) as u64;
     // Coalesce policy IOP-aligned to the backend (ADR-065 cache-co-design): a
     // coalesced range must not exceed one chunk (4 MiB Azure / 8 MiB S3), so it
@@ -2471,8 +2482,11 @@ pub async fn rabitq_search_segment_coalesced(
         };
         let region = coalesced_sq8::Sq8Region::from_bytes(&region_arc)?;
         for &g in &survivors {
-            if let Some(v) = region.decode_row(g) {
-                scored.push((g, rerank_distance(metric, query, &v)));
+            if let Some(codes) = region.row_codes(g)
+                && let Some(score) =
+                    rerank_sq8_distance(metric, query, codes, &sq8_params, query_norm_squared)
+            {
+                scored.push((g, score));
             }
         }
     } else {
@@ -2519,8 +2533,15 @@ pub async fn rabitq_search_segment_coalesced(
                 if rel + dim > buf.len() {
                     continue;
                 }
-                let v = coalesced_sq8::decode_codes(&buf[rel..rel + dim], &sq8_params);
-                scored.push((g, rerank_distance(metric, query, &v)));
+                if let Some(score) = rerank_sq8_distance(
+                    metric,
+                    query,
+                    &buf[rel..rel + dim],
+                    &sq8_params,
+                    query_norm_squared,
+                ) {
+                    scored.push((g, score));
+                }
             }
         }
     }
@@ -3356,6 +3377,49 @@ mod tests {
             0.25,
             "cosine distance is already canonical"
         );
+    }
+
+    #[test]
+    fn fused_sq8_rerank_matches_decode_then_score_for_every_metric() {
+        let params = proximadb_codec::Sq8Params {
+            scale: 0.0625,
+            offset: -2.0,
+            vmin: -2.0,
+            vmax: 13.9375,
+        };
+        let codes = (0..128)
+            .map(|i| ((i * 47 + 11) % 256) as u8)
+            .collect::<Vec<_>>();
+        let query = (0..128)
+            .map(|i| ((i * 31 + 3) as f32 * 0.013).cos() * 3.0)
+            .collect::<Vec<_>>();
+        let decoded = proximadb_codec::functions::sq8::decode(&codes, &params);
+        let query_norm_squared = query.iter().map(|value| value * value).sum::<f32>();
+        for metric in [RankMetric::L2, RankMetric::Cosine, RankMetric::DotProduct] {
+            let expected = match metric {
+                RankMetric::L2 => query
+                    .iter()
+                    .zip(&decoded)
+                    .map(|(a, b)| (a - b) * (a - b))
+                    .sum::<f32>(),
+                RankMetric::Cosine => {
+                    let dot = query.iter().zip(&decoded).map(|(a, b)| a * b).sum::<f32>();
+                    let decoded_norm = decoded.iter().map(|value| value * value).sum::<f32>();
+                    1.0 - dot / ((query_norm_squared * decoded_norm).sqrt() + 1e-12)
+                }
+                RankMetric::DotProduct => {
+                    -query.iter().zip(&decoded).map(|(a, b)| a * b).sum::<f32>()
+                }
+            };
+            let actual = rerank_sq8_distance(metric, &query, &codes, &params, query_norm_squared)
+                .expect("matching SQ8/query dimensions");
+            let tolerance = expected.abs().max(1.0) * 1e-5;
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "{metric:?}: fused={actual} decoded={expected}"
+            );
+        }
+        assert!(rerank_sq8_distance(RankMetric::L2, &query[..127], &codes, &params, 0.0).is_none());
     }
 
     /// A coalesced-RaBitQ segment (opt-in) is detected as Pax, carries a non-zero
