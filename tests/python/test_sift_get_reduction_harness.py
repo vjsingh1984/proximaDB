@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import struct
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -18,6 +19,79 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 HARNESS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HARNESS)
+MATRIX_PATH = REPOSITORY_ROOT / "scripts" / "bench" / "nprobe_sweep.py"
+MATRIX_SPEC = importlib.util.spec_from_file_location(
+    "sift_nprobe_matrix", MATRIX_PATH
+)
+assert MATRIX_SPEC is not None and MATRIX_SPEC.loader is not None
+MATRIX = importlib.util.module_from_spec(MATRIX_SPEC)
+MATRIX_SPEC.loader.exec_module(MATRIX)
+
+
+def test_matrix_contract_rejects_duplicate_probes_and_wrong_geometry() -> None:
+    assert MATRIX.comma_separated_ints("1,2,4", "--nprobes") == [1, 2, 4]
+    with pytest.raises(RuntimeError, match="duplicates"):
+        MATRIX.comma_separated_ints("1,2,1", "--nprobes")
+    with pytest.raises(RuntimeError, match="rows"):
+        MATRIX.validate_geometry(
+            {
+                "row_count": 99,
+                "segment_count": 1,
+                "segments": [
+                    {"layout_version": 3, "coarse_cells": 4}
+                ],
+            },
+            rows=100,
+            max_segments=1,
+            layout_version=3,
+        )
+
+
+def test_a0_geometry_reports_cell_shape_and_verifies_checksum() -> None:
+    dimension = 2
+    components = 1
+    rows = [3, 0]
+    radii = [1.5, 0.0]
+    encoded = bytearray(b"PXA0")
+    encoded.extend(bytes([1, 0]))
+    encoded.extend(struct.pack("<HIIQQQ", components, len(rows), dimension, 7, 5, sum(rows)))
+    encoded.extend(struct.pack("<2f", 0.0, 0.0))
+    encoded.extend(struct.pack("<2f", 1.0, 0.0))
+    encoded.extend(struct.pack("<2f", 0.0, 2.0))
+    encoded.extend(struct.pack("<2f", *radii))
+    row_begin = 0
+    for row_count in rows:
+        row_end = row_begin + row_count
+        encoded.extend(
+            struct.pack(
+                "<QQQQQQQQII",
+                row_begin,
+                row_end,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        )
+        row_begin = row_end
+    encoded.extend(struct.pack("<Q", HARNESS.fnv1a64(encoded)))
+
+    geometry = HARNESS.parse_a0_geometry(bytes(encoded))
+
+    assert geometry["coarse_cells"] == 2
+    assert geometry["coarse_trained_rows"] == 5
+    assert geometry["cell_rows"] == rows
+    assert geometry["empty_cell_fraction"] == 0.5
+    assert geometry["cell_row_max_to_mean"] == 2.0
+    assert geometry["radii"] == radii
+
+    encoded[-1] ^= 1
+    with pytest.raises(RuntimeError, match="checksum"):
+        HARNESS.parse_a0_geometry(bytes(encoded))
 
 
 def test_azure_inventory_scopes_prefix_and_records_stable_identity(

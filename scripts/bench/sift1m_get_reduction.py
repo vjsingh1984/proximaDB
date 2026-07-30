@@ -59,6 +59,13 @@ METRICS = (
     "proximadb_cache_local_disk_bytes",
     "proximadb_compactions_total",
     "proximadb_wal_size_bytes",
+    "proximadb_ivf_cells_total",
+    "proximadb_ivf_cells_probed_total",
+    "proximadb_ivf_probed_rows_total",
+    "proximadb_ivf_region_a_bytes_read_total",
+    "proximadb_ivf_region_b_bytes_read_total",
+    "proximadb_ivf_fetch_rounds_total",
+    "proximadb_ivf_whole_region_fallback_total",
 )
 
 
@@ -159,6 +166,108 @@ def iter_fvec_batches(path: Path, count: int, batch_size: int):
             yield batch
 
 
+def summarize_values(values: list[int] | list[float]) -> dict:
+    ordered = sorted(values)
+    if not ordered:
+        return {
+            "min": None,
+            "p50": None,
+            "p95": None,
+            "max": None,
+            "mean": None,
+        }
+    return {
+        "min": ordered[0],
+        "p50": percentile(ordered, 0.50),
+        "p95": percentile(ordered, 0.95),
+        "max": ordered[-1],
+        "mean": sum(ordered) / len(ordered),
+    }
+
+
+def fnv1a64(data: bytes) -> int:
+    value = 0xCBF29CE484222325
+    for byte in data:
+        value ^= byte
+        value = (value * 0x00000100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return value
+
+
+def parse_a0_geometry(a0: bytes) -> dict:
+    """Parse the persisted coarse-model shape without interpreting vectors."""
+    if len(a0) < 48 or a0[:4] != A0_MAGIC:
+        raise RuntimeError("invalid A0 coarse directory")
+    if a0[4] != 1:
+        raise RuntimeError(f"unsupported A0 version {a0[4]}")
+    n_comp = struct.unpack_from("<H", a0, 6)[0]
+    cells = struct.unpack_from("<I", a0, 8)[0]
+    dimension = struct.unpack_from("<I", a0, 12)[0]
+    seed = struct.unpack_from("<Q", a0, 16)[0]
+    trained_rows = struct.unpack_from("<Q", a0, 24)[0]
+    covered_rows = struct.unpack_from("<Q", a0, 32)[0]
+    expected_length = (
+        40
+        + dimension * 4
+        + n_comp * dimension * 4
+        + cells * n_comp * 4
+        + cells * 4
+        + cells * 72
+        + 8
+    )
+    if len(a0) != expected_length:
+        raise RuntimeError(
+            f"A0 length {len(a0)} != expected {expected_length}"
+        )
+    stored_checksum = struct.unpack_from("<Q", a0, len(a0) - 8)[0]
+    if fnv1a64(a0[:-8]) != stored_checksum:
+        raise RuntimeError("A0 checksum mismatch")
+
+    offset = (
+        40
+        + dimension * 4
+        + n_comp * dimension * 4
+        + cells * n_comp * 4
+    )
+    radii = list(struct.unpack_from(f"<{cells}f", a0, offset))
+    offset += cells * 4
+    cell_rows = []
+    for _ in range(cells):
+        row_begin, row_end = struct.unpack_from("<QQ", a0, offset)
+        if row_end < row_begin:
+            raise RuntimeError("A0 cell has a descending row range")
+        cell_rows.append(row_end - row_begin)
+        offset += 72
+    if sum(cell_rows) != covered_rows:
+        raise RuntimeError(
+            f"A0 cell rows {sum(cell_rows)} != covered rows {covered_rows}"
+        )
+    nonempty = [rows for rows in cell_rows if rows]
+    row_summary = summarize_values(cell_rows)
+    mean_rows = row_summary["mean"] or 0.0
+    return {
+        "coarse_cells": cells,
+        "coarse_components": n_comp,
+        "coarse_dimension": dimension,
+        "coarse_seed": seed,
+        "coarse_trained_rows": trained_rows,
+        "coarse_rows_covered": covered_rows,
+        "training_rows_per_cell": (
+            trained_rows / cells if cells else None
+        ),
+        "empty_cells": cells - len(nonempty),
+        "empty_cell_fraction": (
+            (cells - len(nonempty)) / cells if cells else None
+        ),
+        "cell_rows": cell_rows,
+        "cell_row_summary": row_summary,
+        "cell_row_max_to_mean": (
+            max(cell_rows) / mean_rows if mean_rows else None
+        ),
+        "radii": radii,
+        "radius_summary": summarize_values(radii),
+    }
+
+
 def parse_pax(path: Path, root: Path) -> dict:
     size = path.stat().st_size
     if size < 25:
@@ -183,18 +292,14 @@ def parse_pax(path: Path, root: Path) -> dict:
     coarse = {}
     if header[4] == 3:
         a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
-        if a0_length < 40:
+        if a0_length < 48:
             raise RuntimeError(f"{path}: invalid A0 length {a0_length}")
         with path.open("rb") as segment:
             segment.seek(a0_offset)
-            a0_header = segment.read(40)
-        if a0_header[:4] != A0_MAGIC:
-            raise RuntimeError(f"{path}: missing A0 directory magic")
-        coarse = {
-            "coarse_cells": struct.unpack_from("<I", a0_header, 8)[0],
-            "coarse_components": struct.unpack_from("<H", a0_header, 6)[0],
-            "coarse_trained_rows": struct.unpack_from("<Q", a0_header, 24)[0],
-        }
+            a0 = segment.read(a0_length)
+        if len(a0) != a0_length:
+            raise RuntimeError(f"{path}: truncated A0 directory")
+        coarse = parse_a0_geometry(a0)
     return {
         "path": str(path.relative_to(root)),
         "bytes": size,
@@ -596,6 +701,27 @@ def run_query_sweep(server: str, collection_id: str, query_path: Path,
     local_misses = metric_delta(
         before, after, "proximadb_cache_local_disk_misses_total"
     )
+    ivf_cells_total = metric_delta(
+        before, after, "proximadb_ivf_cells_total"
+    )
+    ivf_cells_probed = metric_delta(
+        before, after, "proximadb_ivf_cells_probed_total"
+    )
+    ivf_probed_rows = metric_delta(
+        before, after, "proximadb_ivf_probed_rows_total"
+    )
+    ivf_region_a_bytes = metric_delta(
+        before, after, "proximadb_ivf_region_a_bytes_read_total"
+    )
+    ivf_region_b_bytes = metric_delta(
+        before, after, "proximadb_ivf_region_b_bytes_read_total"
+    )
+    ivf_fetch_rounds = metric_delta(
+        before, after, "proximadb_ivf_fetch_rounds_total"
+    )
+    ivf_whole_region_fallbacks = metric_delta(
+        before, after, "proximadb_ivf_whole_region_fallback_total"
+    )
     survivor_total = survivor_hits + survivor_misses
     invariant_total = invariant_hits + invariant_misses
     result = {
@@ -634,6 +760,25 @@ def run_query_sweep(server: str, collection_id: str, query_path: Path,
                 "proximadb_cache_local_disk_bytes"
             ],
         },
+        "ivf": {
+            "cells_total": ivf_cells_total,
+            "cells_total_per_query": ivf_cells_total / query_count,
+            "cells_probed": ivf_cells_probed,
+            "cells_probed_per_query": ivf_cells_probed / query_count,
+            "probed_rows": ivf_probed_rows,
+            "probed_rows_per_query": ivf_probed_rows / query_count,
+            "region_a_bytes": ivf_region_a_bytes,
+            "region_a_bytes_per_query": (
+                ivf_region_a_bytes / query_count
+            ),
+            "region_b_bytes": ivf_region_b_bytes,
+            "region_b_bytes_per_query": (
+                ivf_region_b_bytes / query_count
+            ),
+            "fetch_rounds": ivf_fetch_rounds,
+            "fetch_rounds_per_query": ivf_fetch_rounds / query_count,
+            "whole_region_fallbacks": ivf_whole_region_fallbacks,
+        },
     }
     print(
         f"{phase}: recall@{top_k}={result['recall_at_k']:.4f} "
@@ -641,6 +786,9 @@ def run_query_sweep(server: str, collection_id: str, query_path: Path,
         f"bytes/q={result['bytes_per_query'] / 1_000_000:.2f}MB "
         f"p50={result['latency_ms']['p50']:.2f}ms "
         f"p95={result['latency_ms']['p95']:.2f}ms "
+        f"cells/q={result['ivf']['cells_probed_per_query']:.2f} "
+        f"rows/q={result['ivf']['probed_rows_per_query']:.0f} "
+        f"rounds/q={result['ivf']['fetch_rounds_per_query']:.2f} "
         f"local_hits={local_hits:.0f}",
         flush=True,
     )
