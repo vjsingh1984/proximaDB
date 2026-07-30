@@ -1082,6 +1082,19 @@ def wait_for_pax_epoch(
     )
 
 
+def post_flush_compaction_observation(
+        explicit_flush_every_rows: int | None) -> dict | None:
+    if explicit_flush_every_rows is None:
+        return None
+    return {
+        "requested": False,
+        "reason": (
+            "automatic threshold compaction is observed by the stable "
+            "materialization gate"
+        ),
+    }
+
+
 def ingest(
         server: str, base_path: Path, expected_rows: int, batch_size: int,
         flight_host: str, flight_port: int,
@@ -1197,45 +1210,17 @@ def ingest(
         raise RuntimeError(
             f"ingest iterator admitted {inserted} rows, expected {expected_rows}"
         )
-    explicit_compaction = None
-    if explicit_flush_every_rows is not None:
-        if explicit_geometry is None:
-            raise RuntimeError(
-                "explicit compaction requires Azure PAX inventory evidence"
-            )
-        inventory_before = explicit_geometry.inventory()
-        compact_started = time.perf_counter()
-        response = compact_via_flight(
-            flight_host,
-            flight_port,
-            collection_id,
-        )
-        action_seconds = time.perf_counter() - compact_started
-        (
-            publish_seconds,
-            inventory_after,
-            wal_after,
-        ) = wait_for_pax_epoch(
-            server,
-            collection_id,
-            explicit_geometry,
-            inventory_before,
-        )
-        explicit_compaction = {
-            "action_seconds": action_seconds,
-            "publish_seconds": publish_seconds,
-            "wal_bytes_after": wal_after,
-            "segments_before": inventory_before["segments"],
-            "segments_after": inventory_after["segments"],
-            "response": response,
-        }
-        print(
-            "explicit compaction: "
-            f"action={action_seconds:.3f}s "
-            f"publish={publish_seconds:.3f}s "
-            f"segments={inventory_after['segment_count']}",
-            flush=True,
-        )
+    # Do not issue a second compaction after the final explicit flush. The
+    # fifth L0 epoch arms automatic compaction at the configured threshold,
+    # and wait_for_materialization below is the authoritative quiescence gate.
+    # If automatic compaction already finished, the operator action is a valid
+    # no-op and therefore cannot produce the "new PAX epoch" this harness used
+    # to wait for. Requiring one caused a false 300-second timeout; racing the
+    # automatic morsel also risked measuring redundant work rather than the
+    # settled write path.
+    explicit_compaction = post_flush_compaction_observation(
+        explicit_flush_every_rows
+    )
     elapsed = time.perf_counter() - started
     return (
         collection_id,

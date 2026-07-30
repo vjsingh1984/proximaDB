@@ -265,6 +265,15 @@ def test_explicit_compaction_uses_supported_flight_action() -> None:
     assert calls["closed"] is True
 
 
+def test_explicit_flush_bed_relies_on_automatic_compaction_quiescence() -> None:
+    assert HARNESS.post_flush_compaction_observation(None) is None
+    observation = HARNESS.post_flush_compaction_observation(20_000)
+
+    assert observation is not None
+    assert observation["requested"] is False
+    assert "materialization gate" in observation["reason"]
+
+
 def test_explicit_flush_waits_for_stable_new_pax_epoch() -> None:
     before = {"segments": [], "segment_count": 0, "bytes": 0}
     after = {
