@@ -1,7 +1,7 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-ABAC-6: Unified request-identity seam across REST / gRPC / Arrow Flight (+ pgwire)
-:status: In progress — PR-A (foundation seam + shared credential parser) delivered
+:status: In progress — PR-A (foundation seam + credential parser, #1339 merged) + PR-B (resolve_request_identity orchestrator) delivered
 :date: 2026-07-30
 :authors: FA enforcement track session 2026-07-30
 :realizes: TD-FOUNDATION-3 FA-c; consolidates TD-TENANT-1 (tenant) + TD-ABAC-2..5 (subject)
