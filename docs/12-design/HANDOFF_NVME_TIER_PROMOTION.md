@@ -74,7 +74,7 @@ changing the requested D1-D6 outcome:
   bytes from `Debug` output. Wiring it would fail this handoff's second-restart
   test. The real persistent byte store therefore lives in the foundation
   `proximadb-cache` crate (the root crate cannot be imported from a foundation
-  crate without a layering cycle). See ADR-082.
+  crate without a layering cycle). See ADR-085.
 - Local range reads validate persisted CRCs per 4 MiB chunk. Reading and
   checksumming an entire 128 MiB SQ8 parent for a small survivor range would
   remove Blob GETs but introduce avoidable local read amplification.

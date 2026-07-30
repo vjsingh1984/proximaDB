@@ -11,7 +11,7 @@
 | Status | **In Progress.** D1-D6 implemented locally; corrected SIFT1M verification and CI remain.
 | Priority | P0 — object-store GET count dominates retrieval COGS and cold latency.
 | Component | `proximadb-cache`; SST `segment_format`, `survivor_range_cache`, flush, compaction, config, metrics.
-| Design | ADR-082; ADR-080; TD-SEARCH-3.
+| Design | ADR-085; ADR-080; TD-SEARCH-3.
 | Evidence | Handoff baseline reports 48.5 physical GETs/query at 1M after segment consolidation. That number remains historical input, not evidence for this implementation; the acceptance run must be re-recorded.
 |===
 
