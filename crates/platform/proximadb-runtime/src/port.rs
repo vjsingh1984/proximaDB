@@ -153,5 +153,11 @@ pub trait ApiHandlersPort: Send + Sync {
         // haven't been wired pass `None`); production gRPC/REST threads the real
         // tenant from the request.
         tenant_id: Option<&str>,
+        // TD-ABAC-5: the authenticated subject (principal id), threaded to ABAC
+        // enforcement at the relational read boundary. Opaque `&str` here because
+        // this port (runtime layer) cannot name `SubjectId` (catalog/control); the
+        // root-crate adapter converts it. `None` ⇒ anonymous/unwired ⇒ no
+        // enforcement (status quo). Enforcement is behind `abac-policy`.
+        subject: Option<&str>,
     ) -> Result<ExecuteQueryResponse>;
 }

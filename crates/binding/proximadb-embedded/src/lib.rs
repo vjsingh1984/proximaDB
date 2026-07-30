@@ -4412,6 +4412,7 @@ impl EmbeddedProximaDB {
                     }),
                     collection.map(str::to_string),
                     None, // embedded single-process: no per-request tenant
+                    None, // TD-ABAC-5: embedded single-process: no per-request subject
                 )
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
