@@ -356,16 +356,12 @@ fn auth_data_from_headers(headers: &HeaderMap) -> Result<AuthenticationData, Sta
         .to_str()
         .map_err(|_| Status::invalid_argument("authorization metadata is not valid ASCII"))?;
 
-    if let Some(token) = auth_header.strip_prefix("Bearer ") {
-        return Ok(AuthenticationData::JWTToken(token.to_string()));
-    }
-    if let Some(key) = auth_header.strip_prefix("API-Key ") {
-        return Ok(AuthenticationData::ApiKey(key.to_string()));
-    }
-    if let Some(key) = auth_header.strip_prefix("Api-Key ") {
-        return Ok(AuthenticationData::ApiKey(key.to_string()));
-    }
-    Ok(AuthenticationData::ApiKey(auth_header.to_string()))
+    // TD-ABAC-6: the shared credential parser. This was a verbatim copy of
+    // Arrow's `auth_data_from_metadata` and REST's `map_header_to_auth_data`
+    // (same Bearer / API-Key / raw logic); all three now share one parser.
+    Ok(crate::security::request_identity::parse_authorization(
+        auth_header,
+    ))
 }
 
 fn validate_capability_for_grpc_path(
