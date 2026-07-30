@@ -684,6 +684,9 @@ default_tenant = "default"
 metadata_url = "file://{data / 'metadata'}"
 mmap_enabled = false
 
+[storage.optimization]
+enable_mmap = false
+
 [[storage.storage_locations]]
 url = "{storage_url}"
 weight = 1
@@ -1006,7 +1009,8 @@ def main() -> int:
         "--binary-source-revision",
         help=(
             "Git revision used to build --binary; defaults to current HEAD. "
-            "Use only when later commits touch docs/benchmark harnesses."
+            "Use only when later commits touch docs, benchmark harnesses, or "
+            "the focused Python contract for this harness."
         ),
     )
     parser.add_argument(
@@ -1088,6 +1092,7 @@ def main() -> int:
         unsafe_changes = [
             path for path in changed_since_build
             if not path.startswith(("docs/", "scripts/"))
+            and path != "tests/python/test_sift_get_reduction_harness.py"
         ]
         if unsafe_changes:
             raise RuntimeError(

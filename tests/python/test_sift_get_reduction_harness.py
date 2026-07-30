@@ -83,4 +83,6 @@ def test_config_preserves_object_store_url(tmp_path: Path) -> None:
 
     HARNESS.write_config(config_path, tmp_path, 5690, 128, storage_url)
 
-    assert f'url = "{storage_url}"' in config_path.read_text()
+    config = config_path.read_text()
+    assert f'url = "{storage_url}"' in config
+    assert "[storage.optimization]\nenable_mmap = false" in config
