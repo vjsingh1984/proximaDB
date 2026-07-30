@@ -59,6 +59,10 @@ pub struct CollectionFlushPlan {
     pub collection_name: String,
     /// Base storage location (`file://…` / `s3://…`) for this collection.
     pub base_location: String,
+    /// Immutable L2 addressing composite used only for typed object-store path
+    /// composition. Admission and WAL ownership remain keyed by the L1
+    /// [`CollectionObjectId`](crate::core::stable_id::CollectionObjectId).
+    pub collection_identity: Option<crate::core::stable_id::CollectionIdentity>,
     /// Proto `StorageEngine` discriminant for the collection's configured engine.
     pub engine_type: i32,
     /// Vector dimension (required by VIPER/NOVA flush).
@@ -84,6 +88,26 @@ pub fn flush_plan_from_collection_meta(
     let base_location = assignment
         .map(|a| a.base_location.clone())
         .unwrap_or_default();
+    let collection_identity = match assignment.map(|assignment| {
+        (
+            assignment.typed_account_id,
+            assignment.typed_namespace_id,
+            assignment.typed_collection_id,
+        )
+    }) {
+        None | Some((None, None, None)) => None,
+        Some((Some(_), Some(_), Some(_))) => Some(
+            crate::storage::trait_components::path_resolver::typed_identity_from_storage_assignment(
+                assignment,
+            )
+            .context("catalog storage assignment has an out-of-range typed identity")?,
+        ),
+        Some(_) => {
+            anyhow::bail!(
+                "catalog storage assignment has an incomplete typed account/namespace/collection identity"
+            )
+        }
+    };
     let tenant_id = proximadb_tenant::tenant_id_of(meta);
     let collection_object_id = meta.id.parse().with_context(|| {
         format!(
@@ -98,6 +122,7 @@ pub fn flush_plan_from_collection_meta(
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| collection_object_id.to_string()),
         base_location,
+        collection_identity,
         engine_type,
         dimension,
         tenant_id,
@@ -488,11 +513,23 @@ async fn materialize_collection_with_coordinator_mode(
 
     // Collection config carries engine + dimension + the on-disk layout path so the
     // flush writes into the same directory recovery reads from.
+    let (typed_account_id, typed_namespace_id, typed_collection_id) = match plan.collection_identity
+    {
+        Some(identity) => (
+            Some(identity.account_id),
+            Some(u32::from(identity.namespace_id)),
+            Some(identity.collection_id),
+        ),
+        None => (None, None, None),
+    };
     let collection_config = Collection {
         id: collection_id_text.clone(),
         storage_assignment: Some(StorageAssignment {
             base_location: plan.base_location.clone(),
             engine: plan.engine_type,
+            typed_account_id,
+            typed_namespace_id,
+            typed_collection_id,
             ..Default::default()
         }),
         config: Some(CollectionConfig {
@@ -673,6 +710,7 @@ mod tests {
         StorageQueryContext,
     };
     use std::collections::HashMap;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::{Barrier, Notify};
 
@@ -696,6 +734,7 @@ mod tests {
         wait_for_release: bool,
         entered_flush: Notify,
         release_flush: Notify,
+        last_storage_assignment: Mutex<Option<StorageAssignment>>,
     }
 
     impl RecordingEngine {
@@ -712,6 +751,7 @@ mod tests {
                 wait_for_release: false,
                 entered_flush: Notify::new(),
                 release_flush: Notify::new(),
+                last_storage_assignment: Mutex::new(None),
             }
         }
 
@@ -755,6 +795,13 @@ mod tests {
 
         async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
             self.flush_calls.fetch_add(1, Ordering::SeqCst);
+            *self
+                .last_storage_assignment
+                .lock()
+                .expect("test storage-assignment lock") = params
+                .collection_config
+                .as_ref()
+                .and_then(|collection| collection.storage_assignment.clone());
             let active = self.active_flushes.fetch_add(1, Ordering::SeqCst) + 1;
             self.max_active_flushes.fetch_max(active, Ordering::SeqCst);
             let _active_guard = ActiveFlush(&self.active_flushes);
@@ -808,6 +855,7 @@ mod tests {
             collection_object_id,
             collection_name: format!("collection-{collection_object_id}"),
             base_location: "file:///tmp/adr081-tests".to_string(),
+            collection_identity: None,
             engine_type: ProtoStorageEngine::Sst as i32,
             dimension: 2,
             tenant_id: Some("test-tenant".to_string()),
@@ -915,6 +963,101 @@ mod tests {
 
         assert!(outcome.is_some());
         assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn typed_storage_identity_reaches_the_engine_flush_boundary() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_batch(&write_buffer, 111, "v0").await;
+        let engine = Arc::new(RecordingEngine::new());
+        let mut typed_plan = plan(111);
+        typed_plan.collection_identity = Some(crate::core::stable_id::CollectionIdentity {
+            account_id: 7,
+            namespace_id: 11,
+            collection_id: 13,
+        });
+
+        materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &typed_plan,
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect("typed flush must succeed")
+        .expect("typed flush must publish its batch");
+
+        let assignment = engine
+            .last_storage_assignment
+            .lock()
+            .expect("test storage-assignment lock")
+            .clone()
+            .expect("flush parameters must carry a storage assignment");
+        assert_eq!(assignment.typed_account_id, Some(7));
+        assert_eq!(assignment.typed_namespace_id, Some(11));
+        assert_eq!(assignment.typed_collection_id, Some(13));
+    }
+
+    #[test]
+    fn flush_plan_preserves_catalog_storage_identity() {
+        let mut collection = Collection {
+            id: "111".to_string(),
+            config: Some(CollectionConfig {
+                name: "typed-collection".to_string(),
+                dimension: 2,
+                storage_engine: Some(ProtoStorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: "file:///typed".to_string(),
+                engine: ProtoStorageEngine::Sst as i32,
+                typed_account_id: Some(7),
+                typed_namespace_id: Some(11),
+                typed_collection_id: Some(13),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let plan = flush_plan_from_collection_meta(&collection).expect("valid flush plan");
+        assert_eq!(
+            plan.collection_identity,
+            Some(crate::core::stable_id::CollectionIdentity {
+                account_id: 7,
+                namespace_id: 11,
+                collection_id: 13,
+            })
+        );
+
+        collection
+            .storage_assignment
+            .as_mut()
+            .expect("storage assignment")
+            .typed_namespace_id = None;
+        assert!(
+            flush_plan_from_collection_meta(&collection)
+                .err()
+                .expect("partial typed identity must fail closed")
+                .to_string()
+                .contains("incomplete typed account/namespace/collection identity")
+        );
+
+        collection
+            .storage_assignment
+            .as_mut()
+            .expect("storage assignment")
+            .typed_namespace_id = Some(u32::from(u16::MAX) + 1);
+        assert!(
+            flush_plan_from_collection_meta(&collection)
+                .err()
+                .expect("out-of-range typed identity must fail closed")
+                .to_string()
+                .contains("out-of-range typed identity")
+        );
     }
 
     #[tokio::test]

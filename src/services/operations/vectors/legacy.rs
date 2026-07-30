@@ -1184,7 +1184,7 @@ impl VectorOperationsService {
         // consult the DV.
         #[cfg(feature = "cold-deletion-vectors")]
         let (result, lsns) = self
-            .insert_vectors_via_wal_returning_lsns(collection_id, tombstones)
+            .insert_vectors_via_wal_returning_lsns(&collection_id, tombstones)
             .await?;
         #[cfg(not(feature = "cold-deletion-vectors"))]
         let result = self
@@ -1203,7 +1203,7 @@ impl VectorOperationsService {
                 for (oid, lsn) in record_ids.iter().zip(lsns.iter().copied()) {
                     let hits = match self
                         .storage_engine
-                        .resolve_oid_positions(collection_id, oid)
+                        .resolve_oid_positions(&collection_id, oid)
                         .await
                     {
                         Ok(h) => h,
@@ -2103,9 +2103,18 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.write_coordinator()
-            .bulk_write(collection_id, vectors)
-            .await
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
+        let result = self
+            .write_coordinator()
+            .bulk_write(&collection_id, vectors)
+            .await?;
+        if result.success {
+            self.invalidate_query_cache(&collection_id).await;
+        }
+        Ok(result)
     }
 
     /// Internal helper: insert records via standard WAL path
@@ -2150,8 +2159,17 @@ impl VectorOperationsService {
         collection_id: &str,
         records: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.insert_vectors_via_wal_insert_only(collection_id, records)
-            .await
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
+        let result = self
+            .insert_vectors_via_wal_insert_only(&collection_id, records)
+            .await?;
+        if result.success {
+            self.invalidate_query_cache(&collection_id).await;
+        }
+        Ok(result)
     }
 
     /// Insert canonical records after validating tenant access and injecting tenant_id.
@@ -2611,6 +2629,26 @@ impl VectorOperationsService {
         Vec<crate::proto::proximadb_v1::SearchResult>,
         Option<crate::query::explain::VectorObjectEconomyExplain>,
     )> {
+        // ADR-0083 D5: resolve the mutable name/alias once at the catalog
+        // boundary. Every cache, WAL, AXIS, and storage lookup below is keyed
+        // by the immutable numeric L1 identity.
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let collection_object_id: crate::core::stable_id::CollectionObjectId =
+            collection.id.parse().map_err(|error| {
+                anyhow::anyhow!(
+                    "catalog collection '{}' has invalid object identity {:?}: {error}",
+                    collection_id,
+                    collection.id
+                )
+            })?;
+        let collection_id_text = collection_object_id.to_string();
+        let collection_id = collection_id_text.as_str();
+        let response_collection_name = collection
+            .config
+            .as_ref()
+            .map(|config| config.name.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(collection_id);
         let config = config.clone();
 
         // Reuse the same cache key as legacy and convert on hit
@@ -2668,8 +2706,6 @@ impl VectorOperationsService {
             collection_id, progressive_enabled
         );
 
-        // Get collection configuration
-        let collection = self.get_or_load_collection(collection_id).await?;
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
@@ -2736,8 +2772,11 @@ impl VectorOperationsService {
             .await?;
 
         // Build v1 results from the merged records
-        let v1_results =
-            vec![self.optimized_results_to_proto_v1(merged_results, collection_id, true)];
+        let v1_results = vec![self.optimized_results_to_proto_v1(
+            merged_results,
+            response_collection_name,
+            true,
+        )];
 
         // Cache v1 (via legacy conversion) for reuse, stamped with the LSN this
         // result was computed at so a later Strong read can validate it. If a
@@ -2816,6 +2855,19 @@ impl VectorOperationsService {
         use std::time::Instant;
         let total_start = Instant::now();
 
+        // ADR-0083 D5: internal search state is keyed by the catalog's native
+        // L1 object id. Names and aliases terminate at this boundary.
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let collection_object_id: crate::core::stable_id::CollectionObjectId =
+            collection.id.parse().map_err(|error| {
+                anyhow::anyhow!(
+                    "catalog collection '{}' has invalid object identity {:?}: {error}",
+                    collection_id,
+                    collection.id
+                )
+            })?;
+        let collection_id_text = collection_object_id.to_string();
+        let collection_id = collection_id_text.as_str();
         let config = config.clone();
 
         // Extract search_mode from config (defaults to Exact for 100% recall)
@@ -2826,7 +2878,6 @@ impl VectorOperationsService {
 
         // Plan context
         let context_start = Instant::now();
-        let collection = self.get_or_load_collection(collection_id).await?;
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
@@ -4237,10 +4288,14 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<crate::storage::engines::InsertResult> {
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
         let mut vectors = vectors;
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        self.validate_records_for_insert(collection_id, &vectors)
+        self.validate_records_for_insert(&collection_id, &vectors)
             .await?;
 
         let start = std::time::Instant::now();
@@ -4258,8 +4313,9 @@ impl VectorOperationsService {
             .sum::<usize>() as i64;
 
         self.wal_manager
-            .write_vector_batch_native_arc(collection_id, Arc::new(vectors))
+            .write_vector_batch_native_arc(&collection_id, Arc::new(vectors))
             .await?;
+        self.invalidate_query_cache(&collection_id).await;
 
         Ok(crate::storage::engines::InsertResult {
             entries_written,
@@ -4274,27 +4330,31 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Arc<Vec<ProximaRecord>>,
     ) -> Result<crate::storage::engines::InsertResult> {
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
         let mut vectors: Vec<ProximaRecord> = (*vectors).clone();
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        self.validate_records_for_insert(collection_id, &vectors)
+        self.validate_records_for_insert(&collection_id, &vectors)
             .await?;
 
         let start = std::time::Instant::now();
         let _batch_result = self
             .wal_manager
-            .write_vector_batch_native_arc(collection_id, Arc::new(vectors.clone()))
+            .write_vector_batch_native_arc(&collection_id, Arc::new(vectors.clone()))
             .await?;
 
         #[cfg(feature = "axis")]
-        let collection = self.get_or_load_collection(collection_id).await?;
+        let collection = self.get_or_load_collection(&collection_id).await?;
         #[cfg(feature = "axis")]
         let axis_duration = if collection_uses_axis_indexes(&collection) {
             let axis_start = std::time::Instant::now();
             for record in vectors.iter() {
                 if let Err(e) = self
                     .axis_index_manager
-                    .insert_record(collection_id, record)
+                    .insert_record(&collection_id, record)
                     .await
                 {
                     tracing::warn!(
@@ -4346,6 +4406,7 @@ impl VectorOperationsService {
             duration_micros,
             axis_duration
         );
+        self.invalidate_query_cache(&collection_id).await;
 
         Ok(crate::storage::engines::InsertResult {
             entries_written: vectors.len() as i64,
