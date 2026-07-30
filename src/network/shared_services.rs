@@ -3583,3 +3583,135 @@ mod join_storage_url_tests {
         assert!(local_storage_path("abfs://container/data").is_none());
     }
 }
+
+// ============================================================================
+// ABAC composition-root integration test (TD-ABAC-2/3/4)
+// ============================================================================
+//
+// The durable substrate (authority #1310 + bindings #1331 + predicate objects
+// #1335) and the pgwire subject activation (#1333) are each proven in isolation:
+// the abac-crate tests prove each `FileSystem*` store survives a restart, and
+// #1324's `abac_relational_enforcement_tests` proves the enforcer + scan filter
+// rows. The ONE integration point nothing covered was the composition root —
+// `build_abac_enforcer` loading all THREE durable files into a working enforcer.
+// These tests close that gap: seed the durable trio, call the real
+// `build_abac_enforcer`, and assert it produces an enforcer that enforces.
+#[cfg(all(test, feature = "abac-policy"))]
+mod abac_composition_root_tests {
+    use super::SharedServices;
+    use crate::core::config::Config;
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+    use crate::security::rls::AbacScanResult;
+    use proximadb_abac::{
+        AttributeBinding, FileSystemAttributeAuthority, FileSystemPolicyBindingStore,
+        FileSystemPredicateObjectStore,
+    };
+    use proximadb_catalog::fc_metamodel::{
+        AttrValue, Effect, PolicyBinding, Scope, SubjectId, Target,
+    };
+    use serde_json::json;
+
+    fn unique_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "proximadb-abac-comproot-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// Seed the durable trio, then exercise the REAL composition-root builder
+    /// (`build_abac_enforcer`) — proving the three `FileSystem*` stores load into a
+    /// working enforcer. This is the integration point no isolated unit test covers.
+    #[test]
+    fn build_abac_enforcer_loads_the_durable_trio_into_a_working_enforcer() {
+        let dir = unique_dir();
+        let abac_dir = dir.join("abac");
+        std::fs::create_dir_all(&abac_dir).expect("abac dir");
+
+        // 1. durable authority: alice → dept=eng in tenant 7.
+        {
+            let mut auth =
+                FileSystemAttributeAuthority::open(abac_dir.join("attribute-bindings.json"))
+                    .expect("open authority");
+            auth.upsert(
+                AttributeBinding::new("alice", 7).with_attr("dept", AttrValue::Str("eng".into())),
+            );
+        }
+        // 2. durable policy bindings: permit table 200 under predicate ref 42.
+        {
+            let mut bindings =
+                FileSystemPolicyBindingStore::open(abac_dir.join("policy-bindings.json"))
+                    .expect("open binding store");
+            bindings.replace_tenant(
+                7,
+                vec![PolicyBinding {
+                    object_id: 1,
+                    tenant_stable_id: 7,
+                    scope: Scope::Table(200),
+                    effect: Effect::Permit,
+                    predicate_ref: Some(42),
+                    field_mask: None,
+                }],
+            );
+        }
+        // 3. durable predicate objects: ref 42 → dept == "eng".
+        {
+            let mut preds =
+                FileSystemPredicateObjectStore::open(abac_dir.join("predicate-objects.json"))
+                    .expect("open predicate store");
+            preds.register(
+                42,
+                FilterExpression::Comparison {
+                    field: "dept".to_string(),
+                    operator: ComparisonOperator::Equals,
+                    value: json!("eng"),
+                },
+            );
+        }
+
+        // Composition root: build the enforcer from the data_dir (reads all 3 files).
+        let mut config = Config::default();
+        config.server.data_dir = dir.clone();
+        let enforcer = SharedServices::build_abac_enforcer(Some(&config))
+            .expect("durable substrate present ⇒ enforcer built");
+
+        let target = Target {
+            namespace: 3,
+            table: 200,
+            column: None,
+        };
+
+        // alice (dept=eng) ⇒ Restricted to dept=eng rows — the full chain
+        // (authority resolve → binding compose → predicate resolve) works through
+        // the composition root.
+        match enforcer.predicate_for(&SubjectId("alice".into()), 7, target) {
+            AbacScanResult::Restricted(_) => {}
+            _ => panic!("alice must be Restricted via the durable substrate"),
+        }
+        // An unbound subject ⇒ Denied (no attribute binding in the authority).
+        assert!(
+            matches!(
+                enforcer.predicate_for(&SubjectId("mallory".into()), 7, target),
+                AbacScanResult::Denied(_)
+            ),
+            "an unbound subject must be denied"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No `data_dir` (embedded/ephemeral paths) ⇒ no durable substrate ⇒ `None`.
+    /// This is the documented fail-open-to-status-quo behavior (never a
+    /// synthesized allow).
+    #[test]
+    fn build_abac_enforcer_returns_none_without_a_config() {
+        assert!(
+            SharedServices::build_abac_enforcer(None).is_none(),
+            "no opt_config ⇒ no enforcer (status quo)"
+        );
+    }
+}
