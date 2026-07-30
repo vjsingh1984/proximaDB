@@ -1,0 +1,102 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-ABAC-6: Unified request-identity seam across REST / gRPC / Arrow Flight (+ pgwire)
+:status: In progress — PR-A (foundation seam + shared credential parser) delivered
+:date: 2026-07-30
+:authors: FA enforcement track session 2026-07-30
+:realizes: TD-FOUNDATION-3 FA-c; consolidates TD-TENANT-1 (tenant) + TD-ABAC-2..5 (subject)
+:design-of-record: TD-TENANT-1 (`identity_trust.rs`); plan `docs` consolidation review
+:depends-on: TD-ABAC-2/3/4/5 (#1331/#1333/#1335/#1338), #1336
+
+[cols="1,3"]
+|===
+| Status | **PR-A delivered (pending):** the unified identity *model* (`AuthClass` + `ResolvedRequestIdentity` + `resolve_subject_assertion`) in the foundation seam, the shared `parse_authorization` credential parser, and Arrow's adoption of it. PR-B (gRPC+REST resolver) + PR-C (pgwire + cleanup) remain.
+| Problem | ABAC threading (TD-ABAC-3/5) surfaced that each network surface re-implements the same identity pipeline in parallel: 3 near-identical credential parsers, duplicated resolution pipelines, and a trust-vs-auth distinction buried in comments. Arrow even *drops* `user_id`. This TD consolidates it into one seam.
+| Principle | Co-design (mandate #1): the contract is the identity, not the transport. Each surface keeps only a thin transport adapter; the resolution is shared. Behavior-preserving.
+|===
+
+NOTE: Code references are `file::symbol`. `develop` moves; trust the symbol, re-locate the line.
+
+== 1. The duplication (the problem)
+
+Three concerns were duplicated across REST / gRPC / Arrow Flight:
+
+* **Credential parsing** (`authorization` → `AuthenticationData`): gRPC
+  `auth_data_from_headers` (`grpc/auth.rs`), Arrow `auth_data_from_metadata`
+  (`arrow_ipc/service.rs`), REST `map_header_to_auth_data` (`auth/middleware.rs`) —
+  verbatim copies of the same `Bearer`/`API-Key`/raw logic.
+* **Resolution pipeline** (`authenticate_request → AuthenticatedTenantBinding →
+  resolve_tenant_assertion → resolve_request_tenant_for_mode`): duplicated in gRPC +
+  Arrow; REST splits it across two middleware layers.
+* **Audit/error mapping**: identical `warn!(tenant_audit)` + reject, differing only
+  in a `surface=` label.
+
+Plus two symptoms: **Arrow drops `user_id`** (`AuthenticatedFlightContext` keeps only
+`tenant_id`+`capability`), and the **trust-auth-vs-real-auth distinction is not in the
+type system** (pgwire enforcement is advisory/spoofable; gRPC/REST load-bearing — but
+only comments say so). gRPC also *double-gates* tenant (a legacy
+`validate_tenant_assertion` alongside the shared `resolve_tenant_assertion`).
+
+== 2. The seam (the design)
+
+Two-layer split forced by layering (mandate #17): foundation can't name `SubjectId`
+(control); the runtime port can't either (opaque `Option<&str>`).
+
+**Layer 1 — extend the existing foundation seam** (`identity_trust.rs`, already the
+TD-TENANT-1 tenant gate every surface calls). Added (PR-A):
+* `AuthClass { Authenticated, TrustAsserted, Anonymous }` — the auditable distinction.
+* `ResolvedRequestIdentity { tenant, subject, auth_class }` — bare-string identity.
+* `resolve_subject_assertion` — the subject analogue of `resolve_tenant_assertion`'s
+  bare-assertion arm (pgwire's `check_pgwire_subject_assertion` proved that arm
+  generic); the subject gate stops being pgwire-only.
+
+**Layer 2 — root helpers** (`src/security/request_identity.rs`). Added (PR-A):
+* `parse_authorization(value) -> AuthenticationData` — the ONE credential parser
+  (collapses the three copies); each surface extracts the raw value from its transport
+  + keeps surface-specific fallbacks (Arrow's mTLS / `x-api-key`).
+
+**Still to land (PR-B/C):**
+* `resolve_request_identity(coordinator, credential, asserted_tenant,
+  asserted_subject, trust, mode) -> ResolvedIdentity { identity, user_context }` —
+  the ONE orchestrator (authenticate → tenant/subject gates → `ResolvedRequestIdentity`).
+* `subject_id_of` / `subject_str_of` lifts (→ `SubjectId` for ABAC, → `&str` for the
+  runtime port).
+
+`AuthClass` is **informational** in this refactor — it does NOT change enforcement
+(pgwire stays advisory, gRPC load-bearing). A future hardening slice may refuse
+`TrustAsserted` as load-bearing; that is a separate policy decision.
+
+== 3. Phased delivery
+
+* **PR-A (this PR):** foundation seam + `parse_authorization` + Arrow adopts
+  `parse_authorization` (first concrete dedup). Pure additive library — no behavior
+  change, no dead code (the per-surface context-field wiring lands with consumers).
+* **PR-B:** the `resolve_request_identity` orchestrator; wire **gRPC** (delete
+  `auth_data_from_headers` + the redundant `validate_tenant_metadata` double-gate;
+  `GrpcAuthContext` carries `ResolvedRequestIdentity`) + **REST** (collapse the two
+  middleware layers; thread the subject — fixes the #1338 REST follow-on). gRPC/REST
+  adopt `parse_authorization`.
+* **PR-C:** wire **pgwire** (`resolve_request_identity(coordinator=None)` →
+  `TrustAsserted`; the SELECT-path subject from the resolved identity); **Arrow**
+  `AuthenticatedFlightContext` gains `user_id` (consumed by #1309 vector ABAC);
+  delete remaining dead helpers; final dedup audit.
+
+== 4. Verification (PR-A)
+
+* `cargo check --workspace` (the seam is foundation; `parse_authorization` is root lib
+  — both compile in the default build, not `abac-policy`-gated).
+* `cargo nextest run -p proximadb-tenant` — identity_trust unit tests
+  (`resolve_subject_assertion` Open/strict/anonymous, `AuthClass` serde/display,
+  `ResolvedRequestIdentity`).
+* `cargo nextest run -p proximadb request_identity` — `parse_authorization` parity
+  tests (Bearer→JWT, API-Key/Api-Key→ApiKey, raw→ApiKey).
+* Arrow `service_tests.rs` unchanged (parity — the parser swap is behavior-neutral).
+* `cargo clippy --workspace -- -D warnings`, `cargo fmt --check`,
+  `make work-commit-check` (panic-policy +0, layering, tenant-path, capability-matrix).
+
+== 5. Out of scope
+
+* Changing enforcement behavior (`AuthClass` is auditable, not a gate).
+* Arrow vector-path ABAC threading (#1309) — *enabled* by PR-C (user_id surfaced) but
+  wired separately.
+* Column masking, graph trio, P2 (real pgwire SCRAM).

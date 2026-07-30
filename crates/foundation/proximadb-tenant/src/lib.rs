@@ -428,7 +428,7 @@ pub use rbac_context::{
 // ============================================================================
 pub mod identity_trust;
 pub use identity_trust::{
-    AuthenticatedTenantBinding, GATEWAY_ROLE, HeaderTrustPolicy, OPERATOR_ROLE,
-    ResolvedTenantAssertion, TenantAssertionError, TenantStableIdResolver,
-    resolve_tenant_assertion,
+    AuthClass, AuthenticatedTenantBinding, GATEWAY_ROLE, HeaderTrustPolicy, OPERATOR_ROLE,
+    ResolvedRequestIdentity, ResolvedTenantAssertion, TenantAssertionError, TenantStableIdResolver,
+    resolve_subject_assertion, resolve_tenant_assertion,
 };
