@@ -251,6 +251,8 @@ pub mod blocks;
 pub mod codebook_integration;
 pub mod collections;
 pub mod core;
+#[cfg(feature = "cold-deletion-vectors")]
+pub mod deletion_vector_store; // TD-DELVEC-1 WI-3a-remaining-A: CAS'd per-segment DV store
 pub mod flush;
 pub mod manifest;
 #[cfg(feature = "cold-deletion-vectors")]

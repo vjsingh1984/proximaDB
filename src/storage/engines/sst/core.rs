@@ -345,6 +345,14 @@ pub struct SstEngine {
     pub(crate) oid_resolver_cache:
         Option<Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>>,
 
+    /// TD-DELVEC-1 WI-3a-remaining-A: durable, CAS'd per-segment deletion-vector
+    /// store. Feature-gated `cold-deletion-vectors`. Per-engine (authoritative
+    /// owned state, not a shared cache), keyed by segment path; lazy-filled on
+    /// first touch + reload. INERT until WI-3b wires the delete path.
+    #[cfg(feature = "cold-deletion-vectors")]
+    pub(crate) deletion_vector_store:
+        Option<Arc<crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore>>,
+
     /// ADR-065 Q3: ranged RAM cache for survivor (Region B SQ8) + OID (Region D)
     /// byte ranges. Hot repeat queries skip the per-range `fs.read_range` GETs.
     /// Default `None` (read path byte-for-byte unchanged); opt in via
@@ -628,6 +636,17 @@ impl SstEngine {
                 .clone()
         };
 
+        // TD-DELVEC-1 WI-3a-remaining-A: per-engine deletion-vector store. Not a
+        // process-global singleton (unlike the resolver cache): the DV store is
+        // authoritative owned state for this engine's segments, so per-engine
+        // ownership is the natural model + avoids the OnceLock test hazard.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let deletion_vector_store = Some(std::sync::Arc::new(
+            crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore::new(
+                filesystem.clone(),
+            ),
+        ));
+
         Ok(Self {
             config,
             compaction_manager,
@@ -651,6 +670,8 @@ impl SstEngine {
             survivor_cache,
             #[cfg(feature = "cold-deletion-vectors")]
             oid_resolver_cache,
+            #[cfg(feature = "cold-deletion-vectors")]
+            deletion_vector_store,
             tiering_integration: None,
             freshness_lsn_source: None,
             #[cfg(test)]

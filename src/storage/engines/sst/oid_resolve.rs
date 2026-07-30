@@ -35,10 +35,10 @@ impl super::core::SstEngine {
             if !path.ends_with(".pax") {
                 continue;
             }
-            if let Some(resolver) = self.get_or_load_resolver(path, cache).await? {
-                if let Some(pos) = resolver.position_of(oid) {
-                    hits.push((path.clone(), pos));
-                }
+            if let Some(resolver) = self.get_or_load_resolver(path, cache).await?
+                && let Some(pos) = resolver.position_of(oid)
+            {
+                hits.push((path.clone(), pos));
             }
         }
         Ok(hits)
