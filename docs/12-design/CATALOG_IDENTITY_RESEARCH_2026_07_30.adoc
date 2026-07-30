@@ -1,0 +1,146 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= Catalog identity research — how mature multi-modal/multi-tenant databases shape stable-id, display names, and hierarchy
+
+Companion to link:adr/ADR-0083-consolidated-catalog-identity-model.adoc[ADR-0083]. This is the industry survey + first-principles evaluation that grounds the three-layer decision. Survey date: 2026-07-30.
+
+== The question
+
+A catalog object (collection/table) is identified by different consumers for
+different purposes: the storage hot path needs a cheap immutable key; the
+object-store path needs a hierarchy-encoding identity for structural
+isolation; humans need a mutable name. The design question is whether to
+**overload one id** for all three, or **separate them into layers**. This
+survey asks how mature systems answer it, then evaluates each id model on
+merits.
+
+== Survey
+
+=== PostgreSQL — the canonical "numeric OID + mutable name"
+
+* **Hierarchy:** `database → schema → table → column`.
+* **Stable id:** `OID` — an unsigned 4-byte (`u32`) integer, the primary key
+  of every system catalog table (`pg_class.oid`, …), assigned at creation,
+  immutable for the object's lifetime within the cluster.
+* **Display name:** `relname` (+ `relnamespace` for the schema); mutable;
+  unique within the schema.
+* **Rename:** `ALTER TABLE … RENAME` changes `relname`, **not** the OID.
+* **Admission/joins:** the engine joins catalog tables on `OID`, never on name.
+* **Caveat:** OIDs can be regenerated across a `pg_dump`/restore, so they are
+  stable within a lifetime but not across a full restore (PostgreSQL 12+ no
+  longer adds an `oid` column to user tables, but the catalog row still has
+  one).
+* Sources: https://www.postgresql.org/docs/current/datatype-oid.html[OID types],
+  https://www.postgresql.org/docs/current/sql-altertable.html[ALTER TABLE].
+
+=== CockroachDB — numeric descriptor ID + namespace table
+
+* **Hierarchy:** `database → schema → table → column`.
+* **Stable id:** a numeric **descriptor ID** (immutable) stored in
+  `system.descriptor`.
+* **Name mapping:** the `system.namespace` table maps
+  `(parentID, parentSchemaID, name) → descriptorID`. Name resolution is a
+  lookup in this table.
+* **Rename:** updates the namespace-table row (the name); the descriptor ID is
+  unchanged.
+* **Admission:** keyed on the descriptor ID; the namespace table is the
+  name→id resolver at the boundary.
+* Sources: https://www.cockroachlabs.com/docs/stable/schema-design-overview[schema design],
+  https://github.com/cockroachdb/cockroach/blob/master/docs/RFCS/20200501_user_defined_schemas.md[user-defined schemas RFC].
+
+=== Apache Iceberg — `table-uuid` (immutable) + `TableIdentifier` (mutable)
+
+* **Hierarchy:** `catalog → namespace (list of segments) → table → field` (Iceberg field IDs).
+* **Stable id:** `table-uuid` — an immutable UUID assigned at table creation,
+  stored in the table's metadata JSON, persisting across renames and the tie
+  that holds metadata files together.
+* **Display/addressing id:** `TableIdentifier = Namespace + name` — the
+  logical, human-readable identifier used in catalog API calls (including the
+  REST catalog); **mutable via rename** (rename creates a new `TableIdentifier`
+  instance; the `table-uuid` is unchanged).
+* **Field ids:** columns have stable Iceberg field IDs (`i32`), separate from
+  names — so schema evolution (rename/add/drop column) is stable.
+* Sources: https://iceberg.apache.org/javadoc/1.4.3/index.html?org/apache/iceberg/catalog/TableIdentifier.html[TableIdentifier javadoc],
+  https://github.com/apache/iceberg/blob/main/api/src/main/java/org/apache/iceberg/catalog/TableIdentifier.java[source].
+
+=== Databricks Unity Catalog — name-as-id (governance catalog, not a storage hot path)
+
+* **Hierarchy:** `metastore → catalog → schema → table/column`.
+* **Identifier:** the three-level **fully-qualified name** `catalog.schema.table`
+  is the unique identifier within a metastore. No numeric id is exposed for
+  admission.
+* **Why it differs:** Unity Catalog is a **governance** layer (permissions,
+  lineage, discovery), not a storage engine's hot path. Name-as-id is
+  acceptable there; a storage engine keying its WAL/compaction on a mutable
+  3-level string would be a defect.
+* Source: https://docs.databricks.com/aws/en/data-governance/unity-catalog/[Unity Catalog].
+
+=== Snowflake / BigQuery / Cosmos DB (corroborating pattern)
+
+* **Snowflake:** `database → schema → table`; human FQN for addressing, with
+  internal immutable numeric ids for the metadata store (not exposed as the
+  API key). Multi-tenant via account.
+* **BigQuery:** `project → dataset → table`; a numeric table id exists
+  internally alongside the FQN.
+* **Cosmos DB:** `database → container → items`; resource-link ids (immutable)
+  alongside user-facing names.
+* Pattern: even where the API surface is name-based, an **internal immutable
+  numeric/uuid id** exists for the engine.
+
+== First-principles evaluation — one id vs layered ids
+
+[cols="2,3,3,2", options="header"]
+|===
+| Id model | Merit | Demerit | Used for
+| **Global monotonic `u64`** | O(1) compare/hash; 1-cycle integer hash; immutable; globally unique with one allocator; smallest wire/parse cost | Encodes no hierarchy; cannot drive path isolation alone | **L1 physical/admission key** (PG OID, CRDB descriptorID, Iceberg uuid)
+| **Composite `(account, ns, coll)`** | Encodes the hierarchy; naturally scoped; names safely repeat per namespace; drives structural path isolation | 3-field struct; multi-field compare on hot paths; needs per-scope allocators | **L2 addressing/path** (CRDB namespace table, Iceberg TableIdentifier)
+| **UUID (128-bit)** | Global uniqueness with zero coordination | Opaque (no hierarchy); 128-bit (bad for keys/sort); poor path segment | rejected as the catalog key — this is the ProximaDB bug today
+| **Name-as-id (string)** | Simple; human-readable | Mutable (rename invalidates refs); not globally unique under multi-tenancy | **L3 display only** (PG relname); or governance-only (Databricks)
+|===
+
+**The cross-system invariant:** every serious *storage engine* separates an
+immutable numeric (or uuid) physical key — used by the hot path, WAL, and
+compaction — from a mutable name/composite used for addressing and display.
+The only systems that use name-as-id are *governance* catalogs (Databricks),
+which do not own a storage hot path. No surveyed storage engine keys its
+admission/WAL path on a composite or a name.
+
+== Synthesis → ProximaDB (ADR-0083)
+
+ProximaDB already has all three id types (`stable_id.rs`: `CollectionObjectId u64`,
+`CollectionIdentity {account, namespace, collection}`, `CollectionConfig.name`).
+ADR-0083 assigns each its layer — no new type is needed:
+
+* **L1 `object_id` u64** ↔ PostgreSQL OID / CRDB descriptorID / Iceberg uuid → `Collection.id`, admission, WAL, compaction.
+* **L2 composite** ↔ CRDB namespace triple / Iceberg TableIdentifier → `DrPathBuilder`, isolation (on `StorageAssignment`).
+* **L3 name** ↔ PG relname / CRDB name → `CollectionConfig.name`, display.
+
+The #1325 regression is the textbook "overload" failure: `Collection.id`
+carried a UUID (no layer's id) while the flush plan read it as L1. The fix is
+not a new model — it is completing the migration so `Collection.id` carries L1,
+as ADR-031 always intended.
+
+== Open nuances (for the record)
+
+* **Dump/restore stability:** like PostgreSQL OIDs, ProximaDB `object_id` is
+  stable within a deployment lifetime; a cross-store restore must preserve it
+  (the catalog export/import carries `object_id`). Iceberg's `table-uuid` is
+  the analog that survives rename but is reassigned on `replace`.
+* **Allocator width:** `namespace_id` is `u16` (65,536/account) — a hard cap,
+  not a silent wrap (ADR-074 D4). `collection_id` is `u32` per-namespace
+  (4.3B/namespace). `object_id` is `u64` (effectively unbounded).
+* **Why not encode the composite into the `u64`:** packing
+  `(account, namespace, collection)` into 64 bits would couple L1 to L2's
+  widths and break independent allocator evolution; a separate global `u64`
+  keeps the layers decoupled (the same choice CRDB makes — descriptor ID is
+  independent of the namespace triple).
+
+== Sources
+
+* https://www.postgresql.org/docs/current/datatype-oid.html[PostgreSQL — Object Identifier Types]
+* https://www.postgresql.org/docs/current/sql-altertable.html[PostgreSQL — ALTER TABLE (rename keeps OID)]
+* https://www.cockroachlabs.com/docs/stable/schema-design-overview[CockroachDB — schema design]
+* https://github.com/cockroachdb/cockroach/blob/master/docs/RFCS/20200501_user_defined_schemas.md[CockroachDB — user-defined schemas RFC (namespace table)]
+* https://iceberg.apache.org/javadocs/1.4.3/index.html?org/apache/iceberg/catalog/TableIdentifier.html[Apache Iceberg — TableIdentifier]
+* https://github.com/apache/iceberg/blob/main/api/src/main/java/org/apache/iceberg/catalog/TableIdentifier.java[Apache Iceberg — TableIdentifier source]
+* https://docs.databricks.com/aws/en/data-governance/unity-catalog/[Databricks — Unity Catalog]

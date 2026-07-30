@@ -1,0 +1,186 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-0083: Consolidated catalog identity model — physical key, addressing composite, display name (three layers, reconciled)
+
+[cols="1,3"]
+|===
+|Status|Accepted
+|Date|2026-07-30
+|Deciders|Vijaykumar Singh
+|Relates to|ADR-031 (object_id physical key), ADR-074 (namespace isolation), ADR-075 (stable-id authoritative), ADR-077 (one canonical identity declaration), ADR-032 (durable tenant-prefixed catalog), ADR-048 (unified catalog authority), `crates/foundation/proximadb-kernel/src/stable_id.rs` (the type authority)
+|Reconciles (does not supersede)|ADR-031, ADR-074, ADR-075, ADR-077 — these remain the per-layer authorities; this ADR is the umbrella that shows how they compose into one model and resolves the questions they left implicit.
+|Research|`docs/12-design/CATALOG_IDENTITY_RESEARCH_2026_07_30.adoc` (industry survey + first-principles merits/demerits)
+|===
+
+== Why this ADR exists
+
+ProximaDB's catalog-identity decisions are correct but **fragmented across six
+ADR-031 (object_id physical key), ADR-074 (namespace isolation), ADR-075 (stable-id authoritative), ADR-077 (one canonical identity declaration), ADR-032 (durable tenant-prefixed catalog), ADR-048 (unified catalog authority). Each covers a layer; none states the whole, and the interaction left three questions **implicit** — one of which surfaced as a live regression (PR #1325: the embedded flush path parsed `Collection.id` as a `u64` while the field held a UUID).
+
+This ADR states the whole model in one place, grounds it in how mature
+multi-modal/multi-tenant databases solve the same problem, and decides the
+three open questions. It is the authority on **how the layers compose**; the
+per-layer ADRs remain authoritative for their layer.
+
+== Context — the identity question, first principles
+
+A catalog object (collection/table) needs to be identified by **different
+consumers for different purposes**, and conflating those purposes is the
+root of every identity bug:
+
+* **The storage hot path** (WAL, memtable, admission, flush, compaction,
+  locking) needs a *cheap, immutable, globally unique* key — one it can hash,
+  compare, and persist without decomposing a struct.
+* **The object-store path + multi-tenant isolation** needs an identity that
+  *encodes the hierarchy* (tenant/namespace/collection) so paths are
+  structural and a name can repeat safely across namespaces.
+* **Humans and client APIs** need a *mutable, readable name* they can rename
+  without breaking internal references.
+
+The industry consensus (see the research doc) is that a serious storage engine
+**separates these into distinct layers** rather than overloading one field.
+PostgreSQL (OID u32 + relname), CockroachDB (descriptor ID + namespace table),
+and Apache Iceberg (`table-uuid` + `TableIdentifier`) all do exactly this:
+an immutable numeric physical key for internals, a mutable name/composite for
+addressing and display. Databricks Unity Catalog uses name-as-id, but it is a
+*governance* catalog — not a storage engine's hot path — and explicitly does
+not expose a numeric id for admission.
+
+== Decision — three identity layers, each with one job
+
+[cols="2,3,3,3", options="header"]
+|===
+| Layer | Type | Role | Industry analog
+| **L1 — Physical key** | `CollectionObjectId` (`u64`, immutable, globally unique, catalog-minted monotonic) | WAL key, memtable key, **admission + scheduling** (flush, compaction, locking), catalog PK | PostgreSQL `OID`; CockroachDB `descriptorID`; Iceberg `table-uuid`
+| **L2 — Addressing composite** | `CollectionIdentity { account_id: u32, namespace_id: u16, collection_id: u32 }` (immutable, scoped) | **Object-store path composition** (`DrPathBuilder`: `accounts/{a}/{ns}/{coll}/…`), structural tenant isolation, cross-scope addressing | CockroachDB namespace table `(parentID, parentSchemaID, name)`; Iceberg `TableIdentifier (Namespace+name)`
+| **L3 — Display name** | `CollectionConfig.name` (`string`, mutable, unique per `(account, namespace)`) | Human addressing, client API, display; renames change this only | PostgreSQL `relname`; CockroachDB `name`; Iceberg `name`
+|===
+
+**One object, three identities, never conflated.** L1 is what the engine keys
+on internally; L2 is how it lays out + isolates data on the object store; L3 is
+what the user calls it.
+
+=== D1 — `Collection.id` (the proto field) holds L1, the decimal `CollectionObjectId`
+
+This is the live bug. `Collection.id` is the proto surface every internal path
+reads, and it must be the **immutable physical key** — the decimal-string form
+of the `u64` `object_id` — not a UUID, not the name, not a composite encoding.
+
+* The catalog mints `schema.object_id` (`u64`) at create (`native.rs
+  mint_object_id`). That value, as a decimal string, **is** `Collection.id`.
+* The display name lives in `CollectionConfig.name` (L3); the composite lives on
+  `StorageAssignment` (`typed_account_id` / `typed_namespace_id` /
+  `typed_collection_id`, per ADR-031 Phase 4d — L2). `Collection.id` is
+  reserved for L1.
+* Rationale (industry): PostgreSQL catalog tables are keyed by `OID`, not
+  `relname`; CockroachDB descriptors are keyed by `descriptorID`, not name.
+  Keying the proto surface on the immutable numeric id means renames never
+  invalidate internal references and every path can `parse::<u64>()` safely.
+
+ADR-031 *implied* this; D1 makes it explicit and removes the UUID that the
+pre-migration code wrote (`src/services/collection/manager.rs:1133`).
+
+=== D2 — admission / scheduling / flush / compaction key on L1 (`object_id` u64), not the composite
+
+The hot path keys on the single `u64`. `CollectionFlushPlan.collection_object_id`,
+`Compaction::enqueue_due_compaction`, WAL keys, and memtable keys all take the
+`object_id`. This is ADR-031's "one `u64` equality beats a composite's
+multi-field compare on every hot path," confirmed by the research: admission is
+always the cheap numeric key (OID / descriptorID / uuid), never the composite.
+
+The composite (L2) is for **path composition + isolation**, not admission.
+"Use the typed identity" (ADR-031 Phase 4d) and "key admission on object_id"
+are **not in conflict** — they are different layers, exactly as Iceberg uses
+`TableIdentifier` for addressing and `table-uuid` for the immutable tie across
+renames.
+
+=== D3 — the catalog mints all three, in one create path, on every surface
+
+`CatalogIdService` (`crates/control/proximadb-catalog/src/id_allocator.rs`) owns
+minting for every surface, including embedded and catalog-free engines:
+
+* `object_id` (`u64`, **one global monotonic sequence** — D4),
+* the composite `collection_id` (`u32`, **per `(account, namespace)`**),
+* `namespace_id` (`u16`, per account).
+
+No create path — including `EmbeddedProximaDB::create_collection` — may skip
+minting `object_id`. The #1325 regression was precisely the embedded path
+leaving `Collection.id` as a UUID because the mint never reached it. D3 closes
+that: every create resolves through the catalog mint, and `Collection.id` is
+populated from `schema.object_id` before the proto is returned.
+
+=== D4 — `object_id` is one global sequence; `collection_id` is per-scope. They are different ids.
+
+This resolves the ADR-031-amendment vs `id_allocator.rs` inconsistency.
+`object_id` (L1) is a **single system-wide monotonic `u64`** (one allocator)
+— it is the global physical key. `collection_id` (L2's third component) is a
+**per-`(account, namespace)` `u32`** — it is the path-scoped component. Both
+are correct; they are different identifiers serving different layers, and the
+two allocator shapes are intentional, not a bug.
+
+=== D5 — resolution happens once, at the identity seam
+
+Name (L3) → composite (L2) → `object_id` (L1) resolution happens **once**, at
+the catalog boundary, authz-gated (ADR-074 D5). Downstream paths receive the
+resolved numeric/composite and never re-resolve from a string. This is the
+single canonical declaration of ADR-077, applied to identity.
+
+== First-principles: why three layers, not one
+
+(Full evaluation in the research doc; summary here.)
+
+[cols="2,4,3", options="header"]
+|===
+| Model | Merit | Demerit / why rejected as the *only* id
+| Global `u64` (L1) | O(1) compare/hash; immutable; globally unique with one allocator; ideal hot-path key | Encodes no hierarchy → can't drive path isolation alone (needs L2)
+| Composite (L2) | Encodes hierarchy; naturally scoped; names safely repeat per namespace | 3-field struct; slower on hot paths → not the admission key
+| UUID | No-coordination global uniqueness | Opaque, 128-bit, terrible for sort/path; **this is the bug** (`Collection.id` today)
+| Name-as-id (L3) | Simple, human | Mutable (rename breaks refs); not globally unique in multi-tenant → display only
+|===
+
+**Synthesis:** no single id serves all three consumers. The robust design —
+the one PostgreSQL, CockroachDB, and Iceberg independently arrived at — is to
+give each consumer its own id and resolve between them at the boundary.
+ProximaDB already has the three types (`stable_id.rs`); this ADR assigns each
+its job and its field.
+
+== Consequences
+
+* **`Collection.id` becomes the decimal `object_id`.** The #1325 flush-plan
+  `parse::<u64>()` then succeeds everywhere; the embedded path is unblocked.
+  Migration: set `Collection.id = schema.object_id.to_string()` at create
+  (`src/services/collection/manager.rs:1133`), retire the UUID. Carried in the
+  #1325 code fix, gated by a round-trip test.
+* **Readers of `Collection.id`** must treat it as the numeric physical key
+  (L1), not a name. Audit (research doc §6): storage/flush/compaction already
+  `parse::<u64>()` (correct once D1 lands); display paths must read
+  `CollectionConfig.name`; path paths must read the composite on
+  `StorageAssignment`. The few that read `Collection.id` as a name are the
+  migration debt.
+* **No new id is invented.** This ADR assigns roles to the three types that
+  already exist in `stable_id.rs`; it adds no type, no field.
+* **ADR-031/074/075/077/032/048 are reconciled, not superseded.** Each remains
+  authoritative for its layer; this ADR is the composition + the resolution of
+  the three questions they left implicit.
+
+== Reconciliation map
+
+[cols="2,4", options="header"]
+|===
+| Existing ADR | Role under ADR-0083
+| ADR-031 (object_id physical key) | **L1 authority.** Confirmed; D1 makes `Collection.id` = `object_id` explicit (031 implied).
+| ADR-074 (namespace isolation) | **L2/L3 authority** (composite + name resolution, two-layer naming). Confirmed.
+| ADR-075 (stable-id authoritative) | **Numeric > string authority.** Confirmed; ADR-0083 names the three layers.
+| ADR-077 (one canonical identity declaration) | **Single-location invariant.** D1 makes `Collection.id` the canonical L1 location.
+| ADR-032 (durable tenant-prefixed catalog) | **Catalog durability + path prefix.** Confirmed; the catalog is the minting authority (D3).
+| ADR-048 (unified catalog authority) | **Catalog owns identity.** Confirmed; D3 places minting in `CatalogIdService`.
+|===
+
+== Open items (not blocking this decision)
+
+* **Namespace `u16` wrap (ADR-074 D4):** 65,536 namespaces/account is a hard
+  limit, not a silent wrap. Fence it (fail-closed at the cap) rather than
+  overflow. Tracked separately.
+* **Dump/restore id stability:** like PostgreSQL OIDs, the `object_id` is
+  stable within a deployment lifetime; a cross-store restore must preserve it
+  (catalog export/import carries `object_id`). Documented in the research doc.
