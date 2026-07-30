@@ -138,3 +138,19 @@ def test_explicit_flush_uses_supported_flight_action() -> None:
     assert calls["action"].type == "flush_collection"
     assert json.loads(calls["action"].body) == {"collection_id": "7"}
     assert calls["closed"] is True
+
+
+def test_explicit_flush_waits_for_collection_wal_to_drain() -> None:
+    samples = [
+        'proximadb_wal_size_bytes{collection="7"} 4096\n',
+        'proximadb_wal_size_bytes{collection="7"} 0\n',
+    ]
+
+    with (
+        patch.object(HARNESS, "scrape_text", side_effect=samples),
+        patch.object(HARNESS.time, "sleep") as sleep,
+    ):
+        elapsed = HARNESS.wait_for_wal_drain("http://server", "7")
+
+    assert elapsed >= 0
+    sleep.assert_called_once_with(0.25)

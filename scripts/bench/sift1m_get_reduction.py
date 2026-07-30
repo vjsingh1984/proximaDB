@@ -864,6 +864,31 @@ def force_flush_via_flight(
     return payload
 
 
+def wait_for_wal_drain(
+        server: str, collection_id: str, timeout_seconds: int = 300) -> float:
+    started = time.monotonic()
+    deadline = started + timeout_seconds
+    while time.monotonic() < deadline:
+        wal_bytes = labelled_metric(
+            scrape_text(server),
+            "proximadb_wal_size_bytes",
+            "collection",
+            collection_id,
+        )
+        if wal_bytes is None:
+            raise RuntimeError(
+                "explicit flush cannot prove WAL drain: collection gauge absent "
+                f"for {collection_id}"
+            )
+        if wal_bytes == 0:
+            return time.monotonic() - started
+        time.sleep(0.25)
+    raise RuntimeError(
+        "explicit flush did not drain the collection WAL within "
+        f"{timeout_seconds}s: collection={collection_id}"
+    )
+
+
 def ingest(
         server: str, base_path: Path, expected_rows: int, batch_size: int,
         flight_host: str, flight_port: int,
@@ -920,23 +945,38 @@ def ingest(
             explicit_flush_every_rows is not None
             and inserted % explicit_flush_every_rows == 0
         ):
+            wal_before = labelled_metric(
+                scrape_text(server),
+                "proximadb_wal_size_bytes",
+                "collection",
+                collection_id,
+            )
+            if wal_before is None or wal_before <= 0:
+                raise RuntimeError(
+                    "explicit flush boundary has no positive unflushed-WAL "
+                    f"gauge: collection={collection_id}, value={wal_before!r}"
+                )
             flush_started = time.perf_counter()
             response = force_flush_via_flight(
                 flight_host,
                 flight_port,
                 collection_id,
             )
-            flush_seconds = time.perf_counter() - flush_started
+            action_seconds = time.perf_counter() - flush_started
+            drain_seconds = wait_for_wal_drain(server, collection_id)
             explicit_flushes.append(
                 {
                     "after_rows": inserted,
-                    "seconds": flush_seconds,
+                    "wal_bytes_before": wal_before,
+                    "action_seconds": action_seconds,
+                    "drain_seconds": drain_seconds,
                     "response": response,
                 }
             )
             print(
                 f"explicit flush: rows={inserted:,} "
-                f"seconds={flush_seconds:.3f}",
+                f"action={action_seconds:.3f}s "
+                f"drain={drain_seconds:.3f}s",
                 flush=True,
             )
         if inserted % 100_000 == 0:
