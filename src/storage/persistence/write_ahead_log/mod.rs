@@ -1202,6 +1202,7 @@ fn spawn_inline_flush(collection_id: String) {
         let Some(write_buffer) = get_global_write_buffer_behavior() else {
             return;
         };
+        #[cfg(feature = "axis")]
         let axis = crate::index::get_global_axis_manager();
         let catalog = list_collections_from_catalog().await;
         let Some(meta) = catalog.iter().find(|c| c.id == collection_id) else {
@@ -1222,15 +1223,11 @@ fn spawn_inline_flush(collection_id: String) {
             "🚿 inline size-flush starting (segments appear on completion)"
         );
         let start = std::time::Instant::now();
-        match materialize_collection_if_idle(
-            &write_buffer,
-            &plan,
-            None,
-            None,
-            true,
-            axis.as_deref(),
-        )
-        .await
+        #[cfg(feature = "axis")]
+        let axis_arg = axis.as_deref();
+        #[cfg(not(feature = "axis"))]
+        let axis_arg: Option<&()> = None;
+        match materialize_collection_if_idle(&write_buffer, &plan, None, None, true, axis_arg).await
         {
             Ok(Some(outcome)) => tracing::info!(
                 "✅ inline size-flush '{}': {} entries, {} bytes in {:.3}s",

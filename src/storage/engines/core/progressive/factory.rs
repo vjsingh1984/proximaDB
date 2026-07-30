@@ -101,7 +101,12 @@ impl ProgressivePipelineFactory {
             ProgressiveEngineType::VIPER => self.create_viper_pipeline(stages, hamming_threshold),
             ProgressiveEngineType::SWIFT => self.create_swift_pipeline(stages, hamming_threshold),
             ProgressiveEngineType::NOVA => self.create_nova_pipeline(stages, hamming_threshold),
+            #[cfg(feature = "experimental-engines")]
             ProgressiveEngineType::RAPTOR => self.create_raptor_pipeline(stages, hamming_threshold),
+            // RAPTOR requires `experimental-engines`; unreachable without it, so
+            // return an empty pipeline to keep the match exhaustive.
+            #[cfg(not(feature = "experimental-engines"))]
+            ProgressiveEngineType::RAPTOR => ProgressiveSearchCoordinator::new(),
         }
     }
 
@@ -272,6 +277,7 @@ impl ProgressivePipelineFactory {
         coordinator
     }
 
+    #[cfg(feature = "experimental-engines")]
     fn create_raptor_pipeline(
         &self,
         stages: &[PipelineStage],

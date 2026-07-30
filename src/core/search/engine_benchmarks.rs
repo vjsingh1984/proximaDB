@@ -767,6 +767,7 @@ impl SearchCostEstimator {
         );*/
 
         Self {
+            #[cfg(feature = "axis")]
             index_search_times: HashMap::new(),
             progressive_search_times: HashMap::new(),
             direct_search_times: HashMap::new(),

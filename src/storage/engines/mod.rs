@@ -102,6 +102,9 @@ pub mod core;
 pub mod helix;
 pub mod impls; // Deprecated: Moving engines directly to engines/ level
 pub mod nova; // Phase 1: Moved from impls/nova/
+// RAPTOR fundamentally uses AXIS clustering; gated by `experimental-engines`
+// (which implies `axis`). Not compiled for PAX-exact-scan builds.
+#[cfg(feature = "experimental-engines")]
 pub mod raptor; // Phase 1: Moved from impls/raptor/
 pub mod sst; // Phase 1: Moved from impls/sst/
 pub mod swift; // Phase 1: Moved from impls/swift/
@@ -132,6 +135,7 @@ pub use crate::storage::traits::{
 pub use helix::HelixEngine;
 #[allow(deprecated)]
 pub use nova::NovaEngine; // Phase 1: Moved from impls/
+#[cfg(feature = "experimental-engines")]
 #[allow(deprecated)]
 pub use raptor::RaptorEngine; // Phase 1: Moved from impls/
 #[allow(deprecated)]

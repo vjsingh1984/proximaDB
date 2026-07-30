@@ -1637,7 +1637,7 @@ impl MultiModalQueryExecutor {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod executor_tests {
     use super::*;
     use crate::graph::GraphOperationsService;

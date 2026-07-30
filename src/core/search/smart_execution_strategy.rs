@@ -13,7 +13,12 @@ use tracing::{debug, info, trace};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
-use crate::index::axis::AxisManager;
+// The `axis_manager` strategy hint is vestigial (never `Some` in production, only
+// threaded by tests). Aliased so the signatures compile with `axis` off.
+#[cfg(feature = "axis")]
+type AxisManagerOpt<'a> = Option<&'a crate::index::axis::AxisManager>;
+#[cfg(not(feature = "axis"))]
+type AxisManagerOpt<'a> = Option<&'a ()>;
 use crate::proto::proximadb_v1::QuantizationConfig;
 
 /// Smart execution strategy selector
@@ -290,7 +295,7 @@ impl SmartExecutionStrategy {
         &self,
         collection_id: &str,
         search_params: &SearchParams,
-        axis_manager: Option<&AxisManager>,
+        axis_manager: AxisManagerOpt<'_>,
     ) -> Result<ExecutionStrategy> {
         let start = std::time::Instant::now();
 
@@ -447,7 +452,7 @@ impl SmartExecutionStrategy {
         &self,
         metadata: &CollectionMetadata,
         query: &QueryAnalysis,
-        _axis_manager: Option<&AxisManager>,
+        _axis_manager: AxisManagerOpt<'_>,
     ) -> ExecutionStrategy {
         // Choose best index type based on query
         let index_type = if query.has_filters && metadata.index_types.contains(&"IVF".to_string()) {
@@ -510,7 +515,7 @@ impl SmartExecutionStrategy {
         &self,
         metadata: &CollectionMetadata,
         query: &QueryAnalysis,
-        axis_manager: Option<&AxisManager>,
+        axis_manager: AxisManagerOpt<'_>,
     ) -> ExecutionStrategy {
         let primary = if metadata.has_indexes {
             Box::new(

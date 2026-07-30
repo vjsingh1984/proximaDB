@@ -694,13 +694,19 @@ proximadb-embedded = { path = "crates/binding/proximadb-embedded" }
 # (in-memory-map-as-durable-source) path during one minor-release migration
 # window can opt OUT via `default-features = false` + explicit feature selection.
 # Plan: remove the feature flag entirely in v0.4 once the migration window closes.
-default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store", "datafusion-integration", "otlp-metering"]
+default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store", "datafusion-integration", "otlp-metering", "axis"]
+# AXIS index engine (HNSW/IVF/RaBitQ ANN) + its recall-advisor / drift / hot-swap surfaces.
+# Default ON = zero behavior change (the canonical ANN path). Gate OFF for PAX exact-scan-only
+# builds (smaller binary, no AXIS boot/index-build cost); search then routes to the exact-scan
+# path (TD-AXIS-4 Superseded; ADR-052). Pure cfg gate — AXIS lives in the root crate, no dep.
+axis = []
 # Optional surfaces; keep off by default to minimize binary size and public API surface
 ai_endpoints = []
 tenant_access = []
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.
-experimental-engines = ["proximadb-raptor-engine/experimental-engines"]
+# RAPTOR fundamentally uses AXIS clustering, so this implies `axis`.
+experimental-engines = ["proximadb-raptor-engine/experimental-engines", "axis"]
 # Experimental transactional Ledger modality (ADR-071 / TD-LEDGER-1): the durable atomic-CAS
 # KV + TTL-lease OLTP surface. Off by default; enables the durable backend + its gRPC service.
 experimental-ledger = ["dep:proximadb-ledger", "proximadb-ledger/durable"]

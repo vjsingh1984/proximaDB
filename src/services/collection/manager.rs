@@ -730,24 +730,34 @@ impl CollectionService {
         if let Some(recall_target) =
             crate::services::collection::recall_target::parse_recall_target(&enriched_config)
         {
-            let applied = crate::services::collection::recall_target::apply_advisor_to_indexes(
-                &mut enriched_config,
-                recall_target,
-            );
-            for advice in &applied {
-                tracing::info!(
-                    target: "collection.recall_target",
-                    collection = %enriched_config.name,
-                    index = %advice.index_name,
-                    recall_target = recall_target,
-                    algorithm = %advice.output.kind.label(),
-                    clamped_by_budget = advice.output.clamped_by_budget,
-                    projected_recall = ?advice.output.projected_recall,
-                    estimated_memory_mb = advice.output.estimated_memory_mb,
-                    estimated_per_query_work = advice.output.estimated_per_query_work,
-                    rationale = %advice.output.rationale,
-                    "auto-sized index from recall_target"
+            // The advisor sizes AXIS HNSW/IVF params — skipped in a PAX-exact-scan
+            // (`axis` off) build; the recall_target tag is still parsed above so the
+            // rest of collection-create is unaffected.
+            #[cfg(feature = "axis")]
+            {
+                let applied = crate::services::collection::recall_target::apply_advisor_to_indexes(
+                    &mut enriched_config,
+                    recall_target,
                 );
+                for advice in &applied {
+                    tracing::info!(
+                        target: "collection.recall_target",
+                        collection = %enriched_config.name,
+                        index = %advice.index_name,
+                        recall_target = recall_target,
+                        algorithm = %advice.output.kind.label(),
+                        clamped_by_budget = advice.output.clamped_by_budget,
+                        projected_recall = ?advice.output.projected_recall,
+                        estimated_memory_mb = advice.output.estimated_memory_mb,
+                        estimated_per_query_work = advice.output.estimated_per_query_work,
+                        rationale = %advice.output.rationale,
+                        "auto-sized index from recall_target"
+                    );
+                }
+            }
+            #[cfg(not(feature = "axis"))]
+            {
+                let _ = recall_target;
             }
         }
 

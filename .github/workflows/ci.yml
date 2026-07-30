@@ -832,6 +832,11 @@ jobs:
           # by the default build. Keep them in the same mandatory matrix rather
           # than relying on a PR being correctly labelled as mechanical.
           - { label: "no-default-features",  pkg: proximadb,        args: "--no-default-features" }
+          # AXIS cfg feature (TD-AXIS-4 Superseded): default ON; this variant turns
+          # it OFF while keeping the other defaults on — the PAX-exact-scan build that
+          # excludes the AXIS index engine + its recall/advisor/drift surfaces. Catches
+          # cfg drift where axis code leaks out of the `#[cfg(feature = "axis")]` gates.
+          - { label: "no-axis", pkg: proximadb-server, args: "--no-default-features --features sql_frontend,graph-first-sks,unified-facade-routing,canonical-document-store,datafusion-integration,otlp-metering" }
           - { label: "experimental-engines", pkg: proximadb,        args: "--features experimental-engines" }
           # F3v (TD-DELVEC-1): cold-tier deletion vectors — feature-gated PAX flush-path
           # resolver capture. Check it compiles so cfg drift in that path is caught.

@@ -106,6 +106,7 @@ pub use shard::{
 };
 
 // HMGI distributed partitioning surfaces used by cluster-aware AXIS routing.
+#[cfg(feature = "axis")]
 pub use crate::index::axis::hmgi::{
     ClusterMembership as HmgiClusterMembership, ClusterNode as HmgiClusterNode,
     ClusterNodeId as HmgiClusterNodeId, DistributedPartitionLocator as HmgiPartitionLocator,

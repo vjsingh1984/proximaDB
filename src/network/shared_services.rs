@@ -1307,63 +1307,62 @@ impl SharedServices {
         // SharedServices field that AppState/route-health read.
         let recall_probe_gate = Arc::new(crate::catalog::RecallProbeGate::new());
 
-        // Create AxisManager for index operations
-        debug!("🔧 SharedServices::new - Creating AxisManager for index operations...");
-        let mut axis_manager_inner =
-            crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?;
-        axis_manager_inner.set_recall_probe_gate(recall_probe_gate.clone());
-        // ADR-023 R3 Slice 4: give AXIS the shared FilesystemFactory so index
-        // persistence + cold-load can dispatch by scheme (s3/adls/gs/file).
-        axis_manager_inner.set_filesystem_factory(filesystem_factory.clone());
-        // Route index persistence through an object-store URI when configured
-        // (PROXIMADB_INDEX_PERSIST_URL=s3://bucket/prefix | adls://… | gs://…) —
-        // the cold-load path then reads only [header]+[COLD]+probed clusters via
-        // byte-range GETs. Otherwise persist under the local data dir so a cold
-        // collection warms from disk on first query (TD-087 Slice B; no-op without
-        // a data dir).
-        if let Ok(url) = std::env::var("PROXIMADB_INDEX_PERSIST_URL") {
-            axis_manager_inner.set_index_persist_url(url);
-        } else if let Some(cfg) = opt_config {
-            axis_manager_inner.set_index_persist_dir(cfg.server.data_dir.join("axis_indexes"));
-        }
+        // Create AxisManager for index operations (AXIS-gated: the whole index
+        // engine + its registrations vanish from a PAX-exact-scan build).
+        #[cfg(feature = "axis")]
+        let axis_manager = {
+            debug!("🔧 SharedServices::new - Creating AxisManager for index operations...");
+            let mut axis_manager_inner =
+                crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?;
+            axis_manager_inner.set_recall_probe_gate(recall_probe_gate.clone());
+            // ADR-023 R3 Slice 4: give AXIS the shared FilesystemFactory so index
+            // persistence + cold-load can dispatch by scheme (s3/adls/gs/file).
+            axis_manager_inner.set_filesystem_factory(filesystem_factory.clone());
+            // Route index persistence through an object-store URI when configured
+            // (PROXIMADB_INDEX_PERSIST_URL=s3://bucket/prefix | adls://… | gs://…) —
+            // the cold-load path then reads only [header]+[COLD]+probed clusters via
+            // byte-range GETs. Otherwise persist under the local data dir so a cold
+            // collection warms from disk on first query (TD-087 Slice B; no-op
+            // without a data dir).
+            if let Ok(url) = std::env::var("PROXIMADB_INDEX_PERSIST_URL") {
+                axis_manager_inner.set_index_persist_url(url);
+            } else if let Some(cfg) = opt_config {
+                axis_manager_inner.set_index_persist_dir(cfg.server.data_dir.join("axis_indexes"));
+            }
 
-        // CATALOG_OBJECT_MODEL #3 read-port: make catalog-resolved index locations
-        // live for ALL collections — boot-present AND runtime-created — by injecting
-        // a catalog resolver that AXIS pulls from on demand (and memoizes). For each
-        // collection's VectorAnn projection, an explicit `projection.location` is
-        // honored (relocated/tiered indexes); `PROXIMADB_INDEX_CATALOG_PATHS=1`
-        // additionally opts the fleet into the DrPathBuilder `indexes/<projection>/`
-        // layout. Default-off and additive: with no projection locations set the
-        // resolver returns `None` and AXIS keeps the `index_persist_url`/`dir`
-        // convention (mixed-safe). The resolver is catalog-free at the AXIS seam —
-        // this adapter lives in the control layer (dependency inversion).
-        {
-            let migrate = std::env::var_os("PROXIMADB_INDEX_CATALOG_PATHS").is_some();
-            axis_manager_inner.set_index_location_resolver(Arc::new(
-                crate::catalog::index_location_resolver::CatalogIndexLocationResolver::new(
-                    catalog_manager.clone(),
-                    migrate,
-                ),
-            ));
-        }
+            // CATALOG_OBJECT_MODEL #3 read-port: make catalog-resolved index locations
+            // live for ALL collections — boot-present AND runtime-created — by injecting
+            // a catalog resolver that AXIS pulls from on demand (and memoizes). For each
+            // collection's VectorAnn projection, an explicit `projection.location` is
+            // honored (relocated/tiered indexes); `PROXIMADB_INDEX_CATALOG_PATHS=1`
+            // additionally opts the fleet into the DrPathBuilder `indexes/<projection>/`
+            // layout. Default-off and additive: with no projection locations set the
+            // resolver returns `None` and AXIS keeps the `index_persist_url`/`dir`
+            // convention (mixed-safe). The resolver is catalog-free at the AXIS seam —
+            // this adapter lives in the control layer (dependency inversion).
+            {
+                let migrate = std::env::var_os("PROXIMADB_INDEX_CATALOG_PATHS").is_some();
+                axis_manager_inner.set_index_location_resolver(Arc::new(
+                    crate::catalog::index_location_resolver::CatalogIndexLocationResolver::new(
+                        catalog_manager.clone(),
+                        migrate,
+                    ),
+                ));
+            }
 
-        let axis_manager = Arc::new(axis_manager_inner);
-        debug!("✅ SharedServices::new - AxisManager created successfully");
-
-        // Make AXIS manager available to graph-first entity store by default
-        crate::storage::entity_store::orion_backend::set_global_axis_manager(axis_manager.clone());
-
-        // Make AXIS manager available to SST engine for HNSW/IVF search
-        crate::storage::engines::sst::core::set_sst_axis_manager(axis_manager.clone());
-        debug!(
-            "✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search"
-        );
-
-        // ADR-078: register the same manager for the shared flush→AXIS hook.
-        // VIPER/HELIX/NOVA construct `axis_manager: None` and nothing ever set
-        // it, which is precisely why they routed flush notifications through the
-        // AXIS queue instead of indexing directly. This gives them a handle.
-        crate::storage::common::axis_flush_hook::set_flush_axis_manager(axis_manager.clone());
+            let m = Arc::new(axis_manager_inner);
+            debug!("✅ SharedServices::new - AxisManager created successfully");
+            // Make AXIS manager available to graph-first entity store by default
+            crate::storage::entity_store::orion_backend::set_global_axis_manager(m.clone());
+            // Make AXIS manager available to SST engine for HNSW/IVF search
+            crate::storage::engines::sst::core::set_sst_axis_manager(m.clone());
+            debug!(
+                "✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search"
+            );
+            // ADR-078: register the same manager for the shared flush→AXIS hook.
+            crate::storage::common::axis_flush_hook::set_flush_axis_manager(m.clone());
+            m
+        };
 
         // Create VectorOperationsService with optimized architecture and two-stage search
         debug!(
@@ -1421,14 +1420,17 @@ impl SharedServices {
         } else {
             info!("✅ SharedServices: EventLog service initialized successfully");
 
-            // Start the AXIS EventLog consumer as a background task
-            // This polls the EventLog and builds AXIS indexes when flush events occur
+            // Start the AXIS EventLog consumer as a background task (AXIS-gated).
+            // This polls the EventLog and builds AXIS indexes when flush events occur.
+            #[cfg(feature = "axis")]
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
             // TD-LIFECYCLE-1: registered (not leaked) so a clean shutdown
             // can stop the loop; see services::shutdown_registry.
+            #[cfg(feature = "axis")]
             crate::services::shutdown_registry::register("axis-eventlog-consumer", shutdown_tx);
 
+            #[cfg(feature = "axis")]
             if let Some(event_log_service) = crate::services::events::log::event_log_service() {
                 let _consumer_handle =
                     crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
@@ -1455,12 +1457,25 @@ impl SharedServices {
         // engine, the vector ops service, and the SharedServices public
         // field all share the same `Arc`.
         let vector_operations_service = Arc::new(
-            VectorOperationsService::new(
-                sst_engine,
-                wal_manager,
-                axis_manager.clone(),
-                collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
-            )
+            {
+                #[cfg(feature = "axis")]
+                {
+                    VectorOperationsService::new(
+                        sst_engine,
+                        wal_manager,
+                        axis_manager.clone(),
+                        collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+                    )
+                }
+                #[cfg(not(feature = "axis"))]
+                {
+                    VectorOperationsService::new(
+                        sst_engine,
+                        wal_manager,
+                        collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+                    )
+                }
+            }
             .with_orchestrator(Some(orchestrator.clone()))
             .with_directory_cache(directory_cache.clone())
             // Phase 7.2: thread the same affinity registry held by
@@ -2149,12 +2164,14 @@ impl SharedServices {
         debug!(
             "🔧 SharedServices::new - Creating MultiModelStorageFacade for federated queries..."
         );
-        let vector_store = Arc::new(
-            crate::storage::multimodel::VectorStore::with_engine(
+        let vector_store = Arc::new({
+            let vs = crate::storage::multimodel::VectorStore::with_engine(
                 vector_operations_service.unified_engine(),
-            )
-            .with_index_manager(axis_manager.clone()),
-        );
+            );
+            #[cfg(feature = "axis")]
+            let vs = vs.with_index_manager(axis_manager.clone());
+            vs
+        });
         let graph_store = Arc::new(
             crate::storage::multimodel::GraphStore::new(Default::default())
                 .with_service(graph_service.clone()),
@@ -2543,13 +2560,23 @@ impl SharedServices {
                 Arc::new(crate::services::external_collection::ExternalCollectionRegistry::new())
             }
         };
-        let external_collection_service = Arc::new(
-            crate::services::external_collection::ExternalCollectionService::new(
-                external_collection_registry,
-                catalog_manager.clone(),
-                axis_manager.clone(),
-            ),
-        );
+        let external_collection_service = Arc::new({
+            #[cfg(feature = "axis")]
+            {
+                crate::services::external_collection::ExternalCollectionService::new(
+                    external_collection_registry,
+                    catalog_manager.clone(),
+                    axis_manager.clone(),
+                )
+            }
+            #[cfg(not(feature = "axis"))]
+            {
+                crate::services::external_collection::ExternalCollectionService::new(
+                    external_collection_registry,
+                    catalog_manager.clone(),
+                )
+            }
+        });
         {
             let executor = Arc::new(
                 crate::services::discovery::DiscoveryJobExecutor::new(
@@ -2573,6 +2600,9 @@ impl SharedServices {
             );
             info!("✅ SharedServices: DiscoveryJobExecutor spawned (Phase 8 CS/CD loop)");
         }
+        // Phase-5 recall observer (AXIS-gated): the whole job probes AXIS-managed
+        // IVF/HNSW recall, so it is not spawned in a PAX-exact-scan build.
+        #[cfg(feature = "axis")]
         {
             // Phase-5 recall observer (TD-075 / F2): periodically probes
             // quantized-vs-exact recall per collection and feeds the shared
@@ -2635,6 +2665,9 @@ impl SharedServices {
                 "✅ SharedServices: DriftWatcher spawned (Phase 8 F1 trigger arm — write-volume drift)"
             );
         }
+        // Recall-drift sweeper (AXIS-gated): walks `recall_target:`-tagged
+        // collections and emits axis_recall_drift_* metrics — no AXIS, no drift.
+        #[cfg(feature = "axis")]
         {
             // Recall-drift sweeper: every 5 min, walk every
             // collection with a `recall_target:` tag and emit a

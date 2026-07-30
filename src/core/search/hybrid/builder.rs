@@ -45,6 +45,7 @@ use tracing::{debug, info, trace};
 
 use crate::core::search::FilterExpression;
 use crate::core::search::filter_contract::{CandidateSet, FilterContract, MetadataLookup};
+#[cfg(feature = "axis")]
 use crate::index::axis::management::manager::HybridQuery as AxisHybridQueryImport;
 
 /// Selectivity below which filter-first (PreFilter) is used. ADR-011: 5%.
@@ -557,6 +558,7 @@ impl Default for HybridQueryBuilder {
 }
 
 /// Convert SearchHybridQuery to AXIS SearchHybridQuery for compatibility
+#[cfg(feature = "axis")]
 impl From<SearchHybridQuery> for AxisHybridQueryImport {
     fn from(query: SearchHybridQuery) -> Self {
         use crate::index::axis::management::manager::AnnFilteringMode;

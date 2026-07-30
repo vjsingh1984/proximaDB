@@ -171,19 +171,20 @@ pub use adapters::{
     // Generic adapter
     InternalFormatAdapter,
     NovaFormatAdapter,
-    RaptorFormatAdapter,
     // Engine-specific type aliases
     SstFormatAdapter,
     SwiftFormatAdapter,
     ViperFormatAdapter,
     create_helix_adapter,
     create_nova_adapter,
-    create_raptor_adapter,
     // Factory functions
     create_sst_adapter,
     create_swift_adapter,
     create_viper_adapter,
 };
+// RAPTOR adapters are `experimental-engines`-gated (RAPTOR needs AXIS clustering).
+#[cfg(feature = "experimental-engines")]
+pub use adapters::{RaptorFormatAdapter, create_raptor_adapter};
 
 // ============================================================================
 // Module-Level Tests
