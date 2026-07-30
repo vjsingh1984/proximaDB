@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — classification/audit (small)
+| Status | Resolved 2026-07-30 — classified as dormant GTM scaffolding; removed (this PR)
 | Priority | Low — no guard violation today; hygiene + naming risk only
 | Severity | Low
 | Component | `src/ai/executive_dashboard.rs`, `src/ai/business_intelligence/` (engine, insight_generator, report_generator, trend_analyzer)
@@ -49,10 +49,43 @@ guard passing is silence, not a verdict.
    to the `check_oss_boundary.py` denylist so the class of drift is guarded,
    not re-audited.
 
+== Resolution (2026-07-30)
+
+**Classification: dormant GTM-flavored scaffolding → removed** (Work item 3's
+remove-if-dormant rule; pre-GA no-back-compat). The reachability audit found:
+
+* The **only** consumers of `executive_dashboard` + `business_intelligence`
+  were each other, the `src/ai/mod.rs` re-exports, and the
+  `#[cfg(feature = "ai_endpoints")]` handler (default OFF, never in the CI
+  feature matrix). No live code path reached them in a default build.
+* The content was go-to-market shaped, not database-feature shaped:
+  `FocusArea::Revenue/Customers/Growth/Risk`, "executive dashboards" — the
+  sibling of the B4-externalized `src/executive` surface.
+* The gated surface was **broken when enabled**: `create_router` binds `router`
+  immutably while the gated block reassigned it, so
+  `--features ai_endpoints` could not have compiled — invisible because the CI
+  feature matrix never built that feature. Dead by construction.
+* `tests/integration/release_1_enterprise_validation.rs` was not listed in
+  `tests/integration/mod.rs` — a never-compiled test file referencing the same
+  surface.
+
+**Removed:** `src/ai/executive_dashboard.rs`, `src/ai/business_intelligence/`
+(5 files), `src/api_handlers/ai_endpoints.rs`, the `ai_endpoints` feature flag,
+its gated mount in `src/network/rest/canonical/handlers.rs`, the dead test
+file, and the `feature_toggles.md` entry.
+
+**Kept (classified as feature, not GTM):** `src/ai/insights.rs`,
+`analytics.rs`, the NL-query stack (`natural_language*`, `llm*`, `nlp`) — these
+are consumed by live paths (`src/query/nl/`, `database.rs`, REST `nl.rs`).
+Incidental "business intelligence" *naming* inside retained feature content
+(e.g. the NL prompt template `default_business_intelligence_template`, the
+`NaturalLanguageBusinessIntelligenceAPI` type) is descriptive of the feature,
+so **no `check_oss_boundary.py` denylist addition** (Work item 4): a denylist
+on these phrases would false-positive on legitimate feature content.
+
 == Done-when
 
-* Each of the two modules has an explicit classification recorded (this file
-  updated or superseded), and the chosen action (keep / rename / remove) is
-  merged.
-* `check_oss_boundary.py` reflects the outcome if new denylist terms were
-  chosen.
+* ✅ Each of the two modules has an explicit classification recorded (above),
+  and the chosen action (remove) is merged.
+* ✅ `check_oss_boundary.py` outcome decided: no new denylist terms (rationale
+  above).
