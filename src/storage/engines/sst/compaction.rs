@@ -29,8 +29,8 @@ use crate::storage::Result;
 use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, ArrowBlockWriter};
 use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FilesystemError, FilesystemFactory, FsResult};
 use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionCoordinator, TransactionStageType,
 };
@@ -1258,14 +1258,6 @@ impl Compaction {
             task.level
         );
 
-        // Reuse this persistent Compaction's filesystem factory (TD-COMPACT-6:
-        // the former code constructed a fresh FilesystemFactory per compaction
-        // call — pointless proliferation + another cold instance).
-        let fs = self
-            .filesystem_factory
-            .get_filesystem("file:///")
-            .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
-
         for input_file in &task.input_files {
             let input_path = input_file.to_string_lossy();
 
@@ -1280,25 +1272,16 @@ impl Compaction {
                         records.len(),
                         input_path
                     );
-                    // TD-COMPACT-1 S2: input-size accounting for the throughput
-                    // metric. The plugin-FS metadata call can fail on scheme-
-                    // prefixed path strings (`file:///…`) — fall back to
-                    // std::fs on the scheme-stripped path and WARN when both
-                    // fail instead of silently reporting 0.0 MB/s.
-                    match fs.metadata(&input_path).await {
+                    // TD-COMPACT-1 S2: resolve metadata from the URL's backend.
+                    // A task may contain `az://`, `s3://`, or `file://` inputs;
+                    // pinning this call to the local filesystem made cloud
+                    // throughput report zero even though the read succeeded.
+                    match self.filesystem_factory.metadata(&input_path).await {
                         Ok(metadata) => bytes_read += metadata.size,
-                        Err(_) => {
-                            let local = input_path
-                                .strip_prefix("file://")
-                                .unwrap_or(input_path.as_ref());
-                            match std::fs::metadata(local) {
-                                Ok(m) => bytes_read += m.len(),
-                                Err(e) => warn!(
-                                    "compaction throughput: cannot size input {input_path}: {e} \
-                                     (bytes_read will under-report)"
-                                ),
-                            }
-                        }
+                        Err(error) => warn!(
+                            "compaction throughput: cannot size input {input_path}: {error} \
+                             (bytes_read will under-report)"
+                        ),
                     }
 
                     if records.is_empty() {
@@ -1921,26 +1904,18 @@ impl Compaction {
                 }
             }
 
-            // TD-COMPACT-1 S2: size the output for the throughput metric with
-            // the same plugin-FS → std::fs fallback as the input sizing — and
-            // never fail the (already durable) compaction over a metric probe.
+            // TD-COMPACT-1 S2: size the output through its URL-selected
+            // backend, and never fail the already-durable compaction over a
+            // metric probe.
             let output_path = task.output_file.to_string_lossy();
-            match fs.metadata(&output_path).await {
+            match self.filesystem_factory.metadata(&output_path).await {
                 Ok(metadata) => metadata.size,
-                Err(_) => {
-                    let local = output_path
-                        .strip_prefix("file://")
-                        .unwrap_or(output_path.as_ref());
-                    match std::fs::metadata(local) {
-                        Ok(m) => m.len(),
-                        Err(e) => {
-                            warn!(
-                                "compaction throughput: cannot size output {output_path}: {e} \
-                                 (bytes_written will report 0)"
-                            );
-                            0
-                        }
-                    }
+                Err(error) => {
+                    warn!(
+                        "compaction throughput: cannot size output {output_path}: {error} \
+                         (bytes_written will report 0)"
+                    );
+                    0
                 }
             }
         };
@@ -1976,25 +1951,37 @@ impl Compaction {
         // input file — correctness is structural (UUID-unique outputs, old
         // paths never queried again), but without eviction the dead entries
         // squat in the invariants/survivor budgets until recency ages them out.
+        let mut retirement_errors = Vec::new();
         for input_file in &task.input_files {
             let input_path = input_file.to_string_lossy();
-            if let Err(e) = fs.delete(&input_path).await {
+            if let Err(error) = retire_compaction_input(&self.filesystem_factory, &input_path).await
+            {
                 warn!(
                     "Failed to remove input file {}: {}",
                     input_file.display(),
-                    e
+                    error
                 );
-            } else {
-                let purged =
-                    purge_retired_segment_cache_entries(&input_path, warm_caches.as_ref()).await;
-                if purged > 0 {
-                    debug!(
-                        file = %input_path,
-                        purged,
-                        "evicted survivor-cache ranges for compacted-away file"
-                    );
-                }
+                retirement_errors.push(format!("{}: {error}", input_file.display()));
+                continue;
             }
+
+            let purged =
+                purge_retired_segment_cache_entries(&input_path, warm_caches.as_ref()).await;
+            if purged > 0 {
+                debug!(
+                    file = %input_path,
+                    purged,
+                    "evicted survivor-cache ranges for compacted-away file"
+                );
+            }
+        }
+        if !retirement_errors.is_empty() {
+            return Err(crate::core::StorageError::SstEngine(format!(
+                "compaction published {} but failed to retire {} input(s): {}",
+                task.output_file.display(),
+                retirement_errors.len(),
+                retirement_errors.join("; ")
+            )));
         }
 
         // DETAILED COMPACTION PERFORMANCE ANALYSIS
@@ -2570,6 +2557,18 @@ type WarmTierCachePair = (
     Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
 );
 
+/// Retire one immutable compaction input through the backend selected by its
+/// URL. A missing input is an idempotent success: another already-running
+/// morsel may have completed retirement after this task took its discovery
+/// snapshot. Every other backend error is surfaced so the worker cannot report
+/// a false-success or schedule a follow-up over still-live inputs.
+async fn retire_compaction_input(factory: &FilesystemFactory, path: &str) -> FsResult<()> {
+    match factory.delete(path).await {
+        Ok(()) | Err(FilesystemError::NotFound(_)) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 /// Purge immutable bytes for one retired compaction input.
 ///
 /// The compaction loop invokes this only after the backing filesystem confirms
@@ -2650,11 +2649,49 @@ mod compaction_format_tests {
 
 #[cfg(test)]
 mod compaction_cache_retirement_tests {
-    use super::purge_retired_segment_cache_entries;
+    use super::{purge_retired_segment_cache_entries, retire_compaction_input};
     use crate::storage::engines::sst::segment_format::{SegmentInvariants, SegmentInvariantsCache};
     use crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache;
+    use crate::storage::persistence::filesystem::{FilesystemError, FilesystemFactory};
     use proximadb_cache::PersistentByteStore;
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn input_retirement_routes_by_url_scheme_and_never_falls_back_to_local() {
+        let factory = FilesystemFactory::create_default()
+            .await
+            .expect("create filesystem factory");
+        let error =
+            retire_compaction_input(&factory, "retirement-spy://bucket/collection/L0_input.pax")
+                .await
+                .expect_err("unknown object-store scheme must not be treated as a local path");
+
+        assert!(
+            matches!(error, FilesystemError::UnsupportedScheme(ref scheme)
+                if scheme == "retirement-spy"),
+            "unexpected routing error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn input_retirement_deletes_local_file_and_is_idempotent() {
+        let directory = tempfile::tempdir().expect("retirement tempdir");
+        let input = directory.path().join("L0_input.pax");
+        std::fs::write(&input, b"segment").expect("write retirement fixture");
+        let input_url = format!("file://{}", input.display());
+        let factory = FilesystemFactory::create_default()
+            .await
+            .expect("create filesystem factory");
+
+        retire_compaction_input(&factory, &input_url)
+            .await
+            .expect("retire existing input");
+        assert!(!input.exists(), "input must be deleted");
+
+        retire_compaction_input(&factory, &input_url)
+            .await
+            .expect("retiring an absent immutable input is idempotent");
+    }
 
     #[tokio::test]
     async fn retired_input_purges_dram_and_both_persistent_namespaces() {
