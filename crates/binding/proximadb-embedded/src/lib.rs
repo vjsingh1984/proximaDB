@@ -2364,12 +2364,19 @@ impl EmbeddedProximaDB {
                     // Embedded is single-pod: it passes no fence and reuses the running
                     // unified SST engine as the create-failure fallback.
                     let plan = proximadb::storage::flush_materializer::CollectionFlushPlan {
-                        collection_object_id: canonical_collection_id.parse().map_err(|error| {
-                            anyhow::anyhow!(
-                                "catalog collection object identity '{}' is not numeric: {error}",
-                                canonical_collection_id
-                            )
-                        })?,
+                        // ADR-0083 rev2 D2: derived handle — numeric catalog ids
+                        // parse directly; legacy UUID/name ids hash to a stable
+                        // deterministic u64. The handle is derived (never stored),
+                        // so it cannot drift from the identity — closes the #1325
+                        // regression where this parse failed on a UUID coll.id.
+                        collection_object_id: canonical_collection_id
+                            .parse()
+                            .unwrap_or_else(|_| {
+                                use std::hash::{Hash, Hasher};
+                                let mut h = std::collections::hash_map::DefaultHasher::new();
+                                canonical_collection_id.hash(&mut h);
+                                h.finish()
+                            }),
                         collection_name: collection_name.clone(),
                         base_location: base_location_for_flush.clone(),
                         engine_type: storage_engine_type,

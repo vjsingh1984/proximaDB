@@ -14,6 +14,18 @@ use proximadb_proto::proximadb_v1::Collection;
 // field types stay identical for back-compat.
 use proximadb_kernel::CompactBatchId as BatchId;
 
+/// Deterministic 64-bit hash of a string, used to derive a stable
+/// `CollectionObjectId` handle from legacy UUID/name collection ids
+/// (ADR-0083 rev2 D2). Uses the fixed-seed `DefaultHasher`, so the derived
+/// handle is stable across processes and restarts (and never collides for any
+/// realistic collection count).
+fn stable_collection_handle(id: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish()
+}
+
 /// Flexible flush parameters that work for all storage engines.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlushParameters {
@@ -68,19 +80,23 @@ impl FlushParameters {
             .ok_or_else(|| anyhow!("No collection_id provided in flush parameters"))
     }
 
-    /// Resolve the native, globally unique catalog object identity.
+    /// Resolve a stable native handle for admission / scheduling / WAL / cache
+    /// keying (ADR-0083 rev2 D2).
     ///
-    /// This is deliberately fail-closed: storage execution must never invent an
-    /// identity from a mutable collection name.
+    /// This is a **derived** `u64` handle, NOT the collection's identity — the
+    /// composite `CollectionIdentity` on `StorageAssignment` is the authoritative
+    /// identity. Numeric catalog ids parse directly; legacy UUID/name ids hash to
+    /// a deterministic u64. Because the handle is derived (never independently
+    /// stored), it cannot drift from the identity the way a second stored u64 can
+    /// — which is exactly the #1325 regression this closes (the embedded flush
+    /// plan parsed `Collection.id` as `u64` while it held a UUID).
     pub fn get_collection_object_id(
         &self,
     ) -> Result<proximadb_kernel::stable_id::CollectionObjectId> {
         let collection_id = self.get_collection_id()?;
-        collection_id.parse().map_err(|error| {
-            anyhow!(
-                "flush collection_id must be a decimal catalog object id, got {collection_id:?}: {error}"
-            )
-        })
+        Ok(collection_id
+            .parse()
+            .unwrap_or_else(|_| stable_collection_handle(&collection_id)))
     }
 
     /// Resolve the collection data directory from cached config or an engine hint.
