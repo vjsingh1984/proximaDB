@@ -17,8 +17,8 @@ use crate::core::search::{
 use crate::security::rls::filter_lattice::admits_with_security;
 #[cfg(feature = "abac-policy")]
 use proximadb_abac::{
-    AttributeAuthority, AuthorizedReadContext, DenyReason, PolicyEpochSource, PredicateObjectStore,
-    compile_security_filter,
+    AttributeAuthority, AuthorizedReadContext, DenyReason, PolicyBindingStore, PolicyEpochSource,
+    PredicateObjectStore, compile_security_filter,
 };
 #[cfg(feature = "abac-policy")]
 use proximadb_catalog::fc_metamodel::{ObjectId, PolicyBinding, SubjectId, Target};
@@ -90,6 +90,10 @@ pub struct AbacEnforcer {
     /// (`predicate_for`); the per-call `scan_predicate_for(.., bindings)` variant
     /// remains for substrate unit tests.
     bindings: Vec<PolicyBinding>,
+    /// The durable policy source (Phase 5b). When set, `predicate_for` loads the
+    /// tenant's bindings from here per read — restart-surviving policy. When
+    /// unset, it falls back to the held `bindings` (the in-memory/test path).
+    binding_store: Option<Box<dyn PolicyBindingStore + Send + Sync>>,
 }
 
 #[cfg(feature = "abac-policy")]
@@ -107,6 +111,7 @@ impl AbacEnforcer {
             store,
             epochs,
             bindings: Vec::new(),
+            binding_store: None,
         }
     }
 
@@ -118,17 +123,35 @@ impl AbacEnforcer {
         self
     }
 
+    /// Install the durable policy source (builder, Phase 5b). When set,
+    /// [`predicate_for`](Self::predicate_for) loads the tenant's bindings from the
+    /// store on every read — a restart-surviving policy. This is the production
+    /// path; [`with_bindings`](Self::with_bindings) remains for tests.
+    pub fn with_binding_store(mut self, store: Box<dyn PolicyBindingStore + Send + Sync>) -> Self {
+        self.binding_store = Some(store);
+        self
+    }
+
     /// Resolve `subject`'s authorization for `target` and compile to a scan
-    /// predicate, using the enforcer's **held** bindings (self-contained policy).
-    /// This is the production call site: a service holds the enforcer and invokes
-    /// this per read.
+    /// predicate. When a durable [`PolicyBindingStore`] is installed, the
+    /// tenant's bindings are loaded from it per read (the production path);
+    /// otherwise the enforcer's held `bindings` are used (the in-memory/test
+    /// path). This is the one call a read-serving service makes per scan.
     pub fn predicate_for(
         &self,
         subject: &SubjectId,
         tenant: u64,
         target: Target,
     ) -> AbacScanResult {
-        self.scan_predicate_for(subject, tenant, target, &self.bindings)
+        let owned;
+        let bindings: &[PolicyBinding] = match &self.binding_store {
+            Some(store) => {
+                owned = store.bindings_for(tenant);
+                &owned
+            }
+            None => &self.bindings,
+        };
+        self.scan_predicate_for(subject, tenant, target, bindings)
     }
 
     /// Resolve `subject`'s authorization for `target` and compile to a scan
@@ -252,7 +275,8 @@ mod tests {
     use super::*;
     use crate::core::search::{ComparisonOperator, FilterExpression};
     use proximadb_abac::{
-        InMemoryAttributeAuthority, InMemoryPolicyEpochs, InMemoryPredicateObjectStore,
+        FileSystemPolicyBindingStore, InMemoryAttributeAuthority, InMemoryPolicyEpochs,
+        InMemoryPredicateObjectStore,
     };
     use proximadb_catalog::fc_metamodel::{AttrValue, Effect, Scope};
     use proximadb_data_model::ProximaValue;
@@ -418,6 +442,158 @@ mod tests {
             &bindings,
         );
         assert!(result.is_err(), "unbound subject must be denied");
+    }
+
+    // --- Phase 5b: durable policy-binding store (the enforcer loads from it) ---
+
+    /// Shared store/authority/predicate-store config for the durable-policy tests.
+    /// `dept=eng` is the only admitted dept; tenant 7's policy permits table 200
+    /// under predicate ref 42.
+    fn predicate_store_for_dept() -> InMemoryPredicateObjectStore {
+        let mut store = InMemoryPredicateObjectStore::new();
+        store.register(
+            42,
+            FilterExpression::Comparison {
+                field: "dept".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: json!("eng"),
+            },
+        );
+        store
+    }
+
+    #[test]
+    fn enforcer_loads_bindings_from_the_store_not_the_held_set() {
+        // The enforcer is built with EMPTY held bindings + a durable store holding
+        // tenant 7's permit. predicate_for must still resolve — proof it consulted
+        // the store, not the (empty) held set.
+        let dir = std::env::temp_dir().join(format!(
+            "proximadb-abac-enforcer-store-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("policy.json");
+
+        let mut authority = InMemoryAttributeAuthority::new();
+        authority.upsert(
+            proximadb_abac::AttributeBinding::new("alice", 7)
+                .with_attr("dept", AttrValue::Str("eng".into())),
+        );
+        let mut store = FileSystemPolicyBindingStore::open(&path).expect("open");
+        store.replace_tenant(
+            7,
+            vec![PolicyBinding {
+                object_id: 1,
+                tenant_stable_id: 7,
+                scope: Scope::Table(200),
+                effect: Effect::Permit,
+                predicate_ref: Some(42),
+                field_mask: None,
+            }],
+        );
+
+        let enforcer = AbacEnforcer::new(
+            Box::new(authority),
+            Box::new(predicate_store_for_dept()),
+            Box::new(InMemoryPolicyEpochs::new()),
+        )
+        // NOTE: no with_bindings — held bindings are empty by design.
+        .with_binding_store(Box::new(store));
+
+        match enforcer.predicate_for(
+            &SubjectId("alice".into()),
+            7,
+            Target {
+                namespace: 3,
+                table: 200,
+                column: None,
+            },
+        ) {
+            AbacScanResult::Restricted(pred) => {
+                assert!(
+                    pred(&record_with("eng")),
+                    "alice (dept=eng) admits eng rows"
+                );
+                assert!(!pred(&record_with("hr")), "dept=hr is denied");
+            }
+            _ => panic!("alice must be Restricted via the store, not Denied/Unrestricted"),
+        }
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn enforcer_reconstitutes_the_same_result_after_a_restart() {
+        // The Phase-5b ratchet at the enforcer level: write tenant 7's policy via
+        // the durable store, drop it, reopen it, rebuild the enforcer — and the
+        // compiled AbacScanResult for alice is byte-identical. The policy survived
+        // the restart; the enforcement outcome did too.
+        let dir = std::env::temp_dir().join(format!(
+            "proximadb-abac-enforcer-restart-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("policy.json");
+        let target = Target {
+            namespace: 3,
+            table: 200,
+            column: None,
+        };
+
+        // Write phase: persist tenant 7's permit, then drop everything.
+        {
+            let mut store = FileSystemPolicyBindingStore::open(&path).expect("open");
+            store.replace_tenant(
+                7,
+                vec![PolicyBinding {
+                    object_id: 1,
+                    tenant_stable_id: 7,
+                    scope: Scope::Table(200),
+                    effect: Effect::Permit,
+                    predicate_ref: Some(42),
+                    field_mask: None,
+                }],
+            );
+        }
+
+        // Read phase: reopen the durable store and build a fresh enforcer over it
+        // (authority/predicate-store/epochs are reconstructed identically — only
+        // the policy source is what persisted).
+        fn fresh_enforcer(store: FileSystemPolicyBindingStore) -> AbacEnforcer {
+            let mut authority = InMemoryAttributeAuthority::new();
+            authority.upsert(
+                proximadb_abac::AttributeBinding::new("alice", 7)
+                    .with_attr("dept", AttrValue::Str("eng".into())),
+            );
+            AbacEnforcer::new(
+                Box::new(authority),
+                Box::new(predicate_store_for_dept()),
+                Box::new(InMemoryPolicyEpochs::new()),
+            )
+            .with_binding_store(Box::new(store))
+        }
+
+        let store = FileSystemPolicyBindingStore::open(&path).expect("reopen");
+        let enforcer = fresh_enforcer(store);
+        let result = enforcer.predicate_for(&SubjectId("alice".into()), 7, target);
+
+        match result {
+            AbacScanResult::Restricted(pred) => {
+                assert!(pred(&record_with("eng")));
+                assert!(!pred(&record_with("hr")));
+            }
+            _ => panic!("alice must be Restricted after restart"),
+        }
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
     }
 
     // --- Phase 3: vector-path post-filter ---

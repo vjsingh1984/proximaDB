@@ -53,14 +53,18 @@ pub mod authority;
 pub mod cache_key;
 pub mod compile;
 pub mod context;
+pub mod policy_binding_store;
 
 pub use authority::{
     AttributeAuthority, AttributeBinding, AttributeDigest, AuthorityError,
-    InMemoryAttributeAuthority, ResolvedSubject,
+    FileSystemAttributeAuthority, InMemoryAttributeAuthority, ResolvedSubject,
 };
 pub use cache_key::{InMemoryPolicyEpochs, PolicyEpoch, PolicyEpochSource, SubjectCacheKey};
 pub use compile::{InMemoryPredicateObjectStore, PredicateObjectStore, compile_security_filter};
 pub use context::{
     AuthorizedReadContext, ClientServable, ColumnDecision, DenyReason, ForbiddenColumn,
     ReadContext, ReadDecision, SystemReadContext, SystemReadReason,
+};
+pub use policy_binding_store::{
+    FileSystemPolicyBindingStore, InMemoryPolicyBindingStore, PolicyBindingStore, PolicyStoreError,
 };

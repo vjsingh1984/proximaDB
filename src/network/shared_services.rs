@@ -523,6 +523,78 @@ impl SharedServices {
         }
     }
 
+    /// Build the process-shared ABAC [`AbacEnforcer`](crate::security::rls::AbacEnforcer)
+    /// from the **durable** substrate (TD-ABAC-2, Phase 5b): the
+    /// `FileSystemAttributeAuthority` (#1310) + the `FileSystemPolicyBindingStore`
+    /// (this change), both restart-recovered from `<data_dir>/abac/`. The
+    /// predicate-object store and the policy-epoch source are **in-memory** today
+    /// (follow-ons: durable predicates, durable epochs) — so an opt-in
+    /// `abac-policy` build can evaluate table-level permit/deny (predicate-free
+    /// bindings) but not yet row-predicates until the predicate store is durable.
+    ///
+    /// Returns `None` on default builds (the feature is OFF) and when there is no
+    /// `data_dir` or a durable store cannot be opened — i.e. the status quo (no
+    /// enforcement). It never synthesizes an allow: absent ⇒ no enforcer ⇒ no
+    /// filtering, the same state as today.
+    #[cfg(feature = "abac-policy")]
+    fn build_abac_enforcer(
+        opt_config: Option<&crate::core::config::Config>,
+    ) -> Option<Arc<crate::security::rls::AbacEnforcer>> {
+        use proximadb_abac::{
+            FileSystemAttributeAuthority, FileSystemPolicyBindingStore, InMemoryPolicyEpochs,
+            InMemoryPredicateObjectStore,
+        };
+
+        let data_dir = opt_config?.server.data_dir.clone();
+        let abac_dir = std::path::Path::new(&data_dir).join("abac");
+        // A missing `data_dir` (embedded/ephemeral paths) ⇒ no durable substrate ⇒
+        // no enforcer. Best-effort dir creation; a create failure ⇒ None too.
+        if std::fs::create_dir_all(&abac_dir).is_err() {
+            tracing::warn!(
+                "abac-policy: could not create abac dir at {}",
+                abac_dir.display()
+            );
+            return None;
+        }
+
+        let authority =
+            match FileSystemAttributeAuthority::open(abac_dir.join("attribute-bindings.json")) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!(
+                        "abac-policy: failed to open attribute authority at {}: {e}; \
+                         enforcement DISABLED (no enforcer)",
+                        abac_dir.display()
+                    );
+                    return None;
+                }
+            };
+        let bindings =
+            match FileSystemPolicyBindingStore::open(abac_dir.join("policy-bindings.json")) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(
+                        "abac-policy: failed to open policy binding store at {}: {e}; \
+                     enforcement DISABLED (no enforcer)",
+                        abac_dir.display()
+                    );
+                    return None;
+                }
+            };
+
+        tracing::info!(
+            "abac-policy: durable ABAC enforcer active at {} (authority + policy binding store)",
+            abac_dir.display()
+        );
+        let enforcer = crate::security::rls::AbacEnforcer::new(
+            Box::new(authority),
+            Box::new(InMemoryPredicateObjectStore::new()),
+            Box::new(InMemoryPolicyEpochs::new()),
+        )
+        .with_binding_store(Box::new(bindings));
+        Some(Arc::new(enforcer))
+    }
+
     /// Create shared services with full business logic configuration
     /// SharedServices owns all business logic and configuration decisions
     /// Returns (SharedServices, CollectionService) - the collection service is needed by StorageEngine
@@ -2319,6 +2391,18 @@ impl SharedServices {
         };
         let base_dml = match &conditional_key_store {
             Some(cks) => base_dml.with_conditional_key_store(cks.clone()),
+            None => base_dml,
+        };
+        // TD-ABAC-2 (Phase 5b): construct the durable ABAC enforcer (authority +
+        // policy binding store, both at <data_dir>/abac/) and DI it into the
+        // DML read funnel. Fully behind `abac-policy` (default-OFF) ⇒ default
+        // builds are byte-for-byte unchanged; `None` ⇒ no enforcement (status quo).
+        #[cfg(feature = "abac-policy")]
+        let base_dml = match Self::build_abac_enforcer(opt_config) {
+            Some(enforcer) => {
+                debug!("✅ SharedServices::new - durable ABAC enforcer wired into DmlService");
+                base_dml.with_abac_enforcer(enforcer)
+            }
             None => base_dml,
         };
         let dml_service_for_grpc = Arc::new(match dml_lock_service {
