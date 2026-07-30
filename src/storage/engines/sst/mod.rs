@@ -253,6 +253,12 @@ pub mod collections;
 pub mod core;
 #[cfg(feature = "cold-deletion-vectors")]
 pub mod deletion_vector_store; // TD-DELVEC-1 WI-3a-remaining-A: CAS'd per-segment DV store
+// TD-DELVEC-1 WI-3b: cold-delete → DV-bit integration test (in-crate, to read
+// the pub(crate) DV store). The `tests/` dir isn't a compiled module, so the
+// test is wired in via #[path] under test + the feature.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_delete_dv_test.rs"]
+mod cold_delete_dv_test;
 pub mod flush;
 pub mod manifest;
 #[cfg(feature = "cold-deletion-vectors")]
