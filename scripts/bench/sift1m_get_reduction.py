@@ -1336,6 +1336,9 @@ def main() -> int:
             "write_buffer_mb": args.write_buffer_mb,
             "flush_vector_threshold": args.flush_vector_threshold,
             "explicit_flush_every_rows": args.explicit_flush_every_rows,
+            "explicit_flush_flight_port": (
+                args.port if args.explicit_flush_every_rows is not None else None
+            ),
         },
         "thresholds": {
             "post_write_max_gets_per_query": args.post_write_max_gets,
@@ -1375,7 +1378,7 @@ def main() -> int:
             args.rows,
             args.batch_size,
             "127.0.0.1",
-            args.port + 2,
+            args.port,
             args.explicit_flush_every_rows,
         )
         result["collection_id"] = collection_id
