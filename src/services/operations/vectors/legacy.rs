@@ -1127,11 +1127,55 @@ impl VectorOperationsService {
             ensure_tenant_on_records(&mut tombstones, &tenant_context.tenant_id)?;
         }
 
+        // TD-DELVEC-1 WI-3b: under `cold-deletion-vectors`, a delete that lands on
+        // a row already in an immutable cold segment sets a deletion-vector bit
+        // (keyed by the delete's real WAL LSN) in addition to the tombstone. The
+        // tombstone still carries read-after-write coherence (`is_record_dead`,
+        // valid_to_ns=0 in olap_delta_merge) until WI-4 wires merge-on-read to
+        // consult the DV.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let (result, lsns) = self
+            .insert_vectors_via_wal_returning_lsns(collection_id, tombstones)
+            .await?;
+        #[cfg(not(feature = "cold-deletion-vectors"))]
         let result = self
             .insert_vectors_via_wal(collection_id, tombstones)
             .await?;
         if !result.success {
             return Ok(result);
+        }
+
+        #[cfg(feature = "cold-deletion-vectors")]
+        {
+            // Best-effort: a resolve / mark_deleted failure logs + continues — the
+            // tombstone already made the delete effective; the DV bit is for WI-4's
+            // merge-on-read. Failure policy hardens when the DV becomes load-bearing.
+            if let Some(dv_store) = self.storage_engine.deletion_vector_store.as_ref() {
+                for (oid, lsn) in record_ids.iter().zip(lsns.iter().copied()) {
+                    let hits = match self
+                        .storage_engine
+                        .resolve_oid_positions(collection_id, oid)
+                        .await
+                    {
+                        Ok(h) => h,
+                        Err(e) => {
+                            warn!(
+                                "resolve_oid_positions failed for {}: {:?} (no DV bits set)",
+                                oid, e
+                            );
+                            continue;
+                        }
+                    };
+                    for (seg, pos) in hits {
+                        if let Err(e) = dv_store.mark_deleted(&seg, pos, lsn).await {
+                            warn!(
+                                "DV mark_deleted failed for {} @ {}:{} (gen {}): {:?} (tombstone still coherent)",
+                                oid, seg, pos, lsn, e
+                            );
+                        }
+                    }
+                }
+            }
         }
         // Read-after-write coherence: a deleted record must not resurface
         // from a stale cached query result. Await so the next search sees it.
@@ -2013,6 +2057,7 @@ impl VectorOperationsService {
     }
 
     /// Internal helper: insert records via standard WAL path
+    #[cfg(not(feature = "cold-deletion-vectors"))]
     async fn insert_vectors_via_wal(
         &self,
         collection_id: &str,
@@ -2030,6 +2075,20 @@ impl VectorOperationsService {
     ) -> Result<BatchOperationResult> {
         self.write_coordinator()
             .insert_vectors_via_wal_insert_only(collection_id, vectors)
+            .await
+    }
+
+    /// Internal helper: insert records via the standard WAL path, returning the
+    /// per-record WAL/MVCC LSNs. TD-DELVEC-1 WI-3b: the cold-delete DV-bit path
+    /// keys the bit on the real delete LSN instead of wall-clock time.
+    #[cfg(feature = "cold-deletion-vectors")]
+    async fn insert_vectors_via_wal_returning_lsns(
+        &self,
+        collection_id: &str,
+        vectors: Vec<ProximaRecord>,
+    ) -> Result<(BatchOperationResult, Vec<u64>)> {
+        self.write_coordinator()
+            .insert_vectors_via_wal_returning_lsns(collection_id, vectors)
             .await
     }
 

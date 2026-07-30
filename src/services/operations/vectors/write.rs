@@ -302,6 +302,35 @@ impl VectorWriteCoordinator {
         vectors: Vec<ProximaRecord>,
         insert_only: bool,
     ) -> Result<BatchOperationResult> {
+        // Back-compat wrapper: discard the per-record LSNs. TD-DELVEC-1 WI-3b
+        // surfaces them via `insert_vectors_via_wal_returning_lsns` for the
+        // cold-delete DV-bit path; callers that don't need the LSNs use this.
+        let (result, _lsns) = self
+            .insert_vectors_via_wal_with_mode_returning_lsns(collection_id, vectors, insert_only)
+            .await?;
+        Ok(result)
+    }
+
+    /// Insert records via the standard WAL path, returning the per-record WAL/MVCC
+    /// LSNs alongside the batch result. TD-DELVEC-1 WI-3b: the cold-delete path
+    /// keys the deletion-vector bit on the delete's real LSN (`sequences`, one per
+    /// input record, in input order) instead of wall-clock time.
+    #[cfg(feature = "cold-deletion-vectors")]
+    pub(crate) async fn insert_vectors_via_wal_returning_lsns(
+        &self,
+        collection_id: &str,
+        vectors: Vec<ProximaRecord>,
+    ) -> Result<(BatchOperationResult, Vec<u64>)> {
+        self.insert_vectors_via_wal_with_mode_returning_lsns(collection_id, vectors, false)
+            .await
+    }
+
+    async fn insert_vectors_via_wal_with_mode_returning_lsns(
+        &self,
+        collection_id: &str,
+        vectors: Vec<ProximaRecord>,
+        insert_only: bool,
+    ) -> Result<(BatchOperationResult, Vec<u64>)> {
         let mut vectors = vectors;
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
@@ -323,7 +352,7 @@ impl VectorWriteCoordinator {
         };
 
         match wal_result {
-            Ok(_) => {
+            Ok(lsns) => {
                 let duration = start_time.elapsed();
                 let _vectors_per_sec = if duration.as_secs_f64() > 0.0 {
                     (vector_count as f64 / duration.as_secs_f64()) as u64
@@ -336,24 +365,30 @@ impl VectorWriteCoordinator {
                     vector_count, duration
                 );
 
-                Ok(BatchOperationResult::success(
-                    vector_ids,
-                    OperationMetrics {
-                        total_processed: vector_count as i64,
-                        successful_count: vector_count as i64,
-                        failed_count: 0,
-                        updated_count: 0,
-                        processing_time_us: duration.as_micros() as i64,
-                        wal_write_time_us: duration.as_micros() as i64,
-                        index_update_time_us: 0,
-                    },
+                Ok((
+                    BatchOperationResult::success(
+                        vector_ids,
+                        OperationMetrics {
+                            total_processed: vector_count as i64,
+                            successful_count: vector_count as i64,
+                            failed_count: 0,
+                            updated_count: 0,
+                            processing_time_us: duration.as_micros() as i64,
+                            wal_write_time_us: duration.as_micros() as i64,
+                            index_update_time_us: 0,
+                        },
+                    ),
+                    lsns,
                 ))
             }
             Err(e) => {
                 if insert_only && e.to_string().contains("INSERT_CONFLICT") {
-                    return Ok(BatchOperationResult::failure(
-                        format!("Record insert failed: {}", e),
-                        "INSERT_CONFLICT".to_string(),
+                    return Ok((
+                        BatchOperationResult::failure(
+                            format!("Record insert failed: {}", e),
+                            "INSERT_CONFLICT".to_string(),
+                        ),
+                        vec![],
                     ));
                 }
                 warn!("WAL batch insert failed: {}", e);
@@ -362,9 +397,12 @@ impl VectorWriteCoordinator {
                 // retryable 429 / RESOURCE_EXHAUSTED instead of a non-retryable
                 // 400/500. Other errors keep the generic `WAL_WRITE_ERROR` code.
                 let error_code = crate::storage::persistence::write_ahead_log::flush_policy::write_batch_error_code(&e, "WAL_WRITE_ERROR");
-                Ok(BatchOperationResult::failure(
-                    format!("Batch insert failed: {}", e),
-                    error_code,
+                Ok((
+                    BatchOperationResult::failure(
+                        format!("Batch insert failed: {}", e),
+                        error_code,
+                    ),
+                    vec![],
                 ))
             }
         }
