@@ -150,10 +150,10 @@ impl DeletionVectorStore {
         let mut shard = self.shard_for(segment_path).write().await;
         // Lazy-load the on-disk DV if not resident, so a mark never clobbers
         // existing bits with a fresh empty DV.
-        if !shard.contains_key(segment_path) {
-            if let Some(dv) = self.load_dv_from_disk(segment_path).await? {
-                shard.insert(segment_path.to_string(), DvEntry { dv, version: 0 });
-            }
+        if !shard.contains_key(segment_path)
+            && let Some(dv) = self.load_dv_from_disk(segment_path).await?
+        {
+            shard.insert(segment_path.to_string(), DvEntry { dv, version: 0 });
         }
         let entry = shard
             .entry(segment_path.to_string())
