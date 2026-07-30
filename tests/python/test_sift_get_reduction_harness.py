@@ -81,8 +81,9 @@ def test_config_preserves_object_store_url(tmp_path: Path) -> None:
     config_path = tmp_path / "benchmark.toml"
     storage_url = "adls://benchmarks/run-1"
 
-    HARNESS.write_config(config_path, tmp_path, 5690, 128, storage_url)
+    HARNESS.write_config(config_path, tmp_path, 5690, 128, 20_000, storage_url)
 
     config = config_path.read_text()
     assert f'url = "{storage_url}"' in config
     assert "[storage.optimization]\nenable_mmap = false" in config
+    assert "vector_count_threshold = 20000" in config

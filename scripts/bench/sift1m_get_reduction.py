@@ -668,7 +668,7 @@ def require_complete_insert(response: dict, expected_count: int) -> None:
 
 def write_config(
         path: Path, root: Path, port: int, write_buffer_mb: int,
-        storage_url: str) -> None:
+        flush_vector_threshold: int, storage_url: str) -> None:
     data = root / "data"
     config = f"""[server]
 node_id = "sift1m-get-reduction"
@@ -697,6 +697,7 @@ write_buffer_directory = "file://{data / 'wal'}"
 enable_wal = true
 sync_mode = "PerBatch"
 write_buffer_size_mb = {write_buffer_mb}
+vector_count_threshold = {flush_vector_threshold}
 flush_interval_secs = 12
 
 [storage.sst_config]
@@ -969,6 +970,15 @@ def main() -> int:
     parser.add_argument("--rows", type=int, default=1_000_000)
     parser.add_argument("--batch-size", type=int, default=2_000)
     parser.add_argument("--write-buffer-mb", type=int, default=4096)
+    parser.add_argument(
+        "--flush-vector-threshold",
+        type=int,
+        default=100_000,
+        help=(
+            "vectors per L0 flush; use rows/5 for small-corpus v3 geometry "
+            "experiments that must trigger one compaction"
+        ),
+    )
     parser.add_argument("--queries", type=int, default=1_000)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--settle-timeout-secs", type=int, default=1_200)
@@ -1026,6 +1036,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.write_buffer_mb <= 0:
         raise RuntimeError("--write-buffer-mb must be positive")
+    if args.flush_vector_threshold <= 0:
+        raise RuntimeError("--flush-vector-threshold must be positive")
     if args.ivf_k is not None and args.ivf_k <= 0:
         raise RuntimeError("--ivf-k must be positive")
     if args.nprobe is not None and args.nprobe <= 0:
@@ -1154,6 +1166,7 @@ def main() -> int:
         root,
         args.port,
         args.write_buffer_mb,
+        args.flush_vector_threshold,
         storage_url,
     )
     server_url = f"http://127.0.0.1:{args.port}"
@@ -1242,6 +1255,7 @@ def main() -> int:
         "ingest_config": {
             "batch_size": args.batch_size,
             "write_buffer_mb": args.write_buffer_mb,
+            "flush_vector_threshold": args.flush_vector_threshold,
         },
         "thresholds": {
             "post_write_max_gets_per_query": args.post_write_max_gets,
