@@ -99,41 +99,55 @@ merits.
 |===
 
 **The cross-system invariant:** every serious *storage engine* separates an
-immutable numeric (or uuid) physical key — used by the hot path, WAL, and
-compaction — from a mutable name/composite used for addressing and display.
-The only systems that use name-as-id are *governance* catalogs (Databricks),
-which do not own a storage hot path. No surveyed storage engine keys its
-admission/WAL path on a composite or a name.
+immutable internal key from a mutable name. PostgreSQL, CockroachDB, and
+Iceberg all implement this as a *numeric* internal key (OID / descriptorID /
+uuid) with the name/composite *resolved at the boundary* (namespace table /
+catalog lookup) — they do **not** carry the composite on every record. That
+works for them because they always have a catalog at the boundary to resolve
+name→numeric. The only systems using name-as-id are *governance* catalogs
+(Databricks), which do not own a storage hot path.
 
-== Synthesis → ProximaDB (ADR-0083)
+== Synthesis → ProximaDB (ADR-0083, composite-only)
 
-ProximaDB already has all three id types (`stable_id.rs`: `CollectionObjectId u64`,
-`CollectionIdentity {account, namespace, collection}`, `CollectionConfig.name`).
-ADR-0083 assigns each its layer — no new type is needed:
+ProximaDB **deviates from the numeric-internal-key norm — justifiably.** The
+industry pattern (resolve name→numeric at the boundary, key internally on the
+numeric) requires a catalog at every boundary. ProximaDB has **catalog-free
+engines** (embedded) plus a **structural-path-isolation mandate** (the object-store
+path *is* `data/{tenant}/{namespace}/{collection}/`). Together these **force the
+composite `(account, namespace, collection)` to be carried on the object
+regardless** — there is no boundary at which to resolve it away.
 
-* **L1 `object_id` u64** ↔ PostgreSQL OID / CRDB descriptorID / Iceberg uuid → `Collection.id`, admission, WAL, compaction.
-* **L2 composite** ↔ CRDB namespace triple / Iceberg TableIdentifier → `DrPathBuilder`, isolation (on `StorageAssignment`).
-* **L3 name** ↔ PG relname / CRDB name → `CollectionConfig.name`, display.
+Once the composite is forced to be carried, the numeric `object_id` u64 is a
+*redundant second identity* alongside it — and two identity systems is an
+inconsistency seam (the #1325 regression: `Collection.id` held a UUID while the
+composite lived elsewhere). ADR-0083 therefore makes the **composite the sole
+canonical identity** and retires the stored global u64:
 
-The #1325 regression is the textbook "overload" failure: `Collection.id`
-carried a UUID (no layer's id) while the flush plan read it as L1. The fix is
-not a new model — it is completing the migration so `Collection.id` carries L1,
-as ADR-031 always intended.
+* **Identity** = `CollectionIdentity {account, namespace, collection}` — self-describing (the path is the identity), structurally isolating, the one carried thing.
+* **Admission/WAL/compaction** key on the composite (perf-irrelevant: the collection id is keyed per write/batch/query, not on the distance/segment hot paths).
+* **Hot-path integer convenience** (lock-striping, shard index) uses a *derived, non-stored* hash of the composite — it cannot drift.
+* **Display** = `CollectionConfig.name` (mutable, per-namespace-unique).
+
+The #1325 regression is fixed *by removing the seam*: there is no second
+identity for `Collection.id` to disagree with.
 
 == Open nuances (for the record)
 
-* **Dump/restore stability:** like PostgreSQL OIDs, ProximaDB `object_id` is
-  stable within a deployment lifetime; a cross-store restore must preserve it
-  (the catalog export/import carries `object_id`). Iceberg's `table-uuid` is
-  the analog that survives rename but is reassigned on `replace`.
+* **Why deviate from PG/CRDB/Iceberg's numeric-internal-key:** those systems
+  resolve name→numeric at a catalog boundary and never carry the composite on a
+  record. ProximaDB's catalog-free engines + structural-path mandate make that
+  impossible — the composite must be carried, so it is the identity. The
+  trade-off (a 3-field key vs an 8-byte u64 on collection-id-frequency ops) is
+  negligible; the gain (one identity system, self-describing, no drift seam) is
+  structural.
+* **Dump/restore stability:** the composite is immutable for the collection's
+  lifetime (the scoped ids are never reused — ADR-074 D6 reserves retired ids);
+  a catalog export/import carries the composite verbatim.
 * **Allocator width:** `namespace_id` is `u16` (65,536/account) — a hard cap,
   not a silent wrap (ADR-074 D4). `collection_id` is `u32` per-namespace
-  (4.3B/namespace). `object_id` is `u64` (effectively unbounded).
-* **Why not encode the composite into the `u64`:** packing
-  `(account, namespace, collection)` into 64 bits would couple L1 to L2's
-  widths and break independent allocator evolution; a separate global `u64`
-  keeps the layers decoupled (the same choice CRDB makes — descriptor ID is
-  independent of the namespace triple).
+  (4.3B/namespace). Global capacity is unbounded across `(account, namespace)`
+  scopes; a separate global *ordering* sequence (not an identity) may be kept if
+  creation-order is ever needed.
 
 == Sources
 
