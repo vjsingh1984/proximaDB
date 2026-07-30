@@ -831,8 +831,44 @@ class OwnedServer:
         self.process = None
 
 
-def ingest(server: str, base_path: Path, expected_rows: int,
-           batch_size: int) -> tuple[str, float, dict[int, int]]:
+def force_flush_via_flight(
+        host: str, port: int, collection_id: str,
+        flight_module=None) -> dict:
+    if flight_module is None:
+        try:
+            import pyarrow.flight as flight_module
+        except ImportError as error:
+            raise RuntimeError(
+                "--explicit-flush-every-rows requires PyArrow Flight; "
+                "run the harness with the repository Python environment"
+            ) from error
+
+    location = flight_module.Location.for_grpc_tcp(host, port)
+    client = flight_module.FlightClient(location)
+    try:
+        action = flight_module.Action(
+            "flush_collection",
+            json.dumps({"collection_id": collection_id}).encode(),
+        )
+        responses = list(client.do_action(action))
+    finally:
+        client.close()
+    if len(responses) != 1:
+        raise RuntimeError(
+            "Flight flush returned an unexpected response count: "
+            f"{len(responses)}"
+        )
+    payload = json.loads(bytes(responses[0].body))
+    if payload.get("success") is not True:
+        raise RuntimeError(f"Flight flush did not succeed: {payload}")
+    return payload
+
+
+def ingest(
+        server: str, base_path: Path, expected_rows: int, batch_size: int,
+        flight_host: str, flight_port: int,
+        explicit_flush_every_rows: int | None,
+) -> tuple[str, float, dict[int, int], list[dict]]:
     _, dimension = count_fixed_records(base_path, 4)
     response = request_json(
         server + "/api/v2/collections",
@@ -859,6 +895,7 @@ def ingest(server: str, base_path: Path, expected_rows: int,
     started = time.perf_counter()
     inserted = 0
     retry_status_counts: dict[int, int] = {}
+    explicit_flushes = []
     for batch in iter_fvec_batches(base_path, expected_rows, batch_size):
         for attempt in range(8):
             try:
@@ -879,6 +916,29 @@ def ingest(server: str, base_path: Path, expected_rows: int,
                 )
                 time.sleep(min(10, 0.25 * (2 ** attempt)))
         inserted += len(batch)
+        if (
+            explicit_flush_every_rows is not None
+            and inserted % explicit_flush_every_rows == 0
+        ):
+            flush_started = time.perf_counter()
+            response = force_flush_via_flight(
+                flight_host,
+                flight_port,
+                collection_id,
+            )
+            flush_seconds = time.perf_counter() - flush_started
+            explicit_flushes.append(
+                {
+                    "after_rows": inserted,
+                    "seconds": flush_seconds,
+                    "response": response,
+                }
+            )
+            print(
+                f"explicit flush: rows={inserted:,} "
+                f"seconds={flush_seconds:.3f}",
+                flush=True,
+            )
         if inserted % 100_000 == 0:
             elapsed = time.perf_counter() - started
             print(
@@ -891,7 +951,7 @@ def ingest(server: str, base_path: Path, expected_rows: int,
             f"ingest iterator admitted {inserted} rows, expected {expected_rows}"
         )
     elapsed = time.perf_counter() - started
-    return collection_id, elapsed, retry_status_counts
+    return collection_id, elapsed, retry_status_counts, explicit_flushes
 
 
 def require_empty_directory(path: Path) -> None:
@@ -975,8 +1035,16 @@ def main() -> int:
         type=int,
         default=100_000,
         help=(
-            "vectors per L0 flush; use rows/5 for small-corpus v3 geometry "
-            "experiments that must trigger one compaction"
+            "WAL vector-count threshold; the predicted-byte floor may defer "
+            "its size flush, so this does not guarantee segment cardinality"
+        ),
+    )
+    parser.add_argument(
+        "--explicit-flush-every-rows",
+        type=int,
+        help=(
+            "issue the supported Arrow Flight flush action after each exact "
+            "row interval; intended for controlled small-corpus geometry"
         ),
     )
     parser.add_argument("--queries", type=int, default=1_000)
@@ -1038,6 +1106,17 @@ def main() -> int:
         raise RuntimeError("--write-buffer-mb must be positive")
     if args.flush_vector_threshold <= 0:
         raise RuntimeError("--flush-vector-threshold must be positive")
+    if args.explicit_flush_every_rows is not None:
+        if args.explicit_flush_every_rows <= 0:
+            raise RuntimeError("--explicit-flush-every-rows must be positive")
+        if args.explicit_flush_every_rows % args.batch_size:
+            raise RuntimeError(
+                "--explicit-flush-every-rows must be a multiple of --batch-size"
+            )
+        if args.rows % args.explicit_flush_every_rows:
+            raise RuntimeError(
+                "--rows must be a multiple of --explicit-flush-every-rows"
+            )
     if args.ivf_k is not None and args.ivf_k <= 0:
         raise RuntimeError("--ivf-k must be positive")
     if args.nprobe is not None and args.nprobe <= 0:
@@ -1256,6 +1335,7 @@ def main() -> int:
             "batch_size": args.batch_size,
             "write_buffer_mb": args.write_buffer_mb,
             "flush_vector_threshold": args.flush_vector_threshold,
+            "explicit_flush_every_rows": args.explicit_flush_every_rows,
         },
         "thresholds": {
             "post_write_max_gets_per_query": args.post_write_max_gets,
@@ -1284,14 +1364,26 @@ def main() -> int:
             args.azurite,
         )
         active.start()
-        collection_id, ingest_seconds, retry_status_counts = ingest(
-            server_url, base_path, args.rows, args.batch_size
+        (
+            collection_id,
+            ingest_seconds,
+            retry_status_counts,
+            explicit_flushes,
+        ) = ingest(
+            server_url,
+            base_path,
+            args.rows,
+            args.batch_size,
+            "127.0.0.1",
+            args.port + 2,
+            args.explicit_flush_every_rows,
         )
         result["collection_id"] = collection_id
         result["ingest"] = {
             "seconds": ingest_seconds,
             "vectors_per_second": args.rows / ingest_seconds,
             "retry_status_counts": retry_status_counts,
+            "explicit_flushes": explicit_flushes,
         }
         geometry = wait_for_materialization(
             root / "data" / "sst",
