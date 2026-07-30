@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 = ADR-084: OSS↔commercial placement — WORM/compliance (TD-GST-2) and multi-node distribution
 
-:status: Proposed
+:status: Accepted (2026-07-30, owner)
 :date: 2026-07-30
 :deciders: owner + architecture
 :relates-to: OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc, ADR-060 (commercial Rust crate seam), OPEN_CORE.md, TD-GST-2, ADR-017 (DR engine surface), ADR-063/ADR-069 (single-node durability)
@@ -10,7 +10,9 @@
 
 == Status
 
-**Proposed** (2026-07-30). Records the placement decisions for the two upcoming
+**Accepted** (2026-07-30, ratified by the owner; the `OPEN_CORE.md`
+clarification in Decision 2's reconciliation was adopted at ratification).
+Records the placement decisions for the two upcoming
 capabilities that sit closest to the OSS↔commercial seam — **before the WORM
 mechanism exists and before any distribution hardening**, while the choice is
 still free. Once a capability ships in an Apache-2.0 release its openness is
@@ -137,10 +139,10 @@ shipped capability stops working at scale (data scale-out over object storage
 is single-node OSS). What the covenant does **not** promise is future OSS
 engineering investment in every subsystem; D2 is a roadmap-allocation decision
 (where hardening effort goes), not a gate on anything shipped. This reading is
-recorded here precisely because the freeze *is* commercially motivated — if the
-owner prefers the covenant to say it outright, a one-line clarification
-("multi-node coordination is the commercial line") can be added to
-`OPEN_CORE.md` when ratifying this ADR.
+recorded here precisely because the freeze *is* commercially motivated — and at
+ratification the owner chose to make the covenant say it outright:
+`OPEN_CORE.md` now states, in the same change as this ADR, that the single-node
+scoping is deliberate and multi-node coordination is the commercial line.
 
 **Why:** distribution is where operational value (and the market's willingness
 to pay) concentrates, it is the hardest subsystem to harden, and open-sourcing a
@@ -164,9 +166,9 @@ adoption funnel; the covenant already draws this line — this ADR commits to it
   that file is touched (status-as-of guard applies).
 * `check_oss_boundary.py` needs no change — neither decision introduces
   commercial terms, entitlements, or dependency edges into OSS code.
-* `OPEN_CORE.md` is unchanged under the reconciliation reading above (nothing
-  shipped is gated or degraded); the optional one-line clarification is the
-  owner's call at ratification.
+* `OPEN_CORE.md` gains the one-line clarification (adopted at ratification):
+  the single-node scoping is deliberate; multi-node coordination is the
+  commercial line. Nothing shipped is gated or degraded.
 * ADR-060 and the boundary spec are **amended** (multi-node-coordination
   carve-out only) as stated in Decision 2; their rules are otherwise untouched.
 * Everything already shipped under Apache-2.0 stays open (irrevocable); this ADR
