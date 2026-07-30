@@ -725,7 +725,7 @@ def require_groundtruth_scope(rows: int, groundtruth_scope: int) -> None:
 
 
 def gate_failures(phase: str, result: dict, max_gets: float | None,
-                  min_recall: float, max_p50_ms: float,
+                  min_recall: float, max_p50_ms: float | None,
                   require_local_hit: bool) -> list[str]:
     failures = []
     if max_gets is not None and result["gets_per_query"] > max_gets:
@@ -736,7 +736,10 @@ def gate_failures(phase: str, result: dict, max_gets: float | None,
         failures.append(
             f"{phase}: recall {result['recall_at_k']:.4f} < {min_recall:.4f}"
         )
-    if result["latency_ms"]["p50"] > max_p50_ms:
+    if (
+        max_p50_ms is not None
+        and result["latency_ms"]["p50"] > max_p50_ms
+    ):
         failures.append(
             f"{phase}: p50 {result['latency_ms']['p50']:.2f}ms "
             f"> {max_p50_ms:.2f}ms"
@@ -791,6 +794,22 @@ def main() -> int:
     parser.add_argument("--min-recall", type=float, default=0.98)
     parser.add_argument("--max-p50-ms", type=float, default=50.0)
     parser.add_argument(
+        "--local-warm-max-p50-ms",
+        type=float,
+        help=(
+            "optional local-tier latency gate; unset by default because the "
+            "acceptance latency target is object-cold and local file:// "
+            "latency is not an Azure WAN proxy"
+        ),
+    )
+    parser.add_argument(
+        "--binary-source-revision",
+        help=(
+            "Git revision used to build --binary; defaults to current HEAD. "
+            "Use only when later commits touch docs/benchmark harnesses."
+        ),
+    )
+    parser.add_argument(
         "--ivf-k",
         type=int,
         help="force compaction-time coarse cell count (scale experiments only)",
@@ -834,6 +853,38 @@ def main() -> int:
             "benchmark refuses a dirty worktree; commit the exact "
             "source state before building and measuring"
         )
+    binary_source_revision = args.binary_source_revision or git_revision
+    subprocess.run(
+        [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            binary_source_revision,
+            git_revision,
+        ],
+        check=True,
+    )
+    if binary_source_revision != git_revision:
+        changed_since_build = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--name-only",
+                f"{binary_source_revision}..{git_revision}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        unsafe_changes = [
+            path for path in changed_since_build
+            if not path.startswith(("docs/", "scripts/"))
+        ]
+        if unsafe_changes:
+            raise RuntimeError(
+                "binary source revision differs from executable source: "
+                f"{unsafe_changes}; rebuild the release binary"
+            )
 
     base_path = args.sift_dir / "sift_base.fvecs"
     query_path = args.sift_dir / "sift_query.fvecs"
@@ -881,11 +932,17 @@ def main() -> int:
             "path": str(binary),
             "sha256": sha256(binary),
             "bytes": binary.stat().st_size,
+            "source_revision": binary_source_revision,
             "profile": (
                 "release-server"
                 if "/target/release-server/" in binary_text
                 else "release"
             ),
+        },
+        "harness": {
+            "git_revision": git_revision,
+            "path": str(Path(__file__).resolve()),
+            "sha256": sha256(Path(__file__).resolve()),
         },
         "dataset": {
             "base": str(base_path),
@@ -929,7 +986,9 @@ def main() -> int:
             "local_disk_warm_max_gets_per_query": args.local_warm_max_gets,
             "object_cold_max_gets_per_query": args.object_cold_max_gets,
             "min_recall_at_k": args.min_recall,
-            "max_p50_ms": args.max_p50_ms,
+            "post_write_max_p50_ms": args.max_p50_ms,
+            "local_disk_warm_max_p50_ms": args.local_warm_max_p50_ms,
+            "object_cold_max_p50_ms": args.max_p50_ms,
             "max_segments": args.max_segments,
         },
         "phases": {},
@@ -1033,7 +1092,7 @@ def main() -> int:
             local_warm,
             args.local_warm_max_gets,
             args.min_recall,
-            args.max_p50_ms,
+            args.local_warm_max_p50_ms,
             require_local_hit=True,
         ))
         active.stop()
