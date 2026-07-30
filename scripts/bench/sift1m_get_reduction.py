@@ -18,10 +18,10 @@ It measures three distinct states with fresh result/DRAM caches:
 2. local_disk_warm: restart with the persistent local-disk tier; and
 3. object_cold: restart without the local-disk tier (diagnostic baseline).
 
-The local backend is intentional: CountingFileSystem meters the same physical
-read seam used by object-store backends, without injecting WAN latency into a
-GET-count correctness benchmark. Latency results therefore describe this
-machine/filesystem profile and are not Azure network-latency claims.
+The default local backend meters the same physical read seam used by
+object-store backends. Pass ``--storage-url adls://... --azurite`` to exercise
+the production Azure backend over HTTP. Azurite latency is local-emulator
+evidence, not a production Azure WAN-latency claim.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import re
 import signal
 import struct
@@ -40,7 +39,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
-
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 
 PAX_MAGIC = b"PAXSEG01"
 PAX_HEADER_MAGIC = b"PXH1"
@@ -219,6 +219,151 @@ def pax_geometry(root: Path) -> dict:
     }
 
 
+class AzureCliPaxGeometry:
+    """Read final PAX geometry from Azure/Azurite without touching server metrics.
+
+    Query GET counters live inside the measured server process. The Azure CLI
+    inventory/download calls here are out-of-process evidence reads performed
+    before query sweeps. They cannot inflate or warm ProximaDB's cache counters,
+    although they may warm Azurite's host page cache.
+    """
+
+    def __init__(self, storage_url: str, snapshot_root: Path):
+        parsed = urlparse(storage_url)
+        if parsed.scheme not in {"adls", "az", "azure"}:
+            raise RuntimeError(
+                f"Azure geometry requires adls:// storage, got {storage_url}"
+            )
+        if not parsed.netloc:
+            raise RuntimeError(
+                f"Azure storage URL has no container: {storage_url}"
+            )
+        self.container = parsed.netloc
+        self.prefix = parsed.path.strip("/")
+        self.snapshot_root = snapshot_root
+
+    def _list_blobs(self) -> list[dict]:
+        command = [
+            "az",
+            "storage",
+            "blob",
+            "list",
+            "--container-name",
+            self.container,
+            "--output",
+            "json",
+        ]
+        if self.prefix:
+            command.extend(["--prefix", self.prefix])
+        completed = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(completed.stdout)
+        if not isinstance(payload, list):
+            raise RuntimeError("Azure CLI blob inventory was not a JSON list")
+        return payload
+
+    def require_empty_prefix(self) -> None:
+        blobs = self._list_blobs()
+        if blobs:
+            names = [item.get("name", "<unnamed>") for item in blobs[:5]]
+            raise RuntimeError(
+                "Azure benchmark prefix is not empty: "
+                f"adls://{self.container}/{self.prefix}, first_blobs={names}"
+            )
+
+    def _snapshot_target(self, blob_name: str) -> Path:
+        relative = PurePosixPath(blob_name)
+        if relative.is_absolute() or any(
+            component in {"", ".", ".."} for component in relative.parts
+        ):
+            raise RuntimeError(
+                f"unsafe Azure blob name in geometry snapshot: {blob_name!r}"
+            )
+        return self.snapshot_root.joinpath(*relative.parts)
+
+    def inventory(self) -> dict:
+        segments = []
+        for blob in self._list_blobs():
+            name = str(blob.get("name", ""))
+            if not name.endswith(".pax"):
+                continue
+            properties = blob.get("properties") or {}
+            size = properties.get("contentLength", blob.get("contentLength"))
+            if size is None:
+                raise RuntimeError(f"Azure blob has no content length: {name}")
+            segments.append(
+                {
+                    "path": name,
+                    "bytes": int(size),
+                    "etag": str(properties.get("etag", blob.get("etag", ""))),
+                    "last_modified": str(
+                        properties.get(
+                            "lastModified", blob.get("lastModified", "")
+                        )
+                    ),
+                }
+            )
+        segments.sort(key=lambda item: item["path"])
+        return {
+            "segment_count": len(segments),
+            "bytes": sum(item["bytes"] for item in segments),
+            "segments": segments,
+        }
+
+    @staticmethod
+    def stable_signature(inventory: dict) -> tuple:
+        return tuple(
+            (item["path"], item["bytes"], item["etag"])
+            for item in inventory["segments"]
+        )
+
+    def materialize(self, inventory: dict) -> dict:
+        self.snapshot_root.mkdir(parents=True, exist_ok=True)
+        segments = []
+        for blob in inventory["segments"]:
+            target = self._snapshot_target(blob["path"])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                [
+                    "az",
+                    "storage",
+                    "blob",
+                    "download",
+                    "--container-name",
+                    self.container,
+                    "--name",
+                    blob["path"],
+                    "--file",
+                    str(target),
+                    "--overwrite",
+                    "true",
+                    "--no-progress",
+                    "--output",
+                    "none",
+                ],
+                check=True,
+            )
+            if target.stat().st_size != blob["bytes"]:
+                raise RuntimeError(
+                    f"Azure snapshot size mismatch for {blob['path']}: "
+                    f"{target.stat().st_size} != {blob['bytes']}"
+                )
+            parsed = parse_pax(target, self.snapshot_root)
+            parsed["path"] = blob["path"]
+            parsed["blob_etag"] = blob["etag"]
+            segments.append(parsed)
+        return {
+            "segment_count": len(segments),
+            "row_count": sum(item["rows"] for item in segments),
+            "bytes": sum(item["bytes"] for item in segments),
+            "segments": segments,
+        }
+
+
 def stable_signature(geometry: dict) -> tuple:
     return tuple(
         (item["path"], item["bytes"], item["rows"], item["mtime_ns"])
@@ -226,10 +371,10 @@ def stable_signature(geometry: dict) -> tuple:
     )
 
 
-def wait_for_materialization(root: Path, server: str, collection_id: str,
-                             expected_rows: int, max_segments: int,
-                             timeout_seconds: int,
-                             stable_seconds: int) -> dict:
+def wait_for_materialization(
+        root: Path, server: str, collection_id: str, expected_rows: int,
+        max_segments: int, timeout_seconds: int, stable_seconds: int,
+        azure_geometry: AzureCliPaxGeometry | None = None) -> dict:
     deadline = time.monotonic() + timeout_seconds
     stable_since = None
     prior = None
@@ -238,7 +383,11 @@ def wait_for_materialization(root: Path, server: str, collection_id: str,
     while time.monotonic() < deadline:
         now = time.monotonic()
         try:
-            geometry = pax_geometry(root)
+            geometry = (
+                azure_geometry.inventory()
+                if azure_geometry is not None
+                else pax_geometry(root)
+            )
             last_parse_error = None
         except RuntimeError as error:
             # Compaction output is visible while it is still being streamed.
@@ -252,17 +401,27 @@ def wait_for_materialization(root: Path, server: str, collection_id: str,
                 last_report = now
             time.sleep(3)
             continue
-        signature = stable_signature(geometry)
+        signature = (
+            azure_geometry.stable_signature(geometry)
+            if azure_geometry is not None
+            else stable_signature(geometry)
+        )
         wal_bytes = labelled_metric(
             scrape_text(server),
             "proximadb_wal_size_bytes",
             "collection",
             collection_id,
         )
+        observed_rows = geometry.get("row_count")
+        row_status = (
+            f"{observed_rows:,}/{expected_rows:,}"
+            if observed_rows is not None
+            else f"pending-footer-snapshot/{expected_rows:,}"
+        )
         if now - last_report >= 15:
             print(
                 "settle:"
-                f" rows={geometry['row_count']:,}/{expected_rows:,}"
+                f" rows={row_status}"
                 f" segments={geometry['segment_count']}"
                 f" bytes={geometry['bytes']:,}"
                 f" wal_unflushed={wal_bytes!r}",
@@ -273,13 +432,24 @@ def wait_for_materialization(root: Path, server: str, collection_id: str,
         # row sum above `expected_rows` is legal. It must disappear before the
         # stable window; a persistent duplicate/stale segment fails by timeout.
         complete = (
-            geometry["row_count"] == expected_rows
+            (
+                observed_rows == expected_rows
+                if azure_geometry is None
+                else True
+            )
             and 0 < geometry["segment_count"] <= max_segments
             and wal_bytes == 0
         )
         if complete and signature == prior:
             stable_since = stable_since or now
             if now - stable_since >= stable_seconds:
+                if azure_geometry is not None:
+                    geometry = azure_geometry.materialize(geometry)
+                    if geometry["row_count"] != expected_rows:
+                        raise RuntimeError(
+                            "quiescent Azure PAX footer row mismatch: "
+                            f"{geometry['row_count']} != {expected_rows}"
+                        )
                 geometry["wal_unflushed_bytes"] = wal_bytes
                 return geometry
         else:
@@ -287,20 +457,24 @@ def wait_for_materialization(root: Path, server: str, collection_id: str,
         prior = signature
         time.sleep(3)
     try:
-        geometry = pax_geometry(root)
+        geometry = (
+            azure_geometry.inventory()
+            if azure_geometry is not None
+            else pax_geometry(root)
+        )
     except RuntimeError as error:
         last_parse_error = str(error)
         geometry = {"row_count": 0, "segment_count": 0}
     raise RuntimeError(
         "materialization/compaction did not quiesce: "
-        f"rows={geometry['row_count']}/{expected_rows}, "
+        f"rows={geometry.get('row_count', 'not-snapshotted')}/{expected_rows}, "
         f"segments={geometry['segment_count']} (max {max_segments}), "
         f"last_parse_error={last_parse_error!r}"
     )
 
 
 def parse_prometheus(text: str) -> dict[str, float]:
-    totals = {name: 0.0 for name in METRICS}
+    totals = dict.fromkeys(METRICS, 0.0)
     present: set[str] = set()
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -492,8 +666,9 @@ def require_complete_insert(response: dict, expected_count: int) -> None:
         )
 
 
-def write_config(path: Path, root: Path, port: int,
-                 write_buffer_mb: int) -> None:
+def write_config(
+        path: Path, root: Path, port: int, write_buffer_mb: int,
+        storage_url: str) -> None:
     data = root / "data"
     config = f"""[server]
 node_id = "sift1m-get-reduction"
@@ -510,7 +685,7 @@ metadata_url = "file://{data / 'metadata'}"
 mmap_enabled = false
 
 [[storage.storage_locations]]
-url = "file://{data / 'sst'}"
+url = "{storage_url}"
 weight = 1
 tags = ["durable", "benchmark"]
 
@@ -547,7 +722,8 @@ log_level = "info"
 class OwnedServer:
     def __init__(self, binary: Path, config: Path, server: str,
                  log_path: Path, local_disk_path: Path | None,
-                 ivf_k: int | None = None, nprobe: int | None = None):
+                 ivf_k: int | None = None, nprobe: int | None = None,
+                 azure_emulator: bool = False):
         self.binary = binary
         self.config = config
         self.server = server
@@ -555,6 +731,7 @@ class OwnedServer:
         self.local_disk_path = local_disk_path
         self.ivf_k = ivf_k
         self.nprobe = nprobe
+        self.azure_emulator = azure_emulator
         self.process: subprocess.Popen | None = None
         self.log_file = None
 
@@ -566,11 +743,8 @@ class OwnedServer:
                 "PROXIMADB_CACHE_PREFILL": "0",
                 "PROXIMADB_CACHE_ON_WRITE": "all",
                 "PROXIMADB_L0_COMPACTION_ENABLED": "1",
-                # The durable backend stays file:// so this harness counts the
-                # physical read seam without WAN noise. Force the production
-                # Azure range-planner bounds; otherwise the engine correctly
-                # selects its 1 MiB local-disk policy and the operation count
-                # would not model Azure.
+                # Keep the planner fixed across local and Azure profiles so
+                # backend choice does not silently change the read geometry.
                 "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(
                     AZURE_COALESCE_GAP_BYTES
                 ),
@@ -600,6 +774,16 @@ class OwnedServer:
             environment["PROXIMADB_IVF_K"] = str(self.ivf_k)
         if self.nprobe is not None:
             environment["PROXIMADB_PAX_READ_COARSE_NPROBE"] = str(self.nprobe)
+        if self.azure_emulator:
+            environment.update(
+                {
+                    "PROXIMADB_AZURE_EMULATOR": "1",
+                    "AZURE_STORAGE_USE_EMULATOR": "true",
+                    "AZURE_ALLOW_HTTP": "true",
+                    "AZURE_STORAGE_ACCOUNT": "devstoreaccount1",
+                    "AZURE_STORAGE_ACCOUNT_NAME": "devstoreaccount1",
+                }
+            )
         if self.local_disk_path is not None:
             environment["PROXIMADB_CACHE_LOCAL_DISK_PATH"] = str(
                 self.local_disk_path
@@ -794,6 +978,22 @@ def main() -> int:
     parser.add_argument("--min-recall", type=float, default=0.98)
     parser.add_argument("--max-p50-ms", type=float, default=50.0)
     parser.add_argument(
+        "--storage-url",
+        help=(
+            "durable segment base URL; defaults to a file:// directory under "
+            "--root. adls:// requires Azure CLI for footer geometry."
+        ),
+    )
+    parser.add_argument(
+        "--azurite",
+        action="store_true",
+        help=(
+            "run the production Azure backend against local Azurite; requires "
+            "--storage-url adls://... and AZURE_STORAGE_CONNECTION_STRING for "
+            "out-of-process geometry snapshots"
+        ),
+    )
+    parser.add_argument(
         "--local-warm-max-p50-ms",
         type=float,
         help=(
@@ -826,6 +1026,15 @@ def main() -> int:
         raise RuntimeError("--ivf-k must be positive")
     if args.nprobe is not None and args.nprobe <= 0:
         raise RuntimeError("--nprobe must be positive")
+    if args.azurite and not (
+        args.storage_url
+        and urlparse(args.storage_url).scheme in {"adls", "az", "azure"}
+    ):
+        raise RuntimeError("--azurite requires --storage-url adls://...")
+    if args.azurite and not os.environ.get("AZURE_STORAGE_CONNECTION_STRING"):
+        raise RuntimeError(
+            "--azurite requires AZURE_STORAGE_CONNECTION_STRING for geometry"
+        )
 
     binary = args.binary.resolve()
     if not binary.is_file():
@@ -921,10 +1130,55 @@ def main() -> int:
 
     root = args.root.resolve()
     require_empty_directory(root)
+    storage_url = args.storage_url or f"file://{root / 'data' / 'sst'}"
+    storage_scheme = urlparse(storage_url).scheme
+    if storage_scheme not in {"file", "adls", "az", "azure"}:
+        raise RuntimeError(
+            f"unsupported benchmark storage URL scheme: {storage_scheme}"
+        )
+    azure_geometry = (
+        AzureCliPaxGeometry(storage_url, root / "azure-pax-snapshot")
+        if storage_scheme in {"adls", "az", "azure"}
+        else None
+    )
+    if azure_geometry is not None:
+        azure_geometry.require_empty_prefix()
     config = root / "benchmark.toml"
-    write_config(config, root, args.port, args.write_buffer_mb)
+    write_config(
+        config,
+        root,
+        args.port,
+        args.write_buffer_mb,
+        storage_url,
+    )
     server_url = f"http://127.0.0.1:{args.port}"
     local_disk = root / "local-disk-cache"
+    backend_profile = (
+        "azure_blob_azurite"
+        if args.azurite
+        else (
+            "azure_blob"
+            if azure_geometry is not None
+            else "local_file"
+        )
+    )
+    filesystem_note = (
+        "Azure backend and HTTP request-path evidence against Azurite. "
+        "GET counters are emitted by the measured ProximaDB process. "
+        "Out-of-process Azure CLI inventory/footer reads are excluded from "
+        "those counters but may warm the emulator host page cache; latency is "
+        "local-emulator evidence, not production Azure WAN evidence."
+        if args.azurite
+        else (
+            "GET count is physical-I/O-seam evidence. Latency is local "
+            "filesystem evidence, not Azure WAN evidence."
+            if azure_geometry is None
+            else (
+                "Azure backend evidence. Out-of-process Azure CLI inventory/"
+                "footer reads are excluded from the measured server counters."
+            )
+        )
+    )
     result = {
         "protocol": "sift1m_get_reduction_v2",
         "git_revision": git_revision,
@@ -959,18 +1213,21 @@ def main() -> int:
             "groundtruth_scope": groundtruth_scope,
         },
         "filesystem_profile": {
-            "segment_backend": "file",
+            "segment_backend": backend_profile,
+            "storage_url": storage_url,
+            "azurite": args.azurite,
+            "geometry_evidence": (
+                "azure_cli_inventory_and_footer_snapshot"
+                if azure_geometry is not None
+                else "local_pax_footer"
+            ),
             "local_disk_path": str(local_disk),
             "range_planner": {
                 "profile": "azure",
                 "max_gap_bytes": AZURE_COALESCE_GAP_BYTES,
                 "max_range_bytes": AZURE_COALESCE_RANGE_BYTES,
             },
-            "note": (
-                "GET count is physical-I/O-seam evidence; latency is local "
-                "filesystem evidence, not Azure WAN evidence. Azure planner "
-                "bounds are explicit because the segment URL remains file://."
-            ),
+            "note": filesystem_note,
         },
         "probe_policy": {
             "ivf_k_override": args.ivf_k,
@@ -1005,6 +1262,7 @@ def main() -> int:
             local_disk,
             args.ivf_k,
             args.nprobe,
+            args.azurite,
         )
         active.start()
         collection_id, ingest_seconds, retry_status_counts = ingest(
@@ -1024,6 +1282,7 @@ def main() -> int:
             args.max_segments,
             args.settle_timeout_secs,
             args.stable_secs,
+            azure_geometry,
         )
         wrong_layouts = [
             segment for segment in geometry["segments"]
@@ -1074,6 +1333,7 @@ def main() -> int:
             local_disk,
             args.ivf_k,
             args.nprobe,
+            args.azurite,
         )
         active.start()
         local_warm = run_query_sweep(
@@ -1105,6 +1365,7 @@ def main() -> int:
             None,
             args.ivf_k,
             args.nprobe,
+            args.azurite,
         )
         active.start()
         object_cold = run_query_sweep(
