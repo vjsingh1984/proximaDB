@@ -9,7 +9,7 @@
 | Priority | High — a legal-retention/audit requirement AnvaiOps can only half-satisfy at the app layer today
 | Severity | Medium/High — app-layer immutability is defeatable (a privileged overwrite/delete leaves no engine-enforced trail)
 | Component | record KV write path; collection policy/metadata; DR/CRR contract (`docs/12-design/COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc`)
-| Relates to | ADR-017 (DR engine surface — collection-level policy is the right home), TD-MANIFEST-1 (manifest retention), the Iceberg v3 row-lineage / `GlobalLsnAllocator` primitives (`docs/12-design/FORMAT_STRATEGY_ICEBERG_DELTA_LANCE_2026_06.adoc` §"Iceberg v3 alignment")
+| Relates to | **ADR-084 (OSS↔commercial placement — Decision 1 governs this TD's boundary split: mechanism = OSS engine, attestation/anchoring/legal-hold/compliance packaging = commercial)**, ADR-017 (DR engine surface — collection-level policy is the right home), TD-MANIFEST-1 (manifest retention), the Iceberg v3 row-lineage / `GlobalLsnAllocator` primitives (`docs/12-design/FORMAT_STRATEGY_ICEBERG_DELTA_LANCE_2026_06.adoc` §"Iceberg v3 alignment")
 |===
 
 == Context
