@@ -263,7 +263,7 @@ def test_explicit_flush_disables_timer_races_by_default() -> None:
         HARNESS.effective_flush_interval(20_000, 0)
 
 
-def test_flight_insert_stream_writes_batches_and_validates_ack() -> None:
+def test_flight_upsert_stream_writes_batches_and_validates_ack() -> None:
     calls = {"rows": 0}
 
     class FakeLocation:
@@ -322,7 +322,7 @@ def test_flight_insert_stream_writes_batches_and_validates_ack() -> None:
         FlightDescriptor=FakeDescriptor,
         FlightClient=FakeClient,
     )
-    stream = HARNESS.FlightInsertStream(
+    stream = HARNESS.FlightUpsertStream(
         "127.0.0.1",
         5692,
         "7",
@@ -337,7 +337,7 @@ def test_flight_insert_stream_writes_batches_and_validates_ack() -> None:
     assert calls["location"] == ("127.0.0.1", 5692)
     assert calls["command"] == {
         "collection_id": "7",
-        "operation": "insert",
+        "operation": "upsert",
         "write_mode": "wal",
         "trigger_compaction": False,
     }

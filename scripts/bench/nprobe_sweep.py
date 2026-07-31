@@ -246,7 +246,7 @@ def main() -> int:
         )
 
     result = {
-        "protocol": "sift_nprobe_topk_matrix_v1",
+        "protocol": "pax_nprobe_topk_matrix",
         "git_revision": current_revision,
         "binary": {
             "path": str(binary),

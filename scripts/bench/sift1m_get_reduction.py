@@ -1167,7 +1167,7 @@ class OwnedServer:
         self.process = None
 
 
-class FlightInsertStream:
+class FlightUpsertStream:
     def __init__(
         self,
         host: str,
@@ -1187,7 +1187,10 @@ class FlightInsertStream:
         command = json.dumps(
             {
                 "collection_id": collection_id,
-                "operation": "insert",
+                # The benchmark owns a fresh collection prefix and deterministic
+                # unique IDs. UPSERT preserves that final state without paying
+                # insert-only's required point lookup for every row.
+                "operation": "upsert",
                 "write_mode": "wal",
                 "trigger_compaction": False,
             }
@@ -1201,13 +1204,13 @@ class FlightInsertStream:
 
     def write_batch(self, batch) -> None:
         if self.closed:
-            raise RuntimeError("cannot write to a closed Flight insert stream")
+            raise RuntimeError("cannot write to a closed Flight upsert stream")
         self.writer.write_batch(batch)
         self.rows += batch.num_rows
 
     def close(self) -> dict:
         if self.closed:
-            raise RuntimeError("Flight insert stream was already closed")
+            raise RuntimeError("Flight upsert stream was already closed")
         self.closed = True
         try:
             self.writer.done_writing()
@@ -1404,7 +1407,7 @@ def ingest(
         if ingest_transport == "flight":
             batch_rows = batch.num_rows
             if flight_stream is None:
-                flight_stream = FlightInsertStream(
+                flight_stream = FlightUpsertStream(
                     flight_host,
                     flight_port,
                     collection_id,
@@ -1933,7 +1936,7 @@ def main() -> int:
         )
     )
     result = {
-        "protocol": "sift1m_get_reduction_v2",
+        "protocol": "pax_get_reduction",
         "git_revision": git_revision,
         "binary": {
             "path": str(binary),
@@ -1997,6 +2000,9 @@ def main() -> int:
         },
         "ingest_config": {
             "transport": args.ingest_transport,
+            "flight_operation": (
+                "upsert" if args.ingest_transport == "flight" else None
+            ),
             "batch_size": args.batch_size,
             "write_buffer_mb": args.write_buffer_mb,
             "flush_vector_threshold": args.flush_vector_threshold,
@@ -2004,6 +2010,13 @@ def main() -> int:
             "explicit_flush_every_rows": args.explicit_flush_every_rows,
             "explicit_flush_flight_port": (
                 args.port if args.explicit_flush_every_rows is not None else None
+            ),
+        },
+        "query_config": {
+            "transport": "rest_v2",
+            "reason": (
+                "Arrow Flight DoGet currently delegates to the deprecated v1 "
+                "search handler; this benchmark keeps v2 search semantics"
             ),
         },
         "thresholds": {
