@@ -1094,6 +1094,23 @@ impl SstEngine {
             storage_url
         );
 
+        // TD-DELVEC-1 WI-4: capture the scan's snapshot LSN once per direct-scan
+        // invocation for merge-on-read deletion-vector filtering in
+        // `search_pax_file_exact`. Captured at this convergence point — every route
+        // that reaches a `.pax` exact read funnels through here (exact segment scan,
+        // orchestrated AXIS fallback, and plain direct search) — so cold deletes are
+        // hidden uniformly across all of them. A later capture is strictly correct
+        // for slice 1's "hide deletes" goal (a larger LSN surfaces more deletes to
+        // the filter). Falls back to u64::MAX (see all deletes) when no freshness
+        // source is wired.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let snapshot_lsn = match self.freshness_lsn_source_ref() {
+            Some(src) => src.current_lsn(collection_id).await,
+            None => u64::MAX,
+        };
+        #[cfg(not(feature = "cold-deletion-vectors"))]
+        let snapshot_lsn: u64 = u64::MAX;
+
         let mut all_candidates = Vec::new();
 
         // Phase 7.2 warm-path profiling: emit per-phase elapsed
@@ -1259,6 +1276,7 @@ impl SstEngine {
                                 filter_owned.clone(),
                                 k,
                                 distance_metric,
+                                snapshot_lsn,
                             )
                             .await
                         } else {
@@ -1381,6 +1399,7 @@ impl SstEngine {
                         filter_expression.cloned(),
                         k,
                         distance_metric,
+                        snapshot_lsn,
                     )
                     .await
                 } else {
@@ -1582,6 +1601,18 @@ impl SstEngine {
         use_parallel_morsels: bool,
         use_vectorized: bool,
     ) -> Result<Vec<OptimizedSearchRecord>> {
+        // TD-DELVEC-1 WI-4: capture the scan's snapshot LSN once per single-file
+        // scan (the parallel/arc path's per-file entry) for merge-on-read filtering
+        // in `search_pax_file_exact`. See `fallback_to_direct_search` for the
+        // rationale; u64::MAX (see all deletes) when no freshness source is wired.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let snapshot_lsn = match self.freshness_lsn_source_ref() {
+            Some(src) => src.current_lsn(collection_id).await,
+            None => u64::MAX,
+        };
+        #[cfg(not(feature = "cold-deletion-vectors"))]
+        let snapshot_lsn: u64 = u64::MAX;
+
         // PAX RaBitQ→SQ8 cascade first for `.pax` under a validated metric.
         let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path.ends_with(".pax")
             && matches!(
@@ -1636,6 +1667,7 @@ impl SstEngine {
                 filter_expression.cloned(),
                 k,
                 distance_metric,
+                snapshot_lsn,
             )
             .await
         } else if use_pipeline {
@@ -2383,6 +2415,7 @@ impl SstEngine {
     /// cascade; everything else falls here instead of hitting the
     /// ProximaBlocks-only `sstable_reader` (which cannot decode `.pax`). Recall
     /// is exact for `RawF32` quant and dequantization-bound for `RaBitQ`/`SQ8`.
+    #[cfg_attr(not(feature = "cold-deletion-vectors"), allow(unused_variables))]
     async fn search_pax_file_exact(
         &self,
         pax_path: &str,
@@ -2390,6 +2423,7 @@ impl SstEngine {
         filter_expression: Option<FilterExpression>,
         limit: usize,
         distance_metric: DistanceMetric,
+        snapshot_lsn: u64,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         use proximadb_distance_kernel::engine::{SimilarityResult, UnifiedDistanceCompute};
         use std::sync::Arc;
@@ -2415,11 +2449,34 @@ impl SstEngine {
             records.len()
         );
 
+        // TD-DELVEC-1 WI-4: warm this segment's deletion vector (lazy-load the
+        // `.dv`) so merge-on-read can skip deleted positions below. Best-effort —
+        // a load failure just means no skipping for this segment (the tombstone
+        // still provides read-coherence via is_record_dead until the DV is the
+        // sole mechanism).
+        #[cfg(feature = "cold-deletion-vectors")]
+        if let Some(dv) = &self.deletion_vector_store {
+            let _ = dv.load(pax_path).await;
+        }
+
         let distance_computer = UnifiedDistanceCompute::new(distance_metric);
         let mut candidates: Vec<OptimizedSearchRecord> =
             Vec::with_capacity(records.len().min(limit));
 
-        for record in &records {
+        for (pos, record) in records.iter().enumerate() {
+            // TD-DELVEC-1 WI-4: merge-on-read — skip positions whose deletion
+            // vector bit is set as of the scan's snapshot LSN (captured by the
+            // caller at the direct-scan convergence point). A cold delete is
+            // invisible here.
+            #[cfg(feature = "cold-deletion-vectors")]
+            if let Some(dv) = &self.deletion_vector_store
+                && dv
+                    .is_deleted_as_of(pax_path, pos as u32, snapshot_lsn)
+                    .await
+            {
+                continue;
+            }
+
             // Apply the metadata filter at record level (canonical props), mirroring
             // the ProximaBlocks scan path — PAX is the default format, so filter
             // support here is required, not optional (the Arrow path skips it).

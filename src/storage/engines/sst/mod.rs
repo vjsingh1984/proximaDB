@@ -259,6 +259,12 @@ pub mod deletion_vector_store; // TD-DELVEC-1 WI-3a-remaining-A: CAS'd per-segme
 #[cfg(all(test, feature = "cold-deletion-vectors"))]
 #[path = "tests/cold_delete_dv_test.rs"]
 mod cold_delete_dv_test;
+// TD-DELVEC-1 WI-4 (slice 1): merge-on-read integration test — a cold delete is
+// invisible on the exact `.pax` scan path (`search_pax_file_exact`). In-crate
+// (#[path], like cold_delete_dv_test) to read the pub(crate) DV store + discovery.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_read_merge_test.rs"]
+mod cold_read_merge_test;
 pub mod flush;
 pub mod manifest;
 #[cfg(feature = "cold-deletion-vectors")]
