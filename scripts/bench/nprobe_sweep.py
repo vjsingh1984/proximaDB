@@ -91,6 +91,7 @@ def require_release_provenance(
             "tests/python/test_sift_get_reduction_harness.py",
             "tests/python/test_bigann_prefix_groundtruth.py",
             "tests/python/test_nprobe_geometry_analysis.py",
+            "tests/python/test_nprobe_sweep.py",
         }
     ]
     if unsafe:
@@ -156,6 +157,75 @@ def require_config_port(config: Path, expected_port: int) -> None:
         )
 
 
+def checkpoint_identity(result: dict) -> dict:
+    """Return the immutable provenance/configuration of a matrix run."""
+    matrix = result["matrix"]
+    return {
+        "protocol": result["protocol"],
+        "git_revision": result["git_revision"],
+        "collection_id": result["collection_id"],
+        "binary": result["binary"],
+        "bed_config": result["bed_config"],
+        "dataset": result["dataset"],
+        "filesystem_profile": result["filesystem_profile"],
+        "compute_profile": result["compute_profile"],
+        "settled_geometry": result["settled_geometry"],
+        "matrix_config": {
+            "nprobes": matrix["nprobes"],
+            "top_k_values": matrix["top_k_values"],
+            "min_recall": matrix["min_recall"],
+        },
+    }
+
+
+def validate_resume(existing: dict, expected: dict) -> set[tuple[int, int]]:
+    """Validate a checkpoint and return its completed point identities."""
+    if existing.get("status") not in {"running", "incomplete"}:
+        raise RuntimeError(
+            f"matrix checkpoint is terminal ({existing.get('status')!r}); "
+            "refusing resume"
+        )
+    if checkpoint_identity(existing) != checkpoint_identity(expected):
+        raise RuntimeError("matrix checkpoint provenance/configuration differs")
+    expected_pairs = {
+        (int(nprobe), int(top_k))
+        for nprobe in expected["matrix"]["nprobes"]
+        for top_k in expected["matrix"]["top_k_values"]
+    }
+    completed: set[tuple[int, int]] = set()
+    for point in existing["matrix"].get("points", []):
+        identity = (int(point["nprobe"]), int(point["top_k"]))
+        if identity not in expected_pairs:
+            raise RuntimeError(f"checkpoint contains unexpected point {identity}")
+        if identity in completed:
+            raise RuntimeError(f"checkpoint contains duplicate point {identity}")
+        completed.add(identity)
+    return completed
+
+
+def write_checkpoint(
+    output: Path,
+    result: dict,
+    state: str,
+    incomplete_reason: str | None = None,
+) -> None:
+    """Atomically persist all completed points before advancing the sweep."""
+    expected_points = len(result["matrix"]["nprobes"]) * len(
+        result["matrix"]["top_k_values"]
+    )
+    result["status"] = state
+    result["checkpoint"] = {
+        "state": state,
+        "completed_points": len(result["matrix"]["points"]),
+        "expected_points": expected_points,
+        "incomplete_reason": incomplete_reason,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.tmp")
+    temporary.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    temporary.replace(output)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
@@ -195,6 +265,14 @@ def main() -> int:
     parser.add_argument("--required-layout-version", type=int, default=3)
     parser.add_argument("--min-recall", type=float, default=0.98)
     parser.add_argument("--azurite", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "resume an incomplete atomic checkpoint only when binary, dataset, "
+            "storage geometry, query slice, and sweep configuration all match"
+        ),
+    )
     args = parser.parse_args()
 
     repository = Path(__file__).resolve().parents[2]
@@ -205,8 +283,10 @@ def main() -> int:
     groundtruth_path = args.groundtruth_path.resolve()
     nprobes = comma_separated_ints(args.nprobes, "--nprobes")
     top_k_values = comma_separated_ints(args.top_k_values, "--top-k-values")
-    if output.exists():
+    if output.exists() and not args.resume:
         raise RuntimeError(f"refusing to overwrite matrix result: {output}")
+    if args.resume and not output.exists():
+        raise RuntimeError(f"resume checkpoint does not exist: {output}")
     if not config.is_file():
         raise RuntimeError(f"benchmark config not found: {config}")
     require_config_port(config, args.port)
@@ -279,12 +359,20 @@ def main() -> int:
     result = {
         "protocol": "pax_nprobe_topk_matrix",
         "git_revision": current_revision,
+        "collection_id": args.collection_id,
         "binary": {
             "path": str(binary),
             "sha256": ACCEPTANCE.sha256(binary),
             "bytes": binary.stat().st_size,
             "source_revision": args.binary_source_revision,
             "profile": profile,
+        },
+        "bed_config": {
+            "path": str(config),
+            "sha256": ACCEPTANCE.sha256(config),
+            "port": args.port,
+            "max_segments": args.max_segments,
+            "required_layout_version": args.required_layout_version,
         },
         "dataset": {
             "base": str(base_path),
@@ -326,9 +414,26 @@ def main() -> int:
         "failures": [],
     }
 
+    if args.resume:
+        existing = json.loads(output.read_text())
+        completed = validate_resume(existing, result)
+        result = existing
+        result["checkpoint"]["incomplete_reason"] = None
+        print(
+            f"resuming matrix: {len(completed)}/"
+            f"{len(nprobes) * len(top_k_values)} points complete",
+            flush=True,
+        )
+    else:
+        completed = set()
+        write_checkpoint(output, result, "running")
+
     server_url = f"http://127.0.0.1:{args.port}"
     for nprobe in nprobes:
         for top_k in top_k_values:
+            if (nprobe, top_k) in completed:
+                print(f"checkpoint skip: nprobe={nprobe} top_k={top_k}", flush=True)
+                continue
             label = f"nprobe-{nprobe}-top-{top_k}"
             server = ACCEPTANCE.OwnedServer(
                 binary=binary,
@@ -353,6 +458,14 @@ def main() -> int:
                     args.query_format,
                     args.groundtruth_format,
                 )
+            except (Exception, KeyboardInterrupt) as error:
+                write_checkpoint(
+                    output,
+                    result,
+                    "incomplete",
+                    f"{label}: {type(error).__name__}: {error}",
+                )
+                raise
             finally:
                 server.stop()
             expected_cells = sum(
@@ -374,6 +487,8 @@ def main() -> int:
             ):
                 result["failures"].append(attribution_failure)
             result["matrix"]["points"].append(point)
+            completed.add((nprobe, top_k))
+            write_checkpoint(output, result, "running")
 
     for top_k in top_k_values:
         recalls = [
@@ -385,9 +500,8 @@ def main() -> int:
             result["failures"].append(
                 f"top_k={top_k}: no nprobe reaches recall {args.min_recall:.4f}"
             )
-    result["status"] = "pass" if not result["failures"] else "fail"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    final_status = "pass" if not result["failures"] else "fail"
+    write_checkpoint(output, result, final_status)
     print(f"matrix result: {output}", flush=True)
     if result["failures"]:
         for failure in result["failures"]:
