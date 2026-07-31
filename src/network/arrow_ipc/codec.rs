@@ -220,7 +220,11 @@ fn flight_filter_to_rich(filter: &FlightFilter) -> Result<RichFilterCondition> {
     };
     let value = json_value_to_proxima(&filter.value);
     let value_upper = filter.value_upper.as_ref().map(json_value_to_proxima);
-    let value_list = filter.value_list.iter().map(json_value_to_proxima).collect();
+    let value_list = filter
+        .value_list
+        .iter()
+        .map(json_value_to_proxima)
+        .collect();
     Ok(RichFilterCondition {
         field: filter.field.clone(),
         operator,
@@ -1120,8 +1124,12 @@ impl ArrowProtoCodec {
         ]));
 
         let id_array = StringArray::from_iter_values(results.iter().map(|r| r.id.as_str()));
-        let score_array =
-            Float32Array::from(results.iter().map(|r| Some(r.score as f32)).collect::<Vec<_>>());
+        let score_array = Float32Array::from(
+            results
+                .iter()
+                .map(|r| Some(r.score as f32))
+                .collect::<Vec<_>>(),
+        );
 
         // Vector column: per-row validity, reserving `dimension` slots per row
         // even when the row carries no vector (keeps the child buffer length at
@@ -1162,8 +1170,12 @@ impl ArrowProtoCodec {
             Int64Array::from(results.iter().map(|r| r.timestamp).collect::<Vec<_>>());
         let version_array =
             UInt32Array::from(results.iter().map(|r| r.version).collect::<Vec<_>>());
-        let source_array =
-            StringArray::from(results.iter().map(|r| r.source.as_deref()).collect::<Vec<_>>());
+        let source_array = StringArray::from(
+            results
+                .iter()
+                .map(|r| r.source.as_deref())
+                .collect::<Vec<_>>(),
+        );
 
         RecordBatch::try_new(
             schema,
@@ -1566,10 +1578,23 @@ mod tests {
         let batch =
             ArrowProtoCodec::rich_search_results_to_batch(&[], false).expect("empty encodes");
         assert_eq!(batch.num_rows(), 0);
-        let names: Vec<&str> = batch.schema().fields().iter().map(|f| f.name().as_str()).collect();
+        let names: Vec<&str> = batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().as_str())
+            .collect();
         assert_eq!(
             names,
-            vec!["id", "score", "vector", "properties", "timestamp", "version", "source"]
+            vec![
+                "id",
+                "score",
+                "vector",
+                "properties",
+                "timestamp",
+                "version",
+                "source"
+            ]
         );
     }
 
@@ -1580,8 +1605,7 @@ mod tests {
             ("year", ProximaValue::Int64(2024)),
         ];
         let results = vec![mk_result("r1", 0.91, props)];
-        let batch =
-            ArrowProtoCodec::rich_search_results_to_batch(&results, false).expect("encode");
+        let batch = ArrowProtoCodec::rich_search_results_to_batch(&results, false).expect("encode");
         assert_eq!(batch.num_rows(), 1);
         let props_col = batch.column_by_name("properties").expect("properties col");
         let sa = props_col
@@ -1600,8 +1624,7 @@ mod tests {
         let mut r1 = mk_result("r1", 1.0, vec![]);
         r1.vector = vec![0.1, 0.2, 0.3];
         let r2 = mk_result("r2", 0.5, vec![]);
-        let batch =
-            ArrowProtoCodec::rich_search_results_to_batch(&[r1, r2], true).expect("encode");
+        let batch = ArrowProtoCodec::rich_search_results_to_batch(&[r1, r2], true).expect("encode");
         let vcol = batch.column_by_name("vector").expect("vector col");
         assert_eq!(vcol.null_count(), 1, "second row has no vector => null");
         assert!(!vcol.is_null(0));

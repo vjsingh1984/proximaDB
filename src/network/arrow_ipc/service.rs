@@ -39,7 +39,9 @@ use crate::services::operations::{
 };
 use chrono::Utc;
 
-use super::codec::{ArrowProtoCodec, FlightFilter, FlightSearchTicket, FlightWriteOperation, WriteMode};
+use super::codec::{
+    ArrowProtoCodec, FlightFilter, FlightSearchTicket, FlightWriteOperation, WriteMode,
+};
 use super::file_export::{
     ArrowFileExportHandler, ArrowFileRequest, ArrowFileTicket, FlightCompression,
 };
@@ -3229,8 +3231,8 @@ impl ProximaFlightService {
                     let flight_data_vec =
                         ArrowProtoCodec::batch_to_flight_data(&result_batch, &Default::default())
                             .map_err(|e| {
-                                TonicStatus::internal(format!("Failed to encode result: {}", e))
-                            })?;
+                            TonicStatus::internal(format!("Failed to encode result: {}", e))
+                        })?;
                     for fd in flight_data_vec {
                         results.push(Ok(fd));
                     }

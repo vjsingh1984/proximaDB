@@ -7691,6 +7691,7 @@ dependencies = [
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-records",
+ "proximadb-search-types",
  "proximadb-tenant",
  "regex",
  "reqwest 0.11.27",

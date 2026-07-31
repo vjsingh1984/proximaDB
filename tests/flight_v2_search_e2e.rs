@@ -13,10 +13,10 @@ use std::net::TcpListener;
 use std::time::Duration;
 
 use arrow_array::{RecordBatch, StringArray};
+use arrow_flight::Ticket;
 use arrow_flight::decode::FlightRecordBatchStream;
 use arrow_flight::error::FlightError;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Ticket;
 use futures::TryStreamExt;
 use proximadb::core::Config;
 use proximadb::database::ProximaDB;
@@ -191,7 +191,11 @@ async fn flight_v2_doget_matches_rest_v2() {
                 .map(str::to_string)
         })
         .collect();
-    assert_eq!(rest_ids, vec!["rec-0", "rec-1", "rec-2"], "rest oracle order: {rest_body}");
+    assert_eq!(
+        rest_ids,
+        vec!["rec-0", "rec-1", "rec-2"],
+        "rest oracle order: {rest_body}"
+    );
 
     // Flight DoGet with the canonical v2 ticket.
     let channel = tonic::transport::Endpoint::from_shared(server.flight_url())
@@ -212,7 +216,11 @@ async fn flight_v2_doget_matches_rest_v2() {
         .unwrap()
         .into(),
     };
-    let response = flight.do_get(ticket).await.expect("flight do_get").into_inner();
+    let response = flight
+        .do_get(ticket)
+        .await
+        .expect("flight do_get")
+        .into_inner();
     let record_stream = FlightRecordBatchStream::new_from_flight_data(
         response.map_err(|s| FlightError::Tonic(Box::new(s))),
     );

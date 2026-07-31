@@ -937,7 +937,8 @@ impl proximadb_runtime::RecordSearchPort for RecordOpsService {
         request: RichSearchRequest,
         tenant_id: Option<&str>,
     ) -> Result<RichSearchResponse> {
-        self.handle_record_search_for_tenant(request, tenant_id).await
+        self.handle_record_search_for_tenant(request, tenant_id)
+            .await
     }
 }
 

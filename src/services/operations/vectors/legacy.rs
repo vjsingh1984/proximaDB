@@ -229,7 +229,8 @@ pub use proximadb_runtime::rich_record::{
 /// here so existing `crate::services::operations::vectors::legacy::RichSearch*`
 /// / `RichFilter*` callers are unaffected.
 pub use proximadb_runtime::rich_search::{
-    RichFilterCondition, RichFilterOperator, RichSearchRequest, RichSearchResponse, RichSearchResult,
+    RichFilterCondition, RichFilterOperator, RichSearchRequest, RichSearchResponse,
+    RichSearchResult,
 };
 
 pub type RichRecordGetResponse = Option<RichSearchResult>;
