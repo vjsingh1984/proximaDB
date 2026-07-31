@@ -172,15 +172,24 @@ def summarize_matrix(result: dict, target_recall: float, source: Path) -> dict:
             "quality_floor": quality_floor(curve, target_recall),
         }
     segment = result["settled_geometry"]["segments"][0]
+    corpus_rows = int(result["dataset"]["corpus_rows"])
+    dimension = int(result["dataset"]["dimension"])
+    coarse_cells = int(segment["coarse_cells"])
     return {
         "source": str(source.resolve()),
         "source_sha256": _sha256(source),
-        "corpus_rows": int(result["dataset"]["corpus_rows"]),
-        "dimension": int(result["dataset"]["dimension"]),
-        "coarse_cells": int(segment["coarse_cells"]),
-        "rows_per_cell_mean": (
-            int(result["dataset"]["corpus_rows"]) / int(segment["coarse_cells"])
+        "corpus_rows": corpus_rows,
+        "dimension": dimension,
+        "coarse_cells": coarse_cells,
+        "rows_per_cell_mean": corpus_rows / coarse_cells,
+        "sq8_bytes_per_cell_mean": corpus_rows * dimension / coarse_cells,
+        "rabitq_bytes_per_cell_mean": (
+            corpus_rows * (8 + math.ceil(dimension / 8)) / coarse_cells
         ),
+        "cell_row_summary": segment.get("cell_row_summary"),
+        "cell_row_max_to_mean": segment.get("cell_row_max_to_mean"),
+        "empty_cell_fraction": segment.get("empty_cell_fraction"),
+        "radius_summary": segment.get("radius_summary"),
         "curves": curves,
         "points": points,
     }
@@ -239,6 +248,11 @@ def build_analysis(matrices: list[Path], target_recall: float) -> dict:
         "scales": scales,
         "fits": fits,
         "interpretation": {
+            "coarse_cell_rule": (
+                "k_c = clamp(floor(corpus_rows * dimension / 4MiB), 2, 4096); "
+                "therefore the fitted deployment form is coefficient * "
+                "(corpus_rows * dimension / 4MiB) ^ exponent"
+            ),
             "recommendation_rule": (
                 "minimum measured nprobe whose recall meets the target"
             ),
@@ -249,6 +263,11 @@ def build_analysis(matrices: list[Path], target_recall: float) -> dict:
             "extrapolation": (
                 "descriptive only within measured_cell_range; clamp to "
                 "[configured_min, coarse_cells]"
+            ),
+            "cluster_radii": (
+                "persisted and reported as shape evidence, but the current "
+                "probe ranks centroid distance only; radii do not select cells "
+                "and cannot cause a recall or GET change in this sweep"
             ),
         },
     }
