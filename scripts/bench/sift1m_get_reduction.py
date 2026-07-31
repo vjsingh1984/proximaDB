@@ -1071,6 +1071,7 @@ def write_config(
     flush_vector_threshold: int,
     storage_url: str,
     flush_interval_secs: int = 12,
+    flush_floor_predicted_mb: int = 128,
 ) -> None:
     data = root / "data"
     config = f"""[server]
@@ -1102,6 +1103,7 @@ sync_mode = "PerBatch"
 write_buffer_size_mb = {write_buffer_mb}
 vector_count_threshold = {flush_vector_threshold}
 flush_interval_secs = {flush_interval_secs}
+flush_floor_predicted_mb = {flush_floor_predicted_mb}
 
 [storage.sst_config]
 data_directory = "{data / "sst"}"
@@ -1745,6 +1747,16 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--flush-floor-predicted-mb",
+        type=int,
+        default=128,
+        help=(
+            "minimum predicted quantized PAX MiB before an inline size flush; "
+            "the production default is 128. For a single-segment geometry bed, "
+            "set this above the corpus prediction and use one explicit flush"
+        ),
+    )
+    parser.add_argument(
         "--explicit-flush-every-rows",
         type=int,
         help=(
@@ -1819,6 +1831,8 @@ def main() -> int:
         raise RuntimeError("--write-buffer-mb must be positive")
     if args.flush_vector_threshold <= 0:
         raise RuntimeError("--flush-vector-threshold must be positive")
+    if args.flush_floor_predicted_mb < 0:
+        raise RuntimeError("--flush-floor-predicted-mb must be non-negative")
     if args.explicit_flush_every_rows is not None:
         if args.explicit_flush_every_rows <= 0:
             raise RuntimeError("--explicit-flush-every-rows must be positive")
@@ -2008,6 +2022,7 @@ def main() -> int:
         args.flush_vector_threshold,
         storage_url,
         flush_interval_secs,
+        args.flush_floor_predicted_mb,
     )
     server_url = f"http://127.0.0.1:{args.port}"
     local_disk = root / "local-disk-cache"
@@ -2108,6 +2123,7 @@ def main() -> int:
             "write_buffer_mb": args.write_buffer_mb,
             "flush_vector_threshold": args.flush_vector_threshold,
             "flush_interval_secs": flush_interval_secs,
+            "flush_floor_predicted_mb": args.flush_floor_predicted_mb,
             "explicit_flush_every_rows": args.explicit_flush_every_rows,
             "explicit_flush_flight_port": (
                 args.port if args.explicit_flush_every_rows is not None else None

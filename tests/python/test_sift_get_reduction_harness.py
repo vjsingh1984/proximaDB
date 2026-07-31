@@ -299,6 +299,26 @@ def test_config_preserves_object_store_url(tmp_path: Path) -> None:
     assert f'url = "{storage_url}"' in config
     assert "[storage.optimization]\nenable_mmap = false" in config
     assert "vector_count_threshold = 20000" in config
+    assert "flush_floor_predicted_mb = 128" in config
+
+
+def test_config_records_controlled_geometry_flush_floor(tmp_path: Path) -> None:
+    config_path = tmp_path / "benchmark.toml"
+
+    HARNESS.write_config(
+        config_path,
+        tmp_path,
+        5690,
+        2048,
+        2_000_000,
+        "az://benchmarks/run-1",
+        flush_interval_secs=3600,
+        flush_floor_predicted_mb=256,
+    )
+
+    config = config_path.read_text()
+    assert "flush_interval_secs = 3600" in config
+    assert "flush_floor_predicted_mb = 256" in config
 
 
 def test_explicit_flush_disables_timer_races_by_default() -> None:
