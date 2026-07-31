@@ -70,6 +70,17 @@ def test_azure_geometry_uses_canonical_az_scheme(tmp_path: Path) -> None:
     assert geometry.prefix == "five-point/100k"
 
 
+def test_compute_profile_names_the_actual_pax_distance_dispatch() -> None:
+    arm = HARNESS.compute_profile("arm64")
+    x86 = HARNESS.compute_profile("x86_64")
+
+    assert arm["region_b_sq8_l2_kernel"] == "neon_fused_decode_distance"
+    assert arm["dispatch"] == "compile_time_aarch64"
+    assert x86["region_b_sq8_l2_kernel"] == "avx2_or_scalar_fused_decode_distance"
+    assert x86["dispatch"] == "runtime_feature_detection"
+    assert arm["gpu_role"] == "not_used_by_pax_rabitq_sq8_search"
+
+
 def test_prefix_quality_checkpoints_reuse_one_query_execution() -> None:
     recalls = [1.0] * 100 + [0.9] * 900 + [0.8] * 9_000
     latencies = [float(value) for value in range(1, 10_001)]

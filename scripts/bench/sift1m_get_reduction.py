@@ -31,6 +31,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import re
 import signal
 import struct
@@ -67,6 +68,34 @@ METRICS = (
     "proximadb_ivf_fetch_rounds_total",
     "proximadb_ivf_whole_region_fallback_total",
 )
+
+
+def compute_profile(machine: str | None = None) -> dict:
+    """Describe the kernels this fixed Euclidean PAX benchmark exercises."""
+    architecture = (machine or platform.machine()).lower()
+    if architecture in {"arm64", "aarch64"}:
+        sq8_kernel = "neon_fused_decode_distance"
+        dispatch = "compile_time_aarch64"
+    elif architecture in {"x86_64", "amd64"}:
+        sq8_kernel = "avx2_or_scalar_fused_decode_distance"
+        dispatch = "runtime_feature_detection"
+    else:
+        sq8_kernel = "scalar_fused_decode_distance"
+        dispatch = "portable_fallback"
+    return {
+        "architecture": architecture,
+        "distance_metric": "euclidean_l2",
+        "region_a_filter_kernel": "rabitq_query_bound_lookup_table",
+        "region_b_sq8_l2_kernel": sq8_kernel,
+        "dispatch": dispatch,
+        "gpu_role": "not_used_by_pax_rabitq_sq8_search",
+        "source": {
+            "rerank_call": "src/storage/engines/sst/segment_format.rs",
+            "sq8_dispatch": (
+                "crates/horizontal/proximadb-codec/src/baseline/functions/sq8.rs"
+            ),
+        },
+    }
 
 
 def request_json(
@@ -2057,6 +2086,7 @@ def main() -> int:
                 "search handler; this benchmark keeps v2 search semantics"
             ),
         },
+        "compute_profile": compute_profile(),
         "thresholds": {
             "post_write_max_gets_per_query": args.post_write_max_gets,
             "local_disk_warm_max_gets_per_query": args.local_warm_max_gets,
