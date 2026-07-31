@@ -165,7 +165,7 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 
 | link:ADR-031-stable-object-id-physical-key.adoc[ADR-031]
 | Stable `object_id` as the Physical Collection Key — the **catalog-object surrogate identity** authority (name is a mutable attribute)
-| Proposed
+| Superseded (2026-07-30)
 | Keys the canonical-WAL `collection_id`, the memtable partition, and storage paths on a stable immutable `u64` `object_id` instead of the mutable name — **rename-safe** + **structurally tenant-isolated** (drops the per-query `tenant_id` feed predicate, since the id is globally unique). The **authority for catalog-object surrogate identity** (account/namespace/table/column/index): the parallel `ADR-033-catalog-object-surrogate-identity` draft (PR #436) was closed — `033` was taken (primary-storage-format) and re-use fails the #441 `td-adr-unique` guard — and its decisions, the salvaged execution plan, and the ADR-024 identity addendum are folded here; `object_id` ≡ `object_oid`. Mixed-read-safe **O0–O4** cutover, default-OFF (relational O0–O2 merged). Execution plan: `CATALOG_OID_MIGRATION_2026_06_27.adoc` (TD-181). Tracked: ADR-031 O0–O4.
 
 | link:ADR-032-durable-tenant-prefixed-object-store-catalog.adoc[ADR-032]
