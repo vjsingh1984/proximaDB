@@ -184,6 +184,11 @@ pub struct ProximaFlightService {
     /// Whether missing request identity may resolve to a configured default.
     tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
     catalog_manager: Option<Arc<CatalogManager>>,
+    /// TD-TENANT-1: catalog-backed tenant stable-id resolver, mirroring the
+    /// REST `TenantExtractor::with_stable_id_resolver` seam. When present,
+    /// `handle_v2_search` stamps the resolved stable u64 into the io_trace
+    /// boundary (so Flight search is attributable per-tenant like REST).
+    stable_id_resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
     /// R-7c.4b: when present, the `rank_features_export` Flight action
     /// drives the multi-phase ranking pipeline through this singleton.
     /// Absent means the action returns `Unimplemented` (deployments that
@@ -287,6 +292,7 @@ impl ProximaFlightService {
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
             catalog_manager: None,
+            stable_id_resolver: None,
             rank_services: None,
             primary_pod_gate: None,
             graph_service: None,
@@ -408,6 +414,17 @@ impl ProximaFlightService {
     /// Attach xCatalog metadata for relational/table Flight schema resolution.
     pub fn with_catalog_manager(mut self, catalog_manager: Option<Arc<CatalogManager>>) -> Self {
         self.catalog_manager = catalog_manager;
+        self
+    }
+
+    /// Wire the catalog-backed tenant stable-id resolver (TD-TENANT-1), mirroring
+    /// REST's `TenantExtractor::with_stable_id_resolver`. When set, Flight search
+    /// stamps the resolved stable id into the io_trace boundary.
+    pub fn with_stable_id_resolver(
+        mut self,
+        resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
+    ) -> Self {
+        self.stable_id_resolver = resolver;
         self
     }
 
@@ -1175,8 +1192,8 @@ impl ProximaFlightService {
     /// behavior, and the tenant-collection-access check. Wrapped in the same
     /// query-scoped I/O-trace boundary as REST v2 (route
     /// `arrow_flight.v2.records.search`) so object GETs/bytes stay attributable
-    /// per query. Flight has no tenant-stable-id resolver yet, so the stable id
-    /// is `None` (matches the `instrument()` fallback).
+    /// per query. The tenant stable id (TD-TENANT-1) is resolved via the wired
+    /// `TenantStableIdResolver` when present, else `None`.
     async fn handle_v2_search(
         &self,
         ticket: FlightSearchTicket,
@@ -1191,9 +1208,18 @@ impl ProximaFlightService {
             "Arrow Flight canonical v2 vector search"
         );
 
+        // TD-TENANT-1: resolve the tenant's stable u64 (catalog-backed) so the
+        // io_trace record is attributable per-tenant, mirroring REST v2. `None`
+        // when no resolver is wired or the tenant is unminted (fail-open for
+        // attribution, never for access).
+        let tenant_stable_id = self
+            .stable_id_resolver
+            .as_ref()
+            .and_then(|r| r.stable_id_of(tenant_id));
+
         let response = crate::observability::io_trace::instrument_with_stable_tenant(
             Some(tenant_id.to_string()),
-            None,
+            tenant_stable_id,
             "arrow_flight.v2.records.search",
             crate::observability::predicate_diagnostics::scope(async {
                 self.record_search_port

@@ -737,7 +737,11 @@ impl MultiServer {
                     arrow_graph,
                 )
                 .with_tenant_header_trust(tenant_header_trust)
-                .with_tenant_deployment_mode(tenant_deployment_mode);
+                .with_tenant_deployment_mode(tenant_deployment_mode)
+                .with_stable_id_resolver(Some(Arc::new(
+                    crate::security::CatalogTenantStableIdResolver::new(catalog_manager.clone()),
+                )
+                    as Arc<dyn proximadb_tenant::TenantStableIdResolver>));
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
@@ -1145,7 +1149,13 @@ impl MultiServer {
                 })
                 .with_tenant_header_trust(self.tenant_header_trust)
                 .with_tenant_deployment_mode(self.tenant_deployment_mode.clone())
-                .with_catalog_manager(Some(services.catalog_manager.clone()));
+                .with_catalog_manager(Some(services.catalog_manager.clone()))
+                .with_stable_id_resolver(Some(Arc::new(
+                    crate::security::CatalogTenantStableIdResolver::new(
+                        services.catalog_manager.clone(),
+                    ),
+                )
+                    as Arc<dyn proximadb_tenant::TenantStableIdResolver>));
             let flight_server =
                 arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
                     .max_encoding_message_size(512 * 1024 * 1024)
@@ -1662,7 +1672,11 @@ impl MultiServer {
                     arrow_graph,
                 )
                 .with_tenant_header_trust(tenant_header_trust)
-                .with_tenant_deployment_mode(tenant_deployment_mode);
+                .with_tenant_deployment_mode(tenant_deployment_mode)
+                .with_stable_id_resolver(Some(Arc::new(
+                    crate::security::CatalogTenantStableIdResolver::new(catalog_manager.clone()),
+                )
+                    as Arc<dyn proximadb_tenant::TenantStableIdResolver>));
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
