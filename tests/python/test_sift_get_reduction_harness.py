@@ -60,6 +60,20 @@ def test_object_cold_ivf_requires_physical_region_byte_attribution() -> None:
     assert HARNESS.ivf_byte_attribution_failure("object_cold", result) is None
 
 
+def test_prefix_quality_checkpoints_reuse_one_query_execution() -> None:
+    recalls = [1.0] * 100 + [0.9] * 900 + [0.8] * 9_000
+    latencies = [float(value) for value in range(1, 10_001)]
+
+    checkpoints = HARNESS.prefix_quality_checkpoints(recalls, latencies)
+
+    assert [point["query_count"] for point in checkpoints] == [100, 1_000, 10_000]
+    assert checkpoints[0]["recall_at_k"] == 1.0
+    assert checkpoints[1]["recall_at_k"] == pytest.approx(0.91)
+    assert checkpoints[2]["recall_at_k"] == pytest.approx(0.811)
+    assert checkpoints[0]["latency_ms"]["p50"] == 50.0
+    assert checkpoints[1]["latency_ms"]["p95"] == 950.0
+
+
 def test_u8bin_prefix_uses_physical_rows_and_preserves_declared_rows(
     tmp_path: Path,
 ) -> None:

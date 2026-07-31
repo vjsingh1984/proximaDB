@@ -845,6 +845,37 @@ def percentile(sorted_values: list[float], quantile: float) -> float:
     return sorted_values[rank]
 
 
+def prefix_quality_checkpoints(
+    recalls: list[float], latencies: list[float]
+) -> list[dict]:
+    """Summarize nested 100/1K/10K samples without rerunning any query.
+
+    Recall and latency are query-local, so their prefix estimates can share a
+    single execution. Physical-I/O counters remain attached to the complete
+    sweep because scraping at each prefix would add control-plane noise.
+    """
+    if not recalls or len(recalls) != len(latencies):
+        raise RuntimeError("quality checkpoints require paired query samples")
+    checkpoints = sorted(
+        {len(recalls), *[n for n in (100, 1_000, 10_000) if n <= len(recalls)]}
+    )
+    result = []
+    for query_count in checkpoints:
+        prefix_latencies = sorted(latencies[:query_count])
+        result.append(
+            {
+                "query_count": query_count,
+                "recall_at_k": sum(recalls[:query_count]) / query_count,
+                "latency_ms": {
+                    "p50": percentile(prefix_latencies, 0.50),
+                    "p95": percentile(prefix_latencies, 0.95),
+                    "mean": sum(prefix_latencies) / query_count,
+                },
+            }
+        )
+    return result
+
+
 def run_query_sweep(
     server: str,
     collection_id: str,
@@ -877,6 +908,7 @@ def run_query_sweep(
         expected = {f"v{row}" for row in groundtruth[offset][:top_k]}
         recalls.append(len(returned & expected) / top_k)
     after = scrape(server)
+    quality_checkpoints = prefix_quality_checkpoints(recalls, latencies)
     latencies.sort()
     gets = metric_delta(before, after, "proximadb_object_store_gets_total")
     bytes_read = metric_delta(before, after, "proximadb_object_store_bytes_read_total")
@@ -913,6 +945,7 @@ def run_query_sweep(
         "query_count": query_count,
         "top_k": top_k,
         "recall_at_k": sum(recalls) / len(recalls),
+        "prefix_quality_checkpoints": quality_checkpoints,
         "latency_ms": {
             "p50": percentile(latencies, 0.50),
             "p95": percentile(latencies, 0.95),
