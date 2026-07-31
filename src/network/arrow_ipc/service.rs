@@ -169,14 +169,9 @@ pub struct ProximaFlightService {
     // concrete services it actually uses, not a monolithic handler. Canonical
     // v2 vector search goes through `RecordSearchPort`, record-batch ingest
     // through `RecordOpsPort`; the vector-ops/collection services are held
-    // directly (same Arcs as before). `api_port` is retained for the v1
-    // surface still used elsewhere (deprecated for Flight search — TD-FLIGHT-1).
-    // TD-FLIGHT-1: `api_port` (the v1 search contract) is no longer used by
-    // Flight search — both DoGet and bulk_search now route through
-    // `record_search_port`. Retained (rather than ripped out) to keep this PR
-    // off the constructor/boot-wiring cascade; a follow-up TD removes it.
-    #[allow(dead_code)]
-    api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+    // directly (same Arcs as before). (TD-FLIGHT-2: the deprecated v1
+    // `api_port`/`ApiHandlersPort` search field was removed once #1351 landed —
+    // the v1 method stays on `ApiHandlersPort` for REST `/progressive/search`.)
     record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
     record_search_port: Arc<dyn proximadb_runtime::RecordSearchPort>,
     vector_operations_service: Arc<crate::services::VectorOperationsService>,
@@ -277,7 +272,6 @@ impl ProximaFlightService {
     /// routes through ROOT). The vector-ops/collection services and the storage
     /// locations are passed in by the boot wiring (multi_server / ArrowFlightServer).
     pub fn new(
-        api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
         record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
         record_search_port: Arc<dyn proximadb_runtime::RecordSearchPort>,
         vector_operations_service: Arc<crate::services::VectorOperationsService>,
@@ -285,7 +279,6 @@ impl ProximaFlightService {
         storage_locations: Vec<String>,
     ) -> Self {
         Self {
-            api_port,
             record_port,
             record_search_port,
             vector_operations_service,
@@ -314,12 +307,11 @@ impl ProximaFlightService {
     }
 
     /// Boot adapter (TD-104 S3-c/S3-e): build a `ProximaFlightService` from the
-    /// runtime `api_port` plus the concrete services it needs, all passed
-    /// directly (no root `UnifiedHandlers` indirection). `storage_locations` is
-    /// derived from the collection service's storage config — the same read the
-    /// former root `storage_config()` delegated to.
+    /// runtime ports plus the concrete services it needs, all passed directly
+    /// (no root `UnifiedHandlers` indirection). `storage_locations` is derived
+    /// from the collection service's storage config — the same read the former
+    /// root `storage_config()` delegated to.
     pub fn from_services(
-        api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
         record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
         record_search_port: Arc<dyn proximadb_runtime::RecordSearchPort>,
         vector_operations_service: Arc<crate::services::VectorOperationsService>,
@@ -334,7 +326,6 @@ impl ProximaFlightService {
             .collect();
 
         Self::new(
-            api_port,
             record_port,
             record_search_port,
             vector_operations_service,
