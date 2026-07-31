@@ -19,7 +19,7 @@ It measures three distinct states with fresh result/DRAM caches:
 3. object_cold: restart without the local-disk tier (diagnostic baseline).
 
 The default local backend meters the same physical read seam used by
-object-store backends. Pass ``--storage-url adls://... --azurite`` to exercise
+object-store backends. Pass ``--storage-url az://... --azurite`` to exercise
 the production Azure backend over HTTP. Azurite latency is local-emulator
 evidence, not a production Azure WAN-latency claim.
 """
@@ -534,7 +534,8 @@ class AzureCliPaxGeometry:
         parsed = urlparse(storage_url)
         if parsed.scheme not in {"adls", "az", "azure"}:
             raise RuntimeError(
-                f"Azure geometry requires adls:// storage, got {storage_url}"
+                f"Azure geometry requires canonical az:// storage "
+                f"(azure:// and adls:// aliases are accepted), got {storage_url}"
             )
         if not parsed.netloc:
             raise RuntimeError(f"Azure storage URL has no container: {storage_url}")
@@ -1719,7 +1720,7 @@ def main() -> int:
         "--storage-url",
         help=(
             "durable segment base URL; defaults to a file:// directory under "
-            "--root. adls:// requires Azure CLI for footer geometry."
+            "--root. az:// requires Azure CLI for footer geometry."
         ),
     )
     parser.add_argument(
@@ -1727,7 +1728,7 @@ def main() -> int:
         action="store_true",
         help=(
             "run the production Azure backend against local Azurite; requires "
-            "--storage-url adls://... and AZURE_STORAGE_CONNECTION_STRING for "
+            "--storage-url az://... and AZURE_STORAGE_CONNECTION_STRING for "
             "out-of-process geometry snapshots"
         ),
     )
@@ -1786,7 +1787,10 @@ def main() -> int:
         args.storage_url
         and urlparse(args.storage_url).scheme in {"adls", "az", "azure"}
     ):
-        raise RuntimeError("--azurite requires --storage-url adls://...")
+        raise RuntimeError(
+            "--azurite requires canonical --storage-url az://... "
+            "(azure:// and adls:// aliases are accepted)"
+        )
     if args.azurite and not os.environ.get("AZURE_STORAGE_CONNECTION_STRING"):
         raise RuntimeError(
             "--azurite requires AZURE_STORAGE_CONNECTION_STRING for geometry"

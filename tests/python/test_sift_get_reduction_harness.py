@@ -60,6 +60,16 @@ def test_object_cold_ivf_requires_physical_region_byte_attribution() -> None:
     assert HARNESS.ivf_byte_attribution_failure("object_cold", result) is None
 
 
+def test_azure_geometry_uses_canonical_az_scheme(tmp_path: Path) -> None:
+    geometry = HARNESS.AzureCliPaxGeometry(
+        "az://benchmark-container/five-point/100k",
+        tmp_path,
+    )
+
+    assert geometry.container == "benchmark-container"
+    assert geometry.prefix == "five-point/100k"
+
+
 def test_prefix_quality_checkpoints_reuse_one_query_execution() -> None:
     recalls = [1.0] * 100 + [0.9] * 900 + [0.8] * 9_000
     latencies = [float(value) for value in range(1, 10_001)]
