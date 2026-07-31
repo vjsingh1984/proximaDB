@@ -582,6 +582,15 @@ pub struct VectorOperationsService {
     /// Optional RBAC enforcer for role-based access control
     rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
 
+    /// FA-2 vector ABAC enforcer (default-OFF behind `abac-policy`). When
+    /// present, `unified_search_native` pushes the subject's accessibility
+    /// predicate into the search — ACORN traversal for conjunctive policies
+    /// (recall-preserving), exact-scan or result post-filter otherwise. `None`
+    /// ⇒ no per-record enforcement (fail-open for unwired/test, mirroring the
+    /// relational `DmlService` when no enforcer is installed).
+    #[cfg(feature = "abac-policy")]
+    abac_enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
+
     /// Bulk write router for intelligent write path selection.
     /// Routes large batches to the WAL-backed bulk lane until direct
     /// segment/manifest commit has an accepted durability proof.
@@ -622,6 +631,31 @@ pub struct VectorOperationsService {
         Option<Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>>,
 }
 
+/// FA-2 (abac-policy): a `FilterExpression` is AXIS push-down-compatible iff it
+/// is a conjunction of comparisons — the only shape `flatten_filter_expression`
+/// (`hybrid/axis_builder.rs`) accepts; Or/Not cause that builder to error out.
+#[cfg(feature = "abac-policy")]
+fn abac_filter_is_conjunctive(expr: &crate::core::search::FilterExpression) -> bool {
+    use crate::core::search::FilterExpression;
+    match expr {
+        FilterExpression::Comparison { .. } => true,
+        FilterExpression::And(parts) => parts.iter().all(abac_filter_is_conjunctive),
+        FilterExpression::Or(_) | FilterExpression::Not(_) => false,
+    }
+}
+
+/// FA-2 (abac-policy): push the security predicate DOWN into the ANN search iff
+/// BOTH the security expression and the user filter are conjunctive — so the
+/// ANDed combined filter still flattens into the AXIS query. Otherwise the
+/// caller post-filters the results (the non-conjunctive fallback).
+#[cfg(feature = "abac-policy")]
+fn abac_security_is_pushdown(
+    security: &crate::core::search::FilterExpression,
+    user_filter: Option<&crate::core::search::FilterExpression>,
+) -> bool {
+    abac_filter_is_conjunctive(security) && user_filter.is_none_or(abac_filter_is_conjunctive)
+}
+
 impl VectorOperationsService {
     /// Create service with a shared context for cross-cutting concerns
     pub fn new_with_context(
@@ -656,6 +690,17 @@ impl VectorOperationsService {
         }
         svc
     }
+
+    /// Install the FA-2 vector ABAC enforcer (default-OFF behind `abac-policy`).
+    /// When set, `unified_search_native` enforces the subject's accessibility
+    /// predicate on every vector search (push-down for conjunctive policies,
+    /// post-filter fallback otherwise). Mirrors `DmlService::with_abac_enforcer`.
+    #[cfg(feature = "abac-policy")]
+    pub fn with_abac_enforcer(mut self, enforcer: Arc<crate::security::rls::AbacEnforcer>) -> Self {
+        self.abac_enforcer = Some(enforcer);
+        self
+    }
+
     /// Expose the unified storage engine as a trait object for integration points
     pub fn unified_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageFormat> {
         self.storage_engine.clone() as Arc<dyn crate::storage::traits::UnifiedStorageFormat>
@@ -1622,6 +1667,8 @@ impl VectorOperationsService {
             // NEW: Multi-tenant integration (initially None, set via builder methods)
             tenant_manager: None,
             rbac_enforcer: None,
+            #[cfg(feature = "abac-policy")]
+            abac_enforcer: None,
 
             // Bulk write router for intelligent write path selection
             bulk_write_router: BulkWriteRouter::new(),
@@ -2843,6 +2890,42 @@ impl VectorOperationsService {
 
     /// Native variant: returns optimized native records for internal callers.
     /// Callers at API boundaries should use v1 adapters.
+    /// FA-2 (abac-policy): plan how to apply the subject's accessibility
+    /// predicate on the vector search path. Returns `(filter_for_search,
+    /// post_security)`: a conjunctive policy ANDs into the search filter
+    /// (push-down into ACORN / exact-scan — recall-preserving); a non-
+    /// conjunctive policy (Or/Not, which `flatten_filter_expression` rejects)
+    /// leaves the user filter for the search and returns the security
+    /// expression to post-filter the results. `None` enforcer or a `System`
+    /// context ⇒ passthrough (fail-open for unwired/trusted-internal, mirroring
+    /// `DmlService` when no enforcer is installed).
+    #[cfg(feature = "abac-policy")]
+    fn apply_abac_vector_filter(
+        &self,
+        user_filter: Option<FilterExpression>,
+        read_context: &ReadContext,
+    ) -> (Option<FilterExpression>, Option<FilterExpression>) {
+        use crate::services::operations::secure_operations::combine_filters;
+        let enforcer = match self.abac_enforcer.as_ref() {
+            Some(enforcer) => enforcer,
+            None => return (user_filter, None),
+        };
+        let security = match read_context {
+            ReadContext::Client(ctx) => enforcer.security_filter_for_context(ctx),
+            ReadContext::System(_) => return (user_filter, None),
+        };
+        match security {
+            None => (user_filter, None),
+            Some(security) => {
+                if abac_security_is_pushdown(&security, user_filter.as_ref()) {
+                    (combine_filters(user_filter, Some(security)), None)
+                } else {
+                    (user_filter, Some(security))
+                }
+            }
+        }
+    }
+
     pub async fn unified_search_native(
         &self,
         collection_id: &str,
@@ -2854,6 +2937,11 @@ impl VectorOperationsService {
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         use std::time::Instant;
         let total_start = Instant::now();
+        // FA-2 (abac-policy): push the subject's accessibility predicate into
+        // the search — conjunctive ⇒ AND into `filter` (push-down into the ANN
+        // traversal); non-conjunctive ⇒ defer to post-filter the results.
+        #[cfg(feature = "abac-policy")]
+        let (filter, abac_post_filter) = self.apply_abac_vector_filter(filter, _read_context);
 
         // ADR-0083 D5: internal search state is keyed by the catalog's native
         // L1 object id. Names and aliases terminate at this boundary.
@@ -2918,6 +3006,16 @@ impl VectorOperationsService {
                 search_mode.clone(),
             )
             .await?;
+        // FA-2 (abac-policy): a non-conjunctive security predicate (Or/Not) can't
+        // flatten into the AXIS query, so post-filter the results instead. The
+        // conjunctive case already pushed down into the search above.
+        #[cfg(feature = "abac-policy")]
+        let optimized_results = match abac_post_filter {
+            Some(security) => {
+                crate::security::rls::post_filter_search_results(optimized_results, &security)
+            }
+            None => optimized_results,
+        };
         let execute_time_us = execute_start.elapsed().as_micros();
 
         let total_time_us = total_start.elapsed().as_micros();
@@ -6483,5 +6581,59 @@ mod axis_insert_gate_tests {
             ..Default::default()
         };
         assert!(collection_uses_axis_indexes(&collection));
+    }
+}
+
+#[cfg(all(test, feature = "abac-policy"))]
+mod abac_vector_pushdown_tests {
+    use super::{abac_filter_is_conjunctive, abac_security_is_pushdown};
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+
+    fn eq(field: &str, val: &str) -> FilterExpression {
+        FilterExpression::Comparison {
+            field: field.to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!(val),
+        }
+    }
+
+    #[test]
+    fn conjunctive_classifies_comparison_and_and_but_not_or_not() {
+        // Comparison + And-of-comparisons are AXIS push-down-compatible.
+        assert!(abac_filter_is_conjunctive(&eq("dept", "eng")));
+        assert!(abac_filter_is_conjunctive(&FilterExpression::And(vec![
+            eq("dept", "eng"),
+            eq("level", "5"),
+        ])));
+        // Or/Not are NOT — `flatten_filter_expression` rejects them, so they
+        // must take the post-filter fallback path.
+        assert!(!abac_filter_is_conjunctive(&FilterExpression::Or(vec![
+            eq("dept", "eng"),
+            eq("dept", "sales"),
+        ])));
+        assert!(!abac_filter_is_conjunctive(&FilterExpression::Not(
+            Box::new(eq("dept", "eng",))
+        )));
+        // An And containing an Or is non-conjunctive (the Or would not flatten).
+        assert!(!abac_filter_is_conjunctive(&FilterExpression::And(vec![
+            eq("dept", "eng"),
+            FilterExpression::Or(vec![eq("a", "1"), eq("b", "2")]),
+        ])));
+    }
+
+    #[test]
+    fn pushdown_requires_both_security_and_user_conjunctive() {
+        let sec = eq("dept", "eng");
+        let user = eq("color", "red");
+        let or = FilterExpression::Or(vec![eq("a", "1"), eq("b", "2")]);
+        // Conjunctive security + (no user | conjunctive user) ⇒ push-down.
+        assert!(abac_security_is_pushdown(&sec, None));
+        assert!(abac_security_is_pushdown(&sec, Some(&user)));
+        // Non-conjunctive security ⇒ post-filter, regardless of user.
+        assert!(!abac_security_is_pushdown(&or, None));
+        assert!(!abac_security_is_pushdown(&or, Some(&user)));
+        // Conjunctive security + non-conjunctive user ⇒ post-filter (the ANDed
+        // combined filter would not flatten into the AXIS query either).
+        assert!(!abac_security_is_pushdown(&sec, Some(&or)));
     }
 }

@@ -216,6 +216,22 @@ impl AbacEnforcer {
         }
     }
 
+    /// Compile an **already-admitted** [`AuthorizedReadContext`]'s row predicates
+    /// into a security `FilterExpression` (no re-resolution). For the vector
+    /// push-down path: the caller (a network handler) resolves the subject →
+    /// [`AuthorizedReadContext::resolve`], handles `Deny` fail-closed (→ empty
+    /// results) THERE, and passes the admitted `Client` context here. Returns
+    /// `Option`, not `Result`: deny is impossible at this stage because the
+    /// context is already admitted — the caller MUST NOT collapse a `DenyReason`
+    /// into `None` (that would be a fail-open hole). `None` = admitted with no
+    /// row predicate.
+    pub fn security_filter_for_context(
+        &self,
+        ctx: &AuthorizedReadContext,
+    ) -> Option<FilterExpression> {
+        compile_security_filter(ctx.row_predicate_refs(), self.store.as_ref())
+    }
+
     /// Resolve `subject`'s authorization and **post-filter** vector search
     /// results. The ANN search runs first (over its own metadata filter), then
     /// this removes inadmissible results via the strict 3-valued walker.
