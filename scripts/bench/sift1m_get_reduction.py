@@ -730,6 +730,38 @@ def wal_is_quiescent(wal_bytes: float | None) -> bool:
     return wal_bytes is None or wal_bytes == 0
 
 
+def layout_candidate_is_ready(
+    geometry: dict,
+    required_layout_version: int | None,
+    azure_inventory: bool,
+) -> bool:
+    """Reject known-transient layouts before starting the stable window.
+
+    Local geometry includes parsed headers and can prove the layout directly.
+    Azure inventory is deliberately metadata-only to avoid repeatedly
+    downloading a large segment. For the v3 two-level layout, an L0 object is
+    the untrained flush artifact and therefore cannot be terminal; training
+    compaction publishes it at L1 or above. The eventual downloaded header is
+    still the authority before the function returns.
+    """
+    if required_layout_version is None:
+        return True
+    segments = geometry.get("segments", [])
+    if segments and all("layout_version" in segment for segment in segments):
+        return all(
+            segment["layout_version"] == required_layout_version
+            for segment in segments
+        )
+    if not azure_inventory or required_layout_version <= 1:
+        return True
+    for segment in segments:
+        name = Path(segment["path"]).name
+        match = re.match(r"L(\d+)_", name)
+        if match is None or int(match.group(1)) == 0:
+            return False
+    return bool(segments)
+
+
 def wait_for_materialization(
     root: Path,
     server: str,
@@ -739,6 +771,7 @@ def wait_for_materialization(
     timeout_seconds: int,
     stable_seconds: int,
     azure_geometry: AzureCliPaxGeometry | None = None,
+    required_layout_version: int | None = None,
 ) -> dict:
     deadline = time.monotonic() + timeout_seconds
     stable_since = None
@@ -800,6 +833,11 @@ def wait_for_materialization(
             (observed_rows == expected_rows if azure_geometry is None else True)
             and 0 < geometry["segment_count"] <= max_segments
             and wal_is_quiescent(wal_bytes)
+            and layout_candidate_is_ready(
+                geometry,
+                required_layout_version,
+                azure_geometry is not None,
+            )
         )
         if complete and signature == prior:
             stable_since = stable_since or now
@@ -811,6 +849,15 @@ def wait_for_materialization(
                             "quiescent Azure PAX footer row mismatch: "
                             f"{geometry['row_count']} != {expected_rows}"
                         )
+                    if not layout_candidate_is_ready(
+                        geometry,
+                        required_layout_version,
+                        azure_inventory=False,
+                    ):
+                        stable_since = None
+                        prior = signature
+                        time.sleep(3)
+                        continue
                 geometry["wal_unflushed_bytes"] = wal_bytes
                 return geometry
         else:
@@ -2222,6 +2269,7 @@ def main() -> int:
             args.settle_timeout_secs,
             args.stable_secs,
             azure_geometry,
+            required_layout_version=args.require_layout_version,
         )
         wrong_layouts = [
             segment

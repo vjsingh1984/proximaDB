@@ -638,6 +638,27 @@ def test_materialization_accepts_absent_wal_gauge_after_exact_azure_footer(
     assert not HARNESS.wal_is_quiescent(1)
 
 
+def test_v3_azure_settle_treats_l0_as_transient_until_training_compaction() -> None:
+    l0 = {
+        "segments": [{"path": "7/data/L0_20260731T000000_a.pax"}],
+        "segment_count": 1,
+    }
+    l1 = {
+        "segments": [{"path": "7/data/L1_20260731T000100_b.pax"}],
+        "segment_count": 1,
+    }
+    parsed_l1_v1 = {
+        "segments": [{"path": l1["segments"][0]["path"], "layout_version": 1}],
+        "segment_count": 1,
+    }
+
+    assert not HARNESS.layout_candidate_is_ready(l0, 3, azure_inventory=True)
+    assert HARNESS.layout_candidate_is_ready(l1, 3, azure_inventory=True)
+    assert not HARNESS.layout_candidate_is_ready(
+        parsed_l1_v1, 3, azure_inventory=False
+    )
+
+
 def test_server_records_explicit_sub_floor_training_override(tmp_path: Path) -> None:
     process = SimpleNamespace(poll=lambda: None)
     server = HARNESS.OwnedServer(
