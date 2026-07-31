@@ -528,3 +528,61 @@ def test_explicit_flush_waits_for_stable_new_pax_epoch() -> None:
     assert wal_bytes is None
     assert geometry.calls == 2
     sleep.assert_called_once_with(0.5)
+
+
+def test_materialization_accepts_absent_wal_gauge_after_exact_azure_footer(
+    tmp_path: Path,
+) -> None:
+    inventory = {
+        "segments": [{"path": "7/data/L0.pax", "bytes": 4096, "etag": "e1"}],
+        "segment_count": 1,
+        "bytes": 4096,
+    }
+
+    class FakeGeometry:
+        @staticmethod
+        def inventory() -> dict:
+            return inventory
+
+        @staticmethod
+        def stable_signature(observed: dict) -> tuple:
+            return tuple(
+                (item["path"], item["bytes"], item["etag"])
+                for item in observed["segments"]
+            )
+
+        @staticmethod
+        def materialize(observed: dict) -> dict:
+            return {
+                **observed,
+                "row_count": 100,
+                "segments": [
+                    {
+                        **observed["segments"][0],
+                        "rows": 100,
+                        "layout_version": 3,
+                    }
+                ],
+            }
+
+    with (
+        patch.object(HARNESS, "scrape_text", return_value=""),
+        patch.object(HARNESS.time, "sleep"),
+        patch.object(HARNESS.time, "monotonic", side_effect=[0, 1, 1, 2, 2]),
+    ):
+        settled = HARNESS.wait_for_materialization(
+            tmp_path,
+            "http://server",
+            "7",
+            expected_rows=100,
+            max_segments=1,
+            timeout_seconds=10,
+            stable_seconds=0,
+            azure_geometry=FakeGeometry(),
+        )
+
+    assert settled["row_count"] == 100
+    assert settled["wal_unflushed_bytes"] is None
+    assert HARNESS.wal_is_quiescent(None)
+    assert HARNESS.wal_is_quiescent(0)
+    assert not HARNESS.wal_is_quiescent(1)

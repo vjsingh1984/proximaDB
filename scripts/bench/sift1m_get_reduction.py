@@ -699,6 +699,17 @@ def stable_signature(geometry: dict) -> tuple:
     )
 
 
+def wal_is_quiescent(wal_bytes: float | None) -> bool:
+    """Treat an absent per-collection gauge as zero after WAL retirement.
+
+    The metrics registry removes the labelled sample when the collection has no
+    remaining unflushed WAL. Materialization still requires a stable PAX epoch
+    and an exact footer row count, so absence cannot by itself admit an
+    incomplete segment.
+    """
+    return wal_bytes is None or wal_bytes == 0
+
+
 def wait_for_materialization(
     root: Path,
     server: str,
@@ -768,7 +779,7 @@ def wait_for_materialization(
         complete = (
             (observed_rows == expected_rows if azure_geometry is None else True)
             and 0 < geometry["segment_count"] <= max_segments
-            and wal_bytes == 0
+            and wal_is_quiescent(wal_bytes)
         )
         if complete and signature == prior:
             stable_since = stable_since or now
@@ -1397,7 +1408,7 @@ def wait_for_pax_epoch(
             "collection",
             collection_id,
         )
-        if stable_observations >= 2 and (wal_bytes is None or wal_bytes == 0):
+        if stable_observations >= 2 and wal_is_quiescent(wal_bytes):
             return time.monotonic() - started, inventory, wal_bytes
         time.sleep(0.5)
     raise RuntimeError(
