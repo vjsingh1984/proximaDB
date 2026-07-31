@@ -43,6 +43,17 @@ def test_matrix_contract_rejects_duplicate_probes_and_wrong_geometry() -> None:
         )
 
 
+def test_matrix_rejects_port_different_from_immutable_bed(tmp_path: Path) -> None:
+    config = tmp_path / "benchmark.toml"
+    config.write_text(
+        "[server]\nport = 1111\n\n[api]\nunified_port = 5790 # measured port\n"
+    )
+
+    MATRIX.require_config_port(config, 5790)
+    with pytest.raises(RuntimeError, match="does not match"):
+        MATRIX.require_config_port(config, 5800)
+
+
 def test_object_cold_ivf_requires_physical_region_byte_attribution() -> None:
     result = {
         "physical_gets": 12,
@@ -586,3 +597,28 @@ def test_materialization_accepts_absent_wal_gauge_after_exact_azure_footer(
     assert HARNESS.wal_is_quiescent(None)
     assert HARNESS.wal_is_quiescent(0)
     assert not HARNESS.wal_is_quiescent(1)
+
+
+def test_server_records_explicit_sub_floor_training_override(tmp_path: Path) -> None:
+    process = SimpleNamespace(poll=lambda: None)
+    server = HARNESS.OwnedServer(
+        tmp_path / "proximadb-server",
+        tmp_path / "benchmark.toml",
+        "http://127.0.0.1:5790",
+        tmp_path / "server.log",
+        None,
+        training_compaction_min_mb=1,
+    )
+
+    with (
+        patch.dict(
+            HARNESS.os.environ,
+            {"PROXIMADB_TRAINING_COMPACTION_MIN_MB": "99"},
+        ),
+        patch.object(HARNESS.subprocess, "Popen", return_value=process) as popen,
+        patch.object(HARNESS, "request_json", return_value={}),
+    ):
+        server.start()
+
+    environment = popen.call_args.kwargs["env"]
+    assert environment["PROXIMADB_TRAINING_COMPACTION_MIN_MB"] == "1"

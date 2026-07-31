@@ -127,6 +127,35 @@ def validate_geometry(
         raise RuntimeError("every matrix segment must persist coarse cells")
 
 
+def require_config_port(config: Path, expected_port: int) -> None:
+    """Fail before startup when the immutable bed config binds another port."""
+    section = ""
+    configured_port = None
+    for raw_line in config.read_text().splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section != "api" or "=" not in line:
+            continue
+        key, value = (item.strip() for item in line.split("=", 1))
+        if key == "unified_port":
+            try:
+                configured_port = int(value)
+            except ValueError as error:
+                raise RuntimeError(
+                    f"invalid [api].unified_port in {config}: {value!r}"
+                ) from error
+            break
+    if configured_port is None:
+        raise RuntimeError(f"missing [api].unified_port in {config}")
+    if configured_port != expected_port:
+        raise RuntimeError(
+            f"--port={expected_port} does not match immutable bed config "
+            f"[api].unified_port={configured_port}"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
@@ -180,6 +209,7 @@ def main() -> int:
         raise RuntimeError(f"refusing to overwrite matrix result: {output}")
     if not config.is_file():
         raise RuntimeError(f"benchmark config not found: {config}")
+    require_config_port(config, args.port)
     if args.groundtruth_scope_rows != args.rows:
         raise RuntimeError("ground-truth scope must equal the measured corpus rows")
     if args.queries <= 0 or args.query_start < 0:
@@ -301,14 +331,13 @@ def main() -> int:
         for top_k in top_k_values:
             label = f"nprobe-{nprobe}-top-{top_k}"
             server = ACCEPTANCE.OwnedServer(
-                binary,
-                config,
-                server_url,
-                run_root / f"{label}.log",
-                None,
-                None,
-                nprobe,
-                args.azurite,
+                binary=binary,
+                config=config,
+                server=server_url,
+                log_path=run_root / f"{label}.log",
+                local_disk_path=None,
+                nprobe=nprobe,
+                azure_emulator=args.azurite,
             )
             try:
                 server.start()

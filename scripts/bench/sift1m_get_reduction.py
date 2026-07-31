@@ -1147,6 +1147,7 @@ class OwnedServer:
         local_disk_path: Path | None,
         ivf_k: int | None = None,
         nprobe: int | None = None,
+        training_compaction_min_mb: int | None = None,
         azure_emulator: bool = False,
     ):
         self.binary = binary
@@ -1156,6 +1157,7 @@ class OwnedServer:
         self.local_disk_path = local_disk_path
         self.ivf_k = ivf_k
         self.nprobe = nprobe
+        self.training_compaction_min_mb = training_compaction_min_mb
         self.azure_emulator = azure_emulator
         self.process: subprocess.Popen | None = None
         self.log_file = None
@@ -1185,12 +1187,17 @@ class OwnedServer:
             "PROXIMADB_CACHE_NVME_MAX_GB",
             "PROXIMADB_IVF_K",
             "PROXIMADB_PAX_READ_COARSE_NPROBE",
+            "PROXIMADB_TRAINING_COMPACTION_MIN_MB",
         ):
             environment.pop(inherited_gate, None)
         if self.ivf_k is not None:
             environment["PROXIMADB_IVF_K"] = str(self.ivf_k)
         if self.nprobe is not None:
             environment["PROXIMADB_PAX_READ_COARSE_NPROBE"] = str(self.nprobe)
+        if self.training_compaction_min_mb is not None:
+            environment["PROXIMADB_TRAINING_COMPACTION_MIN_MB"] = str(
+                self.training_compaction_min_mb
+            )
         if self.azure_emulator:
             environment.update(
                 {
@@ -1799,6 +1806,14 @@ def main() -> int:
         type=int,
         help="force query-time coarse cells (scale experiments only)",
     )
+    parser.add_argument(
+        "--training-compaction-min-mb",
+        type=int,
+        help=(
+            "override the production 32 MiB untrained-L0 floor; intended only "
+            "to make sub-floor corpus points comparable in geometry experiments"
+        ),
+    )
     args = parser.parse_args()
     if args.write_buffer_mb <= 0:
         raise RuntimeError("--write-buffer-mb must be positive")
@@ -1819,6 +1834,11 @@ def main() -> int:
         raise RuntimeError("--ivf-k must be positive")
     if args.nprobe is not None and args.nprobe <= 0:
         raise RuntimeError("--nprobe must be positive")
+    if (
+        args.training_compaction_min_mb is not None
+        and args.training_compaction_min_mb <= 0
+    ):
+        raise RuntimeError("--training-compaction-min-mb must be positive")
     flush_interval_secs = effective_flush_interval(
         args.explicit_flush_every_rows,
         args.flush_interval_secs,
@@ -2074,6 +2094,9 @@ def main() -> int:
         "probe_policy": {
             "ivf_k_override": args.ivf_k,
             "nprobe_override": args.nprobe,
+            "training_compaction_min_mb_override": (
+                args.training_compaction_min_mb
+            ),
             "required_layout_version": args.require_layout_version,
         },
         "ingest_config": {
@@ -2115,14 +2138,15 @@ def main() -> int:
     failures: list[str] = []
     try:
         active = OwnedServer(
-            binary,
-            config,
-            server_url,
-            root / "server-ingest.log",
-            local_disk,
-            args.ivf_k,
-            args.nprobe,
-            args.azurite,
+            binary=binary,
+            config=config,
+            server=server_url,
+            log_path=root / "server-ingest.log",
+            local_disk_path=local_disk,
+            ivf_k=args.ivf_k,
+            nprobe=args.nprobe,
+            training_compaction_min_mb=args.training_compaction_min_mb,
+            azure_emulator=args.azurite,
         )
         active.start()
         (
@@ -2208,14 +2232,15 @@ def main() -> int:
         active.stop()
 
         active = OwnedServer(
-            binary,
-            config,
-            server_url,
-            root / "server-local-disk-warm.log",
-            local_disk,
-            args.ivf_k,
-            args.nprobe,
-            args.azurite,
+            binary=binary,
+            config=config,
+            server=server_url,
+            log_path=root / "server-local-disk-warm.log",
+            local_disk_path=local_disk,
+            ivf_k=args.ivf_k,
+            nprobe=args.nprobe,
+            training_compaction_min_mb=args.training_compaction_min_mb,
+            azure_emulator=args.azurite,
         )
         active.start()
         local_warm = run_query_sweep(
@@ -2244,14 +2269,15 @@ def main() -> int:
         active.stop()
 
         active = OwnedServer(
-            binary,
-            config,
-            server_url,
-            root / "server-object-cold.log",
-            None,
-            args.ivf_k,
-            args.nprobe,
-            args.azurite,
+            binary=binary,
+            config=config,
+            server=server_url,
+            log_path=root / "server-object-cold.log",
+            local_disk_path=None,
+            ivf_k=args.ivf_k,
+            nprobe=args.nprobe,
+            training_compaction_min_mb=args.training_compaction_min_mb,
+            azure_emulator=args.azurite,
         )
         active.start()
         object_cold = run_query_sweep(
