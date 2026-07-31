@@ -68,3 +68,52 @@ def test_fit_rejects_fewer_than_three_independent_scales():
         assert "at least three" in str(error)
     else:
         raise AssertionError("fit unexpectedly accepted two points")
+
+
+def test_dual_axis_and_pareto_svgs_encode_decision_axes(tmp_path: Path):
+    point_low = {
+        "nprobe": 1,
+        "top_k": 10,
+        "recall_at_k": 0.90,
+        "gets_per_query": 2.0,
+        "ivf": {"probed_rows_per_query": 25_000.0},
+    }
+    point_knee = {
+        "nprobe": 2,
+        "top_k": 10,
+        "recall_at_k": 0.985,
+        "gets_per_query": 6.0,
+        "ivf": {"probed_rows_per_query": 50_000.0},
+    }
+    analysis = {
+        "target_recall": 0.98,
+        "scales": [
+            {
+                "corpus_rows": 100_000,
+                "coarse_cells": 4,
+                "points": [point_low, point_knee],
+                "curves": {
+                    "10": {
+                        "quality_floor": point_knee,
+                        "curve_bend": point_low,
+                    }
+                },
+            }
+        ],
+    }
+    dual = tmp_path / "dual.svg"
+    pareto = tmp_path / "pareto.svg"
+
+    ANALYSIS.write_dual_axis_svg(analysis, dual)
+    ANALYSIS.write_pareto_svg(analysis, pareto)
+
+    dual_text = dual.read_text()
+    pareto_text = pareto.read_text()
+    assert "Normalized probe fraction (nprobe / k_c)" in dual_text
+    assert "Physical GET/query" in dual_text
+    assert "Axis crossings are not optima" in dual_text
+    assert "N=100,000; k_c=4; top_k=10; nprobe=2" in dual_text
+    assert "Recall → GET/query Pareto frontier" in pareto_text
+    assert "Bubble area scales with actual rows probed / corpus rows" in pareto_text
+    assert "rows probed=50000" in pareto_text
+    assert 'class="knee"' in pareto_text
