@@ -608,6 +608,22 @@ impl CatalogManager {
         self.get_catalog(name).await
     }
 
+    /// TD-TENANT-1 item 3: SYNC best-effort lookup of the account u32 via the
+    /// default catalog's registry (no mint, no I/O) — for the request-hot
+    /// `TenantStableIdResolver`. Uses `try_read` on the two backing RwLocks and
+    /// returns `None` on (rare) contention — callers treat `None` as fail-closed
+    /// deny (safe; the next request retries). Also `None` when no default
+    /// catalog is configured or the account is unminted.
+    pub fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
+        let name = self
+            .default_catalog
+            .try_read()
+            .ok()
+            .and_then(|n| n.as_ref().cloned())?;
+        let catalogs = self.catalogs.try_read().ok()?;
+        catalogs.get(&name)?.account_id_u32_lookup(account)
+    }
+
     /// Set the default catalog
     pub async fn set_default_catalog(&self, name: &str) -> Result<()> {
         // Verify catalog exists

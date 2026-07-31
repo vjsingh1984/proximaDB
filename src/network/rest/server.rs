@@ -422,6 +422,14 @@ impl RestServer {
             query_adapter.clone(),
             llm_engine,
         );
+        // TD-TENANT-1 item 3: build the tenant-stable-id resolver from the
+        // catalog handle before it's moved into base_state below, so the tenant
+        // middleware can stamp tenant_stable_id for ABAC enforcement.
+        let tenant_stable_id_resolver = catalog_manager.as_ref().map(|cm| {
+            Arc::new(crate::security::CatalogTenantStableIdResolver::new(
+                cm.clone(),
+            )) as Arc<dyn proximadb_tenant::TenantStableIdResolver>
+        });
         if let Some(manager) = catalog_manager {
             base_state = base_state.with_catalog_manager(manager);
         }
@@ -559,8 +567,11 @@ impl RestServer {
         // Tenant extraction layer for multi-tenant isolation.
         // Env overrides (PROXIMADB_TENANT_HEADER_TRUST) are applied here — at
         // server construction, never inside constructors — so tests stay hermetic.
-        let tenant_extractor =
+        let mut tenant_extractor =
             TenantExtractor::with_config(security_config.tenant.clone().apply_env_overrides());
+        if let Some(resolver) = &tenant_stable_id_resolver {
+            tenant_extractor = tenant_extractor.with_stable_id_resolver(resolver.clone());
+        }
         let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
 
         // Log security configuration
@@ -747,6 +758,13 @@ impl RestServer {
         if let Some(reg) = segment_registry {
             base_state = base_state.with_segment_registry(reg);
         }
+        // TD-TENANT-1 item 3: build the tenant-stable-id resolver from the
+        // catalog handle before it's moved into base_state below.
+        let tenant_stable_id_resolver = catalog_manager.as_ref().map(|cm| {
+            Arc::new(crate::security::CatalogTenantStableIdResolver::new(
+                cm.clone(),
+            )) as Arc<dyn proximadb_tenant::TenantStableIdResolver>
+        });
         if let Some(manager) = catalog_manager {
             base_state = base_state.with_catalog_manager(manager);
         }
@@ -877,7 +895,11 @@ impl RestServer {
         // unified path must apply it too (it is NOT wrapped by the caller).
         // The caller supplies the same deployment-derived policy used by the
         // multi-port path. Environment overrides are applied once here.
-        let tenant_extractor = TenantExtractor::with_config(tenant_config.apply_env_overrides());
+        let mut tenant_extractor =
+            TenantExtractor::with_config(tenant_config.apply_env_overrides());
+        if let Some(resolver) = &tenant_stable_id_resolver {
+            tenant_extractor = tenant_extractor.with_stable_id_resolver(resolver.clone());
+        }
         let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
 
         // Auth layer — convergent with the multi-port `start_with_security`

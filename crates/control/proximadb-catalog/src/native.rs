@@ -1397,6 +1397,15 @@ impl Catalog for NativeCatalog {
         Ok(self.account_u32(account).await)
     }
 
+    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
+        // TD-TENANT-1 item 3: sync read-only lookup (no mint, no persist) for the
+        // request-hot TenantStableIdResolver. None when unminted/empty.
+        if account.is_empty() {
+            return None;
+        }
+        self.account_registry.get(account).map(|v| *v.value())
+    }
+
     async fn max_object_id(&self) -> Result<Option<u64>> {
         // Max persisted object_id from the durable forward index (name→oid),
         // loaded eagerly at startup. Used by the root to raise the collection-id
@@ -2110,6 +2119,14 @@ mod tests {
         // A genuinely new account mints above the recovered floor (2, not 1).
         let new_acct = cat2.account_u32("other").await.expect("mint new");
         assert_eq!(new_acct, 2, "new account mints above recovered floor");
+
+        // TD-TENANT-1 item 3: the SYNC account_id_u32_lookup returns the minted
+        // u32 (no mint, no I/O) — the TenantStableIdResolver contract. None for
+        // unknown/empty (fail-closed deny).
+        assert_eq!(cat2.account_id_u32_lookup("acct"), Some(1));
+        assert_eq!(cat2.account_id_u32_lookup("other"), Some(2));
+        assert_eq!(cat2.account_id_u32_lookup("never"), None);
+        assert_eq!(cat2.account_id_u32_lookup(""), None);
     }
 
     #[tokio::test]

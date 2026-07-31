@@ -151,3 +151,23 @@ second system; it is retired.
   a sequence separate from identity (not a key).
 * **Namespace `u16` wrap (ADR-074 D4):** 65,536 namespaces/account is a hard
   cap, not a silent wrap — fence it. Tracked separately.
+
+== Addendum: ABAC `tenant_stable_id` (TD-TENANT-1 item 3)
+
+The ABAC layer keys enforcement on `tenant_stable_id: u64` (the binding filter
+`b.tenant_stable_id == tenant_stable_id`; ABAC/ADR-075). This u64 is **the
+ADR-0083 account u32 widened** — the composite's tenant component
+(`{account(u32), namespace(u16), collection(u32)}`; Phase 5: tenant≡account).
+The catalog does **not** mint a separate tenant u64.
+
+Rationale: ADR-0083 retired the global u64-as-identity; a fresh `IdAllocator` u64
+tenant space would reintroduce it. Reusing the account u32 (the existing durable
+`account_registry`, with its sidecar + floor recovery) is ADR-consistent and
+structurally guarantees binding consistency — there is exactly one minting
+authority for the tenant u64, consumed by both the request path
+(`TenantStableIdResolver`) and the (future) ABAC binding-provisioning path.
+
+* `TenantStableIdResolver::stable_id_of(tenant)` returns `account_u32(tenant)
+  as u64` (lookup-only, no mint).
+* `None` (unminted / brief lock contention) ⇒ fail-closed deny — the id is an
+optimization, never a second source of truth (ADR-075).
