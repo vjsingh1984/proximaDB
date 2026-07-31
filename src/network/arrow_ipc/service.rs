@@ -137,12 +137,15 @@ fn graph_flight_err(e: anyhow::Error) -> FlightError {
 /// - **.arrow**: Arrow IPC files (from SST, HELIX engines)
 /// - **.parquet**: Parquet files (from Nova, VIPER engines)
 pub struct ProximaFlightService {
-    // TD-104 S3: the Flight service depends on ports + the concrete services it
-    // actually uses, not a monolithic handler. Vector search goes through
-    // `ApiHandlersPort`, record-batch ingest through `RecordOpsPort`; the
-    // vector-ops/collection services are held directly (same Arcs as before).
+    // TD-104 S3 / TD-FLIGHT-1: the Flight service depends on ports + the
+    // concrete services it actually uses, not a monolithic handler. Canonical
+    // v2 vector search goes through `RecordSearchPort`, record-batch ingest
+    // through `RecordOpsPort`; the vector-ops/collection services are held
+    // directly (same Arcs as before). `api_port` is retained for the v1
+    // surface still used elsewhere (deprecated for Flight search — TD-FLIGHT-1).
     api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
     record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
+    record_search_port: Arc<dyn proximadb_runtime::RecordSearchPort>,
     vector_operations_service: Arc<crate::services::VectorOperationsService>,
     collection_service: Arc<crate::services::CollectionService>,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
@@ -243,6 +246,7 @@ impl ProximaFlightService {
     pub fn new(
         api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
         record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
+        record_search_port: Arc<dyn proximadb_runtime::RecordSearchPort>,
         vector_operations_service: Arc<crate::services::VectorOperationsService>,
         collection_service: Arc<crate::services::CollectionService>,
         storage_locations: Vec<String>,
@@ -250,6 +254,7 @@ impl ProximaFlightService {
         Self {
             api_port,
             record_port,
+            record_search_port,
             vector_operations_service,
             collection_service,
             security_coordinator: None,
@@ -283,6 +288,7 @@ impl ProximaFlightService {
     pub fn from_services(
         api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
         record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
+        record_search_port: Arc<dyn proximadb_runtime::RecordSearchPort>,
         vector_operations_service: Arc<crate::services::VectorOperationsService>,
         collection_service: Arc<crate::services::CollectionService>,
         graph_service: Arc<crate::graph::GraphOperationsService>,
@@ -297,6 +303,7 @@ impl ProximaFlightService {
         Self::new(
             api_port,
             record_port,
+            record_search_port,
             vector_operations_service,
             collection_service,
             storage_locations,
