@@ -33,14 +33,13 @@ use tracing::{debug, info, warn};
 
 use crate::catalog::CatalogManager;
 use crate::network::auth::middleware::DataPlaneCapability;
-use crate::proto::proximadb_v1::VectorSearchRequest;
 use crate::security::{AuthenticationData, ClientCertificateData, SecurityCoordinator};
 use crate::services::operations::{
     BatchOperationResult, BulkWriteMode, CatalogBulkWriteResult, CatalogBulkWriteService,
 };
 use chrono::Utc;
 
-use super::codec::{ArrowProtoCodec, FlightSearchTicket, FlightWriteOperation, WriteMode};
+use super::codec::{ArrowProtoCodec, FlightFilter, FlightSearchTicket, FlightWriteOperation, WriteMode};
 use super::file_export::{
     ArrowFileExportHandler, ArrowFileRequest, ArrowFileTicket, FlightCompression,
 };
@@ -64,6 +63,33 @@ fn flight_data_wire_bytes(flight_data: &[FlightData]) -> u64 {
         .iter()
         .map(|fd| (fd.data_header.len() + fd.data_body.len() + fd.app_metadata.len()) as u64)
         .sum()
+}
+
+/// Optional control frame for the `bulk_search` DoExchange (TD-FLIGHT-1).
+/// Carried as JSON in a `FlightData.app_metadata` message ahead of the query
+/// batches; sets top_k / filters / include_vector for the queries that follow.
+/// Absent ⇒ defaults (top_k = 10, no filters), matching the pre-TD-FLIGHT-1
+/// behavior but now on the canonical v2 search path.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct BulkSearchControl {
+    #[serde(default)]
+    top_k: Option<u32>,
+    #[serde(default)]
+    include_vector: bool,
+    #[serde(default)]
+    filters: Vec<FlightFilter>,
+}
+
+/// Build a control-only `FlightData` frame (no body) carrying `metadata` as
+/// app-metadata — used for per-query error frames and the bulk_search
+/// completion frame.
+fn control_flight_data(metadata: Vec<u8>) -> FlightData {
+    FlightData {
+        flight_descriptor: None,
+        data_header: Default::default(),
+        app_metadata: metadata.into(),
+        data_body: Default::default(),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +169,11 @@ pub struct ProximaFlightService {
     // through `RecordOpsPort`; the vector-ops/collection services are held
     // directly (same Arcs as before). `api_port` is retained for the v1
     // surface still used elsewhere (deprecated for Flight search — TD-FLIGHT-1).
+    // TD-FLIGHT-1: `api_port` (the v1 search contract) is no longer used by
+    // Flight search — both DoGet and bulk_search now route through
+    // `record_search_port`. Retained (rather than ripped out) to keep this PR
+    // off the constructor/boot-wiring cascade; a follow-up TD removes it.
+    #[allow(dead_code)]
     api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
     record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
     record_search_port: Arc<dyn proximadb_runtime::RecordSearchPort>,
@@ -1142,42 +1173,6 @@ impl ProximaFlightService {
         self.record_port
             .delete_record_batch(collection_id, record_ids, tenant_id)
             .await
-    }
-
-    /// Handle vector search (DoGet)
-    async fn handle_vector_search(
-        &self,
-        request: VectorSearchRequest,
-        tenant_id: &str,
-    ) -> Result<Vec<arrow_array::RecordBatch>> {
-        debug!(
-            collection_id = %request.collection_id,
-            top_k = request.top_k,
-            "Arrow IPC vector search"
-        );
-
-        // Execute search via UnifiedHandlers (reuses existing path)
-        let response = self
-            .api_port
-            .handle_vector_search_v1_for_tenant(request, Some(tenant_id))
-            .await?;
-
-        // Convert results to Arrow RecordBatch
-        let search_results = response
-            .results
-            .as_ref()
-            .map(|r| &r.results)
-            .filter(|results| !results.is_empty());
-
-        let Some(results) = search_results else {
-            return Ok(Vec::new());
-        };
-
-        let dimension = results[0].vector.len();
-
-        let batch = ArrowProtoCodec::search_results_to_batch(results, dimension)?;
-
-        Ok(vec![batch])
     }
 
     /// Canonical v2 vector search (TD-FLIGHT-1). Routes through the
@@ -3136,8 +3131,17 @@ impl ProximaFlightService {
         first_msg: FlightData,
         mut stream: TonicStreaming<FlightData>,
     ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
-        let mut results = Vec::new();
+        let mut results: Vec<std::result::Result<FlightData, TonicStatus>> = Vec::new();
         let mut query_count = 0u64;
+
+        // The bulk_search exchange carries query vectors as Arrow batches of
+        // ProximaRecord envelopes. Optional control frames (JSON in
+        // `app_metadata`) set top_k / filters / include_vector for the queries
+        // that follow; absent a control frame the defaults are top_k=10 and no
+        // filters — but now on the canonical v2 search path (TD-FLIGHT-1).
+        let mut top_k: u32 = 10;
+        let mut include_vector = false;
+        let mut filters: Vec<FlightFilter> = Vec::new();
         let mut flight_messages = vec![first_msg];
 
         while let Some(data) = stream
@@ -3146,9 +3150,16 @@ impl ProximaFlightService {
             .map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?
         {
             if !data.app_metadata.is_empty()
-                && let Ok(config) = serde_json::from_slice::<serde_json::Value>(&data.app_metadata)
+                && let Ok(control) = serde_json::from_slice::<BulkSearchControl>(&data.app_metadata)
             {
-                debug!("Received search config: {:?}", config);
+                debug!(?control, "Received bulk_search control frame");
+                if let Some(k) = control.top_k {
+                    top_k = k;
+                }
+                include_vector = control.include_vector;
+                if !control.filters.is_empty() {
+                    filters = control.filters;
+                }
                 continue;
             }
             flight_messages.push(data);
@@ -3156,18 +3167,29 @@ impl ProximaFlightService {
 
         let query_batches = ArrowProtoCodec::flight_data_stream_to_batches(&flight_messages)
             .map_err(|e| TonicStatus::internal(format!("Failed to parse query batches: {}", e)))?;
+
         for batch in query_batches {
             // Extract query vectors from batch using canonical ProximaRecord envelopes.
             let query_records = match ArrowProtoCodec::batches_to_proxima_records(vec![batch]) {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!("Failed to extract query vectors: {}", e);
+                    // Surface the per-batch decode error as a frame instead of
+                    // silently dropping the whole batch.
+                    let meta = serde_json::to_vec(&serde_json::json!({
+                        "type": "error", "stage": "decode", "message": e.to_string()
+                    }))
+                    .unwrap_or_default();
+                    results.push(Ok(control_flight_data(meta)));
+                    warn!("Failed to extract query vectors: {e}");
                     continue;
                 }
             };
 
-            // Execute searches for each query vector
+            // Execute one canonical v2 search per query vector, preserving input
+            // order. A failed query surfaces an error frame at its position
+            // rather than vanishing (acceptance #2).
             for query_record in query_records {
+                let query_index = query_count;
                 query_count += 1;
 
                 let query_vector = query_record
@@ -3176,45 +3198,39 @@ impl ProximaFlightService {
                     .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default();
 
-                let search_request = crate::proto::proximadb_v1::VectorSearchRequest {
+                // Build a canonical v2 ticket (reuses the DoGet filter lowering)
+                // and route through the same RecordSearchPort authority.
+                let ticket = FlightSearchTicket {
+                    ticket_type: "vector_search".to_string(),
                     collection_id: collection_id.clone(),
-                    queries: vec![crate::proto::proximadb_v1::SearchQuery {
-                        vector: query_vector,
-                        filters: std::collections::HashMap::new(),
-                        advanced_filter: None,
-                    }],
-                    top_k: 10, // Default top_k
-                    include_fields: Some(crate::proto::proximadb_v1::IncludeFields {
-                        vector: true,
-                        metadata: true,
-                        score: true,
-                        rank: true,
-                        source: false,
-                        source_options: std::collections::HashMap::new(),
-                    }),
-                    search_params: None,
-                    distance_metric_override: None,
-                    search_optimization: None,
+                    query_vector,
+                    top_k,
+                    filters: filters.clone(),
+                    include_vector,
                 };
 
-                // Execute search
-                let search_response =
-                    match self.handle_vector_search(search_request, &tenant_id).await {
-                        Ok(batches) => batches,
-                        Err(e) => {
-                            warn!("Search failed for query {}: {}", query_record.oid, e);
-                            continue;
-                        }
-                    };
+                let search_batches = match self.handle_v2_search(ticket, &tenant_id).await {
+                    Ok(batches) => batches,
+                    Err(e) => {
+                        let meta = serde_json::to_vec(&serde_json::json!({
+                            "type": "error",
+                            "query_index": query_index,
+                            "query_id": query_record.oid.to_string(),
+                            "message": e.to_string()
+                        }))
+                        .unwrap_or_default();
+                        results.push(Ok(control_flight_data(meta)));
+                        warn!(query_index, query_id = %query_record.oid, "bulk_search query failed: {e}");
+                        continue;
+                    }
+                };
 
-                // Convert result batches to FlightData
-                for result_batch in search_response {
+                for result_batch in search_batches {
                     let flight_data_vec =
                         ArrowProtoCodec::batch_to_flight_data(&result_batch, &Default::default())
                             .map_err(|e| {
-                            TonicStatus::internal(format!("Failed to encode result: {}", e))
-                        })?;
-
+                                TonicStatus::internal(format!("Failed to encode result: {}", e))
+                            })?;
                     for fd in flight_data_vec {
                         results.push(Ok(fd));
                     }
@@ -3222,26 +3238,19 @@ impl ProximaFlightService {
             }
         }
 
-        // Send completion message
-        let complete_msg = serde_json::json!({
+        // Completion frame.
+        let complete_meta = serde_json::to_vec(&serde_json::json!({
             "type": "complete",
             "query_count": query_count,
             "collection_id": collection_id
-        });
-
-        let complete_data = FlightData {
-            flight_descriptor: None,
-            data_header: Default::default(),
-            app_metadata: serde_json::to_vec(&complete_msg).unwrap_or_default().into(),
-            data_body: Default::default(),
-        };
-
-        results.push(Ok(complete_data));
+        }))
+        .unwrap_or_default();
+        results.push(Ok(control_flight_data(complete_meta)));
 
         info!(
             collection_id = %collection_id,
-            query_count = query_count,
-            "Arrow Flight: bulk_search exchange completed"
+            query_count,
+            "Arrow Flight: bulk_search exchange completed (canonical v2 path)"
         );
 
         Ok(TonicResponse::new(Box::pin(stream::iter(results))))
