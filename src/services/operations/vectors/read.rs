@@ -43,14 +43,23 @@ impl VectorReadCoordinator {
         include_vector: bool,
         include_metadata: bool,
     ) -> Result<Option<ProximaRecord>> {
+        // Writes are keyed by the catalog-owned numeric object id. Resolve a
+        // caller-facing name/alias at the same boundary before consulting
+        // either read tier; otherwise a just-written WAL record is invisible
+        // until flush merely because the caller used the collection name.
+        let collection_id = self
+            .resolver
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
         let record = if let Some(record) = self
             .wal_manager
-            .search_vector_by_id(collection_id, &vector_id.to_string())
+            .search_vector_by_id(&collection_id, &vector_id.to_string())
             .await?
         {
             Some(record)
         } else {
-            let collection = self.resolver.get_or_load_collection(collection_id).await?;
+            let collection = self.resolver.get_or_load_collection(&collection_id).await?;
             let storage_assignment = collection.storage_assignment.as_ref();
             let base_path = storage_assignment
                 .map(|assignment| assignment.base_location.as_str())
@@ -60,11 +69,16 @@ impl VectorReadCoordinator {
             );
             let engine = self
                 .resolver
-                .get_engine_for_collection(collection_id)
+                .get_engine_for_collection(&collection_id)
                 .await?;
 
             engine
-                .point_lookup(collection_id, base_path, &[vector_id.to_string()], identity)
+                .point_lookup(
+                    &collection_id,
+                    base_path,
+                    &[vector_id.to_string()],
+                    identity,
+                )
                 .await?
                 .into_iter()
                 .next()
