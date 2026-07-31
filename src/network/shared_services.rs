@@ -1231,6 +1231,29 @@ impl SharedServices {
                 engine = engine.with_freshness_lsn_source(src);
             }
 
+            // Catalog-driven storage-URL resolution: attach the catalog/config
+            // resolver so `get_collection_storage_url` resolves the real
+            // per-collection location (retires the `/data/collections/{id}`
+            // placeholder; the catalog is the single source of truth). Catalog
+            // first → `ConfigFallbackResolver` default, wrapped in `CachedResolver`.
+            // (WAL injection deferred: the WAL's fallback returns the base-location
+            // PREFIX, while these resolvers return the ROOT `{base}/{id}`;
+            // reconciling those contracts is a follow-up. SstEngine resolving
+            // correctly already achieves write/read agreement.)
+            {
+                use crate::storage::trait_components::path_resolver::{
+                    CachedResolver, CatalogResolver, CollectionPathResolver, CompositeResolver,
+                    ConfigFallbackResolver,
+                };
+                let chain: Vec<Arc<dyn CollectionPathResolver>> = vec![
+                    Arc::new(CatalogResolver::new()),
+                    Arc::new(ConfigFallbackResolver::default()),
+                ];
+                engine = engine.with_path_resolver(Arc::new(CachedResolver::new(Arc::new(
+                    CompositeResolver::new(chain),
+                ))));
+            }
+
             // Attach tier-migration integration when configured. Reads
             // the `[storage.sst_config.tiering]` block; defaults to
             // disabled. When `enabled = true`, the engine's
