@@ -20,6 +20,21 @@ from pathlib import Path
 import numpy as np
 
 
+def exact_l2_compute_dtype(dimension: int) -> type[np.floating]:
+    """Choose a floating accumulator that represents every u8 L2 term exactly.
+
+    The norm identity uses ``||q||² + ||x||² - 2q·x``. Each intermediate is
+    an integer bounded by ``2 * dimension * 255²``. IEEE f32 represents every
+    integer through 2²⁴ exactly; use f64 once the corpus dimension can exceed
+    that bound instead of silently calling a rounded ordering "exact".
+    """
+
+    if dimension <= 0:
+        raise RuntimeError("dimension must be positive")
+    max_intermediate = 2 * dimension * 255 * 255
+    return np.float32 if max_intermediate <= 2**24 else np.float64
+
+
 def inspect_u8bin(path: Path) -> tuple[np.memmap, int, int, int]:
     with path.open("rb") as source:
         header = source.read(8)
@@ -135,11 +150,12 @@ def exact_neighbors_for_queries(
         raise RuntimeError(f"top_k={top_k} is invalid for the prefix")
     if query_batch <= 0 or base_block <= 0:
         raise RuntimeError("query/base block sizes must be positive")
-    selected_queries = np.asarray(queries[query_indices], dtype="<f4")
-    base_norms = np.empty(prefix_rows, dtype="<f4")
+    compute_dtype = exact_l2_compute_dtype(base.shape[1])
+    selected_queries = np.asarray(queries[query_indices], dtype=compute_dtype)
+    base_norms = np.empty(prefix_rows, dtype=compute_dtype)
     for base_start in range(0, prefix_rows, base_block):
         base_end = min(base_start + base_block, prefix_rows)
-        block = np.asarray(base[base_start:base_end], dtype="<f4")
+        block = np.asarray(base[base_start:base_end], dtype=compute_dtype)
         base_norms[base_start:base_end] = np.einsum("ij,ij->i", block, block)
 
     output = np.empty((len(query_indices), top_k), dtype="<i4")
@@ -147,11 +163,11 @@ def exact_neighbors_for_queries(
         query_end = min(query_start + query_batch, len(query_indices))
         query = selected_queries[query_start:query_end]
         query_norms = np.einsum("ij,ij->i", query, query)[:, None]
-        best_distances = np.full((len(query), top_k), np.inf, dtype="<f4")
+        best_distances = np.full((len(query), top_k), np.inf, dtype=compute_dtype)
         best_ids = np.full((len(query), top_k), -1, dtype="<i4")
         for base_start in range(0, prefix_rows, base_block):
             base_end = min(base_start + base_block, prefix_rows)
-            block = np.asarray(base[base_start:base_end], dtype="<f4")
+            block = np.asarray(base[base_start:base_end], dtype=compute_dtype)
             distances = (
                 query_norms
                 + base_norms[base_start:base_end][None, :]
@@ -251,6 +267,10 @@ def main() -> int:
         "superset_groundtruth_sha256": sha256(args.superset_groundtruth),
         "prefix_rows": args.prefix_rows,
         "dimension": dimension,
+        "distance_compute_dtype": np.dtype(exact_l2_compute_dtype(dimension)).name,
+        "distance_exactness_bound": (
+            "2 * dimension * 255^2 <= 2^24 for float32; float64 otherwise"
+        ),
         "top_k": args.top_k,
         "derived_from_superset_rows": args.queries - len(uncovered),
         "exact_fallback_rows": len(uncovered),

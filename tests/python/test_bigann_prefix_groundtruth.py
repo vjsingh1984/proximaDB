@@ -15,6 +15,14 @@ GROUNDTRUTH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GROUNDTRUTH)
 
 
+def test_exact_l2_accumulator_is_fail_closed_by_dimension() -> None:
+    assert GROUNDTRUTH.exact_l2_compute_dtype(128) is np.float32
+    assert GROUNDTRUTH.exact_l2_compute_dtype(129) is np.float32
+    assert GROUNDTRUTH.exact_l2_compute_dtype(130) is np.float64
+    with np.testing.assert_raises_regex(RuntimeError, "positive"):
+        GROUNDTRUTH.exact_l2_compute_dtype(0)
+
+
 def test_superset_filter_only_falls_back_for_uncovered_queries() -> None:
     superset_ids = np.asarray(
         [
