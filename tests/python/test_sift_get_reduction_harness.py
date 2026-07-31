@@ -279,6 +279,25 @@ def test_azure_inventory_scopes_prefix_and_records_stable_identity(
     )
 
 
+def test_azure_inventory_forwards_explicit_connection_string(tmp_path: Path) -> None:
+    completed = SimpleNamespace(stdout="[]")
+    geometry = HARNESS.AzureCliPaxGeometry("az://benchmarks/run-1", tmp_path)
+
+    with (
+        patch.dict(
+            HARNESS.os.environ,
+            {"AZURE_STORAGE_CONNECTION_STRING": "emulator-connection"},
+        ),
+        patch.object(HARNESS.subprocess, "run", return_value=completed) as run,
+    ):
+        geometry.inventory()
+
+    command = run.call_args.args[0]
+    assert command[command.index("--connection-string") + 1] == (
+        "emulator-connection"
+    )
+
+
 @pytest.mark.parametrize("blob_name", ["/absolute.pax", "../escape.pax"])
 def test_azure_snapshot_rejects_paths_outside_evidence_root(
     tmp_path: Path, blob_name: str

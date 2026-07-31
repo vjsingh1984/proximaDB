@@ -572,6 +572,23 @@ class AzureCliPaxGeometry:
         self.prefix = parsed.path.strip("/")
         self.snapshot_root = snapshot_root
 
+    @staticmethod
+    def _authentication_args() -> list[str]:
+        """Forward an explicit connection string when the caller supplied one.
+
+        Azure CLI does not consistently consume AZURE_STORAGE_CONNECTION_STRING
+        as implicit auth across CLI versions. The benchmark already requires it
+        for Azurite, so forwarding it makes inventory and snapshot reads use the
+        same emulator endpoint as the measured server. Real Azure runs without
+        this variable retain the CLI's normal identity/account resolution.
+        """
+        connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+        return (
+            ["--connection-string", connection_string]
+            if connection_string is not None
+            else []
+        )
+
     def _list_blobs(self) -> list[dict]:
         command = [
             "az",
@@ -585,6 +602,7 @@ class AzureCliPaxGeometry:
         ]
         if self.prefix:
             command.extend(["--prefix", self.prefix])
+        command.extend(self._authentication_args())
         completed = subprocess.run(
             command,
             check=True,
@@ -655,8 +673,7 @@ class AzureCliPaxGeometry:
         for blob in inventory["segments"]:
             target = self._snapshot_target(blob["path"])
             target.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(
-                [
+            command = [
                     "az",
                     "storage",
                     "blob",
@@ -672,7 +689,10 @@ class AzureCliPaxGeometry:
                     "--no-progress",
                     "--output",
                     "none",
-                ],
+                ]
+            command.extend(self._authentication_args())
+            subprocess.run(
+                command,
                 check=True,
             )
             if target.stat().st_size != blob["bytes"]:
