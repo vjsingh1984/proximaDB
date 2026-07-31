@@ -758,16 +758,39 @@ impl TieredFileRegistry {
         data_directory: &str,
         extension: &str,
     ) -> Result<HashMap<u32, Vec<GenericFileMetadata>>> {
+        let fs = filesystem.get_filesystem(data_directory)?;
+        self.discover_files_on_filesystem(fs.as_ref(), data_directory, extension)
+            .await
+    }
+
+    /// Discover files through an already-resolved backend.
+    ///
+    /// A directory/prefix listing is the authoritative existence check. Flat
+    /// object stores do not materialize directory objects, so `exists(prefix)`
+    /// is false even when `prefix/L0_….pax` exists. An exists-before-list gate
+    /// therefore makes cloud compaction silently discover zero files.
+    async fn discover_files_on_filesystem(
+        &self,
+        fs: &dyn crate::storage::persistence::filesystem::FileSystem,
+        data_directory: &str,
+        extension: &str,
+    ) -> Result<HashMap<u32, Vec<GenericFileMetadata>>> {
         let mut files_by_level: HashMap<u32, Vec<GenericFileMetadata>> = HashMap::new();
 
-        let fs = filesystem.get_filesystem(data_directory)?;
-
-        if !fs.exists(data_directory).await? {
-            debug!("📁 Data directory does not exist: {}", data_directory);
-            return Ok(files_by_level);
-        }
-
-        let entries = fs.list(data_directory).await?;
+        let entries = match fs.list(data_directory).await {
+            Ok(entries) => entries,
+            Err(crate::storage::persistence::filesystem::FilesystemError::NotFound(_)) => {
+                debug!("📁 Data directory does not exist: {}", data_directory);
+                return Ok(files_by_level);
+            }
+            Err(crate::storage::persistence::filesystem::FilesystemError::Io(error))
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                debug!("📁 Data directory does not exist: {}", data_directory);
+                return Ok(files_by_level);
+            }
+            Err(error) => return Err(error.into()),
+        };
         debug!(
             "📋 Scanning {} entries in: {}",
             entries.len(),
@@ -1057,7 +1080,122 @@ impl FileMetadata for GenericFileMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::persistence::filesystem::{
+        DirEntry, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsFileMetadata,
+        FsResult,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+
+    #[derive(Debug)]
+    struct PrefixOnlyFileSystem {
+        exists_calls: AtomicUsize,
+        entries: Vec<DirEntry>,
+    }
+
+    impl PrefixOnlyFileSystem {
+        fn unsupported(operation: &str) -> FilesystemError {
+            FilesystemError::InvalidOperation(operation.to_string())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FileSystem for PrefixOnlyFileSystem {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        async fn read(&self, _path: &str) -> FsResult<Vec<u8>> {
+            Err(Self::unsupported("read"))
+        }
+
+        async fn write(
+            &self,
+            _path: &str,
+            _data: &[u8],
+            _options: Option<FileOptions>,
+        ) -> FsResult<()> {
+            Err(Self::unsupported("write"))
+        }
+
+        async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
+            Err(Self::unsupported("append"))
+        }
+
+        async fn delete(&self, _path: &str) -> FsResult<()> {
+            Err(Self::unsupported("delete"))
+        }
+
+        async fn exists(&self, _path: &str) -> FsResult<bool> {
+            self.exists_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(false)
+        }
+
+        async fn metadata(&self, _path: &str) -> FsResult<FsFileMetadata> {
+            Err(Self::unsupported("metadata"))
+        }
+
+        async fn list(&self, _path: &str) -> FsResult<Vec<DirEntry>> {
+            Ok(self.entries.clone())
+        }
+
+        async fn create_dir(&self, _path: &str) -> FsResult<()> {
+            Err(Self::unsupported("create_dir"))
+        }
+
+        async fn create_dir_all(&self, _path: &str) -> FsResult<()> {
+            Err(Self::unsupported("create_dir_all"))
+        }
+
+        async fn copy(&self, _from: &str, _to: &str) -> FsResult<()> {
+            Err(Self::unsupported("copy"))
+        }
+
+        async fn move_file(&self, _from: &str, _to: &str) -> FsResult<()> {
+            Err(Self::unsupported("move_file"))
+        }
+
+        fn filesystem_type(&self) -> &'static str {
+            "prefix-only-test"
+        }
+
+        async fn sync(&self) -> FsResult<()> {
+            Ok(())
+        }
+
+        async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
+            Err(Self::unsupported("open_file"))
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_prefix_discovery_lists_without_exact_prefix_object() {
+        let segment_name = "L0_20260730T120000_deadbeef.pax";
+        let filesystem = PrefixOnlyFileSystem {
+            exists_calls: AtomicUsize::new(0),
+            entries: vec![DirEntry {
+                name: segment_name.to_string(),
+                url: format!("az://segments/1/data/{segment_name}"),
+                metadata: FsFileMetadata {
+                    size: 4096,
+                    is_directory: false,
+                    ..Default::default()
+                },
+            }],
+        };
+
+        let files = TieredFileRegistry::new()
+            .discover_files_on_filesystem(&filesystem, "az://segments/1/data", "pax")
+            .await
+            .expect("prefix listing should discover child objects");
+
+        assert_eq!(filesystem.exists_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(files.get(&0).map(Vec::len), Some(1));
+        assert_eq!(
+            files[&0][0].path,
+            "az://segments/1/data/L0_20260730T120000_deadbeef.pax"
+        );
+    }
 
     #[tokio::test]
     async fn test_operation_conflicts() {

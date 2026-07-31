@@ -305,11 +305,13 @@ impl proximadb_storage_filesystem_types::counting::IoRecorder for IoTraceFsRecor
         // `bytes_read`; re-recording here double-counts. Keep only the op verb.
         crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
     }
-    fn record_batched_ranges(&self, _bytes: u64) {
+    fn record_batched_ranges(&self, physical_gets: u64, _bytes: u64) {
         // `read_ranges` loops the leaf `read_range` (trait default), which
-        // already accounted each constituent range; re-recording double-counted
-        // bytes and added a spurious +1 GET per batch. Op verb only.
-        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        // already accounted each constituent range's bytes/range_gets. This
+        // decorator owns only the op verb, once per physical range.
+        for _ in 0..physical_gets {
+            crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        }
     }
 }
 

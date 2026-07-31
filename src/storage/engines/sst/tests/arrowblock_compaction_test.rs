@@ -307,6 +307,7 @@ mod tests {
         let output_file = PathBuf::from(format!("{}/compacted_L1.arrow", data_path));
 
         let compaction_task = CompactionTask {
+            collection_object_id: 1,
             level: 0,
             input_files: input_files.clone(),
             output_file: output_file.clone(),
@@ -704,6 +705,7 @@ mod tests {
         let output_file = PathBuf::from(format!("{}/compacted_metadata_test.arrow", data_path));
 
         let compaction_task = CompactionTask {
+            collection_object_id: 1,
             level: 0,
             input_files,
             output_file,
@@ -889,6 +891,7 @@ mod tests {
         let output_file = PathBuf::from(format!("{}/compacted_dedup_test.arrow", data_path));
 
         let compaction_task = CompactionTask {
+            collection_object_id: 1,
             level: 0,
             input_files,
             output_file,

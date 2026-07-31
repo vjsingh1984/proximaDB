@@ -818,10 +818,25 @@ pub struct CompactionConfig {
     /// L0 file count threshold for compaction.
     pub l0_file_threshold: usize,
 
+    /// Query-visible file-count threshold for L1 and higher levels.
+    ///
+    /// This is intentionally lower than the L0 admission threshold: L0
+    /// batches writes, while every steady-state higher-level segment adds a
+    /// search cascade. Two is the smallest threshold that actually reduces
+    /// fanout: a pair of immutable segments is merged once, while the
+    /// single-file rewrite guard prevents pointless level promotion.
+    #[serde(default = "default_higher_level_file_threshold")]
+    pub higher_level_file_threshold: usize,
+
     /// L0 size threshold in MB for compaction.
     pub l0_size_threshold_mb: usize,
 
-    /// Multiplier for higher level thresholds.
+    /// Multiplier for higher-level file-count thresholds.
+    ///
+    /// Vector search pays a read-amplification cost for every query-visible
+    /// segment, so the default is deliberately `1.0`: every level consolidates
+    /// at the L0 threshold. A RocksDB-style `2.0` default optimizes write
+    /// amplification but lets L1/L2 segment counts grow geometrically.
     pub level_multiplier: f64,
 
     /// Maximum number of levels.
@@ -838,13 +853,18 @@ impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
             l0_file_threshold: 5,
+            higher_level_file_threshold: default_higher_level_file_threshold(),
             l0_size_threshold_mb: 256,
-            level_multiplier: 2.0,
+            level_multiplier: 1.0,
             max_levels: 7,
             strategy: "hybrid".to_string(),
             target_file_size_mb: 128,
         }
     }
+}
+
+fn default_higher_level_file_threshold() -> usize {
+    2
 }
 
 /// Performance optimization configuration.
@@ -1260,8 +1280,16 @@ mod tests {
         let config = CompactionConfig::default();
 
         assert_eq!(config.l0_file_threshold, 5);
+        assert_eq!(
+            config.higher_level_file_threshold, 2,
+            "two query-visible files must consolidate instead of stranding a pair"
+        );
         assert_eq!(config.l0_size_threshold_mb, 256);
-        assert_eq!(config.level_multiplier, 2.0);
+        assert_eq!(
+            config.level_multiplier, 1.0,
+            "vector-search levels must consolidate at the L0 threshold; \
+             a RocksDB-style 2.0 multiplier strands query-visible segments"
+        );
         assert_eq!(config.max_levels, 7);
         assert_eq!(config.strategy, "hybrid");
         assert_eq!(config.target_file_size_mb, 128);

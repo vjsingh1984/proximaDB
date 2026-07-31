@@ -29,8 +29,8 @@ use crate::storage::Result;
 use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, ArrowBlockWriter};
 use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FilesystemError, FilesystemFactory, FsResult};
 use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionCoordinator, TransactionStageType,
 };
@@ -181,6 +181,10 @@ impl CompactionMemTrace {
 /// Compaction task to be processed by background workers
 #[derive(Debug, Clone)]
 pub struct SstCompactionTask {
+    /// Globally unique catalog object identity used to re-evaluate
+    /// higher-level work after this morsel publishes. Paths and collection
+    /// aliases are not authoritative identity sources.
+    pub collection_object_id: crate::core::stable_id::CollectionObjectId,
     pub level: u8,
     pub input_files: Vec<PathBuf>,
     pub output_file: PathBuf,
@@ -534,14 +538,45 @@ impl Compaction {
         self.precision_resolver.set(resolver)
     }
 
-    /// Mirror of `CollectionManager::collection_table_identifier` for
-    /// the compaction-scheduler side of the precision lookup.
-    fn collection_to_table_identifier(collection_id: &str) -> proximadb_catalog::TableIdentifier {
-        let parsed = proximadb_catalog::TableIdentifier::parse(collection_id);
+    /// Existing catalog-name adapter for callers that have not yet migrated
+    /// canonical precision into the resolved collection scope. New compaction
+    /// tasks receive the precision at flush admission and do not carry this
+    /// string representation through the worker queue.
+    fn collection_to_table_identifier(collection: &str) -> proximadb_catalog::TableIdentifier {
+        let parsed = proximadb_catalog::TableIdentifier::parse(collection);
         if parsed.namespace.is_empty() {
             proximadb_catalog::TableIdentifier::new(vec!["default".to_string()], parsed.name)
         } else {
             parsed
+        }
+    }
+
+    /// Resolve canonical precision through the pre-existing catalog-name
+    /// adapter. This remains for non-flush callers while the v1 metadata DTO is
+    /// retired; admitted flush/compaction work carries a native precision hint.
+    pub async fn resolve_precision_hint(
+        &self,
+        collection: &str,
+    ) -> Option<proximadb_records::EmbeddingScalarType> {
+        let resolver: Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver> =
+            if let Some(resolver) = self.precision_resolver.get() {
+                Arc::clone(resolver)
+            } else if let Some(resolver) = get_global_precision_resolver() {
+                Arc::clone(resolver)
+            } else {
+                return None;
+            };
+        let table_id = Self::collection_to_table_identifier(collection);
+        match resolver.resolve(&table_id).await {
+            Ok(precision) => Some(precision),
+            Err(error) => {
+                warn!(
+                    collection,
+                    %error,
+                    "compaction: precision resolver failed; falling back to fp32"
+                );
+                None
+            }
         }
     }
 
@@ -681,7 +716,7 @@ impl Compaction {
     }
 
     /// Schedule a compaction task
-    pub async fn schedule_compaction(&self, task: SstCompactionTask) -> Result<()> {
+    pub async fn schedule_compaction(&self, task: SstCompactionTask) -> Result<bool> {
         debug!(
             "Scheduling compaction for level {} with {} input files",
             task.level,
@@ -708,7 +743,19 @@ impl Compaction {
                     "Skipping compaction - already active for output file {}",
                     compaction_key
                 );
-                return Ok(());
+                return Ok(false);
+            }
+            if active.values().any(|active_task| {
+                active_task
+                    .input_files
+                    .iter()
+                    .any(|input| task.input_files.contains(input))
+            }) {
+                debug!(
+                    collection_object_id = task.collection_object_id,
+                    "Skipping compaction - an input file is already owned by another morsel"
+                );
+                return Ok(false);
             }
             active.insert(compaction_key, task.clone());
         }
@@ -731,7 +778,7 @@ impl Compaction {
             self.task_queue.lock().await.len()
         );
 
-        Ok(())
+        Ok(true)
     }
 
     /// TD-COMPACT-6 (ADR-076 D1): the production flush-path compaction trigger.
@@ -755,12 +802,18 @@ impl Compaction {
     /// asserting use `await_compaction_quiescence`.
     pub async fn enqueue_due_compaction(
         &self,
-        collection_id: &str,
+        collection_object_id: crate::core::stable_id::CollectionObjectId,
         collection_dir: &Path,
         l0_threshold: usize,
+        precision_hint: Option<proximadb_records::EmbeddingScalarType>,
     ) -> Result<bool> {
         let Some(task) = self
-            .check_compaction_needed(collection_id, collection_dir, Some(l0_threshold))
+            .check_compaction_needed(
+                collection_object_id,
+                collection_dir,
+                Some(l0_threshold),
+                precision_hint,
+            )
             .await?
         else {
             return Ok(false);
@@ -770,45 +823,7 @@ impl Compaction {
         // `task.output_file.parent()` (the output is always generated under the
         // collection dir — see `generate_output_file_path`), so no separate
         // field is needed on the task.
-        self.schedule_compaction(task).await?;
-        Ok(true)
-    }
-
-    /// Resolve the canonical embedding precision for a collection, to stamp on
-    /// a produced `SstCompactionTask.precision_hint`. Consults the per-instance
-    /// resolver first (test/override), then falls back to the process-global
-    /// resolver (TD-PRECISE-GLOBAL: set once at boot, reaches every
-    /// per-collection `Compaction` that the boot path can't individually wire).
-    /// Returns `None` when no resolver is armed (records keep fp32) or the
-    /// resolver errors (best-effort — a precision failure must never break
-    /// compaction).
-    pub async fn resolve_precision_hint(
-        &self,
-        collection_id: &str,
-    ) -> Option<proximadb_records::EmbeddingScalarType> {
-        // Per-instance resolver first (test/override), then the process-global
-        // fallback (TD-PRECISE-GLOBAL). Clone the Arc out so no borrow from
-        // `self` is held across the `.await` below.
-        let resolver: Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver> =
-            if let Some(r) = self.precision_resolver.get() {
-                Arc::clone(r)
-            } else if let Some(g) = get_global_precision_resolver() {
-                Arc::clone(g)
-            } else {
-                return None;
-            };
-        let table_id = Self::collection_to_table_identifier(collection_id);
-        match resolver.resolve(&table_id).await {
-            Ok(precision) => Some(precision),
-            Err(e) => {
-                warn!(
-                    collection = %collection_id,
-                    error = %e,
-                    "compaction: precision resolver failed; falling back to fp32"
-                );
-                None
-            }
-        }
+        self.schedule_compaction(task).await
     }
 
     /// Check if compaction is needed for the given collection and level.
@@ -820,16 +835,21 @@ impl Compaction {
     /// `None` uses the deployment `CompactionConfig` default.
     pub async fn check_compaction_needed(
         &self,
-        collection_id: &str,
+        collection_object_id: crate::core::stable_id::CollectionObjectId,
         collection_dir: &Path,
         l0_threshold_override: Option<usize>,
+        precision_hint: Option<proximadb_records::EmbeddingScalarType>,
     ) -> Result<Option<SstCompactionTask>> {
         debug!(
             "🔍 SST COMPACTION: Delegating to unified framework for collection: {}",
-            collection_id
+            collection_object_id
         );
 
         let collection_path = collection_dir.to_string_lossy();
+        // The common cross-engine discovery adapter is still string-based.
+        // Keep that representation local to the adapter call; the scheduler,
+        // task queue, and catalog resolver retain the authoritative u64.
+        let collection_id_text = collection_object_id.to_string();
 
         // Use SST-specific config if available, otherwise use defaults
         let mut compaction_config = self
@@ -855,7 +875,7 @@ impl Compaction {
         // This matches the `.pax`-aware `discover_sstable_files` gate that arms
         // the run.
         let task_info = CompactionTaskBuilder::check_and_build_compaction_task(
-            collection_id,
+            &collection_id_text,
             &collection_path,
             "pax",
             CompactionEngineType::SST,
@@ -875,7 +895,7 @@ impl Compaction {
         if let Some(task) = unified_task {
             debug!(
                 "🔄 SST COMPACTION: Converting unified task to SST-specific format for collection {} level {}",
-                collection_id, task.level
+                collection_object_id, task.level
             );
 
             // Convert unified task to SST SstCompactionTask
@@ -888,7 +908,7 @@ impl Compaction {
             let output_block_format = compaction_output_format(&input_files);
 
             let output_file = self.generate_output_file_path(
-                collection_id,
+                collection_object_id,
                 collection_dir,
                 task.target_level as u8,
                 output_block_format,
@@ -900,9 +920,8 @@ impl Compaction {
                 CompactionPriority::Medium
             };
 
-            let precision_hint = self.resolve_precision_hint(collection_id).await;
-
             return Ok(Some(SstCompactionTask {
+                collection_object_id,
                 level: task.level as u8,
                 input_files,
                 output_file,
@@ -915,7 +934,7 @@ impl Compaction {
 
         debug!(
             "📋 COMPACTION: Unified framework reports no compaction needed for collection: {}",
-            collection_id
+            collection_object_id
         );
         Ok(None)
     }
@@ -1015,7 +1034,7 @@ impl Compaction {
                 // hung on the worker. `perform_compaction` only reads through
                 // the Arc-shared reader/compactor/factory, so concurrent
                 // invocation across workers + flush is safe.
-                match compaction.perform_compaction(&task).await {
+                let succeeded = match compaction.perform_compaction(&task).await {
                     Ok(compaction_stats) => {
                         info!(
                             "Compaction completed for level {} in {}ms: {} files merged -> {}",
@@ -1043,6 +1062,7 @@ impl Compaction {
                                     (stats_guard.avg_compaction_time_ms + elapsed_ms) / 2;
                             }
                         }
+                        true
                     }
                     Err(e) => {
                         error!(
@@ -1051,6 +1071,50 @@ impl Compaction {
                             task.output_file.display(),
                             e
                         );
+                        false
+                    }
+                };
+
+                // A completed morsel changes the level geometry. Re-evaluate
+                // it immediately so higher-level compaction does not depend on
+                // a future flush that may never arrive after ingest settles.
+                // Schedule before releasing the current active marker, keeping
+                // the quiescence barrier closed across the hand-off.
+                if succeeded
+                    && !shutdown_signal.load(Ordering::SeqCst)
+                    && let Some(collection_dir) = task.output_file.parent()
+                {
+                    match compaction
+                        .check_compaction_needed(
+                            task.collection_object_id,
+                            collection_dir,
+                            None,
+                            task.precision_hint,
+                        )
+                        .await
+                    {
+                        Ok(Some(follow_up)) => {
+                            match compaction.schedule_compaction(follow_up).await {
+                                Ok(true) => info!(
+                                    collection_object_id = task.collection_object_id,
+                                    "Compaction follow-up morsel enqueued after level {}",
+                                    task.level
+                                ),
+                                Ok(false) => debug!(
+                                    collection_object_id = task.collection_object_id,
+                                    "Compaction follow-up already owned by another morsel"
+                                ),
+                                Err(error) => warn!(
+                                    collection_object_id = task.collection_object_id,
+                                    "Compaction follow-up enqueue failed: {error}"
+                                ),
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => warn!(
+                            collection_object_id = task.collection_object_id,
+                            "Compaction follow-up discovery failed: {error}"
+                        ),
                     }
                 }
 
@@ -1169,7 +1233,7 @@ impl Compaction {
     async fn perform_unified_vectorrecord_compaction(
         &self,
         task: &SstCompactionTask,
-        _config: &SstConfig,
+        config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
         compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<EnhancedSstCompactionStats> {
@@ -1194,14 +1258,6 @@ impl Compaction {
             task.level
         );
 
-        // Reuse this persistent Compaction's filesystem factory (TD-COMPACT-6:
-        // the former code constructed a fresh FilesystemFactory per compaction
-        // call — pointless proliferation + another cold instance).
-        let fs = self
-            .filesystem_factory
-            .get_filesystem("file:///")
-            .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
-
         for input_file in &task.input_files {
             let input_path = input_file.to_string_lossy();
 
@@ -1216,25 +1272,16 @@ impl Compaction {
                         records.len(),
                         input_path
                     );
-                    // TD-COMPACT-1 S2: input-size accounting for the throughput
-                    // metric. The plugin-FS metadata call can fail on scheme-
-                    // prefixed path strings (`file:///…`) — fall back to
-                    // std::fs on the scheme-stripped path and WARN when both
-                    // fail instead of silently reporting 0.0 MB/s.
-                    match fs.metadata(&input_path).await {
+                    // TD-COMPACT-1 S2: resolve metadata from the URL's backend.
+                    // A task may contain `az://`, `s3://`, or `file://` inputs;
+                    // pinning this call to the local filesystem made cloud
+                    // throughput report zero even though the read succeeded.
+                    match self.filesystem_factory.metadata(&input_path).await {
                         Ok(metadata) => bytes_read += metadata.size,
-                        Err(_) => {
-                            let local = input_path
-                                .strip_prefix("file://")
-                                .unwrap_or(input_path.as_ref());
-                            match std::fs::metadata(local) {
-                                Ok(m) => bytes_read += m.len(),
-                                Err(e) => warn!(
-                                    "compaction throughput: cannot size input {input_path}: {e} \
-                                     (bytes_read will under-report)"
-                                ),
-                            }
-                        }
+                        Err(error) => warn!(
+                            "compaction throughput: cannot size input {input_path}: {error} \
+                             (bytes_read will under-report)"
+                        ),
                     }
 
                     if records.is_empty() {
@@ -1481,6 +1528,12 @@ impl Compaction {
         // are retired — compaction re-emits PAX (`write_pax_segment_compacted`) or
         // Arrow (`ArrowBlockWriter`), neither of which takes those.
 
+        let cache_on_write = std::env::var("PROXIMADB_CACHE_ON_WRITE")
+            .ok()
+            .and_then(|value| crate::core::config::CacheOnWritePolicy::parse(&value))
+            .unwrap_or(config.cache_on_write);
+        let mut pax_cache_seed: Option<proximadb_storage_common::pax_block::PaxCacheSeed> = None;
+
         let bytes_written = if let Some(ref coordinator) = atomic_coordinator {
             // Use atomic operations for compaction
             info!("🔒 LSM COMPACTION: Using atomic operations for compaction_info");
@@ -1598,21 +1651,42 @@ impl Compaction {
                         .max()
                         .unwrap_or(1)
                         .max(1);
-                    crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
-                        &staging_file_path,
-                        &records,
-                        &collection_id,
-                        embedding_count,
-                        proximadb_block_format::VectorQuant::RaBitQ,
-                        rerank_quant,
-                        f32_tier,
-                        None,
-                    )
-                    .map_err(|e| {
-                        crate::core::StorageError::SstEngine(format!(
-                            "PAX compaction write failed: {e}"
-                        ))
-                    })?;
+                    if cache_on_write.includes_invariants() {
+                        let write = crate::storage::engines::sst::segment_format::
+                            write_pax_segment_compacted_with_cache_seed(
+                                &staging_file_path,
+                                &records,
+                                &collection_id,
+                                embedding_count,
+                                proximadb_block_format::VectorQuant::RaBitQ,
+                                rerank_quant,
+                                f32_tier,
+                                None,
+                                cache_on_write.includes_survivors(),
+                            )
+                            .map_err(|e| {
+                                crate::core::StorageError::SstEngine(format!(
+                                    "PAX compaction write failed: {e}"
+                                ))
+                            })?;
+                        pax_cache_seed = write.cache_seed;
+                    } else {
+                        crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
+                            &staging_file_path,
+                            &records,
+                            &collection_id,
+                            embedding_count,
+                            proximadb_block_format::VectorQuant::RaBitQ,
+                            rerank_quant,
+                            f32_tier,
+                            None,
+                        )
+                        .map_err(|e| {
+                            crate::core::StorageError::SstEngine(format!(
+                                "PAX compaction write failed: {e}"
+                            ))
+                        })?;
+                    }
                     info!(
                         "✅ COMPACTION: Wrote {} records to PAX segment",
                         records.len()
@@ -1742,21 +1816,42 @@ impl Compaction {
                         .max()
                         .unwrap_or(1)
                         .max(1);
-                    crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
-                        &task.output_file,
-                        &records,
-                        &collection_id,
-                        embedding_count,
-                        proximadb_block_format::VectorQuant::RaBitQ,
-                        rerank_quant,
-                        f32_tier,
-                        None,
-                    )
-                    .map_err(|e| {
-                        crate::core::StorageError::SstEngine(format!(
-                            "PAX compaction write failed: {e}"
-                        ))
-                    })?;
+                    if cache_on_write.includes_invariants() {
+                        let write = crate::storage::engines::sst::segment_format::
+                            write_pax_segment_compacted_with_cache_seed(
+                                &task.output_file,
+                                &records,
+                                &collection_id,
+                                embedding_count,
+                                proximadb_block_format::VectorQuant::RaBitQ,
+                                rerank_quant,
+                                f32_tier,
+                                None,
+                                cache_on_write.includes_survivors(),
+                            )
+                            .map_err(|e| {
+                                crate::core::StorageError::SstEngine(format!(
+                                    "PAX compaction write failed: {e}"
+                                ))
+                            })?;
+                        pax_cache_seed = write.cache_seed;
+                    } else {
+                        crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
+                            &task.output_file,
+                            &records,
+                            &collection_id,
+                            embedding_count,
+                            proximadb_block_format::VectorQuant::RaBitQ,
+                            rerank_quant,
+                            f32_tier,
+                            None,
+                        )
+                        .map_err(|e| {
+                            crate::core::StorageError::SstEngine(format!(
+                                "PAX compaction write failed: {e}"
+                            ))
+                        })?;
+                    }
                     info!(
                         "✅ COMPACTION (non-atomic): Wrote {} records to PAX segment",
                         records.len()
@@ -1809,26 +1904,18 @@ impl Compaction {
                 }
             }
 
-            // TD-COMPACT-1 S2: size the output for the throughput metric with
-            // the same plugin-FS → std::fs fallback as the input sizing — and
-            // never fail the (already durable) compaction over a metric probe.
+            // TD-COMPACT-1 S2: size the output through its URL-selected
+            // backend, and never fail the already-durable compaction over a
+            // metric probe.
             let output_path = task.output_file.to_string_lossy();
-            match fs.metadata(&output_path).await {
+            match self.filesystem_factory.metadata(&output_path).await {
                 Ok(metadata) => metadata.size,
-                Err(_) => {
-                    let local = output_path
-                        .strip_prefix("file://")
-                        .unwrap_or(output_path.as_ref());
-                    match std::fs::metadata(local) {
-                        Ok(m) => m.len(),
-                        Err(e) => {
-                            warn!(
-                                "compaction throughput: cannot size output {output_path}: {e} \
-                                 (bytes_written will report 0)"
-                            );
-                            0
-                        }
-                    }
+                Err(error) => {
+                    warn!(
+                        "compaction throughput: cannot size output {output_path}: {error} \
+                         (bytes_written will report 0)"
+                    );
+                    0
                 }
             }
         };
@@ -1846,31 +1933,55 @@ impl Compaction {
             "Compaction completed - files will be discovered automatically by directory scanning"
         );
 
+        // D6: populate only after the output is published at its final path.
+        // A staged/failed write must never become visible through the warm tier.
+        let warm_caches = crate::storage::engines::sst::core::get_warm_tier_caches();
+        if let (Some(seed), Some((invariants, survivor))) = (pax_cache_seed, &warm_caches) {
+            crate::storage::engines::sst::segment_format::install_pax_cache_seed(
+                &task.output_file.to_string_lossy(),
+                seed,
+                Some(invariants),
+                Some(survivor),
+            )
+            .await;
+        }
+
         // Remove input files after successful compaction using plugin filesystem
         // TD-CACHE-2 S2d: evict the warm-tier cache entries for each deleted
         // input file — correctness is structural (UUID-unique outputs, old
         // paths never queried again), but without eviction the dead entries
         // squat in the invariants/survivor budgets until recency ages them out.
-        let warm_caches = crate::storage::engines::sst::core::get_warm_tier_caches();
+        let mut retirement_errors = Vec::new();
         for input_file in &task.input_files {
             let input_path = input_file.to_string_lossy();
-            if let Err(e) = fs.delete(&input_path).await {
+            if let Err(error) = retire_compaction_input(&self.filesystem_factory, &input_path).await
+            {
                 warn!(
                     "Failed to remove input file {}: {}",
                     input_file.display(),
-                    e
+                    error
                 );
-            } else if let Some((invariants, survivor)) = &warm_caches {
-                invariants.invalidate(&input_path);
-                let purged = survivor.purge_path(&input_path).await;
-                if purged > 0 {
-                    debug!(
-                        file = %input_path,
-                        purged,
-                        "evicted survivor-cache ranges for compacted-away file"
-                    );
-                }
+                retirement_errors.push(format!("{}: {error}", input_file.display()));
+                continue;
             }
+
+            let purged =
+                purge_retired_segment_cache_entries(&input_path, warm_caches.as_ref()).await;
+            if purged > 0 {
+                debug!(
+                    file = %input_path,
+                    purged,
+                    "evicted survivor-cache ranges for compacted-away file"
+                );
+            }
+        }
+        if !retirement_errors.is_empty() {
+            return Err(crate::core::StorageError::SstEngine(format!(
+                "compaction published {} but failed to retire {} input(s): {}",
+                task.output_file.display(),
+                retirement_errors.len(),
+                retirement_errors.join("; ")
+            )));
         }
 
         // DETAILED COMPACTION PERFORMANCE ANALYSIS
@@ -2281,7 +2392,7 @@ impl Compaction {
     /// Respects the configured block_format setting for file extension
     fn generate_output_file_path(
         &self,
-        _collection_id: &str,
+        _collection_object_id: crate::core::stable_id::CollectionObjectId,
         collection_dir: &Path,
         level: u8,
         block_format: BlockFormat,
@@ -2441,6 +2552,39 @@ impl Compaction {
     }
 }
 
+type WarmTierCachePair = (
+    Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+);
+
+/// Retire one immutable compaction input through the backend selected by its
+/// URL. A missing input is an idempotent success: another already-running
+/// morsel may have completed retirement after this task took its discovery
+/// snapshot. Every other backend error is surfaced so the worker cannot report
+/// a false-success or schedule a follow-up over still-live inputs.
+async fn retire_compaction_input(factory: &FilesystemFactory, path: &str) -> FsResult<()> {
+    match factory.delete(path).await {
+        Ok(()) | Err(FilesystemError::NotFound(_)) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Purge immutable bytes for one retired compaction input.
+///
+/// The compaction loop invokes this only after the backing filesystem confirms
+/// deletion. A failed delete therefore keeps acceleration bytes for a
+/// still-discoverable segment.
+async fn purge_retired_segment_cache_entries(
+    path: &str,
+    warm_caches: Option<&WarmTierCachePair>,
+) -> usize {
+    let Some((invariants, survivor)) = warm_caches else {
+        return 0;
+    };
+    invariants.invalidate_all(path).await;
+    survivor.purge_path(path).await
+}
+
 impl Drop for Compaction {
     fn drop(&mut self) {
         self.shutdown_signal.store(true, Ordering::SeqCst);
@@ -2499,6 +2643,163 @@ mod compaction_format_tests {
         assert_eq!(
             compaction_output_format(&[] as &[String]),
             BlockFormat::PaxBlock
+        );
+    }
+}
+
+#[cfg(test)]
+mod compaction_cache_retirement_tests {
+    use super::{purge_retired_segment_cache_entries, retire_compaction_input};
+    use crate::storage::engines::sst::segment_format::{SegmentInvariants, SegmentInvariantsCache};
+    use crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache;
+    use crate::storage::persistence::filesystem::{FilesystemError, FilesystemFactory};
+    use proximadb_cache::PersistentByteStore;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn input_retirement_routes_by_url_scheme_and_never_falls_back_to_local() {
+        let factory = FilesystemFactory::create_default()
+            .await
+            .expect("create filesystem factory");
+        let error =
+            retire_compaction_input(&factory, "retirement-spy://bucket/collection/L0_input.pax")
+                .await
+                .expect_err("unknown object-store scheme must not be treated as a local path");
+
+        assert!(
+            matches!(error, FilesystemError::UnsupportedScheme(ref scheme)
+                if scheme == "retirement-spy"),
+            "unexpected routing error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn input_retirement_deletes_local_file_and_is_idempotent() {
+        let directory = tempfile::tempdir().expect("retirement tempdir");
+        let input = directory.path().join("L0_input.pax");
+        std::fs::write(&input, b"segment").expect("write retirement fixture");
+        let input_url = format!("file://{}", input.display());
+        let factory = FilesystemFactory::create_default()
+            .await
+            .expect("create filesystem factory");
+
+        retire_compaction_input(&factory, &input_url)
+            .await
+            .expect("retire existing input");
+        assert!(!input.exists(), "input must be deleted");
+
+        retire_compaction_input(&factory, &input_url)
+            .await
+            .expect("retiring an absent immutable input is idempotent");
+    }
+
+    #[tokio::test]
+    async fn retired_input_purges_dram_and_both_persistent_namespaces() {
+        let directory = tempfile::tempdir().expect("cache tempdir");
+        let store = Arc::new(
+            PersistentByteStore::open(directory.path(), 1 << 20).expect("persistent cache store"),
+        );
+        let invariants = Arc::new(SegmentInvariantsCache::with_l2(1 << 20, store.clone()));
+        let survivor = Arc::new(SurvivorRangeCache::with_resolver_and_l2(
+            1 << 20,
+            None,
+            Some(store.clone()),
+        ));
+        let path = "file:///tenant-a/collection-a/L1_retired.pax";
+        invariants
+            .put_with_l2(
+                path.to_string(),
+                Arc::new(SegmentInvariants {
+                    header_bytes: vec![1, 2, 3],
+                    region_bytes: Some(Arc::from(&b"region-a"[..])),
+                    footer_bytes: vec![4, 5],
+                    a0_bytes: None,
+                    rabitq_header_bytes: None,
+                }),
+            )
+            .await;
+        survivor
+            .seed_parent_region(path, 1_000, Arc::from(&b"sq8-region"[..]))
+            .await
+            .expect("seed survivor parent");
+
+        let pair = (invariants.clone(), survivor);
+        purge_retired_segment_cache_entries(path, Some(&pair)).await;
+
+        assert!(invariants.get(path).is_none(), "invariant DRAM entry");
+        assert!(
+            store
+                .get(&format!("invariants/control/{path}"))
+                .await
+                .expect("read invariant L2")
+                .is_none(),
+            "invariant persistent entry"
+        );
+        assert!(
+            store
+                .get(&format!(
+                    "survivor-parent/{path}:{}:{}",
+                    1_000,
+                    b"sq8-region".len()
+                ))
+                .await
+                .expect("read survivor L2")
+                .is_none(),
+            "survivor persistent parent"
+        );
+    }
+
+    #[tokio::test]
+    async fn collection_prefix_retirement_preserves_similarly_named_sibling() {
+        let directory = tempfile::tempdir().expect("cache tempdir");
+        let store = Arc::new(
+            PersistentByteStore::open(directory.path(), 1 << 20).expect("persistent cache store"),
+        );
+        let invariants = SegmentInvariantsCache::with_l2(1 << 20, store.clone());
+        let survivor = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(store.clone()));
+        let retired_root = "file:///tenant-a/collection-12";
+        let retired_path = "file:///tenant-a/collection-12/L1.pax";
+        let sibling_path = "file:///tenant-a/collection-123/L1.pax";
+
+        for path in [retired_path, sibling_path] {
+            invariants
+                .put_with_l2(
+                    path.to_string(),
+                    Arc::new(SegmentInvariants {
+                        header_bytes: vec![1],
+                        region_bytes: Some(Arc::from(&b"region"[..])),
+                        footer_bytes: vec![2],
+                        a0_bytes: None,
+                        rabitq_header_bytes: None,
+                    }),
+                )
+                .await;
+            survivor
+                .seed_parent_region(path, 100, Arc::from(&b"sq8"[..]))
+                .await
+                .expect("seed survivor parent");
+        }
+
+        assert!(invariants.invalidate_prefix_all(retired_root).await > 0);
+        assert!(survivor.purge_prefix(retired_root).await > 0);
+        assert!(invariants.get(retired_path).is_none());
+        assert!(
+            invariants.get(sibling_path).is_some(),
+            "separator-aware prefix retirement must preserve collection-123"
+        );
+        assert!(
+            store
+                .get(&format!("survivor-parent/{retired_path}:100:3"))
+                .await
+                .expect("retired persistent lookup")
+                .is_none()
+        );
+        assert!(
+            store
+                .get(&format!("survivor-parent/{sibling_path}:100:3"))
+                .await
+                .expect("sibling persistent lookup")
+                .is_some()
         );
     }
 }

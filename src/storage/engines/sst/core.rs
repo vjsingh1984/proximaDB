@@ -86,6 +86,16 @@ pub fn get_warm_tier_caches() -> Option<(
     GLOBAL_WARM_TIER_CACHES.get().cloned()
 }
 
+/// Reclaim all immutable PAX acceleration bytes below a successfully retired
+/// collection directory. No cache is a valid no-op (env-unset behavior).
+pub async fn purge_warm_tier_prefix(path_prefix: &str) -> usize {
+    let Some((invariants, survivor)) = get_warm_tier_caches() else {
+        return 0;
+    };
+    let invariant_entries = invariants.invalidate_prefix_all(path_prefix).await;
+    invariant_entries + survivor.purge_prefix(path_prefix).await
+}
+
 // Global PCA model cache for Z-Order spatial encoding
 // Uses lazy_static for thread-safe initialization
 lazy_static::lazy_static! {
@@ -545,6 +555,47 @@ impl SstEngine {
             config.coarse_probe.as_ref(),
         );
 
+        static SHARED_LOCAL_DISK_STORE: std::sync::OnceLock<
+            Option<Arc<proximadb_cache::PersistentByteStore>>,
+        > = std::sync::OnceLock::new();
+        let local_disk_store = SHARED_LOCAL_DISK_STORE
+            .get_or_init(|| {
+                let path = std::env::var("PROXIMADB_CACHE_LOCAL_DISK_PATH")
+                    .ok()
+                    .filter(|path| !path.trim().is_empty())
+                    .or_else(|| config.cache_local_disk_path.clone());
+                let max_gb = std::env::var("PROXIMADB_CACHE_LOCAL_DISK_MAX_GB")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(config.cache_local_disk_max_gb);
+                path.and_then(|path| {
+                    if path.contains("://") {
+                        tracing::warn!(
+                            "persistent PAX cache disabled: local-disk path must be a filesystem path"
+                        );
+                        return None;
+                    }
+                    if max_gb == 0 {
+                        tracing::warn!(
+                            "persistent PAX cache disabled: local-disk budget is zero GiB"
+                        );
+                        return None;
+                    }
+                    let root = std::path::PathBuf::from(path).join("pax-warm-tier-v1");
+                    let max_bytes = max_gb.saturating_mul(1024 * 1024 * 1024);
+                    match proximadb_cache::PersistentByteStore::open(root, max_bytes) {
+                        Ok(store) => Some(Arc::new(store)),
+                        Err(error) => {
+                            tracing::warn!(
+                                "persistent PAX cache disabled: unable to open local-disk tier: {error}"
+                            );
+                            None
+                        }
+                    }
+                })
+            })
+            .clone();
+
         static SHARED_INVARIANTS_CACHE: std::sync::OnceLock<
             Option<Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>>,
         > = std::sync::OnceLock::new();
@@ -555,11 +606,16 @@ impl SstEngine {
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(config.segment_invariants_cache_mb);
                 (mb > 0).then(|| {
-                    Arc::new(
+                    Arc::new(if let Some(store) = &local_disk_store {
+                        crate::storage::engines::sst::segment_format::SegmentInvariantsCache::with_l2(
+                            (mb as usize) * 1024 * 1024,
+                            store.clone(),
+                        )
+                    } else {
                         crate::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
                             (mb as usize) * 1024 * 1024,
-                        ),
-                    )
+                        )
+                    })
                 })
             })
             .clone();
@@ -592,9 +648,10 @@ impl SstEngine {
                         policy.resolver(budget_bytes, tenant_to_tier)
                     });
                 Arc::new(
-                    crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::with_resolver(
+                    crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::with_resolver_and_l2(
                         budget_bytes,
                         resolver,
+                        local_disk_store.clone(),
                     ),
                 )
             })

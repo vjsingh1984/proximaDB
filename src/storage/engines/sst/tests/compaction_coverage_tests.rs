@@ -105,6 +105,7 @@ mod tests {
         let output_file = PathBuf::from("/tmp/output.sstable");
 
         let task = CompactionTask {
+            collection_object_id: 1,
             level: 2,
             input_files: input_files.clone(),
             output_file: output_file.clone(),
@@ -202,6 +203,7 @@ mod tests {
 
         // Test scheduling task with empty input files
         let task = CompactionTask {
+            collection_object_id: 1,
             level: 1,
             input_files: vec![], // Empty input files
             output_file: PathBuf::from("/tmp/empty_output.sstable"),
@@ -224,6 +226,7 @@ mod tests {
             .collect();
 
         let task = CompactionTask {
+            collection_object_id: 1,
             level: 2,
             input_files: many_files,
             output_file: PathBuf::from("/tmp/multi_output.sstable"),
@@ -334,6 +337,7 @@ mod tests {
         priority: CompactionPriority,
     ) -> CompactionTask {
         CompactionTask {
+            collection_object_id: 1,
             level,
             input_files: vec![
                 PathBuf::from(format!("/tmp/{}_input1.sstable", collection_id)),

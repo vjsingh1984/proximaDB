@@ -1,33 +1,41 @@
-# Handoff: NVMe Tier Promotion — DRAM→NVMe Spill for Both Cache Tiers
+# Handoff: Local-Disk Tier Promotion — DRAM→Local-Disk Spill for Both Cache Tiers
 
 ## Context
 
 The SIFT1M end-to-end benchmark (2026-07-29) measured **48.5 GETs/query cold** at 1M scale (2 segments, `level_multiplier=1.0`). The dominant cost driver is SQ8 survivor range misses (38.5 GETs/query at 32% DRAM cache hit) + control-plane misses (4 GETs/query at 0% invariants cache hit — a separate bug). Each cold miss = 1 Azure Blob GET ($0.005/10K).
 
-**Azure instance store NVMe is free** (bundled in Lsv2/E-series VM price). Turbopuffer charges $0.10/GB for this same SSD caching. ProximaDB can include it for free.
+Azure instance-store NVMe can provide the local path without a separate
+managed-disk line item on suitable VM SKUs. It is bundled capacity, not free
+hardware; HDD, SATA SSD, managed disk, and instance NVMe all satisfy the
+correctness contract, with materially different latency and VM economics.
 
-**The `NvmeBackend` + L1→L2 spillover pattern already exist in the codebase** (`src/storage/cache/backend/nvme_tier.rs`, `src/storage/cache/base.rs`) — but are NOT wired into either the SurvivorRangeCache or the SegmentInvariantsCache.
+An L1→L2 spillover pattern already exists in `src/storage/cache/base.rs`.
+The similarly named `NvmeBackend` was an initial reuse candidate, but the
+implementation audit below found that it is memory-backed and unsuitable for
+restart persistence.
 
 ## The Goal
 
-Wire the existing NVMe tier machinery into BOTH warm-tier caches:
+Wire a persistent local-disk tier into BOTH warm-tier caches:
 
 ```
 Object Store (Azure Blob, $0.005/10K GETs)
     ↑ cold miss (first-ever access to a segment)
     |
-NVMe L2 (instance store — FREE on Azure Lsv2)
-    ↑ warm miss (evicted from DRAM, still on NVMe)
+Local-disk L2 (instance-store NVMe is the recommended profile)
+    ↑ warm miss (evicted from DRAM, still on local disk)
     |
 DRAM L1 (moka — admission-controlled by CacheTier priority)
     = hot hit (the working set)
 ```
 
-Both `SegmentInvariantsCache` (Region A RaBitQ) AND `SurvivorRangeCache` (Region B SQ8) get the same treatment. At 1M scale, the DRAM budget (256MB invariants + 1024MB survivor) covers everything. At billion-scale, DRAM can't hold all segments → the NVMe tier catches the overflow → near-zero object-store GETs.
+Both `SegmentInvariantsCache` (Region A RaBitQ) AND `SurvivorRangeCache` (Region B SQ8) get the same treatment. At 1M scale, the DRAM budget (256MB invariants + 1024MB survivor) covers everything. At billion-scale, DRAM can't hold all segments → the local-disk tier catches the overflow → near-zero object-store GETs.
 
-## What Already Exists (reuse, don't rebuild)
+## What Already Exists (audit before reuse)
 
-1. **`NvmeBackend<K,V>`** — `src/storage/cache/backend/nvme_tier.rs`. Full implementation: sharded dirs (16 shards), DashMap index, LRU eviction, size tracking. Implements `StorageBackend` trait. **Tested.**
+1. **`NvmeBackend<K,V>`** — `src/storage/cache/backend/nvme_tier.rs`.
+   Despite its name and shard-directory setup, values live only in a DashMap.
+   It is not the persistent implementation used by this design.
 
 2. **L1→L2 spillover pattern** — `src/storage/cache/base.rs`:
    - `spill_to_l2(key, value)` — called on L1 eviction.
@@ -36,7 +44,7 @@ Both `SegmentInvariantsCache` (Region A RaBitQ) AND `SurvivorRangeCache` (Region
 
 3. **`TenantCache<V>`** — `crates/foundation/proximadb-cache/src/lib.rs`. The moka-backed, byte-budgeted, per-tenant fair-sharing cache that backs `SurvivorRangeCache`. Has:
    - `get_or_load` read-through API with loader closure.
-   - Eviction listener (for gauge updates — extend for NVMe spill).
+   - Eviction listener (for gauge updates).
    - Per-kind admission ceilings (`CacheKind::QuantizedCodes` etc.).
    - Per-tenant weighted fair share + true-pin reserves.
 
@@ -52,11 +60,37 @@ Both `SegmentInvariantsCache` (Region A RaBitQ) AND `SurvivorRangeCache` (Region
    ResultPayload   // Region D OIDs — priority 1
    ```
 
-6. **`SurvivorRangeCache` header doc** explicitly says: *"NVMe spill for 10M+ scale swaps the backing behind the same key/budget API (follow-up)."* — this IS the designed follow-up.
+6. **`SurvivorRangeCache` header doc** identified a persistent local spill tier
+   as the 10M+ follow-up. This is that follow-up, with the medium generalized
+   from NVMe to local disk.
+
+## Implementation audit correction (2026-07-29)
+
+First-principles inspection changed one implementation assumption without
+changing the requested D1-D6 outcome:
+
+- The root `NvmeBackend` is **not file-backed**. It creates shard directories
+  but keeps values in a `DashMap`, cannot rebuild after restart, and estimates
+  bytes from `Debug` output. Wiring it would fail this handoff's second-restart
+  test. The real persistent byte store therefore lives in the foundation
+  `proximadb-cache` crate (the root crate cannot be imported from a foundation
+  crate without a layering cycle). See ADR-085.
+- Local range reads validate persisted CRCs per 4 MiB chunk. Reading and
+  checksumming an entire 128 MiB SQ8 parent for a small survivor range would
+  remove Blob GETs but introduce avoidable local read amplification.
+- Write-time population is **zero extra object I/O/encoding**, not literally
+  zero cost: it retains memory and performs hashing, checksumming, and an
+  optional local write. It becomes visible only after final atomic publication.
+- "Free NVMe" means no separately metered managed-disk line item on an
+  instance-store SKU. Its capacity is bundled into the selected VM and is not
+  economically or operationally free in isolation.
+- All impact rows below remain projections until a corrected benchmark proves
+  quiescent materialization, segment geometry, cache state, physical GET count,
+  and recall and records the result in `BENCHMARK_EVIDENCE.toml`.
 
 ## What to Build
 
-### D1 — Wire NVMe L2 into `TenantCache` (backs SurvivorRangeCache)
+### D1 — Wire local-disk L2 into `TenantCache` (backs SurvivorRangeCache)
 
 **File:** `crates/foundation/proximadb-cache/src/lib.rs`
 
@@ -64,67 +98,70 @@ Add `l2_backend: Option<Arc<NvmeBackend<CacheKey, V>>>` field.
 
 In `get_or_load`:
 1. L1 (DRAM/moka) hit → return.
-2. L1 miss → **check L2 (NVMe)** → on hit, promote to L1 (admission-controlled), return.
+2. L1 miss → **check local-disk L2** → on hit, promote to L1 (admission-controlled), return.
 3. L2 miss → run the loader (object store fetch) → insert into L1 + L2.
 
 In moka eviction listener:
-- On eviction → **spill to L2** (fire-and-forget `tokio::spawn`).
+- On eviction → **spill to L2**.
 
-### D2 — Wire NVMe L2 into `SegmentInvariantsCache`
+### D2 — Wire local-disk L2 into `SegmentInvariantsCache`
 
 **File:** `src/storage/engines/sst/segment_format.rs`
 
-The InvariantsCache uses a custom sharded HashMap (not TenantCache). Add an optional `Arc<NvmeBackend<...>>` alongside each shard. On shard miss → check NVMe → on hit, promote to shard. On shard eviction (LRU) → spill to NVMe.
+The InvariantsCache uses a custom sharded HashMap (not TenantCache). Add an optional persistent byte-store handle alongside each shard. On shard miss → check local disk → on hit, promote to shard. On shard eviction (LRU) → spill to local disk.
 
 The key: `{segment_path}:{region_kind}` (e.g., `"data/.../seg.pax:RaBitQ"` vs `"data/.../seg.pax:Footer"`).
 
-### D3 — Shared NVMe path + per-kind budgets
+### D3 — Shared local-disk path + per-kind budgets
 
-Both caches share ONE NVMe directory (e.g., `/var/lib/proximadb/cache/`). The `NvmeBackend`'s sharded directory structure naturally separates entries by key hash. Per-kind budgets ensure invariants don't crowd out survivors on NVMe:
+Both caches share ONE local directory (e.g., `/var/lib/proximadb/cache/`). The persistent store's sharded directory structure separates entries by stable key hash. Priority eviction ensures survivor data does not crowd invariants out of the shared budget:
 
 ```toml
 [storage.sst_config]
 survivor_cache_mb = 1024                    # DRAM budget (existing)
 segment_invariants_cache_mb = 256            # DRAM budget (existing)
-cache_nvme_path = "/var/lib/proximadb"      # NEW: shared NVMe path
-cache_nvme_max_gb = 100                      # NEW: shared NVMe budget
+cache_local_disk_path = "/var/lib/proximadb" # NEW: shared local path
+cache_local_disk_max_gb = 100                 # NEW: shared disk budget
 ```
 
 Env overrides:
-- `PROXIMADB_CACHE_NVME_PATH` — the instance-store path.
-- `PROXIMADB_CACHE_NVME_MAX_GB` — the shared budget.
+- `PROXIMADB_CACHE_LOCAL_DISK_PATH` — the local-filesystem path.
+- `PROXIMADB_CACHE_LOCAL_DISK_MAX_GB` — the shared budget.
 - Unset → no L2 (current behavior, unchanged, zero regression).
 
 ### D4 — Metrics
 
 Add Prometheus counters:
-- `proximadb_cache_nvme_hits_total{tier="survivor|invariants"}` — L2 hit (0 GETs).
-- `proximadb_cache_nvme_misses_total{tier="survivor|invariants"}` — L2 miss (object store).
-- `proximadb_cache_nvme_bytes{tier="survivor|invariants"}` — resident NVMe bytes.
+- `proximadb_cache_local_disk_hits_total{tier="survivor|invariants"}` — L2 hit (0 GETs).
+- `proximadb_cache_local_disk_misses_total{tier="survivor|invariants"}` — L2 namespace miss.
+- `proximadb_cache_local_disk_bytes{tier="survivor|invariants"}` — resident local bytes.
 
 ### D5 — Register env gates
 
-Add `PROXIMADB_CACHE_NVME_PATH` + `PROXIMADB_CACHE_NVME_MAX_GB` to `docs/12-design/ENV_GATE_REGISTRY.adoc`.
+Add `PROXIMADB_CACHE_LOCAL_DISK_PATH` + `PROXIMADB_CACHE_LOCAL_DISK_MAX_GB` to `docs/12-design/ENV_GATE_REGISTRY.adoc`.
 
-## Scale Analysis (why both caches need NVMe)
+## Scale Analysis (why both caches need local disk)
 
-| Scale | RaBitQ (A) per segment | SQ8 (B) per segment | Segments | DRAM needs | NVMe needs |
+| Scale | RaBitQ (A) per segment | SQ8 (B) per segment | Segments | DRAM needs | Local-disk needs |
 |---|---|---|---|---|---|
 | 1M | 24 MB | 128 MB | 2 | 304 MB ✅ | 0 (fits DRAM) |
 | 10M | 24 MB | 128 MB | ~5 | 760 MB ⚠️ | 0-2 GB (overflow) |
 | 100M | 24 MB | 128 MB | ~20 | 3 GB ❌ | ~15 GB |
 | 1B | 24 MB | 128 MB | ~100 | 15 GB ❌ | ~100 GB |
 
-At billion-scale with a 4GB DRAM instance: DRAM holds ~20 segments' invariants + ~10 segments' survivors. NVMe holds the remaining 80 segments. Object store is only for never-queried segments (the cold tail).
+At billion-scale with a 4GB DRAM instance, the local-disk budget retains the
+immutable working set that does not fit in DRAM. The exact split depends on
+segment geometry, metadata size, disk budget, and eviction history; it must be
+measured rather than inferred solely from corpus size.
 
 ## Expected Impact on GETs/query
 
-| Scenario | DRAM hit% | NVMe hit% | Object store% | GETs/query | Retrieval COGS/M | Margin @ $50/M |
+| Scenario | DRAM hit% | Local-disk hit% | Object store% | GETs/query | Retrieval COGS/M | Margin @ $50/M |
 |---|---|---|---|---|---|---|
 | Current (DRAM only, 1M cold) | 32% | 0% | 68% | 48.5 | $24.25 | 51.5% |
-| DRAM + NVMe (1M warm) | 32% | **60%** | 8% | **~5.8** | **$2.9** | **94%** |
-| DRAM + NVMe (100M warm) | 15% | **75%** | 10% | **~10** | **$5.0** | **90%** |
-| DRAM + NVMe (1B warm) | 5% | **80%** | 15% | **~15** | **$7.5** | **85%** |
+| DRAM + local disk (1M warm) | 32% | **60%** | 8% | **~5.8** | **$2.9** | **94%** |
+| DRAM + local disk (100M warm) | 15% | **75%** | 10% | **~10** | **$5.0** | **90%** |
+| DRAM + local disk (1B warm) | 5% | **80%** | 15% | **~15** | **$7.5** | **85%** |
 
 ### Attribution — survivors dominate the reduction, not invariants
 
@@ -141,10 +178,10 @@ measured 48.5 GETs/query (2 segments) by PAX region — the 48.5 total is
 | **Region B SQ8 survivors** | the rerank payload | SurvivorRangeCache (`QuantizedCodes`) | **~16–24** | **~40–50%** |
 | Region D OIDs | top-k metadata blocks | SurvivorRangeCache (`Other`) | ~2–4 | ~5% |
 
-The 48.5 → ~5.8 projection is driven by the **survivor cache + NVMe** (~40–50%
+The 48.5 → ~5.8 projection is driven by the **survivor cache + local disk** (~40–50%
 of GETs), *not* invariants (~20–25%). Invariants caching alone takes 48.5 → ~38.
-The full warm-tier stack (both caches + NVMe) is what reaches ~5.8. All six PAX
-regions route through one of the two warm-tier caches, so the NVMe plan (D1 into
+The full warm-tier stack (both caches + local disk) is what reaches ~5.8. All six PAX
+regions route through one of the two warm-tier caches, so the local-disk plan (D1 into
 `TenantCache`→SurvivorRangeCache, D2 into SegmentInvariantsCache) covers the
 entire read path — including Region D OIDs
 (`survivor_cache.get_or_fetch(CacheKind::Other, …)`, `segment_format.rs:2111`).
@@ -153,10 +190,10 @@ entire read path — including Region D OIDs
 
 The `level_multiplier=1.0` benchmark measured the invariants cache at **0% hit**
 (vs 99.96% in the earlier Phase-2 run). This is not a side note — **it gates
-D2.** NVMe sits *behind* the invariants cache: on an L1 miss the code checks L2
-(NVMe), but L2 is only populated by L1-eviction spill. If L1 never successfully
-inserts (the 0%-hit symptom), **L2 stays empty too → D2 delivers ~zero
-benefit.** Fix this *before* investing in D2.
+D2.** Local disk sits *behind* the invariants cache: on an L1 miss the code
+checks L2. Both authoritative read-through and post-publication write seeding
+populate L2, but an L1 population bug would still hide the intended DRAM
+benefit. Fix that defect before declaring D2 complete.
 
 Code trace (`segment_format.rs`, `core.rs:531`):
 - The cache **is armed** (process-wide `OnceLock`, `Some` when
@@ -180,30 +217,31 @@ Acceptance: invariants-cache hit rate **≥ 90% on warm repeat queries at 1M**
 | Component | Turbopuffer (AWS) | ProximaDB (Azure) |
 |---|---|---|
 | Object storage | $0.023/GB-mo (S3) | $0.018/GB-mo (Blob Hot) |
-| SSD cache layer | **$0.10/GB-mo** (EC2 instance store markup) | **$0** (instance store NVMe — FREE) |
+| SSD cache layer | **$0.10/GB-mo** (reported competitor price) | bundled with selected VM when using instance-store NVMe; managed-disk cost otherwise |
 | DRAM cache | Included in compute | Included in compute |
 | Total storage+cache | $0.12/GB-mo | $0.018/GB-mo (**6.7× cheaper**) |
 | Queries (cold) | ~$1/PB (S3 GETs ~$0.004/10K) | $50/M flat (Blob GETs ~$0.005/10K) |
-| Queries (warm NVMe) | ~$0 (cached on SSD) | ~$0 (cached on NVMe — same model) |
+| Queries (local-disk warm) | no object-store GET fee | no object-store GET fee; local media/compute still costs |
 
 At 100M+ scale, the storage markup dominates: Turbopuffer charges $0.10/GB for SSD cache that ProximaDB includes for free. ProximaDB undercuts at ~2× cheaper.
 
 ## Multitenancy
 
-The existing `TenantCache` per-tenant fair-sharing (TD-CACHE-3: floors, ceilings, true-pin reserves, work-conserving elastic budget) applies to the NVMe tier automatically — the `CacheKey` includes `tenant: Arc<str>`, and the `NvmeBackend` hashes the full key. No cross-tenant contention. Shared multi-tenant is the default; BYOC is an Enterprise option.
+The existing `TenantCache` per-tenant fair-sharing (TD-CACHE-3: floors, ceilings, true-pin reserves, work-conserving elastic budget) continues to govern DRAM admission. The local-disk key includes the tenant identity, preventing cross-tenant key collisions; its shared capacity policy is priority/recency rather than the DRAM tier's per-tenant quota scheme. Shared multi-tenant is the default; BYOC is an Enterprise option.
 
 ## Key Files
 
 | File | Role |
 |---|---|
 | `crates/foundation/proximadb-cache/src/lib.rs` | `TenantCache` — add L2 backend |
-| `src/storage/cache/backend/nvme_tier.rs` | `NvmeBackend` — existing, reuse as-is |
+| `crates/foundation/proximadb-cache/src/persistent_l2.rs` | `PersistentByteStore` — restart-persistent local store |
+| `src/storage/cache/backend/nvme_tier.rs` | Legacy `NvmeBackend` — audited only; memory-backed, not reused |
 | `src/storage/cache/base.rs` | L1→L2 spillover pattern — existing, reference |
-| `src/storage/engines/sst/survivor_range_cache.rs` | `SurvivorRangeCache` — pass NVMe config to TenantCache |
-| `src/storage/engines/sst/segment_format.rs` | `SegmentInvariantsCache` — add NVMe L2 lookup on miss |
-| `src/storage/engines/sst/core.rs` | `SstEngine::new` — wire NVMe path from config |
-| `src/core/config.rs` | `SstConfig` — add `cache_nvme_path` + `cache_nvme_max_gb` |
-| `src/metrics/operational_metrics.rs` | Add NVMe hit/miss/bytes counters |
+| `src/storage/engines/sst/survivor_range_cache.rs` | `SurvivorRangeCache` — pass local store to TenantCache |
+| `src/storage/engines/sst/segment_format.rs` | `SegmentInvariantsCache` — add local-disk L2 lookup on miss |
+| `src/storage/engines/sst/core.rs` | `SstEngine::new` — wire local-disk path from config |
+| `src/core/config.rs` | `SstConfig` — add `cache_local_disk_path` + `cache_local_disk_max_gb` |
+| `src/metrics/operational_metrics.rs` | Add local-disk hit/miss/bytes counters |
 | `docs/12-design/ENV_GATE_REGISTRY.adoc` | Register two new env gates |
 
 ## Design Docs (already merged to develop — read these first)
@@ -211,10 +249,10 @@ The existing `TenantCache` per-tenant fair-sharing (TD-CACHE-3: floors, ceilings
 - `docs/12-design/adr/ADR-080-vector-search-compaction-tuning.adoc` — the L2 compaction fix (level_multiplier=1.0) + the verified 48.5 GETs measurement.
 - `docs/10-quality/td/TD-COMPACT-10-l2-segment-consolidation-gap.adoc` — the measured segment-count problem + verified fix.
 - `docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc` — Azure charges per GET (not per byte) + the coalescing opportunity.
-- `docs/12-design/adr/ADR-065-*.adoc` — the PAX region layout + the warm-tier cache design (A in DRAM, B in DRAM/NVMe, D streamed).
+- `docs/12-design/adr/ADR-065-*.adoc` — the PAX region layout + the original warm-tier cache design.
 - `docs/12-design/HANDOFF_L2_COMPACTION_GET_REDUCTION.md` — the original Codex handoff for the L2 compaction fix.
 
-## Next reductions beyond caching (the post-NVMe levers)
+## Next reductions beyond caching (the post-local-disk levers)
 
 Once D1–D6 land, the warm-tier seam is complete — **caching is near-maxed**.
 The next 2–3× comes from model quality and I/O coalescing, not more cache tiers:
@@ -240,24 +278,31 @@ path to <5.
 
 0. **(Prerequisite, blocks D2)** SegmentInvariantsCache hit rate ≥ 90% on warm
    repeat queries at 1M (Prometheus `SEGMENT_INVARIANTS_CACHE_HITS_TOTAL` /
-   misses). Fix the measured 0% hit *before* wiring NVMe behind it — otherwise
+   misses). Fix the measured 0% hit *before* declaring local-disk promotion complete — otherwise
    D2 is dead weight. See "Prerequisite" section above.
-1. NVMe L2 is optional (env-gated, unset = current behavior, zero regression).
-2. Both `SurvivorRangeCache` AND `SegmentInvariantsCache` spill to NVMe on DRAM eviction.
-3. Both promote from NVMe to DRAM on L2 hit.
-4. At 1M SIFT (warm NVMe after one cold sweep): GETs/query ≤ **10** (vs 48.5 cold).
+1. Local-disk L2 is optional (env-gated, unset = current behavior, zero regression).
+2. Both `SurvivorRangeCache` AND `SegmentInvariantsCache` retain immutable values on local disk.
+3. Both promote from local disk to DRAM on L2 hit.
+4. At 1M SIFT (warm local disk after one cold sweep): GETs/query ≤ **10** (vs 48.5 cold).
 5. Recall@10 ≥ 0.98 maintained (same data, faster access).
-6. Per-tenant NVMe isolation (TenantCache key includes tenant).
-7. Metrics: `proximadb_cache_nvme_hits_total`, `_misses_total`, `_bytes` with tier labels.
+6. Per-tenant local-disk key isolation (cache key includes tenant).
+7. Metrics: `proximadb_cache_local_disk_hits_total`, `_misses_total`, `_bytes` with tier labels.
 8. `cargo clippy --lib --bins -D warnings` clean.
 9. `make work-commit-check` clean (including env-gate registry).
 
 ## How to Verify
 
+The authoritative implementation harness is now
+`scripts/bench/sift1m_get_reduction.py`. It builds on the sequence below but
+adds release-binary enforcement, full PAX-footer row accounting, a stable
+segment-geometry gate, persisted collection identity, exact metric presence,
+fresh-process cache states, and machine-readable output. The following remains
+the original manual sketch, not evidence protocol:
+
 ```bash
-# 1. Boot with NVMe path on local disk (stand-in for instance store)
-PROXIMADB_CACHE_NVME_PATH=/tmp/proximadb_nvme \
-PROXIMADB_CACHE_NVME_MAX_GB=10 \
+# 1. Boot with the persistent local-disk tier (NVMe is recommended in production)
+PROXIMADB_CACHE_LOCAL_DISK_PATH=/tmp/proximadb_local_cache \
+PROXIMADB_CACHE_LOCAL_DISK_MAX_GB=10 \
 PROXIMADB_L0_COMPACTION_ENABLED=1 \
   target/release-server/proximadb-server -c config.toml
 
@@ -265,17 +310,17 @@ PROXIMADB_L0_COMPACTION_ENABLED=1 \
 python3 scripts/bench/async_compaction_1m_verify.py
 # Wait 120s for compaction
 
-# 3. Cold sweep #1 (populates DRAM + NVMe)
-# Restart server (cold DRAM, cold NVMe)
+# 3. Cold sweep #1 (populates DRAM + local disk)
+# Restart server (cold DRAM, cold local disk)
 pkill proximadb-server; sleep 3; <boot>; sleep 20
 python3 scripts/bench/cache_hot_vs_cold_1m.py
-# Record: GETs/query (expect ~48 cold), NVMe hits = 0
+# Record: GETs/query (expect ~48 cold), local-disk hits = 0
 
-# 4. Restart again (cold DRAM, but NVMe PERSISTS on disk)
+# 4. Restart again (cold DRAM, but local cache persists)
 pkill proximadb-server; sleep 3; <boot>; sleep 20
 python3 scripts/bench/cache_hot_vs_cold_1m.py
-# Record: GETs/query (expect ~5-10 — NVMe catches the overflow)
-# Scrape: proximadb_cache_nvme_hits_total > 0
+# Record: GETs/query (expect ~5-10 — local disk catches the overflow)
+# Scrape: proximadb_cache_local_disk_hits_total > 0
 ```
 
 ## D6 — Write-Time Cache Population (policy-driven)
@@ -398,38 +443,38 @@ them for the file write. No extra work.
 | Lever | When it fires | GETs saved | Cost |
 |---|---|---|---|
 | **Write-time caching** (D6) | On write/compaction | ~4-7 per segment (first query) | ~0 (Arc clone) |
-| **NVMe L2 spill** (D1-D2) | On DRAM eviction | All subsequent reads of evicted data | ~0 (free NVMe) |
+| **Local-disk L2 retention** (D1-D2) | On authoritative load/write | All subsequent reads of retained data | local read |
 | **Manifest warming** (TD-CACHE-1, existing) | On restart | Top-K hot ranges | Few GETs |
 | **Lazy read-through** (existing) | First query on cold data | N/A (the fallback) | 1 GET per access |
 
 **Together:** the ONLY time a GET happens is for data that was NEVER written
-(cold new collections) or NEVER queried AND evicted from NVMe (rare with 100GB
-NVMe budget).
+(cold new collections) or never queried and evicted from the configured
+local-disk budget.
 
 ### Expected combined impact
 
-| Scenario | Without D6 | With D6 (write-time + NVMe) |
+| Scenario | Without D6 | With D6 (write-time + local disk) |
 |---|---|---|
 | First query after write | 48.5 GETs (cold) | **~0 GETs** (write-time cached) |
 | Second query (DRAM warm) | ~0 GETs | ~0 GETs |
-| After DRAM eviction + restart | ~48.5 GETs (cold) | **~5-10 GETs** (NVMe L2 hit) |
-| After NVMe eviction (rare) | ~48.5 GETs (cold) | ~48.5 GETs (fallback to object store) |
+| After DRAM eviction + restart | ~48.5 GETs (cold) | **~5-10 GETs** (local-disk L2 hit) |
+| After local-disk eviction | ~48.5 GETs (cold) | ~48.5 GETs (fallback to object store) |
 
 ## Projected rate-card economics (why this ships — pricing rationale)
 
-The NVMe tier + write-time caching are not just perf work — they are a **pricing
+The local-disk tier + write-time caching are not just perf work — they are a **pricing
 prerequisite**. Modeling the current rate card (KSU $0.02/GB-mo, KRU $50/M flat,
 KIU $0.75/GB) against the verified GET measurements shows the cold path goes
 negative at scale, but the blended path stays strongly profitable everywhere.
 
 === Headline
 
-**The $50/M KRU flat rate is safe AFTER the NVMe tier ships.** On the cold path
+**The $50/M KRU flat rate is safe AFTER the local-disk tier ships.** On the cold path
 alone it goes negative at ≥100M. On the blended path (the realistic steady state
 once D1–D6 land) it holds 61–90% margin at every scale up to 1B.
 
 Blend assumption (the realistic steady state post-D6): 50% write-time-hot
-(0 GETs) + 35% NVMe-warm + 15% cold. GETs at each scale are projected from the
+(0 GETs) + 35% local-disk-warm + 15% cold. GETs at each scale are projected from the
 verified 48.5 cold at 1M, scaled by segment count (each segment adds ~7-8 reads,
 nprobe scales as sqrt(k_c)).
 
@@ -447,7 +492,7 @@ nprobe scales as sqrt(k_c)).
 
 The cold-path negatives at 100M/1B are the reason the tier must ship before we
 price large corpora at $50/M flat. Until then the rate card carries a note:
-"assumes ≥35% blended cache hit (default with NVMe + write-time caching)."
+"assumes ≥35% blended cache hit (default with local-disk + write-time caching)."
 
 === Rate-card decisions
 
@@ -455,7 +500,7 @@ price large corpora at $50/M flat. Until then the rate card carries a note:
   Measured 48.5 cold at 1M is inside the design band → 51.5% cold margin. Blended
   pushes it to 85–90%. Do not lower it.
 
-. **KSU $0.02/GB-mo — KEEP, and make the free NVMe the headline.** Storage
+. **KSU $0.02/GB-mo — KEEP, and make the bundled local tier the headline.** Storage
   margin is 82% (engine bytes × $0.018 vs raw × $0.020). Turbopuffer charges
   $0.10/GB for the SSD cache layer we include free → **6.7× cheaper
   storage+cache stack**. This compounds at scale; the query rate does not.
@@ -472,7 +517,7 @@ price large corpora at $50/M flat. Until then the rate card carries a note:
 |===
 | Offering | Monthly @1M | Monthly @1B | Notes
 
-| **ProximaDB** (blended) | $7.27 | $44.20 | free NVMe tier
+| **ProximaDB** (blended) | $7.27 | $44.20 | local tier on bundled instance NVMe
 | Turbopuffer (AWS) | $16.00 (floor) | $61.48 | BYOC; $0.10/GB SSD markup
 | S3 Vectors (AWS) | $2.53 | $33.22 | bare ANN, AWS-only
 | Qdrant (Azure VM) | $100+ | $100+ | self-managed
@@ -490,7 +535,6 @@ be corrected when the code lands:
 
 | `read_request_usd_per_10k.azure` | 0.0065 | **0.005** | web-verified Azure Hot tier
 | `measured_cold_gets_per_query_at_gate` | 51 | **48.5** | post level_multiplier=1.0
-| `pooled_vector_limit` | 5,000,000 | **100,000,000** | post NVMe tier (1B needs quote)
-| `minimum_cache_hit_ratio_at_gate` | 0.5 | **0.3** | NVMe tier makes this easier
+| `pooled_vector_limit` | 5,000,000 | **100,000,000** | post local-disk tier (1B needs quote)
+| `minimum_cache_hit_ratio_at_gate` | 0.5 | **0.3** | local-disk tier makes this easier
 |===
-

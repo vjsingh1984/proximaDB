@@ -2214,6 +2214,19 @@ impl CollectionService {
                             );
                         }
                     }
+                    if cleaned_components == 3 {
+                        let purged = crate::storage::engines::sst::core::purge_warm_tier_prefix(
+                            &collection_dir,
+                        )
+                        .await;
+                        if purged > 0 {
+                            debug!(
+                                collection_dir,
+                                purged,
+                                "Reclaimed retired collection entries from the PAX warm tier"
+                            );
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!("⚠️ Failed to get filesystem for {}: {}", base_location, e);

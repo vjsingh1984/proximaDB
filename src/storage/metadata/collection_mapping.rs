@@ -22,6 +22,10 @@ use crate::proto::proximadb_v1::{
     IndexConfig, IndexingAlgorithm, StorageAssignment, StorageEngine,
 };
 
+const TYPED_ACCOUNT_ID_LAYOUT_PROPERTY: &str = "typed_account_id";
+const TYPED_NAMESPACE_ID_LAYOUT_PROPERTY: &str = "typed_namespace_id";
+const TYPED_COLLECTION_ID_LAYOUT_PROPERTY: &str = "typed_collection_id";
+
 /// Catalog-asset property key holding the canonical ProximaType columns
 /// (ADR-047 / TD-TBL-1). The narrow v1 `CollectionConfig` cannot represent the
 /// full `ProximaType` vocabulary (UInt/Struct/Map/Sparse/BinaryVector …), so the
@@ -306,10 +310,46 @@ pub(crate) fn collection_from_catalog_schema(
     let storage_assignment = if location.is_empty() {
         None
     } else {
+        let layout = schema.storage_layouts.first();
+        let typed_ids = match layout.map(|layout| {
+            (
+                layout.properties.get(TYPED_ACCOUNT_ID_LAYOUT_PROPERTY),
+                layout.properties.get(TYPED_NAMESPACE_ID_LAYOUT_PROPERTY),
+                layout.properties.get(TYPED_COLLECTION_ID_LAYOUT_PROPERTY),
+            )
+        }) {
+            None | Some((None, None, None)) => None,
+            Some((Some(account_id), Some(namespace_id), Some(collection_id))) => {
+                let account_id = account_id
+                    .parse()
+                    .context("invalid typed account id in catalog storage layout")?;
+                let namespace_id = namespace_id
+                    .parse()
+                    .context("invalid typed namespace id in catalog storage layout")?;
+                u16::try_from(namespace_id)
+                    .context("typed namespace id exceeds its native u16 range")?;
+                let collection_id = collection_id
+                    .parse()
+                    .context("invalid typed collection id in catalog storage layout")?;
+                Some((account_id, namespace_id, collection_id))
+            }
+            Some(_) => {
+                anyhow::bail!(
+                    "catalog storage layout has an incomplete typed account/namespace/collection identity"
+                )
+            }
+        };
+        let (typed_account_id, typed_namespace_id, typed_collection_id) = typed_ids
+            .map_or((None, None, None), |(account, namespace, collection)| {
+                (Some(account), Some(namespace), Some(collection))
+            });
         Some(StorageAssignment {
             primary_path: location.clone(),
             engine: storage_engine,
             base_location: location,
+            typed_account_id,
+            typed_namespace_id,
+            typed_collection_id,
             ..Default::default()
         })
     };
@@ -479,6 +519,36 @@ pub(crate) fn catalog_schema_from_collection(
             .map(|engine| format!("{:?}", engine))
             .unwrap_or_else(|| "Sst".to_string()),
     );
+    if let Some(assignment) = collection.storage_assignment.as_ref() {
+        match (
+            assignment.typed_account_id,
+            assignment.typed_namespace_id,
+            assignment.typed_collection_id,
+        ) {
+            (None, None, None) => {}
+            (Some(account_id), Some(namespace_id), Some(collection_id)) => {
+                u16::try_from(namespace_id)
+                    .context("typed namespace id exceeds its native u16 range")?;
+                layout.properties.insert(
+                    TYPED_ACCOUNT_ID_LAYOUT_PROPERTY.to_string(),
+                    account_id.to_string(),
+                );
+                layout.properties.insert(
+                    TYPED_NAMESPACE_ID_LAYOUT_PROPERTY.to_string(),
+                    namespace_id.to_string(),
+                );
+                layout.properties.insert(
+                    TYPED_COLLECTION_ID_LAYOUT_PROPERTY.to_string(),
+                    collection_id.to_string(),
+                );
+            }
+            _ => {
+                anyhow::bail!(
+                    "storage assignment has an incomplete typed account/namespace/collection identity"
+                )
+            }
+        }
+    }
 
     schema.storage_layouts = vec![layout];
     schema.location = collection
@@ -735,5 +805,93 @@ mod tests {
         .expect("schema");
         assert!(!schema.props_auto_promotion.enabled);
         assert!(schema.props_auto_promotion.promoted_keys.is_empty());
+    }
+
+    #[test]
+    fn typed_storage_identity_round_trips_through_catalog_layout() {
+        let collection = Collection {
+            id: "42".to_string(),
+            config: Some(CollectionConfig {
+                name: "typed_vectors".to_string(),
+                dimension: 64,
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: "file:///typed".to_string(),
+                engine: StorageEngine::Sst as i32,
+                typed_account_id: Some(7),
+                typed_namespace_id: Some(11),
+                typed_collection_id: Some(13),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let schema = catalog_schema_from_collection(&collection).expect("catalog mapping");
+        let restored = collection_from_catalog_schema(
+            &TableIdentifier::new(vec!["default".to_string()], "typed_vectors"),
+            &schema,
+        )
+        .expect("catalog read")
+        .expect("vector collection");
+        let assignment = restored
+            .storage_assignment
+            .expect("restored storage assignment");
+
+        assert_eq!(assignment.typed_account_id, Some(7));
+        assert_eq!(assignment.typed_namespace_id, Some(11));
+        assert_eq!(assignment.typed_collection_id, Some(13));
+    }
+
+    #[test]
+    fn incomplete_typed_storage_identity_fails_closed() {
+        let mut collection = Collection {
+            id: "42".to_string(),
+            config: Some(CollectionConfig {
+                name: "typed_vectors".to_string(),
+                dimension: 64,
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: "file:///typed".to_string(),
+                engine: StorageEngine::Sst as i32,
+                typed_account_id: Some(7),
+                typed_namespace_id: Some(11),
+                typed_collection_id: Some(13),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let mut schema = catalog_schema_from_collection(&collection).expect("catalog mapping");
+        schema.storage_layouts[0]
+            .properties
+            .remove(TYPED_NAMESPACE_ID_LAYOUT_PROPERTY);
+
+        let error = collection_from_catalog_schema(
+            &TableIdentifier::new(vec!["default".to_string()], "typed_vectors"),
+            &schema,
+        )
+        .expect_err("partial typed identity must not fall back to an untyped path");
+        assert!(
+            error
+                .to_string()
+                .contains("incomplete typed account/namespace/collection identity")
+        );
+
+        collection
+            .storage_assignment
+            .as_mut()
+            .expect("storage assignment")
+            .typed_namespace_id = None;
+        let error = catalog_schema_from_collection(&collection)
+            .expect_err("partial typed identity must not be persisted as an untyped path");
+        assert!(
+            error
+                .to_string()
+                .contains("incomplete typed account/namespace/collection identity")
+        );
     }
 }

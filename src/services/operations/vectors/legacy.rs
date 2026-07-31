@@ -544,9 +544,14 @@ pub struct VectorOperationsService {
     /// Default storage engine (SST) - used for fallback and WAL coordination
     storage_engine: Arc<SstEngine>,
 
-    /// Dynamic engine cache - maps collection_id to the correct storage engine
+    /// Dynamic engine cache keyed by the catalog's globally unique object id.
     /// This enables each collection to use its configured engine (SST, HELIX, VIPER, etc.)
-    engine_cache: Arc<dashmap::DashMap<String, Arc<dyn UnifiedStorageFormat>>>,
+    engine_cache: Arc<
+        dashmap::DashMap<
+            crate::core::stable_id::CollectionObjectId,
+            Arc<dyn UnifiedStorageFormat>,
+        >,
+    >,
 
     /// WAL/Memtable for unflushed vectors (required for two-stage search)
     wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
@@ -554,8 +559,11 @@ pub struct VectorOperationsService {
     /// SINGLE query optimizer (replaced two separate optimizers)
     query_optimizer: Arc<UnifiedQueryOptimizer>,
 
-    /// Collection cache (unchanged)
-    collection_cache: Arc<dashmap::DashMap<String, Arc<Collection>>>,
+    /// Collection metadata cache keyed by catalog object id. Names/aliases are
+    /// resolved before this cache boundary.
+    collection_cache: Arc<
+        dashmap::DashMap<crate::core::stable_id::CollectionObjectId, Arc<Collection>>,
+    >,
 
     /// Query result cache - unified for all query sources (SQL, REST API, gRPC)
     query_cache: Arc<QueryCache>,
@@ -686,54 +694,66 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-    ) -> Result<()> {
-        if self.tenant_manager.is_none() {
-            return Ok(());
-        }
+    ) -> Result<crate::core::stable_id::CollectionObjectId> {
+        let collection = if self.tenant_manager.is_some() {
+            let tenant_ctx = tenant_context.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Tenant context is required for collection '{}' in multi-tenant mode",
+                    collection_id
+                )
+            })?;
+            let collection = self
+                .collection_port
+                .get_collection(collection_id, Some(&tenant_ctx.tenant_id))
+                .await?;
+            let Some(collection) = collection else {
+                warn!(
+                    "🚨 Tenant '{}' attempted to access collection '{}' without authorization",
+                    tenant_ctx.tenant_id, collection_id
+                );
+                return Err(anyhow::anyhow!(
+                    "Collection '{}' is not accessible for tenant '{}'",
+                    collection_id,
+                    tenant_ctx.tenant_id
+                ));
+            };
+            collection
+        } else {
+            (*self.get_or_load_collection(collection_id).await?).clone()
+        };
 
-        let tenant_ctx = tenant_context.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Tenant context is required for collection '{}' in multi-tenant mode",
-                collection_id
-            )
-        })?;
-
-        let collection = self
-            .collection_port
-            .get_collection(collection_id, Some(&tenant_ctx.tenant_id))
-            .await?;
-
-        if collection.is_none() {
-            warn!(
-                "🚨 Tenant '{}' attempted to access collection '{}' without authorization",
-                tenant_ctx.tenant_id, collection_id
-            );
-            return Err(anyhow::anyhow!(
-                "Collection '{}' is not accessible for tenant '{}'",
-                collection_id,
-                tenant_ctx.tenant_id
-            ));
-        }
-
-        if self.rbac_enforcer.is_some() {
+        if self.rbac_enforcer.is_some()
+            && let Some(tenant_ctx) = tenant_context
+        {
             debug!(
                 "RBAC enforcer configured for tenant '{}', but vector operations still need user context wiring for collection-level authorization",
                 tenant_ctx.tenant_id
             );
         }
 
-        Ok(())
+        let object_id = collection.id.parse().map_err(|error| {
+            anyhow::anyhow!(
+                "catalog collection '{}' has invalid object identity {:?}: {error}",
+                collection_id,
+                collection.id
+            )
+        })?;
+        self.collection_cache
+            .insert(object_id, Arc::new(collection));
+        Ok(object_id)
     }
 
     /// Execute a v1 vector search after validating that the caller has access to the collection
     /// under the provided tenant context.
     pub async fn search_v1_with_tenant_context(
         &self,
-        req: crate::proto::proximadb_v1::VectorSearchRequest,
+        mut req: crate::proto::proximadb_v1::VectorSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
-        self.validate_tenant_collection_access(&req.collection_id, tenant_context)
-            .await?;
+        req.collection_id = self
+            .validate_tenant_collection_access(&req.collection_id, tenant_context)
+            .await?
+            .to_string();
         self.search_v1(req).await
     }
 
@@ -770,11 +790,11 @@ impl VectorOperationsService {
         request: RichSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<RichSearchResponse> {
-        let collection_id = request.collection_id.clone();
-
         // Authorize before touching data, matching `search_v1_with_tenant_context`.
-        self.validate_tenant_collection_access(&collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(&request.collection_id, tenant_context)
+            .await?
+            .to_string();
 
         // Build the canonical filter directly from the rich predicates — no v1
         // proto round-trip, so `starts_with`/`ends_with` and the full op set
@@ -833,11 +853,13 @@ impl VectorOperationsService {
         request: RichRecordGetRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<RichRecordGetResponse> {
-        self.validate_tenant_collection_access(&request.collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(&request.collection_id, tenant_context)
+            .await?
+            .to_string();
 
         self.vector(
-            &request.collection_id,
+            &collection_id,
             &request.record_id,
             request.include_vector,
             request.include_props,
@@ -869,9 +891,11 @@ impl VectorOperationsService {
         record_id: &str,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<Option<ProximaRecord>> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
-        let record = self.vector(collection_id, record_id, false, true).await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
+        let record = self.vector(&collection_id, record_id, false, true).await?;
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         Ok(record.filter(|r| {
             r.is_visible_at(now_ns)
@@ -892,12 +916,14 @@ impl VectorOperationsService {
         include_props: bool,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<Vec<ProximaRecord>> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         let mut records = self
             .wal_manager
-            .get_collection_vectors_raw(collection_id)
+            .get_collection_vectors_raw(&collection_id)
             .await?;
         if let Some(tenant_context) = tenant_context {
             records.retain(|record| {
@@ -943,11 +969,13 @@ impl VectorOperationsService {
         collection_id: &str,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<Vec<ProximaRecord>> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
         let mut records = self
             .wal_manager
-            .get_collection_vectors(collection_id)
+            .get_collection_vectors(&collection_id)
             .await?;
         if let Some(tenant_context) = tenant_context {
             records.retain(|record| {
@@ -984,8 +1012,10 @@ impl VectorOperationsService {
         Vec<ProximaRecord>,
         Option<crate::services::scan_cursor::ScanCursor>,
     )> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         // Combined page predicate = tenant rule AND the optional pushed filter,
         // applied inside the storage scan BEFORE the limit. Owns its captures
@@ -1012,7 +1042,7 @@ impl VectorOperationsService {
 
         let mut page = self
             .wal_manager
-            .stream_unflushed_records(collection_id, after, limit, pred_ref, now_ns)
+            .stream_unflushed_records(&collection_id, after, limit, pred_ref, now_ns)
             .await?;
 
         if !include_vector {
@@ -1027,21 +1057,23 @@ impl VectorOperationsService {
         }
 
         let next =
-            crate::services::scan_cursor::derive_next_cursor(&page, limit, collection_id, now_ns);
+            crate::services::scan_cursor::derive_next_cursor(&page, limit, &collection_id, now_ns);
         Ok((page, next))
     }
 
-    /// Resolve a user-facing collection identifier (name) to the canonical
-    /// internal id that the write path keys WAL + storage under. Idempotent for
-    /// already-canonical ids; falls back to the input if resolution fails.
-    pub async fn resolve_collection_id(&self, identifier: &str) -> String {
+    /// Resolve a user-facing collection name/alias to the catalog's globally
+    /// unique native object identity. Unknown aliases and malformed catalog
+    /// metadata fail closed.
+    pub async fn resolve_collection_object_id(
+        &self,
+        identifier: &str,
+    ) -> Result<crate::core::stable_id::CollectionObjectId> {
         self.collection_resolver()
-            .resolve_collection_id(identifier)
+            .resolve_collection_object_id(identifier)
             .await
     }
 
-    /// Reverse of [`resolve_collection_id`](Self::resolve_collection_id): resolve
-    /// an internal id (or name) to the user-facing collection **name**. Used by
+    /// Resolve an internal id or name to the user-facing collection **name**. Used by
     /// the recall observer, which holds AxisManager index keys (uuids) but must
     /// signal discovery by name (the discovery pipeline keys jobs/pins by name).
     /// Returns `None` if the collection can't be loaded or carries no config.
@@ -1061,20 +1093,22 @@ impl VectorOperationsService {
         collection_id: &str,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<Vec<ProximaRecord>> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         // WAL/memtable (unflushed) + flushed storage. Storage is best-effort:
         // an engine that doesn't implement read_all_records returns empty.
         let wal_records = self
             .wal_manager
-            .get_collection_vectors(collection_id)
+            .get_collection_vectors(&collection_id)
             .await?;
         // Resolve the collection's data location from metadata and pass it to
         // the engine, which stays a pure format reader (it does not resolve
         // paths itself). Mirrors ViperEngine::parquet_files_for_collection.
         let storage_url = self
-            .get_or_load_collection(collection_id)
+            .get_or_load_collection(&collection_id)
             .await
             .ok()
             .and_then(|collection| {
@@ -1083,9 +1117,9 @@ impl VectorOperationsService {
                     .as_ref()
                     .map(|sa| format!("{}/{}/data", sa.base_location, collection_id))
             });
-        let storage_records = match self.get_engine_for_collection(collection_id).await {
+        let storage_records = match self.get_engine_for_collection(&collection_id).await {
             Ok(engine) => engine
-                .read_all_records(collection_id, storage_url.as_deref())
+                .read_all_records(&collection_id, storage_url.as_deref())
                 .await
                 .unwrap_or_default(),
             Err(_) => Vec::new(),
@@ -1123,8 +1157,10 @@ impl VectorOperationsService {
         record_ids: Vec<String>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<BatchOperationResult> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         if record_ids.is_empty() {
             return Ok(BatchOperationResult::success(
@@ -1148,11 +1184,11 @@ impl VectorOperationsService {
         // consult the DV.
         #[cfg(feature = "cold-deletion-vectors")]
         let (result, lsns) = self
-            .insert_vectors_via_wal_returning_lsns(collection_id, tombstones)
+            .insert_vectors_via_wal_returning_lsns(&collection_id, tombstones)
             .await?;
         #[cfg(not(feature = "cold-deletion-vectors"))]
         let result = self
-            .insert_vectors_via_wal(collection_id, tombstones)
+            .insert_vectors_via_wal(&collection_id, tombstones)
             .await?;
         if !result.success {
             return Ok(result);
@@ -1167,7 +1203,7 @@ impl VectorOperationsService {
                 for (oid, lsn) in record_ids.iter().zip(lsns.iter().copied()) {
                     let hits = match self
                         .storage_engine
-                        .resolve_oid_positions(collection_id, oid)
+                        .resolve_oid_positions(&collection_id, oid)
                         .await
                     {
                         Ok(h) => h,
@@ -1192,7 +1228,7 @@ impl VectorOperationsService {
         }
         // Read-after-write coherence: a deleted record must not resurface
         // from a stale cached query result. Await so the next search sees it.
-        self.invalidate_query_cache(collection_id).await;
+        self.invalidate_query_cache(&collection_id).await;
         let total_processed = result.metrics.total_processed.max(0);
         let processing_time_us = start.elapsed().as_micros() as i64;
 
@@ -2067,9 +2103,18 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.write_coordinator()
-            .bulk_write(collection_id, vectors)
-            .await
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
+        let result = self
+            .write_coordinator()
+            .bulk_write(&collection_id, vectors)
+            .await?;
+        if result.success {
+            self.invalidate_query_cache(&collection_id).await;
+        }
+        Ok(result)
     }
 
     /// Internal helper: insert records via standard WAL path
@@ -2114,8 +2159,17 @@ impl VectorOperationsService {
         collection_id: &str,
         records: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.insert_vectors_via_wal_insert_only(collection_id, records)
-            .await
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
+        let result = self
+            .insert_vectors_via_wal_insert_only(&collection_id, records)
+            .await?;
+        if result.success {
+            self.invalidate_query_cache(&collection_id).await;
+        }
+        Ok(result)
     }
 
     /// Insert canonical records after validating tenant access and injecting tenant_id.
@@ -2125,8 +2179,10 @@ impl VectorOperationsService {
         mut records: Vec<ProximaRecord>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<BatchOperationResult> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         if let Some(tenant_ctx) = tenant_context {
             ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
@@ -2146,12 +2202,12 @@ impl VectorOperationsService {
 
         let result = self
             .write_coordinator()
-            .insert_batch_internal(collection_id, records)
+            .insert_batch_internal(&collection_id, records)
             .await?;
         // Read-after-write coherence: a freshly inserted record must be
         // visible to the next search, not hidden behind a stale cached result.
         if result.success {
-            self.invalidate_query_cache(collection_id).await;
+            self.invalidate_query_cache(&collection_id).await;
         }
         Ok(result)
     }
@@ -2174,19 +2230,21 @@ impl VectorOperationsService {
         mut records: Vec<ProximaRecord>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<BatchOperationResult> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         if let Some(tenant_ctx) = tenant_context {
             ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
         }
 
-        if let Some(conflict) = duplicate_insert_conflict_result(collection_id, &records) {
+        if let Some(conflict) = duplicate_insert_conflict_result(&collection_id, &records) {
             return Ok(conflict);
         }
 
         let tenant_id = tenant_context.map(|t| t.tenant_id.as_str());
-        let lock_key = insert_only_lock_key(collection_id, tenant_id);
+        let lock_key = insert_only_lock_key(&collection_id, tenant_id);
         let lock = self
             .insert_only_locks
             .entry(lock_key)
@@ -2196,18 +2254,18 @@ impl VectorOperationsService {
 
         for record in &records {
             if self
-                .record_exists_unchecked(collection_id, &record.oid)
+                .record_exists_unchecked(&collection_id, &record.oid)
                 .await?
             {
                 return Ok(insert_existing_record_conflict_result(
-                    collection_id,
+                    &collection_id,
                     &record.oid,
                 ));
             }
         }
 
         self.write_coordinator()
-            .insert_batch_internal(collection_id, records)
+            .insert_batch_internal(&collection_id, records)
             .await
     }
 
@@ -2219,10 +2277,12 @@ impl VectorOperationsService {
         record_id: &str,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<bool> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
+        let collection_object_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
             .await?;
 
-        self.record_exists_unchecked(collection_id, record_id).await
+        self.record_exists_unchecked(&collection_object_id.to_string(), record_id)
+            .await
     }
 
     async fn record_exists_unchecked(&self, collection_id: &str, record_id: &str) -> Result<bool> {
@@ -2283,22 +2343,21 @@ impl VectorOperationsService {
         config: Option<UnifiedSearchConfig>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
+        let collection_object_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+        let collection_id_text = collection_object_id.to_string();
+        let collection_id = collection_id_text.as_str();
+
         debug!(
             "🔍 Executing unified search: collection={}, k={}",
             collection_id, k
         );
 
         if let Some(tenant_ctx) = tenant_context {
-            self.validate_tenant_collection_access(collection_id, Some(tenant_ctx))
-                .await?;
             debug!(
                 "✅ Tenant validation passed for search: tenant={}, collection={}",
                 tenant_ctx.tenant_id, collection_id
-            );
-        } else if self.tenant_manager.is_some() {
-            debug!(
-                "Vector search executed without tenant context for collection '{}'; caller must provide explicit tenant scoping in multi-tenant deployments",
-                collection_id
             );
         }
 
@@ -2570,6 +2629,26 @@ impl VectorOperationsService {
         Vec<crate::proto::proximadb_v1::SearchResult>,
         Option<crate::query::explain::VectorObjectEconomyExplain>,
     )> {
+        // ADR-0083 D5: resolve the mutable name/alias once at the catalog
+        // boundary. Every cache, WAL, AXIS, and storage lookup below is keyed
+        // by the immutable numeric L1 identity.
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let collection_object_id: crate::core::stable_id::CollectionObjectId =
+            collection.id.parse().map_err(|error| {
+                anyhow::anyhow!(
+                    "catalog collection '{}' has invalid object identity {:?}: {error}",
+                    collection_id,
+                    collection.id
+                )
+            })?;
+        let collection_id_text = collection_object_id.to_string();
+        let collection_id = collection_id_text.as_str();
+        let response_collection_name = collection
+            .config
+            .as_ref()
+            .map(|config| config.name.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(collection_id);
         let config = config.clone();
 
         // Reuse the same cache key as legacy and convert on hit
@@ -2627,8 +2706,6 @@ impl VectorOperationsService {
             collection_id, progressive_enabled
         );
 
-        // Get collection configuration
-        let collection = self.get_or_load_collection(collection_id).await?;
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
@@ -2695,8 +2772,11 @@ impl VectorOperationsService {
             .await?;
 
         // Build v1 results from the merged records
-        let v1_results =
-            vec![self.optimized_results_to_proto_v1(merged_results, collection_id, true)];
+        let v1_results = vec![self.optimized_results_to_proto_v1(
+            merged_results,
+            response_collection_name,
+            true,
+        )];
 
         // Cache v1 (via legacy conversion) for reuse, stamped with the LSN this
         // result was computed at so a later Strong read can validate it. If a
@@ -2714,10 +2794,11 @@ impl VectorOperationsService {
     }
 
     /// Tenant-aware wrapper over [`unified_search_native`]: validates the tenant's access to the
-    /// collection and resolves it to the tenant's canonical id (mirroring `VectorOpsPort::search`),
-    /// then delegates the actual search. Isolation is clean-name + `TenantContext`
-    /// (catalog-resolve and record-stamp), never a name fold. `None` tenant (or empty tenant_id) ⇒
-    /// plain delegation.
+    /// collection and resolves it to the tenant's storage lookup key (mirroring
+    /// `VectorOpsPort::search`), then delegates the actual search.
+    /// Isolation is clean-name + `TenantContext` (catalog-resolve and record-stamp), never a name
+    /// fold. The catalog object handle is used for in-memory indexing and admission, not as a
+    /// substitute for the collection key used by WAL/memtable/SST reads.
     /// Lets the fusion vector leg read only the tenant's vectors (TD-ENTITY-TENANT-1) without
     /// touching the existing `unified_search_native` call sites.
     pub async fn unified_search_native_with_tenant_context(
@@ -2731,17 +2812,20 @@ impl VectorOperationsService {
         #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let resolved = match tenant_context {
-            Some(tc) if !tc.tenant_id.is_empty() => {
+            Some(context) if !context.tenant_id.is_empty() => {
                 self.validate_tenant_collection_access(collection_id, tenant_context)
                     .await?;
-                match self
-                    .collection_port
-                    .get_collection(collection_id, Some(&tc.tenant_id))
+                self.collection_port
+                    .get_collection(collection_id, Some(&context.tenant_id))
                     .await?
-                {
-                    Some(collection) => collection.id,
-                    None => collection_id.to_string(),
-                }
+                    .map(|collection| collection.id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Collection '{}' is not accessible for tenant '{}'",
+                            collection_id,
+                            context.tenant_id
+                        )
+                    })?
             }
             _ => collection_id.to_string(),
         };
@@ -2771,6 +2855,19 @@ impl VectorOperationsService {
         use std::time::Instant;
         let total_start = Instant::now();
 
+        // ADR-0083 D5: internal search state is keyed by the catalog's native
+        // L1 object id. Names and aliases terminate at this boundary.
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let collection_object_id: crate::core::stable_id::CollectionObjectId =
+            collection.id.parse().map_err(|error| {
+                anyhow::anyhow!(
+                    "catalog collection '{}' has invalid object identity {:?}: {error}",
+                    collection_id,
+                    collection.id
+                )
+            })?;
+        let collection_id_text = collection_object_id.to_string();
+        let collection_id = collection_id_text.as_str();
         let config = config.clone();
 
         // Extract search_mode from config (defaults to Exact for 100% recall)
@@ -2781,7 +2878,6 @@ impl VectorOperationsService {
 
         // Plan context
         let context_start = Instant::now();
-        let collection = self.get_or_load_collection(collection_id).await?;
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
@@ -4192,10 +4288,14 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<crate::storage::engines::InsertResult> {
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
         let mut vectors = vectors;
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        self.validate_records_for_insert(collection_id, &vectors)
+        self.validate_records_for_insert(&collection_id, &vectors)
             .await?;
 
         let start = std::time::Instant::now();
@@ -4213,8 +4313,9 @@ impl VectorOperationsService {
             .sum::<usize>() as i64;
 
         self.wal_manager
-            .write_vector_batch_native_arc(collection_id, Arc::new(vectors))
+            .write_vector_batch_native_arc(&collection_id, Arc::new(vectors))
             .await?;
+        self.invalidate_query_cache(&collection_id).await;
 
         Ok(crate::storage::engines::InsertResult {
             entries_written,
@@ -4229,27 +4330,31 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Arc<Vec<ProximaRecord>>,
     ) -> Result<crate::storage::engines::InsertResult> {
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
         let mut vectors: Vec<ProximaRecord> = (*vectors).clone();
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        self.validate_records_for_insert(collection_id, &vectors)
+        self.validate_records_for_insert(&collection_id, &vectors)
             .await?;
 
         let start = std::time::Instant::now();
         let _batch_result = self
             .wal_manager
-            .write_vector_batch_native_arc(collection_id, Arc::new(vectors.clone()))
+            .write_vector_batch_native_arc(&collection_id, Arc::new(vectors.clone()))
             .await?;
 
         #[cfg(feature = "axis")]
-        let collection = self.get_or_load_collection(collection_id).await?;
+        let collection = self.get_or_load_collection(&collection_id).await?;
         #[cfg(feature = "axis")]
         let axis_duration = if collection_uses_axis_indexes(&collection) {
             let axis_start = std::time::Instant::now();
             for record in vectors.iter() {
                 if let Err(e) = self
                     .axis_index_manager
-                    .insert_record(collection_id, record)
+                    .insert_record(&collection_id, record)
                     .await
                 {
                     tracing::warn!(
@@ -4301,6 +4406,7 @@ impl VectorOperationsService {
             duration_micros,
             axis_duration
         );
+        self.invalidate_query_cache(&collection_id).await;
 
         Ok(crate::storage::engines::InsertResult {
             entries_written: vectors.len() as i64,
@@ -5234,15 +5340,15 @@ mod index_first_search_tests {
 
     fn cache_test_collection(
         service: &VectorOperationsService,
-        collection_id: &str,
+        collection_object_id: crate::core::stable_id::CollectionObjectId,
         dimension: u32,
     ) {
         service.collection_cache.insert(
-            collection_id.to_string(),
+            collection_object_id,
             Arc::new(crate::proto::proximadb_v1::Collection {
-                id: collection_id.to_string(),
+                id: collection_object_id.to_string(),
                 config: Some(crate::proto::proximadb_v1::CollectionConfig {
-                    name: collection_id.to_string(),
+                    name: format!("collection-{collection_object_id}"),
                     dimension,
                     ..Default::default()
                 }),
@@ -5268,11 +5374,11 @@ mod index_first_search_tests {
     #[tokio::test]
     async fn insert_batch_rejects_non_finite_embedding_before_wal() {
         let (service, _temp_dir) = create_test_service().await.unwrap();
-        cache_test_collection(&service, "validation-collection", 3);
+        cache_test_collection(&service, 1001, 3);
 
         let err = service
             .insert_records_with_tenant_context(
-                "validation-collection",
+                "1001",
                 vec![record_with_vector("bad", vec![1.0, f32::NAN, 3.0])],
                 None,
             )
@@ -5285,30 +5391,31 @@ mod index_first_search_tests {
     #[tokio::test]
     async fn insert_batch_rejects_wrong_dimension_before_wal() {
         let (service, _temp_dir) = create_test_service().await.unwrap();
-        cache_test_collection(&service, "validation-collection", 3);
+        cache_test_collection(&service, 1001, 3);
 
         let err = service
             .insert_records_with_tenant_context(
-                "validation-collection",
+                "1001",
                 vec![record_with_vector("bad", vec![1.0, 2.0])],
                 None,
             )
             .await
             .unwrap_err();
 
-        assert!(err.to_string().contains(
-            "has dimension 2 but collection 'validation-collection' expects dimension 3"
-        ));
+        assert!(
+            err.to_string()
+                .contains("has dimension 2 but collection '1001' expects dimension 3")
+        );
     }
 
     #[tokio::test]
     async fn search_rejects_non_finite_query_vector_before_execution() {
         let (service, _temp_dir) = create_test_service().await.unwrap();
-        cache_test_collection(&service, "validation-collection", 3);
+        cache_test_collection(&service, 1001, 3);
 
         let err = service
             .unified_search_with_tenant_context(
-                "validation-collection",
+                "1001",
                 vec![1.0, f32::INFINITY, 3.0],
                 10,
                 None,
@@ -5324,23 +5431,16 @@ mod index_first_search_tests {
     #[tokio::test]
     async fn search_rejects_wrong_dimension_before_execution() {
         let (service, _temp_dir) = create_test_service().await.unwrap();
-        cache_test_collection(&service, "validation-collection", 3);
+        cache_test_collection(&service, 1001, 3);
 
         let err = service
-            .unified_search_with_tenant_context(
-                "validation-collection",
-                vec![1.0, 2.0],
-                10,
-                None,
-                None,
-                None,
-            )
+            .unified_search_with_tenant_context("1001", vec![1.0, 2.0], 10, None, None, None)
             .await
             .unwrap_err();
 
         assert!(
             err.to_string()
-                .contains("Query vector has dimension 2 but collection 'validation-collection' expects dimension 3")
+                .contains("Query vector has dimension 2 but collection '1001' expects dimension 3")
         );
     }
 
@@ -5353,10 +5453,10 @@ mod index_first_search_tests {
     #[tokio::test]
     async fn strong_read_bypasses_query_cache_on_tenant_context_path() {
         let (service, _temp_dir) = create_test_service().await.unwrap();
-        cache_test_collection(&service, "freshness-coll", 3);
+        cache_test_collection(&service, 1002, 3);
         service
             .insert_records_with_tenant_context(
-                "freshness-coll",
+                "1002",
                 vec![record_with_vector("real-1", vec![1.0, 2.0, 3.0])],
                 None,
             )
@@ -5366,7 +5466,7 @@ mod index_first_search_tests {
         let qv = vec![1.0f32, 2.0, 3.0];
         let k = 5usize;
         let cache_key = crate::storage::cache::specialized::query_cache::QueryKey::new(
-            "freshness-coll".to_string(),
+            "1002".to_string(),
             &qv,
             k as u32,
             None,
@@ -5393,14 +5493,7 @@ mod index_first_search_tests {
 
         // StaleOk is served the seeded (stale) cache entry.
         let served = service
-            .unified_search_with_tenant_context(
-                "freshness-coll",
-                qv.clone(),
-                k,
-                None,
-                Some(stale_ok),
-                None,
-            )
+            .unified_search_with_tenant_context("1002", qv.clone(), k, None, Some(stale_ok), None)
             .await
             .unwrap();
         assert!(
@@ -5416,14 +5509,7 @@ mod index_first_search_tests {
         // broken, `fresh` would be Ok([sentinel]); a bypass yields either Err or
         // Ok(real-results-without-sentinel).
         let fresh = service
-            .unified_search_with_tenant_context(
-                "freshness-coll",
-                qv.clone(),
-                k,
-                None,
-                Some(strong),
-                None,
-            )
+            .unified_search_with_tenant_context("1002", qv.clone(), k, None, Some(strong), None)
             .await;
         let served_stale = matches!(
             &fresh,
@@ -6110,7 +6196,10 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
 
         // Resolve name → canonical internal id (identity for v2 where id == name,
         // and for already-canonical ids) before touching the record store.
-        let resolved = self.resolve_collection_id(collection_id).await;
+        let resolved = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
 
         // Read the authoritative record set — WAL memtable plus flushed storage —
         // and keep the ids whose property tree satisfies the filter under the

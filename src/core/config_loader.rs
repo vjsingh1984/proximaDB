@@ -148,6 +148,15 @@ impl ConfigLoader {
                 )) as Box<dyn std::error::Error + Send + Sync>
             })?;
         }
+        if let Some(sst_config) = &config.storage.sst_config {
+            sst_config.validate().map_err(|err| {
+                let message = format!("Invalid SST configuration: {err}");
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    message,
+                )) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+        }
 
         Ok(())
     }
@@ -359,6 +368,10 @@ impl ConfigLoader {
         if let Some(ref mut sst_config) = config.storage.sst_config {
             sst_config.data_directory =
                 Self::resolve_path_under(&data_dir, &sst_config.data_directory);
+            if let Some(cache_path) = &sst_config.cache_local_disk_path {
+                sst_config.cache_local_disk_path =
+                    Some(Self::resolve_path_under(&data_dir, cache_path));
+            }
         }
 
         // Resolve VIPER data directory if configured

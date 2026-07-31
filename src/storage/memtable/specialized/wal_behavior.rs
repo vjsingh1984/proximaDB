@@ -33,6 +33,22 @@ pub(crate) fn metadata_bloom_key(field: &str, value: &str) -> String {
     format!("{}={}", field, value)
 }
 
+fn memtable_threshold_backpressure(
+    collection_id: &str,
+    current_usage: u64,
+    threshold: u64,
+) -> Option<crate::storage::persistence::write_ahead_log::flush_policy::WalBackpressure> {
+    if threshold == 0 || current_usage < threshold {
+        return None;
+    }
+    Some(
+        crate::storage::persistence::write_ahead_log::flush_policy::WalBackpressure {
+            collection_id: collection_id.to_string(),
+            fill_pct: (current_usage as f64 / threshold as f64) * 100.0,
+        },
+    )
+}
+
 /// Write Buffer-specific vector batch for tracking deserialized data
 #[derive(Debug, Clone)]
 pub struct WALVectorBatch {
@@ -698,11 +714,10 @@ impl WALBehaviorWrapper {
             }
         };
         let threshold = self.config.flush_threshold_bytes as u64;
-        if current_usage >= threshold {
-            anyhow::bail!(
-                "BACKPRESSURE: collection {} over memtable threshold; retry later",
-                collection_id
-            );
+        if let Some(backpressure) =
+            memtable_threshold_backpressure(collection_id, current_usage, threshold)
+        {
+            return Err(anyhow::Error::new(backpressure));
         }
         let batch_id = batch.batch_id.to_base62();
         let vector_count = batch.vector_records.len();
@@ -1858,6 +1873,29 @@ mod tests {
                 .await
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn memtable_threshold_backpressure_is_typed_and_disableable() {
+        assert!(
+            memtable_threshold_backpressure("collection", 10, 0).is_none(),
+            "a zero threshold disables the legacy memtable guard"
+        );
+        assert!(memtable_threshold_backpressure("collection", 9, 10).is_none());
+
+        let error = memtable_threshold_backpressure("collection", 10, 10)
+            .expect("usage at the threshold must be rejected");
+        assert_eq!(error.collection_id, "collection");
+        assert_eq!(error.fill_pct, 100.0);
+
+        let classified = anyhow::Error::new(error);
+        assert_eq!(
+            crate::storage::persistence::write_ahead_log::flush_policy::write_batch_error_code(
+                &classified,
+                "RECORD_INSERT_FAILED"
+            ),
+            "WAL_BACKPRESSURE"
         );
     }
 }

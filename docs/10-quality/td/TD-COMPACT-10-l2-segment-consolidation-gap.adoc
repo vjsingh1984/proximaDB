@@ -1,14 +1,14 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-COMPACT-10: L2+ segment consolidation gap — GET/query 10× too high at 1M scale
-:status: Open
+:status: Implemented
 :dim: D1
 :pillar: PERF
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open.** Design decided (ADR-080). Root-caused + measured 2026-07-29.
+| Status | **Implemented pending final SIFT1M evidence.** Pair consolidation, common→SST config propagation, worker follow-up, and real explicit compaction are covered by deterministic tests.
 | Priority | **P0** — GETs/query = 205 at 1M makes retrieval COGS ($141/M) exceed the rate-card price ($50/M) → negative margin. Blocks competitive pricing.
 | Component | `src/storage/common/compaction_utils.rs:264-350` (level scaling); `src/core/config.rs` (`CompactionConfig.level_multiplier`).
 | Evidence | 2026-07-29 SIFT1M end-to-end benchmark: 9 segments (3 L0 + 1 L1 + 5 L2), 205 GETs/query cold, recall 0.978, retrieval COGS $141.83/M queries at $0.0065/10K Azure reads.
@@ -21,6 +21,14 @@ pays **205 object-store GETs** — 10× the competitive threshold (~20). This ma
 the retrieval COGS ($141.83/M queries) exceed the KRU rate-card price ($50/M) by
 2.8× → **negative 183% margin**. At 33% margin the price would be $211/mo —
 uncompetitive with Turbopuffer ($16) or S3 Vectors ($2.53).
+
+The later passing GET-reduction run at commit `484d7da84` established the
+pre-pair baseline on the hardened harness: 1,000,000 rows, zero unflushed WAL,
+two L1 PAX segments, object-cold 42.02 GETs/query with recall@10 0.9830, and
+local-disk-warm 2.00 GETs/query (16 bytes/query) with recall@10 0.9850. The
+remaining two 8-byte requests were subsequently traced to generic legacy-SST
+classification and are covered by TD-SEARCH-3. These figures are historical
+inputs; they are not promoted as final evidence for the threshold-2 build.
 
 == Root cause
 
@@ -68,15 +76,24 @@ settles.
 
 == Fix
 
-. **`level_multiplier: 1.0`** (was 2.0) — every level compacts at the same file
-  threshold (5). The 5 L2 files immediately trigger L2 compaction → merge into 1-2.
+. **`level_multiplier: 1.0`** (was 2.0) plus
+  **`higher_level_file_threshold: 2`** — L0 retains its batching threshold,
+  while any pair at L1+ consolidates. A single-file guard prevents pointless
+  promotion/retraining.
   Default carries a strong co-design comment (see ADR-080 D1) so future sessions
   don't revert it. **Bounded [1.0, 1.5]**: config validator WARNs outside this
   range. Below 1.0 = over-compaction (CPU churn). Above 1.5 = segment accumulation
   (defeats the purpose). 2.0 (RocksDB default) is explicitly WRONG for vector
   search.
-. **Post-ingest settle pass** — force the higher-level loop when no new L0 files
-  appeared in the last tick (the auto-flush driver already ticks every 30s).
+. **Post-compaction settle pass** — after successful publication the worker
+  immediately checks and enqueues the next due level, independent of another
+  flush or timer.
+. **Config propagation** — `StorageConfig::effective_sst_config()` injects the
+  common policy into every SST runtime unless an explicit per-engine override
+  exists. The observed TOML parse/SST-default split is now a regression test.
+. **Explicit compaction** — the Flight action resolves catalog metadata and
+  stable object identity, then calls the real SST scheduler. It no longer
+  returns a false-success stub.
 . **Production `flush_floor`** — the benchmark used `flush_floor=4MB` (test config),
   producing tiny 7.1MB L0 segments. Production uses 128MB.
 

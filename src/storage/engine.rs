@@ -153,7 +153,7 @@ impl StorageEngine {
         // background compaction. Keeping this Arc prevents the worker-owning
         // instance from being discarded and a second default engine from being
         // constructed by the materializer.
-        let sst_config = config.sst_config.clone().unwrap_or_default();
+        let sst_config = config.effective_sst_config();
         let distance_compute =
             Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
         let canonical_sst_storage = Arc::new(
@@ -320,7 +320,9 @@ impl StorageEngine {
     ) -> crate::storage::Result<
         crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult,
     > {
-        use crate::storage::flush_materializer::{CollectionFlushPlan, materialize_collection};
+        use crate::storage::flush_materializer::{
+            flush_plan_from_collection_meta, materialize_collection,
+        };
         use crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult;
         use crate::storage::persistence::write_ahead_log::{
             get_global_write_buffer_behavior, list_collections_from_catalog,
@@ -369,7 +371,7 @@ impl StorageEngine {
         let mut failed_collections: Vec<(String, String)> = Vec::new();
 
         for collection_id in &collections_to_flush {
-            // The server keys the write buffer by canonical UUID, so resolve by id.
+            // The server keys the write buffer by the catalog L1 object id.
             let Some(meta) = catalog.iter().find(|c| &c.id == collection_id) else {
                 tracing::warn!(
                     "⚠️ STORAGE_ENGINE: No catalog metadata for collection '{}'; cannot resolve engine, skipping",
@@ -379,25 +381,16 @@ impl StorageEngine {
                 continue;
             };
 
-            let config = meta.config.as_ref();
-            let assignment = meta.storage_assignment.as_ref();
-            let engine_type = assignment
-                .map(|a| a.engine)
-                .or_else(|| config.and_then(|c| c.storage_engine))
-                .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
-            let dimension = config.map(|c| c.dimension).unwrap_or(0);
-            let base_location = assignment
-                .map(|a| a.base_location.clone())
-                .unwrap_or_default();
-            let tenant_id = proximadb_tenant::tenant_id_of(meta);
-
-            let plan = CollectionFlushPlan {
-                wal_key: collection_id.clone(),
-                canonical_id: collection_id.clone(),
-                base_location,
-                engine_type,
-                dimension,
-                tenant_id,
+            let plan = match flush_plan_from_collection_meta(meta) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    tracing::warn!(
+                        collection_id,
+                        "STORAGE_ENGINE: catalog identity resolution failed: {error}"
+                    );
+                    failed_collections.push((collection_id.clone(), error.to_string()));
+                    continue;
+                }
             };
 
             // A6 fence is applied inside `materialize_collection` (default-OFF), so a

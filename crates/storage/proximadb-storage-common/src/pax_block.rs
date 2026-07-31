@@ -498,6 +498,27 @@ impl SegmentIndex {
 // `proximadb_storage_common::pax_block::SegmentMeta` path keeps working.
 pub use proximadb_block_format::SegmentMeta;
 
+/// Immutable PAX regions retained from the writer for post-publication cache
+/// population. This is rebuildable acceleration data, not commit authority.
+#[derive(Debug, Clone)]
+pub struct PaxCacheSeed {
+    pub header_bytes: Vec<u8>,
+    pub a0_bytes: Option<std::sync::Arc<[u8]>>,
+    pub rabitq_bytes: std::sync::Arc<[u8]>,
+    pub rabitq_header_bytes: std::sync::Arc<[u8]>,
+    pub footer_bytes: Vec<u8>,
+    pub sq8_off: u64,
+    pub sq8_bytes: Option<std::sync::Arc<[u8]>>,
+}
+
+/// Writer result used by staged flush/compaction. Callers must install the
+/// optional seed only after their atomic publication succeeds.
+#[derive(Debug)]
+pub struct PaxSegmentWrite {
+    pub meta: SegmentMeta,
+    pub cache_seed: Option<PaxCacheSeed>,
+}
+
 // ── Writer ────────────────────────────────────────────────────────────────────
 
 /// Writes `ProximaRecord` rows to a PAX segment file.
@@ -1151,7 +1172,17 @@ impl PaxSegmentWriter {
     /// legacy `[blocks][index][magic]` tail or — when coalesced-RaBitQ is on —
     /// assemble the ADR-062 layout `[header][RaBitQ region][blocks][footer][tail]`.
     /// Persists to `self.path`; returns `SegmentMeta` for Iceberg manifest use.
-    pub fn finish(mut self) -> Result<SegmentMeta> {
+    pub fn finish(self) -> Result<SegmentMeta> {
+        Ok(self.finish_internal(None)?.meta)
+    }
+
+    /// Finish while retaining writer-owned regions for cache-on-write.
+    /// `include_sq8=false` captures invariant/control data only.
+    pub fn finish_with_cache_seed(self, include_sq8: bool) -> Result<PaxSegmentWrite> {
+        self.finish_internal(Some(include_sq8))
+    }
+
+    fn finish_internal(mut self, capture_sq8: Option<bool>) -> Result<PaxSegmentWrite> {
         // Flush any remaining rows as the last block
         self.flush_current_block()?;
 
@@ -1171,9 +1202,12 @@ impl PaxSegmentWriter {
             .unwrap_or(0) as u32;
 
         let result = if self.coalesced_rabitq && coalesced_dim > 0 {
-            self.finish_coalesced(coalesced_dim)
+            self.finish_coalesced(coalesced_dim, capture_sq8)
         } else {
-            self.finish_legacy()
+            self.finish_legacy().map(|meta| PaxSegmentWrite {
+                meta,
+                cache_seed: None,
+            })
         };
         self.emit_write_trace();
         result
@@ -1398,7 +1432,7 @@ impl PaxSegmentWriter {
     /// Region A, `layout_version = 3`, and the A0 extent mirrored in the
     /// footer. Regions A/B/D are byte-identical in format — only the row
     /// order (coarse-cell-major) and the block padding differ.
-    fn finish_coalesced(&mut self, dim: u32) -> Result<SegmentMeta> {
+    fn finish_coalesced(&mut self, dim: u32, capture_sq8: Option<bool>) -> Result<PaxSegmentWrite> {
         // 1. Build the coalesced RaBitQ region (single segment centroid) over the
         //    cluster-ordered embedding-0 vectors. `self.file_buf` already holds the
         //    blocks at 0-based offsets (relative to the blocks region).
@@ -1596,7 +1630,8 @@ impl PaxSegmentWriter {
                 + footer_body.len()
                 + 16,
         );
-        out.extend_from_slice(&header.to_bytes());
+        let header_bytes = header.to_bytes();
+        out.extend_from_slice(&header_bytes);
         if let Some(a0) = &a0_bytes {
             out.extend_from_slice(a0);
         }
@@ -1609,7 +1644,19 @@ impl PaxSegmentWriter {
         out.extend(segment_tail(&footer_body));
 
         let total_bytes = self.write_file(&out)?;
-        Ok(SegmentMeta {
+        let cache_seed = capture_sq8.map(|include_sq8| {
+            let rabitq_header_len = rabitq_region_header_len(dim).min(region_bytes.len());
+            PaxCacheSeed {
+                header_bytes,
+                a0_bytes: a0_bytes.map(std::sync::Arc::from),
+                rabitq_header_bytes: std::sync::Arc::from(&region_bytes[..rabitq_header_len]),
+                rabitq_bytes: std::sync::Arc::from(region_bytes),
+                footer_bytes: footer_body,
+                sq8_off,
+                sq8_bytes: include_sq8.then(|| std::sync::Arc::from(sq8_region_bytes)),
+            }
+        });
+        let meta = SegmentMeta {
             path: self.path.clone(),
             size_bytes: total_bytes,
             block_count: self.index.blocks.len() as u32,
@@ -1621,7 +1668,8 @@ impl PaxSegmentWriter {
             rabitq_len,
             sq8_off,
             sq8_len,
-        })
+        };
+        Ok(PaxSegmentWrite { meta, cache_seed })
     }
 
     /// Create the parent dir + write `buf` to `self.path`; returns bytes written.
@@ -1973,6 +2021,83 @@ mod tests {
             updated_at_ns: ts,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn cache_seed_is_byte_identical_to_published_regions() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        const DIM: usize = 8;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("cache-seed.pax");
+        let model = CoarseModel {
+            dim: DIM as u32,
+            n_comp: 1,
+            pca_mean: vec![0.0; DIM],
+            pca_components: vec![0.1; DIM],
+            centroids: vec![-1.0, 1.0],
+            radii: vec![1.0, 1.0],
+            cell_rows: vec![2, 2],
+            seed: 7,
+            trained_on: 4,
+        };
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_two_level(model);
+        for row in 0..4usize {
+            let mut record = make_record(&format!("r{row}"), "t", row as i64);
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(vec![row as f32; DIM]),
+                ..Default::default()
+            });
+            writer.add_record(&record)?;
+        }
+
+        let write = writer.finish_with_cache_seed(true)?;
+        let seed = write
+            .cache_seed
+            .ok_or_else(|| anyhow::anyhow!("capturing writer must return a seed"))?;
+        let segment = std::fs::read(&path)?;
+        let header = SegmentHeaderPrefix::parse(&segment)?;
+
+        assert_eq!(
+            seed.header_bytes.as_slice(),
+            &segment[..seed.header_bytes.len()]
+        );
+        assert_eq!(
+            seed.a0_bytes.as_deref(),
+            Some(&segment[header.a0_off as usize..(header.a0_off + header.a0_len) as usize])
+        );
+        assert_eq!(
+            seed.rabitq_bytes.as_ref(),
+            &segment[header.rabitq_off as usize..(header.rabitq_off + header.rabitq_len) as usize]
+        );
+        assert_eq!(
+            seed.rabitq_header_bytes.as_ref(),
+            &segment[header.rabitq_off as usize
+                ..header.rabitq_off as usize + seed.rabitq_header_bytes.len()]
+        );
+        assert_eq!(seed.sq8_off, header.sq8_off);
+        assert_eq!(
+            seed.sq8_bytes.as_deref(),
+            Some(&segment[header.sq8_off as usize..(header.sq8_off + header.sq8_len) as usize])
+        );
+        assert_eq!(
+            seed.footer_bytes.as_slice(),
+            &segment[header.footer_off as usize..(header.footer_off + header.footer_len) as usize]
+        );
+        Ok(())
     }
 
     #[test]

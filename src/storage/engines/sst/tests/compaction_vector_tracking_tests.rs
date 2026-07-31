@@ -64,6 +64,7 @@ mod tests {
 
         // Create a compaction task with test files
         let task = CompactionTask {
+            collection_object_id: 1,
             level: 0,
             input_files: vec![
                 temp_dir.path().join("input1.sstable"),

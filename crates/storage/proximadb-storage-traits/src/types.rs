@@ -14,10 +14,27 @@ use proximadb_proto::proximadb_v1::Collection;
 // field types stay identical for back-compat.
 use proximadb_kernel::CompactBatchId as BatchId;
 
+/// Deterministic 64-bit hash of a string, used to derive a stable
+/// `CollectionObjectId` handle from legacy UUID/name collection ids
+/// (ADR-0083 rev2 D2). Uses the fixed-seed `DefaultHasher`, so the derived
+/// handle is stable across processes and restarts (and never collides for any
+/// realistic collection count).
+fn stable_collection_handle(id: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish()
+}
+
 /// Flexible flush parameters that work for all storage engines.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlushParameters {
-    /// Target collection (None means global flush for engines that support it)
+    /// Decimal catalog object identity at the legacy storage-trait boundary.
+    ///
+    /// `None` means a global flush for engines that support it. New scheduling,
+    /// admission, and cache code must immediately parse this adapter field to
+    /// `CollectionObjectId`; user-facing collection aliases never cross this
+    /// boundary.
     pub collection_id: Option<String>,
 
     /// Force immediate flush regardless of thresholds
@@ -61,6 +78,25 @@ impl FlushParameters {
                     .map(|collection| collection.id.clone())
             })
             .ok_or_else(|| anyhow!("No collection_id provided in flush parameters"))
+    }
+
+    /// Resolve a stable native handle for admission / scheduling / WAL / cache
+    /// keying (ADR-0083 rev2 D2).
+    ///
+    /// This is a **derived** `u64` handle, NOT the collection's identity — the
+    /// composite `CollectionIdentity` on `StorageAssignment` is the authoritative
+    /// identity. Numeric catalog ids parse directly; legacy UUID/name ids hash to
+    /// a deterministic u64. Because the handle is derived (never independently
+    /// stored), it cannot drift from the identity the way a second stored u64 can
+    /// — which is exactly the #1325 regression this closes (the embedded flush
+    /// plan parsed `Collection.id` as `u64` while it held a UUID).
+    pub fn get_collection_object_id(
+        &self,
+    ) -> Result<proximadb_kernel::stable_id::CollectionObjectId> {
+        let collection_id = self.get_collection_id()?;
+        Ok(collection_id
+            .parse()
+            .unwrap_or_else(|_| stable_collection_handle(&collection_id)))
     }
 
     /// Resolve the collection data directory from cached config or an engine hint.
@@ -123,6 +159,21 @@ impl CompactionParameters {
             .ok_or_else(|| {
                 anyhow!("Compaction parameters require a collection_id or collection_config")
             })
+    }
+
+    /// Resolve the native, globally unique catalog object identity.
+    ///
+    /// Compaction may retire files and cache entries, so accepting a mutable
+    /// collection alias at this boundary would make the operation ambiguous.
+    pub fn get_collection_object_id(
+        &self,
+    ) -> Result<proximadb_kernel::stable_id::CollectionObjectId> {
+        let collection_id = self.get_collection_id()?;
+        collection_id.parse().map_err(|error| {
+            anyhow!(
+                "compaction collection_id must be a decimal catalog object id, got {collection_id:?}: {error}"
+            )
+        })
     }
 
     /// Resolve the collection data directory from cached config or an engine hint.
@@ -215,11 +266,53 @@ mod tests {
     }
 
     #[test]
+    fn flush_adapter_accepts_only_catalog_object_identity() {
+        let numeric = FlushParameters {
+            collection_id: Some("184467".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(numeric.get_collection_object_id().unwrap(), 184467);
+
+        let alias = FlushParameters {
+            collection_id: Some("customer-orders".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            alias
+                .get_collection_object_id()
+                .unwrap_err()
+                .to_string()
+                .contains("decimal catalog object id")
+        );
+    }
+
+    #[test]
     fn test_compaction_parameters_default() {
         let params = CompactionParameters::default();
         assert!(params.collection_id.is_none());
         assert!(!params.force);
         assert_eq!(params.priority, OperationPriority::Medium);
+    }
+
+    #[test]
+    fn compaction_adapter_accepts_only_catalog_object_identity() {
+        let numeric = CompactionParameters {
+            collection_id: Some("184467".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(numeric.get_collection_object_id().unwrap(), 184467);
+
+        let alias = CompactionParameters {
+            collection_id: Some("customer-orders".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            alias
+                .get_collection_object_id()
+                .unwrap_err()
+                .to_string()
+                .contains("decimal catalog object id")
+        );
     }
 
     #[test]

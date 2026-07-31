@@ -1212,7 +1212,16 @@ fn spawn_inline_flush(collection_id: String) {
             );
             return;
         };
-        let plan = flush_plan_from_collection_meta(meta);
+        let plan = match flush_plan_from_collection_meta(meta) {
+            Ok(plan) => plan,
+            Err(error) => {
+                tracing::warn!(
+                    collection_id,
+                    "inline size-flush: catalog identity resolution failed: {error}"
+                );
+                return;
+            }
+        };
 
         // TD-FLUSH-4: announce the start — a large-memtable materialize runs
         // tens of seconds and segments only become visible on completion

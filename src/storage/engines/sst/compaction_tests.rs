@@ -27,6 +27,7 @@ async fn test_compaction_task_scheduling() {
     let manager = Compaction::new(config).await.unwrap();
 
     let task = CompactionTask {
+        collection_object_id: 1,
         level: 0,
         input_files: vec![],
         output_file: PathBuf::from("/tmp/output.db"),
@@ -49,6 +50,7 @@ async fn td_compact6_schedule_dedups_same_output_at_enqueue() {
     let manager = Compaction::new(SstConfig::default()).await.unwrap();
     // No start_workers → task is never consumed; queue + active reflect enqueue.
     let mk_task = || CompactionTask {
+        collection_object_id: 1,
         level: 0,
         input_files: vec![PathBuf::from("/nonexistent/proxima_d1_test/input.pax")],
         output_file: PathBuf::from("/nonexistent/proxima_d1_test/compacted_L1.pax"),
@@ -57,10 +59,10 @@ async fn td_compact6_schedule_dedups_same_output_at_enqueue() {
         compression_config: None,
         precision_hint: None,
     };
-    manager.schedule_compaction(mk_task()).await.unwrap();
+    assert!(manager.schedule_compaction(mk_task()).await.unwrap());
     // Second schedule for the same output file is deduped at enqueue (the
     // active marker was inserted atomically with the first schedule's check).
-    manager.schedule_compaction(mk_task()).await.unwrap();
+    assert!(!manager.schedule_compaction(mk_task()).await.unwrap());
     assert_eq!(
         manager.active_compaction_count().await,
         1,
@@ -71,6 +73,37 @@ async fn td_compact6_schedule_dedups_same_output_at_enqueue() {
         1,
         "the deduped second schedule did not enqueue a second task"
     );
+}
+
+#[tokio::test]
+async fn compaction_morsel_admission_rejects_overlapping_inputs() {
+    use crate::core::stable_id::ToPathSegment;
+
+    let manager = Compaction::new(SstConfig::default()).await.unwrap();
+    let input = PathBuf::from(format!(
+        "/nonexistent/morsel/{}.pax",
+        10u32.to_path_segment()
+    ));
+    let task = |segment_id: crate::core::stable_id::SegmentId| CompactionTask {
+        collection_object_id: 1,
+        level: 1,
+        input_files: vec![input.clone()],
+        output_file: PathBuf::from(format!(
+            "/nonexistent/morsel/{}.pax",
+            segment_id.to_path_segment()
+        )),
+        priority: CompactionPriority::Medium,
+        block_size_kb: None,
+        compression_config: None,
+        precision_hint: None,
+    };
+
+    assert!(manager.schedule_compaction(task(1)).await.unwrap());
+    assert!(
+        !manager.schedule_compaction(task(2)).await.unwrap(),
+        "a different output name must not admit the same input morsel twice"
+    );
+    assert_eq!(manager.pending_task_count().await, 1);
 }
 
 /// TD-COMPACT-6 (ADR-076 D1): on the async path the flush caller sets the
@@ -101,6 +134,7 @@ async fn td_compact6_worker_clears_training_in_flight_after_completion() {
     );
 
     let task = CompactionTask {
+        collection_object_id: 1,
         level: 0,
         // Nonexistent input → the worker's perform_compaction errors, but it
         // STILL runs release_task_state (the post-match cleanup), which is the
@@ -209,6 +243,7 @@ async fn test_sst_compaction_expired_deletion_unit() -> anyhow::Result<()> {
 
     // Create compaction task
     let _task = CompactionTask {
+        collection_object_id: 1,
         level: 0,
         input_files: vec![input_file],
         output_file: output_file.clone(),

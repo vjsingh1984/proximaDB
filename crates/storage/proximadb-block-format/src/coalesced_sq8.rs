@@ -236,9 +236,8 @@ impl<'a> Sq8Region<'a> {
         self.header.n_rows as usize
     }
 
-    /// Decode row `g` to f32 (None if `g` is out of range or null/absent).
-    /// Reuses the canonical [`decode`] kernel over the row's `dim`-byte run.
-    pub fn decode_row(&self, g: usize) -> Option<Vec<f32>> {
+    /// Borrow one row's fixed-stride SQ8 codes without decoding or allocating.
+    pub fn row_codes(&self, g: usize) -> Option<&[u8]> {
         let n = self.n_rows();
         let dim = self.header.dim as usize;
         if g >= n {
@@ -249,7 +248,14 @@ impl<'a> Sq8Region<'a> {
             return None;
         }
         let off = g * dim;
-        Some(decode(&self.codes[off..off + dim], &self.header.params))
+        self.codes.get(off..off + dim)
+    }
+
+    /// Decode row `g` to f32 (None if `g` is out of range or null/absent).
+    /// Reuses the canonical [`decode`] kernel over the row's `dim`-byte run.
+    pub fn decode_row(&self, g: usize) -> Option<Vec<f32>> {
+        self.row_codes(g)
+            .map(|codes| decode(codes, &self.header.params))
     }
 }
 
@@ -355,6 +361,9 @@ mod tests {
         assert_eq!(parsed.n_rows(), 8);
         assert!(parsed.decode_row(3).is_none(), "row 3 is null");
         assert!(parsed.decode_row(0).is_some());
+        assert!(parsed.row_codes(3).is_none(), "row 3 codes are null");
+        assert_eq!(parsed.row_codes(0).map(<[u8]>::len), Some(DIM));
+        assert!(parsed.row_codes(8).is_none(), "out-of-range row");
     }
 
     /// Header parse is fail-closed on truncation (no panic).

@@ -158,7 +158,7 @@ impl CompactionFileDiscovery {
         level: u32,
         threshold: usize,
     ) -> bool {
-        if let Some(level_files) = filtered_files.compactable_files.get(&0) {
+        if let Some(level_files) = filtered_files.compactable_files.get(&level) {
             let should_compact = level_files.len() >= threshold;
 
             if should_compact {
@@ -168,7 +168,7 @@ impl CompactionFileDiscovery {
                     level_files.len(),
                     threshold
                 );
-            } else if filtered_files.pending_files.contains_key(&0) {
+            } else if filtered_files.pending_files.contains_key(&level) {
                 debug!(
                     "⏸️ COMPACTION: Level {} has only {} compactable files (< threshold {}), some files pending",
                     level,
@@ -200,6 +200,18 @@ impl CompactionFileDiscovery {
 /// Unified compaction task builder
 /// Creates compaction tasks based on discovered files and thresholds
 pub struct CompactionTaskBuilder;
+
+fn higher_level_compaction_reduces_fanout(
+    compactable_file_count: usize,
+    threshold_triggered: bool,
+) -> bool {
+    threshold_triggered && compactable_file_count >= 2
+}
+
+fn higher_level_file_threshold(config: &CompactionConfig, level: u32) -> usize {
+    (config.higher_level_file_threshold as f64 * config.level_multiplier.powi(level as i32 - 1))
+        .ceil() as usize
+}
 
 impl CompactionTaskBuilder {
     /// Check if compaction is needed and build task if necessary
@@ -285,13 +297,19 @@ impl CompactionTaskBuilder {
 
         // Check higher levels if needed (using configured max_levels)
         for level in 1..config.max_levels as u32 {
-            // Apply level multiplier to thresholds
-            let level_file_threshold = (config.l0_file_threshold as f64
-                * config.level_multiplier.powi(level as i32))
-                as usize;
+            // L0 admission batches writes; query-visible higher levels use a
+            // lower base so any pair is consolidated rather than left as two
+            // permanent query cascades. The multiplier applies between higher levels (L1 is
+            // exponent zero), preserving the operator's write-amplification
+            // trade-off without inheriting the L0 batching threshold.
+            let level_file_threshold = higher_level_file_threshold(config, level);
             let level_size_threshold_mb = (config.l0_size_threshold_mb as f64
                 * config.level_multiplier.powi(level as i32))
                 as usize;
+            let level_file_count = filtered_files
+                .compactable_files
+                .get(&level)
+                .map_or(0, Vec::len);
 
             let should_compact =
                 match config.strategy.as_str() {
@@ -332,7 +350,10 @@ impl CompactionTaskBuilder {
                     }
                 };
 
-            if should_compact {
+            // Rewriting a single immutable segment cannot reduce read
+            // amplification. In particular, a size-only trigger must not
+            // cascade one large file through every level.
+            if higher_level_compaction_reduces_fanout(level_file_count, should_compact) {
                 let compactable_files = file_discovery.get_compaction_files(&filtered_files, level);
 
                 info!(
@@ -459,6 +480,54 @@ impl CompactionSelfHealing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn file(level: u32) -> GenericFileMetadata {
+        GenericFileMetadata {
+            path: format!("L{level}.pax"),
+            size_bytes: 1,
+            level,
+            timestamp: 0,
+            extension: "pax".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn count_trigger_reads_the_requested_higher_level() {
+        let filesystem = Arc::new(
+            FilesystemFactory::create_default()
+                .await
+                .expect("test filesystem"),
+        );
+        let discovery = CompactionFileDiscovery::new(filesystem);
+        let filtered = FilteredCompactionFiles {
+            compactable_files: HashMap::from([(1, vec![file(1), file(1), file(1)])]),
+            pending_files: HashMap::new(),
+            total_files: 3,
+            compactable_count: 3,
+            pending_count: 0,
+        };
+
+        assert!(discovery.should_trigger_compaction(&filtered, 1, 3));
+        assert!(
+            !discovery.should_trigger_compaction(&filtered, 0, 3),
+            "L1 files must not be counted as L0"
+        );
+    }
+
+    #[test]
+    fn a_single_large_file_is_not_rewritten_to_reduce_gets() {
+        assert!(!higher_level_compaction_reduces_fanout(1, true));
+        assert!(higher_level_compaction_reduces_fanout(2, true));
+        assert!(!higher_level_compaction_reduces_fanout(3, false));
+    }
+
+    #[test]
+    fn default_higher_levels_consolidate_a_pair() {
+        let config = CompactionConfig::default();
+
+        assert_eq!(higher_level_file_threshold(&config, 1), 2);
+        assert_eq!(higher_level_file_threshold(&config, 2), 2);
+    }
 
     #[test]
     fn test_self_healing_detection() {
