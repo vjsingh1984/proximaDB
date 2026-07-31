@@ -1451,6 +1451,163 @@ mod tests {
         assert_eq!(schema.field(1).name(), "vector");
     }
 
+    // ---- TD-FLIGHT-1: canonical v2 ticket + encoder ----
+
+    fn mk_ticket(json: serde_json::Value) -> Ticket {
+        Ticket {
+            ticket: serde_json::to_vec(&json).expect("serialize ticket").into(),
+        }
+    }
+
+    fn mk_result(id: &str, score: f64, props: Vec<(&str, ProximaValue)>) -> RichSearchResult {
+        RichSearchResult {
+            id: id.to_string(),
+            score,
+            similarity: None,
+            vector: vec![],
+            props: props.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            version: None,
+            timestamp: None,
+            source: None,
+        }
+    }
+
+    #[test]
+    fn test_flight_search_ticket_discriminator() {
+        let v2 = mk_ticket(serde_json::json!({
+            "type": "vector_search",
+            "collection_id": "c1",
+            "query_vector": [0.1, 0.2],
+            "top_k": 5
+        }));
+        let parsed = FlightSearchTicket::from_ticket(&v2).expect("v2 ticket parses");
+        assert_eq!(parsed.collection_id, "c1");
+        assert_eq!(parsed.query_vector, vec![0.1_f32, 0.2]);
+        assert_eq!(parsed.top_k, 5);
+        assert!(!parsed.include_vector);
+        assert!(parsed.filters.is_empty());
+
+        // Non-v2 tickets return None rather than mis-parsing.
+        let file_ticket = mk_ticket(serde_json::json!({
+            "type": "arrow_file", "collection_id": "c1", "file_path": "/x"
+        }));
+        assert!(FlightSearchTicket::from_ticket(&file_ticket).is_none());
+
+        // Old v1 VectorSearchRequest shape (no "type") is rejected.
+        let v1 = mk_ticket(serde_json::json!({
+            "collection_id": "c1", "queries": [], "top_k": 3
+        }));
+        assert!(FlightSearchTicket::from_ticket(&v1).is_none());
+    }
+
+    #[test]
+    fn test_flight_search_ticket_to_rich_request() {
+        let ticket = FlightSearchTicket {
+            ticket_type: "vector_search".to_string(),
+            collection_id: "c1".to_string(),
+            query_vector: vec![1.0, 2.0, 3.0],
+            top_k: 7,
+            filters: vec![
+                FlightFilter {
+                    field: "year".into(),
+                    op: "gte".into(),
+                    value: serde_json::json!(2020),
+                    value_upper: None,
+                    value_list: vec![],
+                },
+                FlightFilter {
+                    field: "tag".into(),
+                    op: "in".into(),
+                    value: serde_json::json!(null),
+                    value_upper: None,
+                    value_list: vec![serde_json::json!("a"), serde_json::json!("b")],
+                },
+                FlightFilter {
+                    field: "price".into(),
+                    op: "between".into(),
+                    value: serde_json::json!(10),
+                    value_upper: Some(serde_json::json!(100)),
+                    value_list: vec![],
+                },
+            ],
+            include_vector: true,
+        };
+        let req = ticket.to_rich_request().expect("translate");
+        assert_eq!(req.collection_id, "c1");
+        assert_eq!(req.top_k, 7);
+        assert_eq!(req.filters.len(), 3);
+        assert_eq!(req.filters[0].operator, RichFilterOperator::Gte);
+        assert_eq!(req.filters[1].operator, RichFilterOperator::In);
+        assert_eq!(req.filters[1].value_list.len(), 2);
+        assert_eq!(req.filters[2].operator, RichFilterOperator::Between);
+        assert!(req.filters[2].value_upper.is_some());
+
+        // Unsupported operator is rejected, not silently coerced.
+        let bad = FlightFilter {
+            field: "x".into(),
+            op: "weird".into(),
+            value: serde_json::json!(1),
+            value_upper: None,
+            value_list: vec![],
+        };
+        let bad_ticket = FlightSearchTicket {
+            ticket_type: "vector_search".into(),
+            collection_id: "c".into(),
+            query_vector: vec![],
+            top_k: 1,
+            filters: vec![bad],
+            include_vector: false,
+        };
+        assert!(bad_ticket.to_rich_request().is_err());
+    }
+
+    #[test]
+    fn test_rich_search_results_to_batch_empty() {
+        let batch =
+            ArrowProtoCodec::rich_search_results_to_batch(&[], false).expect("empty encodes");
+        assert_eq!(batch.num_rows(), 0);
+        let names: Vec<&str> = batch.schema().fields().iter().map(|f| f.name().as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["id", "score", "vector", "properties", "timestamp", "version", "source"]
+        );
+    }
+
+    #[test]
+    fn test_rich_search_results_to_batch_preserves_full_props() {
+        let props = vec![
+            ("category", ProximaValue::String("books".into())),
+            ("year", ProximaValue::Int64(2024)),
+        ];
+        let results = vec![mk_result("r1", 0.91, props)];
+        let batch =
+            ArrowProtoCodec::rich_search_results_to_batch(&results, false).expect("encode");
+        assert_eq!(batch.num_rows(), 1);
+        let props_col = batch.column_by_name("properties").expect("properties col");
+        let sa = props_col
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("properties is StringArray");
+        // The full map round-trips as JSON — BOTH keys survive (the v1 encoder
+        // collapsed props to a single key/value, dropping the second).
+        let json: serde_json::Value = serde_json::from_str(sa.value(0)).expect("valid json");
+        assert!(json.get("category").is_some());
+        assert!(json.get("year").is_some());
+    }
+
+    #[test]
+    fn test_rich_search_results_to_batch_vector_nullable() {
+        let mut r1 = mk_result("r1", 1.0, vec![]);
+        r1.vector = vec![0.1, 0.2, 0.3];
+        let r2 = mk_result("r2", 0.5, vec![]);
+        let batch =
+            ArrowProtoCodec::rich_search_results_to_batch(&[r1, r2], true).expect("encode");
+        let vcol = batch.column_by_name("vector").expect("vector col");
+        assert_eq!(vcol.null_count(), 1, "second row has no vector => null");
+        assert!(!vcol.is_null(0));
+        assert!(vcol.is_null(1));
+    }
+
     /// Regression: a search response with NO vector payload (the common case
     /// when `include_fields.vector` is unset) must still encode — the vector
     /// column becomes an all-null FixedSizeList rather than underflowing the
