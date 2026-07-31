@@ -273,6 +273,9 @@ def test_flight_insert_stream_writes_batches_and_validates_ack() -> None:
         def write_batch(self, batch) -> None:
             calls["rows"] += batch.num_rows
 
+        def done_writing(self) -> None:
+            calls["done_writing"] = True
+
         def close(self) -> None:
             calls["writer_closed"] = True
 
@@ -332,6 +335,7 @@ def test_flight_insert_stream_writes_batches_and_validates_ack() -> None:
     }
     assert calls["schema"] == "vector-schema"
     assert calls["rows"] == 5
+    assert calls["done_writing"] is True
     assert calls["writer_closed"] is True
     assert calls["client_closed"] is True
     assert result["metrics"]["successful_count"] == 5

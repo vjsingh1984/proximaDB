@@ -1198,11 +1198,12 @@ class FlightInsertStream:
             raise RuntimeError("Flight insert stream was already closed")
         self.closed = True
         try:
-            self.writer.close()
+            self.writer.done_writing()
             payload = self.reader.read()
             encoded = payload.to_pybytes() if payload is not None else b""
             result = json.loads(encoded) if encoded else {}
         finally:
+            self.writer.close()
             self.client.close()
         metrics = result.get("metrics", {})
         successful = metrics.get("successful_count")
