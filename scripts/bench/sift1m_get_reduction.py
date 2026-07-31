@@ -1950,6 +1950,7 @@ def main() -> int:
                 "tests/python/test_sift_get_reduction_harness.py",
                 "tests/python/test_bigann_prefix_groundtruth.py",
                 "tests/python/test_nprobe_geometry_analysis.py",
+                "tests/python/test_nprobe_sweep.py",
             }
         ]
         if unsafe_changes:
