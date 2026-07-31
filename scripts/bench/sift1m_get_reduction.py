@@ -2153,8 +2153,9 @@ def main() -> int:
         "query_config": {
             "transport": "rest_v2",
             "reason": (
-                "Arrow Flight DoGet currently delegates to the deprecated v1 "
-                "search handler; this benchmark keeps v2 search semantics"
+                "REST v2 remains the fixed cross-scale reference transport; "
+                "canonical Flight v2 parity and transport overhead are measured "
+                "separately by flight_vs_rest_v2_bed.py"
             ),
         },
         "compute_profile": compute_profile(),
