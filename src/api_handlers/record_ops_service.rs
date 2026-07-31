@@ -924,6 +924,23 @@ impl proximadb_runtime::RecordOpsPort for RecordOpsService {
     }
 }
 
+// TD-FLIGHT-1: canonical v2 search read port. The Arrow Flight search surfaces
+// (do_get + do_exchange bulk_search) consume this instead of the deprecated v1
+// `ApiHandlersPort::handle_vector_search_v1_for_tenant`, so they inherit the
+// same typed-filter, WAL delta-merge, MVCC/tombstone, Strong-freshness, and
+// tenant-collection-access behavior REST v2 / gRPC v2 get. Pure delegation to
+// the single canonical search authority.
+#[async_trait::async_trait]
+impl proximadb_runtime::RecordSearchPort for RecordOpsService {
+    async fn search_record(
+        &self,
+        request: RichSearchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<RichSearchResponse> {
+        self.handle_record_search_for_tenant(request, tenant_id).await
+    }
+}
+
 // ADR-009 convergence: the document facade's canonical branch routes here so a
 // document written via gRPC/DocumentService lands in the same tenant-scoped record
 // store REST v2 already uses — closing the store-split. Writes upsert (a re-inserted
