@@ -1578,22 +1578,24 @@ mod tests {
         let batch =
             ArrowProtoCodec::rich_search_results_to_batch(&[], false).expect("empty encodes");
         assert_eq!(batch.num_rows(), 0);
-        let names: Vec<&str> = batch
+        // The canonical v2 schema (7 typed columns), including the new
+        // full-fidelity `properties` column.
+        let field_names: Vec<String> = batch
             .schema()
             .fields()
             .iter()
-            .map(|f| f.name().as_str())
+            .map(|f| f.name().to_string())
             .collect();
         assert_eq!(
-            names,
+            field_names,
             vec![
-                "id",
-                "score",
-                "vector",
-                "properties",
-                "timestamp",
-                "version",
-                "source"
+                "id".to_string(),
+                "score".to_string(),
+                "vector".to_string(),
+                "properties".to_string(),
+                "timestamp".to_string(),
+                "version".to_string(),
+                "source".to_string(),
             ]
         );
     }

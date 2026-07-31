@@ -12,7 +12,7 @@
 use std::net::TcpListener;
 use std::time::Duration;
 
-use arrow_array::{RecordBatch, StringArray};
+use arrow_array::{Array, RecordBatch, StringArray};
 use arrow_flight::Ticket;
 use arrow_flight::decode::FlightRecordBatchStream;
 use arrow_flight::error::FlightError;
