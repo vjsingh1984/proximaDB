@@ -50,12 +50,19 @@ scripts/worktree.sh guard                # exits non-zero if run in the main che
 scripts/worktree.sh check                # cargo check ONLY the crates changed vs develop
 scripts/worktree.sh test                 # cargo nextest ONLY the crates changed vs develop
 scripts/worktree.sh rm feat/my-thing     # remove after the PR merges (guards dirty)
-scripts/worktree.sh clean                # drop every worktree already merged to develop
+scripts/worktree.sh clean                # reclaim worktrees merged to develop (defensive: protects active worktrees)
 ```
 
 `new` refuses to clobber an existing branch/path; `rm` refuses to delete a
 dirty worktree (pass `--force` to discard) and only deletes the branch if it's
-merged; `clean` is the periodic housekeeping pass.
+merged; `clean` is the periodic housekeeping pass. `clean` is **defensive**: it
+reclaims only worktrees whose branch has genuinely landed in develop (squash- or
+merge-commit) and has a clean tree — it never deletes a *fresh/active* worktree
+whose branch tip still equals develop (no commits of its own; possibly mid-build
+with gitignored `target/` WIP invisible to `status --porcelain`), nor a dirty
+one. A branch later fast-forwarded so develop == its tip is indistinguishable
+from a fresh one and is likewise protected — remove such a worktree explicitly
+with `rm`.
 
 **Affected-only feedback.** `check`/`test` map your diff vs `develop` to the
 owning crates (via `scripts/affected_crates.py` + `cargo metadata`) and build/
@@ -95,12 +102,14 @@ new feat/x  ──▶  edit · commit · push · open PR  ──▶  PR merges  
    ever in a shared tree, fall back to `git commit -o <file>`).
 4. Clean up (`rm`) once your PR merges.
 5. **Commit WIP to your branch early and often — never carry valuable
-   uncommitted work in a worktree.** A worktree is disposable: `clean`,
-   `rm --force`, a concurrent session, or a merge/cleanup pass can remove or
-   reset it at any time, and **uncommitted edits are lost with the directory**.
-   Committed work survives in the branch ref (recoverable even if the worktree
-   is deleted). Commit each coherent increment (it's fine to amend/rebase
-   later); treat "still in the editor, not yet committed" as fragile.
+   uncommitted work in a worktree.** A worktree is disposable: `rm --force`, a
+   concurrent session, or a merge/cleanup pass can remove or reset it at any
+   time, and **uncommitted edits are lost with the directory**. Committed work
+   survives in the branch ref (recoverable even if the worktree is deleted).
+   Commit each coherent increment (it's fine to amend/rebase later); treat
+   "still in the editor, not yet committed" as fragile. (`clean` is defensive —
+   it protects a no-commit worktree whose tip == develop — but `rm --force` and
+   the OS can still drop a worktree, so committing remains the durable guard.)
 6. **Re-verify state before resuming or acting.** After any gap — and before
    any destructive or push step — confirm the worktree still exists
    (`scripts/worktree.sh list`) and the branch hasn't advanced under you
