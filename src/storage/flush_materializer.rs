@@ -144,7 +144,7 @@ pub struct CollectionFlushOutcome {
 /// Process-wide owner of flush engines, per-collection serialization, and
 /// bounded cross-collection admission (ADR-081).
 struct FlushExecutionCoordinator {
-    collection_gates: DashMap<crate::core::stable_id::CollectionObjectId, Weak<Mutex<()>>>,
+    collection_gates: DashMap<crate::core::stable_id::CollectionIdentity, Weak<Mutex<()>>>,
     engines: DashMap<i32, Arc<OnceCell<Arc<dyn UnifiedStorageFormat>>>>,
     permits: Arc<Semaphore>,
 }
@@ -159,7 +159,7 @@ impl FlushExecutionCoordinator {
     }
 
     fn collection_gate(&self, plan: &CollectionFlushPlan) -> Arc<Mutex<()>> {
-        let key = plan.collection_object_id;
+        let key = plan.collection_identity.unwrap_or_default();
         if self.collection_gates.len() > 4_096 {
             self.collection_gates
                 .retain(|_, gate| gate.strong_count() > 0);
