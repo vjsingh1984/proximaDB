@@ -12,6 +12,7 @@ pub mod rbac_service;
 pub mod request_identity;
 pub mod rls;
 pub mod security_coordinator;
+pub mod tenant_stable_id;
 pub mod validation;
 
 pub use rbac_service::{
@@ -33,6 +34,8 @@ pub use advanced_features::{
     IPAccessConfig, IPAccessControlService, IPAccessResult, MFAChallenge, MFAConfig, MFAProvider,
     MFAService, MFAVerificationResult, RateLimitConfig, RateLimitResult, RateLimitingService,
 };
+
+pub use tenant_stable_id::CatalogTenantStableIdResolver;
 
 pub use rls::{
     CollectionRLS, Operation as RLSOperation, RLSConfig, RLSFilterResult, RLSPolicy,

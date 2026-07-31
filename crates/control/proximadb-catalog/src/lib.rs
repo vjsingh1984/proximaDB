@@ -4503,6 +4503,14 @@ pub trait Catalog: Send + Sync {
     async fn account_id_u32(&self, _account: &str) -> anyhow::Result<Option<u32>> {
         Ok(None)
     }
+    /// TD-TENANT-1 item 3: SYNC lookup of the account u32 — no mint, no I/O.
+    /// For the request-hot `TenantStableIdResolver` (which is sync). Returns the
+    /// already-minted u32 for an account/tenant string, or `None` when unminted
+    /// (fail-closed deny). Default `None` — only the native catalog has a
+    /// registry; federated/external catalogs stay `None` (legacy-safe).
+    fn account_id_u32_lookup(&self, _account: &str) -> Option<u32> {
+        None
+    }
     /// ADR-031 allocator unification: the highest persisted `object_id` across
     /// all tables (from the durable `object_name_index`). The root startup path
     /// uses this to raise the collection-id allocator floor above every existing
