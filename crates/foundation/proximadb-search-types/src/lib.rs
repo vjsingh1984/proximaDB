@@ -18,6 +18,9 @@ pub mod bounded_queue;
 pub mod compiled_filter;
 pub mod json_comparison;
 pub mod json_value_serde;
+pub mod predicate_shortfall;
 pub mod results;
 pub mod search_params;
 pub mod sql_value_filter;
+
+pub use predicate_shortfall::PredicateShortfall;
