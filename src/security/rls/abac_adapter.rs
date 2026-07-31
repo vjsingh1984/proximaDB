@@ -154,6 +154,40 @@ impl AbacEnforcer {
         self.scan_predicate_for(subject, tenant, target, bindings)
     }
 
+    /// Resolve `subject`'s read authorization for `target`, returning the
+    /// admitted [`AuthorizedReadContext`] for the vector push-down path: the
+    /// caller wraps it in `ReadContext::Client(ctx)` and hands it to
+    /// `unified_search_native`. `Err(reason)` ⇒ DENY — the caller MUST fail
+    /// closed (return empty results) and MUST NOT collapse it to `None`/`System`
+    /// (that would be a fail-open hole). Mirrors `predicate_for`'s binding-store
+    /// selection so a durable store is consulted per read when present.
+    pub fn resolve_read_context(
+        &self,
+        subject: &SubjectId,
+        tenant: u64,
+        target: Target,
+    ) -> Result<AuthorizedReadContext, DenyReason> {
+        let owned;
+        let bindings: &[PolicyBinding] = match &self.binding_store {
+            Some(store) => {
+                owned = store.bindings_for(tenant);
+                &owned
+            }
+            None => &self.bindings,
+        };
+        match AuthorizedReadContext::resolve(
+            self.authority.as_ref(),
+            self.epochs.as_ref(),
+            bindings,
+            subject,
+            tenant,
+            target,
+        ) {
+            proximadb_abac::ReadDecision::Deny(reason) => Err(reason),
+            proximadb_abac::ReadDecision::Admit(ctx) => Ok(ctx),
+        }
+    }
+
     /// Resolve `subject`'s authorization for `target` and compile to a scan
     /// predicate. The caller provides the `bindings` (loaded from the policy
     /// store — Phase 5 makes that durable; today they are supplied directly).
@@ -442,6 +476,53 @@ mod tests {
             }
             _ => panic!("expected a single Eq(dept, eng) comparison"),
         }
+    }
+
+    #[test]
+    fn enforcer_resolves_admitted_read_context_for_vector_path() {
+        // resolve_read_context is the vector push-down seam: it returns the
+        // admitted AuthorizedReadContext for the caller to wrap as
+        // ReadContext::Client(ctx). Alice (dept=eng, binding present) is admitted
+        // with her row-predicate ref (42) intact — so security_filter_for_context
+        // would later compile the dept=eng filter for the ANN push-down.
+        let (enforcer, bindings) = enforcer_with_alice("eng");
+        let enforcer = enforcer.with_bindings(bindings);
+        let ctx = enforcer
+            .resolve_read_context(
+                &SubjectId("alice".into()),
+                7,
+                Target {
+                    namespace: 3,
+                    table: 200,
+                    column: None,
+                },
+            )
+            .expect("alice (dept=eng, binding present) must be admitted");
+        assert!(
+            ctx.row_predicate_refs().contains(&42),
+            "admitted context carries alice's row-predicate ref"
+        );
+    }
+
+    #[test]
+    fn enforcer_resolve_read_context_denies_unbound_subject() {
+        // Fail-closed contract: an unbound subject (no attribute binding) denies,
+        // and the caller must map Err ⇒ empty results — never collapse to None.
+        let (enforcer, bindings) = enforcer_with_alice("eng");
+        let enforcer = enforcer.with_bindings(bindings);
+        let deny = enforcer.resolve_read_context(
+            &SubjectId("mallory".into()),
+            7,
+            Target {
+                namespace: 3,
+                table: 200,
+                column: None,
+            },
+        );
+        assert!(
+            deny.is_err(),
+            "mallory (unbound) must be denied, not admitted"
+        );
     }
 
     #[test]

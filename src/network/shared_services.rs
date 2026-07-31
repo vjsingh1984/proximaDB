@@ -1479,8 +1479,8 @@ impl SharedServices {
         // `directory_cache` constructed earlier (before SstEngine) so the
         // engine, the vector ops service, and the SharedServices public
         // field all share the same `Arc`.
-        let vector_operations_service = Arc::new(
-            {
+        let vector_operations_service = {
+            let svc = {
                 #[cfg(feature = "axis")]
                 {
                     VectorOperationsService::new(
@@ -1504,8 +1504,25 @@ impl SharedServices {
             // Phase 7.2: thread the same affinity registry held by
             // the SharedServices field so search-path recordings and
             // operator inspection share state.
-            .with_affinity_registry(affinity_registry.clone()),
-        );
+            .with_affinity_registry(affinity_registry.clone());
+            // FA-2 (abac-policy): wire the durable ABAC enforcer into the vector
+            // service so `unified_search_native` enforces the subject's accessibility
+            // predicate on every search (push-down for conjunctive policies, post-filter
+            // otherwise). Default-OFF ⇒ default builds are byte-for-byte unchanged; `None`
+            // ⇒ no enforcer ⇒ no per-record filtering (the status quo). Mirrors the
+            // DmlService wiring (`build_abac_enforcer`, TD-ABAC-2).
+            #[cfg(feature = "abac-policy")]
+            let svc = match Self::build_abac_enforcer(opt_config) {
+                Some(enforcer) => {
+                    debug!(
+                        "✅ SharedServices::new - durable ABAC enforcer wired into VectorOperationsService"
+                    );
+                    svc.with_abac_enforcer(enforcer)
+                }
+                None => svc,
+            };
+            Arc::new(svc)
+        };
 
         info!(
             "✅ SharedServices: VectorOperationsService created successfully - 40-60% performance boost enabled"
