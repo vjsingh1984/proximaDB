@@ -16,8 +16,8 @@ use crate::security::AuthenticationData;
 use crate::security::SecurityCoordinator;
 use crate::security::UnifiedUserContext;
 use proximadb_tenant::identity_trust::{
-    AuthenticatedTenantBinding, ResolvedTenantAssertion, resolve_subject_assertion,
-    resolve_tenant_assertion,
+    AuthenticatedTenantBinding, ResolvedTenantAssertion, TenantAssertionError,
+    resolve_subject_assertion, resolve_tenant_assertion,
 };
 use proximadb_tenant::{
     AuthClass, HeaderTrustPolicy, ResolveRequestTenantError, ResolvedRequestIdentity,
@@ -75,8 +75,12 @@ pub enum IdentityError {
     #[error("authentication failed: {0}")]
     Authentication(String),
     /// A tenant or subject assertion was rejected by the deployment trust policy.
+    /// Carries the structured [`TenantAssertionError`] so each surface can emit
+    /// its own `tenant_audit` trail with full fidelity (Mismatch vs
+    /// UnauthenticatedAssertionRejected) and map it onto its protocol's error
+    /// vocabulary — the orchestrator itself never logs.
     #[error("identity assertion rejected: {0}")]
-    Assertion(String),
+    Assertion(TenantAssertionError),
     /// The resolved tenant is invalid for the deployment mode (e.g. missing under
     /// `MultiTenant`, or an unsafe id).
     #[error(transparent)]
@@ -128,7 +132,7 @@ pub async fn resolve_request_identity(
                         is_gateway_principal: user_context.is_gateway_principal(),
                     });
             let resolved = resolve_tenant_assertion(asserted_tenant, binding.as_ref(), trust)
-                .map_err(|e| IdentityError::Assertion(e.to_string()))?;
+                .map_err(IdentityError::Assertion)?;
             let tenant = resolve_tenant_for_mode(&resolved, mode)?;
             Ok(ResolvedIdentity {
                 identity: ResolvedRequestIdentity {
@@ -143,10 +147,10 @@ pub async fn resolve_request_identity(
         // and gated through the deployment trust policy.
         None => {
             let resolved = resolve_tenant_assertion(asserted_tenant, None, trust)
-                .map_err(|e| IdentityError::Assertion(e.to_string()))?;
+                .map_err(IdentityError::Assertion)?;
             let tenant = resolve_tenant_for_mode(&resolved, mode)?;
             let subject = resolve_subject_assertion(asserted_subject, trust)
-                .map_err(|e| IdentityError::Assertion(e.to_string()))?;
+                .map_err(IdentityError::Assertion)?;
             let auth_class = match (&resolved, &subject) {
                 (ResolvedTenantAssertion::NoTenant, None) => AuthClass::Anonymous,
                 _ => AuthClass::TrustAsserted,
