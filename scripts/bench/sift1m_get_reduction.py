@@ -996,6 +996,7 @@ def write_config(
     write_buffer_mb: int,
     flush_vector_threshold: int,
     storage_url: str,
+    flush_interval_secs: int = 12,
 ) -> None:
     data = root / "data"
     config = f"""[server]
@@ -1026,7 +1027,7 @@ enable_wal = true
 sync_mode = "PerBatch"
 write_buffer_size_mb = {write_buffer_mb}
 vector_count_threshold = {flush_vector_threshold}
-flush_interval_secs = 12
+flush_interval_secs = {flush_interval_secs}
 
 [storage.sst_config]
 data_directory = "{data / "sst"}"
@@ -1049,6 +1050,17 @@ metrics_enabled = true
 log_level = "info"
 """
     path.write_text(config)
+
+
+def effective_flush_interval(
+    explicit_flush_every_rows: int | None,
+    configured_interval_secs: int | None,
+) -> int:
+    if configured_interval_secs is not None:
+        if configured_interval_secs <= 0:
+            raise RuntimeError("--flush-interval-secs must be positive")
+        return configured_interval_secs
+    return 3600 if explicit_flush_every_rows is not None else 12
 
 
 class OwnedServer:
@@ -1640,6 +1652,15 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--flush-interval-secs",
+        type=int,
+        help=(
+            "time-based WAL flush interval; defaults to 12 without explicit "
+            "epochs and 3600 with --explicit-flush-every-rows so the timer "
+            "cannot race the controlled admission plan"
+        ),
+    )
+    parser.add_argument(
         "--explicit-flush-every-rows",
         type=int,
         help=(
@@ -1721,6 +1742,10 @@ def main() -> int:
         raise RuntimeError("--ivf-k must be positive")
     if args.nprobe is not None and args.nprobe <= 0:
         raise RuntimeError("--nprobe must be positive")
+    flush_interval_secs = effective_flush_interval(
+        args.explicit_flush_every_rows,
+        args.flush_interval_secs,
+    )
     if args.azurite and not (
         args.storage_url
         and urlparse(args.storage_url).scheme in {"adls", "az", "azure"}
@@ -1881,6 +1906,7 @@ def main() -> int:
         args.write_buffer_mb,
         args.flush_vector_threshold,
         storage_url,
+        flush_interval_secs,
     )
     server_url = f"http://127.0.0.1:{args.port}"
     local_disk = root / "local-disk-cache"
@@ -1974,6 +2000,7 @@ def main() -> int:
             "batch_size": args.batch_size,
             "write_buffer_mb": args.write_buffer_mb,
             "flush_vector_threshold": args.flush_vector_threshold,
+            "flush_interval_secs": flush_interval_secs,
             "explicit_flush_every_rows": args.explicit_flush_every_rows,
             "explicit_flush_flight_port": (
                 args.port if args.explicit_flush_every_rows is not None else None

@@ -255,6 +255,14 @@ def test_config_preserves_object_store_url(tmp_path: Path) -> None:
     assert "vector_count_threshold = 20000" in config
 
 
+def test_explicit_flush_disables_timer_races_by_default() -> None:
+    assert HARNESS.effective_flush_interval(None, None) == 12
+    assert HARNESS.effective_flush_interval(20_000, None) == 3600
+    assert HARNESS.effective_flush_interval(20_000, 60) == 60
+    with pytest.raises(RuntimeError, match="positive"):
+        HARNESS.effective_flush_interval(20_000, 0)
+
+
 def test_flight_insert_stream_writes_batches_and_validates_ack() -> None:
     calls = {"rows": 0}
 
