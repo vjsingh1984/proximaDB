@@ -225,23 +225,11 @@ pub struct SearchPlanTrace {
 
 /// TD-064: Diagnostic block describing a predicate-aware recall shortfall.
 ///
-/// Emitted when ANN returned a candidate pool, the metadata filter trimmed
-/// it, and the survivor count is below `requested_k`. Clients should treat
-/// this as a correctness signal — either re-issue with `PreFilter` mode,
-/// widen the filter, or accept the disclosed shortfall.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PredicateShortfall {
-    /// The `top_k` value the caller asked for.
-    pub requested_k: u32,
-    /// The number of results actually returned after predicate filtering.
-    pub returned_k: u32,
-    /// Pool size considered before the predicate (oversample budget).
-    pub oversample_pool: u32,
-    /// AnnFilteringMode that produced this shortfall (`post_filter`,
-    /// `inline`, or `pre_filter`). Free-form string so callers can encode
-    /// catalog `AnnFilteringMode` variants without coupling.
-    pub ann_filtering_mode: String,
-}
+/// The *definition* was relocated to the foundation `proximadb-search-types`
+/// crate (TD-FLIGHT-1) so transport-neutral search DTOs can reference it
+/// without a modality-tier dependency. It is re-exported here to preserve the
+/// historical `search_plan_trace::PredicateShortfall` path.
+pub use proximadb_search_types::PredicateShortfall;
 
 impl SearchPlanTrace {
     /// Construct a Phase 0 trace with sensible defaults — meant to be filled

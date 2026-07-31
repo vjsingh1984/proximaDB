@@ -706,6 +706,8 @@ impl MultiServer {
             let arrow_bind_target = self.config.arrow_bind_target();
             let arrow_target_log = format!("{arrow_bind_target:?}");
             let arrow_record_ops = services.record_ops.clone();
+            // TD-FLIGHT-1: same RecordOpsService Arc, coerced to the search port.
+            let arrow_record_search = services.record_ops.clone();
             let arrow_vector_ops = services.vector_operations_service.clone();
             let arrow_collection = services.collection_service.clone();
             let arrow_graph = services.graph_service.clone();
@@ -731,6 +733,7 @@ impl MultiServer {
                 let flight_service = ProximaFlightService::from_services(
                     api_handlers,
                     arrow_record_ops,
+                    arrow_record_search,
                     arrow_vector_ops,
                     arrow_collection,
                     arrow_graph,
@@ -1131,6 +1134,8 @@ impl MultiServer {
             let flight_service =
                 crate::network::arrow_ipc::service::ProximaFlightService::from_services(
                     services.api_handlers.clone(),
+                    services.record_ops.clone(),
+                    // same RecordOpsService Arc, coerced to the v2 search port (TD-FLIGHT-1)
                     services.record_ops.clone(),
                     services.vector_operations_service.clone(),
                     services.collection_service.clone(),
@@ -1629,6 +1634,8 @@ impl MultiServer {
             // `arrow_target_log` (the value has no `Display` impl).
             let arrow_target_log = format!("{arrow_bind_target:?}");
             let arrow_record_ops = services.record_ops.clone();
+            // TD-FLIGHT-1: same RecordOpsService Arc, coerced to the search port.
+            let arrow_record_search = services.record_ops.clone();
             let arrow_vector_ops = services.vector_operations_service.clone();
             let arrow_collection = services.collection_service.clone();
             let arrow_graph = services.graph_service.clone();
@@ -1654,6 +1661,7 @@ impl MultiServer {
                 let flight_service = ProximaFlightService::from_services(
                     api_handlers,
                     arrow_record_ops,
+                    arrow_record_search,
                     arrow_vector_ops,
                     arrow_collection,
                     arrow_graph,
