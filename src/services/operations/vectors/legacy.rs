@@ -1015,18 +1015,16 @@ impl VectorOperationsService {
         Ok(records)
     }
 
-    /// Paginated record scan (TD-099(3d) push-down). Returns up to `limit`
-    /// records with canonical key `(updated_at_ns, oid)` strictly greater than
-    /// `cursor`, in ascending order, plus the next cursor (when the page is
-    /// full). Byte-identical to `scan_records_with_tenant_context` + sort +
-    /// cursor-filter + take, but O(log d + limit) per page once the per-collection
-    /// scan index is warm.
+    /// Paginated storage-inclusive record scan. Returns up to `limit` records
+    /// with canonical key `(updated_at_ns, oid)` strictly greater than `cursor`,
+    /// in ascending order, plus the next cursor (when the page is full).
     ///
-    /// Tenant filtering — and an optional pushed-down `filter` (e.g. a Spark
-    /// predicate) — is pushed INTO the storage range-scan as a predicate so it is
-    /// applied before the limit; otherwise a filtered/multi-tenant collection
-    /// would return short pages and stop pagination prematurely. The `filter` is
-    /// evaluated against each record's property tree.
+    /// The WAL has an ordered push-down index, but immutable engines currently
+    /// expose only `read_all_records` through `UnifiedStorageFormat`. Therefore
+    /// correctness requires merging storage + WAL before filtering and paging;
+    /// using the WAL-only push-down after a flush silently returned an empty
+    /// collection. A future storage range-scan trait can replace this
+    /// materialization without changing the API semantics pinned here.
     #[allow(clippy::too_many_arguments)]
     pub async fn scan_records_paginated(
         &self,
@@ -1047,33 +1045,25 @@ impl VectorOperationsService {
             .await?
             .to_string();
 
-        // Combined page predicate = tenant rule AND the optional pushed filter,
-        // applied inside the storage scan BEFORE the limit. Owns its captures
-        // (tenant id + cloned filter) so the closure is 'static + Send + Sync.
-        let tenant_id = tenant_context.map(|tc| tc.tenant_id.clone());
-        let owned_filter = filter.cloned();
-        let pred: Option<Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>> =
-            if tenant_id.is_some() || owned_filter.is_some() {
-                Some(Box::new(move |r: &ProximaRecord| {
-                    let tenant_ok = tenant_id
-                        .as_ref()
-                        .is_none_or(|tid| r.tenant_id.is_empty() || &r.tenant_id == tid);
-                    let filter_ok = owned_filter.as_ref().is_none_or(|f| {
-                        crate::core::search::sql_value_filter::evaluate_filter_proxima(f, &r.props)
-                    });
-                    tenant_ok && filter_ok
-                }))
-            } else {
-                None
-            };
-        let pred_ref = pred.as_deref();
-
-        let after = cursor.map(|c| (c.last_updated_at_ns, c.last_oid.as_str()));
-
-        let mut page = self
-            .wal_manager
-            .stream_unflushed_records(&collection_id, after, limit, pred_ref, now_ns)
+        let mut records = self
+            .list_all_records_with_tenant_context(&collection_id, tenant_context)
             .await?;
+        records.retain(|record| {
+            record.is_visible_at(now_ns)
+                && filter.as_ref().is_none_or(|filter| {
+                    crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                        filter,
+                        &record.props,
+                    )
+                })
+        });
+        let (mut page, next) = crate::services::scan_cursor::apply_scan_cursor(
+            records,
+            cursor,
+            limit,
+            &collection_id,
+            now_ns,
+        );
 
         if !include_vector {
             for record in &mut page {
@@ -1086,8 +1076,6 @@ impl VectorOperationsService {
             }
         }
 
-        let next =
-            crate::services::scan_cursor::derive_next_cursor(&page, limit, &collection_id, now_ns);
         Ok((page, next))
     }
 
@@ -1134,26 +1122,31 @@ impl VectorOperationsService {
             .wal_manager
             .get_collection_vectors(&collection_id)
             .await?;
-        // Resolve the collection's data location from metadata and pass it to
-        // the engine, which stays a pure format reader (it does not resolve
-        // paths itself). Mirrors ViperEngine::parquet_files_for_collection.
-        let storage_url = self
-            .get_or_load_collection(&collection_id)
-            .await
-            .ok()
-            .and_then(|collection| {
-                collection
-                    .storage_assignment
-                    .as_ref()
-                    .map(|sa| format!("{}/{}/data", sa.base_location, collection_id))
-            });
-        let storage_records = match self.get_engine_for_collection(&collection_id).await {
-            Ok(engine) => engine
-                .read_all_records(&collection_id, storage_url.as_deref())
-                .await
-                .unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
+        // Resolve the collection's data location from the same catalog-carried
+        // typed identity used by flush and point lookup. Manually composing
+        // `base/{object_id}/data` here orphaned every account-rooted segment
+        // from scans after a real flush.
+        let collection = self.get_or_load_collection(&collection_id).await?;
+        let assignment = collection.storage_assignment.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "collection '{}' has no catalog storage assignment",
+                collection_id
+            )
+        })?;
+        let typed_identity =
+            crate::storage::trait_components::path_resolver::typed_identity_from_storage_assignment(
+                Some(assignment),
+            );
+        let storage_url =
+            crate::storage::trait_components::path_resolver::collection_data_path_typed(
+                &assignment.base_location,
+                &collection_id,
+                typed_identity,
+            );
+        let engine = self.get_engine_for_collection(&collection_id).await?;
+        let storage_records = engine
+            .read_all_records(&collection_id, Some(&storage_url))
+            .await?;
 
         // Merge by oid: storage baseline, then WAL overrides on >= updated_at_ns
         // so the freshest version (WAL) wins ties.

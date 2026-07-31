@@ -106,6 +106,48 @@ impl TestServer {
             .force_flush_collection(collection)
             .await
     }
+
+    fn persisted_pax_files(&self) -> Vec<String> {
+        fn visit(path: &std::path::Path, files: &mut Vec<String>) {
+            let Ok(entries) = std::fs::read_dir(path) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    visit(&path, files);
+                } else if path.extension().is_some_and(|ext| ext == "pax") {
+                    files.push(path.display().to_string());
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        visit(self._tmp_data.path(), &mut files);
+        files.sort();
+        files
+    }
+
+    fn persisted_files(&self) -> Vec<String> {
+        fn visit(path: &std::path::Path, files: &mut Vec<String>) {
+            let Ok(entries) = std::fs::read_dir(path) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    visit(&path, files);
+                } else {
+                    files.push(path.display().to_string());
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        visit(self._tmp_data.path(), &mut files);
+        files.sort();
+        files
+    }
 }
 
 impl Drop for TestServer {
@@ -128,6 +170,15 @@ fn ids(values: &[serde_json::Value]) -> BTreeSet<String> {
                 .map(str::to_string)
         })
         .collect()
+}
+
+async fn unflushed_batch_count(collection_id: &str) -> usize {
+    let Some(write_buffer) =
+        proximadb::storage::persistence::write_ahead_log::get_global_write_buffer_behavior()
+    else {
+        return 0;
+    };
+    write_buffer.unflushed_batch_count(collection_id).await
 }
 
 /// enable_proxima_record=false (canonical vector path): exact-match search must
@@ -163,12 +214,20 @@ async fn v2_vector_search_survives_flush() {
         .send()
         .await
         .expect("create");
+    let create_status = create.status();
+    let create_body = create.text().await.expect("create response body");
     assert!(
-        create.status().is_success(),
+        create_status.is_success(),
         "create: {} {}",
-        create.status(),
-        create.text().await.unwrap_or_default()
+        create_status,
+        create_body
     );
+    let create_json: serde_json::Value =
+        serde_json::from_str(&create_body).expect("create response json");
+    let collection_id = create_json
+        .get("collection_id")
+        .and_then(serde_json::Value::as_str)
+        .expect("create response collection_id");
 
     // One-hot directions so cosine cleanly separates them; rec-2 = e_2.
     let records: Vec<serde_json::Value> = (0..n)
@@ -232,10 +291,18 @@ async fn v2_vector_search_survives_flush() {
         pre_top, "rec-2",
         "pre-flush top-1 should be rec-2: {pre_body}"
     );
+    assert!(
+        unflushed_batch_count(collection_id).await > 0,
+        "the regression setup must have a live WAL epoch before force-flush"
+    );
 
     // Force the WAL→storage flush, then re-run the identical search.
     server.force_flush(&name).await.expect("force flush");
-    sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        unflushed_batch_count(collection_id).await,
+        0,
+        "force-flush must return only after retiring the published WAL epoch"
+    );
 
     let (post_hits, post_body) = search(query).await;
     assert!(
@@ -278,6 +345,7 @@ async fn v2_filtered_scan_survives_flush() {
         .json(&json!({
             "name": name,
             "dimension": 1,
+            "engine": "sst",
             "enable_proxima_record": true,
             "schema": {
                 "columns": [
@@ -290,12 +358,20 @@ async fn v2_filtered_scan_survives_flush() {
         .send()
         .await
         .expect("create");
+    let create_status = create.status();
+    let create_body = create.text().await.expect("create response body");
     assert!(
-        create.status().is_success(),
+        create_status.is_success(),
         "create: {} {}",
-        create.status(),
-        create.text().await.unwrap_or_default()
+        create_status,
+        create_body
     );
+    let create_json: serde_json::Value =
+        serde_json::from_str(&create_body).expect("create response json");
+    let collection_id = create_json
+        .get("collection_id")
+        .and_then(serde_json::Value::as_str)
+        .expect("create response collection_id");
 
     let insert = http
         .post(format!("{base}/api/v2/collections/{name}/records/batch"))
@@ -319,13 +395,13 @@ async fn v2_filtered_scan_survives_flush() {
     sleep(Duration::from_millis(500)).await;
 
     let expected: BTreeSet<String> = ["a1".to_string(), "a2".to_string()].into_iter().collect();
-    let scan = || {
+    let scan = |filter: Option<serde_json::Value>| {
         let http = http.clone();
         let url = format!("{base}/api/v2/collections/{name}/records/scan");
         async move {
             let resp = http
                 .post(url)
-                .json(&json!({ "limit": 10, "filter": { "account_id": "acctA" } }))
+                .json(&json!({ "limit": 10, "filter": filter }))
                 .send()
                 .await
                 .expect("scan");
@@ -341,14 +417,38 @@ async fn v2_filtered_scan_survives_flush() {
     };
 
     // Pre-flush: WAL-resident filtered scan returns exactly acctA.
-    let (pre_ids, pre_body) = scan().await;
+    let account_filter = Some(json!({ "account_id": "acctA" }));
+    let (pre_ids, pre_body) = scan(account_filter.clone()).await;
     assert_eq!(pre_ids, expected, "pre-flush filtered scan: {pre_body}");
+    assert!(
+        unflushed_batch_count(collection_id).await > 0,
+        "the metadata regression setup must have a live WAL epoch before force-flush"
+    );
 
     // Force the WAL→storage flush, then re-run the identical filtered scan.
     server.force_flush(&name).await.expect("force flush");
-    sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        unflushed_batch_count(collection_id).await,
+        0,
+        "force-flush must retire the metadata path's published WAL epoch"
+    );
+    let persisted_pax_files = server.persisted_pax_files();
+    assert!(
+        !persisted_pax_files.is_empty(),
+        "force-flush returned without publishing a PAX segment; physical files: {:?}",
+        server.persisted_files()
+    );
 
-    let (post_ids, post_body) = scan().await;
+    let expected_all: BTreeSet<String> =
+        ["a1", "a2", "b1"].into_iter().map(str::to_string).collect();
+    let (post_all_ids, post_all_body) = scan(None).await;
+    assert_eq!(
+        post_all_ids, expected_all,
+        "POST-FLUSH unfiltered scan must discover every persisted record: \
+         body={post_all_body}, physical_pax={persisted_pax_files:?}"
+    );
+
+    let (post_ids, post_body) = scan(account_filter).await;
     assert_eq!(
         post_ids, expected,
         "POST-FLUSH filtered scan must still return exactly acctA records \
