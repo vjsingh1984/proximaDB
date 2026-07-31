@@ -63,6 +63,7 @@ def test_object_cold_ivf_requires_physical_region_byte_attribution() -> None:
 def test_u8bin_prefix_uses_physical_rows_and_preserves_declared_rows(
     tmp_path: Path,
 ) -> None:
+    pa = pytest.importorskip("pyarrow")
     path = tmp_path / "base-prefix.u8bin"
     path.write_bytes(
         struct.pack("<II", 1_000_000_000, 4)
@@ -101,6 +102,15 @@ def test_u8bin_prefix_uses_physical_rows_and_preserves_declared_rows(
             {"id": "v1", "vector": [5.0, 6.0, 7.0, 8.0]},
         ],
         [{"id": "v2", "vector": [9.0, 10.0, 11.0, 12.0]}],
+    ]
+    arrow_batches = list(
+        HARNESS.iter_vector_arrow_batches(path, "u8bin", 3, 2, arrow_module=pa)
+    )
+    assert [batch.num_rows for batch in arrow_batches] == [2, 1]
+    assert arrow_batches[0].column("id").to_pylist() == ["v0", "v1"]
+    assert arrow_batches[0].column("vector").to_pylist() == [
+        [1.0, 2.0, 3.0, 4.0],
+        [5.0, 6.0, 7.0, 8.0],
     ]
 
 
@@ -243,6 +253,88 @@ def test_config_preserves_object_store_url(tmp_path: Path) -> None:
     assert f'url = "{storage_url}"' in config
     assert "[storage.optimization]\nenable_mmap = false" in config
     assert "vector_count_threshold = 20000" in config
+
+
+def test_flight_insert_stream_writes_batches_and_validates_ack() -> None:
+    calls = {"rows": 0}
+
+    class FakeLocation:
+        @staticmethod
+        def for_grpc_tcp(host: str, port: int) -> tuple[str, int]:
+            return host, port
+
+    class FakeDescriptor:
+        @staticmethod
+        def for_command(command: bytes):
+            calls["command"] = json.loads(command)
+            return command
+
+    class FakeWriter:
+        def write_batch(self, batch) -> None:
+            calls["rows"] += batch.num_rows
+
+        def close(self) -> None:
+            calls["writer_closed"] = True
+
+    class FakeReader:
+        @staticmethod
+        def read():
+            return SimpleNamespace(
+                to_pybytes=lambda: json.dumps(
+                    {
+                        "success": True,
+                        "metrics": {
+                            "total_processed": 5,
+                            "successful_count": 5,
+                            "failed_count": 0,
+                        },
+                    }
+                ).encode()
+            )
+
+    class FakeClient:
+        def __init__(self, location):
+            calls["location"] = location
+
+        @staticmethod
+        def do_put(descriptor, schema):
+            calls["descriptor"] = descriptor
+            calls["schema"] = schema
+            return FakeWriter(), FakeReader()
+
+        @staticmethod
+        def close() -> None:
+            calls["client_closed"] = True
+
+    flight = SimpleNamespace(
+        Location=FakeLocation,
+        FlightDescriptor=FakeDescriptor,
+        FlightClient=FakeClient,
+    )
+    stream = HARNESS.FlightInsertStream(
+        "127.0.0.1",
+        5692,
+        "7",
+        schema="vector-schema",
+        flight_module=flight,
+    )
+
+    stream.write_batch(SimpleNamespace(num_rows=2))
+    stream.write_batch(SimpleNamespace(num_rows=3))
+    result = stream.close()
+
+    assert calls["location"] == ("127.0.0.1", 5692)
+    assert calls["command"] == {
+        "collection_id": "7",
+        "operation": "insert",
+        "write_mode": "wal",
+        "trigger_compaction": False,
+    }
+    assert calls["schema"] == "vector-schema"
+    assert calls["rows"] == 5
+    assert calls["writer_closed"] is True
+    assert calls["client_closed"] is True
+    assert result["metrics"]["successful_count"] == 5
 
 
 def test_explicit_flush_uses_supported_flight_action() -> None:

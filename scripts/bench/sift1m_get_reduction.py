@@ -303,6 +303,83 @@ def iter_vector_batches(path: Path, vector_format: str, count: int, batch_size: 
     raise RuntimeError(f"unsupported vector format: {vector_format}")
 
 
+def iter_vector_arrow_batches(
+    path: Path,
+    vector_format: str,
+    count: int,
+    batch_size: int,
+    arrow_module=None,
+):
+    if arrow_module is None:
+        try:
+            import pyarrow as arrow_module
+        except ImportError as error:
+            raise RuntimeError(
+                "Arrow Flight ingest requires PyArrow; run the harness with "
+                "the repository Python environment"
+            ) from error
+    try:
+        import numpy as np
+    except ImportError as error:
+        raise RuntimeError(
+            "Arrow Flight ingest requires NumPy; run the harness with the "
+            "repository Python environment"
+        ) from error
+
+    total, dimension, _ = vector_source_geometry(path, vector_format)
+    if count > total:
+        raise RuntimeError(f"{path}: requested {count} of {total} vectors")
+    if vector_format == "fvecs":
+        header_bytes = 0
+        source_row_bytes = 4 + dimension * 4
+    elif vector_format == "u8bin":
+        header_bytes = 8
+        source_row_bytes = dimension
+    else:
+        raise RuntimeError(f"unsupported vector format: {vector_format}")
+
+    with path.open("rb") as source:
+        source.seek(header_bytes)
+        next_id = 0
+        while next_id < count:
+            rows = min(batch_size, count - next_id)
+            encoded = source.read(rows * source_row_bytes)
+            if len(encoded) != rows * source_row_bytes:
+                raise RuntimeError(f"{path}: truncated {vector_format} batch")
+            if vector_format == "fvecs":
+                raw_ints = np.frombuffer(encoded, dtype="<i4").reshape(
+                    rows, dimension + 1
+                )
+                if not np.all(raw_ints[:, 0] == dimension):
+                    raise RuntimeError(f"{path}: variable fvec dimensions")
+                vectors = (
+                    np.frombuffer(encoded, dtype="<f4")
+                    .reshape(rows, dimension + 1)[:, 1:]
+                    .copy()
+                )
+            else:
+                vectors = (
+                    np.frombuffer(encoded, dtype=np.uint8)
+                    .reshape(rows, dimension)
+                    .astype(np.float32)
+                )
+            ids = arrow_module.array(
+                [f"v{row}" for row in range(next_id, next_id + rows)],
+                type=arrow_module.utf8(),
+            )
+            values = arrow_module.array(
+                vectors.reshape(-1), type=arrow_module.float32()
+            )
+            vector_array = arrow_module.FixedSizeListArray.from_arrays(
+                values, dimension
+            )
+            yield arrow_module.record_batch(
+                [ids, vector_array],
+                names=["id", "vector"],
+            )
+            next_id += rows
+
+
 def summarize_values(values: list[int] | list[float]) -> dict:
     ordered = sorted(values)
     if not ordered:
@@ -1078,6 +1155,72 @@ class OwnedServer:
         self.process = None
 
 
+class FlightInsertStream:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        collection_id: str,
+        schema,
+        flight_module=None,
+    ):
+        if flight_module is None:
+            try:
+                import pyarrow.flight as flight_module
+            except ImportError as error:
+                raise RuntimeError(
+                    "Arrow Flight ingest requires PyArrow Flight; run the "
+                    "harness with the repository Python environment"
+                ) from error
+        command = json.dumps(
+            {
+                "collection_id": collection_id,
+                "operation": "insert",
+                "write_mode": "wal",
+                "trigger_compaction": False,
+            }
+        ).encode()
+        location = flight_module.Location.for_grpc_tcp(host, port)
+        self.client = flight_module.FlightClient(location)
+        descriptor = flight_module.FlightDescriptor.for_command(command)
+        self.writer, self.reader = self.client.do_put(descriptor, schema)
+        self.rows = 0
+        self.closed = False
+
+    def write_batch(self, batch) -> None:
+        if self.closed:
+            raise RuntimeError("cannot write to a closed Flight insert stream")
+        self.writer.write_batch(batch)
+        self.rows += batch.num_rows
+
+    def close(self) -> dict:
+        if self.closed:
+            raise RuntimeError("Flight insert stream was already closed")
+        self.closed = True
+        try:
+            self.writer.close()
+            payload = self.reader.read()
+            encoded = payload.to_pybytes() if payload is not None else b""
+            result = json.loads(encoded) if encoded else {}
+        finally:
+            self.client.close()
+        metrics = result.get("metrics", {})
+        successful = metrics.get("successful_count")
+        processed = metrics.get("total_processed")
+        failed = metrics.get("failed_count")
+        if (
+            result.get("success") is not True
+            or successful != self.rows
+            or processed != self.rows
+            or failed != 0
+        ):
+            raise RuntimeError(
+                "Flight DoPut did not fully admit its stream: "
+                f"rows={self.rows}, result={result}"
+            )
+        return result
+
+
 def storage_action_via_flight(
     host: str,
     port: int,
@@ -1206,6 +1349,7 @@ def ingest(
     batch_size: int,
     flight_host: str,
     flight_port: int,
+    ingest_transport: str,
     explicit_flush_every_rows: int | None,
     explicit_geometry: AzureCliPaxGeometry | None,
 ) -> tuple[str, float, dict[int, int], list[dict], dict | None]:
@@ -1234,29 +1378,54 @@ def ingest(
     inserted = 0
     retry_status_counts: dict[int, int] = {}
     explicit_flushes = []
-    for batch in iter_vector_batches(base_path, base_format, expected_rows, batch_size):
-        for attempt in range(8):
-            try:
-                response = request_json(
-                    f"{server}/api/v2/collections/{collection_id}/records/batch",
-                    method="POST",
-                    body={"records": batch},
-                    timeout=300,
+    flight_stream = None
+    if ingest_transport == "flight":
+        batches = iter_vector_arrow_batches(
+            base_path, base_format, expected_rows, batch_size
+        )
+    elif ingest_transport == "rest":
+        batches = iter_vector_batches(base_path, base_format, expected_rows, batch_size)
+    else:
+        raise RuntimeError(f"unsupported ingest transport: {ingest_transport}")
+    for batch in batches:
+        if ingest_transport == "flight":
+            batch_rows = batch.num_rows
+            if flight_stream is None:
+                flight_stream = FlightInsertStream(
+                    flight_host,
+                    flight_port,
+                    collection_id,
+                    batch.schema,
                 )
-                require_complete_insert(response, len(batch))
-                break
-            except urllib.error.HTTPError as error:
-                if error.code not in (429, 503) or attempt == 7:
-                    raise
-                retry_status_counts[error.code] = (
-                    retry_status_counts.get(error.code, 0) + 1
-                )
-                time.sleep(min(10, 0.25 * (2**attempt)))
-        inserted += len(batch)
+            flight_stream.write_batch(batch)
+        else:
+            batch_rows = len(batch)
+            for attempt in range(8):
+                try:
+                    response = request_json(
+                        f"{server}/api/v2/collections/{collection_id}/records/batch",
+                        method="POST",
+                        body={"records": batch},
+                        timeout=300,
+                    )
+                    require_complete_insert(response, batch_rows)
+                    break
+                except urllib.error.HTTPError as error:
+                    if error.code not in (429, 503) or attempt == 7:
+                        raise
+                    retry_status_counts[error.code] = (
+                        retry_status_counts.get(error.code, 0) + 1
+                    )
+                    time.sleep(min(10, 0.25 * (2**attempt)))
+        inserted += batch_rows
         if (
             explicit_flush_every_rows is not None
             and inserted % explicit_flush_every_rows == 0
         ):
+            flight_ack = None
+            if flight_stream is not None:
+                flight_ack = flight_stream.close()
+                flight_stream = None
             if explicit_geometry is None:
                 raise RuntimeError(
                     "explicit flush epochs require Azure PAX inventory evidence"
@@ -1294,6 +1463,7 @@ def ingest(
                     "publish_seconds": publish_seconds,
                     "segments_before": inventory_before["segments"],
                     "segments_after": inventory_after["segments"],
+                    "flight_ingest_ack": flight_ack,
                     "response": response,
                 }
             )
@@ -1311,6 +1481,8 @@ def ingest(
                 f"({inserted / elapsed:,.0f} vectors/s)",
                 flush=True,
             )
+    if flight_stream is not None:
+        flight_stream.close()
     if inserted != expected_rows:
         raise RuntimeError(
             f"ingest iterator admitted {inserted} rows, expected {expected_rows}"
@@ -1447,6 +1619,15 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=5690)
     parser.add_argument("--rows", type=int, default=1_000_000)
     parser.add_argument("--batch-size", type=int, default=2_000)
+    parser.add_argument(
+        "--ingest-transport",
+        choices=("flight", "rest"),
+        default="flight",
+        help=(
+            "bulk data-plane transport; Flight is the canonical columnar "
+            "default, while REST is retained as an explicit control"
+        ),
+    )
     parser.add_argument("--write-buffer-mb", type=int, default=4096)
     parser.add_argument(
         "--flush-vector-threshold",
@@ -1788,6 +1969,7 @@ def main() -> int:
             "required_layout_version": args.require_layout_version,
         },
         "ingest_config": {
+            "transport": args.ingest_transport,
             "batch_size": args.batch_size,
             "write_buffer_mb": args.write_buffer_mb,
             "flush_vector_threshold": args.flush_vector_threshold,
@@ -1837,6 +2019,7 @@ def main() -> int:
             args.batch_size,
             "127.0.0.1",
             args.port,
+            args.ingest_transport,
             args.explicit_flush_every_rows,
             azure_geometry,
         )
