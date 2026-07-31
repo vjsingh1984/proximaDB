@@ -2076,9 +2076,26 @@ impl WriteAheadLogManager {
         let (entries_flushed, bytes_written) = outcome
             .map(|outcome| (outcome.entries_flushed, outcome.bytes))
             .unwrap_or((0, 0));
+        // The operator-triggered path does not pass through AutoFlushDriver,
+        // so it must close the ADR-069 gauge itself.  In particular, a slow
+        // manual flush can overlap an auto-driver observation which publishes
+        // a non-zero value.  Once exact claim retirement completes above, the
+        // current write-buffer value is authoritative; leaving the sampled
+        // value behind reports phantom unflushed WAL forever.
+        let canonical_collection_id = plan.collection_object_id.to_string();
+        let remaining_bytes = write_buffer.unflushed_bytes(&canonical_collection_id).await;
+        crate::metrics::wal_flush_metrics::record_successful_flush(
+            &canonical_collection_id,
+            "manual",
+            bytes_written,
+            entries_flushed,
+            started.elapsed().as_secs_f64(),
+            Utc::now().timestamp(),
+            remaining_bytes,
+        );
         let result = FlushResult {
             success: true,
-            collections_affected: vec![plan.collection_object_id.to_string()],
+            collections_affected: vec![canonical_collection_id],
             entries_flushed: Some(entries_flushed),
             bytes_written: Some(bytes_written),
             duration_ms: Some(started.elapsed().as_millis() as u64),
