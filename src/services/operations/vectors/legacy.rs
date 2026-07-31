@@ -223,69 +223,16 @@ pub use proximadb_runtime::rich_record::{
     RichRecordBatchRequest, RichRecordDeleteBatchRequest, RichRecordGetRequest,
 };
 
-/// Canonical rich search request for v2 and internal callers.
-#[derive(Debug, Clone)]
-pub struct RichSearchRequest {
-    pub collection_id: String,
-    pub query_vector: Vec<f32>,
-    pub top_k: u32,
-    pub filters: Vec<RichFilterCondition>,
-}
-
-/// Canonical rich search response for v2 and internal callers.
-#[derive(Debug, Clone, Default)]
-pub struct RichSearchResponse {
-    pub results: Vec<RichSearchResult>,
-    pub total_found: i64,
-    pub collection_id: Option<String>,
-    /// TD-064(a): predicate-aware shortfall — `Some(...)` when a filtered
-    /// search returned fewer than the requested `top_k` after the
-    /// WAL+AXIS+storage merge. First-class and always-on (NOT debug-gated):
-    /// a silent `<top_k` under a tenant/RLS filter is fail-open, so the
-    /// client must be able to tell "fewer than k match my filter" from "the
-    /// engine returned my full top-k". Recomputed authoritatively against
-    /// the final merged result so an AXIS-stage false positive is cleared.
-    pub predicate_shortfall: Option<crate::observability::search_plan_trace::PredicateShortfall>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RichSearchResult {
-    pub id: String,
-    pub score: f64,
-    pub similarity: Option<f32>,
-    pub vector: Vec<f32>,
-    pub props: HashMap<String, proximadb_data_model::ProximaValue>,
-    pub version: Option<u32>,
-    pub timestamp: Option<i64>,
-    pub source: Option<String>,
-}
+/// Canonical rich search request/response/filter DTOs now live in
+/// `proximadb-runtime` (TD-FLIGHT-1) so the `RecordSearchPort` contract is
+/// self-contained — mirroring the `RichRecord*` relocation above. Re-exported
+/// here so existing `crate::services::operations::vectors::legacy::RichSearch*`
+/// / `RichFilter*` callers are unaffected.
+pub use proximadb_runtime::rich_search::{
+    RichFilterCondition, RichFilterOperator, RichSearchRequest, RichSearchResponse, RichSearchResult,
+};
 
 pub type RichRecordGetResponse = Option<RichSearchResult>;
-
-#[derive(Debug, Clone)]
-pub struct RichFilterCondition {
-    pub field: String,
-    pub operator: RichFilterOperator,
-    pub value: proximadb_data_model::ProximaValue,
-    pub value_upper: Option<proximadb_data_model::ProximaValue>,
-    pub value_list: Vec<proximadb_data_model::ProximaValue>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RichFilterOperator {
-    Eq,
-    Ne,
-    Gt,
-    Gte,
-    Lt,
-    Lte,
-    Between,
-    In,
-    NotIn,
-    Contains,
-    StartsWith,
-    EndsWith,
-}
 
 /// Lower rich `ProximaValue` predicates straight to the canonical
 /// [`FilterExpression`] consumed by the unified search path.
