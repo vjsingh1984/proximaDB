@@ -69,6 +69,15 @@ fn flight_data_wire_bytes(flight_data: &[FlightData]) -> u64 {
 #[derive(Debug, Clone)]
 struct AuthenticatedFlightContext {
     tenant_id: String,
+    /// The authenticated principal's user id (TD-ABAC-6). Surfaced from the
+    /// resolved identity so the vector/ANN read path can thread it as the ABAC
+    /// subject (#1309) — previously dropped here. `None` on the trust-asserted
+    /// path (no credential) or when no subject was resolved.
+    ///
+    /// Unconsumed until #1309 wires the vector-path ABAC subject; allowed dead
+    /// here deliberately (the surfacing IS this PR's deliverable).
+    #[allow(dead_code)]
+    user_id: Option<String>,
     capability: Option<DataPlaneCapability>,
 }
 
@@ -571,87 +580,79 @@ impl ProximaFlightService {
         metadata: &tonic::metadata::MetadataMap,
         peer_certs: Option<Arc<Vec<tonic::transport::CertificateDer<'static>>>>,
     ) -> std::result::Result<AuthenticatedFlightContext, TonicStatus> {
-        use proximadb_tenant::identity_trust::{
-            AuthenticatedTenantBinding, ResolvedTenantAssertion, resolve_tenant_assertion,
-        };
-
         let requested_tenant_id = Self::tenant_id_from_metadata(metadata);
-        let Some(security_coordinator) = &self.security_coordinator else {
-            // No auth wired: the assertion is bare by definition — the
-            // deployment policy decides (TD-TENANT-1). `Open` preserves the
-            // legacy behavior; strict policies reject the assertion.
-            let tenant_id = match resolve_tenant_assertion(
-                requested_tenant_id.as_deref(),
-                None,
-                self.tenant_header_trust,
-            ) {
-                Ok(ResolvedTenantAssertion::Asserted(tenant)) => Some(tenant),
-                Ok(ResolvedTenantAssertion::Credential(_)) => unreachable!("no binding provided"),
-                Ok(ResolvedTenantAssertion::NoTenant) => None,
-                Err(error) => {
-                    tracing::warn!(
-                        target: "proximadb::tenant_audit",
-                        surface = "arrow_flight",
-                        policy = %self.tenant_header_trust,
-                        %error,
-                        "rejected bare x-tenant-id without authenticated tenant binding"
-                    );
-                    return Err(TonicStatus::permission_denied(error.to_string()));
-                }
-            };
-            let tenant_id =
-                Self::resolve_tenant_for_mode(tenant_id.as_deref(), &self.tenant_deployment_mode)?;
-            return Ok(AuthenticatedFlightContext {
-                tenant_id,
-                capability: None,
-            });
-        };
+        let credential = Self::auth_data_from_metadata(metadata)?
+            .or_else(|| Self::auth_data_from_peer_certs(peer_certs));
+        let coordinator = self.security_coordinator.as_deref();
 
-        let auth_data = Self::auth_data_from_metadata(metadata)?
-            .or_else(|| Self::auth_data_from_peer_certs(peer_certs))
-            .ok_or_else(|| TonicStatus::unauthenticated("Arrow Flight authentication required"))?;
-        let user_context = security_coordinator
-            .authenticate_request(auth_data)
-            .await
-            .map_err(|e| TonicStatus::unauthenticated(format!("Authentication failed: {}", e)))?;
+        // An auth-wired deployment (coordinator present) requires a credential —
+        // token or mTLS peer cert. No credential ⇒ unauthenticated.
+        if coordinator.is_some() && credential.is_none() {
+            return Err(TonicStatus::unauthenticated(
+                "Arrow Flight authentication required",
+            ));
+        }
 
-        let capability = DataPlaneCapability::from_user_context(&user_context);
-        // TD-TENANT-1: the ONE shared reconciliation primitive (same call
-        // REST / gRPC / pgwire make) replaces the hand-rolled mismatch match.
-        let binding = user_context
-            .tenant_id
-            .as_ref()
-            .map(|tenant_id| AuthenticatedTenantBinding {
-                tenant_id: tenant_id.clone(),
-                is_gateway_principal: user_context.is_gateway_principal(),
-            });
-        let tenant_id = match resolve_tenant_assertion(
+        // TD-ABAC-6: the ONE identity resolver (authenticate → tenant/subject
+        // trust-gate → mode gate). Arrow has no subject-assertion surface, so
+        // the subject comes from the credential (authenticated) or is absent
+        // (trust-asserted). The two former branches — no-coordinator (bare
+        // assertion) and coordinator (authenticated binding) — are exactly the
+        // orchestrator's trust-asserted vs authenticated paths.
+        let resolved = crate::security::request_identity::resolve_request_identity(
+            coordinator,
+            credential,
             requested_tenant_id.as_deref(),
-            binding.as_ref(),
+            None,
             self.tenant_header_trust,
-        ) {
-            Ok(
-                ResolvedTenantAssertion::Asserted(tenant)
-                | ResolvedTenantAssertion::Credential(tenant),
-            ) => Some(tenant),
-            Ok(ResolvedTenantAssertion::NoTenant) => None,
-            Err(error) => {
+            &self.tenant_deployment_mode,
+        )
+        .await
+        .map_err(|err| Self::identity_error_to_flight_status(err, self.tenant_header_trust))?;
+
+        Ok(AuthenticatedFlightContext {
+            tenant_id: resolved.identity.tenant,
+            // #1309: surface the authenticated principal so the vector/ANN read
+            // path can thread it as the ABAC subject (previously dropped here).
+            user_id: resolved.identity.subject,
+            capability: resolved
+                .user_context
+                .as_ref()
+                .and_then(DataPlaneCapability::from_user_context),
+        })
+    }
+
+    /// Map the unified [`IdentityError`] onto a Flight gRPC status, preserving
+    /// the per-surface `tenant_audit` trail for assertion rejections
+    /// (TD-TENANT-1). The orchestrator never logs; each surface owns its audit.
+    fn identity_error_to_flight_status(
+        error: crate::security::request_identity::IdentityError,
+        trust: proximadb_tenant::HeaderTrustPolicy,
+    ) -> TonicStatus {
+        use crate::security::request_identity::IdentityError;
+        match error {
+            IdentityError::Authentication(message) => {
+                TonicStatus::unauthenticated(format!("Authentication failed: {message}"))
+            }
+            IdentityError::Assertion(error) => {
                 tracing::warn!(
                     target: "proximadb::tenant_audit",
                     surface = "arrow_flight",
-                    policy = %self.tenant_header_trust,
+                    policy = %trust,
                     %error,
                     "rejected x-tenant-id under tenant trust policy"
                 );
-                return Err(TonicStatus::permission_denied(error.to_string()));
+                TonicStatus::permission_denied(error.to_string())
             }
-        };
-        let tenant_id =
-            Self::resolve_tenant_for_mode(tenant_id.as_deref(), &self.tenant_deployment_mode)?;
-        Ok(AuthenticatedFlightContext {
-            tenant_id,
-            capability,
-        })
+            IdentityError::TenantResolution(error) => match error {
+                proximadb_tenant::ResolveRequestTenantError::MissingTenant => {
+                    TonicStatus::unauthenticated(error.to_string())
+                }
+                proximadb_tenant::ResolveRequestTenantError::InvalidTenant(_) => {
+                    TonicStatus::invalid_argument(error.to_string())
+                }
+            },
+        }
     }
 
     fn validate_flight_write_capability(

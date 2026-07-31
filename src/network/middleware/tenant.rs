@@ -95,6 +95,13 @@ pub struct MiddlewareTenantContext {
     /// ADR-031 stable numeric namespace id (`NamespaceId = u16`). Threaded but
     /// unused until `PROXIMADB_TYPED_PATHS`; `None` = legacy string-resolved path.
     pub namespace_stable_id: Option<u16>,
+    /// The authenticated principal's subject id (#1338 / TD-ABAC-6). Surfaced
+    /// from `UnifiedUserContext.user_id` so REST read paths can thread it as
+    /// the ABAC principal — the direct analog of gRPC's `user_id` accessor and
+    /// Arrow's `AuthenticatedFlightContext.user_id`. `None` on the
+    /// trust-asserted / unauthenticated path. Per-handler consumption (#1309)
+    /// is wired separately; this field is the surfacing.
+    pub subject: Option<String>,
 }
 
 impl MiddlewareTenantContext {
@@ -110,6 +117,7 @@ impl MiddlewareTenantContext {
             tenant_stable_id: None,
             namespace_id: None,
             namespace_stable_id: None,
+            subject: None,
         }
     }
 
@@ -557,6 +565,18 @@ impl Default for TenantExtractor {
 ///
 /// This middleware extracts tenant_id from the request and injects
 /// MiddlewareTenantContext into request extensions.
+/// #1338 (TD-ABAC-6): the authenticated principal's user id, read from the auth
+/// layer's `UnifiedUserContext` extension. Surfaced onto
+/// [`MiddlewareTenantContext::subject`] so REST read paths can thread it as the
+/// ABAC principal — the analog of gRPC's `user_id` accessor / Arrow's `user_id`
+/// field. `None` on the trust-asserted / unauthenticated path (no auth layer, or
+/// auth disabled).
+fn authenticated_subject(req: &Request) -> Option<String> {
+    req.extensions()
+        .get::<crate::security::UnifiedUserContext>()
+        .map(|user| user.user_id.clone())
+}
+
 pub async fn tenant_middleware(
     axum::extract::State(extractor): axum::extract::State<TenantExtractor>,
     mut req: Request,
@@ -604,6 +624,10 @@ pub async fn tenant_middleware(
             if let Some(tier) = tier_claim {
                 crate::services::record_store::set_tenant_tier(&context.tenant_id, tier);
             }
+            // #1338 (TD-ABAC-6): surface the authenticated subject so REST read
+            // paths can thread it as the ABAC principal (mirrors gRPC's
+            // `user_id` accessor / Arrow's `user_id` field).
+            context.subject = authenticated_subject(&req);
             // Also inject api-crate MiddlewareTenantContext for port-backed handlers in proximadb-api
             req.extensions_mut()
                 .insert(proximadb_api::rest::TenantContext {
@@ -622,7 +646,8 @@ pub async fn tenant_middleware(
                 ).into_response()
             } else {
                 // No tenant required, use anonymous context
-                let default_ctx = MiddlewareTenantContext::default_tenant();
+                let mut default_ctx = MiddlewareTenantContext::default_tenant();
+                default_ctx.subject = authenticated_subject(&req);
                 req.extensions_mut()
                     .insert(proximadb_api::rest::TenantContext {
                         tenant_id: default_ctx.tenant_id.clone(),
@@ -1101,6 +1126,56 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(open.status(), StatusCode::OK);
+    }
+
+    /// #1338 (TD-ABAC-6): the authenticated principal's user_id is surfaced on
+    /// `MiddlewareTenantContext.subject` — the REST analog of gRPC's `user_id`
+    /// accessor and Arrow's `user_id` field — so read paths can thread it as the
+    /// ABAC principal. Proves the surfacing (per-handler consumption is #1309).
+    #[tokio::test]
+    async fn tenant_context_surfaces_the_authenticated_subject() {
+        use axum::{Extension, Router, routing::get};
+        use tower::ServiceExt;
+
+        // Simulate the auth layer injecting an authenticated UnifiedUserContext.
+        let inject_user = axum::middleware::from_fn(|mut req: Request, next: Next| async move {
+            let mut user = crate::security::UnifiedUserContext::anonymous();
+            user.user_id = "alice".to_string();
+            user.tenant_id = Some("acme".to_string());
+            user.auth_method = crate::security::UnifiedAuthMethod::JWT;
+            req.extensions_mut().insert(user);
+            next.run(req).await
+        });
+
+        let app = Router::new()
+            .route(
+                "/probe",
+                get(
+                    |Extension(ctx): Extension<MiddlewareTenantContext>| async move {
+                        ctx.subject.unwrap_or_else(|| "none".to_string())
+                    },
+                ),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                extractor(HeaderTrustPolicy::Open),
+                tenant_middleware,
+            ))
+            .layer(inject_user);
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/probe")
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert_eq!(&body[..], b"alice");
     }
 
     #[test]
