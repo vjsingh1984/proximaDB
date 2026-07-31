@@ -42,7 +42,7 @@ mod abac_adapter;
 // read-serving services (DmlService, …) can name the enforcer without depending
 // on the private adapter module's internals.
 #[cfg(feature = "abac-policy")]
-pub use abac_adapter::{AbacEnforcer, AbacScanResult};
+pub use abac_adapter::{AbacEnforcer, AbacScanResult, post_filter_search_results};
 
 #[cfg(all(test, feature = "abac-policy"))]
 mod abac_enforcement_tests;
