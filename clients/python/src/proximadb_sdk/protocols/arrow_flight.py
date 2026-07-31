@@ -705,9 +705,7 @@ class ArrowFlightClient:
                         else []
                     ),
                     score=(
-                        batch.column("score")[i].as_py()
-                        if "score" in names
-                        else 0.0
+                        batch.column("score")[i].as_py() if "score" in names else 0.0
                     ),
                     metadata=metadata,
                 )
