@@ -33,8 +33,8 @@
 
 use anyhow::{Result, bail};
 use proximadb_codec::functions::rabitq::{
-    build_rotation, build_rotation_cached, encode, fit_params, rank_candidates, rank_candidates_ip,
-    rotate_query,
+    QueryLut, build_rotation, build_rotation_cached, encode, fit_params, rank_candidates,
+    rank_candidates_ip, rotate_query,
 };
 use proximadb_codec::{RaBitQCode, RaBitQParams};
 
@@ -326,10 +326,10 @@ pub fn code_stride(dim: u32) -> usize {
 /// (byte-identical to that slice of the region's code area).
 ///
 /// Probed rows are **always present** — A0 cells cover only usable (embedded)
-/// rows, whose validity bits are all 1 — so a synthetic all-ones bitmap lets the
-/// canonical [`parse_rabitq_codes`] decode each run unchanged (no bitmap GET, no
-/// hand-rolled decoder). Returns up to `pool` **global** row indices
-/// nearest-first (same estimator + rotation as [`RaBitQRegion::rank`]).
+/// rows, whose validity bits are all 1. The scorer borrows each fixed-stride
+/// packed row directly; it does not synthesize a bitmap or allocate one
+/// `RaBitQCode::bits` vector per candidate. Returns up to `pool` **global** row
+/// indices nearest-first (same estimator + rotation as [`RaBitQRegion::rank`]).
 pub fn rank_probed_rows(
     header: &CoalescedRaBitQHeader,
     runs: &[(usize, &[u8])],
@@ -341,43 +341,62 @@ pub fn rank_probed_rows(
     if dim == 0 {
         bail!("coarse-probe rank: region dim is 0");
     }
+    if query.len() != dim {
+        bail!(
+            "coarse-probe query dimension {} does not match region dimension {dim}",
+            query.len()
+        );
+    }
     let stride = code_stride(header.dim);
-    // Decode each probed run (all present) and remember each row's GLOBAL index.
-    let mut codes: Vec<Option<RaBitQCode>> = Vec::new();
-    let mut global: Vec<usize> = Vec::new();
-    for &(row_start, bytes) in runs {
+    let total_rows = runs.iter().try_fold(0usize, |total, (_, bytes)| {
         if bytes.len() % stride != 0 {
             bail!(
                 "coarse-probe run bytes {} not a multiple of code stride {stride}",
                 bytes.len()
             );
         }
-        let rows = bytes.len() / stride;
-        if rows == 0 {
-            continue;
-        }
-        // Synthesize the all-ones validity bitmap the canonical parser expects,
-        // then the run's code bytes verbatim → reuse the block decoder as-is.
-        let mut payload = vec![0xFFu8; rows.div_ceil(8)];
-        payload.extend_from_slice(bytes);
-        let run_codes = parse_rabitq_codes(&payload, rows, dim)?;
-        for (j, c) in run_codes.into_iter().enumerate() {
-            codes.push(c);
-            global.push(row_start + j);
-        }
-    }
-    if codes.is_empty() {
+        total
+            .checked_add(bytes.len() / stride)
+            .ok_or_else(|| anyhow::anyhow!("coarse-probe row count overflow"))
+    })?;
+    if total_rows == 0 || pool == 0 {
         return Ok(Vec::new());
     }
     let params = header.to_params();
     let rotation = build_rotation_cached(params.dim, params.seed);
     let q_rotated = rotate_query(query, &params, &rotation);
-    let local = match metric {
-        RankMetric::L2 => rank_candidates(&q_rotated, &codes, pool),
-        RankMetric::Cosine | RankMetric::DotProduct => rank_candidates_ip(&q_rotated, &codes, pool),
+    let lut = QueryLut::build(&q_rotated);
+    let mut scored = Vec::with_capacity(total_rows);
+    for &(row_start, bytes) in runs {
+        for (local_row, packed) in bytes.chunks_exact(stride).enumerate() {
+            let dist_to_centroid = f32::from_le_bytes(packed[0..4].try_into()?);
+            let inv_factor = f32::from_le_bytes(packed[4..8].try_into()?);
+            let bits = &packed[8..];
+            let score = match metric {
+                RankMetric::L2 => lut.l2_rank_score_parts(dist_to_centroid, inv_factor, bits),
+                RankMetric::Cosine | RankMetric::DotProduct => {
+                    lut.ip_rank_score_parts(dist_to_centroid, inv_factor, bits)
+                }
+            }
+            .ok_or_else(|| anyhow::anyhow!("coarse-probe packed bit width mismatch"))?;
+            let global_row = row_start
+                .checked_add(local_row)
+                .ok_or_else(|| anyhow::anyhow!("coarse-probe global row overflow"))?;
+            scored.push((global_row, score));
+        }
+    }
+    let keep = pool.min(scored.len());
+    let compare = |a: &(usize, f32), b: &(usize, f32)| {
+        a.1.partial_cmp(&b.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
     };
-    // Map local (subset) indices back to global row indices.
-    Ok(local.into_iter().map(|l| global[l]).collect())
+    if keep < scored.len() {
+        scored.select_nth_unstable_by(keep, compare);
+        scored.truncate(keep);
+    }
+    scored.sort_unstable_by(compare);
+    Ok(scored.into_iter().map(|(row, _)| row).collect())
 }
 
 #[cfg(test)]
@@ -571,6 +590,46 @@ mod tests {
             two.iter()
                 .all(|&r| (0..5).contains(&r) || (100..110).contains(&r)),
             "two-run survivors stay within the two probed cells"
+        );
+    }
+
+    #[test]
+    fn packed_probe_rank_matches_canonical_for_every_metric_and_fails_closed() {
+        const DIM: usize = 129;
+        const N: usize = 96;
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| synth_vec(i as u64, DIM)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let (region, _) = encode_region(&vectors, DIM as u32, RABITQ_SEED_BASE ^ 91).unwrap();
+        let header = CoalescedRaBitQHeader::parse(&region).unwrap();
+        let parsed = RaBitQRegion::from_bytes(&region).unwrap();
+        let stride = code_stride(DIM as u32);
+        let codes_base = region_header_len(DIM as u32) + N.div_ceil(8);
+        let all_bytes = &region[codes_base..codes_base + N * stride];
+        for metric in [RankMetric::L2, RankMetric::Cosine, RankMetric::DotProduct] {
+            let expected = parsed.rank(&corpus[17], metric, 31);
+            let actual =
+                rank_probed_rows(&header, &[(0, all_bytes)], &corpus[17], metric, 31).unwrap();
+            assert_eq!(actual, expected, "{metric:?}");
+        }
+        assert!(
+            rank_probed_rows(
+                &header,
+                &[(0, &all_bytes[..all_bytes.len() - 1])],
+                &corpus[17],
+                RankMetric::L2,
+                10,
+            )
+            .is_err()
+        );
+        assert!(
+            rank_probed_rows(
+                &header,
+                &[(0, all_bytes)],
+                &corpus[17][..DIM - 1],
+                RankMetric::L2,
+                10,
+            )
+            .is_err()
         );
     }
 

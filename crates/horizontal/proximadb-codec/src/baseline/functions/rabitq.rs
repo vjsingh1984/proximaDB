@@ -394,16 +394,48 @@ impl QueryLut {
     /// [`RaBitQCode::l2_rank_score`] but via the LUT.
     #[inline(always)]
     pub fn l2_rank_score(&self, code: &RaBitQCode) -> f32 {
-        let r = code.dist_to_centroid;
-        let ip = self.binary_dot(&code.bits) * code.inv_factor;
-        r * r - 2.0 * r * ip
+        self.l2_rank_score_parts(code.dist_to_centroid, code.inv_factor, &code.bits)
+            .unwrap_or(f32::INFINITY)
     }
 
     /// IP rank score (lower = higher IP = nearer).
     #[inline(always)]
     pub fn ip_rank_score(&self, code: &RaBitQCode) -> f32 {
-        let ip = self.binary_dot(&code.bits) * code.inv_factor;
-        -code.dist_to_centroid * ip
+        self.ip_rank_score_parts(code.dist_to_centroid, code.inv_factor, &code.bits)
+            .unwrap_or(f32::INFINITY)
+    }
+
+    /// L2 rank score directly from the packed code fields.
+    ///
+    /// This avoids constructing an owned [`RaBitQCode`] when a storage reader
+    /// already has a validated fixed-stride `dist | inv | bits` row.
+    #[inline(always)]
+    pub fn l2_rank_score_parts(
+        &self,
+        dist_to_centroid: f32,
+        inv_factor: f32,
+        bits: &[u8],
+    ) -> Option<f32> {
+        if bits.len() != self.n_bytes {
+            return None;
+        }
+        let ip = self.binary_dot(bits) * inv_factor;
+        Some(dist_to_centroid * dist_to_centroid - 2.0 * dist_to_centroid * ip)
+    }
+
+    /// Inner-product rank score directly from the packed code fields.
+    #[inline(always)]
+    pub fn ip_rank_score_parts(
+        &self,
+        dist_to_centroid: f32,
+        inv_factor: f32,
+        bits: &[u8],
+    ) -> Option<f32> {
+        if bits.len() != self.n_bytes {
+            return None;
+        }
+        let ip = self.binary_dot(bits) * inv_factor;
+        Some(-dist_to_centroid * ip)
     }
 }
 
@@ -629,6 +661,31 @@ mod tests {
         assert!(
             recall >= 0.8,
             "RaBitQ recall@10 with rerank = {recall} (< 0.8)"
+        );
+    }
+
+    #[test]
+    fn packed_field_scoring_matches_owned_code() {
+        let query = (0..129)
+            .map(|index| (index as f32 * 0.137).sin())
+            .collect::<Vec<_>>();
+        let lut = QueryLut::build(&query);
+        let code = RaBitQCode {
+            dist_to_centroid: 3.25,
+            inv_factor: 0.875,
+            bits: (0..17).map(|index| (index * 37 + 11) as u8).collect(),
+        };
+        assert_eq!(
+            lut.l2_rank_score_parts(code.dist_to_centroid, code.inv_factor, &code.bits),
+            Some(lut.l2_rank_score(&code))
+        );
+        assert_eq!(
+            lut.ip_rank_score_parts(code.dist_to_centroid, code.inv_factor, &code.bits),
+            Some(lut.ip_rank_score(&code))
+        );
+        assert!(
+            lut.l2_rank_score_parts(code.dist_to_centroid, code.inv_factor, &code.bits[..16])
+                .is_none()
         );
     }
 }

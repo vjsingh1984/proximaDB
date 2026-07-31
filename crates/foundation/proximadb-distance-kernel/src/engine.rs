@@ -662,6 +662,11 @@ impl UnifiedDistanceCompute {
         }
     }
 
+    /// Acquire a pooled f32 scratch buffer for representation-specific kernels.
+    pub(crate) fn acquire_f32_buffer(&self, capacity: usize) -> PooledItem<Vec<f32>> {
+        self.memory_pool.f32_buffer(capacity)
+    }
+
     /// Create with explicit backend selection (for testing)
     pub fn with_backend(metric: DistanceMetric, backend: HardwareBackend) -> Self {
         let platform_capability = get_platform_capability(); // Uses global cached detection

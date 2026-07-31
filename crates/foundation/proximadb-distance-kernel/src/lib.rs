@@ -15,6 +15,7 @@
 //! Provides unified distance calculation APIs across all storage engines and hardware backends.
 //! All SIMD implementations are now integrated directly into UnifiedDistanceCompute.
 
+pub mod affine_u8;
 pub mod engine; // Consolidated engine with all SIMD implementations
 pub mod platform;
 pub mod quantized; // Unified quantized distance computation for all engines
@@ -33,6 +34,7 @@ pub mod sparse; // Sparse vector optimizations
 pub mod benchmark; // Benchmarking code (moved from distance/benchmark.rs)
 
 // Re-export main types from engine
+pub use affine_u8::{AffineU8BatchResults, AffineU8BatchView, AffineU8Params};
 pub use engine::{
     DistanceComputeProvider, DistanceMetric, DistanceMode, MetricProperties, SimilarityResult,
     UnifiedDistanceCompute,
