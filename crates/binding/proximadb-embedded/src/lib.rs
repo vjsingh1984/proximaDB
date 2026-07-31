@@ -3807,6 +3807,7 @@ impl EmbeddedProximaDB {
                 graph_id: graph_id.to_string(),
                 // Embedded stays single-tenant by default (unscoped, byte-identical legacy behavior).
                 tenant: None,
+                tenant_stable_id: None, // FA-2 PR-D3: embedded path — no client subject
                 vector_collection: vector_collection.to_string(),
                 query_vector,
                 max_depth,

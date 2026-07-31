@@ -508,6 +508,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 vector_collection: collection.clone(),
                 // Structural tenant boundary — scopes BOTH fusion legs (clean names in, TD-ENTITY-TENANT-1).
                 tenant: Some(tenant.clone()),
+                tenant_stable_id: None, // FA-2 PR-D3: gRPC resolver wiring deferred
                 query_vector,
                 // TD-146 scope B: graph-augmented entity fusion. Entity vectors live under the
                 // auxiliary `{node_id}/{model_id}` oid; `EntityNode` keying normalizes both the

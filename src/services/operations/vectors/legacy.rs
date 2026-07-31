@@ -701,6 +701,43 @@ impl VectorOperationsService {
         self
     }
 
+    /// FA-2 PR-D3 (abac-policy): resolve `subject`'s read authorization for a
+    /// vector `collection_id` into the [`AuthorizedReadContext`] the push-down
+    /// path consumes. The fusion seam calls this to build a `ReadContext::Client`
+    /// from the request subject + tenant.
+    ///
+    /// Returns:
+    /// - `None` ⇒ no enforcer wired (or the collection can't be resolved — the
+    ///   search itself then fails with that error, so no unfiltered data is
+    ///   served); the caller uses a `System` (passthrough) context.
+    /// - `Some(Ok(ctx))` ⇒ admitted; wrap as `ReadContext::Client(ctx)`.
+    /// - `Some(Err(reason))` ⇒ DENY; the caller MUST fail closed (return empty).
+    ///
+    /// `Target.table` is the collection's catalog object id (resolved the same
+    /// way `unified_search_native` does, ADR-0083 D5). Table-scoped policies
+    /// match on it alone (`scope_covers` for `Scope::Table` checks `target.table`
+    /// only); `namespace` is irrelevant for the common per-collection RLS case.
+    #[cfg(feature = "abac-policy")]
+    pub async fn resolve_vector_read_context(
+        &self,
+        subject: &proximadb_catalog::fc_metamodel::SubjectId,
+        tenant_stable_id: u64,
+        collection_id: &str,
+    ) -> Option<Result<proximadb_abac::AuthorizedReadContext, proximadb_abac::DenyReason>> {
+        let enforcer = self.abac_enforcer.as_ref()?;
+        let collection = self.get_or_load_collection(collection_id).await.ok()?;
+        let object_id: crate::core::stable_id::CollectionObjectId = collection.id.parse().ok()?;
+        Some(enforcer.resolve_read_context(
+            subject,
+            tenant_stable_id,
+            proximadb_catalog::fc_metamodel::Target {
+                namespace: 0,
+                table: object_id as u32,
+                column: None,
+            },
+        ))
+    }
+
     /// Expose the unified storage engine as a trait object for integration points
     pub fn unified_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageFormat> {
         self.storage_engine.clone() as Arc<dyn crate::storage::traits::UnifiedStorageFormat>
