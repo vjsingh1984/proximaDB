@@ -22,61 +22,39 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
-use proximadb_block_format::{
-    BLOCK_MAGIC, BlockCompression, BlockMode, RankMetric, VectorQuant, col_id,
-};
+use proximadb_block_format::{BlockCompression, BlockMode, RankMetric, VectorQuant, col_id};
 use proximadb_cache::{CacheKind, L2CacheStats, L2Class, PersistentByteStore};
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::pax_block::{
     PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate, SegmentMeta,
 };
+// These three are now used only by this module's `#[cfg(test)]` suite — the
+// detection (`SegmentFormat` / `is_pax_segment`) and the PAX-decode body they
+// served moved down to `proximadb-storage-common`. Gated to test so the non-test
+// lib build stays warning-clean under clippy `-D warnings` (the CI gate).
+#[cfg(test)]
+use proximadb_block_format::BLOCK_MAGIC;
+#[cfg(test)]
 use proximadb_storage_common::segment_layout::{SegmentHeaderPrefix, is_coalesced_segment};
 
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache;
 
-/// On-disk format of a persisted vector segment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum SegmentFormat {
-    /// Legacy row-based block (raw f32). The default for segments written before P3
-    /// and for any manifest entry that predates the format field.
-    #[default]
-    ProximaBlocks,
-    /// Columnar PAX segment (carries SQ8 / RaBitQ codes; enables quantized ANN).
-    Pax,
-}
-
-impl SegmentFormat {
-    /// Detect a persisted segment's format from its raw bytes, mixed-read-safe.
-    ///
-    /// Returns [`SegmentFormat::ProximaBlocks`] for anything not recognisably a PAX
-    /// segment, so the legacy path is never mis-routed on truncated or unknown input.
-    pub fn detect(bytes: &[u8]) -> Self {
-        if is_pax_segment(bytes) {
-            SegmentFormat::Pax
-        } else {
-            SegmentFormat::ProximaBlocks
-        }
-    }
-}
-
-/// True iff `bytes` is a PAX segment: a recognised PAX head AND the trailing
-/// segment magic. Both ends are checked so a stray prefix or suffix alone can't
-/// false-positive. The head is EITHER the legacy block magic `PBLK` (block 0 at
-/// offset 0) OR the coalesced-RaBitQ header magic (ADR-062) — both tail with
-/// `SEGMENT_MAGIC`, so the trailing check is the common anchor.
-fn is_pax_segment(bytes: &[u8]) -> bool {
-    bytes.len() >= BLOCK_MAGIC.len() + SEGMENT_MAGIC.len()
-        && (bytes.starts_with(&BLOCK_MAGIC) || is_coalesced_segment(bytes))
-        && bytes.ends_with(SEGMENT_MAGIC)
-}
+// `SegmentFormat` (detection + `is_pax_segment`) now lives in the format layer —
+// `proximadb_storage_common::segment_layout` — so the mixed-format detection
+// primitive is unit-testable without linking the root crate. Re-exported here so
+// every existing `crate::storage::engines::sst::segment_format::SegmentFormat`
+// reference (and the router below) resolves unchanged (behavior-neutral move).
+pub use proximadb_storage_common::segment_layout::SegmentFormat;
 
 /// Decode a persisted vector segment back to records, routing on the detected format.
 ///
-/// PAX segments are decoded via the canonical inverse
-/// ([`PaxSegmentScanner::read_records`]); legacy segments via
-/// [`ProximaDataBlock::deserialize`]. This is the single mixed-read entry the
-/// Phase A.2 wiring will call from the cold-search, compaction, and recovery paths.
+/// PAX segments are decoded via the format-layer inverse
+/// ([`proximadb_storage_common::pax_block::read_pax_segment_records`]); legacy
+/// segments via [`ProximaDataBlock::deserialize`]. This root-level router is the
+/// single mixed-read entry called from the cold-search, compaction, and recovery
+/// paths. Its signature is unchanged from before the detection + PAX-decode logic
+/// moved down to `proximadb-storage-common` — the move is behavior-neutral.
 ///
 /// `embedding_model_ids` / `user_column_keys` are the collection's schema keys used
 /// to reconstruct PAX records positionally (empty slices = best-effort defaults);
@@ -92,46 +70,14 @@ pub fn read_segment_records(
     tenant_ctx: Option<&str>,
 ) -> Result<Vec<ProximaRecord>> {
     match SegmentFormat::detect(bytes) {
-        SegmentFormat::Pax => {
-            // ADR-065 Region B: a coalesced segment with an SQ8 region stores its
-            // vectors in Region B, NOT in the blocks (blocks are pure row data).
-            // read_records reconstructs from blocks alone, so it would silently drop
-            // the vectors — fail closed instead. The coalesced SEARCH path
-            // (rabitq_search_segment_coalesced) reads Region B directly; full
-            // Region-B read_records/compaction/recovery is a follow-up.
-            let mut scanner =
-                PaxSegmentScanner::from_bytes(bytes.to_vec(), ScanPredicate::default())?;
-            let mut recs =
-                scanner.read_records(embedding_model_ids, user_column_keys, tenant_ctx)?;
-            // ADR-065 Region B: a coalesced segment with an SQ8 region stores its
-            // vectors in Region B (blocks are pure row data). Overlay the SQ8
-            // vectors by row index — block row order == Region B cluster order, so
-            // recs[i] <-> Region B row i. (Exact-f32 preference via F32_TIER is a
-            // follow-up; this returns the SQ8 rerank vectors so compaction / recovery
-            // / full-read see the vectors rather than silently dropping them.)
-            if is_coalesced_segment(bytes)
-                && let Ok(h) = SegmentHeaderPrefix::parse(bytes)
-                && h.sq8_len > 0
-            {
-                let region = &bytes[h.sq8_off as usize..(h.sq8_off + h.sq8_len) as usize];
-                if let Ok(sq8) =
-                    proximadb_block_format::coalesced_sq8::Sq8Region::from_bytes(region)
-                {
-                    let dim = sq8.header.dim;
-                    for (i, rec) in recs.iter_mut().enumerate() {
-                        if let Some(v) = sq8.decode_row(i) {
-                            rec.embeddings.push(proximadb_records::EmbeddingCell {
-                                modality: "dense".into(),
-                                dim,
-                                values: proximadb_records::EmbeddingValues::Fp32(v),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                }
-            }
-            Ok(recs)
-        }
+        SegmentFormat::Pax => Ok(
+            proximadb_storage_common::pax_block::read_pax_segment_records(
+                bytes,
+                embedding_model_ids,
+                user_column_keys,
+                tenant_ctx,
+            )?,
+        ),
         SegmentFormat::ProximaBlocks => Ok(ProximaDataBlock::deserialize(bytes, None)?.records),
     }
 }

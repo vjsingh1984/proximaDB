@@ -29,6 +29,7 @@ use anyhow::{Result, bail};
 use std::collections::HashMap;
 
 use crate::pax_block::SEGMENT_MAGIC;
+use proximadb_block_format::BLOCK_MAGIC;
 
 /// Segment-header magic — the presence-field for the coalesced-RaBitQ layout.
 /// Chosen disjoint from the block magic `PBLK` (`0x50…`) so detection is
@@ -65,6 +66,52 @@ pub const SEG_HEADER_PREFIX_V3_LEN: usize = 72;
 /// presence-field that selects the scan-then-rerank read path (mixed-read).
 pub fn is_coalesced_segment(bytes: &[u8]) -> bool {
     bytes.len() >= SEG_HEADER_MAGIC.len() && &bytes[..SEG_HEADER_MAGIC.len()] == SEG_HEADER_MAGIC
+}
+
+/// On-disk format of a persisted vector segment.
+///
+/// PAX segments (columnar; carry SQ8 / RaBitQ codes for quantized ANN) are
+/// recognised by magic; anything else is the legacy row-based `ProximaDataBlock`
+/// (raw f32). Detection is unambiguous — the PAX head (`PBLK` or the coalesced
+/// header `PXH1`) is disjoint from the legacy version/compression byte — so the
+/// legacy path is never mis-routed.
+///
+/// This is the format-layer detection primitive, factored out of the root
+/// `segment_format` module so it is unit-testable without linking the root crate;
+/// the root re-exports it and its mixed-format read router builds on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum SegmentFormat {
+    /// Legacy row-based block (raw f32). The default for segments written before P3
+    /// and for any manifest entry that predates the format field.
+    #[default]
+    ProximaBlocks,
+    /// Columnar PAX segment (carries SQ8 / RaBitQ codes; enables quantized ANN).
+    Pax,
+}
+
+impl SegmentFormat {
+    /// Detect a persisted segment's format from its raw bytes, mixed-read-safe.
+    ///
+    /// Returns [`SegmentFormat::ProximaBlocks`] for anything not recognisably a PAX
+    /// segment, so the legacy path is never mis-routed on truncated or unknown input.
+    pub fn detect(bytes: &[u8]) -> Self {
+        if is_pax_segment(bytes) {
+            SegmentFormat::Pax
+        } else {
+            SegmentFormat::ProximaBlocks
+        }
+    }
+}
+
+/// True iff `bytes` is a PAX segment: a recognised PAX head AND the trailing
+/// segment magic. Both ends are checked so a stray prefix or suffix alone can't
+/// false-positive. The head is EITHER the legacy block magic `PBLK` (block 0 at
+/// offset 0) OR the coalesced-RaBitQ header magic (ADR-062) — both tail with
+/// [`SEGMENT_MAGIC`], so the trailing check is the common anchor.
+fn is_pax_segment(bytes: &[u8]) -> bool {
+    bytes.len() >= BLOCK_MAGIC.len() + SEGMENT_MAGIC.len()
+        && (bytes.starts_with(&BLOCK_MAGIC) || is_coalesced_segment(bytes))
+        && bytes.ends_with(SEGMENT_MAGIC)
 }
 
 /// The fixed header-prefix at offset 0 (56 B for v1, 72 B for v3). The RaBitQ
@@ -992,6 +1039,49 @@ pub fn segment_tail(footer_body: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mixed-format segment detection must be unambiguous by magic and never
+    /// mis-route the legacy path. Golden table ported from the former root
+    /// `segment_format` tests — locks the disjointness of BLOCK_MAGIC /
+    /// SEG_HEADER_MAGIC / SEGMENT_MAGIC now that detection lives in this crate
+    /// (and proves the moved logic is unit-testable WITHOUT linking the root).
+    #[test]
+    fn segment_format_detect_golden_table() {
+        // Empty / short / unknown bytes -> legacy (never mis-route).
+        assert_eq!(SegmentFormat::detect(&[]), SegmentFormat::ProximaBlocks);
+        assert_eq!(
+            SegmentFormat::detect(&[0x01, 0, 0]),
+            SegmentFormat::ProximaBlocks
+        );
+        assert_eq!(
+            SegmentFormat::detect(&[0x05, 0, 0]),
+            SegmentFormat::ProximaBlocks
+        );
+
+        // PAX head (BLOCK_MAGIC) + trailing SEGMENT_MAGIC -> Pax.
+        let mut pax = BLOCK_MAGIC.to_vec();
+        pax.extend_from_slice(SEGMENT_MAGIC);
+        assert_eq!(SegmentFormat::detect(&pax), SegmentFormat::Pax);
+
+        // Coalesced head (SEG_HEADER_MAGIC) + trailing SEGMENT_MAGIC -> Pax.
+        let mut coalesced = SEG_HEADER_MAGIC.to_vec();
+        coalesced.extend_from_slice(SEGMENT_MAGIC);
+        assert_eq!(SegmentFormat::detect(&coalesced), SegmentFormat::Pax);
+
+        // Head magic alone (no trailing SEGMENT_MAGIC) -> NOT Pax: a stray prefix
+        // alone must never false-positive.
+        assert_eq!(
+            SegmentFormat::detect(&BLOCK_MAGIC[..]),
+            SegmentFormat::ProximaBlocks
+        );
+        assert_eq!(
+            SegmentFormat::detect(&SEG_HEADER_MAGIC[..]),
+            SegmentFormat::ProximaBlocks
+        );
+
+        // Default (e.g. a manifest entry predating the format field) is legacy.
+        assert_eq!(SegmentFormat::default(), SegmentFormat::ProximaBlocks);
+    }
 
     fn sample_footer() -> SegmentFooterIndex {
         SegmentFooterIndex {
