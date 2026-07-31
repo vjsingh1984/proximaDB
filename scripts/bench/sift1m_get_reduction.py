@@ -69,13 +69,12 @@ METRICS = (
 )
 
 
-def request_json(url: str, method: str = "GET", body: object | None = None,
-                 timeout: int = 180) -> dict:
+def request_json(
+    url: str, method: str = "GET", body: object | None = None, timeout: int = 180
+) -> dict:
     data = None if body is None else json.dumps(body).encode()
     headers = {} if data is None else {"Content-Type": "application/json"}
-    request = urllib.request.Request(
-        url, data=data, headers=headers, method=method
-    )
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         payload = response.read()
     return json.loads(payload) if payload else {}
@@ -92,18 +91,14 @@ def count_fixed_records(path: Path, scalar_bytes: int) -> tuple[int, int]:
     record_bytes = 4 + dimension * scalar_bytes
     size = path.stat().st_size
     if size % record_bytes:
-        raise RuntimeError(
-            f"{path}: {size} bytes is not a multiple of {record_bytes}"
-        )
+        raise RuntimeError(f"{path}: {size} bytes is not a multiple of {record_bytes}")
     return size // record_bytes, dimension
 
 
 def read_fvecs(path: Path, start: int, count: int) -> list[list[float]]:
     total, dimension = count_fixed_records(path, 4)
     if start < 0 or count <= 0 or start + count > total:
-        raise RuntimeError(
-            f"{path}: requested [{start}, {start + count}) of {total}"
-        )
+        raise RuntimeError(f"{path}: requested [{start}, {start + count}) of {total}")
     record_bytes = 4 + 4 * dimension
     vectors: list[list[float]] = []
     with path.open("rb") as source:
@@ -113,18 +108,77 @@ def read_fvecs(path: Path, start: int, count: int) -> list[list[float]]:
             encoded_dimension = struct.unpack_from("<i", record, 0)[0]
             if encoded_dimension != dimension:
                 raise RuntimeError(f"{path}: variable dimension encountered")
-            vectors.append(
-                list(struct.unpack_from(f"<{dimension}f", record, 4))
-            )
+            vectors.append(list(struct.unpack_from(f"<{dimension}f", record, 4)))
     return vectors
+
+
+def inspect_u8bin(path: Path) -> tuple[int, int, int]:
+    """Return physical rows, dimension, and source-declared rows.
+
+    BIGANN publishes one 1B-row object and defines smaller corpora as byte
+    prefixes. A prefix therefore retains the 1B source header while its
+    physical payload contains fewer rows. Both counts are evidence: callers
+    must bound reads by the physical payload and record the declared count.
+    """
+    with path.open("rb") as source:
+        header = source.read(8)
+    if len(header) != 8:
+        raise RuntimeError(f"{path}: missing u8bin header")
+    declared_rows, dimension = struct.unpack("<II", header)
+    if declared_rows <= 0 or dimension <= 0:
+        raise RuntimeError(
+            f"{path}: invalid u8bin shape ({declared_rows}, {dimension})"
+        )
+    payload_bytes = path.stat().st_size - len(header)
+    if payload_bytes < 0 or payload_bytes % dimension:
+        raise RuntimeError(f"{path}: partial dense row in u8bin payload")
+    physical_rows = payload_bytes // dimension
+    if physical_rows <= 0 or physical_rows > declared_rows:
+        raise RuntimeError(
+            f"{path}: physical rows {physical_rows} are outside declared "
+            f"range 1..{declared_rows}"
+        )
+    return physical_rows, dimension, declared_rows
+
+
+def vector_source_geometry(path: Path, vector_format: str) -> tuple[int, int, int]:
+    if vector_format == "fvecs":
+        rows, dimension = count_fixed_records(path, 4)
+        return rows, dimension, rows
+    if vector_format == "u8bin":
+        return inspect_u8bin(path)
+    raise RuntimeError(f"unsupported vector format: {vector_format}")
+
+
+def read_u8bin(path: Path, start: int, count: int) -> list[list[float]]:
+    total, dimension, _ = inspect_u8bin(path)
+    if start < 0 or count <= 0 or start + count > total:
+        raise RuntimeError(f"{path}: requested [{start}, {start + count}) of {total}")
+    vectors: list[list[float]] = []
+    with path.open("rb") as source:
+        source.seek(8 + start * dimension)
+        for _ in range(count):
+            record = source.read(dimension)
+            if len(record) != dimension:
+                raise RuntimeError(f"{path}: truncated u8bin vector")
+            vectors.append([float(value) for value in record])
+    return vectors
+
+
+def read_vectors(
+    path: Path, vector_format: str, start: int, count: int
+) -> list[list[float]]:
+    if vector_format == "fvecs":
+        return read_fvecs(path, start, count)
+    if vector_format == "u8bin":
+        return read_u8bin(path, start, count)
+    raise RuntimeError(f"unsupported vector format: {vector_format}")
 
 
 def read_ivecs(path: Path, start: int, count: int) -> list[list[int]]:
     total, dimension = count_fixed_records(path, 4)
     if start < 0 or count <= 0 or start + count > total:
-        raise RuntimeError(
-            f"{path}: requested [{start}, {start + count}) of {total}"
-        )
+        raise RuntimeError(f"{path}: requested [{start}, {start + count}) of {total}")
     record_bytes = 4 + 4 * dimension
     vectors: list[list[int]] = []
     with path.open("rb") as source:
@@ -134,10 +188,62 @@ def read_ivecs(path: Path, start: int, count: int) -> list[list[int]]:
             encoded_dimension = struct.unpack_from("<i", record, 0)[0]
             if encoded_dimension != dimension:
                 raise RuntimeError(f"{path}: variable dimension encountered")
-            vectors.append(
-                list(struct.unpack_from(f"<{dimension}i", record, 4))
-            )
+            vectors.append(list(struct.unpack_from(f"<{dimension}i", record, 4)))
     return vectors
+
+
+def count_bigann_truth_records(path: Path) -> tuple[int, int]:
+    with path.open("rb") as source:
+        header = source.read(8)
+    if len(header) != 8:
+        raise RuntimeError(f"{path}: missing BIGANN ground-truth header")
+    rows, width = struct.unpack("<II", header)
+    if rows <= 0 or width <= 0:
+        raise RuntimeError(
+            f"{path}: invalid BIGANN ground-truth shape ({rows}, {width})"
+        )
+    expected_bytes = 8 + rows * width * 8
+    actual_bytes = path.stat().st_size
+    if actual_bytes != expected_bytes:
+        raise RuntimeError(
+            f"{path}: BIGANN ground truth has {actual_bytes} bytes, "
+            f"expected {expected_bytes}"
+        )
+    return rows, width
+
+
+def count_truth_records(path: Path, truth_format: str) -> tuple[int, int]:
+    if truth_format == "ivecs":
+        return count_fixed_records(path, 4)
+    if truth_format == "bigann-bin":
+        return count_bigann_truth_records(path)
+    raise RuntimeError(f"unsupported ground-truth format: {truth_format}")
+
+
+def read_bigann_truth_ids(path: Path, start: int, count: int) -> list[list[int]]:
+    total, width = count_bigann_truth_records(path)
+    if start < 0 or count <= 0 or start + count > total:
+        raise RuntimeError(f"{path}: requested [{start}, {start + count}) of {total}")
+    row_bytes = width * 4
+    vectors: list[list[int]] = []
+    with path.open("rb") as source:
+        source.seek(8 + start * row_bytes)
+        for _ in range(count):
+            record = source.read(row_bytes)
+            if len(record) != row_bytes:
+                raise RuntimeError(f"{path}: truncated BIGANN truth ID row")
+            vectors.append(list(struct.unpack(f"<{width}i", record)))
+    return vectors
+
+
+def read_truth_ids(
+    path: Path, truth_format: str, start: int, count: int
+) -> list[list[int]]:
+    if truth_format == "ivecs":
+        return read_ivecs(path, start, count)
+    if truth_format == "bigann-bin":
+        return read_bigann_truth_ids(path, start, count)
+    raise RuntimeError(f"unsupported ground-truth format: {truth_format}")
 
 
 def iter_fvec_batches(path: Path, count: int, batch_size: int):
@@ -157,13 +263,44 @@ def iter_fvec_batches(path: Path, count: int, batch_size: int):
                 batch.append(
                     {
                         "id": f"v{next_id}",
-                        "vector": list(
-                            struct.unpack_from(f"<{dimension}f", record, 4)
-                        ),
+                        "vector": list(struct.unpack_from(f"<{dimension}f", record, 4)),
                     }
                 )
                 next_id += 1
             yield batch
+
+
+def iter_u8bin_batches(path: Path, count: int, batch_size: int):
+    total, dimension, _ = inspect_u8bin(path)
+    if count > total:
+        raise RuntimeError(f"{path}: requested {count} of {total} vectors")
+    with path.open("rb") as source:
+        source.seek(8)
+        next_id = 0
+        while next_id < count:
+            batch = []
+            for _ in range(min(batch_size, count - next_id)):
+                record = source.read(dimension)
+                if len(record) != dimension:
+                    raise RuntimeError(f"{path}: truncated u8bin vector")
+                batch.append(
+                    {
+                        "id": f"v{next_id}",
+                        "vector": [float(value) for value in record],
+                    }
+                )
+                next_id += 1
+            yield batch
+
+
+def iter_vector_batches(path: Path, vector_format: str, count: int, batch_size: int):
+    if vector_format == "fvecs":
+        yield from iter_fvec_batches(path, count, batch_size)
+        return
+    if vector_format == "u8bin":
+        yield from iter_u8bin_batches(path, count, batch_size)
+        return
+    raise RuntimeError(f"unsupported vector format: {vector_format}")
 
 
 def summarize_values(values: list[int] | list[float]) -> dict:
@@ -215,19 +352,12 @@ def parse_a0_geometry(a0: bytes) -> dict:
         + 8
     )
     if len(a0) != expected_length:
-        raise RuntimeError(
-            f"A0 length {len(a0)} != expected {expected_length}"
-        )
+        raise RuntimeError(f"A0 length {len(a0)} != expected {expected_length}")
     stored_checksum = struct.unpack_from("<Q", a0, len(a0) - 8)[0]
     if fnv1a64(a0[:-8]) != stored_checksum:
         raise RuntimeError("A0 checksum mismatch")
 
-    offset = (
-        40
-        + dimension * 4
-        + n_comp * dimension * 4
-        + cells * n_comp * 4
-    )
+    offset = 40 + dimension * 4 + n_comp * dimension * 4 + cells * n_comp * 4
     radii = list(struct.unpack_from(f"<{cells}f", a0, offset))
     offset += cells * 4
     cell_rows = []
@@ -251,18 +381,12 @@ def parse_a0_geometry(a0: bytes) -> dict:
         "coarse_seed": seed,
         "coarse_trained_rows": trained_rows,
         "coarse_rows_covered": covered_rows,
-        "training_rows_per_cell": (
-            trained_rows / cells if cells else None
-        ),
+        "training_rows_per_cell": (trained_rows / cells if cells else None),
         "empty_cells": cells - len(nonempty),
-        "empty_cell_fraction": (
-            (cells - len(nonempty)) / cells if cells else None
-        ),
+        "empty_cell_fraction": ((cells - len(nonempty)) / cells if cells else None),
         "cell_rows": cell_rows,
         "cell_row_summary": row_summary,
-        "cell_row_max_to_mean": (
-            max(cell_rows) / mean_rows if mean_rows else None
-        ),
+        "cell_row_max_to_mean": (max(cell_rows) / mean_rows if mean_rows else None),
         "radii": radii,
         "radius_summary": summarize_values(radii),
     }
@@ -284,9 +408,7 @@ def parse_pax(path: Path, root: Path) -> dict:
         segment.seek(-(16 + footer_len), os.SEEK_END)
         footer_prefix = segment.read(9)
     if footer_prefix[0] != 1:
-        raise RuntimeError(
-            f"{path}: unsupported footer version {footer_prefix[0]}"
-        )
+        raise RuntimeError(f"{path}: unsupported footer version {footer_prefix[0]}")
     if header[:4] != PAX_HEADER_MAGIC:
         raise RuntimeError(f"{path}: legacy PAX layout cannot prove row count")
     coarse = {}
@@ -312,9 +434,7 @@ def parse_pax(path: Path, root: Path) -> dict:
 
 def pax_geometry(root: Path) -> dict:
     segments = [
-        parse_pax(path, root)
-        for path in sorted(root.rglob("*.pax"))
-        if path.is_file()
+        parse_pax(path, root) for path in sorted(root.rglob("*.pax")) if path.is_file()
     ]
     return {
         "segment_count": len(segments),
@@ -340,9 +460,7 @@ class AzureCliPaxGeometry:
                 f"Azure geometry requires adls:// storage, got {storage_url}"
             )
         if not parsed.netloc:
-            raise RuntimeError(
-                f"Azure storage URL has no container: {storage_url}"
-            )
+            raise RuntimeError(f"Azure storage URL has no container: {storage_url}")
         self.container = parsed.netloc
         self.prefix = parsed.path.strip("/")
         self.snapshot_root = snapshot_root
@@ -406,9 +524,7 @@ class AzureCliPaxGeometry:
                     "bytes": int(size),
                     "etag": str(properties.get("etag", blob.get("etag", ""))),
                     "last_modified": str(
-                        properties.get(
-                            "lastModified", blob.get("lastModified", "")
-                        )
+                        properties.get("lastModified", blob.get("lastModified", ""))
                     ),
                 }
             )
@@ -477,9 +593,15 @@ def stable_signature(geometry: dict) -> tuple:
 
 
 def wait_for_materialization(
-        root: Path, server: str, collection_id: str, expected_rows: int,
-        max_segments: int, timeout_seconds: int, stable_seconds: int,
-        azure_geometry: AzureCliPaxGeometry | None = None) -> dict:
+    root: Path,
+    server: str,
+    collection_id: str,
+    expected_rows: int,
+    max_segments: int,
+    timeout_seconds: int,
+    stable_seconds: int,
+    azure_geometry: AzureCliPaxGeometry | None = None,
+) -> dict:
     deadline = time.monotonic() + timeout_seconds
     stable_since = None
     prior = None
@@ -537,11 +659,7 @@ def wait_for_materialization(
         # row sum above `expected_rows` is legal. It must disappear before the
         # stable window; a persistent duplicate/stale segment fails by timeout.
         complete = (
-            (
-                observed_rows == expected_rows
-                if azure_geometry is None
-                else True
-            )
+            (observed_rows == expected_rows if azure_geometry is None else True)
             and 0 < geometry["segment_count"] <= max_segments
             and wal_bytes == 0
         )
@@ -600,9 +718,7 @@ def parse_prometheus(text: str) -> dict[str, float]:
 
 
 def scrape_text(server: str) -> str:
-    with urllib.request.urlopen(
-        server + "/metrics/prometheus", timeout=30
-    ) as response:
+    with urllib.request.urlopen(server + "/metrics/prometheus", timeout=30) as response:
         return response.read().decode()
 
 
@@ -610,18 +726,17 @@ def scrape(server: str) -> dict[str, float]:
     return parse_prometheus(scrape_text(server))
 
 
-def labelled_metric(text: str, name: str, label: str,
-                    expected_value: str) -> float | None:
+def labelled_metric(
+    text: str, name: str, label: str, expected_value: str
+) -> float | None:
     """Return one exact labelled Prometheus sample without summing tenants."""
-    label_pattern = re.compile(
-        rf'(?:^|,){re.escape(label)}="([^"\\]*(?:\\.[^"\\]*)*)"'
-    )
+    label_pattern = re.compile(rf'(?:^|,){re.escape(label)}="([^"\\]*(?:\\.[^"\\]*)*)"')
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line.startswith(name + "{"):
             continue
         token, _, raw_value = line.partition(" ")
-        labels = token[len(name) + 1:-1]
+        labels = token[len(name) + 1 : -1]
         match = label_pattern.search(labels)
         if match is None or match.group(1) != expected_value:
             continue
@@ -653,11 +768,22 @@ def percentile(sorted_values: list[float], quantile: float) -> float:
     return sorted_values[rank]
 
 
-def run_query_sweep(server: str, collection_id: str, query_path: Path,
-                    groundtruth_path: Path, query_start: int,
-                    query_count: int, top_k: int, phase: str) -> dict:
-    queries = read_fvecs(query_path, query_start, query_count)
-    groundtruth = read_ivecs(groundtruth_path, query_start, query_count)
+def run_query_sweep(
+    server: str,
+    collection_id: str,
+    query_path: Path,
+    groundtruth_path: Path,
+    query_start: int,
+    query_count: int,
+    top_k: int,
+    phase: str,
+    query_format: str = "fvecs",
+    groundtruth_format: str = "ivecs",
+) -> dict:
+    queries = read_vectors(query_path, query_format, query_start, query_count)
+    groundtruth = read_truth_ids(
+        groundtruth_path, groundtruth_format, query_start, query_count
+    )
     before = scrape(server)
     latencies = []
     recalls = []
@@ -671,54 +797,34 @@ def run_query_sweep(server: str, collection_id: str, query_path: Path,
         )
         latencies.append((time.perf_counter() - started) * 1000)
         returned = {item.get("id") for item in response.get("results", [])}
-        expected = {
-            f"v{row}" for row in groundtruth[offset][:top_k]
-        }
+        expected = {f"v{row}" for row in groundtruth[offset][:top_k]}
         recalls.append(len(returned & expected) / top_k)
     after = scrape(server)
     latencies.sort()
-    gets = metric_delta(
-        before, after, "proximadb_object_store_gets_total"
-    )
-    bytes_read = metric_delta(
-        before, after, "proximadb_object_store_bytes_read_total"
-    )
-    survivor_hits = metric_delta(
-        before, after, "proximadb_survivor_cache_hits"
-    )
-    survivor_misses = metric_delta(
-        before, after, "proximadb_survivor_cache_misses"
-    )
+    gets = metric_delta(before, after, "proximadb_object_store_gets_total")
+    bytes_read = metric_delta(before, after, "proximadb_object_store_bytes_read_total")
+    survivor_hits = metric_delta(before, after, "proximadb_survivor_cache_hits")
+    survivor_misses = metric_delta(before, after, "proximadb_survivor_cache_misses")
     invariant_hits = metric_delta(
         before, after, "proximadb_segment_invariants_cache_hits_total"
     )
     invariant_misses = metric_delta(
         before, after, "proximadb_segment_invariants_cache_misses_total"
     )
-    local_hits = metric_delta(
-        before, after, "proximadb_cache_local_disk_hits_total"
-    )
+    local_hits = metric_delta(before, after, "proximadb_cache_local_disk_hits_total")
     local_misses = metric_delta(
         before, after, "proximadb_cache_local_disk_misses_total"
     )
-    ivf_cells_total = metric_delta(
-        before, after, "proximadb_ivf_cells_total"
-    )
-    ivf_cells_probed = metric_delta(
-        before, after, "proximadb_ivf_cells_probed_total"
-    )
-    ivf_probed_rows = metric_delta(
-        before, after, "proximadb_ivf_probed_rows_total"
-    )
+    ivf_cells_total = metric_delta(before, after, "proximadb_ivf_cells_total")
+    ivf_cells_probed = metric_delta(before, after, "proximadb_ivf_cells_probed_total")
+    ivf_probed_rows = metric_delta(before, after, "proximadb_ivf_probed_rows_total")
     ivf_region_a_bytes = metric_delta(
         before, after, "proximadb_ivf_region_a_bytes_read_total"
     )
     ivf_region_b_bytes = metric_delta(
         before, after, "proximadb_ivf_region_b_bytes_read_total"
     )
-    ivf_fetch_rounds = metric_delta(
-        before, after, "proximadb_ivf_fetch_rounds_total"
-    )
+    ivf_fetch_rounds = metric_delta(before, after, "proximadb_ivf_fetch_rounds_total")
     ivf_whole_region_fallbacks = metric_delta(
         before, after, "proximadb_ivf_whole_region_fallback_total"
     )
@@ -742,9 +848,7 @@ def run_query_sweep(server: str, collection_id: str, query_path: Path,
         "survivor": {
             "hits": survivor_hits,
             "misses": survivor_misses,
-            "hit_ratio": (
-                survivor_hits / survivor_total if survivor_total else None
-            ),
+            "hit_ratio": (survivor_hits / survivor_total if survivor_total else None),
         },
         "invariants": {
             "hits": invariant_hits,
@@ -756,9 +860,7 @@ def run_query_sweep(server: str, collection_id: str, query_path: Path,
         "local_disk": {
             "hits": local_hits,
             "misses": local_misses,
-            "resident_bytes": after[
-                "proximadb_cache_local_disk_bytes"
-            ],
+            "resident_bytes": after["proximadb_cache_local_disk_bytes"],
         },
         "ivf": {
             "cells_total": ivf_cells_total,
@@ -768,13 +870,9 @@ def run_query_sweep(server: str, collection_id: str, query_path: Path,
             "probed_rows": ivf_probed_rows,
             "probed_rows_per_query": ivf_probed_rows / query_count,
             "region_a_bytes": ivf_region_a_bytes,
-            "region_a_bytes_per_query": (
-                ivf_region_a_bytes / query_count
-            ),
+            "region_a_bytes_per_query": (ivf_region_a_bytes / query_count),
             "region_b_bytes": ivf_region_b_bytes,
-            "region_b_bytes_per_query": (
-                ivf_region_b_bytes / query_count
-            ),
+            "region_b_bytes_per_query": (ivf_region_b_bytes / query_count),
             "fetch_rounds": ivf_fetch_rounds,
             "fetch_rounds_per_query": ivf_fetch_rounds / query_count,
             "whole_region_fallbacks": ivf_whole_region_fallbacks,
@@ -815,8 +913,13 @@ def require_complete_insert(response: dict, expected_count: int) -> None:
 
 
 def write_config(
-        path: Path, root: Path, port: int, write_buffer_mb: int,
-        flush_vector_threshold: int, storage_url: str) -> None:
+    path: Path,
+    root: Path,
+    port: int,
+    write_buffer_mb: int,
+    flush_vector_threshold: int,
+    storage_url: str,
+) -> None:
     data = root / "data"
     config = f"""[server]
 node_id = "sift1m-get-reduction"
@@ -829,7 +932,7 @@ mode = "single_tenant"
 default_tenant = "default"
 
 [storage]
-metadata_url = "file://{data / 'metadata'}"
+metadata_url = "file://{data / "metadata"}"
 mmap_enabled = false
 
 [storage.optimization]
@@ -841,7 +944,7 @@ weight = 1
 tags = ["durable", "benchmark"]
 
 [storage.wal_config]
-write_buffer_directory = "file://{data / 'wal'}"
+write_buffer_directory = "file://{data / "wal"}"
 enable_wal = true
 sync_mode = "PerBatch"
 write_buffer_size_mb = {write_buffer_mb}
@@ -849,7 +952,7 @@ vector_count_threshold = {flush_vector_threshold}
 flush_interval_secs = 12
 
 [storage.sst_config]
-data_directory = "{data / 'sst'}"
+data_directory = "{data / "sst"}"
 mmap_enabled = false
 segment_invariants_cache_mb = 256
 survivor_cache_mb = 1024
@@ -872,10 +975,17 @@ log_level = "info"
 
 
 class OwnedServer:
-    def __init__(self, binary: Path, config: Path, server: str,
-                 log_path: Path, local_disk_path: Path | None,
-                 ivf_k: int | None = None, nprobe: int | None = None,
-                 azure_emulator: bool = False):
+    def __init__(
+        self,
+        binary: Path,
+        config: Path,
+        server: str,
+        log_path: Path,
+        local_disk_path: Path | None,
+        ivf_k: int | None = None,
+        nprobe: int | None = None,
+        azure_emulator: bool = False,
+    ):
         self.binary = binary
         self.config = config
         self.server = server
@@ -897,18 +1007,10 @@ class OwnedServer:
                 "PROXIMADB_L0_COMPACTION_ENABLED": "1",
                 # Keep the planner fixed across local and Azure profiles so
                 # backend choice does not silently change the read geometry.
-                "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(
-                    AZURE_COALESCE_GAP_BYTES
-                ),
-                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(
-                    AZURE_COALESCE_RANGE_BYTES
-                ),
-                "PROXIMADB_PAX_COALESCE_GAP": str(
-                    AZURE_COALESCE_GAP_BYTES
-                ),
-                "PROXIMADB_PAX_COALESCE_RANGE": str(
-                    AZURE_COALESCE_RANGE_BYTES
-                ),
+                "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(AZURE_COALESCE_GAP_BYTES),
+                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(AZURE_COALESCE_RANGE_BYTES),
+                "PROXIMADB_PAX_COALESCE_GAP": str(AZURE_COALESCE_GAP_BYTES),
+                "PROXIMADB_PAX_COALESCE_RANGE": str(AZURE_COALESCE_RANGE_BYTES),
             }
         )
         # The diagnostic object-cold phase must remain cold even when the
@@ -937,9 +1039,7 @@ class OwnedServer:
                 }
             )
         if self.local_disk_path is not None:
-            environment["PROXIMADB_CACHE_LOCAL_DISK_PATH"] = str(
-                self.local_disk_path
-            )
+            environment["PROXIMADB_CACHE_LOCAL_DISK_PATH"] = str(self.local_disk_path)
             environment["PROXIMADB_CACHE_LOCAL_DISK_MAX_GB"] = "10"
         self.log_file = self.log_path.open("wb")
         self.process = subprocess.Popen(
@@ -954,8 +1054,7 @@ class OwnedServer:
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 raise RuntimeError(
-                    f"server exited with {self.process.returncode}; "
-                    f"see {self.log_path}"
+                    f"server exited with {self.process.returncode}; see {self.log_path}"
                 )
             try:
                 request_json(self.server + "/health/live", timeout=5)
@@ -980,8 +1079,13 @@ class OwnedServer:
 
 
 def storage_action_via_flight(
-        host: str, port: int, collection_id: str, action_type: str,
-        expected_operation: str, flight_module=None) -> dict:
+    host: str,
+    port: int,
+    collection_id: str,
+    action_type: str,
+    expected_operation: str,
+    flight_module=None,
+) -> dict:
     if flight_module is None:
         try:
             import pyarrow.flight as flight_module
@@ -1018,8 +1122,8 @@ def storage_action_via_flight(
 
 
 def force_flush_via_flight(
-        host: str, port: int, collection_id: str,
-        flight_module=None) -> dict:
+    host: str, port: int, collection_id: str, flight_module=None
+) -> dict:
     return storage_action_via_flight(
         host,
         port,
@@ -1031,8 +1135,8 @@ def force_flush_via_flight(
 
 
 def compact_via_flight(
-        host: str, port: int, collection_id: str,
-        flight_module=None) -> dict:
+    host: str, port: int, collection_id: str, flight_module=None
+) -> dict:
     return storage_action_via_flight(
         host,
         port,
@@ -1044,8 +1148,11 @@ def compact_via_flight(
 
 
 def wait_for_pax_epoch(
-        server: str, collection_id: str, geometry: AzureCliPaxGeometry,
-        before_inventory: dict, timeout_seconds: int = 300,
+    server: str,
+    collection_id: str,
+    geometry: AzureCliPaxGeometry,
+    before_inventory: dict,
+    timeout_seconds: int = 300,
 ) -> tuple[float, dict, float | None]:
     started = time.monotonic()
     deadline = started + timeout_seconds
@@ -1057,9 +1164,7 @@ def wait_for_pax_epoch(
         signature = geometry.stable_signature(inventory)
         if signature != before_signature:
             stable_observations = (
-                stable_observations + 1
-                if signature == prior_signature
-                else 1
+                stable_observations + 1 if signature == prior_signature else 1
             )
         else:
             stable_observations = 0
@@ -1070,10 +1175,7 @@ def wait_for_pax_epoch(
             "collection",
             collection_id,
         )
-        if (
-            stable_observations >= 2
-            and (wal_bytes is None or wal_bytes == 0)
-        ):
+        if stable_observations >= 2 and (wal_bytes is None or wal_bytes == 0):
             return time.monotonic() - started, inventory, wal_bytes
         time.sleep(0.5)
     raise RuntimeError(
@@ -1083,7 +1185,8 @@ def wait_for_pax_epoch(
 
 
 def post_flush_compaction_observation(
-        explicit_flush_every_rows: int | None) -> dict | None:
+    explicit_flush_every_rows: int | None,
+) -> dict | None:
     if explicit_flush_every_rows is None:
         return None
     return {
@@ -1096,12 +1199,17 @@ def post_flush_compaction_observation(
 
 
 def ingest(
-        server: str, base_path: Path, expected_rows: int, batch_size: int,
-        flight_host: str, flight_port: int,
-        explicit_flush_every_rows: int | None,
-        explicit_geometry: AzureCliPaxGeometry | None,
+    server: str,
+    base_path: Path,
+    base_format: str,
+    expected_rows: int,
+    batch_size: int,
+    flight_host: str,
+    flight_port: int,
+    explicit_flush_every_rows: int | None,
+    explicit_geometry: AzureCliPaxGeometry | None,
 ) -> tuple[str, float, dict[int, int], list[dict], dict | None]:
-    _, dimension = count_fixed_records(base_path, 4)
+    _, dimension, _ = vector_source_geometry(base_path, base_format)
     response = request_json(
         server + "/api/v2/collections",
         method="POST",
@@ -1113,9 +1221,7 @@ def ingest(
             "distance_metric": "euclidean",
         },
     )
-    collection_id = str(
-        response.get("collection_id") or response.get("id") or ""
-    )
+    collection_id = str(response.get("collection_id") or response.get("id") or "")
     if not collection_id:
         raise RuntimeError(f"create response has no collection id: {response}")
     try:
@@ -1128,12 +1234,11 @@ def ingest(
     inserted = 0
     retry_status_counts: dict[int, int] = {}
     explicit_flushes = []
-    for batch in iter_fvec_batches(base_path, expected_rows, batch_size):
+    for batch in iter_vector_batches(base_path, base_format, expected_rows, batch_size):
         for attempt in range(8):
             try:
                 response = request_json(
-                    f"{server}/api/v2/collections/"
-                    f"{collection_id}/records/batch",
+                    f"{server}/api/v2/collections/{collection_id}/records/batch",
                     method="POST",
                     body={"records": batch},
                     timeout=300,
@@ -1146,7 +1251,7 @@ def ingest(
                 retry_status_counts[error.code] = (
                     retry_status_counts.get(error.code, 0) + 1
                 )
-                time.sleep(min(10, 0.25 * (2 ** attempt)))
+                time.sleep(min(10, 0.25 * (2**attempt)))
         inserted += len(batch)
         if (
             explicit_flush_every_rows is not None
@@ -1218,9 +1323,7 @@ def ingest(
     # to wait for. Requiring one caused a false 300-second timeout; racing the
     # automatic morsel also risked measuring redundant work rather than the
     # settled write path.
-    explicit_compaction = post_flush_compaction_observation(
-        explicit_flush_every_rows
-    )
+    explicit_compaction = post_flush_compaction_observation(explicit_flush_every_rows)
     elapsed = time.perf_counter() - started
     return (
         collection_id,
@@ -1233,9 +1336,7 @@ def ingest(
 
 def require_empty_directory(path: Path) -> None:
     if path.exists() and any(path.iterdir()):
-        raise RuntimeError(
-            f"{path} is not empty; use a fresh benchmark root"
-        )
+        raise RuntimeError(f"{path} is not empty; use a fresh benchmark root")
     path.mkdir(parents=True, exist_ok=True)
 
 
@@ -1249,9 +1350,14 @@ def require_groundtruth_scope(rows: int, groundtruth_scope: int) -> None:
         )
 
 
-def gate_failures(phase: str, result: dict, max_gets: float | None,
-                  min_recall: float, max_p50_ms: float | None,
-                  require_local_hit: bool) -> list[str]:
+def gate_failures(
+    phase: str,
+    result: dict,
+    max_gets: float | None,
+    min_recall: float,
+    max_p50_ms: float | None,
+    require_local_hit: bool,
+) -> list[str]:
     failures = []
     if max_gets is not None and result["gets_per_query"] > max_gets:
         failures.append(
@@ -1261,13 +1367,9 @@ def gate_failures(phase: str, result: dict, max_gets: float | None,
         failures.append(
             f"{phase}: recall {result['recall_at_k']:.4f} < {min_recall:.4f}"
         )
-    if (
-        max_p50_ms is not None
-        and result["latency_ms"]["p50"] > max_p50_ms
-    ):
+    if max_p50_ms is not None and result["latency_ms"]["p50"] > max_p50_ms:
         failures.append(
-            f"{phase}: p50 {result['latency_ms']['p50']:.2f}ms "
-            f"> {max_p50_ms:.2f}ms"
+            f"{phase}: p50 {result['latency_ms']['p50']:.2f}ms > {max_p50_ms:.2f}ms"
         )
     if require_local_hit and result["local_disk"]["hits"] <= 0:
         failures.append(f"{phase}: local-disk phase recorded zero local hits")
@@ -1302,12 +1404,37 @@ def main() -> int:
         default=Path(os.environ.get("SIFT_DIR", "/Users/vijaysingh/sift1m")),
     )
     parser.add_argument(
+        "--base-path",
+        type=Path,
+        help="base vectors; defaults to <sift-dir>/sift_base.fvecs",
+    )
+    parser.add_argument(
+        "--base-format",
+        choices=("fvecs", "u8bin"),
+        default="fvecs",
+    )
+    parser.add_argument(
+        "--query-path",
+        type=Path,
+        help="query vectors; defaults to <sift-dir>/sift_query.fvecs",
+    )
+    parser.add_argument(
+        "--query-format",
+        choices=("fvecs", "u8bin"),
+        default="fvecs",
+    )
+    parser.add_argument(
         "--groundtruth-path",
         type=Path,
         help=(
             "ivecs ground truth for exactly --rows corpus rows; defaults to "
             "<sift-dir>/sift_groundtruth.ivecs (the full base corpus)"
         ),
+    )
+    parser.add_argument(
+        "--groundtruth-format",
+        choices=("ivecs", "bigann-bin"),
+        default="ivecs",
     )
     parser.add_argument(
         "--groundtruth-scope-rows",
@@ -1426,10 +1553,12 @@ def main() -> int:
     if not binary.is_file():
         raise RuntimeError(f"release binary not found: {binary}")
     binary_text = str(binary)
-    if "/target/release/" not in binary_text and "/target/release-server/" not in binary_text:
+    if (
+        "/target/release/" not in binary_text
+        and "/target/release-server/" not in binary_text
+    ):
         raise RuntimeError(
-            "benchmark binary must come from target/release or "
-            "target/release-server"
+            "benchmark binary must come from target/release or target/release-server"
         )
     git_revision = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -1472,9 +1601,14 @@ def main() -> int:
             text=True,
         ).stdout.splitlines()
         unsafe_changes = [
-            path for path in changed_since_build
+            path
+            for path in changed_since_build
             if not path.startswith(("docs/", "scripts/"))
-            and path != "tests/python/test_sift_get_reduction_harness.py"
+            and path
+            not in {
+                "tests/python/test_sift_get_reduction_harness.py",
+                "tests/python/test_bigann_prefix_groundtruth.py",
+            }
         ]
         if unsafe_changes:
             raise RuntimeError(
@@ -1482,9 +1616,21 @@ def main() -> int:
                 f"{unsafe_changes}; rebuild the release binary"
             )
 
-    base_path = args.sift_dir / "sift_base.fvecs"
-    query_path = args.sift_dir / "sift_query.fvecs"
-    base_count, base_dimension = count_fixed_records(base_path, 4)
+    base_path = (
+        args.base_path.resolve()
+        if args.base_path is not None
+        else args.sift_dir / "sift_base.fvecs"
+    )
+    query_path = (
+        args.query_path.resolve()
+        if args.query_path is not None
+        else args.sift_dir / "sift_query.fvecs"
+    )
+    (
+        base_count,
+        base_dimension,
+        base_declared_rows,
+    ) = vector_source_geometry(base_path, args.base_format)
     groundtruth_path = (
         args.groundtruth_path.resolve()
         if args.groundtruth_path is not None
@@ -1500,8 +1646,14 @@ def main() -> int:
         else base_count
     )
     require_groundtruth_scope(args.rows, groundtruth_scope)
-    query_count, query_dimension = count_fixed_records(query_path, 4)
-    gt_count, _ = count_fixed_records(groundtruth_path, 4)
+    (
+        query_count,
+        query_dimension,
+        query_declared_rows,
+    ) = vector_source_geometry(query_path, args.query_format)
+    gt_count, truth_width = count_truth_records(
+        groundtruth_path, args.groundtruth_format
+    )
     if args.rows > base_count or base_dimension != 128:
         raise RuntimeError(
             f"invalid SIFT base: rows={base_count}, dim={base_dimension}"
@@ -1514,6 +1666,10 @@ def main() -> int:
         )
     if query_dimension != base_dimension:
         raise RuntimeError("base/query dimensions differ")
+    if args.top_k > truth_width:
+        raise RuntimeError(
+            f"top_k={args.top_k} exceeds ground-truth width {truth_width}"
+        )
 
     root = args.root.resolve()
     require_empty_directory(root)
@@ -1530,10 +1686,7 @@ def main() -> int:
     )
     if azure_geometry is not None:
         azure_geometry.require_empty_prefix()
-    if (
-        args.explicit_flush_every_rows is not None
-        and azure_geometry is None
-    ):
+    if args.explicit_flush_every_rows is not None and azure_geometry is None:
         raise RuntimeError(
             "--explicit-flush-every-rows requires Azure/Azurite storage so "
             "each durable PAX epoch can be proven by blob identity"
@@ -1552,11 +1705,7 @@ def main() -> int:
     backend_profile = (
         "azure_blob_azurite"
         if args.azurite
-        else (
-            "azure_blob"
-            if azure_geometry is not None
-            else "local_file"
-        )
+        else ("azure_blob" if azure_geometry is not None else "local_file")
     )
     filesystem_note = (
         "Azure backend and HTTP request-path evidence against Azurite. "
@@ -1596,9 +1745,15 @@ def main() -> int:
         },
         "dataset": {
             "base": str(base_path),
+            "base_format": args.base_format,
             "available_rows": base_count,
+            "base_declared_rows": base_declared_rows,
             "measured_rows": args.rows,
             "dimension": base_dimension,
+            "queries_path": str(query_path),
+            "query_format": args.query_format,
+            "query_available_rows": query_count,
+            "query_declared_rows": query_declared_rows,
             "query_count": args.queries,
             "phase_query_ranges": {
                 "post_write": [0, args.queries],
@@ -1606,7 +1761,9 @@ def main() -> int:
                 "object_cold": [args.queries * 2, args.queries * 3],
             },
             "groundtruth": str(groundtruth_path),
+            "groundtruth_format": args.groundtruth_format,
             "groundtruth_scope": groundtruth_scope,
+            "groundtruth_width": truth_width,
         },
         "filesystem_profile": {
             "segment_backend": backend_profile,
@@ -1675,6 +1832,7 @@ def main() -> int:
         ) = ingest(
             server_url,
             base_path,
+            args.base_format,
             args.rows,
             args.batch_size,
             "127.0.0.1",
@@ -1701,7 +1859,8 @@ def main() -> int:
             azure_geometry,
         )
         wrong_layouts = [
-            segment for segment in geometry["segments"]
+            segment
+            for segment in geometry["segments"]
             if segment["layout_version"] != args.require_layout_version
         ]
         if wrong_layouts:
@@ -1711,13 +1870,13 @@ def main() -> int:
             )
         if args.ivf_k is not None:
             wrong_cells = [
-                segment for segment in geometry["segments"]
+                segment
+                for segment in geometry["segments"]
                 if segment.get("coarse_cells") != args.ivf_k
             ]
             if wrong_cells:
                 raise RuntimeError(
-                    f"forced ivf_k={args.ivf_k} was not persisted: "
-                    f"{wrong_cells}"
+                    f"forced ivf_k={args.ivf_k} was not persisted: {wrong_cells}"
                 )
         result["settled_geometry"] = geometry
         post_write = run_query_sweep(
@@ -1729,16 +1888,20 @@ def main() -> int:
             args.queries,
             args.top_k,
             "post_write",
+            args.query_format,
+            args.groundtruth_format,
         )
         result["phases"]["post_write"] = post_write
-        failures.extend(gate_failures(
-            "post_write",
-            post_write,
-            args.post_write_max_gets,
-            args.min_recall,
-            args.max_p50_ms,
-            require_local_hit=False,
-        ))
+        failures.extend(
+            gate_failures(
+                "post_write",
+                post_write,
+                args.post_write_max_gets,
+                args.min_recall,
+                args.max_p50_ms,
+                require_local_hit=False,
+            )
+        )
         active.stop()
 
         active = OwnedServer(
@@ -1761,16 +1924,20 @@ def main() -> int:
             args.queries,
             args.top_k,
             "local_disk_warm",
+            args.query_format,
+            args.groundtruth_format,
         )
         result["phases"]["local_disk_warm"] = local_warm
-        failures.extend(gate_failures(
-            "local_disk_warm",
-            local_warm,
-            args.local_warm_max_gets,
-            args.min_recall,
-            args.local_warm_max_p50_ms,
-            require_local_hit=True,
-        ))
+        failures.extend(
+            gate_failures(
+                "local_disk_warm",
+                local_warm,
+                args.local_warm_max_gets,
+                args.min_recall,
+                args.local_warm_max_p50_ms,
+                require_local_hit=True,
+            )
+        )
         active.stop()
 
         active = OwnedServer(
@@ -1793,16 +1960,20 @@ def main() -> int:
             args.queries,
             args.top_k,
             "object_cold",
+            args.query_format,
+            args.groundtruth_format,
         )
         result["phases"]["object_cold"] = object_cold
-        failures.extend(gate_failures(
-            "object_cold",
-            object_cold,
-            args.object_cold_max_gets,
-            args.min_recall,
-            args.max_p50_ms,
-            require_local_hit=False,
-        ))
+        failures.extend(
+            gate_failures(
+                "object_cold",
+                object_cold,
+                args.object_cold_max_gets,
+                args.min_recall,
+                args.max_p50_ms,
+                require_local_hit=False,
+            )
+        )
         if attribution_failure := ivf_byte_attribution_failure(
             "object_cold", object_cold
         ):

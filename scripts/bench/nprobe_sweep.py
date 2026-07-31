@@ -63,9 +63,7 @@ def require_release_provenance(
     ):
         raise RuntimeError("matrix requires an optimized release binary")
     current_revision = git_output(repository, "rev-parse", "HEAD")
-    if git_output(
-        repository, "status", "--porcelain", "--untracked-files=normal"
-    ):
+    if git_output(repository, "status", "--porcelain", "--untracked-files=normal"):
         raise RuntimeError("matrix refuses a dirty worktree")
     subprocess.run(
         [
@@ -88,17 +86,18 @@ def require_release_provenance(
         path
         for path in changed
         if not path.startswith(("docs/", "scripts/"))
-        and path != "tests/python/test_sift_get_reduction_harness.py"
+        and path
+        not in {
+            "tests/python/test_sift_get_reduction_harness.py",
+            "tests/python/test_bigann_prefix_groundtruth.py",
+        }
     ]
     if unsafe:
         raise RuntimeError(
-            "binary source differs from executable source: "
-            f"{unsafe}; rebuild release"
+            f"binary source differs from executable source: {unsafe}; rebuild release"
         )
     return current_revision, (
-        "release-server"
-        if "/target/release-server/" in binary_text
-        else "release"
+        "release-server" if "/target/release-server/" in binary_text else "release"
     )
 
 
@@ -122,9 +121,7 @@ def validate_geometry(
         if segment["layout_version"] != layout_version
     ]
     if wrong_layouts:
-        raise RuntimeError(
-            f"matrix requires PAX v{layout_version}: {wrong_layouts}"
-        )
+        raise RuntimeError(f"matrix requires PAX v{layout_version}: {wrong_layouts}")
     if any(not segment.get("coarse_cells") for segment in geometry["segments"]):
         raise RuntimeError("every matrix segment must persist coarse cells")
 
@@ -139,7 +136,24 @@ def main() -> int:
     parser.add_argument("--collection-id", required=True)
     parser.add_argument("--storage-url", required=True)
     parser.add_argument("--sift-dir", type=Path, required=True)
+    parser.add_argument("--base-path", type=Path)
+    parser.add_argument(
+        "--base-format",
+        choices=("fvecs", "u8bin"),
+        default="fvecs",
+    )
+    parser.add_argument("--query-path", type=Path)
+    parser.add_argument(
+        "--query-format",
+        choices=("fvecs", "u8bin"),
+        default="fvecs",
+    )
     parser.add_argument("--groundtruth-path", type=Path, required=True)
+    parser.add_argument(
+        "--groundtruth-format",
+        choices=("ivecs", "bigann-bin"),
+        default="ivecs",
+    )
     parser.add_argument("--groundtruth-scope-rows", type=int, required=True)
     parser.add_argument("--rows", type=int, required=True)
     parser.add_argument("--nprobes", required=True)
@@ -160,17 +174,13 @@ def main() -> int:
     output = args.output.resolve()
     groundtruth_path = args.groundtruth_path.resolve()
     nprobes = comma_separated_ints(args.nprobes, "--nprobes")
-    top_k_values = comma_separated_ints(
-        args.top_k_values, "--top-k-values"
-    )
+    top_k_values = comma_separated_ints(args.top_k_values, "--top-k-values")
     if output.exists():
         raise RuntimeError(f"refusing to overwrite matrix result: {output}")
     if not config.is_file():
         raise RuntimeError(f"benchmark config not found: {config}")
     if args.groundtruth_scope_rows != args.rows:
-        raise RuntimeError(
-            "ground-truth scope must equal the measured corpus rows"
-        )
+        raise RuntimeError("ground-truth scope must equal the measured corpus rows")
     if args.queries <= 0 or args.query_start < 0:
         raise RuntimeError("query count must be positive and start non-negative")
     if not 0.0 < args.min_recall <= 1.0:
@@ -181,12 +191,28 @@ def main() -> int:
     current_revision, profile = require_release_provenance(
         repository, binary, args.binary_source_revision
     )
-    base_path = args.sift_dir.resolve() / "sift_base.fvecs"
-    query_path = args.sift_dir.resolve() / "sift_query.fvecs"
-    base_count, dimension = ACCEPTANCE.count_fixed_records(base_path, 4)
-    query_count, query_dimension = ACCEPTANCE.count_fixed_records(query_path, 4)
-    truth_count, truth_width = ACCEPTANCE.count_fixed_records(
-        groundtruth_path, 4
+    base_path = (
+        args.base_path.resolve()
+        if args.base_path is not None
+        else args.sift_dir.resolve() / "sift_base.fvecs"
+    )
+    query_path = (
+        args.query_path.resolve()
+        if args.query_path is not None
+        else args.sift_dir.resolve() / "sift_query.fvecs"
+    )
+    (
+        base_count,
+        dimension,
+        base_declared_rows,
+    ) = ACCEPTANCE.vector_source_geometry(base_path, args.base_format)
+    (
+        query_count,
+        query_dimension,
+        query_declared_rows,
+    ) = ACCEPTANCE.vector_source_geometry(query_path, args.query_format)
+    truth_count, truth_width = ACCEPTANCE.count_truth_records(
+        groundtruth_path, args.groundtruth_format
     )
     if args.rows > base_count or dimension != 128:
         raise RuntimeError(
@@ -213,9 +239,7 @@ def main() -> int:
         args.max_segments,
         args.required_layout_version,
     )
-    max_cells = max(
-        segment["coarse_cells"] for segment in geometry["segments"]
-    )
+    max_cells = max(segment["coarse_cells"] for segment in geometry["segments"])
     if max(nprobes) > max_cells:
         raise RuntimeError(
             f"nprobe={max(nprobes)} exceeds persisted max k_c={max_cells}"
@@ -233,10 +257,17 @@ def main() -> int:
         },
         "dataset": {
             "base": str(base_path),
+            "base_format": args.base_format,
             "corpus_rows": args.rows,
+            "base_available_rows": base_count,
+            "base_declared_rows": base_declared_rows,
             "dimension": dimension,
             "queries_path": str(query_path),
+            "query_format": args.query_format,
+            "query_available_rows": query_count,
+            "query_declared_rows": query_declared_rows,
             "groundtruth": str(groundtruth_path),
+            "groundtruth_format": args.groundtruth_format,
             "groundtruth_scope_rows": args.groundtruth_scope_rows,
             "groundtruth_width": truth_width,
             "query_range": [args.query_start, query_end],
@@ -288,17 +319,17 @@ def main() -> int:
                     args.queries,
                     top_k,
                     label,
+                    args.query_format,
+                    args.groundtruth_format,
                 )
             finally:
                 server.stop()
             expected_cells = sum(
-                min(nprobe, segment["coarse_cells"])
-                for segment in geometry["segments"]
+                min(nprobe, segment["coarse_cells"]) for segment in geometry["segments"]
             )
             point["nprobe"] = nprobe
             point["normalized_nprobe_by_segment"] = [
-                nprobe / segment["coarse_cells"]
-                for segment in geometry["segments"]
+                nprobe / segment["coarse_cells"] for segment in geometry["segments"]
             ]
             point["expected_cells_probed_per_query"] = expected_cells
             actual_cells = point["ivf"]["cells_probed_per_query"]

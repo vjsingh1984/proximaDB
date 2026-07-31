@@ -20,9 +20,7 @@ assert SPEC is not None and SPEC.loader is not None
 HARNESS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HARNESS)
 MATRIX_PATH = REPOSITORY_ROOT / "scripts" / "bench" / "nprobe_sweep.py"
-MATRIX_SPEC = importlib.util.spec_from_file_location(
-    "sift_nprobe_matrix", MATRIX_PATH
-)
+MATRIX_SPEC = importlib.util.spec_from_file_location("sift_nprobe_matrix", MATRIX_PATH)
 assert MATRIX_SPEC is not None and MATRIX_SPEC.loader is not None
 MATRIX = importlib.util.module_from_spec(MATRIX_SPEC)
 MATRIX_SPEC.loader.exec_module(MATRIX)
@@ -37,9 +35,7 @@ def test_matrix_contract_rejects_duplicate_probes_and_wrong_geometry() -> None:
             {
                 "row_count": 99,
                 "segment_count": 1,
-                "segments": [
-                    {"layout_version": 3, "coarse_cells": 4}
-                ],
+                "segments": [{"layout_version": 3, "coarse_cells": 4}],
             },
             rows=100,
             max_segments=1,
@@ -56,15 +52,83 @@ def test_object_cold_ivf_requires_physical_region_byte_attribution() -> None:
             "region_b_bytes": 0,
         },
     }
-    assert (
-        HARNESS.ivf_byte_attribution_failure("object_cold", result)
-        == (
-            "object_cold: IVF probe issued physical GETs but attributed zero "
-            "Region-A/B bytes"
-        )
+    assert HARNESS.ivf_byte_attribution_failure("object_cold", result) == (
+        "object_cold: IVF probe issued physical GETs but attributed zero "
+        "Region-A/B bytes"
     )
     result["ivf"]["region_b_bytes"] = 4096
     assert HARNESS.ivf_byte_attribution_failure("object_cold", result) is None
+
+
+def test_u8bin_prefix_uses_physical_rows_and_preserves_declared_rows(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "base-prefix.u8bin"
+    path.write_bytes(
+        struct.pack("<II", 1_000_000_000, 4)
+        + bytes(
+            [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+            ]
+        )
+    )
+
+    physical_rows, dimension, declared_rows = HARNESS.inspect_u8bin(path)
+
+    assert (physical_rows, dimension, declared_rows) == (
+        3,
+        4,
+        1_000_000_000,
+    )
+    assert HARNESS.read_vectors(path, "u8bin", 1, 2) == [
+        [5.0, 6.0, 7.0, 8.0],
+        [9.0, 10.0, 11.0, 12.0],
+    ]
+    assert list(HARNESS.iter_vector_batches(path, "u8bin", 3, 2)) == [
+        [
+            {"id": "v0", "vector": [1.0, 2.0, 3.0, 4.0]},
+            {"id": "v1", "vector": [5.0, 6.0, 7.0, 8.0]},
+        ],
+        [{"id": "v2", "vector": [9.0, 10.0, 11.0, 12.0]}],
+    ]
+
+
+def test_u8bin_rejects_partial_dense_row(tmp_path: Path) -> None:
+    path = tmp_path / "partial.u8bin"
+    path.write_bytes(struct.pack("<II", 3, 4) + bytes([1, 2, 3, 4, 5]))
+
+    with pytest.raises(RuntimeError, match="partial dense row"):
+        HARNESS.inspect_u8bin(path)
+
+
+def test_bigann_groundtruth_reads_id_matrix_before_distances(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "groundtruth.bin"
+    ids = (7, 3, 9, 4, 2, 8)
+    distances = (1.0, 2.0, 3.0, 0.5, 1.5, 2.5)
+    path.write_bytes(
+        struct.pack("<II", 2, 3)
+        + struct.pack("<6i", *ids)
+        + struct.pack("<6f", *distances)
+    )
+
+    assert HARNESS.count_truth_records(path, "bigann-bin") == (2, 3)
+    assert HARNESS.read_truth_ids(path, "bigann-bin", 0, 2) == [
+        [7, 3, 9],
+        [4, 2, 8],
+    ]
 
 
 def test_a0_geometry_reports_cell_shape_and_verifies_checksum() -> None:
@@ -74,7 +138,9 @@ def test_a0_geometry_reports_cell_shape_and_verifies_checksum() -> None:
     radii = [1.5, 0.0]
     encoded = bytearray(b"PXA0")
     encoded.extend(bytes([1, 0]))
-    encoded.extend(struct.pack("<HIIQQQ", components, len(rows), dimension, 7, 5, sum(rows)))
+    encoded.extend(
+        struct.pack("<HIIQQQ", components, len(rows), dimension, 7, 5, sum(rows))
+    )
     encoded.extend(struct.pack("<2f", 0.0, 0.0))
     encoded.extend(struct.pack("<2f", 1.0, 0.0))
     encoded.extend(struct.pack("<2f", 0.0, 2.0))
@@ -132,9 +198,7 @@ def test_azure_inventory_scopes_prefix_and_records_stable_identity(
         },
     ]
     completed = SimpleNamespace(stdout=json.dumps(payload))
-    geometry = HARNESS.AzureCliPaxGeometry(
-        "adls://benchmarks/run-1", tmp_path
-    )
+    geometry = HARNESS.AzureCliPaxGeometry("adls://benchmarks/run-1", tmp_path)
 
     with patch.object(HARNESS.subprocess, "run", return_value=completed) as run:
         inventory = geometry.inventory()
@@ -163,9 +227,7 @@ def test_azure_inventory_scopes_prefix_and_records_stable_identity(
 def test_azure_snapshot_rejects_paths_outside_evidence_root(
     tmp_path: Path, blob_name: str
 ) -> None:
-    geometry = HARNESS.AzureCliPaxGeometry(
-        "adls://benchmarks/run-1", tmp_path
-    )
+    geometry = HARNESS.AzureCliPaxGeometry("adls://benchmarks/run-1", tmp_path)
 
     with pytest.raises(RuntimeError, match="unsafe Azure blob name"):
         geometry._snapshot_target(blob_name)
@@ -223,9 +285,7 @@ def test_explicit_flush_uses_supported_flight_action() -> None:
         Action=FakeAction,
     )
 
-    response = HARNESS.force_flush_via_flight(
-        "127.0.0.1", 5692, "7", flight
-    )
+    response = HARNESS.force_flush_via_flight("127.0.0.1", 5692, "7", flight)
 
     assert response["success"] is True
     assert calls["location"] == ("127.0.0.1", 5692)
@@ -274,9 +334,7 @@ def test_explicit_compaction_uses_supported_flight_action() -> None:
         Action=FakeAction,
     )
 
-    response = HARNESS.compact_via_flight(
-        "127.0.0.1", 5690, "7", flight
-    )
+    response = HARNESS.compact_via_flight("127.0.0.1", 5690, "7", flight)
 
     assert response["success"] is True
     assert calls["location"] == ("127.0.0.1", 5690)
