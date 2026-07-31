@@ -128,6 +128,80 @@ impl CollectionPathResolver for ConfigFallbackResolver {
     }
 }
 
+/// Catalog-backed resolver: resolves a collection's base storage location from
+/// the **catalog** (the metadata authority), reusing the storage-layer
+/// `resolve_collection_from_catalog` (UUID→catalog scan) the WAL already uses.
+/// Returns `Err` when the collection isn't in the catalog or has no
+/// `storage_assignment`, so a `CompositeResolver` chain can fall through to a
+/// config default. This is the resolver that retires the `SstEngine`
+/// `get_collection_storage_url` placeholder — the catalog as the single source
+/// of truth for storage location. (No `CollectionService` dependency: the
+/// schema→assignment mapping `collection_from_catalog_schema` is storage-layer.)
+pub struct CatalogResolver;
+
+impl CatalogResolver {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for CatalogResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl CollectionPathResolver for CatalogResolver {
+    fn name(&self) -> &'static str {
+        "Catalog"
+    }
+
+    async fn resolve_base_location(&self, collection_id: &str) -> Result<String> {
+        let collection =
+            crate::storage::persistence::write_ahead_log::resolve_collection_from_catalog(
+                collection_id,
+            )
+            .await
+            .ok_or_else(|| {
+                anyhow::anyhow!("CatalogResolver: collection {collection_id} not found in catalog")
+            })?;
+        let base = collection
+            .storage_assignment
+            .as_ref()
+            .map(|a| a.base_location.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "CatalogResolver: collection {collection_id} has no storage_assignment"
+                )
+            })?;
+        // The catalog stores the base-location PREFIX (no collection_id); return
+        // the collection ROOT (prefix + collection_id), matching
+        // `ConfigFallbackResolver`'s contract — callers append `/data`, `/wal`, …
+        Ok(format!("{base}/{collection_id}"))
+    }
+
+    async fn resolve_storage_assignment(&self, collection_id: &str) -> Result<StorageAssignment> {
+        let base = self.resolve_base_location(collection_id).await?;
+        Ok(StorageAssignment {
+            primary_url: base,
+            weight: 1,
+            available: true,
+            replica_urls: Vec::new(),
+        })
+    }
+
+    async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
+        Ok(
+            crate::storage::persistence::write_ahead_log::resolve_collection_from_catalog(
+                collection_id,
+            )
+            .await
+            .is_some(),
+        )
+    }
+}
+
 /// Caching resolver wrapper (for performance)
 ///
 /// Caches resolved paths to avoid repeated metadata lookups.

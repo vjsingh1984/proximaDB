@@ -400,6 +400,14 @@ pub struct SstEngine {
         Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
     >,
 
+    /// DIP storage-URL resolver (optional). When set, `get_collection_storage_url`
+    /// resolves the collection's real `base_location` through it (catalog → config
+    /// fallback chain); the `/data/collections/{id}` placeholder is retired.
+    /// Mirrors the WAL's `path_resolver` + this struct's `freshness_lsn_source`.
+    /// Wired by `SharedServices::new`.
+    pub(crate) path_resolver:
+        Option<Arc<dyn crate::storage::trait_components::path_resolver::CollectionPathResolver>>,
+
     /// ADR-081 regression hook: rejected preflights must not reach the
     /// vector-proportional sort boundary.
     #[cfg(test)]
@@ -731,6 +739,7 @@ impl SstEngine {
             deletion_vector_store,
             tiering_integration: None,
             freshness_lsn_source: None,
+            path_resolver: None,
             #[cfg(test)]
             flush_sort_invocations: std::sync::atomic::AtomicU64::new(0),
         })
@@ -824,6 +833,18 @@ impl SstEngine {
         source: Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
     ) -> Self {
         self.freshness_lsn_source = Some(source);
+        self
+    }
+
+    /// Attach the catalog/config storage-URL resolver. When set,
+    /// `get_collection_storage_url` resolves the real `base_location` through it
+    /// (retiring the `/data/collections/{id}` placeholder). When unset, the
+    /// method default-constructs a `ConfigFallbackResolver`.
+    pub fn with_path_resolver(
+        mut self,
+        resolver: Arc<dyn crate::storage::trait_components::path_resolver::CollectionPathResolver>,
+    ) -> Self {
+        self.path_resolver = Some(resolver);
         self
     }
 
