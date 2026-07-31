@@ -537,8 +537,14 @@ impl MultiServer {
                 ))
                 .layer(tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator.clone().map(|sc| {
+                        let stable_id_resolver =
+                            Arc::new(crate::security::CatalogTenantStableIdResolver::new(
+                                self.shared_services.catalog_manager.clone(),
+                            ))
+                                as Arc<dyn proximadb_tenant::TenantStableIdResolver>;
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
+                            .with_stable_id_resolver(stable_id_resolver)
                     })
                 } else {
                     None
@@ -1157,8 +1163,14 @@ impl MultiServer {
                 ))
                 .layer(tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator.clone().map(|sc| {
+                        let stable_id_resolver =
+                            Arc::new(crate::security::CatalogTenantStableIdResolver::new(
+                                self.shared_services.catalog_manager.clone(),
+                            ))
+                                as Arc<dyn proximadb_tenant::TenantStableIdResolver>;
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
+                            .with_stable_id_resolver(stable_id_resolver)
                     })
                 } else {
                     None
@@ -1525,8 +1537,14 @@ impl MultiServer {
                 ))
                 .layer(tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator.clone().map(|sc| {
+                        let stable_id_resolver =
+                            Arc::new(crate::security::CatalogTenantStableIdResolver::new(
+                                self.shared_services.catalog_manager.clone(),
+                            ))
+                                as Arc<dyn proximadb_tenant::TenantStableIdResolver>;
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
+                            .with_stable_id_resolver(stable_id_resolver)
                     })
                 } else {
                     None

@@ -82,12 +82,21 @@ pub struct GrpcAuthContext {
     /// credential binding, an accepted `x-tenant-id` assertion, or a
     /// permitted gateway delegation. `None` = no tenant asserted or bound.
     pub resolved_tenant: Option<String>,
+    /// TD-TENANT-1 item 3: the tenant's ADR-0083 stable u64 id (the account u32
+    /// widened) — the ABAC binding-filter key. Stamped from `resolved_tenant`
+    /// via the wired `TenantStableIdResolver`; `None` when no resolver is wired,
+    /// no tenant resolved, or the tenant is unminted (fail-closed deny).
+    pub tenant_stable_id: Option<u64>,
 }
 
 #[derive(Clone)]
 pub struct GrpcAuthLayer {
     security_coordinator: Arc<SecurityCoordinator>,
     header_trust: HeaderTrustPolicy,
+    /// TD-TENANT-1 item 3: resolver that stamps `tenant_stable_id` on each
+    /// request's `GrpcAuthContext` for ABAC. `None` when no catalog resolver is
+    /// wired (gRPC ABAC inert — the same default REST had before PR1).
+    stable_id_resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
 }
 
 impl GrpcAuthLayer {
@@ -95,12 +104,23 @@ impl GrpcAuthLayer {
         Self {
             security_coordinator,
             header_trust: HeaderTrustPolicy::default(),
+            stable_id_resolver: None,
         }
     }
 
     /// Set the deployment's bare `x-tenant-id` trust policy (TD-TENANT-1).
     pub fn with_header_trust(mut self, header_trust: HeaderTrustPolicy) -> Self {
         self.header_trust = header_trust;
+        self
+    }
+
+    /// TD-TENANT-1 item 3: wire the tenant-stable-id resolver so each request's
+    /// `GrpcAuthContext` carries `tenant_stable_id` for ABAC enforcement.
+    pub fn with_stable_id_resolver(
+        mut self,
+        resolver: Arc<dyn proximadb_tenant::TenantStableIdResolver>,
+    ) -> Self {
+        self.stable_id_resolver = Some(resolver);
         self
     }
 }
@@ -110,6 +130,7 @@ pub struct GrpcAuthService<S> {
     inner: S,
     security_coordinator: Arc<SecurityCoordinator>,
     header_trust: HeaderTrustPolicy,
+    stable_id_resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
 }
 
 impl<S> Layer<S> for GrpcAuthLayer {
@@ -120,6 +141,7 @@ impl<S> Layer<S> for GrpcAuthLayer {
             inner,
             security_coordinator: self.security_coordinator.clone(),
             header_trust: self.header_trust,
+            stable_id_resolver: self.stable_id_resolver.clone(),
         }
     }
 }
@@ -147,9 +169,16 @@ where
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
         let header_trust = self.header_trust;
+        let stable_id_resolver = self.stable_id_resolver.clone();
 
         Box::pin(async move {
-            match authenticate_http_request(&security_coordinator, &mut request, header_trust).await
+            match authenticate_http_request(
+                &security_coordinator,
+                &mut request,
+                header_trust,
+                stable_id_resolver,
+            )
+            .await
             {
                 Ok(()) => inner.call(request).await,
                 Err(status) => Ok(status_to_http_response(status)),
@@ -162,6 +191,7 @@ pub async fn authenticate_http_request<B>(
     security_coordinator: &SecurityCoordinator,
     request: &mut HttpRequest<B>,
     header_trust: HeaderTrustPolicy,
+    stable_id_resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
 ) -> Result<(), Status> {
     let path = request.uri().path();
     if is_arrow_flight_path(path) {
@@ -233,10 +263,18 @@ pub async fn authenticate_http_request<B>(
         .map(|s| s.to_string());
     let tenant_for_tier = user_context.tenant_id.clone();
 
+    // TD-TENANT-1 item 3: resolve the tenant's stable u64 id (the account u32
+    // widened) for ABAC. None when no resolver is wired, no tenant resolved, or
+    // the tenant is unminted (fail-closed deny).
+    let tenant_stable_id = resolved_tenant
+        .as_deref()
+        .and_then(|t| stable_id_resolver.as_ref().and_then(|r| r.stable_id_of(t)));
+
     request.extensions_mut().insert(GrpcAuthContext {
         user_context,
         capability,
         resolved_tenant,
+        tenant_stable_id,
     });
 
     if let (Some(tenant), Some(tier)) = (tenant_for_tier, tier_claim) {
@@ -299,6 +337,17 @@ pub fn user_id<T>(request: &Request<T>) -> Option<String> {
         .get::<GrpcAuthContext>()
         .map(|context| context.user_context.user_id.clone())
         .filter(|id| !id.is_empty())
+}
+
+/// TD-TENANT-1 item 3: the request's tenant stable u64 id (the ABAC binding-
+/// filter key), stamped by the gRPC auth layer from the resolved tenant via the
+/// wired `TenantStableIdResolver`. `None` when no resolver is wired, no tenant
+/// is resolved, or the tenant is unminted (fail-closed deny).
+pub fn tenant_stable_id<T>(request: &Request<T>) -> Option<u64> {
+    request
+        .extensions()
+        .get::<GrpcAuthContext>()
+        .and_then(|context| context.tenant_stable_id)
 }
 
 pub fn enforce_data_plane_request<T>(
@@ -667,9 +716,14 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
-            .await
-            .expect("valid gRPC capability should authenticate");
+        authenticate_http_request(
+            &coordinator().await,
+            &mut request,
+            HeaderTrustPolicy::Open,
+            None,
+        )
+        .await
+        .expect("valid gRPC capability should authenticate");
 
         let context = request
             .extensions()
@@ -695,10 +749,14 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        let status =
-            authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
-                .await
-                .expect_err("REST capability must not authorize generic gRPC");
+        let status = authenticate_http_request(
+            &coordinator().await,
+            &mut request,
+            HeaderTrustPolicy::Open,
+            None,
+        )
+        .await
+        .expect_err("REST capability must not authorize generic gRPC");
         assert_eq!(status.code(), Code::PermissionDenied);
     }
 
@@ -712,10 +770,14 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        let status =
-            authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
-                .await
-                .expect_err("capability must not authorize catalog methods");
+        let status = authenticate_http_request(
+            &coordinator().await,
+            &mut request,
+            HeaderTrustPolicy::Open,
+            None,
+        )
+        .await
+        .expect_err("capability must not authorize catalog methods");
         assert_eq!(status.code(), Code::PermissionDenied);
     }
 
@@ -781,9 +843,14 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
-            .await
-            .expect("Flight service performs its own auth");
+        authenticate_http_request(
+            &coordinator().await,
+            &mut request,
+            HeaderTrustPolicy::Open,
+            None,
+        )
+        .await
+        .expect("Flight service performs its own auth");
         assert!(request.extensions().get::<GrpcAuthContext>().is_none());
     }
 
@@ -797,10 +864,14 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        let status =
-            authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
-                .await
-                .expect_err("tenant header mismatch must fail");
+        let status = authenticate_http_request(
+            &coordinator().await,
+            &mut request,
+            HeaderTrustPolicy::Open,
+            None,
+        )
+        .await
+        .expect_err("tenant header mismatch must fail");
         assert_eq!(status.code(), Code::PermissionDenied);
     }
 
@@ -830,9 +901,14 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
-            .await
-            .expect("normal JWT should authenticate");
+        authenticate_http_request(
+            &coordinator().await,
+            &mut request,
+            HeaderTrustPolicy::Open,
+            None,
+        )
+        .await
+        .expect("normal JWT should authenticate");
         assert!(
             request
                 .extensions()
@@ -877,10 +953,14 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        let status =
-            authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
-                .await
-                .expect_err("normal-JWT tenant metadata mismatch must fail");
+        let status = authenticate_http_request(
+            &coordinator().await,
+            &mut request,
+            HeaderTrustPolicy::Open,
+            None,
+        )
+        .await
+        .expect_err("normal-JWT tenant metadata mismatch must fail");
         assert_eq!(status.code(), Code::PermissionDenied);
     }
 
@@ -904,6 +984,7 @@ mod tests {
             &coordinator().await,
             &mut open_request,
             HeaderTrustPolicy::Open,
+            None,
         )
         .await
         .expect("open policy accepts the assertion");
@@ -920,6 +1001,7 @@ mod tests {
             &coordinator().await,
             &mut strict_request,
             HeaderTrustPolicy::AuthenticatedOnly,
+            None,
         )
         .await
         .expect_err("strict policy rejects the unbound assertion");
