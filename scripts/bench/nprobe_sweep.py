@@ -285,6 +285,7 @@ def main() -> int:
                 "snapshot reads are out of process and excluded from counters."
             ),
         },
+        "compute_profile": ACCEPTANCE.compute_profile(),
         "settled_geometry": geometry,
         "matrix": {
             "nprobes": nprobes,
