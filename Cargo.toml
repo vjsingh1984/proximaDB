@@ -1000,6 +1000,29 @@ overflow-checks = true
 incremental = true
 split-debuginfo = "unpacked"
 
+# dev-fast — opt-in fast-iteration lane (L2 / TD-DECOMP-1 follow-up). The default
+# dev/test/release profiles are UNCHANGED; release remains the perf authority.
+# Use for a quick `cargo check`/test loop where you don't want to pay the dep
+# opt-level=2/3 tax that dev/test carry:
+#   cargo check --profile dev-fast      (alias: cargo check-dev-fast)
+# Trade-off: dev-fast artifacts are NOT shared with the `test` profile (dev==test
+# opt-level is the artifact-reuse invariant — see the dev/test blocks above), so
+# toggling between dev/test and dev-fast recompiles. Acceptable for a fast lane.
+# Behavior-neutral: no runtime code path selects this profile.
+[profile.dev-fast]
+inherits = "dev"
+[profile.dev-fast.package."*"]
+# Broad deps at -O1 instead of dev's -O2. Profile `inherits` DOES carry the base
+# profile's per-package override tables, and a more-specific match wins over this
+# wildcard — so the four arrow-family crates (arrow/parquet/arrow-array/arrow-buffer,
+# pinned to -O3 in [profile.dev.package.*] above) STAY at -O3 under dev-fast; every
+# OTHER dep (the datafusion stack, tokio, serde, …) drops -O2 → -O1, and workspace
+# code stays at the inherited dev top-level opt-level=0. Verified empirically:
+# `cargo check --profile dev-fast -p arrow-buffer -v` emits `-C opt-level=3` for
+# arrow-buffer while generic deps emit `-C opt-level=1`. The build-time lever is the
+# broad -O1 dep mass (NOT arrow/parquet); see the PR body for the measured delta.
+opt-level = 1
+
 # Benchmark configuration - Organized by functional categories
 
 # 1. COMPUTE & DISTANCE BENCHMARKS (01-03)
