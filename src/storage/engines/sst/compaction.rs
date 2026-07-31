@@ -185,6 +185,10 @@ pub struct SstCompactionTask {
     /// higher-level work after this morsel publishes. Paths and collection
     /// aliases are not authoritative identity sources.
     pub collection_object_id: crate::core::stable_id::CollectionObjectId,
+    /// Composite identity (ADR-0083 rev2) for observability — which tenant/ns/coll
+    /// this task compacts. The compaction active-map is path-keyed (not u64-keyed),
+    /// so this is diagnostic, not a key.
+    pub collection_identity: crate::core::stable_id::CollectionIdentity,
     pub level: u8,
     pub input_files: Vec<PathBuf>,
     pub output_file: PathBuf,
@@ -803,11 +807,12 @@ impl Compaction {
     pub async fn enqueue_due_compaction(
         &self,
         collection_object_id: crate::core::stable_id::CollectionObjectId,
+        collection_identity: crate::core::stable_id::CollectionIdentity,
         collection_dir: &Path,
         l0_threshold: usize,
         precision_hint: Option<proximadb_records::EmbeddingScalarType>,
     ) -> Result<bool> {
-        let Some(task) = self
+        let Some(mut task) = self
             .check_compaction_needed(
                 collection_object_id,
                 collection_dir,
@@ -818,6 +823,7 @@ impl Compaction {
         else {
             return Ok(false);
         };
+        task.collection_identity = collection_identity;
         // TD-COMPACT-6 D1: the worker clears the shared training_in_flight guard
         // for this collection on completion. It derives the collection dir from
         // `task.output_file.parent()` (the output is always generated under the
@@ -922,6 +928,7 @@ impl Compaction {
 
             return Ok(Some(SstCompactionTask {
                 collection_object_id,
+                collection_identity: crate::core::stable_id::CollectionIdentity::default(),
                 level: task.level as u8,
                 input_files,
                 output_file,

@@ -28,6 +28,7 @@ async fn test_compaction_task_scheduling() {
 
     let task = CompactionTask {
         collection_object_id: 1,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         input_files: vec![],
         output_file: PathBuf::from("/tmp/output.db"),
@@ -51,6 +52,7 @@ async fn td_compact6_schedule_dedups_same_output_at_enqueue() {
     // No start_workers → task is never consumed; queue + active reflect enqueue.
     let mk_task = || CompactionTask {
         collection_object_id: 1,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         input_files: vec![PathBuf::from("/nonexistent/proxima_d1_test/input.pax")],
         output_file: PathBuf::from("/nonexistent/proxima_d1_test/compacted_L1.pax"),
@@ -86,6 +88,7 @@ async fn compaction_morsel_admission_rejects_overlapping_inputs() {
     ));
     let task = |segment_id: crate::core::stable_id::SegmentId| CompactionTask {
         collection_object_id: 1,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 1,
         input_files: vec![input.clone()],
         output_file: PathBuf::from(format!(
@@ -135,6 +138,7 @@ async fn td_compact6_worker_clears_training_in_flight_after_completion() {
 
     let task = CompactionTask {
         collection_object_id: 1,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         // Nonexistent input → the worker's perform_compaction errors, but it
         // STILL runs release_task_state (the post-match cleanup), which is the
@@ -244,6 +248,7 @@ async fn test_sst_compaction_expired_deletion_unit() -> anyhow::Result<()> {
     // Create compaction task
     let _task = CompactionTask {
         collection_object_id: 1,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         input_files: vec![input_file],
         output_file: output_file.clone(),

@@ -99,6 +99,34 @@ impl FlushParameters {
             .unwrap_or_else(|_| stable_collection_handle(&collection_id)))
     }
 
+    /// Resolve the composite `CollectionIdentity` from the cached config's
+    /// `StorageAssignment` typed triple (ADR-0083 rev2 D3 — always minted).
+    /// Returns `CollectionIdentity::default()` (all-zeros) when the typed
+    /// triple is absent (legacy/pre-migration — should not happen post-Phase 1
+    /// always-mint, but safe).
+    pub fn get_collection_identity(&self) -> proximadb_kernel::stable_id::CollectionIdentity {
+        self.collection_config
+            .as_ref()
+            .and_then(|cc| cc.storage_assignment.as_ref())
+            .and_then(|sa| {
+                match (
+                    sa.typed_account_id,
+                    sa.typed_namespace_id,
+                    sa.typed_collection_id,
+                ) {
+                    (Some(a), Some(ns), Some(c)) => {
+                        Some(proximadb_kernel::stable_id::CollectionIdentity {
+                            account_id: a,
+                            namespace_id: ns as u16,
+                            collection_id: c,
+                        })
+                    }
+                    _ => None,
+                }
+            })
+            .unwrap_or_default()
+    }
+
     /// Resolve the collection data directory from cached config or an engine hint.
     pub fn get_data_dir(&self) -> Result<String> {
         if let Some(collection_config) = &self.collection_config

@@ -193,6 +193,7 @@ impl UnifiedStorageFormat for SstEngine {
         let enqueued = compaction
             .enqueue_due_compaction(
                 collection_object_id,
+                crate::core::stable_id::CollectionIdentity::default(),
                 std::path::Path::new(&collection_dir),
                 l0_threshold,
                 precision_hint,
