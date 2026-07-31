@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Landing (delivered by this slice)
+| Status | Landed (PR #1344). Build/CI-acceleration follow-up levers (L2/D4/D5) landed in PR #1360.
 | Severity | Low — build/dev-loop only; zero runtime, API, or on-disk-format impact
 | Component | `crates/storage/proximadb-storage-common` (`segment_layout`, `pax_block`); root `src/storage/engines/sst/segment_format.rs`
 | Relates to | `roadmap/techdebt/P2_GOD_CRATE_TEST_DECOMPOSITION.md` (god-crate decomposition); the build/CI-shape effort (D1 evidence: root monolith = 850K LOC, filtered root-lib test = 13.45 min / 26.68 GB peak)
@@ -61,6 +61,26 @@ dependency on the root crate (verified) — so no cycle is possible.
   observability, metrics, `block_cluster`, `survivor_range_cache`,
   `sst_query_engine`, `search`); needs several injected traits, so it is a later
   slice once this read/detection seam is established.
-* The complementary compile-time levers (dev/test dep `opt-level` tax, RAM-derived
-  CI job parallelism, touched-crate fast lane) and the embedded/on-prem/cloud
-  deployment-shape documentation are tracked separately under the build/CI-shape effort.
+* The complementary compile-time levers and deployment-shape validation landed in
+  PR #1360 (behavior-neutral; design doc `BUILD_CI_ACCELERATION_2026_07_31`).
+  Measured evidence (quiet machine):
++
+--
+** *L2* — opt-in `[profile.dev-fast]` (inherits `dev`; broad deps `-O2→-O1`, alias
+   `cargo check-dev-fast`). Cold `cargo test --lib … --no-run` (sccache OFF,
+   `jobs=3`): default dev **1245s** vs dev-fast **1069s** → **−176s (~14%)**.
+   Profile `inherits` carries the base profile's per-package overrides, so the
+   arrow-family crates (arrow/parquet/arrow-array/arrow-buffer, pinned `-O3`) STAY
+   at `-O3`; only the broad dep mass drops to `-O1`; workspace code stays at `-O0`
+   (verified: `cargo check --profile dev-fast -p arrow-buffer -v` → `-C opt-level=3`).
+   The win is on cold/CI builds — in the sccache-warm hot loop deps are cached and
+   the `-O0` root recompile dominates.
+** *D4* — advisory `rust-affected-fast` CI lane (`continue-on-error: true`, NOT in
+   `ci-success.needs` → can never block a merge): `cargo nextest run --lib` only on
+   crates touched vs `origin/develop` (`scripts/affected_crates.py`), skipping the
+   root monolith (redundant with `rust-test` + the #920 OOM risk). Seconds-scale
+   feedback for leaf edits; value grows as more logic moves DOWN.
+** *D5* — deployment-shape validation (confirmatory; CI's feature-matrix covers it):
+   on-prem / cloud (`cloud-full,otlp-metering`) / no-axis (default minus `axis`) /
+   embedded (`--no-default-features`) all `cargo check` clean.
+--
