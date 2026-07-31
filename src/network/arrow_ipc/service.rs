@@ -40,7 +40,7 @@ use crate::services::operations::{
 };
 use chrono::Utc;
 
-use super::codec::{ArrowProtoCodec, FlightWriteOperation, WriteMode};
+use super::codec::{ArrowProtoCodec, FlightSearchTicket, FlightWriteOperation, WriteMode};
 use super::file_export::{
     ArrowFileExportHandler, ArrowFileRequest, ArrowFileTicket, FlightCompression,
 };
@@ -1179,6 +1179,48 @@ impl ProximaFlightService {
 
         Ok(vec![batch])
     }
+
+    /// Canonical v2 vector search (TD-FLIGHT-1). Routes through the
+    /// `RecordSearchPort` — the same `RecordOpsService::handle_record_search_for_tenant`
+    /// authority REST v2 and gRPC v2 use — so Flight inherits typed filters,
+    /// WAL delta-merge, MVCC/tombstone filtering, Strong-freshness cache
+    /// behavior, and the tenant-collection-access check. Wrapped in the same
+    /// query-scoped I/O-trace boundary as REST v2 (route
+    /// `arrow_flight.v2.records.search`) so object GETs/bytes stay attributable
+    /// per query. Flight has no tenant-stable-id resolver yet, so the stable id
+    /// is `None` (matches the `instrument()` fallback).
+    async fn handle_v2_search(
+        &self,
+        ticket: FlightSearchTicket,
+        tenant_id: &str,
+    ) -> Result<Vec<arrow_array::RecordBatch>> {
+        let include_vector = ticket.include_vector;
+        let request = ticket.to_rich_request()?;
+        debug!(
+            collection_id = %request.collection_id,
+            top_k = request.top_k,
+            include_vector,
+            "Arrow Flight canonical v2 vector search"
+        );
+
+        let response = crate::observability::io_trace::instrument_with_stable_tenant(
+            Some(tenant_id.to_string()),
+            None,
+            "arrow_flight.v2.records.search",
+            crate::observability::predicate_diagnostics::scope(async {
+                self.record_search_port
+                    .search_record(request, Some(tenant_id))
+                    .await
+            }),
+        )
+        .await?;
+
+        // Always emit one batch of the canonical v2 schema — even when empty
+        // (acceptance: empty results / optional vectors must not panic).
+        let batch =
+            ArrowProtoCodec::rich_search_results_to_batch(&response.results, include_vector)?;
+        Ok(vec![batch])
+    }
 }
 
 #[tonic::async_trait]
@@ -1480,41 +1522,51 @@ impl FlightService for ProximaFlightService {
             return Ok(TonicResponse::new(stream));
         }
 
-        // Otherwise, handle as vector search request
-        let search_request = ArrowProtoCodec::ticket_to_search_request(&ticket).map_err(|e| {
-            TonicStatus::invalid_argument(format!("Failed to parse search request: {}", e))
-        })?;
-        Self::validate_flight_search_capability(
-            auth_context.capability.as_ref(),
-            &search_request.collection_id,
-        )?;
+        // Canonical v2 vector search (TD-FLIGHT-1): a self-describing JSON
+        // ticket discriminated by "type":"vector_search". This replaces the
+        // deprecated v1 `VectorSearchRequest` fallback — Flight search now runs
+        // the same canonical search authority (RecordSearchPort) as REST v2 /
+        // gRPC v2, with full-fidelity props and the tenant-collection-access
+        // check.
+        if let Some(search_ticket) = FlightSearchTicket::from_ticket(&ticket) {
+            Self::validate_flight_search_capability(
+                auth_context.capability.as_ref(),
+                &search_ticket.collection_id,
+            )?;
 
-        // Execute search
-        let batches = self
-            .handle_vector_search(search_request, &auth_context.tenant_id)
-            .await
-            .map_err(|e| TonicStatus::internal(format!("Search failed: {}", e)))?;
+            let batches = self
+                .handle_v2_search(search_ticket, &auth_context.tenant_id)
+                .await
+                .map_err(|e| TonicStatus::internal(format!("Search failed: {}", e)))?;
 
-        // Egress-aware shaping (co-design D2): for a chargeable (far) client, encode
-        // the result batches with ZSTD — a lossless byte-minimization the Arrow
-        // reader decompresses transparently. Near/free clients stay uncompressed
-        // (save CPU). Then meter the ACTUAL encoded bytes so the bill reflects the
-        // compressed egress that really left.
-        let compression = if edge.shape_policy().compress {
-            FlightCompression::Zstd.to_arrow_compression()
-        } else {
-            None
-        };
-        let flight_data =
-            ArrowProtoCodec::batches_to_flight_data_with_compression(&batches, compression)
-                .map_err(|e| TonicStatus::internal(format!("Failed to encode batches: {}", e)))?;
-        edge.record_result_egress(
-            Some(auth_context.tenant_id.as_str()),
-            flight_data_wire_bytes(&flight_data),
-        );
-        let stream = stream::iter(flight_data.into_iter().map(Ok));
+            // Egress-aware shaping (co-design D2): for a chargeable (far)
+            // client, encode the result batches with ZSTD — a lossless
+            // byte-minimization the Arrow reader decompresses transparently.
+            // Near/free clients stay uncompressed (save CPU). Then meter the
+            // ACTUAL encoded bytes so the bill reflects the compressed egress.
+            let compression = if edge.shape_policy().compress {
+                FlightCompression::Zstd.to_arrow_compression()
+            } else {
+                None
+            };
+            let flight_data =
+                ArrowProtoCodec::batches_to_flight_data_with_compression(&batches, compression)
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to encode batches: {}", e))
+                    })?;
+            edge.record_result_egress(
+                Some(auth_context.tenant_id.as_str()),
+                flight_data_wire_bytes(&flight_data),
+            );
+            let stream = stream::iter(flight_data.into_iter().map(Ok));
+            return Ok(TonicResponse::new(Box::pin(stream)));
+        }
 
-        Ok(TonicResponse::new(Box::pin(stream)))
+        // Unknown ticket shape — no longer silently coerced into v1 search.
+        Err(TonicStatus::invalid_argument(
+            "Unrecognized Flight DoGet ticket: expected an arrow_file, graph, \
+             or vector_search (type:\"vector_search\") ticket",
+        ))
     }
 
     async fn do_put(
