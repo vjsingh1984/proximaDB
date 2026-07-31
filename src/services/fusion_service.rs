@@ -450,6 +450,12 @@ pub struct GraphFusionParams {
     /// `{tenant}/{graph_id}` (via `scoped_graph_id`) so reads + canonical oids match the graph write
     /// path. `None`/default tenant ⇒ bare graph_id + unscoped vector read (TD-ENTITY-TENANT-1).
     pub tenant: Option<String>,
+    /// FA-2 PR-D3: the request's STABLE tenant id — the ABAC binding-filter key
+    /// (`b.tenant_stable_id == tenant_stable_id`). Populated by the network layer
+    /// from the resolved identity (REST: `MiddlewareTenantContext.tenant_stable_id`).
+    /// `None` ⇒ no per-record ABAC enforcement (structural isolation only) — the
+    /// default for paths that haven't resolved a stable id (gRPC, embedded).
+    pub tenant_stable_id: Option<u64>,
 }
 
 /// Orchestrates the graph instance of the fusion seam over the live vector + graph engines.
@@ -520,10 +526,33 @@ impl FusionService {
         let limit = params.limit;
 
         #[cfg(feature = "abac-policy")]
-        let read_ctx = proximadb_abac::ReadContext::system(
-            proximadb_abac::SystemReadReason::Statistics,
-            "fusion_service [CLIENT-PLACEHOLDER]",
-        );
+        let read_ctx = match (&params.principal, params.tenant_stable_id) {
+            (Some(subject), Some(tenant_stable_id)) => {
+                match self
+                    .vector
+                    .resolve_vector_read_context(
+                        &proximadb_catalog::fc_metamodel::SubjectId(subject.clone()),
+                        tenant_stable_id,
+                        &collection,
+                    )
+                    .await
+                {
+                    Some(Ok(ctx)) => proximadb_abac::ReadContext::Client(ctx),
+                    Some(Err(_)) => {
+                        // Fail-closed: a denied subject gets an empty fusion result.
+                        return Ok((Vec::new(), FusionStats::default(), HashMap::new()));
+                    }
+                    None => proximadb_abac::ReadContext::system(
+                        proximadb_abac::SystemReadReason::Statistics,
+                        "fusion_service (no abac enforcer)",
+                    ),
+                }
+            }
+            _ => proximadb_abac::ReadContext::system(
+                proximadb_abac::SystemReadReason::Statistics,
+                "fusion_service (no client subject)",
+            ),
+        };
         let mut hits = retry_vector_search(
             &collection,
             || {

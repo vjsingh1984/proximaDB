@@ -383,6 +383,7 @@ impl EntityOrchestrator {
                 vector_collection: collection.to_string(),
                 // Structural tenant boundary — scopes BOTH fusion legs (clean names in, TD-ENTITY-TENANT-1).
                 tenant: Some(tenant.to_string()),
+                tenant_stable_id: None, // FA-2 PR-D3: internal path — no client subject
                 query_vector,
                 // TD-146 scope B: graph-augmented entity fusion. `EntityNode` keying normalizes
                 // the auxiliary vector oid + canonical graph oid to the entity `node_id` so the

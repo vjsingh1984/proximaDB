@@ -109,6 +109,9 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
             graph_id: req.graph_id.clone(),
             // Structural tenant boundary — scopes both fusion legs (TD-ENTITY-TENANT-1).
             tenant: Some(tenant_id.clone()),
+            // FA-2 PR-D3: gRPC tenant_stable_id wiring deferred (resolver not on
+            // the gRPC auth layer) ⇒ None ⇒ no per-record ABAC here yet.
+            tenant_stable_id: None,
             vector_collection: req.vector_collection.clone(),
             query_vector: req.query_vector.clone(),
             max_depth: if req.max_depth == 0 {

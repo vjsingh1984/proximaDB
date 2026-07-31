@@ -206,3 +206,61 @@ async fn system_context_does_not_filter() {
         "a System context must not filter — both records expected; got {ids:?}"
     );
 }
+
+/// FA-2 PR-D3: the centralized vector resolver (`resolve_vector_read_context`)
+/// resolves the collection and builds the `Target` the enforcer matches. An
+/// admitted subject ⇒ `Some(Ok(ctx))`; an unbound subject ⇒ `Some(Err(_))`
+/// (deny — the caller fail-closes). Uses a namespace-scoped binding (matches the
+/// resolver's `Target.namespace = 0`) so the assertion is independent of the
+/// collection's generated object id.
+#[tokio::test]
+async fn resolve_vector_read_context_admits_and_denies() {
+    let env = UnifiedTestEnvironment::new().await.expect("test env");
+    let mut authority = InMemoryAttributeAuthority::new();
+    authority.upsert(
+        proximadb_abac::AttributeBinding::new("alice", TENANT)
+            .with_attr("dept", AttrValue::Str("eng".into())),
+    );
+    let bindings = vec![PolicyBinding {
+        object_id: 1,
+        tenant_stable_id: TENANT,
+        scope: Scope::Namespace(0),
+        effect: Effect::Permit,
+        predicate_ref: None,
+        field_mask: None,
+    }];
+    let enforcer = Arc::new(
+        AbacEnforcer::new(
+            Box::new(authority),
+            Box::new(InMemoryPredicateObjectStore::new()),
+            Box::new(InMemoryPolicyEpochs::new()),
+        )
+        .with_bindings(bindings),
+    );
+    let (svc, collections) = env
+        .vector_operations_service_with_abac(enforcer)
+        .await
+        .expect("vector service with abac");
+    UnifiedTestEnvironment::create_vector_collection(&collections, COLLECTION, DIM)
+        .await
+        .expect("create collection");
+
+    // alice (binding present) ⇒ admitted: the resolver found the collection and
+    // built a Target the enforcer matched.
+    let admitted = svc
+        .resolve_vector_read_context(&SubjectId("alice".into()), TENANT, COLLECTION)
+        .await;
+    assert!(
+        matches!(admitted, Some(Ok(_))),
+        "alice must be admitted (Some(Ok))"
+    );
+
+    // mallory (no attribute binding) ⇒ denied — caller must fail-closed.
+    let denied = svc
+        .resolve_vector_read_context(&SubjectId("mallory".into()), TENANT, COLLECTION)
+        .await;
+    assert!(
+        matches!(denied, Some(Err(_))),
+        "mallory (unbound) must be denied (Some(Err))"
+    );
+}
