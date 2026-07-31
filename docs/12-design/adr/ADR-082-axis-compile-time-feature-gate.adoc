@@ -64,16 +64,24 @@ every search.
   engines were already trait-ified to `Option<Arc<dyn IndexEngine>>` by ADR-078 / #1281,
   so only the `StorageEngine` *core* + the service/boot layer held the concrete type —
   that is what this gate cfg's.
-* **`proximadb-embedded`:** axis-**optional** — `default-features = false` + the
-  exact-scan feature set by default, `axis = ["proximadb/axis"]` opt-in. Embedded has
-  *zero* direct `AxisManager` references (it calls the root library API), so it was only
-  pulling AXIS by accident. In-process / few-collection apps get exact-scan (served from
-  the OS page cache / disk) with no HNSW/IVF training RSS; apps that want ANN opt in.
+* **`proximadb-embedded`:** axis-**optional** — `default-features = false` on the root
+  dep + explicit `[features]` forwarding, mirroring the server. The `default` includes
+  `axis` (so default embedded stays axis-ON, consistent with the workspace build where the
+  root is always axis-ON), but `--no-default-features` (or a curated feature set without
+  `axis`) yields an exact-scan-only build — no in-memory HNSW/IVF, no training RSS — for
+  in-process / few-collection apps. Embedded has *zero* direct `AxisManager` references
+  (it calls the root library API). Because embedded's `axis` feature forwards
+  `proximadb/axis`, embedded's axis cfg is always in sync with the root's, so the
+  flush→AXIS reap's cross-crate type stays consistent in every build. (An earlier cut made
+  embedded default axis-OFF; that broke `cargo check --workspace` — the root compiled
+  axis-ON while embedded compiled axis-OFF, and the cfg-dependent `AxisFlushArg` type
+  mismatched across the crate boundary. Default-OFF is structurally impossible while the
+  root's axis is default-ON; the opt-OUT path is the achievable goal.)
 * **`proximadb-server`:** `axis` is forwarded **explicitly** in its default. The server
   previously obtained AXIS only through workspace feature-unification (via the embedded
-  dev-dependency); making embedded axis-optional removed that source, so the server must
-  declare it directly to keep every build path (Dockerfile, `_shared-build`, release)
-  linking it.
+  dev-dependency); making embedded `default-features = false` removed that source, so the
+  server must declare it directly to keep every build path (Dockerfile, `_shared-build`,
+  release) linking it.
 
 == Alternatives considered
 
