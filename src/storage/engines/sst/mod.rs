@@ -265,6 +265,12 @@ mod cold_delete_dv_test;
 #[cfg(all(test, feature = "cold-deletion-vectors"))]
 #[path = "tests/cold_read_merge_test.rs"]
 mod cold_read_merge_test;
+// TD-DELVEC-1 WI-4 (slice 2): merge-on-read on the RaBitQ ANN cascade path — a
+// cold delete is invisible in an unfiltered Cosine scan over a coalesced RaBitQ
+// segment (`try_pax_cascade` filters hits by `CascadeHit::position`).
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_cascade_merge_test.rs"]
+mod cold_cascade_merge_test;
 pub mod flush;
 pub mod manifest;
 #[cfg(feature = "cold-deletion-vectors")]
