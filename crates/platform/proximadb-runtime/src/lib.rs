@@ -7,6 +7,7 @@ pub mod batch_result;
 pub mod bm25_port;
 pub mod bootstrap_config;
 pub mod cluster_port;
+pub mod cluster_rpc;
 pub mod composition;
 pub mod document_port;
 pub mod entity_port;
