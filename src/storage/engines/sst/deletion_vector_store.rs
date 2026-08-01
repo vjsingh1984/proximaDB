@@ -32,8 +32,11 @@
 //! `load`) and could evict+reload. No eviction/budget for the MVP — the store is
 //! bounded by segment count (unlike the byte-budgeted resolver cache).
 //!
-//! INERT: nothing calls this yet — the delete-path wiring is WI-3b (blocked on
-//! this store + the WAL-LSN plumbing). Feature-gated `cold-deletion-vectors`.
+//! Wired end-to-end (TD-DELVEC-1 WI-3b..WI-6): the delete path sets bits
+//! (`legacy.rs`), recovery re-marks them (`reconcile_deletion_vectors`),
+//! merge-on-read consults them (`search_pax_file_exact` + `try_pax_cascade`),
+//! and compaction reads + retires them (`build_deleted_oids` + retire loop).
+//! Feature-gated `cold-deletion-vectors`.
 
 use std::collections::HashMap;
 use std::sync::Arc;

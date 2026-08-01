@@ -2043,12 +2043,68 @@ impl WriteAheadLogManager {
         Ok(())
     }
 
-    /// Flush collection using modern batch operations
-    pub async fn flush_collection(&self, _collection_id: &str) -> Result<FlushResult> {
+    /// Materialize one collection's admitted WAL epoch to its catalog-selected
+    /// storage engine.
+    ///
+    /// This is the synchronous operator/API trigger. Size and timer triggers
+    /// enter the same canonical materializer asynchronously, while this method
+    /// waits on its per-collection gate and returns only after publication and
+    /// exact WAL-claim retirement complete.
+    pub async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
+        use crate::storage::flush_materializer::{
+            flush_plan_from_collection_meta, materialize_collection,
+        };
+
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let _wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        // WALBehaviorWrapper doesn't handle flushing directly - that's done by the flush coordinator
-        Ok(FlushResult::default())
+        let write_buffer = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let collection = resolve_collection_from_catalog(collection_id)
+            .await
+            .with_context(|| {
+                format!("cannot flush collection {collection_id:?}: catalog metadata was not found")
+            })?;
+        let plan = flush_plan_from_collection_meta(&collection)?;
+        #[cfg(feature = "axis")]
+        let axis = crate::index::get_global_axis_manager();
+        #[cfg(feature = "axis")]
+        let axis_arg = axis.as_deref();
+        #[cfg(not(feature = "axis"))]
+        let axis_arg: Option<&()> = None;
+        let started = std::time::Instant::now();
+        let outcome =
+            materialize_collection(&write_buffer, &plan, None, None, true, axis_arg).await?;
+
+        let (entries_flushed, bytes_written) = outcome
+            .map(|outcome| (outcome.entries_flushed, outcome.bytes))
+            .unwrap_or((0, 0));
+        // The operator-triggered path does not pass through AutoFlushDriver,
+        // so it must close the ADR-069 gauge itself.  In particular, a slow
+        // manual flush can overlap an auto-driver observation which publishes
+        // a non-zero value.  Once exact claim retirement completes above, the
+        // current write-buffer value is authoritative; leaving the sampled
+        // value behind reports phantom unflushed WAL forever.
+        let canonical_collection_id = plan.collection_object_id.to_string();
+        let remaining_bytes = write_buffer.unflushed_bytes(&canonical_collection_id).await;
+        crate::metrics::wal_flush_metrics::record_successful_flush(
+            &canonical_collection_id,
+            "manual",
+            bytes_written,
+            entries_flushed,
+            started.elapsed().as_secs_f64(),
+            Utc::now().timestamp(),
+            remaining_bytes,
+        );
+        let result = FlushResult {
+            success: true,
+            collections_affected: vec![canonical_collection_id],
+            entries_flushed: Some(entries_flushed),
+            bytes_written: Some(bytes_written),
+            duration_ms: Some(started.elapsed().as_millis() as u64),
+            ..Default::default()
+        };
+
+        let mut stats = self.stats.write().await;
+        stats.last_flush_time = Some(Utc::now());
+        Ok(result)
     }
 
     /// Force flush all collections - FOR TESTING ONLY
@@ -2059,18 +2115,13 @@ impl WriteAheadLogManager {
         Ok(())
     }
 
-    /// Force flush specific collection - FOR TESTING ONLY
-    /// WARNING: This method should only be used for testing and debugging
+    /// Synchronously force-flush one collection (operator/API surface).
     pub async fn force_flush_collection(
         &self,
         collection_id: &str,
         _storage_engine: Option<&str>,
     ) -> Result<()> {
-        tracing::warn!(
-            "⚠️ WAL MANAGER: FORCE FLUSH COLLECTION {} - TESTING ONLY",
-            collection_id
-        );
-        // Use modern batch API
+        tracing::info!("WAL manager: force-flush collection {}", collection_id);
         self.flush_collection(collection_id).await?;
         Ok(())
     }

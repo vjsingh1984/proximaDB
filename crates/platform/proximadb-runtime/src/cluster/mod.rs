@@ -12,6 +12,7 @@
 //! except root/application/binding.
 
 pub mod cache_affinity;
+pub mod consensus;
 pub mod metadata_service;
 pub mod node_registry;
 pub mod shard;

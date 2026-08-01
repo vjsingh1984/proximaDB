@@ -358,7 +358,8 @@ pub struct SstEngine {
     /// TD-DELVEC-1 WI-3a-remaining-A: durable, CAS'd per-segment deletion-vector
     /// store. Feature-gated `cold-deletion-vectors`. Per-engine (authoritative
     /// owned state, not a shared cache), keyed by segment path; lazy-filled on
-    /// first touch + reload. INERT until WI-3b wires the delete path.
+    /// first touch + reload. Wired end-to-end (WI-3b delete, WI-4 merge-on-read,
+    /// WI-5 recovery reconcile, WI-6 compaction).
     #[cfg(feature = "cold-deletion-vectors")]
     pub(crate) deletion_vector_store:
         Option<Arc<crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore>>,

@@ -228,9 +228,41 @@ pub fn record_flush(
     }
 }
 
+fn unsigned_metric_value(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
+}
+
+/// Record a successful flush and publish the exact remaining memtable bytes.
+///
+/// The remaining value must come from the write buffer after source-claim
+/// retirement. This closes a stale-gauge race when a slow manual flush overlaps
+/// an auto-driver sample of the pre-flush memtable.
+pub fn record_successful_flush(
+    collection: &str,
+    reason: &str,
+    bytes: u64,
+    vectors: u64,
+    duration_secs: f64,
+    unixtime_secs: i64,
+    remaining_bytes: u64,
+) {
+    record_flush(
+        collection,
+        reason,
+        true,
+        unsigned_metric_value(bytes),
+        unsigned_metric_value(vectors),
+        duration_secs,
+        unixtime_secs,
+    );
+    set_wal_size(collection, remaining_bytes);
+}
+
 /// Set the current unflushed memtable size for a collection (capacity-watermark input).
-pub fn set_wal_size(collection: &str, bytes: i64) {
-    WAL_SIZE_BYTES.with_label_values(&[collection]).set(bytes);
+pub fn set_wal_size(collection: &str, bytes: u64) {
+    WAL_SIZE_BYTES
+        .with_label_values(&[collection])
+        .set(unsigned_metric_value(bytes));
 }
 
 /// Publish the configured budget + derived watermark lines for a collection so
@@ -369,6 +401,33 @@ mod tests {
             0
         );
         assert_eq!(LAST_FLUSH_TIMESTAMP.with_label_values(&[c]).get(), 0);
+    }
+
+    #[test]
+    fn successful_flush_replaces_a_stale_sample_with_exact_remaining_bytes() {
+        let c = "col_flush_stale_gauge";
+        set_wal_size(c, 8_000);
+        record_successful_flush(c, "manual", 7_000, 70, 0.5, 1_700_000_700, 1_000);
+
+        assert_eq!(WAL_SIZE_BYTES.with_label_values(&[c]).get(), 1_000);
+        assert_eq!(
+            FLUSH_TOTAL
+                .with_label_values(&[c, "manual", "success"])
+                .get(),
+            1
+        );
+    }
+
+    #[test]
+    fn successful_flush_saturates_unsigned_domain_at_metric_boundary() {
+        let c = "col_flush_u64_boundary";
+        record_successful_flush(c, "manual", u64::MAX, u64::MAX, 0.5, 1, u64::MAX);
+
+        assert_eq!(WAL_SIZE_BYTES.with_label_values(&[c]).get(), i64::MAX);
+        assert_eq!(
+            FLUSH_BYTES_TOTAL.with_label_values(&[c, "manual"]).get(),
+            i64::MAX as u64
+        );
     }
 
     #[test]

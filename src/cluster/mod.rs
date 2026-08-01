@@ -53,7 +53,10 @@
 // edge. Re-exported here so `crate::cluster::*` paths (incl. distributed_ops/
 // replication/consensus) resolve unchanged.
 pub use proximadb_runtime::cluster::{cache_affinity, metadata_service, node_registry, shard};
-pub mod consensus;
+// `consensus` now lives in `proximadb-runtime::cluster` (TD-DECOMP-6); re-exported so
+// `crate::cluster::consensus::*` paths (grpc_server/distributed_ops/replication/external
+// callers) resolve unchanged.
+pub use proximadb_runtime::cluster::consensus;
 pub mod distributed_ops;
 /// Generation-fenced per-partition write leases over object storage (Phase 7):
 /// a peer holds a durable, fenced lease over one (tenant, collection) for

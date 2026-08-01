@@ -263,9 +263,13 @@ For 128-dimensional SIFT this yields approximately:
 | 30
 | Current acceptance and cost point.
 
+| 3.3M
+| 100 (measured)
+| First scale-validation point above 1M; one PAX v3 L1 segment.
+
 | 10M
-| 305
-| Extrapolation gate before claiming one multiplier scales.
+| approximately 305
+| Extrapolation gate before claiming one calibrated rule scales.
 |===
 
 The planned matrix therefore separates corpus scale from query confidence:
@@ -276,8 +280,9 @@ The planned matrix therefore separates corpus scale from query confidence:
   rather than repeatedly observing the two-cell floor.
 . SIFT1M uses the natural 30-cell geometry and at least 1,000 independent
   queries per reported slice.
-. SIFT10M uses natural 3M/10M points (approximately 91/305 cells) with the same
-  selected policy; it is a validation set, not another place to retune.
+. BIGANN/SIFT10M uses natural 3.3M/10M points (measured 100 / expected
+  approximately 305 cells) with the same selected policy; 10M is a validation
+  set, not another place to retune.
 . Every subset needs ground truth generated against exactly that corpus
   prefix. `sift1m_get_reduction.py` now rejects `--rows` when the declared
   ground-truth scope differs, preventing full-SIFT1M neighbors from being
@@ -295,6 +300,38 @@ successor is query-adaptive stopping using the persisted centroid distances,
 radii, and cell row counts: continue probing until an admissible lower bound
 or covered-mass criterion proves another cell cannot improve top-k. That model
 must first be calibrated by the matrix above.
+
+== Measured 3.3M validation point (2026-07-31)
+
+The first scale point above 1M is now measured, not projected. BIGANN/SIFT
+3.3M, 128d L2, one trained PAX v3 L1 segment, natural `k_c=100`, release
+arm64 binary, Azurite through the production Azure HTTP backend, 1,000 diverse
+queries per point, fresh process and empty DRAM/result caches for every
+`(nprobe, top_k)` pair:
+
+[cols="1,1,1,1,1", options="header"]
+|===
+| Result size | Minimum passing nprobe | Recall | Physical GET/query | p50
+
+| top-10 | 11 | 0.9800 | 24.478 | 256.04 ms
+| top-20 | 12 | 0.9812 | 27.320 | 298.93 ms
+|===
+
+The current `ceil(2 * sqrt(k_c))` policy selects 20 probes. At top-20 it
+measured recall 0.9959, 41.12 GET/query, and 452.19 ms p50. Selecting the
+minimum passing 12 probes therefore removes 33.6% of physical GETs and 33.9%
+of median latency while preserving the 0.98 ratchet. It still needs about a
+27% operation reduction to reach 20 GET/query; bounded coalescing and
+singleflight remain necessary.
+
+The scale relationship is sublinear, not a fixed probe fraction. The joint
+floors at natural cell counts are `3/3`, `5/10`, `7/30`, and `12/100` for
+100K, 330K, 1M, and 3.3M. A four-scale fit predicts about 18 top-20 probes at
+an expected 10M `k_c` near 305, but that is only a validation schedule until
+10M is measured. See
+link:../../_internal/status/BIGANN_NPROBE_GEOMETRY_100K_3M3_2026_07_31.adoc[the
+dated evidence artifact] for the full curves, hashes, shape distribution, and
+the single-segment 10M memory limitation.
 
 == Remaining inefficiencies
 

@@ -66,6 +66,24 @@ pub struct WALVectorBatch {
 }
 
 impl WALVectorBatch {
+    fn flush_shape(&self) -> WALFlushBatchShape {
+        let materializable_records = self
+            .vector_records
+            .iter()
+            .filter(|record| {
+                record
+                    .embeddings
+                    .first()
+                    .is_some_and(|embedding| !embedding.values.is_empty())
+            })
+            .count();
+        match (materializable_records, self.vector_records.len()) {
+            (0, _) => WALFlushBatchShape::DeferredOnly,
+            (materializable, total) if materializable == total => WALFlushBatchShape::VectorsOnly,
+            _ => WALFlushBatchShape::Mixed,
+        }
+    }
+
     /// Estimate the resident size of a record slice — the CANONICAL
     /// `total_size_bytes` source for WAL batches (ADR-069/TD-WAL-1).
     ///
@@ -164,6 +182,19 @@ impl WALVectorBatch {
             None => true,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WALFlushBatchShape {
+    VectorsOnly,
+    DeferredOnly,
+    Mixed,
+}
+
+#[derive(Clone, Copy)]
+enum WALFlushClaimMode {
+    All,
+    SegmentMaterializable,
 }
 
 /// Exact, cancellation-safe ownership of immutable WAL batches for one flush.
@@ -904,6 +935,34 @@ impl WALBehaviorWrapper {
         &self,
         collection_id: &str,
     ) -> Result<Option<WALFlushBatchClaim>> {
+        self.claim_unflushed_batches_with_mode(collection_id, WALFlushClaimMode::All)
+            .await
+    }
+
+    /// Atomically claim only batches that the current immutable-segment writers
+    /// can publish without dropping records.
+    ///
+    /// A vector-only batch is eligible. A tombstone-only batch remains durable
+    /// and visible in the WAL until deletion vectors (or a tombstone segment
+    /// format) can publish it. A mixed batch fails closed: retirement is
+    /// batch-granular, so publishing only its vector records would silently
+    /// retire the colocated tombstones.
+    pub async fn claim_segment_materializable_batches(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<WALFlushBatchClaim>> {
+        self.claim_unflushed_batches_with_mode(
+            collection_id,
+            WALFlushClaimMode::SegmentMaterializable,
+        )
+        .await
+    }
+
+    async fn claim_unflushed_batches_with_mode(
+        &self,
+        collection_id: &str,
+        mode: WALFlushClaimMode,
+    ) -> Result<Option<WALFlushBatchClaim>> {
         // Hold the coordinator read guard through the process-local ownership
         // transition. Otherwise a legacy retirement/drop path could remove a
         // batch between the snapshot and registry insertion, producing a claim
@@ -922,7 +981,6 @@ impl WALBehaviorWrapper {
                 .then_with(|| left.batch_id.to_base62().cmp(&right.batch_id.to_base62()))
         });
 
-        let claim_id = self.flush_claim_sequence.fetch_add(1, Ordering::Relaxed);
         let mut registry = self.flush_claims.lock().map_err(|_| {
             anyhow::anyhow!(
                 "flush claim registry poisoned while claiming collection '{}'",
@@ -930,23 +988,47 @@ impl WALBehaviorWrapper {
             )
         })?;
 
-        let mut batches = Vec::new();
-        let mut batch_ids = Vec::new();
+        let mut unclaimed = Vec::new();
         for batch in candidates {
             let batch_id = batch.batch_id.to_base62();
             if registry.is_claimed(collection_id, &batch_id) {
                 continue;
             }
+            unclaimed.push((batch_id, batch));
+        }
+
+        if matches!(mode, WALFlushClaimMode::SegmentMaterializable) {
+            let mixed_batch_ids: Vec<&str> = unclaimed
+                .iter()
+                .filter_map(|(batch_id, batch)| {
+                    (batch.flush_shape() == WALFlushBatchShape::Mixed).then_some(batch_id.as_str())
+                })
+                .collect();
+            if !mixed_batch_ids.is_empty() {
+                anyhow::bail!(
+                    "flush: collection '{}' contains mixed vector/tombstone WAL batches [{}]; \
+                     refusing partial segment publication because retirement is batch-granular",
+                    collection_id,
+                    mixed_batch_ids.join(",")
+                );
+            }
+            unclaimed.retain(|(_, batch)| batch.flush_shape() == WALFlushBatchShape::VectorsOnly);
+        }
+
+        if unclaimed.is_empty() {
+            return Ok(None);
+        }
+
+        let claim_id = self.flush_claim_sequence.fetch_add(1, Ordering::Relaxed);
+        let mut batches = Vec::with_capacity(unclaimed.len());
+        let mut batch_ids = Vec::with_capacity(unclaimed.len());
+        for (batch_id, batch) in unclaimed {
             registry.insert(collection_id, batch_id.clone(), claim_id);
             batch_ids.push(batch_id);
             batches.push(batch);
         }
         drop(registry);
         drop(coordinator);
-
-        if batches.is_empty() {
-            return Ok(None);
-        }
 
         Ok(Some(WALFlushBatchClaim {
             collection_id: collection_id.to_string(),
@@ -1873,6 +1955,93 @@ mod tests {
                 .await
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn segment_claim_retains_tombstone_only_batches() {
+        let wal = WALBehaviorWrapper::new(MemtableConfig::default());
+        wal.add_vector_batch(
+            "segment_tombstones",
+            test_wal_batch(vec![test_vector_record("dead", Vec::new())]),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            wal.claim_segment_materializable_batches("segment_tombstones")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            wal.get_unflushed_batches("segment_tombstones")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            wal.claimed_flush_batch_count("segment_tombstones").unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn segment_claim_retires_vectors_without_colocated_tombstone_batch() {
+        let wal = WALBehaviorWrapper::new(MemtableConfig::default());
+        wal.add_vector_batch(
+            "segment_split",
+            test_wal_batch(vec![test_vector_record("live", vec![1.0, 0.0])]),
+        )
+        .await
+        .unwrap();
+        wal.add_vector_batch(
+            "segment_split",
+            test_wal_batch(vec![test_vector_record("dead", Vec::new())]),
+        )
+        .await
+        .unwrap();
+
+        let mut claim = wal
+            .claim_segment_materializable_batches("segment_split")
+            .await
+            .unwrap()
+            .expect("vector-only batch must be claimable");
+        assert_eq!(claim.batches().len(), 1);
+        assert_eq!(claim.batches()[0].vector_records[0].oid, "live");
+        assert_eq!(wal.complete_flush_claim(&mut claim).await.unwrap(), 1);
+
+        let remaining = wal.get_unflushed_batches("segment_split").await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].vector_records[0].oid, "dead");
+    }
+
+    #[tokio::test]
+    async fn segment_claim_rejects_mixed_batch_without_partial_ownership() {
+        let wal = WALBehaviorWrapper::new(MemtableConfig::default());
+        wal.add_vector_batch(
+            "segment_mixed",
+            test_wal_batch(vec![
+                test_vector_record("live", vec![1.0, 0.0]),
+                test_vector_record("dead", Vec::new()),
+            ]),
+        )
+        .await
+        .unwrap();
+
+        let error = wal
+            .claim_segment_materializable_batches("segment_mixed")
+            .await
+            .expect_err("mixed source cannot be published or retired partially");
+        assert!(error.to_string().contains("mixed vector/tombstone"));
+        assert_eq!(wal.claimed_flush_batch_count("segment_mixed").unwrap(), 0);
+        assert_eq!(
+            wal.get_unflushed_batches("segment_mixed")
+                .await
+                .unwrap()
+                .len(),
+            1
         );
     }
 

@@ -278,6 +278,12 @@ mod cold_cascade_merge_test;
 #[cfg(all(test, feature = "cold-deletion-vectors"))]
 #[path = "tests/cold_recovery_reconcile_test.rs"]
 mod cold_recovery_reconcile_test;
+// TD-DELVEC-1 WI-6: compaction DV-awareness — `build_deleted_oids` collects the
+// DV-deleted oids so the merge drops them. In-crate (#[path]) to call the
+// pub(crate) feature-gated associated fn + segment helpers.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_compaction_dv_test.rs"]
+mod cold_compaction_dv_test;
 pub mod flush;
 pub mod manifest;
 #[cfg(feature = "cold-deletion-vectors")]

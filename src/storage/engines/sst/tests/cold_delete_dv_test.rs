@@ -7,14 +7,9 @@
 //! → `is_deleted_as_of` is snapshot-correct → the bits survive a restart
 //! (disk-authoritative reload). In-crate so it can read the `pub(crate)` DV store.
 //!
-//! **Test-scope note:** the segment is located by a direct filesystem walk rather
-//! than `resolve_oid_positions`, because `list_collection_files` →
-//! `get_collection_storage_url` is currently a placeholder (`/data/collections/{id}`,
-//! ignoring the collection's `base_location`) — a follow-up (make
-//! `get_collection_storage_url` honor the collection's storage assignment) is the
-//! prerequisite for the full `legacy.rs → resolve → mark_deleted` delete path to be
-//! end-to-end testable + correct for non-default base locations. The legacy.rs glue
-//! itself is compilation/clippy-validated (see the WI-3b plan's test-gaps).
+//! The segment is located via the engine's own `discover_sstable_files` (the
+//! `get_collection_storage_url` placeholder was retired by #1352 — it now resolves
+//! the collection's real `base_location`).
 
 #[cfg(test)]
 mod tests {
@@ -24,12 +19,13 @@ mod tests {
     use anyhow::Result;
     use tempfile::TempDir;
 
+    use crate::core::search::SearchParams;
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, StorageAssignment, StorageEngine, VectorRecord,
     };
     use crate::storage::engines::sst::{SstConfig, core::SstEngine};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-    use crate::storage::traits::{FlushParameters, UnifiedStorageFormat};
+    use crate::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageFormat};
     use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
     fn collection(id: &str, temp_dir: &TempDir) -> Collection {
@@ -72,23 +68,6 @@ mod tests {
             .unwrap()
     }
 
-    /// Recursively find the first `.pax` segment under `dir` (the SST engine writes
-    /// segments under a `collection_data_path` subpath). Returns the LOCAL path.
-    fn find_pax_segment(dir: &std::path::Path) -> Option<String> {
-        let entries = std::fs::read_dir(dir).ok()?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(p) = find_pax_segment(&path) {
-                    return Some(p);
-                }
-            } else if path.extension().and_then(|e| e.to_str()) == Some("pax") {
-                return path.to_str().map(String::from);
-            }
-        }
-        None
-    }
-
     #[tokio::test]
     async fn cold_delete_sets_versioned_dv_bit_on_a_flushed_segment() -> Result<()> {
         let temp_dir = TempDir::new()?;
@@ -119,11 +98,20 @@ mod tests {
         let res = engine.do_flush(&flush).await?;
         assert!(res.success, "flush should produce a cold segment");
 
-        // Locate the flushed segment directly (see the module doc — resolve_oid_positions
-        // is blocked by the get_collection_storage_url placeholder).
-        let pax_local =
-            find_pax_segment(temp_dir.path()).expect("flush should have produced a .pax segment");
-        let seg = format!("file://{pax_local}");
+        // Locate the flushed segment via the engine's own discovery (#1352 retired
+        // the get_collection_storage_url placeholder — it resolves base_location now).
+        let storage_url = StorageQueryContext::new(
+            Arc::new(SearchParams::default()),
+            Arc::new(collection.clone()),
+        )
+        .collection_storage_path()
+        .expect("ctx has a storage assignment");
+        let files = engine.discover_sstable_files(&storage_url).await?;
+        let seg = files
+            .iter()
+            .find(|f| f.ends_with(".pax"))
+            .cloned()
+            .expect("flush should have produced a .pax segment");
 
         let dv = engine
             .deletion_vector_store

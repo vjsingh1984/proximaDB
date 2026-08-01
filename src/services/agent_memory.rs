@@ -557,7 +557,15 @@ impl MemoryStore for VectorMemoryStore {
         let vector = self.embedder.embed(&fact.text, &scope.tenant_id).await?;
         let results = self
             .vector_ops
-            .unified_search_v1(&scope.collection, vector, k, scope_filter(scope), None)
+            .unified_search_v1(
+                &scope.collection,
+                vector,
+                k,
+                scope_filter(scope),
+                None,
+                None,
+                None,
+            )
             .await
             .map_err(|e| anyhow!("memory retrieve failed: {e}"))?;
 
