@@ -48,11 +48,13 @@
 //! └─────────────────────────────────────────────────────────┘
 //! ```
 
-pub mod cache_affinity;
+// Cluster-core subsystem pieces (cache_affinity/metadata_service/node_registry/shard)
+// now live in `proximadb-runtime::cluster` (TD-DECOMP-5) — self-contained, no upward
+// edge. Re-exported here so `crate::cluster::*` paths (incl. distributed_ops/
+// replication/consensus) resolve unchanged.
+pub use proximadb_runtime::cluster::{cache_affinity, metadata_service, node_registry, shard};
 pub mod consensus;
 pub mod distributed_ops;
-pub mod metadata_service;
-pub mod node_registry;
 /// Generation-fenced per-partition write leases over object storage (Phase 7):
 /// a peer holds a durable, fenced lease over one (tenant, collection) for
 /// contention-free local writes. Backs [`primary_pod_registry`]'s in-memory
@@ -64,7 +66,6 @@ pub mod partition_lease;
 pub mod primary_pod_registry;
 pub mod replication;
 pub mod routing;
-pub mod shard;
 
 // RPC abstraction layer for inter-node communication
 // Provides SOLID-compliant traits for consensus, replication, search fanout, and health
