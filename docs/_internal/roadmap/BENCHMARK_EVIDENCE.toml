@@ -755,3 +755,20 @@ hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release run, ser
 date = "2026-07-28"
 version = "develop @ 79209453a (merged #1253)"
 notes = "The HOT 0.4ms is the result cache (vector-hash-keyed), not the segment caches — the same known TD-CACHE-8 behavior. The segment cache value is in the COLD sweep: invariants ~100% (eliminates per-query segment-metadata re-reads) + survivor ~38% (reduces per-query SQ8 range GETs via cell overlap). Phase 3 (budget sweep) follows once the D2 restart-recovery fix (#1294) enables multi-config restarts."
+
+[[claims]]
+id = "bigann_nprobe_geometry_100k_3m3"
+claim = "Natural-cell PAX v3 BIGANN prefix evidence establishes that the minimum nprobe preserving recall >= 0.98 grows sublinearly with coarse-cell count: joint top-10/top-20 floors are 3/3 cells at 100K, 5/10 at 330K, 7/30 at 1M, and 12/100 at 3.3M. At 3.3M the current 2*sqrt(k_c)=20 policy costs 41.12 GET/query and 452.19 ms top-20 p50; the measured joint floor nprobe=12 retains recall 0.9812 at 27.32 GET/query and 298.93 ms. Four-scale top-20 fit: nprobe=1.97377*k_c^0.387382 (log R2=0.9955, leave-one-scale-out MAPE=5.51%). Single-segment 10M remains unmeasured and is not claimed."
+metric = "minimum passing nprobe + recall@10/@20 + physical GET/query + p50 across natural k_c"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/BIGANN_NPROBE_GEOMETRY_100K_3M3_2026_07_31.adoc",
+  "docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc",
+]
+bench_source = "scripts/bench/nprobe_sweep.py"
+bench_command = "Run one release/Azurite PAX v3 bed per exact BIGANN prefix; then nprobe_sweep.py with 1000 queries, top-k 10/20, fresh process per point; then analyze_nprobe_geometry.py over the four matrix JSON artifacts"
+artifact = "docs/_internal/status/BIGANN_NPROBE_GEOMETRY_100K_3M3_2026_07_31.adoc"
+hardware = "Local macOS arm64 Apple Silicon, 64 GiB RAM, serialized release-server runs, Azurite localhost HTTP backend"
+date = "2026-07-31"
+version = "3.3M develop-derived PR #1345 @ 06c9e5678fa7de6a782563bdeb2625e74ba6b37e; lower calibration matrices @ b160d2107d67f712ea78a3d0779d62763f3dfba4 / 504e849a4d2ea84791310540403808a89f3e3fea"
+notes = "3.3M matrix: 20 points, 1000 queries/point, status pass, no failures, SHA-256 5d32b83cf4987956d1bfb71ae93a77e67d76682c6b7b9464f167cea0066e8cc6. Exact binary SHA-256 d6b660cf425f4251f841d882d64420a137060668d6cdde150be215849598e431. Azurite is operation-count and relative-latency evidence, not Azure WAN latency. Cluster radii are persisted shape metadata but do not participate in current centroid-distance probe selection. The four-scale fit is cross-revision calibration evidence; rerun all scales on one binary before a canonical five-point publication."
