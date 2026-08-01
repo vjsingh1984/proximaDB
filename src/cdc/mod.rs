@@ -110,7 +110,10 @@ pub mod config;
 pub mod connectors;
 pub mod coordinator;
 pub mod error;
-pub mod event;
+// `event` now lives in `proximadb-cdc` (TD-DECOMP-7); re-exported so the existing
+// `crate::cdc::event::*` paths (source/coordinator/connectors/sinks/outbound) resolve
+// unchanged.
+pub use proximadb_cdc::event;
 pub mod metrics;
 pub mod offset;
 pub mod outbound;
