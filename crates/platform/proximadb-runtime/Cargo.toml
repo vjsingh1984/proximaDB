@@ -24,6 +24,8 @@ proximadb-distance-types.workspace = true
 # tonic-backed client impl (connection/grpc_client) — TD-DECOMP-4.
 tonic.workspace = true
 serde_json.workspace = true
+# Cluster-core subsystem (TD-DECOMP-5, moved from root src/cluster/).
+chrono.workspace = true
 proximadb-graph-query = { path = "../../query/proximadb-graph-query" }
 proximadb-hardware = { path = "../../foundation/proximadb-hardware" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
