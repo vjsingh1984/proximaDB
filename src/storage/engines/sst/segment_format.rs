@@ -657,6 +657,12 @@ pub struct CascadeHit {
     /// materialization. `None` when no f32 tier is present (the caller gets
     /// id+score only, as before). Populated lazily for the top-k rows only.
     pub vector: Option<Vec<f32>>,
+    /// TD-DELVEC-1 WI-4 slice 2: the hit's global row position in the segment
+    /// (the index `read_segment_records` reconstructs positionally — the same
+    /// space the deletion vector keys on). Set at coalesced-scan hit construction
+    /// from the ranked row index `g`; consumed by `try_pax_cascade`'s merge-on-read
+    /// filter so a cold delete is invisible on the RaBitQ ANN path too.
+    pub position: u32,
 }
 
 /// Canonical resolver from a filter field name to its PAX column id for
@@ -2584,6 +2590,7 @@ pub async fn rabitq_search_segment_coalesced(
             oid: oid_of.get(g).cloned().unwrap_or_default(),
             distance: *dist,
             vector: None,
+            position: *g as u32,
         });
     }
 

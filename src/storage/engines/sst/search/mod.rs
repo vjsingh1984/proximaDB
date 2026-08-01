@@ -371,6 +371,7 @@ impl SstEngine {
     /// L2-validated (recall 0.932 @ N=100k). Other metrics stay on the generic scan
     /// until the cascade is metric-generalized + re-validated (follow-up).
     #[allow(clippy::too_many_arguments)]
+    #[cfg_attr(not(feature = "cold-deletion-vectors"), allow(unused_variables))]
     async fn try_pax_cascade(
         &self,
         sstable_path: &str,
@@ -380,6 +381,7 @@ impl SstEngine {
         distance_metric: DistanceMetric,
         collection_id: &str,
         collection_root: &str,
+        snapshot_lsn: u64,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
         use proximadb_block_format::RankMetric;
         // Map the query metric to a cascade rank metric. Dot/max-IP and exotic
@@ -427,6 +429,30 @@ impl SstEngine {
                 )
                 .await?;
                 if let Some(hits) = coalesced_hits {
+                    // TD-DELVEC-1 WI-4 slice 2: merge-on-read on the RaBitQ ANN
+                    // path — warm this segment's deletion vector, then drop hits
+                    // whose row position (`CascadeHit::position`, the global row
+                    // index the coalesced scan scored = the space the DV keys on)
+                    // is deleted as of the scan's snapshot LSN. A cold delete is
+                    // invisible on the cascade path too. Best-effort: no DV store
+                    // or a load failure ⇒ no skipping (degraded, not a query
+                    // failure). Under the default build this filter is cfg'd out.
+                    #[cfg(feature = "cold-deletion-vectors")]
+                    let hits = if let Some(dv) = self.deletion_vector_store.as_ref() {
+                        let _ = dv.load(sstable_path).await;
+                        let mut kept = Vec::with_capacity(hits.len());
+                        for h in hits {
+                            if !dv
+                                .is_deleted_as_of(sstable_path, h.position, snapshot_lsn)
+                                .await
+                            {
+                                kept.push(h);
+                            }
+                        }
+                        kept
+                    } else {
+                        hits
+                    };
                     let records = hits
                         .into_iter()
                         .map(|h| {
@@ -1240,6 +1266,7 @@ impl SstEngine {
                                     distance_metric,
                                     collection_id,
                                     storage_url,
+                                    snapshot_lsn,
                                 )
                                 .await
                             {
@@ -1347,6 +1374,7 @@ impl SstEngine {
                             distance_metric,
                             collection_id,
                             storage_url,
+                            snapshot_lsn,
                         )
                         .await
                     {
@@ -1628,6 +1656,7 @@ impl SstEngine {
                     distance_metric,
                     collection_id,
                     storage_url,
+                    snapshot_lsn,
                 )
                 .await
             {
