@@ -748,25 +748,12 @@ impl RecordOpsService {
 
     /// Canonical rich-record search handler used by v2 REST/gRPC/internal callers.
     ///
-    /// Delegates to [`Self::handle_record_search_for_tenant_abac`] with no
-    /// subject — the gRPC/Flight/internal callers preserve today's behavior (no
-    /// ABAC enforcement). The REST v2 surface calls `_abac` directly with the
-    /// request subject so a provisioned policy admits/denies/filters the results.
+    /// Threads the request subject + tenant stable id into the vector service so
+    /// ABAC enforces at the shared `unified_search_v1_inner` seam (fail-closed on
+    /// deny). Callers without a subject (gRPC/Flight/internal today) pass `None` ⇒
+    /// `System` passthrough (today's behavior). Enforcement is `abac-policy`-gated
+    /// inside the vector service; default builds are a pass-through.
     pub async fn handle_record_search_for_tenant(
-        &self,
-        request: RichSearchRequest,
-        tenant_id: Option<&str>,
-    ) -> Result<RichSearchResponse> {
-        self.handle_record_search_for_tenant_abac(request, tenant_id, None, None)
-            .await
-    }
-
-    /// ABAC-aware rich-record search: same as
-    /// [`Self::handle_record_search_for_tenant`] but threads the request subject
-    /// and tenant stable id into the vector service so ABAC enforces (fail-closed
-    /// on deny). The enforcement itself is `abac-policy`-gated inside the vector
-    /// service, so default builds are a pass-through.
-    pub async fn handle_record_search_for_tenant_abac(
         &self,
         request: RichSearchRequest,
         tenant_id: Option<&str>,
@@ -788,7 +775,7 @@ impl RecordOpsService {
         };
 
         self.vector_operations_service
-            .search_records_with_tenant_context_abac(
+            .search_records_with_tenant_context(
                 request,
                 tenant_context.as_ref(),
                 subject,
@@ -798,10 +785,31 @@ impl RecordOpsService {
     }
 
     /// Canonical rich-record get handler used by v2 REST/gRPC/internal callers.
+    /// Canonical rich-record get handler used by v2 REST/gRPC/internal callers.
+    ///
+    /// Delegates to [`Self::handle_record_get_for_tenant_abac`] with no subject
+    /// (the gRPC/internal callers preserve today's behavior — no ABAC). The REST
+    /// v2 surface calls `_abac` directly with the request subject.
     pub async fn handle_record_get_for_tenant(
         &self,
         request: RichRecordGetRequest,
         tenant_id: Option<&str>,
+    ) -> Result<RichRecordGetResponse> {
+        self.handle_record_get_for_tenant_abac(request, tenant_id, None, None)
+            .await
+    }
+
+    /// ABAC-aware rich-record get: same as
+    /// [`Self::handle_record_get_for_tenant`] but threads the request subject
+    /// and tenant stable id so a provisioned policy admit-checks the fetched
+    /// record (fail-closed on deny). Enforcement is `abac-policy`-gated inside
+    /// the vector service; default builds are a pass-through.
+    pub async fn handle_record_get_for_tenant_abac(
+        &self,
+        request: RichRecordGetRequest,
+        tenant_id: Option<&str>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> Result<RichRecordGetResponse> {
         let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
         let request = RichRecordGetRequest {
@@ -818,7 +826,12 @@ impl RecordOpsService {
         };
 
         self.vector_operations_service
-            .get_record_with_tenant_context(request, tenant_context.as_ref())
+            .get_record_with_tenant_context_abac(
+                request,
+                tenant_context.as_ref(),
+                subject,
+                tenant_stable_id,
+            )
             .await
     }
 
@@ -963,7 +976,7 @@ impl proximadb_runtime::RecordSearchPort for RecordOpsService {
         request: RichSearchRequest,
         tenant_id: Option<&str>,
     ) -> Result<RichSearchResponse> {
-        self.handle_record_search_for_tenant(request, tenant_id)
+        self.handle_record_search_for_tenant(request, tenant_id, None, None)
             .await
     }
 }

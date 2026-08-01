@@ -124,6 +124,8 @@ impl AqlSource for VectorAqlSource {
                 top_k as usize,
                 None, // No filter pushdown implemented in this skeleton
                 None, // No specific search config
+                None,
+                None,
             )
             .await
             .map_err(|e| {

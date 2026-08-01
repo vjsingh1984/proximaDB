@@ -779,6 +779,8 @@ impl MultiModalQueryExecutor {
                     top_k,
                     filters.cloned(),
                     Some(search_config),
+                    None,
+                    None,
                 )
                 .await?
             } else {

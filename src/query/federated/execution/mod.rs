@@ -628,7 +628,7 @@ impl FederatedExecutor {
                 search_optimization: None,
             };
 
-            let response = vector_ops.search_v1(request).await?;
+            let response = vector_ops.search_v1(request, None, None).await?;
             let records = response
                 .results
                 .map(|result| result.results)

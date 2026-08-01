@@ -14,7 +14,11 @@ use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
-use crate::storage::traits::UnifiedStorageFormat;
+use crate::storage::traits::{StorageFormatStrategy, UnifiedStorageFormat};
+
+fn flush_owns_compaction_schedule(strategy: StorageFormatStrategy) -> bool {
+    matches!(strategy, StorageFormatStrategy::Sst)
+}
 
 /// Coordinates WAL flush + engine compaction for one or all collections.
 /// Compaction failures are logged but never fail the flush (the durability step
@@ -99,6 +103,20 @@ impl FlushCompactionCoordinator {
             .force_flush_collection(collection_id, None)
             .await?;
 
+        // SST flush publication owns its follow-up training/compaction morsel.
+        // Calling compact_collection here as well races that admitted morsel on
+        // the same L0 source.  At 3.3M rows this produced two full reads, sorts,
+        // encodes and L1 writes, followed by a 6.6M-row deduplicating L1→L2
+        // merge.  Return after durable flush publication and let the SST worker
+        // pool perform the single admitted maintenance action.
+        if flush_owns_compaction_schedule(self.storage_engine.strategy()) {
+            debug!(
+                "SST flush owns asynchronous compaction scheduling for collection {}",
+                collection_id
+            );
+            return Ok(());
+        }
+
         // Trigger compaction for this collection
         let collection_object_id: crate::core::stable_id::CollectionObjectId =
             collection_id.parse().map_err(|error| {
@@ -137,5 +155,18 @@ impl FlushCompactionCoordinator {
 
         debug!("Force flush for collection {} completed", collection_id);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sst_flush_is_the_single_compaction_scheduler() {
+        assert!(flush_owns_compaction_schedule(StorageFormatStrategy::Sst));
+        assert!(!flush_owns_compaction_schedule(
+            StorageFormatStrategy::Viper
+        ));
     }
 }

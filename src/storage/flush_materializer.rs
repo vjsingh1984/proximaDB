@@ -559,26 +559,24 @@ async fn materialize_collection_with_coordinator_mode(
     // Exact source ownership is acquired only after engine admission. The
     // claim's Drop releases every batch on error or future cancellation.
     let Some(mut claim) = write_buffer
-        .claim_unflushed_batches(&collection_id_text)
+        .claim_segment_materializable_batches(&collection_id_text)
         .await?
     else {
+        tracing::debug!(
+            collection_object_id = plan.collection_object_id,
+            "flush: no segment-materializable WAL batches; retaining deferred records in WAL"
+        );
         return Ok(None);
     };
     let mut claim_ticket = FlushClaimTicket::new(&collection_id_text, claim.batch_ids().len());
 
-    // Vector-proportional work starts here, inside the admitted job. Tombstones
-    // remain a WAL concern because the current segment writer requires a
-    // non-empty embedding.
+    // Vector-proportional work starts here, inside the admitted job. The claim
+    // contains only vector-only batches, so exact batch retirement cannot drop
+    // a tombstone that the current segment writer cannot represent.
     let vector_records: Vec<proximadb_records::ProximaRecord> = claim
         .batches()
         .iter()
         .flat_map(|batch| batch.vector_records.iter().cloned())
-        .filter(|record| {
-            record
-                .embeddings
-                .first()
-                .is_some_and(|embedding| !embedding.values.is_empty())
-        })
         .collect();
     let vector_count = vector_records.len() as u64;
     let flush_params = FlushParameters {
@@ -617,8 +615,8 @@ async fn materialize_collection_with_coordinator_mode(
     // these dimensions is the commercial anvaiops control plane's concern, never OSS code.
     //
     // Tier "hot" is the write-time default: a fresh flush writes hot, and an unset
-    // `storage_class` ⇒ the account/backend default. `bytes == 0` (e.g. a tombstone-only flush)
-    // records nothing.
+    // `storage_class` ⇒ the account/backend default. A zero-byte engine
+    // publication records nothing.
     if bytes > 0 {
         let tenant = plan.tenant_id.as_deref();
         crate::metrics::consumption_metrics::record_object_store_op(tenant, "flush_write");
@@ -881,8 +879,20 @@ mod tests {
         }
     }
 
-    async fn add_batch(write_buffer: &WALBehaviorWrapper, collection_object_id: u64, oid: &str) {
-        let records = vec![record(oid)];
+    fn tombstone(oid: &str) -> proximadb_records::ProximaRecord {
+        proximadb_records::ProximaRecord {
+            oid: oid.to_string(),
+            valid_to_ns: Some(0),
+            origin: Some("delete".to_string()),
+            ..Default::default()
+        }
+    }
+
+    async fn add_records_batch(
+        write_buffer: &WALBehaviorWrapper,
+        collection_object_id: u64,
+        records: Vec<proximadb_records::ProximaRecord>,
+    ) {
         write_buffer
             .add_vector_batch(
                 &collection_object_id.to_string(),
@@ -897,6 +907,10 @@ mod tests {
             )
             .await
             .expect("test batch must enter the WAL");
+    }
+
+    async fn add_batch(write_buffer: &WALBehaviorWrapper, collection_object_id: u64, oid: &str) {
+        add_records_batch(write_buffer, collection_object_id, vec![record(oid)]).await;
     }
 
     #[tokio::test]
@@ -968,6 +982,100 @@ mod tests {
 
         assert!(outcome.is_some());
         assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn tombstone_only_flush_is_retained_without_calling_segment_writer() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_records_batch(&write_buffer, 112, vec![tombstone("dead")]).await;
+        let engine = Arc::new(RecordingEngine::new());
+
+        let outcome = materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan(112),
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect("tombstone-only source remains durable in WAL");
+
+        assert!(outcome.is_none());
+        assert_eq!(engine.preflight_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(write_buffer.claimed_flush_batch_count("112").unwrap(), 0);
+        assert_eq!(
+            write_buffer
+                .get_unflushed_batches("112")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn vector_flush_retires_only_vector_batches_and_preserves_tombstones() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_records_batch(&write_buffer, 113, vec![record("live")]).await;
+        add_records_batch(&write_buffer, 113, vec![tombstone("dead")]).await;
+        let engine = Arc::new(RecordingEngine::new());
+
+        let outcome = materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan(113),
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect("vector-only source batch must publish")
+        .expect("one vector batch must produce a segment");
+
+        assert_eq!(outcome.vectors_submitted, 1);
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 1);
+        let remaining = write_buffer.get_unflushed_batches("113").await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].vector_records[0].oid, "dead");
+    }
+
+    #[tokio::test]
+    async fn mixed_vector_tombstone_batch_fails_closed_before_segment_write() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_records_batch(&write_buffer, 114, vec![record("live"), tombstone("dead")]).await;
+        let engine = Arc::new(RecordingEngine::new());
+
+        let error = materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan(114),
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect_err("mixed batch must not be partially published");
+
+        assert!(error.to_string().contains("mixed vector/tombstone"));
+        assert_eq!(engine.preflight_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(write_buffer.claimed_flush_batch_count("114").unwrap(), 0);
+        assert_eq!(
+            write_buffer
+                .get_unflushed_batches("114")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
