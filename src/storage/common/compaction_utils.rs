@@ -214,6 +214,21 @@ fn higher_level_file_threshold(config: &CompactionConfig, level: u32) -> usize {
         .ceil() as usize
 }
 
+fn l0_minimum_morsel_files(
+    config: &CompactionConfig,
+    engine_type: &StorageEngineType,
+    extension: &str,
+) -> usize {
+    if config.l0_file_threshold == 1
+        && *engine_type == StorageEngineType::SST
+        && extension.eq_ignore_ascii_case("pax")
+    {
+        1
+    } else {
+        2
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CompactionMorsel {
     input_files: Vec<String>,
@@ -224,12 +239,14 @@ struct CompactionMorsel {
 
 /// Pack the oldest files that fit the current input-byte budget. Oversized
 /// files remain horizontal; smaller, mutually exclusive peers may still make
-/// progress around them. A one-file rewrite never reduces query fanout.
-fn select_compaction_morsel(
+/// progress around them.
+fn select_compaction_morsel_with_minimum(
     files: &[GenericFileMetadata],
     max_input_bytes: u64,
+    minimum_files: usize,
 ) -> Option<CompactionMorsel> {
-    if max_input_bytes == 0 || files.len() < 2 {
+    let minimum_files = minimum_files.max(1);
+    if max_input_bytes == 0 || files.len() < minimum_files {
         return None;
     }
 
@@ -252,12 +269,22 @@ fn select_compaction_morsel(
         }
     }
 
-    (input_files.len() >= 2).then_some(CompactionMorsel {
+    (input_files.len() >= minimum_files).then_some(CompactionMorsel {
         input_files,
         input_bytes,
         total_candidate_bytes,
         total_candidate_files: files.len(),
     })
+}
+
+/// Ordinary compaction must reduce query-visible fanout, so it requires at
+/// least two input files. The L0 training path calls the configurable helper
+/// directly because its threshold-one rewrite changes the on-disk layout.
+fn select_compaction_morsel(
+    files: &[GenericFileMetadata],
+    max_input_bytes: u64,
+) -> Option<CompactionMorsel> {
+    select_compaction_morsel_with_minimum(files, max_input_bytes, 2)
 }
 
 impl CompactionTaskBuilder {
@@ -322,10 +349,18 @@ impl CompactionTaskBuilder {
         // Check if Level 0 compaction is needed
         if should_compact_l0 {
             let memory_budget = current_compaction_input_budget(config);
-            let morsel = filtered_files
-                .compactable_files
-                .get(&0)
-                .and_then(|files| select_compaction_morsel(files, memory_budget.max_input_bytes));
+            // The flush training arm deliberately overrides the L0 threshold
+            // to one so an untrained PAX segment can be promoted to the
+            // searchable v3 layout. It is useful work even though it does not
+            // reduce file count; admission still happens before training.
+            let minimum_files = l0_minimum_morsel_files(config, &engine_type, extension);
+            let morsel = filtered_files.compactable_files.get(&0).and_then(|files| {
+                select_compaction_morsel_with_minimum(
+                    files,
+                    memory_budget.max_input_bytes,
+                    minimum_files,
+                )
+            });
 
             if let Some(morsel) = morsel {
                 info!(
@@ -334,6 +369,7 @@ impl CompactionTaskBuilder {
                     candidate_files = morsel.total_candidate_files,
                     candidate_bytes = morsel.total_candidate_bytes,
                     projected_budget_bytes = memory_budget.remaining_bytes,
+                    layout_promotion = minimum_files == 1,
                     "✅ {} COMPACTION: Triggering bounded L0 morsel for collection {} (excluded {} pending files)",
                     engine_type,
                     collection_id,
@@ -641,6 +677,27 @@ mod tests {
 
         assert!(select_compaction_morsel(&files, 300 * MIB).is_none());
         assert!(select_compaction_morsel(&files[..1], 512 * MIB).is_none());
+    }
+
+    #[test]
+    fn threshold_one_training_morsel_can_promote_one_untrained_file() {
+        let files = vec![sized_file("untrained-L0.pax", 0, 180)];
+        let mut config = CompactionConfig::default();
+        config.l0_file_threshold = 1;
+
+        let minimum_files = l0_minimum_morsel_files(&config, &StorageEngineType::SST, "pax");
+        let morsel = select_compaction_morsel_with_minimum(&files, 512 * MIB, minimum_files)
+            .expect("the explicit threshold-one training arm must promote its one L0 file");
+
+        assert_eq!(minimum_files, 1);
+        assert_eq!(morsel.input_files, vec!["untrained-L0.pax"]);
+        assert_eq!(morsel.input_bytes, 180 * MIB);
+
+        assert_eq!(
+            l0_minimum_morsel_files(&config, &StorageEngineType::VIPER, "parquet"),
+            2,
+            "threshold one must not turn non-PAX compaction into one-file rewrites"
+        );
     }
 
     #[test]

@@ -82,9 +82,12 @@ memory returned by query/cache work can unblock the queue.
 === D4 — Discovery creates byte-bounded file morsels
 
 Task discovery deterministically orders candidates oldest first and packs only
-whole, mutually exclusive files that fit the current input-byte budget. A
-one-file rewrite is rejected because it cannot reduce query fanout. If no pair
-fits, the level remains horizontal and the scheduler reports the decision.
+whole, mutually exclusive files that fit the current input-byte budget.
+Ordinary fanout compaction requires at least two files; if no pair fits, the
+level remains horizontal and the scheduler reports the decision. The existing
+threshold-one L0 training signal is the narrow exception: it may admit one
+untrained PAX file because the rewrite promotes the query layout even though it
+does not reduce file count. Admission still precedes that training work.
 
 The controller never divides a PAX segment in memory merely to satisfy a
 budget. Repacking one oversized segment is future streaming/repartition work.
@@ -123,7 +126,8 @@ duration, and horizontal/no-pair decisions.
 The implementation must prove:
 
 * deterministic byte-bounded morsel selection, including oversized-file skip,
-  at-least-two-files, and zero-budget fail-closed cases;
+  ordinary at-least-two-files, threshold-one layout promotion, and zero-budget
+  fail-closed cases;
 * weighted cross-collection reservation and RAII release;
 * cgroup capacity/current-usage constraint arithmetic;
 * config validation for finite amplification and fractions in `(0, 1]`;

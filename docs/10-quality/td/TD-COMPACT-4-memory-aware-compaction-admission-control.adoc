@@ -34,7 +34,10 @@ S2 — **Implemented: hybrid byte policy + file morsels.** The projection is
 The effective process-wide budget is the minimum of cgroup/host-visible total
 RAM × 0.25, currently available RAM × 0.50, and the optional `max_memory_mb`
 ceiling. Discovery packs oldest-first whole-file morsels within the remaining
-input-byte budget and requires at least two files. An oversized file stays
+input-byte budget and requires at least two files for ordinary fanout
+compaction. The threshold-one L0 training signal may promote one admitted PAX
+file to the trained layout; this preserves the existing write/search contract
+without letting training run before admission. An oversized file stays
 horizontal; streaming repartition remains TD-COMPACT-2 follow-up work.
 
 S3 — **Partially implemented: pressure priority + observability.** Live
