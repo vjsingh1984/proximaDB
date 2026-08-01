@@ -1000,29 +1000,95 @@ impl VectorOperationsService {
         request: RichRecordGetRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<RichRecordGetResponse> {
+        self.get_record_with_tenant_context_abac(request, tenant_context, None, None)
+            .await
+    }
+
+    /// ABAC-aware rich-record get: fetches the record, then admit-checks the
+    /// single result against the subject's security predicate (fail-closed on
+    /// deny). The gRPC/internal callers keep the no-subject delegate (no
+    /// enforcement); the REST v2 surface passes the request subject. Enforcement
+    /// is `abac-policy`-gated; default builds pass the subject through ignored.
+    pub async fn get_record_with_tenant_context_abac(
+        &self,
+        request: RichRecordGetRequest,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
+    ) -> Result<RichRecordGetResponse> {
         let collection_id = self
             .validate_tenant_collection_access(&request.collection_id, tenant_context)
             .await?
             .to_string();
 
-        self.vector(
-            &collection_id,
-            &request.record_id,
-            request.include_vector,
-            request.include_props,
-        )
-        .await
-        .map(|record| {
-            // Defense-in-depth: never return a dead (tombstone / TTL-expired)
-            // record from get-by-id, regardless of which backing store (WAL
-            // or SST point-lookup) produced it. The WAL memtable filters on
-            // its own, but the SST point-lookup path does not. Use the
-            // canonical is_visible_at(now_ns) on valid_to_ns.
-            let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-            record
-                .filter(|r| r.is_visible_at(now_ns))
-                .map(vector_record_to_rich_result)
-        })
+        let record = self
+            .vector(
+                &collection_id,
+                &request.record_id,
+                request.include_vector,
+                request.include_props,
+            )
+            .await
+            .map(|record| {
+                // Defense-in-depth: never return a dead (tombstone / TTL-expired)
+                // record from get-by-id, regardless of which backing store (WAL
+                // or SST point-lookup) produced it. The WAL memtable filters on
+                // its own, but the SST point-lookup path does not. Use the
+                // canonical is_visible_at(now_ns) on valid_to_ns.
+                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                record
+                    .filter(|r| r.is_visible_at(now_ns))
+                    .map(vector_record_to_rich_result)
+            })?;
+
+        #[cfg(feature = "abac-policy")]
+        let record = self
+            .admit_record_abac(record, subject, tenant_stable_id, &collection_id)
+            .await;
+        #[cfg(not(feature = "abac-policy"))]
+        let _ = (subject, tenant_stable_id);
+
+        Ok(record)
+    }
+
+    /// Admit-check a single fetched record against the subject's read context:
+    /// `None` (denied) ⇒ `None` (fail-closed); `System` ⇒ passthrough;
+    /// `Client(ctx)` ⇒ drop the record if it fails the ctx's security predicate.
+    /// (Point lookups have no filter slot to push into, so this is a post-check
+    /// on the one returned record.)
+    #[cfg(feature = "abac-policy")]
+    async fn admit_record_abac(
+        &self,
+        record: Option<RichSearchResult>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
+        collection_id: &str,
+    ) -> Option<RichSearchResult> {
+        use crate::core::search::sql_value_filter::proxima_value_to_json;
+        use crate::security::rls::filter_lattice::admits_with_security;
+
+        match self
+            .records_read_context(subject, tenant_stable_id, collection_id)
+            .await
+        {
+            // Denied ⇒ fail-closed: the record is not returned.
+            None => None,
+            // No client subject / no enforcer ⇒ structural isolation only.
+            Some(proximadb_abac::ReadContext::System(_)) => record,
+            Some(proximadb_abac::ReadContext::Client(ctx)) => {
+                let security = self
+                    .abac_enforcer
+                    .as_ref()
+                    .and_then(|enforcer| enforcer.security_filter_for_context(&ctx));
+                record.filter(|r| match &security {
+                    Some(security) => admits_with_security(None, Some(security), &|field: &str| {
+                        r.props.get(field).map(proxima_value_to_json)
+                    }),
+                    // Admitted with no row predicate ⇒ the record is visible.
+                    None => true,
+                })
+            }
+        }
     }
 
     /// Point-get a single FULL record by id, tenant-scoped (TD-DOC-CONV-1).

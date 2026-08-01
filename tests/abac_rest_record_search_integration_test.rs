@@ -37,7 +37,7 @@ use proximadb_abac::{
 use proximadb_catalog::fc_metamodel::{AttrValue, Effect, PolicyBinding, Scope};
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord, ProximaTreeNode};
-use proximadb_runtime::RichSearchRequest;
+use proximadb_runtime::{RichRecordGetRequest, RichSearchRequest};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -193,5 +193,82 @@ async fn none_subject_is_passthrough_on_rest_records_path() {
     assert!(
         ids.contains(&OID_ENG) && ids.contains(&OID_HR),
         "a None subject (gRPC/Flight path) must see both records (passthrough); got {ids:?}"
+    );
+}
+
+// ── get-by-id path (`get_record_with_tenant_context_abac`) ──
+//
+// A point lookup has no filter slot to push into, so enforcement is a post-check
+// on the single fetched record: denied subject ⇒ None (fail-closed); admitted
+// subject ⇒ the record only if it satisfies the security predicate; None subject
+// ⇒ passthrough.
+
+fn get_request(record_id: &str) -> RichRecordGetRequest {
+    RichRecordGetRequest {
+        collection_id: COLLECTION.to_string(),
+        record_id: record_id.to_string(),
+        include_vector: false,
+        include_props: true,
+    }
+}
+
+/// An admitted subject (dept=eng) may GET the eng record, NOT the hr record.
+#[tokio::test]
+async fn admitted_subject_gets_only_accessible_record_on_getbyid_path() {
+    let (svc, _collections) = fixture().await;
+
+    let eng = svc
+        .get_record_with_tenant_context_abac(
+            get_request(OID_ENG),
+            None,
+            Some("alice"),
+            Some(TENANT),
+        )
+        .await
+        .expect("abac get");
+    assert!(eng.is_some(), "alice (dept=eng) may GET the eng record");
+
+    let hr = svc
+        .get_record_with_tenant_context_abac(get_request(OID_HR), None, Some("alice"), Some(TENANT))
+        .await
+        .expect("abac get");
+    assert!(
+        hr.is_none(),
+        "alice must NOT GET the hr record — it fails the dept=eng security predicate"
+    );
+}
+
+/// A denied subject (no attribute binding) gets NONE — fail-closed.
+#[tokio::test]
+async fn denied_subject_gets_no_record_on_getbyid_path() {
+    let (svc, _collections) = fixture().await;
+
+    let resp = svc
+        .get_record_with_tenant_context_abac(
+            get_request(OID_ENG),
+            None,
+            Some("mallory"),
+            Some(TENANT),
+        )
+        .await
+        .expect("abac get");
+    assert!(
+        resp.is_none(),
+        "mallory (unbound) must be denied — no record (fail-closed)"
+    );
+}
+
+/// A `None` subject (the gRPC/internal callers) gets the record — passthrough.
+#[tokio::test]
+async fn none_subject_is_passthrough_on_getbyid_path() {
+    let (svc, _collections) = fixture().await;
+
+    let resp = svc
+        .get_record_with_tenant_context_abac(get_request(OID_ENG), None, None, None)
+        .await
+        .expect("abac get");
+    assert!(
+        resp.is_some(),
+        "a None subject (gRPC/internal path) may GET the record (passthrough)"
     );
 }
