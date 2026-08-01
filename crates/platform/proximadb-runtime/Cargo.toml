@@ -44,8 +44,9 @@ sysinfo = "0.30"
 thiserror.workspace = true
 tokio = { version = "1.37", features = ["full"] }
 tracing = "0.1"
-# Only used by the `cluster`-gated `ClusterServerConfig::default` (node-id generation).
-uuid = { version = "1.0", features = ["v4"], optional = true }
+# Node-id generation: used unconditionally by `cluster::consensus` (TD-DECOMP-6) and by
+# the `cluster`-gated `ClusterServerConfig::default`.
+uuid = { version = "1.0", features = ["v4"] }
 
 [features]
 default = []
@@ -53,7 +54,6 @@ default = []
 # `ClusterServerConfig` re-export and the cluster-related fields on
 # `MultiServerConfig`. The root `proximadb` crate forwards its own
 # `cluster` feature here. Without this, `#[cfg(feature = "cluster")]`
-# in `bootstrap_config.rs` would unexpected-cfg-condition-value lint.
-# Pulls in `uuid` because the cluster-gated `ClusterServerConfig::default`
-# generates a node id via `uuid::Uuid::new_v4()`.
-cluster = ["dep:uuid"]
+# in `bootstrap_config.rs` would unexpected-cfg-condition-value lint. (`uuid` is now
+# unconditional — see [dependencies] — so this feature enables only the cfg gate, not a dep.)
+cluster = []

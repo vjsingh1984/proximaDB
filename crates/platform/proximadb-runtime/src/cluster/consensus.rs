@@ -30,13 +30,13 @@ use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use super::rpc::{
+use crate::cluster_rpc::{
     AppendEntriesRequest, AppendEntriesResponse, CircuitBreaker, ConnectionManager,
     ConnectionPoolConfig, ConsensusTransport, LogEntryType, NodeEndpoint, RequestVoteRequest,
     RetryPolicy, RpcLogEntry,
 };
 // Re-export for external use
-pub use super::rpc::{RequestVoteResponse, RpcResult};
+pub use crate::cluster_rpc::{RequestVoteResponse, RpcResult};
 
 // Config consolidated into proximadb-config (TD-107, seam S4); re-exported
 // so existing `crate::cluster::...` import paths keep resolving.
@@ -1607,9 +1607,9 @@ mod tests {
         async fn install_snapshot(
             &self,
             _target: &NodeEndpoint,
-            _req: super::super::rpc::InstallSnapshotRequest,
-        ) -> RpcResult<super::super::rpc::InstallSnapshotResponse> {
-            Ok(super::super::rpc::InstallSnapshotResponse {
+            _req: crate::cluster_rpc::InstallSnapshotRequest,
+        ) -> RpcResult<crate::cluster_rpc::InstallSnapshotResponse> {
+            Ok(crate::cluster_rpc::InstallSnapshotResponse {
                 term: 1,
                 bytes_stored: 0,
             })

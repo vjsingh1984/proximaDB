@@ -20,3 +20,7 @@ pub mod grpc_client;
 pub mod retry;
 pub mod traits;
 pub mod types;
+
+// Convenience re-exports (mirror root src/cluster/rpc/mod.rs) so moved callers
+// (e.g. `cluster::consensus`) can name rpc items at the cluster_rpc root.
+pub use {connection::*, error::*, retry::*, traits::*, types::*};
