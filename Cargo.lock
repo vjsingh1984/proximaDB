@@ -7690,6 +7690,8 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-kernel",
  "proximadb-proto",
+ "proximadb-rank-core",
+ "proximadb-rank-onnx",
  "proximadb-records",
  "proximadb-search-types",
  "proximadb-tenant",
