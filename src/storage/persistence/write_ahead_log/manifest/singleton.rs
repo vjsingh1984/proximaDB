@@ -159,8 +159,9 @@ pub async fn shutdown() -> Result<()> {
 
 // Convenience functions
 
-/// Append entry asynchronously (high performance)
-pub async fn append_async(entry: GlobalManifestEntry) -> Result<()> {
+/// Append entry asynchronously (high performance); returns the allocated
+/// durable `global_lsn` (see `GlobalManifestService::append_async`).
+pub async fn append_async(entry: GlobalManifestEntry) -> Result<u64> {
     let service = get_service().ok_or_else(|| anyhow!("Global manifest not initialized"))?;
     service.append_async(entry).await
 }

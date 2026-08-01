@@ -2201,6 +2201,10 @@ impl WriteAheadLogManager {
             }
         }
 
+        // TD-DELVEC-1 WI-5 P0: capture the durable per-batch `global_lsn` (when this
+        // batch is synced to disk + the manifest append succeeds) so it can be
+        // returned for DV-bit keying instead of the ephemeral memtable sequence.
+        let mut durable_lsn: Option<u64> = None;
         // Then, persist to disk if sync mode requires it
         if self.should_sync_to_disk(collection_id).await? {
             info!(
@@ -2373,6 +2377,7 @@ impl WriteAheadLogManager {
                 .await
             {
                 Ok(file_info) => {
+                    durable_lsn = Some(file_info.global_lsn);
                     trace!("WAL: write_batch_with_sync SUCCESS: {:?}", file_info);
                 }
                 Err(e) => {
@@ -2397,7 +2402,12 @@ impl WriteAheadLogManager {
             );
         }
 
-        Ok(sequences)
+        // Return the durable per-batch `global_lsn` (broadcast one-per-record) when
+        // the batch was synced + the manifest allocated one; otherwise the ephemeral
+        // memtable sequences (MemoryOnly / append failure — no durability to key on).
+        // TD-DELVEC-1 WI-3b/WI-5: the cold-delete path keys DV bits on these LSNs.
+        let n = sequences.len();
+        Ok(durable_lsn.map(|l| vec![l; n]).unwrap_or(sequences))
     }
 
     /// Insert multiple vectors efficiently (modern API)

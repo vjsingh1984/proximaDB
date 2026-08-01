@@ -476,10 +476,15 @@ impl GlobalManifestService {
         Ok(())
     }
 
-    /// Append an entry asynchronously (high performance, no blocking)
-    pub async fn append_async(&self, mut entry: GlobalManifestEntry) -> Result<()> {
+    /// Append an entry asynchronously (the LSN is allocated synchronously; the
+    /// entry is persisted by the background worker). Returns the allocated durable
+    /// `global_lsn` — TD-DELVEC-1 WI-5 P0 keys deletion-vector bits on this LSN so
+    /// the DV generation shares the read side's `snapshot_lsn` number space
+    /// (correct MVCC) and is recoverable.
+    pub async fn append_async(&self, mut entry: GlobalManifestEntry) -> Result<u64> {
         // Allocate global LSN
         entry.global_lsn = self.lsn_allocator.allocate().await;
+        let global_lsn = entry.global_lsn;
 
         // Send to background worker (non-blocking)
         self.append_tx
@@ -490,7 +495,7 @@ impl GlobalManifestService {
             .await
             .context("Failed to send append request")?;
 
-        Ok(())
+        Ok(global_lsn)
     }
 
     /// Append an entry synchronously (waits for disk write)
@@ -1200,6 +1205,66 @@ mod barrier_tests {
             entries[0].status,
             WalEntryStatus::Flushed,
             "freshly appended batch must be marked Flushed, not missed"
+        );
+    }
+
+    /// TD-DELVEC-1 WI-5 P0: `append_async` returns the durable per-batch
+    /// `global_lsn` it allocated (previously a discarded `()`), so the cold-delete
+    /// path can key deletion-vector bits on a generation in the read side's
+    /// `snapshot_lsn` number space. The LSN is allocated synchronously, monotonic
+    /// across appends, and matches `current_lsn`.
+    #[tokio::test]
+    async fn append_async_returns_durable_global_lsn() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_url = format!("file://{}", temp_dir.path().display());
+        let fs_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .expect("fs factory"),
+        );
+        let service = GlobalManifestService::new(
+            GlobalManifestServiceConfig::default(),
+            fs_factory,
+            wal_url.clone(),
+        )
+        .await
+        .expect("service");
+
+        let mk_entry = |batch_id: &str| GlobalManifestEntry {
+            global_lsn: 0, // allocated by append_async
+            collection_id: "c1".to_string(),
+            batch_id: batch_id.to_string(),
+            file_path: format!("c1/wal/{batch_id}.bcwal"),
+            storage_url: wal_url.clone(),
+            size_bytes: 42,
+            checksum_crc32: 0,
+            timestamp_ms: 1,
+            format: SerializationFormat::Bincode,
+            vector_count: 1,
+            status: WalEntryStatus::Active,
+            checkpoint_id: None,
+        };
+
+        let lsn1 = service
+            .append_async(mk_entry("b1"))
+            .await
+            .expect("append b1");
+        let lsn2 = service
+            .append_async(mk_entry("b2"))
+            .await
+            .expect("append b2");
+        assert!(
+            lsn1 > 0,
+            "append_async must return an allocated LSN, got {lsn1}"
+        );
+        assert!(
+            lsn2 > lsn1,
+            "returned LSNs must be monotonic: {lsn1} then {lsn2}"
+        );
+        assert_eq!(
+            service.current_lsn().await,
+            lsn2,
+            "the returned LSN must match the manifest's current_lsn"
         );
     }
 }
