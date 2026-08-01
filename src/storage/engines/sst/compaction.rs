@@ -1243,8 +1243,8 @@ impl Compaction {
     /// footer region (position → oid). The merge dedup loses each record's source
     /// segment/position, so this is computed up front from the inputs. Feature-gated.
     #[cfg(feature = "cold-deletion-vectors")]
-    async fn build_deleted_oids(
-        &self,
+    pub(crate) async fn build_deleted_oids(
+        filesystem: &crate::storage::persistence::filesystem::FilesystemFactory,
         dv_store: &crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore,
         input_files: &[std::path::PathBuf],
     ) -> std::collections::HashSet<String> {
@@ -1261,8 +1261,7 @@ impl Compaction {
             if positions.is_empty() {
                 continue;
             }
-            let Ok(Some(resolver)) = read_segment_resolver(&self.filesystem_factory, &path).await
-            else {
+            let Ok(Some(resolver)) = read_segment_resolver(filesystem, &path).await else {
                 continue;
             };
             for pos in positions {
@@ -1443,7 +1442,8 @@ impl Compaction {
                 self.filesystem_factory.clone(),
             );
         #[cfg(feature = "cold-deletion-vectors")]
-        let deleted_oids = self.build_deleted_oids(&dv_store, &task.input_files).await;
+        let deleted_oids =
+            Self::build_deleted_oids(&self.filesystem_factory, &dv_store, &task.input_files).await;
 
         for vector_record in &resolved_records {
             // TD-DELVEC-1 WI-6: drop DV-deleted rows (checked before tombstone/
