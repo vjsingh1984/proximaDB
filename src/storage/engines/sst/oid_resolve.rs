@@ -16,6 +16,7 @@ use proximadb_storage_common::pax_block::SEGMENT_MAGIC;
 use proximadb_storage_common::segment_layout::{SEG_TAIL_LEN, SegmentFooterIndex};
 
 use crate::storage::engines::sst::oid_resolver_cache::OidResolverCache;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 impl super::core::SstEngine {
     /// TD-DELVEC-1 WI-3c: resolve an oid to all `(segment_path, position)` hits
@@ -67,60 +68,72 @@ impl super::core::SstEngine {
     /// (CRC-validated). Returns `None` if the segment has no resolver region
     /// (`opr_len == 0` → tombstone fallback) or isn't a coalesced PAX segment.
     async fn read_resolver(&self, path: &str) -> Result<Option<Arc<OidPositionResolver>>> {
-        let storage_url = path.to_string();
-        let fs = self
-            .filesystem()
-            .get_filesystem(&storage_url)
-            .map_err(|e| anyhow!("resolver load: filesystem for {storage_url}: {e:?}"))?;
-
-        // File size (to read the tail).
-        let metadata = fs
-            .metadata(&storage_url)
-            .await
-            .map_err(|e| anyhow!("resolver load: metadata for {storage_url}: {e:?}"))?;
-        let file_size = metadata.size as u64;
-        if file_size < SEG_TAIL_LEN as u64 {
-            return Ok(None); // too small
-        }
-
-        // Read the tail [footer_len u64 | SEGMENT_MAGIC 8B] to locate the footer.
-        let tail_off = file_size - SEG_TAIL_LEN as u64;
-        let tail = fs
-            .read_range(&storage_url, tail_off, SEG_TAIL_LEN as u64)
-            .await
-            .map_err(|e| anyhow!("resolver load: tail read for {storage_url}: {e:?}"))?;
-        if &tail[8..16] != SEGMENT_MAGIC {
-            return Ok(None); // not a coalesced PAX segment
-        }
-        let footer_len_bytes: [u8; 8] = tail[..8]
-            .try_into()
-            .map_err(|_| anyhow!("resolver load: bad tail for {storage_url}"))?;
-        let footer_len = u64::from_le_bytes(footer_len_bytes) as usize;
-        if footer_len == 0 || (tail_off as usize) < footer_len {
-            return Ok(None);
-        }
-
-        // Read + parse the footer.
-        let footer_off = tail_off - footer_len as u64;
-        let footer_bytes = fs
-            .read_range(&storage_url, footer_off, footer_len as u64)
-            .await
-            .map_err(|e| anyhow!("resolver load: footer read for {storage_url}: {e:?}"))?;
-        let footer = SegmentFooterIndex::parse(&footer_bytes)
-            .map_err(|e| anyhow!("resolver load: footer parse for {storage_url}: {e}"))?;
-
-        // No resolver region → None (tombstone fallback).
-        if footer.opr_len == 0 {
-            return Ok(None);
-        }
-
-        // Read + deserialize the resolver region (CRC-validated by deserialize).
-        let region = fs
-            .read_range(&storage_url, footer.opr_off, footer.opr_len)
-            .await
-            .map_err(|e| anyhow!("resolver load: region read for {storage_url}: {e:?}"))?;
-        let resolver = OidPositionResolver::deserialize(&region)
-            .map_err(|e| anyhow!("resolver load: deserialize for {storage_url}: {e}"))?;
-        Ok(Some(Arc::new(resolver)))
+        read_segment_resolver(self.filesystem(), path).await
     }
+}
+
+/// Lazy-load a resolver from the segment's footer region — a free fn usable by
+/// callers that don't hold an `SstEngine` (e.g. compaction, TD-DELVEC-1 WI-6).
+/// Reads the tail `[footer_len u64 | SEGMENT_MAGIC 8B]` to locate the footer,
+/// then the footer body (→ `opr_off`/`opr_len`), then the region bytes →
+/// deserialize (CRC-validated). Returns `None` if the segment has no resolver
+/// region (`opr_len == 0` → tombstone fallback) or isn't a coalesced PAX segment.
+pub async fn read_segment_resolver(
+    filesystem: &FilesystemFactory,
+    path: &str,
+) -> Result<Option<Arc<OidPositionResolver>>> {
+    let storage_url = path.to_string();
+    let fs = filesystem
+        .get_filesystem(&storage_url)
+        .map_err(|e| anyhow!("resolver load: filesystem for {storage_url}: {e:?}"))?;
+
+    // File size (to read the tail).
+    let metadata = fs
+        .metadata(&storage_url)
+        .await
+        .map_err(|e| anyhow!("resolver load: metadata for {storage_url}: {e:?}"))?;
+    let file_size = metadata.size as u64;
+    if file_size < SEG_TAIL_LEN as u64 {
+        return Ok(None); // too small
+    }
+
+    // Read the tail [footer_len u64 | SEGMENT_MAGIC 8B] to locate the footer.
+    let tail_off = file_size - SEG_TAIL_LEN as u64;
+    let tail = fs
+        .read_range(&storage_url, tail_off, SEG_TAIL_LEN as u64)
+        .await
+        .map_err(|e| anyhow!("resolver load: tail read for {storage_url}: {e:?}"))?;
+    if &tail[8..16] != SEGMENT_MAGIC {
+        return Ok(None); // not a coalesced PAX segment
+    }
+    let footer_len_bytes: [u8; 8] = tail[..8]
+        .try_into()
+        .map_err(|_| anyhow!("resolver load: bad tail for {storage_url}"))?;
+    let footer_len = u64::from_le_bytes(footer_len_bytes) as usize;
+    if footer_len == 0 || (tail_off as usize) < footer_len {
+        return Ok(None);
+    }
+
+    // Read + parse the footer.
+    let footer_off = tail_off - footer_len as u64;
+    let footer_bytes = fs
+        .read_range(&storage_url, footer_off, footer_len as u64)
+        .await
+        .map_err(|e| anyhow!("resolver load: footer read for {storage_url}: {e:?}"))?;
+    let footer = SegmentFooterIndex::parse(&footer_bytes)
+        .map_err(|e| anyhow!("resolver load: footer parse for {storage_url}: {e}"))?;
+
+    // No resolver region → None (tombstone fallback).
+    if footer.opr_len == 0 {
+        return Ok(None);
+    }
+
+    // Read + deserialize the resolver region (CRC-validated by deserialize).
+    let region = fs
+        .read_range(&storage_url, footer.opr_off, footer.opr_len)
+        .await
+        .map_err(|e| anyhow!("resolver load: region read for {storage_url}: {e:?}"))?;
+    let resolver = OidPositionResolver::deserialize(&region)
+        .map_err(|e| anyhow!("resolver load: deserialize for {storage_url}: {e}"))?;
+    Ok(Some(Arc::new(resolver)))
 }

@@ -1237,6 +1237,42 @@ impl Compaction {
     /// Original enhanced compaction implementation (now used as fallback)
     /// UNIFIED VectorRecord compaction (eliminates SstRecord conversions completely)
     /// OPTIMIZATION: Single streaming path, no dual conversions, fastest performance
+    /// TD-DELVEC-1 WI-6: collect the oids deleted (DV bit set) across the input
+    /// segments, so the compaction merge can physically drop them. Reads each
+    /// input's DV (`{input}.dv`, disk-authoritative) + the segment's OID resolver
+    /// footer region (position → oid). The merge dedup loses each record's source
+    /// segment/position, so this is computed up front from the inputs. Feature-gated.
+    #[cfg(feature = "cold-deletion-vectors")]
+    pub(crate) async fn build_deleted_oids(
+        filesystem: &crate::storage::persistence::filesystem::FilesystemFactory,
+        dv_store: &crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore,
+        input_files: &[std::path::PathBuf],
+    ) -> std::collections::HashSet<String> {
+        use crate::storage::engines::sst::oid_resolve::read_segment_resolver;
+        let mut deleted = std::collections::HashSet::new();
+        for input in input_files {
+            let path = input.to_string_lossy().into_owned();
+            // Absent `.dv` → no deletes for this segment (load is a no-op).
+            let _ = dv_store.load(&path).await;
+            let Some(vdv) = dv_store.get(&path).await else {
+                continue;
+            };
+            let positions = vdv.deleted_positions();
+            if positions.is_empty() {
+                continue;
+            }
+            let Ok(Some(resolver)) = read_segment_resolver(filesystem, &path).await else {
+                continue;
+            };
+            for pos in positions {
+                if let Some(oid) = resolver.oid_at(pos) {
+                    deleted.insert(oid.to_string());
+                }
+            }
+        }
+        deleted
+    }
+
     async fn perform_unified_vectorrecord_compaction(
         &self,
         task: &SstCompactionTask,
@@ -1394,7 +1430,29 @@ impl Compaction {
         let mut deleted_vector_ids = Vec::new();
         let mut merged_vectors = Vec::new();
 
+        // TD-DELVEC-1 WI-6: build the set of oids whose deletion-vector bit is
+        // set in any input segment, so the merge physically drops them (a DV-
+        // deleted row must not resurrect in the compacted output). The merge
+        // dedup loses each record's source segment/position, so this is computed
+        // up front from the input segments' DVs + OID resolvers. The `dv_store`
+        // is reused below to retire the inputs' `.dv` files.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let dv_store =
+            crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore::new(
+                self.filesystem_factory.clone(),
+            );
+        #[cfg(feature = "cold-deletion-vectors")]
+        let deleted_oids =
+            Self::build_deleted_oids(&self.filesystem_factory, &dv_store, &task.input_files).await;
+
         for vector_record in &resolved_records {
+            // TD-DELVEC-1 WI-6: drop DV-deleted rows (checked before tombstone/
+            // expiry so a DV delete always wins).
+            #[cfg(feature = "cold-deletion-vectors")]
+            if deleted_oids.contains(&vector_record.id) {
+                deleted_vector_ids.push(vector_record.id.clone());
+                continue;
+            }
             // Tombstone detection: empty vector + expires_at in past (including 0)
             // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
             let is_tombstone = vector_record.vector.is_empty()
@@ -1980,6 +2038,14 @@ impl Compaction {
                     purged,
                     "evicted survivor-cache ranges for compacted-away file"
                 );
+            }
+
+            // TD-DELVEC-1 WI-6: retire the input segment's deletion vector — it
+            // referenced this now-compacted-away input. Best-effort (a missing
+            // `.dv` is already success).
+            #[cfg(feature = "cold-deletion-vectors")]
+            if let Err(e) = dv_store.remove(&input_path).await {
+                warn!("compaction DV retire: failed to remove {input_path}.dv: {e:?}");
             }
         }
         if !retirement_errors.is_empty() {
