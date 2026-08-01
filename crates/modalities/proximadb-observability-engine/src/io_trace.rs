@@ -181,6 +181,13 @@ pub struct IoTrace {
     /// Footer/metadata cache outcomes (Dimension 3 — the highest-ROI cache).
     footer_hits: AtomicU64,
     footer_misses: AtomicU64,
+    /// Persistent local-disk L2 cache probe outcomes (ADR-085 / TD-IOTRACE-4).
+    /// Distinct from the in-memory footer cache: an L2 hit serves bytes that
+    /// survived process restart/L1 eviction without a billed ranged GET, so a
+    /// footer-cold query can still be physically warm — the cache-state signal
+    /// downstream priors aggregation needs alongside the footer ratio.
+    l2_hits: AtomicU64,
+    l2_misses: AtomicU64,
     /// Chargeable egress bytes — moved cross-region / to the internet off the
     /// free same-region path (Dimension 2 — KEU). Recorded only for chargeable
     /// localities; the route cost model's egress weight consumes this.
@@ -519,6 +526,12 @@ impl IoTrace {
         self.footer_misses.fetch_add(misses, Ordering::Relaxed);
     }
 
+    /// Record a batch of persistent-L2 cache probe outcomes (ADR-085 tier).
+    pub fn record_l2s(&self, hits: u64, misses: u64) {
+        self.l2_hits.fetch_add(hits, Ordering::Relaxed);
+        self.l2_misses.fetch_add(misses, Ordering::Relaxed);
+    }
+
     /// Add to chargeable egress bytes (cross-region / internet — KEU).
     pub fn record_egress_bytes(&self, bytes: u64) {
         self.egress_bytes.fetch_add(bytes, Ordering::Relaxed);
@@ -676,6 +689,8 @@ impl IoTrace {
             bytes_written: self.bytes_written.load(Ordering::Relaxed),
             footer_hits: self.footer_hits.load(Ordering::Relaxed),
             footer_misses: self.footer_misses.load(Ordering::Relaxed),
+            l2_hits: self.l2_hits.load(Ordering::Relaxed),
+            l2_misses: self.l2_misses.load(Ordering::Relaxed),
             egress_bytes: self.egress_bytes.load(Ordering::Relaxed),
             embedding_calls: self.embedding_calls.load(Ordering::Relaxed),
             embedding_input_tokens: self.embedding_input_tokens.load(Ordering::Relaxed),
@@ -779,6 +794,12 @@ pub struct IoTraceSnapshot {
     pub bytes_written: u64,
     pub footer_hits: u64,
     pub footer_misses: u64,
+    /// Persistent local-disk L2 cache probe outcomes (ADR-085 / TD-IOTRACE-4).
+    /// `serde(default)` keeps snapshots serialized before this field readable.
+    #[serde(default)]
+    pub l2_hits: u64,
+    #[serde(default)]
+    pub l2_misses: u64,
     pub egress_bytes: u64,
     pub embedding_calls: u64,
     pub embedding_input_tokens: u64,
@@ -896,6 +917,8 @@ impl IoTraceSnapshot {
             && self.bytes_written == 0
             && self.footer_hits == 0
             && self.footer_misses == 0
+            && self.l2_hits == 0
+            && self.l2_misses == 0
             && self.egress_bytes == 0
             && self.embedding_calls == 0
             && self.embedding_input_tokens == 0
@@ -939,6 +962,8 @@ impl IoTraceSnapshot {
             footer_hits = self.footer_hits,
             footer_misses = self.footer_misses,
             footer_hit_ratio = self.footer_hit_ratio().unwrap_or(f64::NAN),
+            l2_hits = self.l2_hits,
+            l2_misses = self.l2_misses,
             egress_bytes = self.egress_bytes,
             embedding_calls = self.embedding_calls,
             embedding_input_tokens = self.embedding_input_tokens,
@@ -1066,6 +1091,17 @@ pub fn record_footers(hits: u64, misses: u64) {
 #[cfg(not(feature = "io-trace"))]
 #[inline(always)]
 pub fn record_footers(_hits: u64, _misses: u64) {}
+
+/// Record a batch of persistent-L2 cache probe outcomes for the active query
+/// (ADR-085 / TD-IOTRACE-4). (TD-160: perf/geometry trace class —
+/// compile-time gated, same class as the footer-cache outcomes.)
+#[cfg(feature = "io-trace")]
+pub fn record_l2s(hits: u64, misses: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_l2s(hits, misses));
+}
+#[cfg(not(feature = "io-trace"))]
+#[inline(always)]
+pub fn record_l2s(_hits: u64, _misses: u64) {}
 
 /// Record chargeable egress bytes (cross-region / internet — KEU) for the
 /// active query.
@@ -1775,6 +1811,27 @@ mod tests {
         assert_eq!(s.embedding_input_tokens, 150);
         assert_eq!(s.embedding_output_tokens, 300);
         assert_eq!(s.total_embedding_tokens(), 450);
+    }
+
+    /// TD-IOTRACE-4: persistent-L2 probe outcomes accumulate into the snapshot,
+    /// count as trace activity, and a snapshot serialized BEFORE the fields
+    /// existed still deserializes with them defaulted (mixed-read-safe).
+    #[test]
+    fn l2_probes_record_snapshot_and_default_from_legacy_json() {
+        let t = IoTrace::new();
+        t.record_l2s(3, 1);
+        t.record_l2s(1, 0);
+        let s = t.snapshot();
+        assert_eq!(s.l2_hits, 4);
+        assert_eq!(s.l2_misses, 1);
+        assert!(!s.is_empty(), "an L2-only trace is not empty");
+
+        let mut v = serde_json::to_value(IoTraceSnapshot::default()).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("l2_hits");
+        obj.remove("l2_misses");
+        let legacy: IoTraceSnapshot = serde_json::from_value(v).unwrap();
+        assert_eq!((legacy.l2_hits, legacy.l2_misses), (0, 0));
     }
 
     #[tokio::test]

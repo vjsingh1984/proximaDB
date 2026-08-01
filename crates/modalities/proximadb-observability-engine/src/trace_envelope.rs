@@ -92,6 +92,12 @@ pub struct TraceHeader {
     pub footer_hits: u64,
     #[serde(default)]
     pub footer_misses: u64,
+    /// Persistent local-disk L2 cache probe outcomes (ADR-085 / TD-IOTRACE-4).
+    /// `serde(default)` keeps pre-existing envelopes readable (mixed-read-safe).
+    #[serde(default)]
+    pub l2_hits: u64,
+    #[serde(default)]
+    pub l2_misses: u64,
     /// Compute wall ms attributed per engine (`datafusion`/`native`/`volcano`).
     /// A billing-class field — read verbatim by the KRU meter.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -248,6 +254,8 @@ impl TraceHeader {
             range_gets: snap.range_gets,
             footer_hits: snap.footer_hits,
             footer_misses: snap.footer_misses,
+            l2_hits: snap.l2_hits,
+            l2_misses: snap.l2_misses,
             compute_ms: snap.compute_ms.clone(),
             setup_ms: snap.setup_ms,
             open_ms: snap.open_ms,
@@ -359,6 +367,23 @@ impl TraceEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-IOTRACE-4: the header carries the persistent-L2 probe counters, and
+    /// an envelope written BEFORE the fields existed still deserializes with
+    /// them defaulted to zero (mixed-read-safe — never a flag-day).
+    #[test]
+    fn header_carries_l2_probes_and_legacy_json_defaults_to_zero() {
+        let snap = IoTraceSnapshot {
+            l2_hits: 5,
+            l2_misses: 2,
+            ..Default::default()
+        };
+        let h = TraceHeader::from_snapshot(&snap, Some("t"), 1);
+        assert_eq!((h.l2_hits, h.l2_misses), (5, 2));
+
+        let legacy: TraceHeader = serde_json::from_str(r#"{"event_time_unix_ms":7}"#).unwrap();
+        assert_eq!((legacy.l2_hits, legacy.l2_misses), (0, 0));
+    }
 
     fn relational_snapshot() -> IoTraceSnapshot {
         IoTraceSnapshot {

@@ -44,8 +44,8 @@ use std::future::Future;
 use std::sync::Arc;
 
 use proximadb_cache::{
-    CacheBudget, CacheKey, CacheKind, CacheScope, L2CacheStats, L2Class, PersistentArcBytesL2,
-    PersistentByteStore, TenantCache,
+    CacheBudget, CacheKey, CacheKind, CacheScope, L2CacheStats, L2Class, L2ValueStore,
+    PersistentArcBytesL2, PersistentByteStore, TenantCache,
 };
 use proximadb_storage_filesystem_types::{FilesystemError, FsResult};
 
@@ -65,6 +65,39 @@ fn request_cache_scope() -> CacheScope {
     crate::observability::io_trace::current_tenant_stable_id()
         .map(CacheScope::stable_tenant)
         .unwrap_or(CacheScope::Shared)
+}
+
+/// Persistent-L2 backend wrapper that forwards each exact-key probe outcome
+/// into the ambient per-query io_trace (TD-IOTRACE-4). It lives at the engine
+/// layer because the cache crate (foundation) must not depend on the
+/// observability engine; the probe runs inside the query task, so the
+/// task-local trace is in scope. Outcome semantics mirror `TenantCache`'s own
+/// global counters: `Ok(Some)` = hit, `Ok(None)`/`Err` = miss (fail-open).
+#[derive(Debug)]
+struct TracedSurvivorL2(PersistentArcBytesL2);
+
+#[async_trait::async_trait]
+impl L2ValueStore<Arc<[u8]>> for TracedSurvivorL2 {
+    async fn get(&self, key: &CacheKey) -> std::io::Result<Option<(Arc<[u8]>, u32)>> {
+        let result = self.0.get(key).await;
+        match &result {
+            Ok(Some(_)) => crate::observability::io_trace::record_l2s(1, 0),
+            Ok(None) | Err(_) => crate::observability::io_trace::record_l2s(0, 1),
+        }
+        result
+    }
+
+    async fn put(&self, key: &CacheKey, weight: u32, value: Arc<[u8]>) -> std::io::Result<()> {
+        self.0.put(key, weight, value).await
+    }
+
+    async fn remove(&self, key: &CacheKey) -> std::io::Result<bool> {
+        self.0.remove(key).await
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.0.resident_bytes()
+    }
 }
 
 /// A byte-range cache for survivor (Region B SQ8) and OID (Region D) ranges of
@@ -157,11 +190,11 @@ impl SurvivorRangeCache {
             None => TenantCache::new(budget),
         };
         if let Some(store) = &l2_store {
-            cache = cache.with_l2_backend(Arc::new(PersistentArcBytesL2::new(
+            cache = cache.with_l2_backend(Arc::new(TracedSurvivorL2(PersistentArcBytesL2::new(
                 store.clone(),
                 "survivor-exact",
                 L2Class::Survivor,
-            )));
+            ))));
         }
         Self {
             inner: Arc::new(cache),
@@ -279,6 +312,7 @@ impl SurvivorRangeCache {
             if let Ok(Some(bytes)) = store.get_range(&persistent_key, relative_off, len).await {
                 self.parent_l2_hits
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                crate::observability::io_trace::record_l2s(1, 0);
                 // Promote only the demanded range. `insert_memory_only`
                 // deliberately avoids writing an exact-range duplicate
                 // beside the durable parent entry.
@@ -290,6 +324,7 @@ impl SurvivorRangeCache {
             }
             self.parent_l2_misses
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            crate::observability::io_trace::record_l2s(0, 1);
         }
         let result = self
             .inner
@@ -709,6 +744,68 @@ mod tests {
             },
         )
         .await;
+    }
+
+    /// TD-IOTRACE-4 acceptance: a query served from the persistent L2 tier
+    /// records a nonzero `l2_hits` in the ambient per-query io_trace — the
+    /// restart-cold DRAM tier is exactly the footer-cold-but-L2-warm state the
+    /// counters exist to make observable. (Gated like the recorder itself:
+    /// without the `io-trace` feature the free fns are no-ops.)
+    #[cfg(feature = "io-trace")]
+    #[tokio::test]
+    async fn l2_probe_outcomes_reach_the_ambient_io_trace() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let store =
+            Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("open persistent L2"));
+        let cache = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(store.clone()));
+        let parent: Arc<[u8]> = Arc::from((0u8..32).collect::<Vec<_>>());
+        cache
+            .seed_parent_region("seg.pax", 1_000, parent)
+            .await
+            .expect("seed parent");
+        drop(cache);
+        drop(store);
+
+        let reopened =
+            Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("reopen persistent L2"));
+        let restarted = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(reopened));
+        let loads = Arc::new(AtomicUsize::new(0));
+        let loads_in_scope = loads.clone();
+        let snap =
+            crate::observability::io_trace::instrument(Some("t".to_string()), "test", async move {
+                let bytes = restarted
+                    .get_or_fetch_in_parent(
+                        CacheKind::QuantizedCodes,
+                        "seg.pax",
+                        1_008,
+                        4,
+                        1_000,
+                        32,
+                        move || {
+                            let loads = loads_in_scope.clone();
+                            async move {
+                                loads.fetch_add(1, Ordering::SeqCst);
+                                Ok(vec![99; 4])
+                            }
+                        },
+                    )
+                    .await
+                    .expect("persistent parent slice");
+                assert_eq!(bytes.as_ref(), &[8, 9, 10, 11]);
+                crate::observability::io_trace::snapshot().expect("trace in scope")
+            })
+            .await;
+        assert_eq!(
+            loads.load(Ordering::SeqCst),
+            0,
+            "served from L2, not the GET"
+        );
+        assert!(
+            snap.l2_hits >= 1,
+            "parent-L2 hit must be recorded in the query trace: hits={} misses={}",
+            snap.l2_hits,
+            snap.l2_misses
+        );
     }
 
     /// TD-CACHE-1 S2: warm_set ranks by hit count, caps at top_k, and

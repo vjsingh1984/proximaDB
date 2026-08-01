@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open** (filed 2026-07-31)
+| Status | **Resolved (2026-07-31, this PR).** `l2_hits`/`l2_misses` flow end-to-end: `IoTrace` → `IoTraceSnapshot` → `TraceHeader` (`serde(default)`) → nullable `trace_header` warehouse columns. Recording sites: the parent-region probe records inline in `SurvivorRangeCache::get_or_fetch_in_parent`, and the exact-key backend is wrapped by `TracedSurvivorL2` (engine-layer `L2ValueStore` adapter — the cache crate stays layering-clean). Gated behind the `io-trace` feature like the footer recorders (TD-160 perf-class). Acceptance test: `l2_probe_outcomes_reach_the_ambient_io_trace`. The downstream `aggregate.py` signal switch remains AnvaiOps TD-M1 scope.
 | Severity | Medium — cache-dimension observability/fidelity gap, not revenue-blocking (the KRU physical counters are TD-IOTRACE-2, Resolved #1091). Becomes higher-stakes as the persistent L2 tier (#1325) changes what "warm" means for real workloads.
 | Component | Observability — `crates/modalities/proximadb-observability-engine/src/{io_trace.rs,trace_envelope.rs}`, `src/observability/io_trace_warehouse.rs`
 | Introduced-by | PR #1325 (persistent L2 PAX warm tier, ADR-085) — the counters exist but stop at process-local stats
