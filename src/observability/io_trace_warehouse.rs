@@ -538,6 +538,11 @@ fn header_schema() -> SchemaRef {
         req("table_open_misses", DataType::Int64),
         req("egress_bytes", DataType::Int64),
         req("compute_ms_total", DataType::Int64),
+        // Persistent-L2 cache probes (ADR-085 / TD-IOTRACE-4). Appended and
+        // NULLABLE: parquet segments written before these columns existed lack
+        // them, and readers must resolve the absence to NULL — never fail.
+        opt("l2_hits", DataType::Int64),
+        opt("l2_misses", DataType::Int64),
     ]))
 }
 
@@ -648,6 +653,8 @@ fn build_header_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, Sto
     let mut table_open_misses = Vec::with_capacity(n);
     let mut egress_bytes = Vec::with_capacity(n);
     let mut compute_ms_total = Vec::with_capacity(n);
+    let mut l2_hits = Vec::with_capacity(n);
+    let mut l2_misses = Vec::with_capacity(n);
     for e in envs {
         let h = &e.header;
         writer_uuid.push(e.writer_uuid.clone());
@@ -682,6 +689,8 @@ fn build_header_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, Sto
         table_open_misses.push(h.table_open_misses as i64);
         egress_bytes.push(h.egress_bytes as i64);
         compute_ms_total.push(h.compute_ms.values().sum::<u64>() as i64);
+        l2_hits.push(h.l2_hits as i64);
+        l2_misses.push(h.l2_misses as i64);
     }
     let cols: Vec<ArrayRef> = vec![
         str_arr(writer_uuid),
@@ -712,6 +721,8 @@ fn build_header_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, Sto
         i64_arr(table_open_misses),
         i64_arr(egress_bytes),
         i64_arr(compute_ms_total),
+        i64_arr(l2_hits),
+        i64_arr(l2_misses),
     ];
     RecordBatch::try_new(header_schema(), cols)
         .map(Some)
@@ -949,6 +960,34 @@ mod tests {
             header: header(writer, seq),
             payload,
         }
+    }
+
+    /// TD-IOTRACE-4: the header batch carries the persistent-L2 probe columns
+    /// (appended, nullable — pre-existing parquet segments lack them and read
+    /// as NULL).
+    #[test]
+    fn header_batch_carries_l2_probe_columns() {
+        let mut e = env("w", 1, TracePayload::Generic);
+        e.header.l2_hits = 9;
+        e.header.l2_misses = 3;
+        let batch = build_header_batch(&[e]).unwrap().unwrap();
+        let schema = batch.schema();
+        let (ih, im) = (
+            schema.index_of("l2_hits").unwrap(),
+            schema.index_of("l2_misses").unwrap(),
+        );
+        assert!(schema.field(ih).is_nullable() && schema.field(im).is_nullable());
+        let hits = batch
+            .column(ih)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let misses = batch
+            .column(im)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!((hits.value(0), misses.value(0)), (9, 3));
     }
 
     fn relational(writer: &str, seq: u64, n_exec: usize) -> TraceEnvelope {
