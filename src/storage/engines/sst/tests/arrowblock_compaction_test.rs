@@ -308,6 +308,7 @@ mod tests {
 
         let compaction_task = CompactionTask {
             collection_object_id: 1,
+            collection_identity: crate::core::stable_id::CollectionIdentity::default(),
             level: 0,
             input_files: input_files.clone(),
             output_file: output_file.clone(),
@@ -706,6 +707,7 @@ mod tests {
 
         let compaction_task = CompactionTask {
             collection_object_id: 1,
+            collection_identity: crate::core::stable_id::CollectionIdentity::default(),
             level: 0,
             input_files,
             output_file,
@@ -892,6 +894,7 @@ mod tests {
 
         let compaction_task = CompactionTask {
             collection_object_id: 1,
+            collection_identity: crate::core::stable_id::CollectionIdentity::default(),
             level: 0,
             input_files,
             output_file,

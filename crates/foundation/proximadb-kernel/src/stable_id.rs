@@ -113,7 +113,7 @@ impl ToPathSegment for u32 {
 /// `DrPathBuilder` / `DrCollectionPath` (the SaaS mandate: every object-store
 /// write is prefixed via DrPathBuilder, the single allowlisted path builder).
 /// DrCollectionPath consumes a `CollectionIdentity` via `build_from_identity`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct CollectionIdentity {
     pub account_id: AccountId,
     pub namespace_id: NamespaceId,

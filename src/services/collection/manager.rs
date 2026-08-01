@@ -76,7 +76,6 @@ use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::trait_components::path_resolver::{
     collection_data_path_typed, collection_index_path_typed, collection_wal_path_typed,
-    typed_paths_enabled,
 };
 use proximadb_storage_common::storage_path::StoragePath;
 
@@ -1097,12 +1096,13 @@ impl CollectionService {
         // The account string is derived from the tenant context inside
         // `mint_typed_identity_for_collection` (Phase 4 collapses tenant into
         // account; see the helper for the rationale + the Phase 5 forward-note).
-        let typed_identity = if typed_paths_enabled() {
-            self.mint_typed_identity_for_collection(tenant_context, &enriched_config.name, &uuid)
-                .await
-        } else {
-            None
-        };
+        // ADR-0083 rev2 D3: the composite is ALWAYS minted (not env-gated) —
+        // it is the sole collection identity. The PATH layout stays env-gated
+        // (typed_paths_enabled), but the composite on StorageAssignment is
+        // always Some so admission/flush/compaction can key on it.
+        let typed_identity = self
+            .mint_typed_identity_for_collection(tenant_context, &enriched_config.name, &uuid)
+            .await;
 
         // Create storage directories (tenant-isolated if multi-tenant mode)
         let tenant_id = tenant_context.map(|ctx| ctx.tenant_id.as_str());
@@ -2013,10 +2013,13 @@ impl CollectionService {
         // `MiddlewareTenantContext.account_id` is a separate (Phase 5) field not
         // threaded to the storage-layer `StorageTenantContext` yet; when it is,
         // prefer it here. Until then the tenant IS the account (Phase 4 collapse).
-        let account = tenant_context.map(|ctx| ctx.tenant_id.as_str())?;
-        if account.is_empty() {
-            return None;
-        }
+        // ADR-0083 rev2 D3: always mint — assign "default" account for
+        // embedded/single-tenant paths (no tenant_context). The composite is
+        // the sole collection identity, so it must be Some on every create.
+        let account = tenant_context
+            .map(|ctx| ctx.tenant_id.as_str())
+            .filter(|a| !a.is_empty())
+            .unwrap_or("default");
         // Derive the namespace_key the SAME way `upsert_collection_catalog_asset`
         // → `collection_table_identifier` scopes the asset: parse the qualified
         // name, default the namespace to `["default"]` when bare (mirrors

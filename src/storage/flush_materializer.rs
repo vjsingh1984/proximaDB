@@ -144,7 +144,7 @@ pub struct CollectionFlushOutcome {
 /// Process-wide owner of flush engines, per-collection serialization, and
 /// bounded cross-collection admission (ADR-081).
 struct FlushExecutionCoordinator {
-    collection_gates: DashMap<crate::core::stable_id::CollectionObjectId, Weak<Mutex<()>>>,
+    collection_gates: DashMap<crate::core::stable_id::CollectionIdentity, Weak<Mutex<()>>>,
     engines: DashMap<i32, Arc<OnceCell<Arc<dyn UnifiedStorageFormat>>>>,
     permits: Arc<Semaphore>,
 }
@@ -159,7 +159,7 @@ impl FlushExecutionCoordinator {
     }
 
     fn collection_gate(&self, plan: &CollectionFlushPlan) -> Arc<Mutex<()>> {
-        let key = plan.collection_object_id;
+        let key = plan.collection_identity.unwrap_or_default();
         if self.collection_gates.len() > 4_096 {
             self.collection_gates
                 .retain(|_, gate| gate.strong_count() > 0);
@@ -855,7 +855,12 @@ mod tests {
             collection_object_id,
             collection_name: format!("collection-{collection_object_id}"),
             base_location: "file:///tmp/adr081-tests".to_string(),
-            collection_identity: None,
+            // Distinct composite per plan (ADR-0083 rev2: the flush gate keys on this).
+            collection_identity: Some(crate::core::stable_id::CollectionIdentity {
+                account_id: 1,
+                namespace_id: 1,
+                collection_id: collection_object_id as u32,
+            }),
             engine_type: ProtoStorageEngine::Sst as i32,
             dimension: 2,
             tenant_id: Some("test-tenant".to_string()),

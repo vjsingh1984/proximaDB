@@ -889,6 +889,7 @@ impl SstEngine {
                     compaction
                         .enqueue_due_compaction(
                             collection_object_id,
+                            params.get_collection_identity(),
                             collection_dir,
                             l0_threshold,
                             precision_hint,
