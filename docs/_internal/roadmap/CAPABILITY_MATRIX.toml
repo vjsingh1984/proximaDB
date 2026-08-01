@@ -312,7 +312,7 @@ status = "partial"
 notes = "Raft internals, shard planning, snapshot/restore, routing foundations exist (~5,491 LOC, src/cluster/, behind the `cluster` flag). RPC transport + remote execution + failover are placeholder/partial (TD-077, support tier Experimental). PULSAR/QUASAR engines retired."
 controlling_td = ["TD-077"]
 evidence = [
-  "src/cluster/consensus.rs:17",
+  "crates/platform/proximadb-runtime/src/cluster/consensus.rs:17",
   "src/cluster/mod.rs:1",
 ]
 
