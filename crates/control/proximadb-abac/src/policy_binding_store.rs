@@ -33,6 +33,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 use proximadb_catalog::fc_metamodel::{PolicyBinding, TenantStableId};
 
@@ -45,8 +46,8 @@ use proximadb_catalog::fc_metamodel::{PolicyBinding, TenantStableId};
 /// `tenant_stable_id` field on every [`PolicyBinding`] is what keeps policy from
 /// crossing the tenant boundary). Implementations are `Send + Sync`: the
 /// [`AbacEnforcer`](crate::AbacEnforcer) (well, the adapter in the root crate)
-/// holds the store behind a `Box<dyn PolicyBindingStore + Send + Sync>` so it can
-/// be shared across the read-serving services.
+/// holds the store behind a shared `Arc<dyn PolicyBindingStore + Send + Sync>` so
+/// it can be shared across the read-serving services.
 pub trait PolicyBindingStore: Send + Sync {
     /// All policy bindings the store holds for `tenant_stable_id`. An empty
     /// `Vec` is the well-defined "deny everything" policy (deny-biased
@@ -160,9 +161,12 @@ impl PolicyBindingStore for InMemoryPolicyBindingStore {
 /// Writes are **synchronous and atomic**: `upsert`/`replace_tenant`/`remove`
 /// immediately persist the full binding set via a temp-file + rename — the same
 /// trade-off [`FileSystemAttributeAuthority`] makes (simple, correct, adequate
-/// for development; a production impl might use per-binding rows).
+/// for development; a production impl might use per-binding rows). The in-memory
+/// cache is behind a [`RwLock`] so an admin write through a shared `Arc` handle
+/// is visible to the live enforcer without a restart (hot-reload): writes take
+/// the write-lock and persist; reads take the read-lock.
 pub struct FileSystemPolicyBindingStore {
-    inner: InMemoryPolicyBindingStore,
+    inner: RwLock<InMemoryPolicyBindingStore>,
     path: PathBuf,
 }
 
@@ -185,37 +189,58 @@ impl FileSystemPolicyBindingStore {
                 inner.upsert(b);
             }
         }
-        Ok(Self { inner, path })
+        Ok(Self {
+            inner: RwLock::new(inner),
+            path,
+        })
     }
 
     /// Insert or replace a binding and persist immediately (atomic rename).
-    pub fn upsert(&mut self, binding: PolicyBinding) {
-        self.inner.upsert(binding);
+    ///
+    /// Takes `&self` (not `&mut self`): the in-memory cache lives behind a
+    /// [`RwLock`], so a shared `Arc<FileSystemPolicyBindingStore>` handle can
+    /// mutate the store — the admin-provisioning path (TD-ABAC control-plane)
+    /// writes through the same instance the live enforcer reads, and the change
+    /// is visible without a restart.
+    pub fn upsert(&self, binding: PolicyBinding) {
+        {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.upsert(binding);
+        }
         let _ = self.persist();
     }
 
-    /// Replace a tenant's binding set and persist immediately.
-    pub fn replace_tenant(
-        &mut self,
-        tenant_stable_id: TenantStableId,
-        bindings: Vec<PolicyBinding>,
-    ) {
-        self.inner.replace_tenant(tenant_stable_id, bindings);
+    /// Replace a tenant's binding set and persist immediately. `&self` for the
+    /// same hot-reload reason as [`upsert`](Self::upsert).
+    pub fn replace_tenant(&self, tenant_stable_id: TenantStableId, bindings: Vec<PolicyBinding>) {
+        {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.replace_tenant(tenant_stable_id, bindings);
+        }
         let _ = self.persist();
     }
 
-    /// Remove a binding and persist immediately.
-    pub fn remove(&mut self, tenant_stable_id: TenantStableId, object_id: u64) -> bool {
-        let removed = self.inner.remove(tenant_stable_id, object_id);
+    /// Remove a binding and persist immediately. `&self` for the same hot-reload
+    /// reason as [`upsert`](Self::upsert).
+    pub fn remove(&self, tenant_stable_id: TenantStableId, object_id: u64) -> bool {
+        let removed = {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.remove(tenant_stable_id, object_id)
+        };
         if removed {
             let _ = self.persist();
         }
         removed
     }
 
-    /// Write the full binding set atomically (temp + rename).
+    /// Write the full binding set atomically (temp + rename). Re-reads the live
+    /// cache under the read-lock — so it always reflects the latest committed
+    /// state (no lost update under concurrent admin writes).
     fn persist(&self) -> Result<(), PolicyStoreError> {
-        let bindings: Vec<PolicyBinding> = self.inner.bindings().cloned().collect();
+        let bindings: Vec<PolicyBinding> = {
+            let guard = self.inner.read().unwrap_or_else(|p| p.into_inner());
+            guard.bindings().cloned().collect()
+        };
         let json =
             serde_json::to_vec_pretty(&bindings).map_err(|e| PolicyStoreError::Unavailable {
                 detail: format!("serialize bindings: {e}"),
@@ -233,7 +258,10 @@ impl FileSystemPolicyBindingStore {
 
 impl PolicyBindingStore for FileSystemPolicyBindingStore {
     fn bindings_for(&self, tenant_stable_id: TenantStableId) -> Vec<PolicyBinding> {
-        self.inner.bindings_for(tenant_stable_id)
+        self.inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .bindings_for(tenant_stable_id)
     }
 }
 
@@ -370,7 +398,7 @@ mod tests {
 
         // Write phase: create the store, publish tenant 7's policy, drop it.
         {
-            let mut store = FileSystemPolicyBindingStore::open(&path).expect("open");
+            let store = FileSystemPolicyBindingStore::open(&path).expect("open");
             store.replace_tenant(
                 7,
                 vec![
@@ -411,7 +439,7 @@ mod tests {
         let path = dir.join("policy.json");
 
         {
-            let mut store = FileSystemPolicyBindingStore::open(&path).expect("open");
+            let store = FileSystemPolicyBindingStore::open(&path).expect("open");
             store.upsert(permit_binding(1, 7, 200, Some(42)));
             assert!(store.remove(7, 1), "binding 1 was present");
             assert!(!store.remove(7, 1), "binding 1 is now gone");

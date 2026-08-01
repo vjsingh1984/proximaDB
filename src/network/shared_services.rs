@@ -359,6 +359,27 @@ pub struct SharedServices {
     #[cfg(feature = "experimental-ledger")]
     pub ledger_store: Arc<proximadb_ledger::LedgerService<proximadb_ledger::DurableLedger>>,
 
+    /// Durable ABAC attribute-authority handle (TD-ABAC control-plane /
+    /// `abac-policy`). The SAME `Arc<FileSystemAttributeAuthority>` instance the
+    /// live enforcer reads — so an admin provision written through this handle is
+    /// visible without a restart (hot-reload). `None` unless `abac-policy` is on
+    /// and `<data_dir>/abac/attribute-bindings.json` opens cleanly.
+    #[cfg(feature = "abac-policy")]
+    pub abac_authority: Option<Arc<proximadb_abac::FileSystemAttributeAuthority>>,
+
+    /// Durable ABAC policy-binding store handle (TD-ABAC control-plane /
+    /// `abac-policy`). Shared with the live enforcer; the admin policy-binding
+    /// endpoints (TD-ABAC control-plane PR-B) write through this handle. `None`
+    /// when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_binding_store: Option<Arc<proximadb_abac::FileSystemPolicyBindingStore>>,
+
+    /// Durable ABAC predicate-object store handle (TD-ABAC control-plane /
+    /// `abac-policy`). Shared with the live enforcer; the admin predicate-object
+    /// endpoints register/revoke through this handle. `None` when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_predicate_store: Option<Arc<proximadb_abac::FileSystemPredicateObjectStore>>,
+
     /// The single canonical WAL-backed record store, built + WAL-recovered ONCE here and
     /// shared across ALL surfaces — the REST/gRPC `DmlService` and the pgwire direct-write
     /// path both route relational tables through this instance — so a write on any protocol
@@ -461,6 +482,18 @@ pub struct SharedServices {
     >,
 }
 
+/// The three durable ABAC substrate stores, each behind a shared `Arc` handle so
+/// the live `AbacEnforcer`(s) and the admin-provisioning writer observe the SAME
+/// instance — a runtime provision is visible to the enforcer without a restart
+/// (hot-reload, TD-ABAC control-plane). Opened once in
+/// [`SharedServices::open_abac_stores`].
+#[cfg(feature = "abac-policy")]
+struct AbacDurableStores {
+    authority: Arc<proximadb_abac::FileSystemAttributeAuthority>,
+    bindings: Arc<proximadb_abac::FileSystemPolicyBindingStore>,
+    predicate_objects: Arc<proximadb_abac::FileSystemPredicateObjectStore>,
+}
+
 impl SharedServices {
     /// Borrow the TurboQuant registry, if any. Convenience getter so call
     /// sites don't have to feature-gate the field access locally — this
@@ -523,26 +556,24 @@ impl SharedServices {
         }
     }
 
-    /// Build the process-shared ABAC [`AbacEnforcer`](crate::security::rls::AbacEnforcer)
-    /// from the **durable** substrate (TD-ABAC-2, Phase 5b): the
-    /// `FileSystemAttributeAuthority` (#1310) + the `FileSystemPolicyBindingStore`
-    /// (this change), both restart-recovered from `<data_dir>/abac/`. The
-    /// predicate-object store and the policy-epoch source are **in-memory** today
-    /// (follow-ons: durable predicates, durable epochs) — so an opt-in
-    /// `abac-policy` build can evaluate table-level permit/deny (predicate-free
-    /// bindings) but not yet row-predicates until the predicate store is durable.
+    /// Open the three durable ABAC substrate stores (`FileSystem*`) from
+    /// `<data_dir>/abac/` once at boot, each behind a shared `Arc` handle. The
+    /// live [`AbacEnforcer`](crate::security::rls::AbacEnforcer)(s) and the
+    /// admin-provisioning writer share these SAME instances, so a runtime
+    /// provision is visible to the enforcer without a restart (hot-reload,
+    /// TD-ABAC control-plane).
     ///
     /// Returns `None` on default builds (the feature is OFF) and when there is no
-    /// `data_dir` or a durable store cannot be opened — i.e. the status quo (no
+    /// `data_dir` or a store cannot be opened — i.e. the status quo (no
     /// enforcement). It never synthesizes an allow: absent ⇒ no enforcer ⇒ no
     /// filtering, the same state as today.
     #[cfg(feature = "abac-policy")]
-    fn build_abac_enforcer(
+    fn open_abac_stores(
         opt_config: Option<&crate::core::config::Config>,
-    ) -> Option<Arc<crate::security::rls::AbacEnforcer>> {
+    ) -> Option<AbacDurableStores> {
         use proximadb_abac::{
             FileSystemAttributeAuthority, FileSystemPolicyBindingStore,
-            FileSystemPredicateObjectStore, InMemoryPolicyEpochs,
+            FileSystemPredicateObjectStore,
         };
 
         let data_dir = opt_config?.server.data_dir.clone();
@@ -559,7 +590,7 @@ impl SharedServices {
 
         let authority =
             match FileSystemAttributeAuthority::open(abac_dir.join("attribute-bindings.json")) {
-                Ok(a) => a,
+                Ok(a) => Arc::new(a),
                 Err(e) => {
                     tracing::error!(
                         "abac-policy: failed to open attribute authority at {}: {e}; \
@@ -571,7 +602,7 @@ impl SharedServices {
             };
         let bindings =
             match FileSystemPolicyBindingStore::open(abac_dir.join("policy-bindings.json")) {
-                Ok(s) => s,
+                Ok(s) => Arc::new(s),
                 Err(e) => {
                     tracing::error!(
                         "abac-policy: failed to open policy binding store at {}: {e}; \
@@ -587,7 +618,7 @@ impl SharedServices {
         // production. Empty ⇒ every predicate ref resolves fail-closed.
         let predicate_objects =
             match FileSystemPredicateObjectStore::open(abac_dir.join("predicate-objects.json")) {
-                Ok(s) => s,
+                Ok(s) => Arc::new(s),
                 Err(e) => {
                     tracing::error!(
                         "abac-policy: failed to open predicate object store at {}: {e}; \
@@ -599,16 +630,45 @@ impl SharedServices {
             };
 
         tracing::info!(
-            "abac-policy: durable ABAC enforcer active at {} (authority + policy binding store + predicate object store)",
+            "abac-policy: durable ABAC stores active at {} (authority + policy binding store + predicate object store)",
             abac_dir.display()
         );
+        Some(AbacDurableStores {
+            authority,
+            bindings,
+            predicate_objects,
+        })
+    }
+
+    /// Build a process-shared [`AbacEnforcer`] from already-opened shared stores,
+    /// cloning the `Arc` handles so the enforcer reads the same instances an admin
+    /// writer mutates (hot-reload). The policy-epoch source is in-memory today
+    /// (follow-on: durable epochs).
+    #[cfg(feature = "abac-policy")]
+    fn build_enforcer_from_stores(
+        stores: &AbacDurableStores,
+    ) -> Arc<crate::security::rls::AbacEnforcer> {
+        use proximadb_abac::InMemoryPolicyEpochs;
         let enforcer = crate::security::rls::AbacEnforcer::new(
-            Box::new(authority),
-            Box::new(predicate_objects),
-            Box::new(InMemoryPolicyEpochs::new()),
+            stores.authority.clone(),
+            stores.predicate_objects.clone(),
+            Arc::new(InMemoryPolicyEpochs::new()),
         )
-        .with_binding_store(Box::new(bindings));
-        Some(Arc::new(enforcer))
+        .with_binding_store(stores.bindings.clone());
+        Arc::new(enforcer)
+    }
+
+    /// Open the durable stores and build the enforcer in one shot. Test-only
+    /// convenience — production shares the opened stores across the vector/DML
+    /// enforcers AND `AppState` (see [`open_abac_stores`] +
+    /// [`build_enforcer_from_stores`]) so an admin provision is hot-visible to
+    /// every reader. Gated to `test` so it carries no dead-code weight in
+    /// `--lib` builds.
+    #[cfg(all(feature = "abac-policy", test))]
+    fn build_abac_enforcer(
+        opt_config: Option<&crate::core::config::Config>,
+    ) -> Option<Arc<crate::security::rls::AbacEnforcer>> {
+        Self::open_abac_stores(opt_config).map(|s| Self::build_enforcer_from_stores(&s))
     }
 
     /// Create shared services with full business logic configuration
@@ -1499,6 +1559,13 @@ impl SharedServices {
             }
         }
 
+        // Open the durable ABAC stores ONCE here (outer scope) so the
+        // vector-service enforcer, the DmlService enforcer, and the AppState
+        // admin handles all share the SAME store instances — a runtime provision
+        // is then hot-visible to every reader (TD-ABAC control-plane).
+        #[cfg(feature = "abac-policy")]
+        let abac_stores = Self::open_abac_stores(opt_config);
+
         // `directory_cache` constructed earlier (before SstEngine) so the
         // engine, the vector ops service, and the SharedServices public
         // field all share the same `Arc`.
@@ -1535,12 +1602,12 @@ impl SharedServices {
             // ⇒ no enforcer ⇒ no per-record filtering (the status quo). Mirrors the
             // DmlService wiring (`build_abac_enforcer`, TD-ABAC-2).
             #[cfg(feature = "abac-policy")]
-            let svc = match Self::build_abac_enforcer(opt_config) {
-                Some(enforcer) => {
+            let svc = match &abac_stores {
+                Some(stores) => {
                     debug!(
                         "✅ SharedServices::new - durable ABAC enforcer wired into VectorOperationsService"
                     );
-                    svc.with_abac_enforcer(enforcer)
+                    svc.with_abac_enforcer(Self::build_enforcer_from_stores(stores))
                 }
                 None => svc,
             };
@@ -2478,10 +2545,10 @@ impl SharedServices {
         // DML read funnel. Fully behind `abac-policy` (default-OFF) ⇒ default
         // builds are byte-for-byte unchanged; `None` ⇒ no enforcement (status quo).
         #[cfg(feature = "abac-policy")]
-        let base_dml = match Self::build_abac_enforcer(opt_config) {
-            Some(enforcer) => {
+        let base_dml = match &abac_stores {
+            Some(stores) => {
                 debug!("✅ SharedServices::new - durable ABAC enforcer wired into DmlService");
-                base_dml.with_abac_enforcer(enforcer)
+                base_dml.with_abac_enforcer(Self::build_enforcer_from_stores(stores))
             }
             None => base_dml,
         };
@@ -2867,6 +2934,16 @@ impl SharedServices {
                 conditional_key_store,
                 #[cfg(feature = "experimental-ledger")]
                 ledger_store,
+                // TD-ABAC control-plane: the three durable ABAC store handles,
+                // cloned from the single `abac_stores` trio opened above so the
+                // admin-provisioning endpoints share the SAME instances the live
+                // enforcer reads (hot-reload). `None` when ABAC is off.
+                #[cfg(feature = "abac-policy")]
+                abac_authority: abac_stores.as_ref().map(|s| s.authority.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_binding_store: abac_stores.as_ref().map(|s| s.bindings.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_predicate_store: abac_stores.as_ref().map(|s| s.predicate_objects.clone()),
                 // TD-064 / LLD §5: per-collection recall-probe gate. Empty
                 // at startup; populated as the stats refresher / search path
                 // observe probe outcomes. Route-health surfaces per-scope
@@ -3681,16 +3758,15 @@ mod abac_composition_root_tests {
 
         // 1. durable authority: alice → dept=eng in tenant 7.
         {
-            let mut auth =
-                FileSystemAttributeAuthority::open(abac_dir.join("attribute-bindings.json"))
-                    .expect("open authority");
+            let auth = FileSystemAttributeAuthority::open(abac_dir.join("attribute-bindings.json"))
+                .expect("open authority");
             auth.upsert(
                 AttributeBinding::new("alice", 7).with_attr("dept", AttrValue::Str("eng".into())),
             );
         }
         // 2. durable policy bindings: permit table 200 under predicate ref 42.
         {
-            let mut bindings =
+            let bindings =
                 FileSystemPolicyBindingStore::open(abac_dir.join("policy-bindings.json"))
                     .expect("open binding store");
             bindings.replace_tenant(
@@ -3707,7 +3783,7 @@ mod abac_composition_root_tests {
         }
         // 3. durable predicate objects: ref 42 → dept == "eng".
         {
-            let mut preds =
+            let preds =
                 FileSystemPredicateObjectStore::open(abac_dir.join("predicate-objects.json"))
                     .expect("open predicate store");
             preds.register(

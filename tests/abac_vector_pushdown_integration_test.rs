@@ -70,9 +70,9 @@ fn enforcer_for_alice() -> Arc<AbacEnforcer> {
     }];
     Arc::new(
         AbacEnforcer::new(
-            Box::new(authority),
-            Box::new(store),
-            Box::new(InMemoryPolicyEpochs::new()),
+            Arc::new(authority),
+            Arc::new(store),
+            Arc::new(InMemoryPolicyEpochs::new()),
         )
         .with_bindings(bindings),
     )
@@ -231,9 +231,9 @@ async fn resolve_vector_read_context_admits_and_denies() {
     }];
     let enforcer = Arc::new(
         AbacEnforcer::new(
-            Box::new(authority),
-            Box::new(InMemoryPredicateObjectStore::new()),
-            Box::new(InMemoryPolicyEpochs::new()),
+            Arc::new(authority),
+            Arc::new(InMemoryPredicateObjectStore::new()),
+            Arc::new(InMemoryPolicyEpochs::new()),
         )
         .with_bindings(bindings),
     );

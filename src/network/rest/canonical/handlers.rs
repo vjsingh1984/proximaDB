@@ -62,6 +62,21 @@ pub struct RestCoreServices {
     /// Port-backed API handler (the runtime `UnifiedHandlers`) — same `Arc` as
     /// `SharedServices.api_handlers`.
     pub api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+
+    /// Durable ABAC attribute-authority handle (TD-ABAC control-plane /
+    /// `abac-policy`). Same `Option<Arc>` as `SharedServices.abac_authority`; flows
+    /// into `AppState.abac_authority` so the admin endpoints share the enforcer's
+    /// instance (hot-reload). `None` when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_authority: Option<Arc<proximadb_abac::FileSystemAttributeAuthority>>,
+    /// Durable ABAC policy-binding store handle. Same as
+    /// `SharedServices.abac_binding_store`.
+    #[cfg(feature = "abac-policy")]
+    pub abac_binding_store: Option<Arc<proximadb_abac::FileSystemPolicyBindingStore>>,
+    /// Durable ABAC predicate-object store handle. Same as
+    /// `SharedServices.abac_predicate_store`.
+    #[cfg(feature = "abac-policy")]
+    pub abac_predicate_store: Option<Arc<proximadb_abac::FileSystemPredicateObjectStore>>,
 }
 
 impl RestCoreServices {
@@ -82,6 +97,15 @@ impl RestCoreServices {
             observability_service: services.observability_service.clone(),
             event_log: services.event_log.clone(),
             api_handlers: services.api_handlers.clone(),
+            // TD-ABAC control-plane: carry the durable handles through so
+            // `AppState::new` can install them — the admin endpoints then share
+            // the SAME instances the live enforcer reads (hot-reload).
+            #[cfg(feature = "abac-policy")]
+            abac_authority: services.abac_authority.clone(),
+            #[cfg(feature = "abac-policy")]
+            abac_binding_store: services.abac_binding_store.clone(),
+            #[cfg(feature = "abac-policy")]
+            abac_predicate_store: services.abac_predicate_store.clone(),
         }
     }
 }
@@ -232,6 +256,32 @@ pub struct AppState {
     /// owns. `None` when the service is not enabled (handlers return 501).
     pub external_collection_service:
         Option<Arc<crate::services::external_collection::ExternalCollectionService>>,
+
+    /// Durable ABAC attribute-authority handle (TD-ABAC control-plane /
+    /// `abac-policy`). The SAME `Arc<FileSystemAttributeAuthority>` instance the
+    /// live enforcer reads, so an admin provision written through this handle is
+    /// visible without a restart (hot-reload). Wired from
+    /// `SharedServices.abac_authority` via `with_abac_authority` in
+    /// `src/network/multi_server.rs`. `None` when ABAC is off; the
+    /// attribute-binding admin endpoints return 503 in that case.
+    #[cfg(feature = "abac-policy")]
+    pub abac_authority: Option<Arc<proximadb_abac::FileSystemAttributeAuthority>>,
+
+    /// Durable ABAC policy-binding store handle (TD-ABAC control-plane /
+    /// `abac-policy`). Shared with the live enforcer; the admin policy-binding
+    /// endpoints write (upsert/remove) through this handle. Wired from
+    /// `SharedServices.abac_binding_store` via `with_abac_binding_store`.
+    /// `None` when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_binding_store: Option<Arc<proximadb_abac::FileSystemPolicyBindingStore>>,
+
+    /// Durable ABAC predicate-object store handle (TD-ABAC control-plane /
+    /// `abac-policy`). Shared with the live enforcer; the admin predicate-object
+    /// endpoints register/revoke through this handle. Wired from
+    /// `SharedServices.abac_predicate_store` via `with_abac_predicate_store`.
+    /// `None` when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_predicate_store: Option<Arc<proximadb_abac::FileSystemPredicateObjectStore>>,
 }
 
 impl AppState {
@@ -257,6 +307,12 @@ impl AppState {
             observability_service,
             event_log,
             api_handlers,
+            #[cfg(feature = "abac-policy")]
+            abac_authority,
+            #[cfg(feature = "abac-policy")]
+            abac_binding_store,
+            #[cfg(feature = "abac-policy")]
+            abac_predicate_store,
         } = core;
         // Cross-modal fusion port — built once at boot from the vector + graph services and the
         // shared full-text index map (search-surface contract: one retrieval engine, shared port).
@@ -319,6 +375,16 @@ impl AppState {
             recall_probe_gate: None,
             discovery_service: None,
             external_collection_service: None,
+            // TD-ABAC control-plane: carried through `RestCoreServices` from
+            // `SharedServices.abac_*` (built once, shared with the live enforcer
+            // so an admin provision is hot-visible). `None` when ABAC is off; the
+            // `with_abac_*` builders remain for test overrides.
+            #[cfg(feature = "abac-policy")]
+            abac_authority,
+            #[cfg(feature = "abac-policy")]
+            abac_binding_store,
+            #[cfg(feature = "abac-policy")]
+            abac_predicate_store,
         }
     }
 
@@ -356,6 +422,41 @@ impl AppState {
         registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
     ) -> Self {
         self.primary_pod_registry = registry;
+        self
+    }
+
+    /// Inject the shared durable ABAC attribute-authority handle (TD-ABAC
+    /// control-plane / `abac-policy`). Wired from `SharedServices.abac_authority`
+    /// in `src/network/multi_server.rs` so the admin attribute-binding endpoints
+    /// and the live enforcer share the SAME instance (hot-reload).
+    #[cfg(feature = "abac-policy")]
+    pub fn with_abac_authority(
+        mut self,
+        authority: Arc<proximadb_abac::FileSystemAttributeAuthority>,
+    ) -> Self {
+        self.abac_authority = Some(authority);
+        self
+    }
+
+    /// Inject the shared durable ABAC policy-binding store handle (TD-ABAC
+    /// control-plane / `abac-policy`). Wired from `SharedServices.abac_binding_store`.
+    #[cfg(feature = "abac-policy")]
+    pub fn with_abac_binding_store(
+        mut self,
+        store: Arc<proximadb_abac::FileSystemPolicyBindingStore>,
+    ) -> Self {
+        self.abac_binding_store = Some(store);
+        self
+    }
+
+    /// Inject the shared durable ABAC predicate-object store handle (TD-ABAC
+    /// control-plane / `abac-policy`). Wired from `SharedServices.abac_predicate_store`.
+    #[cfg(feature = "abac-policy")]
+    pub fn with_abac_predicate_store(
+        mut self,
+        store: Arc<proximadb_abac::FileSystemPredicateObjectStore>,
+    ) -> Self {
+        self.abac_predicate_store = Some(store);
         self
     }
 

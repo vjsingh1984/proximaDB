@@ -468,6 +468,7 @@ mod tests {
 // ===========================================================================
 
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 /// A [`AttributeAuthority`] backed by an atomic-rename JSON snapshot on the
 /// filesystem — modeled on `FileSystemCorpusVersionStore`
@@ -481,9 +482,12 @@ use std::path::{Path, PathBuf};
 /// Writes are **synchronous and atomic**: `upsert`/`revoke` immediately persist
 /// the full binding set via a temp-file + rename. This is the same trade-off
 /// `FileSystemCorpusVersionStore` makes — simple, correct, adequate for
-/// development; a production impl might use per-binding rows.
+/// development; a production impl might use per-binding rows. The in-memory cache
+/// is behind a [`RwLock`] so an admin write through a shared `Arc` handle is
+/// visible to the live enforcer without a restart (hot-reload): writes take the
+/// write-lock and persist; reads take the read-lock.
 pub struct FileSystemAttributeAuthority {
-    inner: InMemoryAttributeAuthority,
+    inner: RwLock<InMemoryAttributeAuthority>,
     path: PathBuf,
 }
 
@@ -505,24 +509,45 @@ impl FileSystemAttributeAuthority {
                 inner.upsert(b);
             }
         }
-        Ok(Self { inner, path })
+        Ok(Self {
+            inner: RwLock::new(inner),
+            path,
+        })
     }
 
     /// Insert or replace a binding and persist immediately (atomic rename).
-    pub fn upsert(&mut self, binding: AttributeBinding) {
-        self.inner.upsert(binding);
+    ///
+    /// Takes `&self` (not `&mut self`): the in-memory cache lives behind a
+    /// [`RwLock`], so a shared `Arc<FileSystemAttributeAuthority>` handle can
+    /// mutate the authority — the admin-provisioning path (TD-ABAC control-plane)
+    /// writes through the same instance the live enforcer reads, and the change
+    /// is visible without a restart.
+    pub fn upsert(&self, binding: AttributeBinding) {
+        {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.upsert(binding);
+        }
         let _ = self.persist();
     }
 
-    /// Remove a binding and persist immediately.
-    pub fn revoke(&mut self, subject: &SubjectId, tenant_stable_id: TenantStableId) {
-        self.inner.revoke(subject, tenant_stable_id);
+    /// Remove a binding and persist immediately. `&self` for the same hot-reload
+    /// reason as [`upsert`](Self::upsert).
+    pub fn revoke(&self, subject: &SubjectId, tenant_stable_id: TenantStableId) {
+        {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.revoke(subject, tenant_stable_id);
+        }
         let _ = self.persist();
     }
 
-    /// Write the full binding set atomically (temp + rename).
+    /// Write the full binding set atomically (temp + rename). Re-reads the live
+    /// cache under the read-lock — so it always reflects the latest committed
+    /// state (no lost update under concurrent admin writes).
     fn persist(&self) -> Result<(), AuthorityError> {
-        let bindings: Vec<AttributeBinding> = self.inner.bindings().cloned().collect();
+        let bindings: Vec<AttributeBinding> = {
+            let guard = self.inner.read().unwrap_or_else(|p| p.into_inner());
+            guard.bindings().cloned().collect()
+        };
         let json = serde_json::to_vec(&bindings).map_err(|e| AuthorityError::Unavailable {
             detail: format!("serialize bindings: {e}"),
         })?;
@@ -544,6 +569,8 @@ impl AttributeAuthority for FileSystemAttributeAuthority {
         tenant_stable_id: TenantStableId,
     ) -> Result<ResolvedSubject, AuthorityError> {
         self.inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
             .resolve_effective_attributes(subject, tenant_stable_id)
     }
 }
@@ -566,7 +593,7 @@ mod fs_authority_tests {
 
         // Write phase: create authority, add alice, drop it.
         {
-            let mut auth = FileSystemAttributeAuthority::open(&path).unwrap();
+            let auth = FileSystemAttributeAuthority::open(&path).unwrap();
             auth.upsert(
                 AttributeBinding::new("alice", 7).with_attr("dept", AttrValue::Str("eng".into())),
             );
@@ -610,7 +637,7 @@ mod fs_authority_tests {
 
         // Add alice, then revoke.
         {
-            let mut auth = FileSystemAttributeAuthority::open(&path).unwrap();
+            let auth = FileSystemAttributeAuthority::open(&path).unwrap();
             auth.upsert(
                 AttributeBinding::new("alice", 7).with_attr("dept", AttrValue::Str("eng".into())),
             );

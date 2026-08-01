@@ -6101,9 +6101,9 @@ mod abac_relational_enforcement_tests {
             field_mask: None,
         }];
         AbacEnforcer::new(
-            Box::new(authority),
-            Box::new(store),
-            Box::new(InMemoryPolicyEpochs::new()),
+            Arc::new(authority),
+            Arc::new(store),
+            Arc::new(InMemoryPolicyEpochs::new()),
         )
         .with_bindings(bindings)
     }
