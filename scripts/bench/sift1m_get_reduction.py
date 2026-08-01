@@ -1139,6 +1139,7 @@ def write_config(
     storage_url: str,
     flush_interval_secs: int = 12,
     flush_floor_predicted_mb: int = 128,
+    compaction_max_memory_mb: int = 0,
 ) -> None:
     data = root / "data"
     config = f"""[server]
@@ -1157,6 +1158,12 @@ mmap_enabled = false
 
 [storage.optimization]
 enable_mmap = false
+
+[storage.compaction_config]
+memory_amplification_factor = 12.0
+memory_budget_fraction = 0.25
+available_memory_fraction = 0.5
+max_memory_mb = {compaction_max_memory_mb}
 
 [[storage.storage_locations]]
 url = "{storage_url}"
@@ -1796,6 +1803,15 @@ def main() -> int:
     )
     parser.add_argument("--write-buffer-mb", type=int, default=4096)
     parser.add_argument(
+        "--compaction-max-memory-mb",
+        type=int,
+        default=0,
+        help=(
+            "optional absolute ceiling for process-wide projected compaction "
+            "memory; zero keeps cgroup/live-memory auto-sizing"
+        ),
+    )
+    parser.add_argument(
         "--flush-vector-threshold",
         type=int,
         default=100_000,
@@ -1896,6 +1912,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.write_buffer_mb <= 0:
         raise RuntimeError("--write-buffer-mb must be positive")
+    if args.compaction_max_memory_mb < 0:
+        raise RuntimeError("--compaction-max-memory-mb must be non-negative")
     if args.flush_vector_threshold <= 0:
         raise RuntimeError("--flush-vector-threshold must be positive")
     if args.flush_floor_predicted_mb < 0:
@@ -2091,6 +2109,7 @@ def main() -> int:
         storage_url,
         flush_interval_secs,
         args.flush_floor_predicted_mb,
+        args.compaction_max_memory_mb,
     )
     server_url = f"http://127.0.0.1:{args.port}"
     local_disk = root / "local-disk-cache"
@@ -2206,6 +2225,12 @@ def main() -> int:
             ),
         },
         "compute_profile": compute_profile(),
+        "compaction_memory_policy": {
+            "memory_amplification_factor": 12.0,
+            "memory_budget_fraction": 0.25,
+            "available_memory_fraction": 0.5,
+            "max_memory_mb": args.compaction_max_memory_mb,
+        },
         "thresholds": {
             "post_write_max_gets_per_query": args.post_write_max_gets,
             "local_disk_warm_max_gets_per_query": args.local_warm_max_gets,

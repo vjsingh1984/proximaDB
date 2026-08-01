@@ -847,6 +847,31 @@ pub struct CompactionConfig {
 
     /// Target output file size in MB for size-based compaction.
     pub target_file_size_mb: usize,
+
+    /// Conservative peak-memory estimate per byte of input segment data.
+    ///
+    /// The initial `12.0` default includes headroom over the 9.85x incremental
+    /// RSS measured by the 3.3M-vector PAX compaction benchmark. This is an
+    /// admission estimate, not an allocation limit; operators can tighten it
+    /// as the streaming writer reduces measured amplification.
+    #[serde(default = "default_compaction_memory_amplification")]
+    pub memory_amplification_factor: f64,
+
+    /// Maximum share of process-visible capacity reserved for compactions.
+    /// Process-visible capacity is cgroup-constrained in containers.
+    #[serde(default = "default_compaction_memory_budget_fraction")]
+    pub memory_budget_fraction: f64,
+
+    /// Maximum share of currently available memory that compactions may
+    /// reserve. This live-pressure guard is applied in addition to the stable
+    /// capacity fraction.
+    #[serde(default = "default_compaction_available_memory_fraction")]
+    pub available_memory_fraction: f64,
+
+    /// Optional absolute ceiling for all in-flight compaction reservations.
+    /// Zero means automatic sizing from capacity and live availability.
+    #[serde(default)]
+    pub max_memory_mb: u64,
 }
 
 impl Default for CompactionConfig {
@@ -859,12 +884,28 @@ impl Default for CompactionConfig {
             max_levels: 7,
             strategy: "hybrid".to_string(),
             target_file_size_mb: 128,
+            memory_amplification_factor: default_compaction_memory_amplification(),
+            memory_budget_fraction: default_compaction_memory_budget_fraction(),
+            available_memory_fraction: default_compaction_available_memory_fraction(),
+            max_memory_mb: 0,
         }
     }
 }
 
 fn default_higher_level_file_threshold() -> usize {
     2
+}
+
+fn default_compaction_memory_amplification() -> f64 {
+    12.0
+}
+
+fn default_compaction_memory_budget_fraction() -> f64 {
+    0.25
+}
+
+fn default_compaction_available_memory_fraction() -> f64 {
+    0.5
 }
 
 /// Performance optimization configuration.

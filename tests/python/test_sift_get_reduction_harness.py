@@ -312,13 +312,25 @@ def test_config_preserves_object_store_url(tmp_path: Path) -> None:
     config_path = tmp_path / "benchmark.toml"
     storage_url = "adls://benchmarks/run-1"
 
-    HARNESS.write_config(config_path, tmp_path, 5690, 128, 20_000, storage_url)
+    HARNESS.write_config(
+        config_path,
+        tmp_path,
+        5690,
+        128,
+        20_000,
+        storage_url,
+        compaction_max_memory_mb=4096,
+    )
 
     config = config_path.read_text()
     assert f'url = "{storage_url}"' in config
     assert "[storage.optimization]\nenable_mmap = false" in config
     assert "vector_count_threshold = 20000" in config
     assert "flush_floor_predicted_mb = 128" in config
+    assert "memory_amplification_factor = 12.0" in config
+    assert "memory_budget_fraction = 0.25" in config
+    assert "available_memory_fraction = 0.5" in config
+    assert "max_memory_mb = 4096" in config
 
 
 def test_config_records_controlled_geometry_flush_floor(tmp_path: Path) -> None:

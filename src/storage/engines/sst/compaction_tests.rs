@@ -32,6 +32,7 @@ async fn test_compaction_task_scheduling() {
         collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         input_files: vec![],
+        input_bytes: 0,
         output_file: PathBuf::from("/tmp/output.db"),
         priority: CompactionPriority::Medium,
         block_size_kb: None,
@@ -56,6 +57,7 @@ async fn td_compact6_schedule_dedups_same_output_at_enqueue() {
         collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         input_files: vec![PathBuf::from("/nonexistent/proxima_d1_test/input.pax")],
+        input_bytes: 0,
         output_file: PathBuf::from("/nonexistent/proxima_d1_test/compacted_L1.pax"),
         priority: CompactionPriority::Medium,
         block_size_kb: None,
@@ -92,6 +94,7 @@ async fn compaction_morsel_admission_rejects_overlapping_inputs() {
         collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 1,
         input_files: vec![input.clone()],
+        input_bytes: 0,
         output_file: PathBuf::from(format!(
             "/nonexistent/morsel/{}.pax",
             segment_id.to_path_segment()
@@ -145,6 +148,7 @@ async fn td_compact6_worker_clears_training_in_flight_after_completion() {
         // STILL runs release_task_state (the post-match cleanup), which is the
         // path under test. No real files needed.
         input_files: vec![coll_dir.join("input.pax")],
+        input_bytes: 0,
         output_file: coll_dir.join("compacted_L1.pax"),
         priority: CompactionPriority::Medium,
         block_size_kb: None,
@@ -252,6 +256,7 @@ async fn test_sst_compaction_expired_deletion_unit() -> anyhow::Result<()> {
         collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         input_files: vec![input_file],
+        input_bytes: 0,
         output_file: output_file.clone(),
         priority: CompactionPriority::Medium,
         block_size_kb: None,
@@ -620,8 +625,10 @@ async fn canonical_compaction_round_trips_real_pax_inputs() -> anyhow::Result<()
     let compaction = Compaction::new(config.clone()).await?;
     let task = CompactionTask {
         collection_object_id: 7,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         input_files: vec![input_a.clone(), input_b.clone()],
+        input_bytes: 0,
         output_file: output.clone(),
         priority: CompactionPriority::High,
         block_size_kb: None,

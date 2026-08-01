@@ -46,6 +46,7 @@ use crate::storage::common::*;
 pub struct LevelBasedSstCompactionTask {
     pub level: u32,
     pub input_files: Vec<String>,
+    pub input_bytes: u64,
     pub target_level: u32,
     pub extension: String,
 }
@@ -185,6 +186,8 @@ pub struct SstCompactionTask {
     pub collection_identity: crate::core::stable_id::CollectionIdentity,
     pub level: u8,
     pub input_files: Vec<PathBuf>,
+    /// Immutable input bytes used by process-wide weighted memory admission.
+    pub input_bytes: u64,
     pub output_file: PathBuf,
     pub priority: CompactionPriority,
     /// Block size in KB for compacted output (uses server default if None)
@@ -250,6 +253,21 @@ pub struct EnhancedSstCompactionStats {
 enum MergedVectorTracking {
     Disabled,
     Enabled,
+}
+
+struct CompactionRunningMetricGuard;
+
+impl CompactionRunningMetricGuard {
+    fn begin() -> Self {
+        crate::metrics::operational_metrics::COMPACTION_RUNNING.inc();
+        Self
+    }
+}
+
+impl Drop for CompactionRunningMetricGuard {
+    fn drop(&mut self) {
+        crate::metrics::operational_metrics::COMPACTION_RUNNING.dec();
+    }
 }
 
 struct PreparedCompactionRecords {
@@ -780,6 +798,7 @@ impl Compaction {
             .unwrap_or(queue.len()); // Insert at end if no lower priority task found
 
         queue.insert(insert_pos, task);
+        crate::metrics::operational_metrics::COMPACTION_QUEUE_DEPTH.inc();
         drop(queue);
         self.task_notify.notify_one();
 
@@ -901,6 +920,7 @@ impl Compaction {
         let unified_task = task_info.map(|info| LevelBasedSstCompactionTask {
             level: info.source_level,
             input_files: info.input_files,
+            input_bytes: info.input_bytes,
             target_level: info.target_level,
             extension: info.extension,
         });
@@ -938,6 +958,7 @@ impl Compaction {
                 collection_identity: crate::core::stable_id::CollectionIdentity::default(),
                 level: task.level as u8,
                 input_files,
+                input_bytes: task.input_bytes,
                 output_file,
                 priority,
                 block_size_kb: None,      // Use server default
@@ -1027,6 +1048,7 @@ impl Compaction {
             };
 
             if let Some(task) = task {
+                crate::metrics::operational_metrics::COMPACTION_QUEUE_DEPTH.dec();
                 debug!(
                     "Worker {} processing compaction for level {} with {} files -> {}",
                     worker_id,
@@ -1041,6 +1063,44 @@ impl Compaction {
                 let compaction_key = task.output_file.to_string_lossy().to_string();
 
                 let start_time = std::time::Instant::now();
+
+                let memory_config = compaction
+                    .config
+                    .compaction_config
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_default();
+                let admission_started = std::time::Instant::now();
+                let Some(memory_reservation) = acquire_compaction_memory(
+                    task.input_bytes,
+                    &memory_config,
+                    shutdown_signal.as_ref(),
+                )
+                .await
+                else {
+                    Self::release_task_state(
+                        &active_compactions,
+                        &training_in_flight,
+                        &compaction_key,
+                        task.output_file.parent(),
+                    )
+                    .await;
+                    break;
+                };
+                let admission_wait = admission_started.elapsed();
+                if admission_wait >= std::time::Duration::from_millis(1) {
+                    crate::metrics::operational_metrics::COMPACTION_MEMORY_ADMISSION_WAITS_TOTAL
+                        .inc();
+                }
+                crate::metrics::operational_metrics::COMPACTION_MEMORY_RESERVED_BYTES
+                    .set(i64::try_from(reserved_compaction_memory_bytes()).unwrap_or(i64::MAX));
+                info!(
+                    input_bytes = task.input_bytes,
+                    projected_memory_bytes = memory_reservation.reserved_bytes(),
+                    admission_wait_ms = admission_wait.as_millis(),
+                    "Compaction memory reservation admitted"
+                );
+                let _running_metric = CompactionRunningMetricGuard::begin();
 
                 // Reuse the persistent Compaction instance (shared Arc). The
                 // former code built a fresh `Compaction` per task via
@@ -1088,6 +1148,9 @@ impl Compaction {
                         false
                     }
                 };
+                drop(memory_reservation);
+                crate::metrics::operational_metrics::COMPACTION_MEMORY_RESERVED_BYTES
+                    .set(i64::try_from(reserved_compaction_memory_bytes()).unwrap_or(i64::MAX));
 
                 // A completed morsel changes the level geometry. Re-evaluate
                 // it immediately so higher-level compaction does not depend on
