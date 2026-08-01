@@ -665,14 +665,13 @@ impl RecoveryManager {
         // the recovery engine's marks persist to `{segment}.dv`, which the canonical
         // serving engine reads. Best-effort — failure logs + continues.
         #[cfg(feature = "cold-deletion-vectors")]
-        if !recovery_tombstones.is_empty() {
-            if let Some(engine) = storage_engines.read().await.get(collection_id).cloned()
-                && let Err(e) = engine
-                    .reconcile_deletion_vectors(collection_id, &recovery_tombstones)
-                    .await
-            {
-                tracing::warn!("recovery DV reconcile failed for {collection_id}: {e:?}");
-            }
+        if !recovery_tombstones.is_empty()
+            && let Some(engine) = storage_engines.read().await.get(collection_id).cloned()
+            && let Err(e) = engine
+                .reconcile_deletion_vectors(collection_id, &recovery_tombstones)
+                .await
+        {
+            tracing::warn!("recovery DV reconcile failed for {collection_id}: {e:?}");
         }
 
         // Test-only crash-point seam (default unset ⇒ normal retirement, no runtime cost
