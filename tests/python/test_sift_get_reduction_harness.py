@@ -20,9 +20,7 @@ assert SPEC is not None and SPEC.loader is not None
 HARNESS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HARNESS)
 MATRIX_PATH = REPOSITORY_ROOT / "scripts" / "bench" / "nprobe_sweep.py"
-MATRIX_SPEC = importlib.util.spec_from_file_location(
-    "sift_nprobe_matrix", MATRIX_PATH
-)
+MATRIX_SPEC = importlib.util.spec_from_file_location("sift_nprobe_matrix", MATRIX_PATH)
 assert MATRIX_SPEC is not None and MATRIX_SPEC.loader is not None
 MATRIX = importlib.util.module_from_spec(MATRIX_SPEC)
 MATRIX_SPEC.loader.exec_module(MATRIX)
@@ -37,14 +35,23 @@ def test_matrix_contract_rejects_duplicate_probes_and_wrong_geometry() -> None:
             {
                 "row_count": 99,
                 "segment_count": 1,
-                "segments": [
-                    {"layout_version": 3, "coarse_cells": 4}
-                ],
+                "segments": [{"layout_version": 3, "coarse_cells": 4}],
             },
             rows=100,
             max_segments=1,
             layout_version=3,
         )
+
+
+def test_matrix_rejects_port_different_from_immutable_bed(tmp_path: Path) -> None:
+    config = tmp_path / "benchmark.toml"
+    config.write_text(
+        "[server]\nport = 1111\n\n[api]\nunified_port = 5790 # measured port\n"
+    )
+
+    MATRIX.require_config_port(config, 5790)
+    with pytest.raises(RuntimeError, match="does not match"):
+        MATRIX.require_config_port(config, 5800)
 
 
 def test_object_cold_ivf_requires_physical_region_byte_attribution() -> None:
@@ -56,15 +63,128 @@ def test_object_cold_ivf_requires_physical_region_byte_attribution() -> None:
             "region_b_bytes": 0,
         },
     }
-    assert (
-        HARNESS.ivf_byte_attribution_failure("object_cold", result)
-        == (
-            "object_cold: IVF probe issued physical GETs but attributed zero "
-            "Region-A/B bytes"
-        )
+    assert HARNESS.ivf_byte_attribution_failure("object_cold", result) == (
+        "object_cold: IVF probe issued physical GETs but attributed zero "
+        "Region-A/B bytes"
     )
     result["ivf"]["region_b_bytes"] = 4096
     assert HARNESS.ivf_byte_attribution_failure("object_cold", result) is None
+
+
+def test_azure_geometry_uses_canonical_az_scheme(tmp_path: Path) -> None:
+    geometry = HARNESS.AzureCliPaxGeometry(
+        "az://benchmark-container/five-point/100k",
+        tmp_path,
+    )
+
+    assert geometry.container == "benchmark-container"
+    assert geometry.prefix == "five-point/100k"
+
+
+def test_compute_profile_names_the_actual_pax_distance_dispatch() -> None:
+    arm = HARNESS.compute_profile("arm64")
+    x86 = HARNESS.compute_profile("x86_64")
+
+    assert arm["region_b_sq8_l2_kernel"] == "neon_fused_decode_distance"
+    assert arm["dispatch"] == "compile_time_aarch64"
+    assert x86["region_b_sq8_l2_kernel"] == "avx2_or_scalar_fused_decode_distance"
+    assert x86["dispatch"] == "runtime_feature_detection"
+    assert arm["gpu_role"] == "not_used_by_pax_rabitq_sq8_search"
+
+
+def test_prefix_quality_checkpoints_reuse_one_query_execution() -> None:
+    recalls = [1.0] * 100 + [0.9] * 900 + [0.8] * 9_000
+    latencies = [float(value) for value in range(1, 10_001)]
+
+    checkpoints = HARNESS.prefix_quality_checkpoints(recalls, latencies)
+
+    assert [point["query_count"] for point in checkpoints] == [100, 1_000, 10_000]
+    assert checkpoints[0]["recall_at_k"] == 1.0
+    assert checkpoints[1]["recall_at_k"] == pytest.approx(0.91)
+    assert checkpoints[2]["recall_at_k"] == pytest.approx(0.811)
+    assert checkpoints[0]["latency_ms"]["p50"] == 50.0
+    assert checkpoints[1]["latency_ms"]["p95"] == 950.0
+
+
+def test_u8bin_prefix_uses_physical_rows_and_preserves_declared_rows(
+    tmp_path: Path,
+) -> None:
+    pa = pytest.importorskip("pyarrow")
+    path = tmp_path / "base-prefix.u8bin"
+    path.write_bytes(
+        struct.pack("<II", 1_000_000_000, 4)
+        + bytes(
+            [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+            ]
+        )
+    )
+
+    physical_rows, dimension, declared_rows = HARNESS.inspect_u8bin(path)
+
+    assert (physical_rows, dimension, declared_rows) == (
+        3,
+        4,
+        1_000_000_000,
+    )
+    assert HARNESS.read_vectors(path, "u8bin", 1, 2) == [
+        [5.0, 6.0, 7.0, 8.0],
+        [9.0, 10.0, 11.0, 12.0],
+    ]
+    assert list(HARNESS.iter_vector_batches(path, "u8bin", 3, 2)) == [
+        [
+            {"id": "v0", "vector": [1.0, 2.0, 3.0, 4.0]},
+            {"id": "v1", "vector": [5.0, 6.0, 7.0, 8.0]},
+        ],
+        [{"id": "v2", "vector": [9.0, 10.0, 11.0, 12.0]}],
+    ]
+    arrow_batches = list(
+        HARNESS.iter_vector_arrow_batches(path, "u8bin", 3, 2, arrow_module=pa)
+    )
+    assert [batch.num_rows for batch in arrow_batches] == [2, 1]
+    assert arrow_batches[0].column("id").to_pylist() == ["v0", "v1"]
+    assert arrow_batches[0].column("vector").to_pylist() == [
+        [1.0, 2.0, 3.0, 4.0],
+        [5.0, 6.0, 7.0, 8.0],
+    ]
+
+
+def test_u8bin_rejects_partial_dense_row(tmp_path: Path) -> None:
+    path = tmp_path / "partial.u8bin"
+    path.write_bytes(struct.pack("<II", 3, 4) + bytes([1, 2, 3, 4, 5]))
+
+    with pytest.raises(RuntimeError, match="partial dense row"):
+        HARNESS.inspect_u8bin(path)
+
+
+def test_bigann_groundtruth_reads_id_matrix_before_distances(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "groundtruth.bin"
+    ids = (7, 3, 9, 4, 2, 8)
+    distances = (1.0, 2.0, 3.0, 0.5, 1.5, 2.5)
+    path.write_bytes(
+        struct.pack("<II", 2, 3)
+        + struct.pack("<6i", *ids)
+        + struct.pack("<6f", *distances)
+    )
+
+    assert HARNESS.count_truth_records(path, "bigann-bin") == (2, 3)
+    assert HARNESS.read_truth_ids(path, "bigann-bin", 0, 2) == [
+        [7, 3, 9],
+        [4, 2, 8],
+    ]
 
 
 def test_a0_geometry_reports_cell_shape_and_verifies_checksum() -> None:
@@ -74,7 +194,9 @@ def test_a0_geometry_reports_cell_shape_and_verifies_checksum() -> None:
     radii = [1.5, 0.0]
     encoded = bytearray(b"PXA0")
     encoded.extend(bytes([1, 0]))
-    encoded.extend(struct.pack("<HIIQQQ", components, len(rows), dimension, 7, 5, sum(rows)))
+    encoded.extend(
+        struct.pack("<HIIQQQ", components, len(rows), dimension, 7, 5, sum(rows))
+    )
     encoded.extend(struct.pack("<2f", 0.0, 0.0))
     encoded.extend(struct.pack("<2f", 1.0, 0.0))
     encoded.extend(struct.pack("<2f", 0.0, 2.0))
@@ -132,9 +254,7 @@ def test_azure_inventory_scopes_prefix_and_records_stable_identity(
         },
     ]
     completed = SimpleNamespace(stdout=json.dumps(payload))
-    geometry = HARNESS.AzureCliPaxGeometry(
-        "adls://benchmarks/run-1", tmp_path
-    )
+    geometry = HARNESS.AzureCliPaxGeometry("adls://benchmarks/run-1", tmp_path)
 
     with patch.object(HARNESS.subprocess, "run", return_value=completed) as run:
         inventory = geometry.inventory()
@@ -159,13 +279,30 @@ def test_azure_inventory_scopes_prefix_and_records_stable_identity(
     )
 
 
+def test_azure_inventory_forwards_explicit_connection_string(tmp_path: Path) -> None:
+    completed = SimpleNamespace(stdout="[]")
+    geometry = HARNESS.AzureCliPaxGeometry("az://benchmarks/run-1", tmp_path)
+
+    with (
+        patch.dict(
+            HARNESS.os.environ,
+            {"AZURE_STORAGE_CONNECTION_STRING": "emulator-connection"},
+        ),
+        patch.object(HARNESS.subprocess, "run", return_value=completed) as run,
+    ):
+        geometry.inventory()
+
+    command = run.call_args.args[0]
+    assert command[command.index("--connection-string") + 1] == (
+        "emulator-connection"
+    )
+
+
 @pytest.mark.parametrize("blob_name", ["/absolute.pax", "../escape.pax"])
 def test_azure_snapshot_rejects_paths_outside_evidence_root(
     tmp_path: Path, blob_name: str
 ) -> None:
-    geometry = HARNESS.AzureCliPaxGeometry(
-        "adls://benchmarks/run-1", tmp_path
-    )
+    geometry = HARNESS.AzureCliPaxGeometry("adls://benchmarks/run-1", tmp_path)
 
     with pytest.raises(RuntimeError, match="unsafe Azure blob name"):
         geometry._snapshot_target(blob_name)
@@ -181,6 +318,120 @@ def test_config_preserves_object_store_url(tmp_path: Path) -> None:
     assert f'url = "{storage_url}"' in config
     assert "[storage.optimization]\nenable_mmap = false" in config
     assert "vector_count_threshold = 20000" in config
+    assert "flush_floor_predicted_mb = 128" in config
+
+
+def test_config_records_controlled_geometry_flush_floor(tmp_path: Path) -> None:
+    config_path = tmp_path / "benchmark.toml"
+
+    HARNESS.write_config(
+        config_path,
+        tmp_path,
+        5690,
+        2048,
+        2_000_000,
+        "az://benchmarks/run-1",
+        flush_interval_secs=3600,
+        flush_floor_predicted_mb=256,
+    )
+
+    config = config_path.read_text()
+    assert "flush_interval_secs = 3600" in config
+    assert "flush_floor_predicted_mb = 256" in config
+
+
+def test_explicit_flush_disables_timer_races_by_default() -> None:
+    assert HARNESS.effective_flush_interval(None, None) == 12
+    assert HARNESS.effective_flush_interval(20_000, None) == 3600
+    assert HARNESS.effective_flush_interval(20_000, 60) == 60
+    with pytest.raises(RuntimeError, match="positive"):
+        HARNESS.effective_flush_interval(20_000, 0)
+
+
+def test_flight_upsert_stream_writes_batches_and_validates_ack() -> None:
+    calls = {"rows": 0}
+
+    class FakeLocation:
+        @staticmethod
+        def for_grpc_tcp(host: str, port: int) -> tuple[str, int]:
+            return host, port
+
+    class FakeDescriptor:
+        @staticmethod
+        def for_command(command: bytes):
+            calls["command"] = json.loads(command)
+            return command
+
+    class FakeWriter:
+        def write_batch(self, batch) -> None:
+            calls["rows"] += batch.num_rows
+
+        def done_writing(self) -> None:
+            calls["done_writing"] = True
+
+        def close(self) -> None:
+            calls["writer_closed"] = True
+
+    class FakeReader:
+        @staticmethod
+        def read():
+            return SimpleNamespace(
+                to_pybytes=lambda: json.dumps(
+                    {
+                        "success": True,
+                        "metrics": {
+                            "total_processed": 5,
+                            "successful_count": 5,
+                            "failed_count": 0,
+                        },
+                    }
+                ).encode()
+            )
+
+    class FakeClient:
+        def __init__(self, location):
+            calls["location"] = location
+
+        @staticmethod
+        def do_put(descriptor, schema):
+            calls["descriptor"] = descriptor
+            calls["schema"] = schema
+            return FakeWriter(), FakeReader()
+
+        @staticmethod
+        def close() -> None:
+            calls["client_closed"] = True
+
+    flight = SimpleNamespace(
+        Location=FakeLocation,
+        FlightDescriptor=FakeDescriptor,
+        FlightClient=FakeClient,
+    )
+    stream = HARNESS.FlightUpsertStream(
+        "127.0.0.1",
+        5692,
+        "7",
+        schema="vector-schema",
+        flight_module=flight,
+    )
+
+    stream.write_batch(SimpleNamespace(num_rows=2))
+    stream.write_batch(SimpleNamespace(num_rows=3))
+    result = stream.close()
+
+    assert calls["location"] == ("127.0.0.1", 5692)
+    assert calls["command"] == {
+        "collection_id": "7",
+        "operation": "upsert",
+        "write_mode": "wal",
+        "trigger_compaction": False,
+    }
+    assert calls["schema"] == "vector-schema"
+    assert calls["rows"] == 5
+    assert calls["done_writing"] is True
+    assert calls["writer_closed"] is True
+    assert calls["client_closed"] is True
+    assert result["metrics"]["successful_count"] == 5
 
 
 def test_explicit_flush_uses_supported_flight_action() -> None:
@@ -223,9 +474,7 @@ def test_explicit_flush_uses_supported_flight_action() -> None:
         Action=FakeAction,
     )
 
-    response = HARNESS.force_flush_via_flight(
-        "127.0.0.1", 5692, "7", flight
-    )
+    response = HARNESS.force_flush_via_flight("127.0.0.1", 5692, "7", flight)
 
     assert response["success"] is True
     assert calls["location"] == ("127.0.0.1", 5692)
@@ -274,9 +523,7 @@ def test_explicit_compaction_uses_supported_flight_action() -> None:
         Action=FakeAction,
     )
 
-    response = HARNESS.compact_via_flight(
-        "127.0.0.1", 5690, "7", flight
-    )
+    response = HARNESS.compact_via_flight("127.0.0.1", 5690, "7", flight)
 
     assert response["success"] is True
     assert calls["location"] == ("127.0.0.1", 5690)
@@ -331,3 +578,107 @@ def test_explicit_flush_waits_for_stable_new_pax_epoch() -> None:
     assert wal_bytes is None
     assert geometry.calls == 2
     sleep.assert_called_once_with(0.5)
+
+
+def test_materialization_accepts_absent_wal_gauge_after_exact_azure_footer(
+    tmp_path: Path,
+) -> None:
+    inventory = {
+        "segments": [{"path": "7/data/L0.pax", "bytes": 4096, "etag": "e1"}],
+        "segment_count": 1,
+        "bytes": 4096,
+    }
+
+    class FakeGeometry:
+        @staticmethod
+        def inventory() -> dict:
+            return inventory
+
+        @staticmethod
+        def stable_signature(observed: dict) -> tuple:
+            return tuple(
+                (item["path"], item["bytes"], item["etag"])
+                for item in observed["segments"]
+            )
+
+        @staticmethod
+        def materialize(observed: dict) -> dict:
+            return {
+                **observed,
+                "row_count": 100,
+                "segments": [
+                    {
+                        **observed["segments"][0],
+                        "rows": 100,
+                        "layout_version": 3,
+                    }
+                ],
+            }
+
+    with (
+        patch.object(HARNESS, "scrape_text", return_value=""),
+        patch.object(HARNESS.time, "sleep"),
+        patch.object(HARNESS.time, "monotonic", side_effect=[0, 1, 1, 2, 2]),
+    ):
+        settled = HARNESS.wait_for_materialization(
+            tmp_path,
+            "http://server",
+            "7",
+            expected_rows=100,
+            max_segments=1,
+            timeout_seconds=10,
+            stable_seconds=0,
+            azure_geometry=FakeGeometry(),
+        )
+
+    assert settled["row_count"] == 100
+    assert settled["wal_unflushed_bytes"] is None
+    assert HARNESS.wal_is_quiescent(None)
+    assert HARNESS.wal_is_quiescent(0)
+    assert not HARNESS.wal_is_quiescent(1)
+
+
+def test_v3_azure_settle_treats_l0_as_transient_until_training_compaction() -> None:
+    l0 = {
+        "segments": [{"path": "7/data/L0_20260731T000000_a.pax"}],
+        "segment_count": 1,
+    }
+    l1 = {
+        "segments": [{"path": "7/data/L1_20260731T000100_b.pax"}],
+        "segment_count": 1,
+    }
+    parsed_l1_v1 = {
+        "segments": [{"path": l1["segments"][0]["path"], "layout_version": 1}],
+        "segment_count": 1,
+    }
+
+    assert not HARNESS.layout_candidate_is_ready(l0, 3, azure_inventory=True)
+    assert HARNESS.layout_candidate_is_ready(l1, 3, azure_inventory=True)
+    assert not HARNESS.layout_candidate_is_ready(
+        parsed_l1_v1, 3, azure_inventory=False
+    )
+
+
+def test_server_records_explicit_sub_floor_training_override(tmp_path: Path) -> None:
+    process = SimpleNamespace(poll=lambda: None)
+    server = HARNESS.OwnedServer(
+        tmp_path / "proximadb-server",
+        tmp_path / "benchmark.toml",
+        "http://127.0.0.1:5790",
+        tmp_path / "server.log",
+        None,
+        training_compaction_min_mb=1,
+    )
+
+    with (
+        patch.dict(
+            HARNESS.os.environ,
+            {"PROXIMADB_TRAINING_COMPACTION_MIN_MB": "99"},
+        ),
+        patch.object(HARNESS.subprocess, "Popen", return_value=process) as popen,
+        patch.object(HARNESS, "request_json", return_value={}),
+    ):
+        server.start()
+
+    environment = popen.call_args.kwargs["env"]
+    assert environment["PROXIMADB_TRAINING_COMPACTION_MIN_MB"] == "1"

@@ -133,7 +133,7 @@ impl AutoFlushDriver {
             let mem_bytes = write_buffer.unflushed_bytes(collection_id).await;
             // Observation is emitted at the decision boundary: what /metrics shows
             // is exactly what the policy acted on.
-            wal_flush_metrics::set_wal_size(collection_id, mem_bytes as i64);
+            wal_flush_metrics::set_wal_size(collection_id, mem_bytes);
             wal_flush_metrics::set_budget(collection_id, budget, high, critical);
 
             let age = self.window_age_secs(collection_id).await;
@@ -215,18 +215,17 @@ impl AutoFlushDriver {
             };
             match result {
                 Ok(Some(outcome)) => {
-                    wal_flush_metrics::record_flush(
+                    let remaining = write_buffer.unflushed_bytes(&collection_id).await;
+                    wal_flush_metrics::record_successful_flush(
                         &collection_id,
                         &reason,
-                        true,
-                        outcome.bytes as i64,
-                        outcome.entries_flushed as i64,
+                        outcome.bytes,
+                        outcome.entries_flushed,
                         dur,
                         Self::now_unixtime(),
+                        remaining,
                     );
                     self.note_flushed(&collection_id).await;
-                    let remaining = write_buffer.unflushed_bytes(&collection_id).await;
-                    wal_flush_metrics::set_wal_size(&collection_id, remaining as i64);
                     tracing::info!(
                         "✅ ADR-081 auto-flush [{}] '{}': {} vectors, {} bytes in {:.3}s",
                         reason,
@@ -239,6 +238,8 @@ impl AutoFlushDriver {
                 Ok(None) => {
                     // Raced to empty; reset the window so we don't re-decide every tick.
                     self.note_flushed(&collection_id).await;
+                    let remaining = write_buffer.unflushed_bytes(&collection_id).await;
+                    wal_flush_metrics::set_wal_size(&collection_id, remaining);
                 }
                 Err(e) => {
                     wal_flush_metrics::record_flush(&collection_id, &reason, false, 0, 0, dur, 0);
