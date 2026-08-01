@@ -1447,7 +1447,12 @@ impl Compaction {
 
         for vector_record in &resolved_records {
             // TD-DELVEC-1 WI-6: drop DV-deleted rows (checked before tombstone/
-            // expiry so a DV delete always wins).
+            // expiry so a DV delete always wins). WI-7 (conservative purge
+            // watermark) is intentionally descoped per TD §7.2-5: long-lived
+            // snapshots are NOT pinned — a DV-deleted row is physically dropped
+            // here regardless of any hypothetical older reader, matching today's
+            // tombstone-reclaim behavior. If a past-T (time-travel) reader is
+            // ever added, revisit this to carry recent deletes forward.
             #[cfg(feature = "cold-deletion-vectors")]
             if deleted_oids.contains(&vector_record.id) {
                 deleted_vector_ids.push(vector_record.id.clone());
