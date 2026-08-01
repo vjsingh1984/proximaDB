@@ -2099,7 +2099,7 @@ pub async fn get_record_v2(
 
     match state
         .record_ops
-        .handle_record_get_for_tenant(
+        .handle_record_get_for_tenant_abac(
             RichRecordGetRequest {
                 collection_id: collection_id.clone(),
                 record_id: record_id.clone(),
@@ -2107,6 +2107,8 @@ pub async fn get_record_v2(
                 include_props: true,
             },
             Some(&tenant.tenant_id),
+            tenant.subject.as_deref(),
+            tenant.tenant_stable_id,
         )
         .await
     {
