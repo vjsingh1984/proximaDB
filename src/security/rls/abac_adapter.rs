@@ -10,6 +10,9 @@
 //! walker via [`admits_with_security`](super::filter_lattice::admits_with_security).
 
 #[cfg(feature = "abac-policy")]
+use std::sync::Arc;
+
+#[cfg(feature = "abac-policy")]
 use crate::core::search::{
     FilterExpression, OptimizedSearchRecord, sql_value_filter::proxima_value_to_json,
 };
@@ -82,9 +85,9 @@ pub enum AbacScanResult {
 #[cfg(feature = "abac-policy")]
 #[allow(dead_code)]
 pub struct AbacEnforcer {
-    authority: Box<dyn AttributeAuthority + Send + Sync>,
-    store: Box<dyn PredicateObjectStore + Send + Sync>,
-    epochs: Box<dyn PolicyEpochSource + Send + Sync>,
+    authority: Arc<dyn AttributeAuthority + Send + Sync>,
+    store: Arc<dyn PredicateObjectStore + Send + Sync>,
+    epochs: Arc<dyn PolicyEpochSource + Send + Sync>,
     /// The policy bindings this enforcer governs. Holding them makes the enforcer
     /// a self-contained policy a service can store once and call per-read
     /// (`predicate_for`); the per-call `scan_predicate_for(.., bindings)` variant
@@ -93,18 +96,25 @@ pub struct AbacEnforcer {
     /// The durable policy source (Phase 5b). When set, `predicate_for` loads the
     /// tenant's bindings from here per read — restart-surviving policy. When
     /// unset, it falls back to the held `bindings` (the in-memory/test path).
-    binding_store: Option<Box<dyn PolicyBindingStore + Send + Sync>>,
+    ///
+    /// Held as a shared `Arc<dyn PolicyBindingStore>` (not `Box`) so the same
+    /// durable store instance is shared between this enforcer and an
+    /// admin-provisioning writer: a write through the writer's `Arc` handle is
+    /// visible to the enforcer's next read without a restart (hot-reload,
+    /// TD-ABAC control-plane).
+    binding_store: Option<Arc<dyn PolicyBindingStore + Send + Sync>>,
 }
 
 #[cfg(feature = "abac-policy")]
 #[allow(dead_code)]
 impl AbacEnforcer {
     /// Construct from the three substrate stores. In production these are the
-    /// durable-backed impls; in tests, the in-memory ones.
+    /// durable-backed impls (shared `Arc` handles so an admin writer and the
+    /// enforcer observe the same instance); in tests, the in-memory ones.
     pub fn new(
-        authority: Box<dyn AttributeAuthority + Send + Sync>,
-        store: Box<dyn PredicateObjectStore + Send + Sync>,
-        epochs: Box<dyn PolicyEpochSource + Send + Sync>,
+        authority: Arc<dyn AttributeAuthority + Send + Sync>,
+        store: Arc<dyn PredicateObjectStore + Send + Sync>,
+        epochs: Arc<dyn PolicyEpochSource + Send + Sync>,
     ) -> Self {
         Self {
             authority,
@@ -127,7 +137,11 @@ impl AbacEnforcer {
     /// [`predicate_for`](Self::predicate_for) loads the tenant's bindings from the
     /// store on every read — a restart-surviving policy. This is the production
     /// path; [`with_bindings`](Self::with_bindings) remains for tests.
-    pub fn with_binding_store(mut self, store: Box<dyn PolicyBindingStore + Send + Sync>) -> Self {
+    ///
+    /// Takes a shared `Arc` so the caller (boot wiring) can retain its own clone
+    /// of the same durable store for the admin-provisioning writer — a provision
+    /// is then visible to this enforcer without a restart.
+    pub fn with_binding_store(mut self, store: Arc<dyn PolicyBindingStore + Send + Sync>) -> Self {
         self.binding_store = Some(store);
         self
     }
@@ -400,9 +414,9 @@ mod tests {
             field_mask: None,
         }];
         let enforcer = AbacEnforcer::new(
-            Box::new(authority),
-            Box::new(store),
-            Box::new(InMemoryPolicyEpochs::new()),
+            Arc::new(authority),
+            Arc::new(store),
+            Arc::new(InMemoryPolicyEpochs::new()),
         );
         (enforcer, bindings)
     }
@@ -579,7 +593,7 @@ mod tests {
             proximadb_abac::AttributeBinding::new("alice", 7)
                 .with_attr("dept", AttrValue::Str("eng".into())),
         );
-        let mut store = FileSystemPolicyBindingStore::open(&path).expect("open");
+        let store = FileSystemPolicyBindingStore::open(&path).expect("open");
         store.replace_tenant(
             7,
             vec![PolicyBinding {
@@ -593,12 +607,12 @@ mod tests {
         );
 
         let enforcer = AbacEnforcer::new(
-            Box::new(authority),
-            Box::new(predicate_store_for_dept()),
-            Box::new(InMemoryPolicyEpochs::new()),
+            Arc::new(authority),
+            Arc::new(predicate_store_for_dept()),
+            Arc::new(InMemoryPolicyEpochs::new()),
         )
         // NOTE: no with_bindings — held bindings are empty by design.
-        .with_binding_store(Box::new(store));
+        .with_binding_store(Arc::new(store));
 
         match enforcer.predicate_for(
             &SubjectId("alice".into()),
@@ -646,7 +660,7 @@ mod tests {
 
         // Write phase: persist tenant 7's permit, then drop everything.
         {
-            let mut store = FileSystemPolicyBindingStore::open(&path).expect("open");
+            let store = FileSystemPolicyBindingStore::open(&path).expect("open");
             store.replace_tenant(
                 7,
                 vec![PolicyBinding {
@@ -670,11 +684,11 @@ mod tests {
                     .with_attr("dept", AttrValue::Str("eng".into())),
             );
             AbacEnforcer::new(
-                Box::new(authority),
-                Box::new(predicate_store_for_dept()),
-                Box::new(InMemoryPolicyEpochs::new()),
+                Arc::new(authority),
+                Arc::new(predicate_store_for_dept()),
+                Arc::new(InMemoryPolicyEpochs::new()),
             )
-            .with_binding_store(Box::new(store))
+            .with_binding_store(Arc::new(store))
         }
 
         let store = FileSystemPolicyBindingStore::open(&path).expect("reopen");
@@ -687,6 +701,90 @@ mod tests {
                 assert!(!pred(&record_with("hr")));
             }
             _ => panic!("alice must be Restricted after restart"),
+        }
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn enforcer_observes_a_binding_provisioned_after_construction_hot_reload() {
+        // PR-A hot-reload gate (TD-ABAC control-plane): the admin-provisioning
+        // path writes through a SHARED `Arc<FileSystemPolicyBindingStore>` — the
+        // SAME instance the live enforcer reads. A binding written AFTER the
+        // enforcer is constructed must be visible to the very next read, with no
+        // restart. This is the property that makes runtime policy provisioning
+        // usable in a running server.
+        let dir = std::env::temp_dir().join(format!(
+            "proximadb-abac-enforcer-hotreload-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("policy.json");
+        let target = Target {
+            namespace: 3,
+            table: 200,
+            column: None,
+        };
+
+        let mut authority = InMemoryAttributeAuthority::new();
+        authority.upsert(
+            proximadb_abac::AttributeBinding::new("alice", 7)
+                .with_attr("dept", AttrValue::Str("eng".into())),
+        );
+
+        // Build the durable store EMPTY, wrap it in an `Arc`, and hand a CLONE
+        // (the same instance) to the enforcer. The caller retains its own clone —
+        // the admin-provisioning handle.
+        let store = Arc::new(FileSystemPolicyBindingStore::open(&path).expect("open"));
+        let enforcer = AbacEnforcer::new(
+            Arc::new(authority),
+            Arc::new(predicate_store_for_dept()),
+            Arc::new(InMemoryPolicyEpochs::new()),
+        )
+        .with_binding_store(store.clone());
+
+        // Before provisioning, alice has no applicable policy ⇒ deny-biased ⇒
+        // fail-closed DENY (also the unprovisioned-tenant behavior the admin API
+        // must not let through).
+        assert!(
+            matches!(
+                enforcer.predicate_for(&SubjectId("alice".into()), 7, target),
+                AbacScanResult::Denied(_)
+            ),
+            "no binding provisioned yet ⇒ alice is denied (fail-closed)"
+        );
+
+        // The admin provisions tenant 7's permit through the SAME shared handle —
+        // no restart, no re-open. This is the write the enforcer must observe.
+        store.replace_tenant(
+            7,
+            vec![PolicyBinding {
+                object_id: 1,
+                tenant_stable_id: 7,
+                scope: Scope::Table(200),
+                effect: Effect::Permit,
+                predicate_ref: Some(42),
+                field_mask: None,
+            }],
+        );
+
+        // The live enforcer observes the provisioned binding on the next read:
+        // alice is now admitted with her dept=eng row predicate.
+        match enforcer.predicate_for(&SubjectId("alice".into()), 7, target) {
+            AbacScanResult::Restricted(pred) => {
+                assert!(pred(&record_with("eng")), "dept=eng row admitted");
+                assert!(!pred(&record_with("hr")), "dept=hr row denied");
+            }
+            AbacScanResult::Unrestricted => {
+                panic!("alice must be Restricted (predicate ref 42), not Unrestricted")
+            }
+            AbacScanResult::Denied(_) => {
+                panic!("hot-reload failed: provisioned binding not visible to enforcer")
+            }
         }
 
         let _ = std::fs::remove_file(&path);

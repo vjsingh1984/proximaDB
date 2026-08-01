@@ -30,6 +30,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 use proximadb_catalog::fc_metamodel::ObjectId;
 use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
@@ -65,7 +66,13 @@ pub trait PredicateObjectStore {
     /// Look up the predicate object registered under `id`. Returns `None` when
     /// unknown, revoked, or in another tenant's scope — [`compile_security_filter`]
     /// treats `None` as fail-closed.
-    fn get(&self, id: ObjectId) -> Option<&FilterExpression>;
+    ///
+    /// Returns an **owned** `FilterExpression` (not a borrow) so a durable
+    /// implementation can hold its cache behind a lock — a reference could not
+    /// escape the read guard. The single consumer
+    /// ([`compile_security_filter`]) already cloned the borrow, so this removes a
+    /// clone rather than adding one.
+    fn get(&self, id: ObjectId) -> Option<FilterExpression>;
 }
 
 /// An in-memory [`PredicateObjectStore`] — the reference implementation.
@@ -99,8 +106,8 @@ impl Default for InMemoryPredicateObjectStore {
 }
 
 impl PredicateObjectStore for InMemoryPredicateObjectStore {
-    fn get(&self, id: ObjectId) -> Option<&FilterExpression> {
-        self.objects.get(&id)
+    fn get(&self, id: ObjectId) -> Option<FilterExpression> {
+        self.objects.get(&id).cloned()
     }
 }
 
@@ -129,10 +136,13 @@ impl PredicateObjectStore for InMemoryPredicateObjectStore {
 /// Predicate objects are keyed by global catalog `ObjectId` (not tenant-
 /// partitioned), matching [`InMemoryPredicateObjectStore`] and the enforcer's
 /// single shared store — a predicate ref resolves the same `FilterExpression`
-/// regardless of tenant. `Send + Sync` (held by the enforcer behind a
-/// `Box<dyn PredicateObjectStore + Send + Sync>`).
+/// regardless of tenant. `Send + Sync` (held by the enforcer behind a shared
+/// `Arc<dyn PredicateObjectStore + Send + Sync>`). The in-memory cache is behind
+/// a [`RwLock`] so an admin write through a shared `Arc` handle is visible to the
+/// live enforcer without a restart (hot-reload): writes take the write-lock and
+/// persist; reads take the read-lock.
 pub struct FileSystemPredicateObjectStore {
-    inner: InMemoryPredicateObjectStore,
+    inner: RwLock<InMemoryPredicateObjectStore>,
     path: PathBuf,
 }
 
@@ -155,31 +165,57 @@ impl FileSystemPredicateObjectStore {
                 inner.register(id, expr);
             }
         }
-        Ok(Self { inner, path })
+        Ok(Self {
+            inner: RwLock::new(inner),
+            path,
+        })
     }
 
     /// Register or replace a predicate object and persist immediately (atomic rename).
-    pub fn register(&mut self, id: ObjectId, expr: FilterExpression) {
-        self.inner.register(id, expr);
+    ///
+    /// Takes `&self` (not `&mut self`): the in-memory cache lives behind a
+    /// [`RwLock`], so a shared `Arc<FileSystemPredicateObjectStore>` handle can
+    /// mutate the store — the admin-provisioning path (TD-ABAC control-plane)
+    /// writes through the same instance the live enforcer reads, and the change
+    /// is visible without a restart.
+    pub fn register(&self, id: ObjectId, expr: FilterExpression) {
+        {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.register(id, expr);
+        }
         let _ = self.persist();
     }
 
     /// Remove a predicate object and persist immediately. Subsequent resolves of
-    /// `id` fail-closed.
-    pub fn revoke(&mut self, id: ObjectId) {
-        self.inner.revoke(id);
+    /// `id` fail-closed. `&self` for the same hot-reload reason as [`register`](Self::register).
+    pub fn revoke(&self, id: ObjectId) {
+        {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.revoke(id);
+        }
         let _ = self.persist();
     }
 
-    /// An iterator over the stored predicate objects — for inspection/audit.
-    pub fn objects(&self) -> impl Iterator<Item = (&ObjectId, &FilterExpression)> {
-        self.inner.objects.iter()
+    /// A snapshot of the stored predicate objects — for inspection/audit. Owned
+    /// (not an iterator borrowing `&self`) because the cache is behind a [`RwLock`].
+    pub fn objects(&self) -> Vec<(ObjectId, FilterExpression)> {
+        self.inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .objects
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect()
     }
 
-    /// Write the full predicate-object set atomically (temp + rename).
+    /// Write the full predicate-object set atomically (temp + rename). Re-reads
+    /// the live cache under the read-lock — so it always reflects the latest
+    /// committed state (no lost update under concurrent admin writes).
     fn persist(&self) -> Result<(), PredicateStoreError> {
         let objects: Vec<(ObjectId, FilterExpression)> = self
             .inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
             .objects
             .iter()
             .map(|(k, v)| (*k, v.clone()))
@@ -200,8 +236,13 @@ impl FileSystemPredicateObjectStore {
 }
 
 impl PredicateObjectStore for FileSystemPredicateObjectStore {
-    fn get(&self, id: ObjectId) -> Option<&FilterExpression> {
-        self.inner.get(id)
+    fn get(&self, id: ObjectId) -> Option<FilterExpression> {
+        self.inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .objects
+            .get(&id)
+            .cloned()
     }
 }
 
@@ -244,7 +285,7 @@ pub fn compile_security_filter(
     let mut resolved: Vec<FilterExpression> = Vec::with_capacity(refs.len());
     for id in refs {
         match store.get(*id) {
-            Some(expr) => resolved.push(expr.clone()),
+            Some(expr) => resolved.push(expr),
             None => {
                 // A missing predicate ref is a deny — the policy references
                 // something the store cannot find, and the safe answer is
@@ -412,7 +453,7 @@ mod tests {
 
         // Write phase: register predicate 42 (dept=eng) + 7 (clearance>=3), drop.
         {
-            let mut store = FileSystemPredicateObjectStore::open(&path).expect("open");
+            let store = FileSystemPredicateObjectStore::open(&path).expect("open");
             store.register(42, eq_dept("eng"));
             store.register(7, gt_clearance(3));
             assert!(path.exists(), "persist wrote the file");
@@ -420,8 +461,8 @@ mod tests {
 
         // Read phase: reopen — both predicates must survive, byte-identical.
         let store = FileSystemPredicateObjectStore::open(&path).expect("reopen");
-        assert_eq!(store.get(42), Some(&eq_dept("eng")));
-        assert_eq!(store.get(7), Some(&gt_clearance(3)));
+        assert_eq!(store.get(42), Some(eq_dept("eng")));
+        assert_eq!(store.get(7), Some(gt_clearance(3)));
         assert!(store.get(999).is_none(), "unknown ref resolves None (deny)");
 
         // compile_security_filter — the production enforcement path — resolves
@@ -442,7 +483,7 @@ mod tests {
         let path = dir.join("predicates.json");
 
         {
-            let mut store = FileSystemPredicateObjectStore::open(&path).expect("open");
+            let store = FileSystemPredicateObjectStore::open(&path).expect("open");
             store.register(42, eq_dept("eng"));
             store.revoke(42);
         }
