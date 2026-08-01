@@ -1686,7 +1686,12 @@ pub async fn search_with_typed_filters(
         crate::observability::predicate_diagnostics::scope(async {
             let outcome = state
                 .record_ops
-                .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
+                .handle_record_search_for_tenant_abac(
+                    search_request,
+                    Some(&tenant.tenant_id),
+                    tenant.subject.as_deref(),
+                    tenant.tenant_stable_id,
+                )
                 .await;
             let downgraded =
                 crate::observability::predicate_diagnostics::take_quantized_downgrade();

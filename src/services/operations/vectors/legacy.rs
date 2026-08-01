@@ -686,6 +686,49 @@ impl VectorOperationsService {
         ))
     }
 
+    /// Resolve the REST records-search read context for `(subject,
+    /// tenant_stable_id)`. Returns:
+    /// - `Some(ReadContext::Client(ctx))` — admitted; the caller ANDs the
+    ///   subject's security filter into the search (pushdown) / post-filters.
+    /// - `Some(ReadContext::System(_))` — no enforcer wired, or no client
+    ///   subject on the request (the `None`-subject callers) ⇒ passthrough
+    ///   (the pre-feature behavior — structural isolation only).
+    /// - `None` — the subject was **denied**; the caller MUST fail closed
+    ///   (return empty results). Mirrors the fusion contract
+    ///   (`fusion_service.rs:529-554`).
+    #[cfg(feature = "abac-policy")]
+    async fn records_read_context(
+        &self,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
+        collection_id: &str,
+    ) -> Option<proximadb_abac::ReadContext> {
+        use proximadb_catalog::fc_metamodel::SubjectId;
+        match (subject, tenant_stable_id) {
+            (Some(subject), Some(tenant_stable_id)) => {
+                match self
+                    .resolve_vector_read_context(
+                        &SubjectId(subject.to_string()),
+                        tenant_stable_id,
+                        collection_id,
+                    )
+                    .await
+                {
+                    Some(Ok(ctx)) => Some(proximadb_abac::ReadContext::Client(ctx)),
+                    Some(Err(_)) => None, // deny ⇒ fail-closed
+                    None => Some(proximadb_abac::ReadContext::system(
+                        proximadb_abac::SystemReadReason::Statistics,
+                        "records_search (no abac enforcer)",
+                    )),
+                }
+            }
+            _ => Some(proximadb_abac::ReadContext::system(
+                proximadb_abac::SystemReadReason::Statistics,
+                "records_search (no client subject)",
+            )),
+        }
+    }
+
     /// Expose the unified storage engine as a trait object for integration points
     pub fn unified_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageFormat> {
         self.storage_engine.clone() as Arc<dyn crate::storage::traits::UnifiedStorageFormat>
@@ -805,7 +848,39 @@ impl VectorOperationsService {
         let om_start = std::time::Instant::now();
         crate::metrics::operational_metrics::QUERIES_TOTAL.inc();
         let result = self
-            .search_records_with_tenant_context_inner(request, tenant_context)
+            .search_records_with_tenant_context_inner(request, tenant_context, None, None)
+            .await;
+        if result.is_err() {
+            crate::metrics::operational_metrics::QUERIES_FAILED_TOTAL.inc();
+        }
+        crate::metrics::operational_metrics::SEARCH_LATENCY_SECONDS
+            .observe(om_start.elapsed().as_secs_f64());
+        result
+    }
+
+    /// ABAC-aware variant of [`search_records_with_tenant_context`] for the REST
+    /// records surface: threads the request subject + tenant stable id so a
+    /// provisioned policy admits/denies/filters the results (fail-closed on
+    /// deny). The gRPC/Flight twins still call the original (`None` subject ⇒ no
+    /// enforcement, unchanged) until their own slice adopts this variant. The
+    /// enforcement logic itself is `abac-policy`-gated inside `_inner`, so under
+    /// default builds this is a pass-through (subject ignored).
+    pub async fn search_records_with_tenant_context_abac(
+        &self,
+        request: RichSearchRequest,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
+    ) -> Result<RichSearchResponse> {
+        let om_start = std::time::Instant::now();
+        crate::metrics::operational_metrics::QUERIES_TOTAL.inc();
+        let result = self
+            .search_records_with_tenant_context_inner(
+                request,
+                tenant_context,
+                subject,
+                tenant_stable_id,
+            )
             .await;
         if result.is_err() {
             crate::metrics::operational_metrics::QUERIES_FAILED_TOTAL.inc();
@@ -819,6 +894,8 @@ impl VectorOperationsService {
         &self,
         request: RichSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> Result<RichSearchResponse> {
         // Authorize before touching data, matching `search_v1_with_tenant_context`.
         let collection_id = self
@@ -830,6 +907,30 @@ impl VectorOperationsService {
         // proto round-trip, so `starts_with`/`ends_with` and the full op set
         // survive to the search engine intact.
         let filter = rich_filters_to_filter_expression(&request.filters);
+
+        // TD-ABAC-5/6 (REST records): push the subject's accessibility predicate
+        // into the search — conjunctive ⇒ AND into `filter` (pushdown); non-
+        // conjunctive ⇒ `post_filter` applied to the results below. Fail-closed:
+        // a denied subject gets an empty response. `None` subject (the gRPC/Flight
+        // callers that still delegate with `None`) ⇒ System passthrough, i.e. the
+        // pre-feature behavior — no enforcement until those surfaces adopt `_abac`.
+        #[cfg(feature = "abac-policy")]
+        let (filter, post_filter) = match self
+            .records_read_context(subject, tenant_stable_id, &collection_id)
+            .await
+        {
+            Some(read_ctx) => self.apply_abac_vector_filter(filter, &read_ctx),
+            None => {
+                return Ok(RichSearchResponse {
+                    results: Vec::new(),
+                    total_found: 0,
+                    collection_id: Some(collection_id),
+                    predicate_shortfall: None,
+                });
+            }
+        };
+        #[cfg(not(feature = "abac-policy"))]
+        let _ = (subject, tenant_stable_id);
 
         // The rich path mirrors the previous `include_fields: None` defaults:
         // metadata included, vectors excluded.
@@ -853,6 +954,22 @@ impl VectorOperationsService {
         };
 
         let mut resp = v1_search_result_to_rich(search_result);
+
+        // ABAC post-filter: non-conjunctive security expressions (e.g. those that
+        // can't be AND'd into the ANN pushdown) are evaluated against each row's
+        // props here. Mirrors `post_filter_search_results` on the native path.
+        #[cfg(feature = "abac-policy")]
+        if let Some(security) = &post_filter {
+            use crate::core::search::sql_value_filter::proxima_value_to_json;
+            use crate::security::rls::filter_lattice::admits_with_security;
+            resp.results.retain(|r| {
+                admits_with_security(None, Some(security), &|field: &str| {
+                    r.props.get(field).map(proxima_value_to_json)
+                })
+            });
+            // A post-filtered result is a real "<top_k match the policy" outcome;
+            // recompute shortfall below accounts for the new length.
+        }
 
         // TD-064(a): authoritative shortfall recompute at the response
         // boundary — the TRUE final merged counts vs the user's `top_k`.
