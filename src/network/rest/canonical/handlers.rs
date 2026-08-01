@@ -1461,7 +1461,7 @@ pub type FullTextIndexMap = Arc<
 fn operator_and_control_v2_routes() -> axum::Router<AppState> {
     use axum::routing::{get, post};
 
-    axum::Router::new()
+    let router = axum::Router::new()
         .route(
             "/api/v2/progressive/search/{collection_id}",
             post(crate::network::rest::progressive_search_handler::progressive_search_handler),
@@ -1538,7 +1538,32 @@ fn operator_and_control_v2_routes() -> axum::Router<AppState> {
         .route(
             "/api/v2/primary-pod",
             get(crate::network::rest::canonical::primary_pod::list_primary_pods),
+        );
+
+    // TD-ABAC control-plane (PR-B): ABAC policy-provisioning admin API. Each
+    // handler writes through the shared enforcer stores (hot-reload), resolves
+    // the tenant string→u64 at write time, and is auth-gated to the operator
+    // role. `abac-policy`-only — default builds omit these routes entirely.
+    #[cfg(feature = "abac-policy")]
+    let router = router
+        .route(
+            "/api/v2/abac/policy-bindings/{tenant}/{object_id}",
+            axum::routing::put(crate::network::rest::canonical::abac_admin::put_policy_binding)
+                .delete(crate::network::rest::canonical::abac_admin::delete_policy_binding),
         )
+        .route(
+            "/api/v2/abac/attribute-bindings",
+            axum::routing::post(
+                crate::network::rest::canonical::abac_admin::post_attribute_binding,
+            ),
+        )
+        .route(
+            "/api/v2/abac/predicate-objects/{object_id}",
+            axum::routing::put(crate::network::rest::canonical::abac_admin::put_predicate_object)
+                .delete(crate::network::rest::canonical::abac_admin::delete_predicate_object),
+        );
+
+    router
 }
 
 pub fn create_router(state: AppState) -> axum::Router {

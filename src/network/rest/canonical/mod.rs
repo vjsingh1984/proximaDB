@@ -1,3 +1,7 @@
+/// ABAC policy-provisioning admin API (TD-ABAC control-plane). Auth-gated to
+/// `SystemAdmin` or `ConfigureSystem`; `abac-policy`-only (default builds omit it).
+#[cfg(feature = "abac-policy")]
+pub mod abac_admin;
 /// Phase 7.2.4: per-collection cache-affinity operator API.
 pub mod affinity;
 /// REST handlers for read-only collection analytics (Entanglement Index)
