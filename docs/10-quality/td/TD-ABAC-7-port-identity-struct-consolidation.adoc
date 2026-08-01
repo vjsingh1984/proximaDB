@@ -1,5 +1,5 @@
 = TD-ABAC-7: Consolidate per-call identity params into one identity struct at the port seams
-:status: Open
+:status: Resolved
 :dim: D5
 :pillar: SEC
 

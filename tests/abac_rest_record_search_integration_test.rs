@@ -43,7 +43,7 @@ use proximadb_abac::{
 use proximadb_catalog::fc_metamodel::{AttrValue, Effect, PolicyBinding, Scope};
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord, ProximaTreeNode};
-use proximadb_runtime::{RichRecordGetRequest, RichSearchRequest};
+use proximadb_runtime::{PortIdentity, RichRecordGetRequest, RichSearchRequest};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -52,6 +52,15 @@ const DIM: u32 = 4;
 const TENANT: u64 = 7;
 const OID_ENG: &str = "abac/record/eng";
 const OID_HR: &str = "abac/record/hr";
+
+/// The port-seam identity for a named ABAC subject under [`TENANT`].
+fn subject_identity(subject: &str) -> PortIdentity<'_> {
+    PortIdentity {
+        tenant_id: None,
+        subject: Some(subject),
+        tenant_stable_id: Some(TENANT),
+    }
+}
 
 /// Admit `alice` (dept=eng) under a `dept=eng` row predicate, scoped to
 /// `Namespace(0)` so it matches `resolve_vector_read_context`'s
@@ -175,7 +184,7 @@ async fn admitted_subject_sees_only_accessible_records_on_rest_records_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_records_with_tenant_context(request(), None, Some("alice"), Some(TENANT))
+        .search_records_with_tenant_context(request(), None, subject_identity("alice"))
         .await
         .expect("abac search");
 
@@ -196,7 +205,7 @@ async fn denied_subject_gets_empty_results_on_rest_records_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_records_with_tenant_context(request(), None, Some("mallory"), Some(TENANT))
+        .search_records_with_tenant_context(request(), None, subject_identity("mallory"))
         .await
         .expect("abac search");
 
@@ -215,7 +224,7 @@ async fn none_subject_is_passthrough_on_rest_records_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_records_with_tenant_context(request(), None, None, None)
+        .search_records_with_tenant_context(request(), None, PortIdentity::anonymous())
         .await
         .expect("abac search");
 
@@ -309,7 +318,7 @@ async fn v1_admitted_subject_sees_only_accessible_records() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_v1(v1_request(), Some("alice"), Some(TENANT))
+        .search_v1(v1_request(), subject_identity("alice"))
         .await
         .expect("v1 abac search");
 
@@ -330,7 +339,7 @@ async fn v1_denied_subject_gets_empty_results() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_v1(v1_request(), Some("mallory"), Some(TENANT))
+        .search_v1(v1_request(), subject_identity("mallory"))
         .await
         .expect("v1 abac search");
 
@@ -347,7 +356,7 @@ async fn v1_none_subject_is_passthrough() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_v1(v1_request(), None, None)
+        .search_v1(v1_request(), PortIdentity::anonymous())
         .await
         .expect("v1 search");
 

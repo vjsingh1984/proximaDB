@@ -90,22 +90,59 @@ pub trait CollectionPort: Send + Sync {
 
 // ── Vector operations ─────────────────────────────────────────────────────────
 
+/// The pre-resolution caller identity carried across port seams (TD-ABAC-7).
+///
+/// This is the RAW identity captured at the network boundary — not an
+/// authorization result (`AuthorizedReadContext` in `proximadb-abac` is what
+/// the enforcement seam *resolves from* it). Fields:
+///
+/// * `tenant_id` — the authoritative ADR-0083 string identity, used for
+///   tenant-scoped catalog/name resolution and `DrPathBuilder` paths.
+/// * `subject` — the authenticated principal (ABAC); `None` = unauthenticated
+///   / internal caller, which the seam treats as passthrough (no policy
+///   evaluation).
+/// * `tenant_stable_id` — the derived numeric projection of `tenant_id`
+///   (widened `account_u32`), the ABAC policy-lookup key. Never a second
+///   source of truth: the string stays authoritative.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PortIdentity<'a> {
+    pub tenant_id: Option<&'a str>,
+    pub subject: Option<&'a str>,
+    pub tenant_stable_id: Option<u64>,
+}
+
+impl<'a> PortIdentity<'a> {
+    /// No identity at all — internal/system callers; enforcement passthrough.
+    pub const fn anonymous() -> Self {
+        Self {
+            tenant_id: None,
+            subject: None,
+            tenant_stable_id: None,
+        }
+    }
+
+    /// Tenant-scoped but with no authenticated ABAC principal.
+    pub const fn for_tenant(tenant_id: &'a str) -> Self {
+        Self {
+            tenant_id: Some(tenant_id),
+            subject: None,
+            tenant_stable_id: None,
+        }
+    }
+}
+
 /// Port for vector CRUD and search operations.
 ///
 /// Implemented by root-crate `VectorOperationsService`.
 #[async_trait]
 pub trait VectorOpsPort: Send + Sync {
-    /// Execute a vector search, tenant-scoped when `tenant_id` is provided.
-    ///
-    /// `subject` + `tenant_stable_id` identify the authenticated principal for
-    /// ABAC enforcement at the shared search seam (`unified_search_v1_inner`);
-    /// `None` means no policy evaluation (internal/unauthenticated callers).
+    /// Execute a vector search, tenant-scoped when `identity.tenant_id` is
+    /// provided; `identity.subject` + `identity.tenant_stable_id` drive ABAC
+    /// enforcement at the shared search seam (`unified_search_v1_inner`).
     async fn search(
         &self,
         request: VectorSearchRequest,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: PortIdentity<'_>,
     ) -> Result<VectorOperationResponse>;
 
     /// TD-XMODAL-4 S2: the **single canonical native vector-search kernel** — the

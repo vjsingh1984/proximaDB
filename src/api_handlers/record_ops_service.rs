@@ -756,11 +756,11 @@ impl RecordOpsService {
     pub async fn handle_record_search_for_tenant(
         &self,
         request: RichSearchRequest,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichSearchResponse> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let tenant_context = self
+            .collection_service
+            .load_tenant_context(identity.tenant_id)?;
         let request = RichSearchRequest {
             collection_id: match self
                 .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
@@ -775,12 +775,7 @@ impl RecordOpsService {
         };
 
         self.vector_operations_service
-            .search_records_with_tenant_context(
-                request,
-                tenant_context.as_ref(),
-                subject,
-                tenant_stable_id,
-            )
+            .search_records_with_tenant_context(request, tenant_context.as_ref(), identity)
             .await
     }
 
@@ -974,9 +969,9 @@ impl proximadb_runtime::RecordSearchPort for RecordOpsService {
     async fn search_record(
         &self,
         request: RichSearchRequest,
-        tenant_id: Option<&str>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichSearchResponse> {
-        self.handle_record_search_for_tenant(request, tenant_id, None, None)
+        self.handle_record_search_for_tenant(request, identity)
             .await
     }
 }

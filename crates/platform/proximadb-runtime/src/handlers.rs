@@ -33,7 +33,7 @@ use crate::port::{
     ApiHandlersPort, CollectionSchemaColumn, CollectionSchemaEnforcement, CollectionSchemaMetadata,
     CollectionSchemaUpdate, CollectionTextStorage,
 };
-use crate::service_ports::{CollectionPort, QueryAdapterPort, VectorOpsPort};
+use crate::service_ports::{CollectionPort, PortIdentity, QueryAdapterPort, VectorOpsPort};
 
 /// Global request counter for generating unique request IDs.
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -569,20 +569,18 @@ impl ApiHandlersPort for UnifiedHandlers {
     async fn handle_vector_search_v1_for_tenant(
         &self,
         request: VectorSearchRequest,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: PortIdentity<'_>,
     ) -> Result<VectorOperationResponse> {
-        self.vector_ops
-            .search(request, tenant_id, subject, tenant_stable_id)
-            .await
+        self.vector_ops.search(request, identity).await
     }
 
     async fn handle_vector_search_v1(
         &self,
         request: VectorSearchRequest,
     ) -> Result<VectorOperationResponse> {
-        self.vector_ops.search(request, None, None, None).await
+        self.vector_ops
+            .search(request, PortIdentity::anonymous())
+            .await
     }
 
     async fn handle_vector_batch_v1_for_tenant(
@@ -831,10 +829,9 @@ mod tests {
         async fn search(
             &self,
             request: VectorSearchRequest,
-            tenant_id: Option<&str>,
-            _subject: Option<&str>,
-            _tenant_stable_id: Option<u64>,
+            identity: PortIdentity<'_>,
         ) -> Result<VectorOperationResponse> {
+            let tenant_id = identity.tenant_id;
             self.calls
                 .lock()
                 .unwrap()
@@ -1049,9 +1046,7 @@ mod tests {
                     collection_id: "tenant".to_string(),
                     ..VectorSearchRequest::default()
                 },
-                Some("tenant-a"),
-                None,
-                None,
+                PortIdentity::for_tenant("tenant-a"),
             )
             .await
             .unwrap();

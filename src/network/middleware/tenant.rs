@@ -202,6 +202,20 @@ impl From<&MiddlewareTenantContext> for crate::storage::tenant::context::Storage
     }
 }
 
+/// TD-ABAC-7: the one bridge from the middleware identity to the port-seam
+/// caller identity ([`proximadb_runtime::PortIdentity`]). REST handlers build
+/// it with `PortIdentity::from(&tenant)` instead of hand-threading the
+/// `{tenant_id, subject, tenant_stable_id}` triple per call site.
+impl<'a> From<&'a MiddlewareTenantContext> for proximadb_runtime::PortIdentity<'a> {
+    fn from(ctx: &'a MiddlewareTenantContext) -> Self {
+        Self {
+            tenant_id: Some(&ctx.tenant_id),
+            subject: ctx.subject.as_deref(),
+            tenant_stable_id: ctx.tenant_stable_id,
+        }
+    }
+}
+
 /// Source of the tenant ID (for audit and debugging)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TenantIdSource {

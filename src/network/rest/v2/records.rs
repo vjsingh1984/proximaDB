@@ -1688,9 +1688,7 @@ pub async fn search_with_typed_filters(
                 .record_ops
                 .handle_record_search_for_tenant(
                     search_request,
-                    Some(&tenant.tenant_id),
-                    tenant.subject.as_deref(),
-                    tenant.tenant_stable_id,
+                    proximadb_runtime::PortIdentity::from(&tenant),
                 )
                 .await;
             let downgraded =

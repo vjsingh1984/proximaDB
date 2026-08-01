@@ -1478,9 +1478,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                     .record_ops
                     .handle_record_search_for_tenant(
                         search_request,
-                        Some(tenant_id.as_str()),
-                        None,
-                        None,
+                        proximadb_runtime::PortIdentity::for_tenant(tenant_id.as_str()),
                     )
                     .await;
                 let tq = crate::observability::predicate_diagnostics::take_turboquant_hints();
@@ -1564,7 +1562,10 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Execute search
         let response = self
             .record_ops
-            .handle_record_search_for_tenant(search_request, Some(tenant_id.as_str()), None, None)
+            .handle_record_search_for_tenant(
+                search_request,
+                proximadb_runtime::PortIdentity::for_tenant(tenant_id.as_str()),
+            )
             .await
             .map_err(|e| Status::internal(format!("Search stream failed: {}", e)))?;
 
