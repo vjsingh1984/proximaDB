@@ -8146,6 +8146,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "dashmap",
  "futures",
  "num_cpus",
  "proximadb-config",
@@ -8164,6 +8165,7 @@ dependencies = [
  "sysinfo",
  "thiserror 1.0.69",
  "tokio",
+ "tonic",
  "tracing",
  "uuid",
 ]
