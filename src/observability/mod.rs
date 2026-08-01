@@ -106,8 +106,10 @@ pub use proximadb_observability_engine::predicate_diagnostics;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
 /// Rank-pipeline metrics — Prometheus histograms/counters per
-/// RANKING_FRAMEWORK_SPEC NFR-8 (R-7c.4d follow-up).
-pub mod rank_metrics;
+/// RANKING_FRAMEWORK_SPEC NFR-8 (R-7c.4d follow-up). Now lives in
+/// `proximadb-observability-engine` (Slice 2a / TD-DECOMP-2); re-exported so the
+/// `/metrics/prometheus` scrape and existing callers resolve unchanged.
+pub use proximadb_observability_engine::rank_metrics;
 /// Route explain builder — human-readable explanation derived from a
 /// populated SearchPlanTrace for the LLD §1 debug=true response.
 pub use proximadb_observability_engine::route_explain;

@@ -65,6 +65,11 @@ proximadb-tenant.workspace = true
 # re-exports (TD-FLIGHT-1 relocated the definition here so transport-neutral
 # search DTOs can reference it without a modality-tier dependency).
 proximadb-search-types.workspace = true
+# Modality: `rank_metrics` impls `proximadb_rank_onnx::ModelCacheObserver` and
+# `proximadb_rank_core::RankMetricsSink` (fully-qualified). Both are modality-tier,
+# so this edge is modality→modality (layering-legal per check_workspace_boundaries).
+proximadb-rank-core.workspace = true
+proximadb-rank-onnx.workspace = true
 # Optional, feature-gated (otlp-metering) — the OTLP metering *export* surface.
 # Same specs as the root crate's optional deps.
 opentelemetry = { version = "0.32", optional = true }

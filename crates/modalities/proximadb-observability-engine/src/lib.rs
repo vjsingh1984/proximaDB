@@ -20,6 +20,11 @@
 //! `storage/` (WAL up-edges) remain in the root `src/observability/`, as does
 //! the `impl ObservabilityStorageOperations` (root-local trait).
 //!
+//! **Slice 2a** extracted `rank_metrics` (rank-pipeline Prometheus metrics —
+//! `RankPipelineMetrics`/`PrometheusRankSink`/`ModelCacheMetricsObserver`, deps
+//! only `prometheus` + fully-qualified `proximadb_rank_*` trait impls); the root
+//! re-exports it so `/metrics/prometheus` and its callers resolve unchanged.
+//!
 //! The root `crate::observability` module re-exports this crate, so the
 //! ~80 inbound callers (`crate::*`) are unchanged.
 //!
@@ -75,6 +80,10 @@ pub mod predicate_diagnostics;
 /// (`promql`, `tantivy_log_index`, `metrics`). The facade + logs + traces
 /// remain in the root.
 pub mod query;
+/// Rank-pipeline metrics — Prometheus histograms/counters per RANKING_FRAMEWORK_SPEC
+/// NFR-8 (R-7c.4d follow-up). Extracted from the root (Slice 2a); deps only
+/// `prometheus` + the `proximadb_rank_*` trait impls.
+pub mod rank_metrics;
 /// Route explain builder — human-readable explanation from a SearchPlanTrace.
 pub mod route_explain;
 /// SearchPlanTrace — per-query telemetry envelope (KRU billing + learned planner).
