@@ -58,7 +58,7 @@ use super::retry::{CircuitBreaker, RetryExecutor, RetryPolicy};
 use super::traits::{ConsensusTransport, HealthChecker, ReplicationSink, SearchFanout};
 use super::types::*;
 
-use crate::proto::proximadb_cluster_v1 as proto;
+use proximadb_proto::proximadb_cluster_v1 as proto;
 
 fn status_to_rpc_error(status: tonic::Status) -> RpcError {
     let kind = match status.code() {
@@ -687,14 +687,14 @@ impl SearchFanout for GrpcSearchFanout {
                 records: req
                     .records
                     .iter()
-                    .map(|r| crate::proto::proximadb_v1::VectorRecord {
+                    .map(|r| proximadb_proto::proximadb_v1::VectorRecord {
                         id: r.id.clone(),
                         vector: r.vector.clone(),
                         metadata: r
                             .metadata
                             .iter()
                             .filter_map(|(k, v)| {
-                                serde_json::from_value::<crate::proto::proximadb_v1::SqlValue>(
+                                serde_json::from_value::<proximadb_proto::proximadb_v1::SqlValue>(
                                     v.clone(),
                                 )
                                 .ok()
@@ -743,14 +743,14 @@ impl SearchFanout for GrpcSearchFanout {
                 records: req
                     .records
                     .iter()
-                    .map(|r| crate::proto::proximadb_v1::VectorRecord {
+                    .map(|r| proximadb_proto::proximadb_v1::VectorRecord {
                         id: r.id.clone(),
                         vector: r.vector.clone(),
                         metadata: r
                             .metadata
                             .iter()
                             .filter_map(|(k, v)| {
-                                serde_json::from_value::<crate::proto::proximadb_v1::SqlValue>(
+                                serde_json::from_value::<proximadb_proto::proximadb_v1::SqlValue>(
                                     v.clone(),
                                 )
                                 .ok()

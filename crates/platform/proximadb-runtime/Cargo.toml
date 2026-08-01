@@ -16,10 +16,13 @@ path = "src/lib.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-# Cluster RPC abstraction layer (TD-DECOMP-3, moved from root src/cluster/rpc/).
+# Cluster RPC abstraction layer (TD-DECOMP-3/4, moved from root src/cluster/rpc/).
+dashmap.workspace = true
 futures.workspace = true
 rand.workspace = true
 proximadb-distance-types.workspace = true
+# tonic-backed client impl (connection/grpc_client) — TD-DECOMP-4.
+tonic.workspace = true
 serde_json.workspace = true
 proximadb-graph-query = { path = "../../query/proximadb-graph-query" }
 proximadb-hardware = { path = "../../foundation/proximadb-hardware" }

@@ -107,8 +107,6 @@
 //! - `SearchFanoutService`: Distributed query RPCs
 //! - `HealthService`: Node health monitoring
 
-pub mod connection;
-pub mod grpc_client;
 pub mod grpc_server;
 // The RPC abstraction core (error/types/traits/retry) now lives in
 // `proximadb-runtime::cluster_rpc` (TD-DECOMP-3) — self-contained plumbing
@@ -116,7 +114,7 @@ pub mod grpc_server;
 // `crate::cluster::rpc::*` paths — incl. the root-side tonic impl in
 // connection/grpc_client/grpc_server and the ~7 external callers — resolve
 // unchanged.
-pub use proximadb_runtime::cluster_rpc::{error, retry, traits, types};
+pub use proximadb_runtime::cluster_rpc::{connection, error, grpc_client, retry, traits, types};
 
 // Re-export commonly used types for convenience
 pub use error::{RpcError, RpcErrorKind, RpcResult};
