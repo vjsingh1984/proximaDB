@@ -205,6 +205,22 @@ pub struct SstCompactionTask {
     pub precision_hint: Option<proximadb_records::EmbeddingScalarType>,
 }
 
+fn training_follow_up_threshold(source_level: u8, output_file: &Path) -> Option<usize> {
+    let writes_trained_pax = source_level == 0
+        && output_file
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pax"));
+    writes_trained_pax.then_some(1)
+}
+
+fn retain_training_guard_for_follow_up(
+    training_chain_active: bool,
+    scheduled_follow_up_level: Option<u8>,
+) -> bool {
+    training_chain_active && scheduled_follow_up_level == Some(0)
+}
+
 /// Priority levels for compaction tasks
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CompactionPriority {
@@ -1061,6 +1077,12 @@ impl Compaction {
                 // (schedule_compaction) — no insert here. We only remove below
                 // once the task is processed.
                 let compaction_key = task.output_file.to_string_lossy().to_string();
+                let training_guard_active = task.output_file.parent().is_some_and(|dir| {
+                    let key = dir.to_string_lossy();
+                    training_in_flight
+                        .lock()
+                        .is_ok_and(|guard| guard.contains(key.as_ref()))
+                });
 
                 let start_time = std::time::Instant::now();
 
@@ -1083,6 +1105,7 @@ impl Compaction {
                         &training_in_flight,
                         &compaction_key,
                         task.output_file.parent(),
+                        true,
                     )
                     .await;
                     break;
@@ -1157,6 +1180,9 @@ impl Compaction {
                 // a future flush that may never arrive after ingest settles.
                 // Schedule before releasing the current active marker, keeping
                 // the quiescence barrier closed across the hand-off.
+                let mut scheduled_follow_up_level = None;
+                let follow_up_threshold =
+                    training_follow_up_threshold(task.level, &task.output_file);
                 if succeeded
                     && !shutdown_signal.load(Ordering::SeqCst)
                     && let Some(collection_dir) = task.output_file.parent()
@@ -1165,22 +1191,33 @@ impl Compaction {
                         .check_compaction_needed(
                             task.collection_object_id,
                             collection_dir,
-                            None,
+                            follow_up_threshold,
                             task.precision_hint,
                         )
                         .await
                     {
                         Ok(Some(follow_up)) => {
+                            let follow_up_level = follow_up.level;
                             match compaction.schedule_compaction(follow_up).await {
-                                Ok(true) => info!(
-                                    collection_object_id = task.collection_object_id,
-                                    "Compaction follow-up morsel enqueued after level {}",
-                                    task.level
-                                ),
-                                Ok(false) => debug!(
-                                    collection_object_id = task.collection_object_id,
-                                    "Compaction follow-up already owned by another morsel"
-                                ),
+                                Ok(true) => {
+                                    scheduled_follow_up_level = Some(follow_up_level);
+                                    info!(
+                                        collection_object_id = task.collection_object_id,
+                                        layout_promotion_chain = follow_up_threshold.is_some(),
+                                        "Compaction follow-up morsel enqueued after level {}",
+                                        task.level
+                                    );
+                                }
+                                Ok(false) => {
+                                    // Another active task owns this work. Keep
+                                    // the training guard when that owner is an
+                                    // L0 morsel so it inherits threshold one.
+                                    scheduled_follow_up_level = Some(follow_up_level);
+                                    debug!(
+                                        collection_object_id = task.collection_object_id,
+                                        "Compaction follow-up already owned by another morsel"
+                                    );
+                                }
                                 Err(error) => warn!(
                                     collection_object_id = task.collection_object_id,
                                     "Compaction follow-up enqueue failed: {error}"
@@ -1197,11 +1234,18 @@ impl Compaction {
 
                 // TD-COMPACT-6 D1: release the enqueue-time active marker and the
                 // per-collection training guard so the flush path can re-arm.
+                // A bounded L0 training follow-up retains the guard and the
+                // threshold-one reason until the untrained tail is drained.
+                let retain_training_guard = retain_training_guard_for_follow_up(
+                    training_guard_active,
+                    scheduled_follow_up_level,
+                );
                 Self::release_task_state(
                     &active_compactions,
                     &training_in_flight,
                     &compaction_key,
                     task.output_file.parent(),
+                    !retain_training_guard,
                 )
                 .await;
             } else {
@@ -1215,21 +1259,22 @@ impl Compaction {
     /// TD-COMPACT-6 (ADR-076 D1): drop the per-task bookkeeping once a worker
     /// finishes a task (Ok, Err, or manager-construction failure). Removes the
     /// output-file key from `active_compactions` (re-allowing compaction to the
-    /// same output) and, if the task carried a `collection_dir`, clears the
-    /// shared `training_in_flight` guard (re-arming the flush path's
-    /// `should_trigger_compaction` training arm for that collection). Shared by
-    /// every worker exit path so the guard can never leak.
+    /// same output). It normally clears the shared `training_in_flight` guard;
+    /// a successfully handed-off L0 training morsel retains it so the bounded
+    /// chain cannot lose its threshold-one reason. Shared by every worker exit
+    /// path so the guard can never leak.
     async fn release_task_state(
         active_compactions: &Arc<RwLock<HashMap<String, SstCompactionTask>>>,
         training_in_flight: &Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
         compaction_key: &str,
         collection_dir: Option<&Path>,
+        clear_training_guard: bool,
     ) {
         {
             let mut active = active_compactions.write().await;
             active.remove(compaction_key);
         }
-        if let Some(dir) = collection_dir {
+        if clear_training_guard && let Some(dir) = collection_dir {
             let key = dir.to_string_lossy();
             if let Ok(mut guard) = training_in_flight.lock() {
                 guard.remove(key.as_ref());

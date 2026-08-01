@@ -87,7 +87,10 @@ Ordinary fanout compaction requires at least two files; if no pair fits, the
 level remains horizontal and the scheduler reports the decision. The existing
 threshold-one L0 training signal is the narrow exception: it may admit one
 untrained PAX file because the rewrite promotes the query layout even though it
-does not reduce file count. Admission still precedes that training work.
+does not reduce file count. When the byte budget splits that work, the worker
+derives the threshold-one continuation from the immutable L0-to-PAX task shape
+across residual L0 follow-up morsels and clears it before any higher-level
+fanout merge. Admission still precedes every training morsel.
 
 The controller never divides a PAX segment in memory merely to satisfy a
 budget. Repacking one oversized segment is future streaming/repartition work.

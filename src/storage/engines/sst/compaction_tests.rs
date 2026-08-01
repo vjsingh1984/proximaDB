@@ -1,4 +1,6 @@
-use super::MergedVectorTracking;
+use super::{
+    MergedVectorTracking, retain_training_guard_for_follow_up, training_follow_up_threshold,
+};
 use crate::storage::engines::sst::blocks::SstRecord;
 use crate::storage::engines::sst::{
     Compaction, CompactionPriority, CompactionStats, CompactionTask, SstConfig,
@@ -175,6 +177,33 @@ async fn td_compact6_worker_clears_training_in_flight_after_completion() {
     );
 
     let _ = manager.stop().await;
+}
+
+#[test]
+fn bounded_training_chain_keeps_threshold_one_until_l0_is_drained() {
+    assert_eq!(
+        training_follow_up_threshold(0, &PathBuf::from("L1_output.pax")),
+        Some(1)
+    );
+    assert_eq!(
+        training_follow_up_threshold(1, &PathBuf::from("L2_output.pax")),
+        None
+    );
+    assert_eq!(
+        training_follow_up_threshold(0, &PathBuf::from("L1_output.arrow")),
+        None
+    );
+
+    assert!(retain_training_guard_for_follow_up(true, Some(0)));
+    assert!(
+        !retain_training_guard_for_follow_up(true, Some(1)),
+        "a higher-level follow-up means the untrained L0 tail is drained"
+    );
+    assert!(
+        !retain_training_guard_for_follow_up(true, None),
+        "the guard must clear when no follow-up was admitted"
+    );
+    assert!(!retain_training_guard_for_follow_up(false, Some(0)));
 }
 
 // Unit tests for expired record deletion during compaction

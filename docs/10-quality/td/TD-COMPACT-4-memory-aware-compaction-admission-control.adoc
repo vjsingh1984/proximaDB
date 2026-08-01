@@ -37,7 +37,10 @@ ceiling. Discovery packs oldest-first whole-file morsels within the remaining
 input-byte budget and requires at least two files for ordinary fanout
 compaction. The threshold-one L0 training signal may promote one admitted PAX
 file to the trained layout; this preserves the existing write/search contract
-without letting training run before admission. An oversized file stays
+without letting training run before admission. Its reason remains attached to
+bounded L0 follow-up morsels—derived from the immutable L0-to-PAX task shape,
+not timing-sensitive collection state—until the untrained tail is drained,
+then clears before higher-level fanout work. An oversized file stays
 horizontal; streaming repartition remains TD-COMPACT-2 follow-up work.
 
 S3 — **Partially implemented: pressure priority + observability.** Live
