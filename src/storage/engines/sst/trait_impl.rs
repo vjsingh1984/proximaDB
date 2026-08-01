@@ -55,6 +55,40 @@ impl UnifiedStorageFormat for SstEngine {
         self.flush_implementation(params).await
     }
 
+    /// TD-DELVEC-1 WI-5 P1: re-mark deletion-vector bits for recovery tombstones
+    /// (see `UnifiedStorageFormat::reconcile_deletion_vectors`). The just-flushed
+    /// `L0_recovery_*` segments exist on disk, so `resolve_oid_positions` can find
+    /// each tombstone's target row; the mark persists to `{segment}.dv` (disk-
+    /// authoritative, read by the canonical serving engine). Best-effort — a
+    /// resolve/mark failure logs + continues; the tombstone stays coherent.
+    #[cfg(feature = "cold-deletion-vectors")]
+    async fn reconcile_deletion_vectors(
+        &self,
+        collection_id: &str,
+        tombstones: &[(String, u64)],
+    ) -> Result<()> {
+        let Some(dv_store) = self.deletion_vector_store.as_ref() else {
+            return Ok(());
+        };
+        for (oid, lsn) in tombstones {
+            let hits = match self.resolve_oid_positions(collection_id, oid).await {
+                Ok(hits) => hits,
+                Err(e) => {
+                    tracing::warn!("recovery DV reconcile: resolve failed for {oid}: {e:?}");
+                    continue;
+                }
+            };
+            for (seg, pos) in hits {
+                if let Err(e) = dv_store.mark_deleted(&seg, pos, *lsn).await {
+                    tracing::warn!(
+                        "recovery DV reconcile: mark failed for {oid} @ {seg}:{pos} (gen {lsn}): {e:?}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// SST's LSM bulk-load override (Phase 2F-b).
     ///
     /// Same shape as NOVA's override — SST's `flush_implementation`

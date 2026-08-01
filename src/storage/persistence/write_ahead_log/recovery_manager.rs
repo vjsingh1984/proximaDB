@@ -592,6 +592,11 @@ impl RecoveryManager {
         let mut latest_by_oid: HashMap<String, (usize, proximadb_records::ProximaRecord)> =
             HashMap::new();
         let mut order = 0usize;
+        // TD-DELVEC-1 WI-5 P1: retain each record's durable per-batch manifest_lsn
+        // (the dedup map drops the batch→record association) so the post-flush
+        // reconciliation pass can re-mark DV bits at the correct generation.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let mut oid_to_lsn: HashMap<String, u64> = HashMap::new();
         for object in &replay {
             if let Some(token) = &object.token {
                 digest.update(token.epoch.to_be_bytes());
@@ -604,6 +609,10 @@ impl RecoveryManager {
                 // Latest mutation wins in durable token order. Tombstones remain
                 // materialized so they continue suppressing values in older segments.
                 latest_by_oid.insert(record.oid.clone(), (order, record.clone()));
+                #[cfg(feature = "cold-deletion-vectors")]
+                if let Some(lsn) = object.manifest_lsn {
+                    oid_to_lsn.insert(record.oid.clone(), lsn);
+                }
                 order = order.saturating_add(1);
             }
         }
@@ -613,6 +622,15 @@ impl RecoveryManager {
             .into_iter()
             .map(|(_, record)| record)
             .collect::<Vec<_>>();
+        // TD-DELVEC-1 WI-5 P1: collect the recovery tombstones (with their durable
+        // manifest_lsn) so the post-flush pass can re-mark any DV bits a crash
+        // stranded between the WAL append and mark_deleted.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let recovery_tombstones: Vec<(String, u64)> = vectors
+            .iter()
+            .filter(|r| r.valid_to_ns == Some(0) && r.origin.as_deref() == Some("delete"))
+            .filter_map(|r| oid_to_lsn.get(&r.oid).map(|&lsn| (r.oid.clone(), lsn)))
+            .collect();
         let digest = format!("{:x}", digest.finalize());
         let range = match (
             replay.first().and_then(|object| object.token.as_ref()),
@@ -638,6 +656,23 @@ impl RecoveryManager {
         .await?;
         if !result.success {
             anyhow::bail!("recovery materialization failed for collection {collection_id}");
+        }
+
+        // TD-DELVEC-1 WI-5 P1: re-mark deletion-vector bits for the recovery
+        // tombstones (a crash may have stranded them between the WAL append and
+        // mark_deleted). The just-flushed `L0_recovery_*` segments now exist on
+        // disk, so resolve_oid_positions can find the target rows. Disk-authoritative:
+        // the recovery engine's marks persist to `{segment}.dv`, which the canonical
+        // serving engine reads. Best-effort — failure logs + continues.
+        #[cfg(feature = "cold-deletion-vectors")]
+        if !recovery_tombstones.is_empty() {
+            if let Some(engine) = storage_engines.read().await.get(collection_id).cloned()
+                && let Err(e) = engine
+                    .reconcile_deletion_vectors(collection_id, &recovery_tombstones)
+                    .await
+            {
+                tracing::warn!("recovery DV reconcile failed for {collection_id}: {e:?}");
+            }
         }
 
         // Test-only crash-point seam (default unset ⇒ normal retirement, no runtime cost
