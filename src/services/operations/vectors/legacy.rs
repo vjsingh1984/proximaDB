@@ -827,7 +827,7 @@ impl VectorOperationsService {
             .validate_tenant_collection_access(&req.collection_id, tenant_context)
             .await?
             .to_string();
-        self.search_v1(req).await
+        self.search_v1(req, None, None).await
     }
 
     /// Execute canonical rich-record vector search.
@@ -839,39 +839,14 @@ impl VectorOperationsService {
         &self,
         request: RichSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> Result<RichSearchResponse> {
         // TD-METRICS-1: this — not the query-facade adapter — is the entry the
         // canonical REST v2 record search actually traverses (verified live:
         // the adapter-side counters never moved during the SIFT ratchet run).
         // Count + time here; the adapter keeps its own increments for the
         // facade surfaces, which do not route through this method.
-        let om_start = std::time::Instant::now();
-        crate::metrics::operational_metrics::QUERIES_TOTAL.inc();
-        let result = self
-            .search_records_with_tenant_context_inner(request, tenant_context, None, None)
-            .await;
-        if result.is_err() {
-            crate::metrics::operational_metrics::QUERIES_FAILED_TOTAL.inc();
-        }
-        crate::metrics::operational_metrics::SEARCH_LATENCY_SECONDS
-            .observe(om_start.elapsed().as_secs_f64());
-        result
-    }
-
-    /// ABAC-aware variant of [`search_records_with_tenant_context`] for the REST
-    /// records surface: threads the request subject + tenant stable id so a
-    /// provisioned policy admits/denies/filters the results (fail-closed on
-    /// deny). The gRPC/Flight twins still call the original (`None` subject ⇒ no
-    /// enforcement, unchanged) until their own slice adopts this variant. The
-    /// enforcement logic itself is `abac-policy`-gated inside `_inner`, so under
-    /// default builds this is a pass-through (subject ignored).
-    pub async fn search_records_with_tenant_context_abac(
-        &self,
-        request: RichSearchRequest,
-        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
-    ) -> Result<RichSearchResponse> {
         let om_start = std::time::Instant::now();
         crate::metrics::operational_metrics::QUERIES_TOTAL.inc();
         let result = self
@@ -908,32 +883,11 @@ impl VectorOperationsService {
         // survive to the search engine intact.
         let filter = rich_filters_to_filter_expression(&request.filters);
 
-        // TD-ABAC-5/6 (REST records): push the subject's accessibility predicate
-        // into the search — conjunctive ⇒ AND into `filter` (pushdown); non-
-        // conjunctive ⇒ `post_filter` applied to the results below. Fail-closed:
-        // a denied subject gets an empty response. `None` subject (the gRPC/Flight
-        // callers that still delegate with `None`) ⇒ System passthrough, i.e. the
-        // pre-feature behavior — no enforcement until those surfaces adopt `_abac`.
-        #[cfg(feature = "abac-policy")]
-        let (filter, post_filter) = match self
-            .records_read_context(subject, tenant_stable_id, &collection_id)
-            .await
-        {
-            Some(read_ctx) => self.apply_abac_vector_filter(filter, &read_ctx),
-            None => {
-                return Ok(RichSearchResponse {
-                    results: Vec::new(),
-                    total_found: 0,
-                    collection_id: Some(collection_id),
-                    predicate_shortfall: None,
-                });
-            }
-        };
-        #[cfg(not(feature = "abac-policy"))]
-        let _ = (subject, tenant_stable_id);
-
         // The rich path mirrors the previous `include_fields: None` defaults:
-        // metadata included, vectors excluded.
+        // metadata included, vectors excluded. ABAC enforcement is applied at the
+        // shared `unified_search_v1_inner` seam (TD-ABAC-5/6) via the threaded
+        // subject + tenant_stable_id — no per-endpoint ABAC here (the previous
+        // block was retired once the seam covered the records path).
         let response = self
             .run_unified_search_v1(
                 collection_id.clone(),
@@ -942,6 +896,8 @@ impl VectorOperationsService {
                 false,
                 true,
                 filter,
+                subject,
+                tenant_stable_id,
             )
             .await?;
         let Some(search_result) = response.results else {
@@ -954,22 +910,6 @@ impl VectorOperationsService {
         };
 
         let mut resp = v1_search_result_to_rich(search_result);
-
-        // ABAC post-filter: non-conjunctive security expressions (e.g. those that
-        // can't be AND'd into the ANN pushdown) are evaluated against each row's
-        // props here. Mirrors `post_filter_search_results` on the native path.
-        #[cfg(feature = "abac-policy")]
-        if let Some(security) = &post_filter {
-            use crate::core::search::sql_value_filter::proxima_value_to_json;
-            use crate::security::rls::filter_lattice::admits_with_security;
-            resp.results.retain(|r| {
-                admits_with_security(None, Some(security), &|field: &str| {
-                    r.props.get(field).map(proxima_value_to_json)
-                })
-            });
-            // A post-filtered result is a real "<top_k match the policy" outcome;
-            // recompute shortfall below accounts for the new length.
-        }
 
         // TD-064(a): authoritative shortfall recompute at the response
         // boundary — the TRUE final merged counts vs the user's `top_k`.
@@ -1398,6 +1338,8 @@ impl VectorOperationsService {
     pub async fn search_v1(
         &self,
         req: crate::proto::proximadb_v1::VectorSearchRequest,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let collection_id = req.collection_id.clone();
         let top_k = req.top_k as usize;
@@ -1417,6 +1359,8 @@ impl VectorOperationsService {
             include_vectors,
             include_metadata,
             filter,
+            subject,
+            tenant_stable_id,
         )
         .await
     }
@@ -1438,6 +1382,8 @@ impl VectorOperationsService {
         include_vectors: bool,
         include_metadata: bool,
         filter: Option<FilterExpression>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         // P4 advisor observability: capture per-search latency so
         // the post-search hook can populate the recall-residual /
@@ -1459,7 +1405,15 @@ impl VectorOperationsService {
         });
 
         let results = self
-            .unified_search_v1(&collection_id, query_vector, top_k, filter, cfg)
+            .unified_search_v1(
+                &collection_id,
+                query_vector,
+                top_k,
+                filter,
+                cfg,
+                subject,
+                tenant_stable_id,
+            )
             .await?;
 
         let (results, total_count) = if let Some(r) = results.into_iter().next() {
@@ -2756,9 +2710,19 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
         let (results, _explain) = self
-            .unified_search_v1_inner(collection_id, query_vector, k, filter, config)
+            .unified_search_v1_inner(
+                collection_id,
+                query_vector,
+                k,
+                filter,
+                config,
+                subject,
+                tenant_stable_id,
+            )
             .await?;
         Ok(results)
     }
@@ -2775,10 +2739,32 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> Result<(
         Vec<crate::proto::proximadb_v1::SearchResult>,
         Option<crate::query::explain::VectorObjectEconomyExplain>,
     )> {
+        // ABAC seam (cache-safe — TD-ABAC-5/6): fold the subject's security
+        // predicate into `filter` BEFORE the cache key is derived below. The
+        // augmented filter becomes part of the cache key, so two subjects with
+        // different (conjunctive) policies never share an entry. The rare
+        // non-conjunctive case returns a `post_filter` AND makes us bypass the
+        // cache (re-bind `cache_hit` to None + skip the cache write), since its
+        // key can't distinguish subjects — see below. Denied ⇒ fail-closed empty.
+        #[cfg(feature = "abac-policy")]
+        let (filter, post_filter) = match self
+            .records_read_context(subject, tenant_stable_id, collection_id)
+            .await
+        {
+            None => return Ok((Vec::new(), None)),
+            Some(read_ctx) => self.apply_abac_vector_filter(filter, &read_ctx),
+        };
+        #[cfg(not(feature = "abac-policy"))]
+        let _ = (subject, tenant_stable_id);
+        #[cfg(not(feature = "abac-policy"))]
+        let post_filter: Option<FilterExpression> = None;
+
         // ADR-0083 D5: resolve the mutable name/alias once at the catalog
         // boundary. Every cache, WAL, AXIS, and storage lookup below is keyed
         // by the immutable numeric L1 identity.
@@ -2841,6 +2827,16 @@ impl VectorOperationsService {
                 .await
         } else {
             self.query_cache.get_if_fresh_v1(&cache_key, 300).await
+        };
+        // ABAC: a non-conjunctive post-filter can't be cached safely (its key
+        // can't distinguish subjects), so bypass the cache and recompute each
+        // time. Conjunctive security is already baked into the augmented cache
+        // key above, so a hit there is subject-specific and safe.
+        #[cfg(feature = "abac-policy")]
+        let cache_hit = if post_filter.is_some() {
+            None
+        } else {
+            cache_hit
         };
         if let Some(cached_v1) = cache_hit {
             // Phase 7.2: a process-local cache hit is the strongest
@@ -2921,6 +2917,18 @@ impl VectorOperationsService {
             )
             .await?;
 
+        // ABAC post-filter (non-conjunctive security predicates that couldn't be
+        // pushed into the ANN search): drop inadmissible rows from the merged
+        // result before conversion. Conjunctive security was already AND'd into
+        // the search filter above.
+        #[cfg(feature = "abac-policy")]
+        let merged_results = match &post_filter {
+            Some(security) => {
+                crate::security::rls::post_filter_search_results(merged_results, security)
+            }
+            None => merged_results,
+        };
+
         // Build v1 results from the merged records
         let v1_results = vec![self.optimized_results_to_proto_v1(
             merged_results,
@@ -2933,9 +2941,21 @@ impl VectorOperationsService {
         // write raced in during the search, the LSN has advanced past query_lsn,
         // so this entry simply won't be served to a later Strong read (it will
         // recompute) — conservative, never a stale hit.
-        self.query_cache
-            .cache_with_dependencies_v1_at_lsn(cache_key, v1_results.clone(), Vec::new(), query_lsn)
-            .await;
+        //
+        // ABAC: skip caching when a non-conjunctive post-filter applied — that
+        // entry's key (user filter only) can't distinguish subjects, so caching
+        // it would leak across subjects. Conjunctive security is already in the
+        // augmented cache key, so caching there is subject-specific and safe.
+        if post_filter.is_none() {
+            self.query_cache
+                .cache_with_dependencies_v1_at_lsn(
+                    cache_key,
+                    v1_results.clone(),
+                    Vec::new(),
+                    query_lsn,
+                )
+                .await;
+        }
 
         // Phase 7.2: record affinity on a successful v1 search.
         self.record_search_affinity(collection_id);
@@ -3622,7 +3642,7 @@ impl VectorOperationsService {
         // For StaleOk requests and cache hits the explain is None,
         // matching the helper's documented contract.
         let (results, explain) = self
-            .unified_search_v1_inner(collection_id, query_vector, k, filter, config)
+            .unified_search_v1_inner(collection_id, query_vector, k, filter, config, None, None)
             .await?;
         hints.vector_object_economy = explain;
         Ok((results, hints))
@@ -6240,6 +6260,8 @@ impl VectorQueryService for VectorOperationsService {
                 request.top_k,
                 filter,
                 None, // Use default config
+                None,
+                None,
             )
             .await
             .map_err(|e| proximadb_kernel::error::QueryError::VectorSearch(e.to_string()))?;
@@ -6308,7 +6330,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         {
             request.collection_id = collection.id;
         }
-        self.search_v1(request).await
+        self.search_v1(request, None, None).await
     }
 
     /// TD-XMODAL-4 S2: the single canonical native kernel for both the pgvector

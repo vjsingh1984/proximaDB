@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! TD-ABAC-5/6 (REST records slice): proves ABAC enforcement FIRES on the REST
-//! record-search path (`search_records_with_tenant_context_abac`), not just the
+//! record-search path (`search_records_with_tenant_context`), not just the
 //! fusion/service seam.
 //!
 //! A `VectorOperationsService` is built with a durable ABAC enforcer; the REST
@@ -145,7 +145,7 @@ async fn admitted_subject_sees_only_accessible_records_on_rest_records_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_records_with_tenant_context_abac(request(), None, Some("alice"), Some(TENANT))
+        .search_records_with_tenant_context(request(), None, Some("alice"), Some(TENANT))
         .await
         .expect("abac search");
 
@@ -166,7 +166,7 @@ async fn denied_subject_gets_empty_results_on_rest_records_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_records_with_tenant_context_abac(request(), None, Some("mallory"), Some(TENANT))
+        .search_records_with_tenant_context(request(), None, Some("mallory"), Some(TENANT))
         .await
         .expect("abac search");
 
@@ -185,7 +185,7 @@ async fn none_subject_is_passthrough_on_rest_records_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_records_with_tenant_context_abac(request(), None, None, None)
+        .search_records_with_tenant_context(request(), None, None, None)
         .await
         .expect("abac search");
 
