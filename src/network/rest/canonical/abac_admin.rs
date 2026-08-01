@@ -64,7 +64,7 @@ use serde::{Deserialize, Serialize};
 
 use proximadb_abac::{
     AttributeBinding, FileSystemAttributeAuthority, FileSystemPolicyBindingStore,
-    FileSystemPredicateObjectStore,
+    FileSystemPredicateObjectStore, PolicyBindingStore, PredicateObjectStore,
 };
 use proximadb_catalog::fc_metamodel::{
     AttrValue, Effect, FieldMask, ObjectId, PolicyBinding, Scope, SubjectId,
@@ -259,6 +259,34 @@ pub struct PredicateObjectResponse {
     pub expression: FilterExpression,
 }
 
+// ── Read (GET) response DTOs ──
+
+/// Response for `GET /api/v2/abac/policy-bindings/{tenant}` — the tenant's live
+/// policy (the same set the enforcer composes for every read).
+#[derive(Debug, Serialize)]
+pub struct PolicyBindingsResponse {
+    pub tenant: String,
+    pub tenant_stable_id: u64,
+    pub count: usize,
+    pub bindings: Vec<PolicyBinding>,
+}
+
+/// Response for `GET /api/v2/abac/attribute-bindings` — every authority binding
+/// (cluster-operator scope; cross-tenant by design).
+#[derive(Debug, Serialize)]
+pub struct AttributeBindingsResponse {
+    pub count: usize,
+    pub bindings: Vec<AttributeBinding>,
+}
+
+/// Response for `GET /api/v2/abac/predicate-objects` — every registered
+/// predicate object.
+#[derive(Debug, Serialize)]
+pub struct PredicateObjectsResponse {
+    pub count: usize,
+    pub objects: Vec<PredicateObjectResponse>,
+}
+
 // ===========================================================================
 // Testable provisioning cores (sync; take the shared handles + a resolver)
 // ===========================================================================
@@ -444,6 +472,89 @@ pub async fn delete_predicate_object(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ===========================================================================
+// Read (GET) handlers — operator inspection of the live policy
+// ===========================================================================
+
+/// `GET /api/v2/abac/policy-bindings/{tenant}` — the tenant's live policy
+/// bindings (the set the enforcer composes per read). Resolve-at-read, same as
+/// write: 422 if the tenant has no stable id.
+pub async fn get_policy_bindings(
+    user_context: Option<Extension<UnifiedUserContext>>,
+    State(state): State<AppState>,
+    Path(tenant): Path<String>,
+) -> Result<Json<PolicyBindingsResponse>, (StatusCode, Json<OperatorErrorResponse>)> {
+    authorize_operator(user_context.as_ref().map(|e| &e.0))?;
+    let store = require_binding_store(&state)?;
+    let resolver = CatalogTenantStableIdResolver::new(state.catalog_manager.clone());
+    let tenant_stable_id = resolve_tenant(&resolver, &tenant).map_err(map_provision_err)?;
+    let bindings = store.bindings_for(tenant_stable_id);
+    let count = bindings.len();
+    Ok(Json(PolicyBindingsResponse {
+        tenant,
+        tenant_stable_id,
+        count,
+        bindings,
+    }))
+}
+
+/// `GET /api/v2/abac/attribute-bindings` — every authority binding
+/// (cluster-operator scope; cross-tenant by design).
+pub async fn list_attribute_bindings(
+    user_context: Option<Extension<UnifiedUserContext>>,
+    State(state): State<AppState>,
+) -> Result<Json<AttributeBindingsResponse>, (StatusCode, Json<OperatorErrorResponse>)> {
+    authorize_operator(user_context.as_ref().map(|e| &e.0))?;
+    let authority = require_authority(&state)?;
+    let bindings = authority.bindings();
+    let count = bindings.len();
+    Ok(Json(AttributeBindingsResponse { count, bindings }))
+}
+
+/// `GET /api/v2/abac/predicate-objects` — every registered predicate object.
+pub async fn list_predicate_objects(
+    user_context: Option<Extension<UnifiedUserContext>>,
+    State(state): State<AppState>,
+) -> Result<Json<PredicateObjectsResponse>, (StatusCode, Json<OperatorErrorResponse>)> {
+    authorize_operator(user_context.as_ref().map(|e| &e.0))?;
+    let store = require_predicate_store(&state)?;
+    let objects = store
+        .objects()
+        .into_iter()
+        .map(|(object_id, expression)| PredicateObjectResponse {
+            object_id,
+            expression,
+        })
+        .collect::<Vec<_>>();
+    let count = objects.len();
+    Ok(Json(PredicateObjectsResponse { count, objects }))
+}
+
+/// `GET /api/v2/abac/predicate-objects/{object_id}` — one predicate object.
+/// 404 if unknown (a dangling ref resolves fail-closed regardless).
+pub async fn get_predicate_object(
+    user_context: Option<Extension<UnifiedUserContext>>,
+    State(state): State<AppState>,
+    Path(object_id): Path<ObjectId>,
+) -> Result<Json<PredicateObjectResponse>, (StatusCode, Json<OperatorErrorResponse>)> {
+    authorize_operator(user_context.as_ref().map(|e| &e.0))?;
+    let store = require_predicate_store(&state)?;
+    match store.get(object_id) {
+        Some(expression) => Ok(Json(PredicateObjectResponse {
+            object_id,
+            expression,
+        })),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(OperatorErrorResponse {
+                error: "predicate_object_not_found",
+                message: format!("no predicate object registered under object_id {object_id}"),
+                code: 404,
+            }),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,7 +562,6 @@ mod tests {
     use crate::security::rls::AbacEnforcer;
     use chrono::Utc;
     use proximadb_abac::InMemoryPolicyEpochs;
-    use proximadb_abac::PolicyBindingStore;
     use proximadb_catalog::fc_metamodel::Target;
     use proximadb_filter_expression::ComparisonOperator;
     use serde_json::json;
@@ -707,6 +817,71 @@ mod tests {
                 tenant: "ghost".into()
             }
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_endpoints_reflect_provisioned_policy() {
+        // Round-trip: provision via the write cores, then read back through the
+        // SAME accessors the GET handlers use — `authority.bindings()` (the new
+        // accessor), `bindings_for`, `objects`, `get`. Proves the read surface
+        // observes the live, hot-reloaded policy (and validates PR-B's writes).
+        let dir = unique_dir("reads");
+        let binding_store =
+            Arc::new(FileSystemPolicyBindingStore::open(dir.join("policy.json")).unwrap());
+        let authority =
+            Arc::new(FileSystemAttributeAuthority::open(dir.join("attrs.json")).unwrap());
+        let predicate_store =
+            Arc::new(FileSystemPredicateObjectStore::open(dir.join("preds.json")).unwrap());
+        let resolver = TestResolver;
+
+        // Provision one of each.
+        let mut attrs = BTreeMap::new();
+        attrs.insert("dept".to_string(), AttrValue::Str("eng".into()));
+        provision_attribute_binding(&authority, &resolver, "alice", "acme", attrs).unwrap();
+        provision_policy_binding(
+            &binding_store,
+            &resolver,
+            "acme",
+            1,
+            PutPolicyBindingRequest {
+                scope: Scope::Table(200),
+                effect: Effect::Permit,
+                predicate_ref: Some(42),
+                field_mask: None,
+            },
+        )
+        .unwrap();
+        register_predicate_object(
+            &predicate_store,
+            42,
+            FilterExpression::Comparison {
+                field: "dept".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: json!("eng"),
+            },
+        );
+
+        // GET /policy-bindings/{tenant} path → bindings_for.
+        let acme_bindings = binding_store.bindings_for(7);
+        assert_eq!(acme_bindings.len(), 1);
+        assert_eq!(acme_bindings[0].object_id, 1);
+
+        // GET /attribute-bindings path → authority.bindings() (the new accessor).
+        let attr_bindings = authority.bindings();
+        assert_eq!(attr_bindings.len(), 1);
+        assert_eq!(attr_bindings[0].subject_id.0, "alice");
+        assert_eq!(attr_bindings[0].tenant_stable_id, 7);
+
+        // GET /predicate-objects path → objects().
+        let pred_objects = predicate_store.objects();
+        assert_eq!(pred_objects.len(), 1);
+        assert_eq!(pred_objects[0].0, 42);
+
+        // GET /predicate-objects/{object_id} path → get() (Some) or 404 (None).
+        assert!(predicate_store.get(42).is_some());
+        assert!(predicate_store.get(999).is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

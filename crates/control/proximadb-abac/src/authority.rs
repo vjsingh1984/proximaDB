@@ -540,6 +540,19 @@ impl FileSystemAttributeAuthority {
         let _ = self.persist();
     }
 
+    /// A snapshot of every attribute binding — for inspection/audit (the GET
+    /// admin endpoints). Owned (not an iterator borrowing `&self`) because the
+    /// cache is behind a [`RwLock`]; mirrors
+    /// [`FileSystemPredicateObjectStore::objects`](crate::FileSystemPredicateObjectStore::objects).
+    pub fn bindings(&self) -> Vec<AttributeBinding> {
+        self.inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .bindings()
+            .cloned()
+            .collect()
+    }
+
     /// Write the full binding set atomically (temp + rename). Re-reads the live
     /// cache under the read-lock — so it always reflects the latest committed
     /// state (no lost update under concurrent admin writes).

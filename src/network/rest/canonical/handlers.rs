@@ -1540,10 +1540,11 @@ fn operator_and_control_v2_routes() -> axum::Router<AppState> {
             get(crate::network::rest::canonical::primary_pod::list_primary_pods),
         );
 
-    // TD-ABAC control-plane (PR-B): ABAC policy-provisioning admin API. Each
-    // handler writes through the shared enforcer stores (hot-reload), resolves
-    // the tenant string→u64 at write time, and is auth-gated to the operator
-    // role. `abac-policy`-only — default builds omit these routes entirely.
+    // TD-ABAC control-plane (PR-B writes + read endpoints): the ABAC
+    // policy-provisioning admin API. Write handlers go through the shared
+    // enforcer stores (hot-reload), resolve tenant string→u64 at write time, and
+    // are auth-gated to the operator role; read handlers inspect the live policy.
+    // `abac-policy`-only — default builds omit these routes entirely.
     #[cfg(feature = "abac-policy")]
     let router = router
         .route(
@@ -1552,14 +1553,24 @@ fn operator_and_control_v2_routes() -> axum::Router<AppState> {
                 .delete(crate::network::rest::canonical::abac_admin::delete_policy_binding),
         )
         .route(
+            "/api/v2/abac/policy-bindings/{tenant}",
+            axum::routing::get(crate::network::rest::canonical::abac_admin::get_policy_bindings),
+        )
+        .route(
             "/api/v2/abac/attribute-bindings",
-            axum::routing::post(
-                crate::network::rest::canonical::abac_admin::post_attribute_binding,
-            ),
+            axum::routing::get(
+                crate::network::rest::canonical::abac_admin::list_attribute_bindings,
+            )
+            .post(crate::network::rest::canonical::abac_admin::post_attribute_binding),
+        )
+        .route(
+            "/api/v2/abac/predicate-objects",
+            axum::routing::get(crate::network::rest::canonical::abac_admin::list_predicate_objects),
         )
         .route(
             "/api/v2/abac/predicate-objects/{object_id}",
-            axum::routing::put(crate::network::rest::canonical::abac_admin::put_predicate_object)
+            axum::routing::get(crate::network::rest::canonical::abac_admin::get_predicate_object)
+                .put(crate::network::rest::canonical::abac_admin::put_predicate_object)
                 .delete(crate::network::rest::canonical::abac_admin::delete_predicate_object),
         );
 
