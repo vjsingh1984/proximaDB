@@ -271,6 +271,13 @@ mod cold_read_merge_test;
 #[cfg(all(test, feature = "cold-deletion-vectors"))]
 #[path = "tests/cold_cascade_merge_test.rs"]
 mod cold_cascade_merge_test;
+// TD-DELVEC-1 WI-5 P1: post-recovery DV-bit reconciliation —
+// `reconcile_deletion_vectors` re-marks a tombstone's bit (the crash-strand
+// resurface fix). In-crate (#[path]) to call the feature-gated trait override
+// + read the pub(crate) DV store/discovery.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_recovery_reconcile_test.rs"]
+mod cold_recovery_reconcile_test;
 pub mod flush;
 pub mod manifest;
 #[cfg(feature = "cold-deletion-vectors")]
