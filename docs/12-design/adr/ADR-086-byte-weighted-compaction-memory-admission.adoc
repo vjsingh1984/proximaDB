@@ -92,6 +92,12 @@ derives the threshold-one continuation from the immutable L0-to-PAX task shape
 across residual L0 follow-up morsels and clears it before any higher-level
 fanout merge. Admission still precedes every training morsel.
 
+Discovery evaluates the authoritative object URL, not only its basename, and
+excludes any `__flush`, `__compact`, `.tmp`, or `.staging` path component. Flat
+object-store LIST responses can expose a normal `L0_….pax` basename for an
+unpublished `/__flush/L0_….pax` object; admitting it races atomic promotion and
+can materialize the same records twice.
+
 The controller never divides a PAX segment in memory merely to satisfy a
 budget. Repacking one oversized segment is future streaming/repartition work.
 
@@ -115,6 +121,9 @@ duration, and horizontal/no-pair decisions.
 * Sorting, clustering, training, and encoding happen only after admission.
 * Small jobs can progress around a single oversized file without exceeding the
   budget.
+* Remote staging objects are never compaction inputs. Replacing the current
+  remote staging-copy promotion with one final-key upload plus an atomic
+  manifest publication is a separate object-store publish-protocol decision.
 * A constrained node can retain more query-visible segments, increasing
   GETs/query. This is a deliberate stability/read-cost Pareto point: provision
   more memory, raise the explicit ceiling, or land streaming compaction to

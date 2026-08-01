@@ -730,6 +730,14 @@ impl StagingDetector {
         name.starts_with("__") || name.contains(".tmp") || name.contains(".staging")
     }
 
+    /// Check every URL/path component. Flat object-store listings commonly
+    /// return a tiered filename as `DirEntry::name` while the authoritative
+    /// URL still contains `__flush` or `__compact`; basename-only filtering
+    /// can therefore compact an unpublished object and duplicate its rows.
+    pub fn is_staging_path(&self, path: &str) -> bool {
+        path.split('/').any(|component| self.is_staging(component))
+    }
+
     /// Get staging prefix for atomic operations
     pub fn staging_prefix() -> &'static str {
         "__staging_"
@@ -799,8 +807,8 @@ impl TieredFileRegistry {
 
         for entry in entries {
             // Skip staging files/directories
-            if self.staging_detector.is_staging(&entry.name) {
-                debug!("⏭️  Skipping staging: {}", entry.name);
+            if self.staging_detector.is_staging_path(&entry.url) {
+                debug!("⏭️  Skipping staging object: {}", entry.url);
                 continue;
             }
 
@@ -1171,17 +1179,31 @@ mod tests {
     #[tokio::test]
     async fn cloud_prefix_discovery_lists_without_exact_prefix_object() {
         let segment_name = "L0_20260730T120000_deadbeef.pax";
+        let staged_segment_name = "L0_20260730T120001_cafebabe.pax";
         let filesystem = PrefixOnlyFileSystem {
             exists_calls: AtomicUsize::new(0),
-            entries: vec![DirEntry {
-                name: segment_name.to_string(),
-                url: format!("az://segments/1/data/{segment_name}"),
-                metadata: FsFileMetadata {
-                    size: 4096,
-                    is_directory: false,
-                    ..Default::default()
+            entries: vec![
+                DirEntry {
+                    name: segment_name.to_string(),
+                    url: format!("az://segments/1/data/{segment_name}"),
+                    metadata: FsFileMetadata {
+                        size: 4096,
+                        is_directory: false,
+                        ..Default::default()
+                    },
                 },
-            }],
+                DirEntry {
+                    // Flat object-store listings expose the basename here;
+                    // only the URL retains the __flush path component.
+                    name: staged_segment_name.to_string(),
+                    url: format!("az://segments/1/data/__flush/{staged_segment_name}"),
+                    metadata: FsFileMetadata {
+                        size: 8192,
+                        is_directory: false,
+                        ..Default::default()
+                    },
+                },
+            ],
         };
 
         let files = TieredFileRegistry::new()

@@ -42,6 +42,9 @@ bounded L0 follow-up morsels—derived from the immutable L0-to-PAX task shape,
 not timing-sensitive collection state—until the untrained tail is drained,
 then clears before higher-level fanout work. An oversized file stays
 horizontal; streaming repartition remains TD-COMPACT-2 follow-up work.
+Object-store discovery also rejects staging components from the full URL (not
+only `DirEntry.name`), preventing a bounded follow-up from consuming an
+unpublished `__flush` object while its final-key promotion is in flight.
 
 S3 — **Partially implemented: pressure priority + observability.** Live
 available-memory refresh makes compaction admission yield to query/cache
