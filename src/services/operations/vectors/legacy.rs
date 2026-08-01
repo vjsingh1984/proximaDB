@@ -1206,12 +1206,13 @@ impl VectorOperationsService {
             ensure_tenant_on_records(&mut tombstones, &tenant_context.tenant_id)?;
         }
 
-        // TD-DELVEC-1 WI-3b: under `cold-deletion-vectors`, a delete that lands on
-        // a row already in an immutable cold segment sets a deletion-vector bit
-        // (keyed by the delete's real WAL LSN) in addition to the tombstone. The
-        // tombstone still carries read-after-write coherence (`is_record_dead`,
-        // valid_to_ns=0 in olap_delta_merge) until WI-4 wires merge-on-read to
-        // consult the DV.
+        // TD-DELVEC-1 WI-3b / WI-5 P0: under `cold-deletion-vectors`, a delete that
+        // lands on a row already in an immutable cold segment sets a deletion-vector
+        // bit keyed by the delete's durable per-batch WAL `global_lsn` (returned by
+        // `insert_vectors_via_wal_returning_lsns`), in addition to the tombstone.
+        // The durable keying (WI-5 P0) puts the generation in the read side's
+        // `snapshot_lsn` number space for correct MVCC; WI-4 wires merge-on-read to
+        // consult the DV. The tombstone still provides read-after-write coherence.
         #[cfg(feature = "cold-deletion-vectors")]
         let (result, lsns) = self
             .insert_vectors_via_wal_returning_lsns(&collection_id, tombstones)

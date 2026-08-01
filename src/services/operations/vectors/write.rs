@@ -312,9 +312,12 @@ impl VectorWriteCoordinator {
     }
 
     /// Insert records via the standard WAL path, returning the per-record WAL/MVCC
-    /// LSNs alongside the batch result. TD-DELVEC-1 WI-3b: the cold-delete path
-    /// keys the deletion-vector bit on the delete's real LSN (`sequences`, one per
-    /// input record, in input order) instead of wall-clock time.
+    /// LSNs alongside the batch result. TD-DELVEC-1 WI-3b / WI-5 P0: these are the
+    /// durable per-batch manifest `global_lsn` (broadcast one-per-record, in input
+    /// order) when the batch is synced — the cold-delete path keys deletion-vector
+    /// bits on them so the generation shares the read side's `snapshot_lsn` number
+    /// space (correct MVCC). Falls back to ephemeral memtable sequences in
+    /// MemoryOnly mode (no durability to key on).
     #[cfg(feature = "cold-deletion-vectors")]
     pub(crate) async fn insert_vectors_via_wal_returning_lsns(
         &self,
