@@ -7,9 +7,11 @@
 //! the replayed tombstones; the `SstEngine` impl resolves each oid → (segment,
 //! position) and `mark_deleted`s at the tombstone's `manifest_lsn`. This test
 //! drives that method directly: flush rows to a cold `.pax` → confirm no DV bit →
-//! reconcile one oid → that row's position is deleted, the others are not. In-crate
-//! so it can read the `pub(crate)` DV store + discovery, and call the feature-gated
-//! trait override.
+//! reconcile one oid → that row is deleted (MVCC snapshot-correct), the others are
+//! not. In-crate so it can read the `pub(crate)` DV store + call the feature-gated
+//! trait override. The engine's path resolver is wired to the flush's data dir so
+//! `reconcile` → `resolve_oid_positions` → `get_collection_storage_url` finds the
+//! segment.
 
 #[cfg(test)]
 mod tests {
@@ -24,6 +26,7 @@ mod tests {
     };
     use crate::storage::engines::sst::{SstConfig, core::SstEngine};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::storage::trait_components::path_resolver::ConfigFallbackResolver;
     use crate::storage::traits::{FlushParameters, UnifiedStorageFormat};
     use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
@@ -62,9 +65,15 @@ mod tests {
         fs_config.default_fs = Some(format!("file://{base_path}"));
         let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        // Wire the path resolver to the flush's data dir so
+        // `get_collection_storage_url` (used by `resolve_oid_positions`) resolves
+        // the collection_id → the tempdir the flush wrote to.
         SstEngine::new_with_config(SstConfig::default(), filesystem, distance_compute)
             .await
             .unwrap()
+            .with_path_resolver(Arc::new(ConfigFallbackResolver::new(format!(
+                "file://{base_path}"
+            ))))
     }
 
     #[tokio::test]
@@ -74,7 +83,8 @@ mod tests {
         let collection = collection("cold_recovery_reconcile", &temp_dir);
         let engine = make_engine(&base).await;
 
-        // Flush 3 records → an immutable cold `.pax` (OID resolver embedded).
+        // Flush 3 records → an immutable cold `.pax` (OID resolver embedded under
+        // the feature).
         let records: Vec<VectorRecord> = ["r0", "r1", "r2"]
             .iter()
             .copied()
@@ -96,48 +106,23 @@ mod tests {
         let res = engine.do_flush(&flush).await?;
         assert!(res.success, "flush should produce a cold segment");
 
-        // Resolve the segment path + the on-disk row positions (the same space the
-        // DV keys on).
-        let storage_url = crate::storage::traits::StorageQueryContext::new(
-            std::sync::Arc::new(crate::core::search::SearchParams::default()),
-            std::sync::Arc::new(collection.clone()),
-        )
-        .collection_storage_path()
-        .expect("ctx has a storage assignment");
-        let files = engine.discover_sstable_files(&storage_url).await?;
-        let seg = files
-            .iter()
-            .find(|f| f.ends_with(".pax"))
-            .cloned()
-            .expect("flush should have produced a .pax segment");
-        let pax_local = seg.strip_prefix("file://").unwrap_or(&seg);
-        let bytes = std::fs::read(pax_local)?;
-        let on_disk = crate::storage::engines::sst::segment_format::read_segment_records(
-            &bytes,
-            &[],
-            &[],
-            None,
-        )?;
-        assert_eq!(on_disk.len(), 3, "segment should hold all 3 records");
-        // Map oid -> on-disk position (the same space the DV keys on).
-        let p0 = on_disk
-            .iter()
-            .position(|r| r.oid == "r0")
-            .expect("r0 in segment") as u32;
-        let p1 = on_disk
-            .iter()
-            .position(|r| r.oid == "r1")
-            .expect("r1 in segment") as u32;
+        // Resolve r1 → (segment, position) — the exact path reconcile uses.
+        let r1 = engine.resolve_oid_positions(&collection.id, "r1").await?;
+        assert!(
+            !r1.is_empty(),
+            "r1 must resolve (OID resolver embedded + path resolver wired)"
+        );
+        let (r1_seg, r1_pos) = r1[0].clone();
 
         let dv = engine
             .deletion_vector_store
             .as_ref()
             .expect("DV store is armed under cold-deletion-vectors");
 
-        // Precondition: no DV bits set yet (the "stranded" state — the live
-        // mark_deleted never ran, e.g. a crash stranded it).
+        // Precondition: no DV bit (the "stranded" state — the live mark_deleted
+        // never ran, e.g. a crash stranded it).
         assert!(
-            !dv.is_deleted_as_of(&seg, p1, u64::MAX).await,
+            !dv.is_deleted_as_of(&r1_seg, r1_pos, u64::MAX).await,
             "r1 must not be deleted before reconciliation"
         );
 
@@ -146,23 +131,27 @@ mod tests {
             .reconcile_deletion_vectors(&collection.id, &[("r1".to_string(), 100)])
             .await?;
 
-        // r1 is now deleted at gen 100 (visible at snapshot >= 100, invisible before
-        // — correct MVCC, since the key is the durable manifest_lsn space).
+        // r1 is now deleted at gen 100 — visible at snapshot >= 100, invisible
+        // before (correct MVCC, since the key is the durable manifest_lsn space).
         assert!(
-            dv.is_deleted_as_of(&seg, p1, 100).await,
+            dv.is_deleted_as_of(&r1_seg, r1_pos, 100).await,
             "reconciliation must mark r1 @ gen 100"
         );
         assert!(
-            dv.is_deleted_as_of(&seg, p1, u64::MAX).await,
+            dv.is_deleted_as_of(&r1_seg, r1_pos, u64::MAX).await,
             "r1 visible at a later snapshot"
         );
         assert!(
-            !dv.is_deleted_as_of(&seg, p1, 99).await,
+            !dv.is_deleted_as_of(&r1_seg, r1_pos, 99).await,
             "r1 invisible before its delete (MVCC snapshot-correct)"
         );
+
         // r0 (not reconciled) is untouched.
+        let r0 = engine.resolve_oid_positions(&collection.id, "r0").await?;
+        assert!(!r0.is_empty(), "r0 must resolve");
+        let (r0_seg, r0_pos) = r0[0].clone();
         assert!(
-            !dv.is_deleted_as_of(&seg, p0, u64::MAX).await,
+            !dv.is_deleted_as_of(&r0_seg, r0_pos, u64::MAX).await,
             "r0 must remain live (only r1 was reconciled)"
         );
         Ok(())
