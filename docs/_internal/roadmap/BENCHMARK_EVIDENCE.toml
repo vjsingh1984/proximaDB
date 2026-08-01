@@ -772,3 +772,21 @@ hardware = "Local macOS arm64 Apple Silicon, 64 GiB RAM, serialized release-serv
 date = "2026-07-31"
 version = "3.3M develop-derived PR #1345 @ 06c9e5678fa7de6a782563bdeb2625e74ba6b37e; lower calibration matrices @ b160d2107d67f712ea78a3d0779d62763f3dfba4 / 504e849a4d2ea84791310540403808a89f3e3fea"
 notes = "3.3M matrix: 20 points, 1000 queries/point, status pass, no failures, SHA-256 5d32b83cf4987956d1bfb71ae93a77e67d76682c6b7b9464f167cea0066e8cc6. Exact binary SHA-256 d6b660cf425f4251f841d882d64420a137060668d6cdde150be215849598e431. Azurite is operation-count and relative-latency evidence, not Azure WAN latency. Cluster radii are persisted shape metadata but do not participate in current centroid-distance probe selection. The four-scale fit is cross-revision calibration evidence; rerun all scales on one binary before a canonical five-point publication."
+
+[[claims]]
+id = "compaction_memory_amplification_3m3"
+claim = "After canonical-record and in-place-MVCC copy removal, a release-profile 3.3M-vector PAX compaction over the production Azure backend/Azurite path still consumes 9.85x incremental RSS per input-segment byte; input bytes are therefore a usable conservative admission currency, with 12x initial headroom"
+metric = "incremental_peak_rss_bytes / input_segment_bytes + compaction wall time + settled segment count + recall@10"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-086-byte-weighted-compaction-memory-admission.adoc",
+  "docs/10-quality/td/TD-COMPACT-2-compaction-memory-amplification-oom.adoc",
+  "docs/10-quality/td/TD-COMPACT-4-memory-aware-compaction-admission-control.adoc",
+]
+bench_source = "scripts/bench/sift1m_get_reduction.py"
+bench_command = "PROXIMADB_TRACE_COMPACTION_MEM=1 PROXIMADB_TRACE_PAX_WRITE=1 PROXIMADB_SKIP_AXIS_INDEXING=1 PROXIMADB_FLUSH_PREDICTED_BYTES_FLOOR_MB=96 PROXIMADB_PAX_IVF_K=100 python3 scripts/bench/sift1m_get_reduction.py --binary target/release/proximadb-server --root <root> --sift-dir <bigann10m-view> --groundtruth-path <3.3m-top20.ivecs> --groundtruth-scope-rows 3300000 --rows 3300000 --batch-size 30000 --flush-vector-threshold 660000 --queries 100 --top-k 10 --nprobe 20 --azurite --storage-url az://<container>/<prefix>"
+artifact = "docs/_internal/status/COMPACTION_MEMORY_3M3_BASELINE_2026_08_01.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release run; Azurite HTTP object path"
+date = "2026-08-01"
+version = "e60fc85c9500f4e08e5cf3ff9946f04921d97b1a"
+notes = "Five L0 inputs totalled 882,773,394 B (841.9 MiB); compaction boundary RSS ~8,655 MiB and write-done RSS 16,951 MiB, delta 8,296 MiB = 9.85x. 5->1 in 38.991s; output 882,842,998 B. Recall@10 post-write/local-warm/object-cold = 0.998/0.995/0.993. This is the PRE-ADMISSION baseline but already includes the canonical/in-place copy reduction; it supports the 12.0 projection default and does not validate the post-change cap."

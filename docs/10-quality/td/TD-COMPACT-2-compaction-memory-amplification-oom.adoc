@@ -11,6 +11,37 @@
 | Evidence | macOS jetsam: `memorystatus: killing largest compressed process proximadb-server [15323] 125835 MB`. Input: 6 L0 `.pax` files, 763 MB on disk, 1M × 128-dim f32 (512 MB raw vectors). Server RSS was ~11 GB before the compaction; footprint ballooned to ~126 GB (compressed accounting) within ~2–4 min and the process was killed. Peak-RSS sweep below.
 |===
 
+== 2026-08-01 current result and remediation
+
+The historical investigation below found and removed two dominant unrelated
+amplifiers (AXIS training concurrency and the incorrect PAX
+`embedding_count`). A new serialized release/Azurite run now provides the
+admission-controller baseline after those fixes and after the canonical-record
+/ in-place-MVCC rewrite:
+
+* 3.3M vectors, five L0 PAX segments, 882,773,394 input bytes;
+* RSS approximately 8,655 MiB → 16,951 MiB, **+8,296 MiB**;
+* current incremental amplification **9.85x input segment bytes**; and
+* one 882,842,998-byte L1 output in 38.991 seconds, recall@10 0.993-0.998.
+
+The complete evidence is
+link:../../_internal/status/COMPACTION_MEMORY_3M3_BASELINE_2026_08_01.adoc[recorded
+here]. The implemented hardening is:
+
+. remove legacy `VectorRecord` round trips and background-only merged-vector
+  retention;
+. resolve sorted canonical records in place;
+. select deterministic whole-file morsels from a byte budget before decoding;
+. reserve `input_bytes × 12` process-wide before sorting/training/encoding; and
+. constrain that reservation by cgroup-visible capacity, live availability,
+  and an optional absolute ceiling (ADR-086 / TD-COMPACT-4).
+
+This closes the unbounded-start correctness gap. It does **not** close the
+longer-term O(write-buffer) streaming objective: current compaction still
+materializes its admitted morsel. Status remains open until the post-change
+3.3M bound is measured and the streaming design removes the measured 9.85x
+factor rather than merely budgeting it.
+
 == The finding
 
 Explicitly exercising the L0→L1 compaction path on a 1M-vector SIFT collection
