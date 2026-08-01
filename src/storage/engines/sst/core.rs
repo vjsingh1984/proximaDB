@@ -96,6 +96,33 @@ pub async fn purge_warm_tier_prefix(path_prefix: &str) -> usize {
     invariant_entries + survivor.purge_prefix(path_prefix).await
 }
 
+/// TD-DELVEC-1 WI-3c / C2: process-global OID resolver cache (sibling to
+/// `GLOBAL_WARM_TIER_CACHES`). Hoisted to module scope so compaction's retire
+/// path (`purge_retired_segment_cache_entries`) can invalidate entries for
+/// compacted-away segments via `get_global_oid_resolver_cache()`. `None` inner =
+/// cache disabled (`PROXIMADB_OID_RESOLVER_CACHE_MB == 0`).
+#[cfg(feature = "cold-deletion-vectors")]
+static GLOBAL_OID_RESOLVER_CACHE: std::sync::OnceLock<
+    Option<Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>>,
+> = std::sync::OnceLock::new();
+
+/// The process-global OID resolver cache, if an engine armed one (mb > 0).
+/// Borrowed (not cloned) — `invalidate` only needs `&self`.
+#[cfg(feature = "cold-deletion-vectors")]
+pub fn get_global_oid_resolver_cache()
+-> Option<&'static Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>> {
+    GLOBAL_OID_RESOLVER_CACHE.get().and_then(Option::as_ref)
+}
+
+/// Test-only setter (the production path uses the constructor's `get_or_init`).
+/// Set-once; benign across tests (invalidate is miss-safe on unique paths).
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+pub fn set_global_oid_resolver_cache_for_tests(
+    cache: Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>,
+) {
+    let _ = GLOBAL_OID_RESOLVER_CACHE.set(Some(cache));
+}
+
 // Global PCA model cache for Z-Order spatial encoding
 // Uses lazy_static for thread-safe initialization
 lazy_static::lazy_static! {
@@ -681,26 +708,21 @@ impl SstEngine {
         // TD-DELVEC-1 WI-3c: process-global OID resolver cache (sibling to the
         // invariants cache). Feature-gated; 0 disables (lazy-load on each delete).
         #[cfg(feature = "cold-deletion-vectors")]
-        let oid_resolver_cache = {
-            static SHARED_OID_RESOLVER_CACHE: std::sync::OnceLock<
-                Option<Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>>,
-            > = std::sync::OnceLock::new();
-            SHARED_OID_RESOLVER_CACHE
-                .get_or_init(|| {
-                    let mb = std::env::var("PROXIMADB_OID_RESOLVER_CACHE_MB")
-                        .ok()
-                        .and_then(|v| v.parse::<u64>().ok())
-                        .unwrap_or(config.oid_resolver_cache_mb);
-                    (mb > 0).then(|| {
-                        Arc::new(
-                            crate::storage::engines::sst::oid_resolver_cache::OidResolverCache::new(
-                                (mb as usize) * 1024 * 1024,
-                            ),
-                        )
-                    })
+        let oid_resolver_cache = GLOBAL_OID_RESOLVER_CACHE
+            .get_or_init(|| {
+                let mb = std::env::var("PROXIMADB_OID_RESOLVER_CACHE_MB")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(config.oid_resolver_cache_mb);
+                (mb > 0).then(|| {
+                    Arc::new(
+                        crate::storage::engines::sst::oid_resolver_cache::OidResolverCache::new(
+                            (mb as usize) * 1024 * 1024,
+                        ),
+                    )
                 })
-                .clone()
-        };
+            })
+            .clone();
 
         // TD-DELVEC-1 WI-3a-remaining-A: per-engine deletion-vector store. Not a
         // process-global singleton (unlike the resolver cache): the DV store is

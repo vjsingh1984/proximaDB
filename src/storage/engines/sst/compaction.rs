@@ -2656,6 +2656,14 @@ async fn purge_retired_segment_cache_entries(
     path: &str,
     warm_caches: Option<&WarmTierCachePair>,
 ) -> usize {
+    // TD-DELVEC-1 C2: invalidate the OID resolver cache entry for this retired
+    // segment — BEFORE the warm_caches guard, so it fires even when the warm-tier
+    // pair is None (independent cache). Miss-safe (no-op if the resolver was never
+    // loaded for this path).
+    #[cfg(feature = "cold-deletion-vectors")]
+    if let Some(cache) = crate::storage::engines::sst::core::get_global_oid_resolver_cache() {
+        cache.invalidate(path);
+    }
     let Some((invariants, survivor)) = warm_caches else {
         return 0;
     };
@@ -2733,6 +2741,38 @@ mod compaction_cache_retirement_tests {
     use crate::storage::persistence::filesystem::{FilesystemError, FilesystemFactory};
     use proximadb_cache::PersistentByteStore;
     use std::sync::Arc;
+
+    /// TD-DELVEC-1 C2: compaction retire invalidates the OID resolver cache entry
+    /// for the retired segment, even when the warm-tier pair is None (the resolver
+    /// cache is independent of the warm caches).
+    #[cfg(feature = "cold-deletion-vectors")]
+    #[tokio::test]
+    async fn retire_invalidates_oid_resolver_cache_even_when_warm_caches_none() {
+        use crate::storage::engines::sst::core::set_global_oid_resolver_cache_for_tests;
+        use crate::storage::engines::sst::oid_resolver_cache::OidResolverCache;
+        use proximadb_storage_common::oid_position_resolver::OidPositionResolver;
+
+        let path = "c2://test/retired-segment.pax";
+        let cache = Arc::new(OidResolverCache::new(1024 * 1024));
+        set_global_oid_resolver_cache_for_tests(cache.clone());
+        cache.put(
+            path.to_string(),
+            Arc::new(OidPositionResolver::from_stream_order(vec![
+                "oid-a".to_string(),
+            ])),
+        );
+        assert!(cache.get(path).is_some(), "precondition: entry present");
+
+        // None warm_caches deliberately — proves the invalidate fires before the
+        // warm_caches guard (the resolver cache is independent).
+        let _ = purge_retired_segment_cache_entries(path, None).await;
+
+        assert!(
+            cache.get(path).is_none(),
+            "retire must invalidate the entry"
+        );
+        assert!(cache.is_empty(), "cache should be empty after retire");
+    }
 
     #[tokio::test]
     async fn input_retirement_routes_by_url_scheme_and_never_falls_back_to_local() {
