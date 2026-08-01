@@ -271,6 +271,8 @@ impl AqlSource for MemoryAqlSource {
                 recall_k,
                 scope_filter,
                 None,
+                None,
+                None,
             )
             .await
             .map_err(|e| ProximaDBError::Query(QueryError::VectorSearch(e.to_string())))?;

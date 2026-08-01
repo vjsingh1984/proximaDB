@@ -658,6 +658,8 @@ impl EntityStore for ProximaEntityStore {
                         top_k,
                         core_filter.clone(),
                         Some(search_config),
+                        None,
+                        None,
                     )
                     .await?;
 

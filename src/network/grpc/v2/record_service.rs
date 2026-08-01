@@ -1476,7 +1476,12 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             crate::observability::predicate_diagnostics::scope(async {
                 let outcome = self
                     .record_ops
-                    .handle_record_search_for_tenant(search_request, Some(tenant_id.as_str()))
+                    .handle_record_search_for_tenant(
+                        search_request,
+                        Some(tenant_id.as_str()),
+                        None,
+                        None,
+                    )
                     .await;
                 let tq = crate::observability::predicate_diagnostics::take_turboquant_hints();
                 (outcome, tq)
@@ -1559,7 +1564,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Execute search
         let response = self
             .record_ops
-            .handle_record_search_for_tenant(search_request, Some(tenant_id.as_str()))
+            .handle_record_search_for_tenant(search_request, Some(tenant_id.as_str()), None, None)
             .await
             .map_err(|e| Status::internal(format!("Search stream failed: {}", e)))?;
 
