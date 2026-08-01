@@ -202,6 +202,8 @@ pub(crate) mod test_support {
             &self,
             request: VectorSearchRequest,
             tenant_id: Option<&str>,
+            _subject: Option<&str>,
+            _tenant_stable_id: Option<u64>,
         ) -> Result<VectorOperationResponse> {
             self.calls.lock().unwrap().push(ApiCall::VectorSearch {
                 tenant_id: tenant_id.map(ToOwned::to_owned),
@@ -337,6 +339,8 @@ pub(crate) mod test_support {
             &self,
             _request: VectorSearchRequest,
             _tenant_id: Option<&str>,
+            _subject: Option<&str>,
+            _tenant_stable_id: Option<u64>,
         ) -> Result<VectorOperationResponse> {
             Ok(VectorOperationResponse::default())
         }
@@ -449,6 +453,8 @@ mod tests {
                 ..VectorSearchRequest::default()
             },
             Some("tenant-a"),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -592,7 +598,7 @@ mod tests {
         assert!(
             handlers
                 .vector_ops
-                .search(VectorSearchRequest::default(), None)
+                .search(VectorSearchRequest::default(), None, None, None)
                 .await
                 .unwrap()
                 .results

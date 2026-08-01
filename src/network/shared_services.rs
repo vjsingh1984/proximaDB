@@ -3414,6 +3414,8 @@ mod rank_services_wiring_tests {
             &self,
             _request: crate::proto::proximadb_v1::VectorSearchRequest,
             _tenant_id: Option<&str>,
+            _subject: Option<&str>,
+            _tenant_stable_id: Option<u64>,
         ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
             Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                 success: true,

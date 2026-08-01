@@ -105,10 +105,14 @@ pub trait ApiHandlersPort: Send + Sync {
 
     // ── Vector ────────────────────────────────────────────────────────────────
 
+    /// `subject` + `tenant_stable_id` identify the authenticated principal for
+    /// ABAC enforcement at the shared search seam; `None` = no policy evaluation.
     async fn handle_vector_search_v1_for_tenant(
         &self,
         request: VectorSearchRequest,
         tenant_id: Option<&str>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> Result<VectorOperationResponse>;
 
     async fn handle_vector_search_v1(

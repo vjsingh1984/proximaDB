@@ -21,6 +21,12 @@
 //! regardless of the collection's catalog object id (the test harness mints
 //! name-shaped ids that don't parse as the numeric object id).
 //!
+//! The `v1_*` tests prove the same enforcement on the **v1 search path**
+//! (`search_v1` — the entry the REST v1 + `/progressive/search` routes reach via
+//! `ApiHandlersPort::handle_vector_search_v1_for_tenant` → `VectorOpsPort::search`;
+//! progressive is a thin delegate to the same v1 handler, so one v1 test covers
+//! both routes).
+//!
 //! Default-OFF: this file compiles only under `--features abac-policy`.
 
 #![cfg(all(test, feature = "abac-policy"))]
@@ -110,6 +116,30 @@ fn request() -> RichSearchRequest {
         top_k: 10,
         filters: vec![],
     }
+}
+
+/// The proto-typed request the v1 REST + progressive routes carry.
+fn v1_request() -> proximadb::proto::proximadb_v1::VectorSearchRequest {
+    proximadb::proto::proximadb_v1::VectorSearchRequest {
+        collection_id: COLLECTION.to_string(),
+        queries: vec![proximadb::proto::proximadb_v1::SearchQuery {
+            vector: vec![1.0, 0.0, 0.0, 0.0],
+            filters: Default::default(),
+            advanced_filter: None,
+        }],
+        top_k: 10,
+        include_fields: None,
+        search_params: None,
+        distance_metric_override: None,
+        search_optimization: None,
+    }
+}
+
+fn v1_result_ids(resp: &proximadb::proto::proximadb_v1::VectorOperationResponse) -> Vec<String> {
+    resp.results
+        .as_ref()
+        .map(|r| r.results.iter().map(|rec| rec.id.clone()).collect())
+        .unwrap_or_default()
 }
 
 /// Build the service + collection + records once; the per-subject assertions
@@ -270,5 +300,60 @@ async fn none_subject_is_passthrough_on_getbyid_path() {
     assert!(
         resp.is_some(),
         "a None subject (gRPC/internal path) may GET the record (passthrough)"
+    );
+}
+
+/// v1/progressive path: an admitted subject sees only `dept=eng` records.
+#[tokio::test]
+async fn v1_admitted_subject_sees_only_accessible_records() {
+    let (svc, _collections) = fixture().await;
+
+    let resp = svc
+        .search_v1(v1_request(), Some("alice"), Some(TENANT))
+        .await
+        .expect("v1 abac search");
+
+    let ids = v1_result_ids(&resp);
+    assert!(
+        ids.iter().any(|id| id == OID_ENG),
+        "alice (dept=eng) must see the eng record on the v1 path; got {ids:?}"
+    );
+    assert!(
+        !ids.iter().any(|id| id == OID_HR),
+        "the hr record must be filtered out on the v1 path; got {ids:?}"
+    );
+}
+
+/// v1/progressive path: a denied subject gets an EMPTY result — fail-closed.
+#[tokio::test]
+async fn v1_denied_subject_gets_empty_results() {
+    let (svc, _collections) = fixture().await;
+
+    let resp = svc
+        .search_v1(v1_request(), Some("mallory"), Some(TENANT))
+        .await
+        .expect("v1 abac search");
+
+    let ids = v1_result_ids(&resp);
+    assert!(
+        ids.is_empty(),
+        "mallory (unbound) must be denied on the v1 path — empty results (fail-closed); got {ids:?}"
+    );
+}
+
+/// v1/progressive path: a `None` subject (internal callers) is passthrough.
+#[tokio::test]
+async fn v1_none_subject_is_passthrough() {
+    let (svc, _collections) = fixture().await;
+
+    let resp = svc
+        .search_v1(v1_request(), None, None)
+        .await
+        .expect("v1 search");
+
+    let ids = v1_result_ids(&resp);
+    assert!(
+        ids.iter().any(|id| id == OID_ENG) && ids.iter().any(|id| id == OID_HR),
+        "a None subject must see both records on the v1 path (passthrough); got {ids:?}"
     );
 }
