@@ -21,7 +21,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cdc::event::ChangeEvent;
+use crate::event::ChangeEvent;
 
 #[cfg(feature = "cdc-kafka")]
 use super::traits::SinkError;
@@ -535,7 +535,7 @@ impl CdcSink for KafkaSink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{Operation, SourceInfo};
+    use crate::event::{Operation, SourceInfo};
 
     /// Throwaway credential for auth-wiring tests, sourced at runtime so no
     /// string literal is used as a cryptographic value

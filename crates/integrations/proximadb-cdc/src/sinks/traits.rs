@@ -20,7 +20,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cdc::event::ChangeEvent;
+use crate::event::ChangeEvent;
 
 use super::{KafkaConfig, WebhookConfig};
 
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_message_format_json() {
-        use crate::cdc::event::{Operation, SourceInfo};
+        use crate::event::{Operation, SourceInfo};
 
         let event = ChangeEvent::new(
             SourceInfo::postgres("testdb", "public", "server"),
