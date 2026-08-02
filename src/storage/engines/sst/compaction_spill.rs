@@ -12,6 +12,7 @@ use proximadb_block_format::{
 };
 use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
 use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::core::search::mvcc_resolution::{effective_version, is_append_only_oid};
@@ -78,6 +79,14 @@ impl ExternalMvccOutput {
 
     pub(crate) fn stats(&self) -> &ExternalMvccStats {
         &self.stats
+    }
+
+    fn for_each_record(&self, mut visitor: impl FnMut(SpillRecord) -> Result<()>) -> Result<()> {
+        let mut reader = FramedRunReader::open(&self.output_path)?;
+        while let Some(record) = reader.read_next()? {
+            visitor(record)?;
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -729,6 +738,410 @@ fn is_expired(record: &ProximaRecord, current_timestamp_ns: i64) -> bool {
         .is_some_and(|valid_to| valid_to < current_timestamp_ns)
 }
 
+/// Resource and physical-shape evidence for the external IVF ordering pass.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ExternalClusterStats {
+    pub(crate) input_records: u64,
+    pub(crate) usable_records: u64,
+    pub(crate) training_records: u64,
+    pub(crate) cell_count: usize,
+    pub(crate) initial_run_count: usize,
+    pub(crate) merge_pass_count: usize,
+    pub(crate) max_open_runs: usize,
+    pub(crate) peak_run_buffer_bytes: u64,
+    pub(crate) scratch_bytes_written: u64,
+    pub(crate) estimated_training_peak_bytes: u64,
+}
+
+/// Owns cell-ordered winners and their persisted A0 model. The scratch tree is
+/// reclaimed after the PAX writer has consumed the run or on any later error.
+#[derive(Debug)]
+pub(crate) struct ExternalClusterOutput {
+    task_directory: tempfile::TempDir,
+    output_path: PathBuf,
+    model: proximadb_storage_common::coarse_directory::CoarseModel,
+    stats: ExternalClusterStats,
+}
+
+impl ExternalClusterOutput {
+    pub(crate) fn model(&self) -> &proximadb_storage_common::coarse_directory::CoarseModel {
+        &self.model
+    }
+
+    pub(crate) fn stats(&self) -> &ExternalClusterStats {
+        &self.stats
+    }
+
+    pub(crate) fn for_each_record(
+        &self,
+        mut visitor: impl FnMut(ProximaRecord) -> Result<()>,
+    ) -> Result<()> {
+        let mut reader = FramedRunReader::open(&self.output_path)?;
+        while let Some(record) = reader.read_value::<CellSpillRecord>()? {
+            visitor(record.restore_schema_version().spill.record)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn task_path(&self) -> &Path {
+        self.task_directory.path()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CellSpillRecord {
+    cell_rank: u32,
+    pc1: f32,
+    spill: SpillRecord,
+}
+
+impl CellSpillRecord {
+    fn restore_schema_version(mut self) -> Self {
+        self.spill = self.spill.restore_schema_version();
+        self
+    }
+}
+
+fn cell_order(left: &CellSpillRecord, right: &CellSpillRecord) -> Ordering {
+    left.cell_rank
+        .cmp(&right.cell_rank)
+        .then_with(|| left.pc1.total_cmp(&right.pc1))
+        .then_with(|| left.spill.source_ordinal.cmp(&right.spill.source_ordinal))
+}
+
+fn first_f32_embedding(record: &ProximaRecord) -> Option<&[f32]> {
+    match record.embeddings.first().map(|embedding| &embedding.values) {
+        Some(EmbeddingValues::Fp32(vector)) if !vector.is_empty() => Some(vector),
+        _ => None,
+    }
+}
+
+/// Conservative peak for the existing full covariance PCA plus low-dimensional
+/// sample/k-means buffers. This is checked before `IncrementalPCA::new`, so an
+/// oversized dimension fails admission rather than first allocating memory.
+fn estimated_ivf_training_peak_bytes(
+    dim: usize,
+    shape: crate::storage::engines::sst::block_cluster::IvfTrainingShape,
+) -> Option<u64> {
+    let dim = u64::try_from(dim).ok()?;
+    let components = u64::try_from(shape.n_components).ok()?;
+    let samples = u64::try_from(shape.train_sample).ok()?;
+    let cells = u64::try_from(shape.k).ok()?;
+    let covariance_peak = dim.checked_mul(dim)?.checked_mul(16)?;
+    let component_bytes = components.checked_mul(dim)?.checked_mul(8)?;
+    let sample_coordinates = samples.checked_mul(components)?.checked_mul(4)?;
+    let kmeans_working = samples
+        .checked_mul(12)?
+        .checked_add(cells.checked_mul(components)?.checked_mul(16)?)?;
+    covariance_peak
+        .checked_add(component_bytes)?
+        .checked_add(sample_coordinates)?
+        .checked_add(kmeans_working)?
+        .checked_add(8 * 1024 * 1024)
+}
+
+/// Train persisted-f32 PCA/IVF through repeatable scans of the MVCC winner run,
+/// then externally order every record by `(Hilbert cell, PC1, source ordinal)`.
+/// Raw high-dimensional samples and the full coordinate/assignment arrays are
+/// never retained. The configured working-memory bound is enforced before PCA.
+pub(crate) fn cluster_external_mvcc(
+    winners: ExternalMvccOutput,
+    scratch_root: &Path,
+    max_run_buffer_bytes: u64,
+    max_merge_fan_in: usize,
+    max_working_memory_bytes: u64,
+) -> Result<ExternalClusterOutput> {
+    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
+    use crate::storage::engines::sst::block_cluster::{
+        IvfPcaProjection, finish_ivf_probe_classifier, ivf_training_shape,
+    };
+
+    let mut dim = None;
+    let mut usable_rows = 0usize;
+    winners.for_each_record(|item| {
+        if let Some(vector) = first_f32_embedding(&item.record) {
+            if let Some(expected) = dim {
+                if vector.len() != expected {
+                    return Err(SstError::Compaction(format!(
+                        "spill IVF dimension {} differs from established dimension {expected}",
+                        vector.len()
+                    )));
+                }
+            } else {
+                dim = Some(vector.len());
+            }
+            usable_rows = usable_rows.checked_add(1).ok_or_else(|| {
+                SstError::Compaction("spill IVF usable row count exceeds usize".to_string())
+            })?;
+        }
+        Ok(())
+    })?;
+    let dim = dim.ok_or_else(|| {
+        SstError::Compaction("spill IVF requires at least one f32 embedding".to_string())
+    })?;
+    let shape = ivf_training_shape(usable_rows, dim).ok_or_else(|| {
+        SstError::Compaction(format!(
+            "spill IVF requires at least 64 usable rows; found {usable_rows}"
+        ))
+    })?;
+    let estimated_training_peak_bytes =
+        estimated_ivf_training_peak_bytes(dim, shape).ok_or_else(|| {
+            SstError::Compaction("spill IVF memory estimate overflows u64".to_string())
+        })?;
+    if estimated_training_peak_bytes > max_working_memory_bytes {
+        return Err(SstError::Compaction(format!(
+            "spill IVF training needs an estimated {estimated_training_peak_bytes} bytes, above the admitted {max_working_memory_bytes} byte working set"
+        )));
+    }
+
+    let mut pca = IncrementalPCA::new(dim, shape.n_components);
+    let mut usable_index = 0usize;
+    winners.for_each_record(|item| {
+        if let Some(vector) = first_f32_embedding(&item.record) {
+            if usable_index.is_multiple_of(shape.sample_step) {
+                pca.add_sample(vector);
+            }
+            usable_index = usable_index.saturating_add(1);
+        }
+        Ok(())
+    })?;
+    pca.finalize();
+    let projection = IvfPcaProjection::from_finalized(&pca).ok_or_else(|| {
+        SstError::Compaction("spill IVF PCA did not produce a projection".to_string())
+    })?;
+
+    let mut sample_coords = Vec::with_capacity(shape.train_sample);
+    usable_index = 0;
+    winners.for_each_record(|item| {
+        if let Some(vector) = first_f32_embedding(&item.record) {
+            if usable_index.is_multiple_of(shape.sample_step) {
+                sample_coords.push(projection.project(vector));
+            }
+            usable_index = usable_index.saturating_add(1);
+        }
+        Ok(())
+    })?;
+    let classifier = finish_ivf_probe_classifier(projection, shape, &sample_coords)
+        .ok_or_else(|| SstError::Compaction("spill IVF k-means training failed".to_string()))?;
+    let cell_count = classifier.cell_count();
+    let mut cell_rows = vec![0u64; cell_count];
+    let mut radii_sq = vec![0f32; cell_count];
+    let mut builder =
+        ExternalCellBuilder::new(scratch_root, max_run_buffer_bytes, max_merge_fan_in)?;
+    winners.for_each_record(|spill| {
+        let (cell_rank, pc1) = if let Some(vector) = first_f32_embedding(&spill.record) {
+            let assignment = classifier.classify(vector).ok_or_else(|| {
+                SstError::Compaction("spill IVF could not classify a validated vector".to_string())
+            })?;
+            cell_rows[assignment.source_cell] = cell_rows[assignment.source_cell].saturating_add(1);
+            radii_sq[assignment.source_cell] =
+                radii_sq[assignment.source_cell].max(assignment.distance_sq);
+            (
+                u32::try_from(assignment.cell_rank).map_err(|_| {
+                    SstError::Compaction("spill IVF cell rank exceeds u32".to_string())
+                })?,
+                assignment.pc1,
+            )
+        } else {
+            (u32::MAX, 0.0)
+        };
+        builder.push(CellSpillRecord {
+            cell_rank,
+            pc1,
+            spill,
+        })
+    })?;
+    let model = classifier
+        .finish_model(&cell_rows, &radii_sq)
+        .ok_or_else(|| {
+            SstError::Compaction("spill IVF model dimensions disagree with assignments".to_string())
+        })?;
+    builder.finish(
+        model,
+        winners.stats.output_records,
+        usable_rows as u64,
+        sample_coords.len() as u64,
+        estimated_training_peak_bytes,
+    )
+}
+
+struct ExternalCellBuilder {
+    task_directory: tempfile::TempDir,
+    max_run_buffer_bytes: u64,
+    max_merge_fan_in: usize,
+    runs: Vec<PathBuf>,
+    buffer: Vec<CellSpillRecord>,
+    buffered_bytes: u64,
+    stats: ExternalClusterStats,
+}
+
+impl ExternalCellBuilder {
+    fn new(
+        scratch_root: &Path,
+        max_run_buffer_bytes: u64,
+        max_merge_fan_in: usize,
+    ) -> Result<Self> {
+        if max_run_buffer_bytes == 0 || max_merge_fan_in < 2 {
+            return Err(SstError::InvalidArgument(
+                "spill IVF run buffer must be positive and fan-in at least two".to_string(),
+            ));
+        }
+        Ok(Self {
+            task_directory: tempfile::Builder::new()
+                .prefix("proximadb-compaction-cells-")
+                .tempdir_in(scratch_root)?,
+            max_run_buffer_bytes,
+            max_merge_fan_in,
+            runs: Vec::new(),
+            buffer: Vec::new(),
+            buffered_bytes: 0,
+            stats: ExternalClusterStats::default(),
+        })
+    }
+
+    fn push(&mut self, record: CellSpillRecord) -> Result<()> {
+        let record_bytes = estimated_buffer_bytes(&record.spill)?.saturating_add(32);
+        if !self.buffer.is_empty()
+            && self.buffered_bytes.saturating_add(record_bytes) > self.max_run_buffer_bytes
+        {
+            self.flush_run()?;
+        }
+        self.buffered_bytes = self.buffered_bytes.saturating_add(record_bytes);
+        self.stats.peak_run_buffer_bytes =
+            self.stats.peak_run_buffer_bytes.max(self.buffered_bytes);
+        self.buffer.push(record);
+        Ok(())
+    }
+
+    fn flush_run(&mut self) -> Result<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        let path = self
+            .task_directory
+            .path()
+            .join(format!("cell-pass-0000-run-{:06}.pxrun", self.runs.len()));
+        self.stats.scratch_bytes_written = self
+            .stats
+            .scratch_bytes_written
+            .saturating_add(write_sorted_cell_run(&path, &mut self.buffer)?);
+        self.runs.push(path);
+        self.buffered_bytes = 0;
+        Ok(())
+    }
+
+    fn finish(
+        mut self,
+        model: proximadb_storage_common::coarse_directory::CoarseModel,
+        input_records: u64,
+        usable_records: u64,
+        training_records: u64,
+        estimated_training_peak_bytes: u64,
+    ) -> Result<ExternalClusterOutput> {
+        self.flush_run()?;
+        self.stats.initial_run_count = self.runs.len();
+        let mut pass = 0usize;
+        while self.runs.len() > self.max_merge_fan_in {
+            pass = pass.saturating_add(1);
+            let mut next = Vec::with_capacity(self.runs.len().div_ceil(self.max_merge_fan_in));
+            for (group_index, group) in self.runs.chunks(self.max_merge_fan_in).enumerate() {
+                let path = self
+                    .task_directory
+                    .path()
+                    .join(format!("cell-pass-{pass:04}-run-{group_index:06}.pxrun"));
+                self.stats.max_open_runs = self.stats.max_open_runs.max(group.len());
+                self.stats.scratch_bytes_written = self
+                    .stats
+                    .scratch_bytes_written
+                    .saturating_add(merge_cell_runs(group, &path)?);
+                next.push(path);
+            }
+            for path in &self.runs {
+                std::fs::remove_file(path)?;
+            }
+            self.runs = next;
+        }
+        self.stats.merge_pass_count = pass;
+        self.stats.max_open_runs = self.stats.max_open_runs.max(self.runs.len());
+        let output_path = self.task_directory.path().join("cell-ordered.pxrun");
+        self.stats.scratch_bytes_written = self
+            .stats
+            .scratch_bytes_written
+            .saturating_add(merge_cell_runs(&self.runs, &output_path)?);
+        for path in &self.runs {
+            std::fs::remove_file(path)?;
+        }
+        self.stats.input_records = input_records;
+        self.stats.usable_records = usable_records;
+        self.stats.training_records = training_records;
+        self.stats.cell_count = model.cell_rows.len();
+        self.stats.estimated_training_peak_bytes = estimated_training_peak_bytes;
+        Ok(ExternalClusterOutput {
+            task_directory: self.task_directory,
+            output_path,
+            model,
+            stats: self.stats,
+        })
+    }
+}
+
+fn write_sorted_cell_run(path: &Path, records: &mut Vec<CellSpillRecord>) -> Result<u64> {
+    records.sort_unstable_by(cell_order);
+    let mut writer = FramedRunWriter::create(path)?;
+    for record in records.drain(..) {
+        writer.write_value(&record)?;
+    }
+    writer.finish()
+}
+
+#[derive(Debug)]
+struct CellHeapEntry {
+    run_index: usize,
+    record: CellSpillRecord,
+}
+
+impl PartialEq for CellHeapEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.run_index == other.run_index && cell_order(&self.record, &other.record).is_eq()
+    }
+}
+
+impl Eq for CellHeapEntry {}
+
+impl PartialOrd for CellHeapEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CellHeapEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        cell_order(&other.record, &self.record).then_with(|| other.run_index.cmp(&self.run_index))
+    }
+}
+
+fn merge_cell_runs(paths: &[PathBuf], output: &Path) -> Result<u64> {
+    let mut readers = Vec::with_capacity(paths.len());
+    let mut heap = BinaryHeap::with_capacity(paths.len());
+    for (run_index, path) in paths.iter().enumerate() {
+        let mut reader = FramedRunReader::open(path)?;
+        if let Some(record) = reader.read_value::<CellSpillRecord>()? {
+            heap.push(CellHeapEntry { run_index, record });
+        }
+        readers.push(reader);
+    }
+    let mut writer = FramedRunWriter::create(output)?;
+    while let Some(entry) = heap.pop() {
+        let run_index = entry.run_index;
+        writer.write_value(&entry.record)?;
+        if let Some(record) = readers[run_index].read_value::<CellSpillRecord>()? {
+            heap.push(CellHeapEntry { run_index, record });
+        }
+    }
+    writer.finish()
+}
+
 struct FramedRunWriter {
     writer: BufWriter<File>,
     bytes_written: u64,
@@ -747,7 +1160,11 @@ impl FramedRunWriter {
     }
 
     fn write_record(&mut self, record: &SpillRecord) -> Result<()> {
-        let payload = bincode::serialize(record)?;
+        self.write_value(record)
+    }
+
+    fn write_value(&mut self, value: &impl Serialize) -> Result<()> {
+        let payload = bincode::serialize(value)?;
         let length = u32::try_from(payload.len()).map_err(|_| {
             SstError::Compaction(format!(
                 "spill record frame exceeds u32 length: {} bytes",
@@ -810,6 +1227,12 @@ impl FramedRunReader {
     }
 
     fn read_next(&mut self) -> Result<Option<SpillRecord>> {
+        Ok(self
+            .read_value::<SpillRecord>()?
+            .map(SpillRecord::restore_schema_version))
+    }
+
+    fn read_value<T: DeserializeOwned>(&mut self) -> Result<Option<T>> {
         let mut header = [0u8; 8];
         let read = self.reader.read(&mut header[..1])?;
         if read == 0 {
@@ -835,8 +1258,7 @@ impl FramedRunReader {
                 "spill frame checksum mismatch: expected {expected_checksum:#010x}, got {actual_checksum:#010x}"
             )));
         }
-        let record = bincode::deserialize::<SpillRecord>(&payload)?.restore_schema_version();
-        Ok(Some(record))
+        Ok(Some(bincode::deserialize::<T>(&payload)?))
     }
 }
 
@@ -1094,5 +1516,131 @@ mod tests {
         );
         assert!(source.range_reads.load(AtomicOrdering::Relaxed) > 4);
         assert!(input_stats.largest_range_bytes < bytes.len() as u64);
+    }
+
+    #[test]
+    fn external_ivf_and_disk_writer_match_in_memory_pax_bytes() {
+        let records = (0..128)
+            .rev()
+            .map(|index| vector_record(&format!("oid-{index:03}"), index))
+            .collect::<Vec<_>>();
+        let mut canonical_records = records.clone();
+        canonical_records.sort_by(|left, right| left.oid.cmp(&right.oid));
+        let canonical_plan = crate::storage::engines::sst::block_cluster::cluster_plan_ivf_probe(
+            &canonical_records,
+            0,
+        )
+        .expect("canonical IVF plan");
+
+        let root = tempfile::tempdir().expect("test root");
+        let canonical_path = root.path().join("canonical.pax");
+        let mut canonical_writer = PaxSegmentWriter::new(
+            &canonical_path,
+            BlockMode::Pax,
+            BlockCompression::Lz4,
+            "collection",
+            0,
+            1,
+            Some(1_024),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_rerank_quant(VectorQuant::Sq8)
+        .with_coalesced_rabitq(true)
+        .with_expected_rows(canonical_records.len())
+        .with_two_level(canonical_plan.model.clone());
+        for row in canonical_plan.plan.order {
+            canonical_writer
+                .add_record(&canonical_records[row])
+                .expect("canonical row");
+        }
+        canonical_writer.finish().expect("canonical segment");
+
+        let winners = resolve_external_mvcc(
+            root.path(),
+            spill(records).into_iter().map(Ok),
+            2_048,
+            2,
+            10_000,
+        )
+        .expect("MVCC winners");
+        let clustered = cluster_external_mvcc(winners, root.path(), 2_048, 2, 64 * 1024 * 1024)
+            .expect("external IVF");
+        assert_eq!(clustered.model(), &canonical_plan.model);
+        assert_eq!(clustered.stats().input_records, 128);
+        assert_eq!(clustered.stats().usable_records, 128);
+        assert!(clustered.stats().initial_run_count > 1);
+
+        let spill_root = root.path().join("pax-scratch");
+        std::fs::create_dir(&spill_root).expect("spill root");
+        let spill_path = root.path().join("spill.pax");
+        let mut spill_writer = PaxSegmentWriter::new(
+            &spill_path,
+            BlockMode::Pax,
+            BlockCompression::Lz4,
+            "collection",
+            0,
+            1,
+            Some(1_024),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_rerank_quant(VectorQuant::Sq8)
+        .with_coalesced_rabitq(true)
+        .with_expected_rows(clustered.stats().input_records as usize)
+        .with_two_level(clustered.model().clone())
+        .with_local_spill(&spill_root)
+        .expect("disk writer");
+        clustered
+            .for_each_record(|record| {
+                spill_writer.add_record(&record)?;
+                Ok(())
+            })
+            .expect("stream ordered records");
+        spill_writer.finish().expect("spill segment");
+
+        assert_eq!(
+            std::fs::read(canonical_path).expect("canonical bytes"),
+            std::fs::read(spill_path).expect("spill bytes")
+        );
+        let task_path = clustered.task_path().to_path_buf();
+        drop(clustered);
+        assert!(!task_path.exists());
+        assert!(
+            std::fs::read_dir(spill_root)
+                .expect("read spill root")
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn external_ivf_rejects_training_before_exceeding_working_memory() {
+        let records = (0..64)
+            .map(|index| vector_record(&format!("oid-{index:03}"), index))
+            .collect::<Vec<_>>();
+        let root = tempfile::tempdir().expect("test root");
+        let winners = resolve_external_mvcc(
+            root.path(),
+            spill(records).into_iter().map(Ok),
+            4_096,
+            4,
+            10_000,
+        )
+        .expect("MVCC winners");
+        let error = cluster_external_mvcc(winners, root.path(), 4_096, 4, 1024)
+            .expect_err("tiny working set must reject PCA");
+        assert!(error.to_string().contains("above the admitted"));
+    }
+
+    #[test]
+    fn openai_embedding_partition_training_fits_default_spill_working_set() {
+        for (rows, dim) in [(11_184_810usize, 1_536usize), (5_592_405, 3_072)] {
+            let shape = crate::storage::engines::sst::block_cluster::ivf_training_shape(rows, dim)
+                .expect("billion-scale partition shape");
+            let estimate = estimated_ivf_training_peak_bytes(dim, shape).expect("memory estimate");
+            assert!(
+                estimate <= 512 * 1024 * 1024,
+                "dim={dim} estimate={estimate}"
+            );
+        }
     }
 }
