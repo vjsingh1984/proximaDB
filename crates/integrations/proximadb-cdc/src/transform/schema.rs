@@ -20,8 +20,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::{ChangeEvent, RecordState};
+use crate::error::{CdcError, CdcResult};
+use crate::event::{ChangeEvent, RecordState};
 
 /// Schema mapper for transforming CDC event fields
 #[derive(Debug, Clone, Default)]
@@ -775,7 +775,7 @@ mod tests {
 
     #[test]
     fn test_collection_mapping() {
-        use crate::cdc::event::{Operation, SourceInfo};
+        use crate::event::{Operation, SourceInfo};
 
         let mapper = SchemaMapper::new().map_collection("new_collection");
 
