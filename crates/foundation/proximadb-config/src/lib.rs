@@ -921,15 +921,13 @@ pub struct OptimizationConfig {
 
     /// Enable AXIS indexes for approximate nearest neighbor search.
     ///
-    /// Default is `false` per ADR-070: the co-design PAX scan + survivor cache
-    /// is the default ANN path (recall@10=0.999, ~0.5ms hot for ~600 MB RAM
-    /// per collection, vs AXIS at ~1ms for ~8.6 GB RAM). AXIS remains
-    /// available per collection via `index_configs` (the #1145 gate:
-    /// `pax_off || !index_configs.is_empty()`), independent of this flag.
-    /// NOTE (TD-AXIS-2): this flag is not yet wired to boot-time AxisManager
-    /// initialization — the manager still constructs at startup either way;
-    /// the per-collection gate is what keeps AXIS cost off co-design
-    /// collections today.
+    /// Runtime master switch; the Cargo `axis` feature must also be compiled
+    /// and the collection must explicitly declare `index_configs`. Default is
+    /// `false` per ADR-070: the co-design PAX scan + survivor cache is the
+    /// default ANN path. The lightweight manager value may still be
+    /// constructed to keep the compile-time type graph stable, but it is not
+    /// registered with serving and no AXIS maintenance loops start while this
+    /// flag is false.
     #[serde(default = "default_enable_axis_indexes")]
     pub enable_axis_indexes: bool,
 

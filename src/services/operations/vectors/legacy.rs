@@ -81,17 +81,13 @@ use super::write::{
 };
 
 /// ADR-070 / ADR-081: AXIS is a configured projection, not an automatic cost
-/// paid by every vector collection. PAX-only collections carry no index config;
-/// the explicit RawF32 compatibility tag retains the established AXIS path.
+/// paid by every vector collection. PAX-only collections carry no index config.
+/// Encoding/layout tags are not index declarations and therefore cannot enable
+/// AXIS by themselves.
 #[cfg_attr(not(feature = "axis"), allow(dead_code))]
-fn collection_uses_axis_indexes(collection: &Collection) -> bool {
-    collection.config.as_ref().is_some_and(|config| {
-        !config.index_configs.is_empty()
-            || config
-                .tags
-                .iter()
-                .any(|tag| tag.trim().eq_ignore_ascii_case("pax_vector_format:off"))
-    })
+fn collection_uses_axis_indexes(axis_runtime_enabled: bool, collection: &Collection) -> bool {
+    axis_runtime_enabled
+        && crate::storage::traits::collection_declares_axis_index(collection.config.as_ref())
 }
 
 // Import vector query service contract (Phase 2.1)
@@ -519,6 +515,12 @@ pub struct VectorOperationsService {
     /// AXIS index manager for index lookups
     #[cfg(feature = "axis")]
     axis_index_manager: Arc<crate::index::AxisManager>,
+
+    /// Runtime AXIS master switch. The compile feature only makes the
+    /// capability available; no collection may feed, query, or maintain AXIS
+    /// while this process-level policy is false.
+    #[cfg(feature = "axis")]
+    axis_runtime_enabled: bool,
 
     /// Collection port for metadata and configuration (Phase 9 / Task #76)
     collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
@@ -1777,6 +1779,10 @@ impl VectorOperationsService {
             query_cache,
             #[cfg(feature = "axis")]
             axis_index_manager,
+            #[cfg(feature = "axis")]
+            // Fail closed for direct/internal construction. Production boot
+            // applies the configured runtime policy through the builder below.
+            axis_runtime_enabled: false,
             collection_port,
             orchestrator: None,
 
@@ -1796,6 +1802,35 @@ impl VectorOperationsService {
             directory_cache: None,
             affinity_registry: None,
         }
+    }
+
+    /// Apply the process-level AXIS policy resolved from
+    /// `storage.optimization.enable_axis_indexes`.
+    #[cfg(feature = "axis")]
+    pub fn with_axis_runtime_enabled(mut self, enabled: bool) -> Self {
+        self.axis_runtime_enabled = enabled;
+        self
+    }
+
+    /// Whether continuous reclustering may touch this collection.
+    ///
+    /// This intentionally checks all runtime gates before the discovery pass
+    /// reads any records: process policy, collection index intent, and an
+    /// already-published served index. Recluster maintains an index; it does
+    /// not bootstrap one by cloning the whole corpus.
+    #[cfg(feature = "axis")]
+    pub async fn has_reclusterable_axis_index(&self, collection_id: &str) -> Result<bool> {
+        if !self.axis_runtime_enabled {
+            return Ok(false);
+        }
+        let collection = self.get_or_load_collection(collection_id).await?;
+        if !collection_uses_axis_indexes(true, &collection) {
+            return Ok(false);
+        }
+        Ok(self
+            .axis_index_manager
+            .has_served_index(&collection.id)
+            .await)
     }
 
     /// Set tenant manager for multi-tenant support (builder-style)
@@ -4073,7 +4108,8 @@ impl VectorOperationsService {
         // the index. This avoids the 8.6GB RSS + minutes of IVF training for
         // cost-optimized, object-storage-backed collections.
         #[cfg(feature = "axis")]
-        let collection_has_axis_indexes = collection_uses_axis_indexes(&collection);
+        let collection_has_axis_indexes =
+            collection_uses_axis_indexes(self.axis_runtime_enabled, &collection);
         #[cfg(not(feature = "axis"))]
         let collection_has_axis_indexes = false;
 
@@ -4629,7 +4665,8 @@ impl VectorOperationsService {
         #[cfg(feature = "axis")]
         let collection = self.get_or_load_collection(&collection_id).await?;
         #[cfg(feature = "axis")]
-        let axis_duration = if collection_uses_axis_indexes(&collection) {
+        let axis_duration = if collection_uses_axis_indexes(self.axis_runtime_enabled, &collection)
+        {
             let axis_start = std::time::Instant::now();
             for record in vectors.iter() {
                 if let Err(e) = self
@@ -6740,7 +6777,7 @@ mod axis_insert_gate_tests {
             }),
             ..Default::default()
         };
-        assert!(!collection_uses_axis_indexes(&collection));
+        assert!(!collection_uses_axis_indexes(true, &collection));
     }
 
     #[test]
@@ -6752,11 +6789,16 @@ mod axis_insert_gate_tests {
             }),
             ..Default::default()
         };
-        assert!(collection_uses_axis_indexes(&collection));
+        assert!(collection_uses_axis_indexes(true, &collection));
+
+        assert!(
+            !collection_uses_axis_indexes(false, &collection),
+            "the runtime master switch must win over collection index intent"
+        );
     }
 
     #[test]
-    fn raw_f32_compatibility_tag_feeds_axis() {
+    fn format_tag_without_index_config_does_not_feed_axis() {
         let collection = Collection {
             config: Some(CollectionConfig {
                 tags: vec!["pax_vector_format:off".to_string()],
@@ -6764,7 +6806,12 @@ mod axis_insert_gate_tests {
             }),
             ..Default::default()
         };
-        assert!(collection_uses_axis_indexes(&collection));
+        assert!(!collection_uses_axis_indexes(true, &collection));
+    }
+
+    #[test]
+    fn absent_collection_config_does_not_feed_axis() {
+        assert!(!collection_uses_axis_indexes(true, &Collection::default()));
     }
 }
 

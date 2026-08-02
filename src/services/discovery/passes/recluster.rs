@@ -44,6 +44,21 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
         .await?;
     let collection_id = collection_object_id.to_string();
 
+    // Fail before the storage-inclusive corpus read. AXIS being compiled is
+    // only a capability; runtime policy, collection index intent, and an
+    // already-published served index must all be present. Recluster is
+    // maintenance, not an implicit full-corpus bootstrap path.
+    if !vector_ops
+        .has_reclusterable_axis_index(&collection_id)
+        .await?
+    {
+        let mut result = DiscoveryJobResult::default();
+        result
+            .quality_metrics
+            .insert("recluster_skipped_no_served_index".to_string(), 1.0);
+        return Ok(result);
+    }
+
     // Storage-inclusive read of the snapshot (WAL/memtable + flushed storage),
     // merged by oid (freshest wins) — same read path the dedup pass uses.
     let records = vector_ops

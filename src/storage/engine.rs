@@ -29,6 +29,8 @@ pub struct StorageEngine {
     write_ahead_log_manager: Arc<WriteAheadLogManager>,
     #[cfg(feature = "axis")]
     axis_index_manager: Arc<AxisManager>,
+    #[cfg(feature = "axis")]
+    axis_runtime_enabled: bool,
     compaction_manager: Arc<Compaction>,
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 
@@ -134,18 +136,20 @@ impl StorageEngine {
             .first()
             .cloned()
             .unwrap_or_else(|| PathBuf::from("./data"));
+        #[cfg(feature = "axis")]
+        let axis_runtime_enabled = config.optimization.enable_axis_indexes;
         // Initialize AXIS index manager with default configuration
         #[cfg(feature = "axis")]
         let axis_index_manager = {
             let axis_config = AxisConfig::default();
             let m = Arc::new(AxisManager::new(axis_config).await?);
-            // Make AXIS manager available to SST engine for HNSW/IVF search
-            crate::storage::engines::sst::core::set_sst_axis_manager(m.clone());
-            // Also expose the concrete AxisManager for the WAL-layer inline flush trigger
-            // (resolved via `crate::index::get_global_axis_manager`), so an inline flush
-            // clears the AXIS projection exactly like the periodic/shutdown paths.
-            crate::index::set_global_axis_manager(m.clone());
-            info!("✅ AXIS manager registered with SST engine for HNSW/IVF search");
+            if axis_runtime_enabled {
+                // Make AXIS available only after both the compile capability
+                // and process runtime policy are enabled.
+                crate::storage::engines::sst::core::set_sst_axis_manager(m.clone());
+                crate::index::set_global_axis_manager(m.clone());
+                info!("✅ AXIS runtime enabled and registered with storage serving");
+            }
             m
         };
 
@@ -183,6 +187,8 @@ impl StorageEngine {
             write_ahead_log_manager,
             #[cfg(feature = "axis")]
             axis_index_manager,
+            #[cfg(feature = "axis")]
+            axis_runtime_enabled,
             compaction_manager,
             filesystem,
             distance_compute,
@@ -256,7 +262,8 @@ impl StorageEngine {
         #[cfg(feature = "axis")]
         crate::storage::auto_flush_driver::AutoFlushDriver::spawn(
             flush_policy,
-            self.axis_index_manager.clone(),
+            self.axis_runtime_enabled
+                .then(|| self.axis_index_manager.clone()),
             self.storage_write_fence.clone(),
         );
         #[cfg(not(feature = "axis"))]
@@ -404,7 +411,9 @@ impl StorageEngine {
             // round-trip in runtime-evidence/TD163_SERVER_FLUSH_MATERIALIZATION_2026_06_26.md.
             // Shutdown is terminal, so the freed batches are never re-flushed.
             #[cfg(feature = "axis")]
-            let axis_arg: Option<&AxisManager> = Some(&self.axis_index_manager);
+            let axis_arg: Option<&AxisManager> = self
+                .axis_runtime_enabled
+                .then_some(self.axis_index_manager.as_ref());
             #[cfg(not(feature = "axis"))]
             let axis_arg: Option<&()> = None;
             match materialize_collection(
@@ -791,7 +800,7 @@ impl StorageEngine {
 
         // Remove from search index
         #[cfg(feature = "axis")]
-        if exists {
+        if exists && self.axis_runtime_enabled {
             self.axis_index_manager
                 .delete(collection_id, id.clone())
                 .await?;
@@ -901,13 +910,6 @@ impl StorageEngine {
         tracing::debug!(
             "📁 Collection directories created, SST tree will be initialized on first access"
         );
-
-        // Ensure search index strategy exists for the collection
-        #[cfg(feature = "axis")]
-        self.axis_index_manager
-            .ensure_collection_strategy(&collection_id)
-            .await
-            .map_err(|e| crate::core::StorageError::IndexError(e.to_string()))?;
 
         tracing::info!(
             "✅ Created collection: {} with directories at {}",
@@ -1124,9 +1126,11 @@ impl StorageEngine {
 
             // Remove AXIS indexes for collection
             #[cfg(feature = "axis")]
-            self.axis_index_manager
-                .drop_collection(collection_id)
-                .await?;
+            if self.axis_runtime_enabled {
+                self.axis_index_manager
+                    .drop_collection(collection_id)
+                    .await?;
+            }
 
             // Clean up SST files for the dropped collection
             if let Some(sst_storage) = self.sst_storages.get(collection_id) {
@@ -1196,6 +1200,9 @@ impl StorageEngine {
         &self,
         collection_id: &str,
     ) -> crate::storage::Result<Option<HashMap<String, serde_json::Value>>> {
+        if !self.axis_runtime_enabled {
+            return Ok(None);
+        }
         // Get AXIS index statistics
         match self
             .axis_index_manager
@@ -1230,6 +1237,9 @@ impl StorageEngine {
     /// Optimize search index
     #[cfg(feature = "axis")]
     pub async fn optimize_index(&self, collection_id: &str) -> crate::storage::Result<()> {
+        if !self.axis_runtime_enabled {
+            return Ok(());
+        }
         // Trigger AXIS analysis and optimization
         self.axis_index_manager
             .analyze_and_optimize(collection_id)

@@ -24,7 +24,7 @@ Measured on SIFT 1M via REST (post-fix): recall@10 = 0.999, mean latency 476ms c
 
 AXIS (HNSW/IVF in-memory index) is **not the default** for collections without `index_configs`. The co-design PAX scan path (Stage 1 + Stage 3) is the default, and is sufficient for codegraph and similar read-heavy, upsert-prone workloads.
 
-AXIS remains available as an **opt-in** via `index_configs` for workloads that need sub-5ms latency (e.g., real-time code completion, interactive autocomplete). The per-collection AXIS gate (#1145) already routes correctly: `use_axis_indexes = pax_off || !index_configs.is_empty()`.
+AXIS remains available as an **opt-in** via non-empty `index_configs` for workloads that need sub-5ms latency (e.g., real-time code completion, interactive autocomplete). Runtime serving additionally requires `storage.optimization.enable_axis_indexes=true`; compile-time capability additionally requires the Cargo `axis` feature. A format tag such as `pax_vector_format:off` controls PAX representation and is not an index declaration.
 
 == Economics (1M code entities, 768d embeddings)
 
@@ -46,6 +46,7 @@ The ~27ms latency difference (1ms AXIS vs 28ms warm PAX) does not justify 8.6GB 
 * **Positive**: $31/month RAM savings per collection; O(1) upserts (no re-index); immediate restart (no async rebuild); simpler operations (no index persistence/recovery).
 * **Negative**: cold-query latency is ~476ms (object-store GETs) — mitigated by the survivor cache (warms to ~28ms) and parallel morsel search (TD-SEARCH-2, ~7× speedup → ~70ms cold).
 * **AXIS is not removed** — it stays as an opt-in for latency-sensitive use cases. The #1145 gate + #1155 flush-skip already prevent AXIS from being built/queried for co-design collections.
+* **Continuous maintenance is stricter than declared intent** — reclustering requires a published IVF/HNSW index before reading the collection corpus. It cannot bootstrap an absent index as a side effect of drift observation.
 
 == Related
 

@@ -56,27 +56,18 @@ pub fn flush_axis_manager() -> Option<Arc<dyn IndexEngine>> {
 /// Co-design: the AXIS build (HNSW/IVF training + RAM) is expensive and was the
 /// flush-latency bottleneck (~101s per 21k vectors of pure HNSW build), so
 /// collections that never query AXIS must not pay for it. Mirrors the gate the
-/// search route applies (`use_axis_indexes`: `index_configs` non-empty, or the
-/// `pax_vector_format:off` tag).
+/// search route applies (`use_axis_indexes`: `index_configs` non-empty).
 ///
 /// Absent config ⇒ **false**. Co-design is the default per ADR-070, so an
 /// unknown collection means "no AXIS", not "train AXIS". Recovery flushes land
 /// here.
 pub fn axis_needed(params: &FlushParameters) -> bool {
-    match params
-        .collection_config
-        .as_ref()
-        .and_then(|c| c.config.as_ref())
-    {
-        Some(c) => {
-            let pax_off = c
-                .tags
-                .iter()
-                .any(|t| t.trim().eq_ignore_ascii_case("pax_vector_format:off"));
-            pax_off || !c.index_configs.is_empty()
-        }
-        None => false,
-    }
+    crate::storage::traits::collection_declares_axis_index(
+        params
+            .collection_config
+            .as_ref()
+            .and_then(|collection| collection.config.as_ref()),
+    )
 }
 
 /// Index just-flushed vectors into AXIS (TD-112, ADR-078).
@@ -272,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_index_configs_without_pax_off_does_not_request_axis() {
+    fn empty_index_configs_do_not_request_axis() {
         let cfg = CollectionConfig {
             index_configs: vec![],
             tags: vec![],
@@ -282,16 +273,13 @@ mod tests {
     }
 
     #[test]
-    fn pax_vector_format_off_tag_requests_axis() {
+    fn format_tag_without_index_config_does_not_request_axis() {
         let cfg = CollectionConfig {
             index_configs: vec![],
             tags: vec!["  PAX_Vector_Format:OFF ".to_string()],
             ..Default::default()
         };
-        assert!(
-            axis_needed(&params_with(Some(cfg), 10)),
-            "tag match must be trimmed and case-insensitive"
-        );
+        assert!(!axis_needed(&params_with(Some(cfg), 10)));
     }
 
     /// No manager registered and none passed ⇒ returns quietly rather than
@@ -299,8 +287,7 @@ mod tests {
     #[tokio::test]
     async fn missing_axis_manager_is_a_no_op() {
         let cfg = CollectionConfig {
-            index_configs: vec![],
-            tags: vec!["pax_vector_format:off".to_string()],
+            index_configs: vec![proximadb_proto::proximadb_v1::IndexConfig::default()],
             ..Default::default()
         };
         index_flushed_into_axis(None, &params_with(Some(cfg), 5), vec!["f.pax".into()]).await;
@@ -313,8 +300,7 @@ mod tests {
     #[tokio::test]
     async fn convergence_dispatches_records_to_handle_flushed_vectors() {
         let cfg = CollectionConfig {
-            index_configs: vec![],
-            tags: vec!["pax_vector_format:off".to_string()],
+            index_configs: vec![proximadb_proto::proximadb_v1::IndexConfig::default()],
             ..Default::default()
         };
         let spy = Arc::new(RecordingIndexEngine::default());
@@ -347,8 +333,7 @@ mod tests {
     #[tokio::test]
     async fn boot_registered_global_is_used_when_engine_passes_none() {
         let cfg = CollectionConfig {
-            index_configs: vec![],
-            tags: vec!["pax_vector_format:off".to_string()],
+            index_configs: vec![proximadb_proto::proximadb_v1::IndexConfig::default()],
             ..Default::default()
         };
         let concrete = Arc::new(RecordingIndexEngine::default());
