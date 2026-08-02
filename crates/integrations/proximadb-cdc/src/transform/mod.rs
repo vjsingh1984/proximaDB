@@ -43,8 +43,8 @@ pub use embedding::{EmbeddingConfig, EmbeddingPipeline, EmbeddingProvider};
 pub use filter::{FilterAction, FilterRule, FilterRuleSet};
 pub use schema::{FieldMapping, FieldTransform, SchemaMapper};
 
-use crate::cdc::error::CdcResult;
-use crate::cdc::event::ChangeEvent;
+use crate::error::CdcResult;
+use crate::event::ChangeEvent;
 
 /// Transform pipeline for CDC events
 pub struct TransformPipeline {
@@ -237,7 +237,7 @@ pub enum TransformResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{Operation, SourceInfo};
+    use crate::event::{Operation, SourceInfo};
 
     fn create_test_event() -> ChangeEvent {
         ChangeEvent::new(

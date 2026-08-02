@@ -22,8 +22,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::{ChangeEvent, RecordState};
+use crate::error::{CdcError, CdcResult};
+use crate::event::{ChangeEvent, RecordState};
 
 /// Configuration for the embedding pipeline
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -379,7 +379,7 @@ impl Default for EmbeddingConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{Operation, SourceInfo};
+    use crate::event::{Operation, SourceInfo};
 
     fn create_test_event() -> ChangeEvent {
         let mut metadata = HashMap::new();

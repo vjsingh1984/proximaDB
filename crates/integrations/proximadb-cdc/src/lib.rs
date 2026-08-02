@@ -12,4 +12,6 @@
 //! Layering: integration-tier (`crates/integrations/*`); may depend only on
 //! foundation/horizontal/contracts.
 
+pub mod error;
 pub mod event;
+pub mod transform;
