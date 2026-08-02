@@ -6,11 +6,17 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
-use proximadb_records::ProximaRecord;
+use async_trait::async_trait;
+use proximadb_block_format::{
+    FlatRow, PaxBlockReader, sq8_codes_offset, sq8_decode_codes, sq8_region_header_len,
+};
+use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
+use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
 use serde::{Deserialize, Serialize};
 
 use crate::core::search::mvcc_resolution::{effective_version, is_append_only_oid};
 use crate::storage::engines::sst::error::{Result, SstError};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 const RUN_MAGIC: &[u8; 8] = b"PXSPLRUN";
 const RUN_FORMAT_VERSION: u16 = 1;
@@ -106,92 +112,432 @@ pub(crate) fn resolve_external_mvcc<I>(
 where
     I: IntoIterator<Item = Result<SpillRecord>>,
 {
-    if max_run_buffer_bytes == 0 {
-        return Err(SstError::InvalidArgument(
-            "spill MVCC run buffer must be greater than zero".to_string(),
-        ));
-    }
-    if max_merge_fan_in < 2 {
-        return Err(SstError::InvalidArgument(
-            "spill MVCC merge fan-in must be at least two".to_string(),
-        ));
-    }
-
-    let task_directory = tempfile::Builder::new()
-        .prefix("proximadb-compaction-spill-")
-        .tempdir_in(scratch_root)?;
-    let mut stats = ExternalMvccStats::default();
-    let mut runs = Vec::new();
-    let mut buffer = Vec::new();
-    let mut buffered_bytes = 0u64;
-
+    let mut builder = ExternalMvccBuilder::new(
+        scratch_root,
+        max_run_buffer_bytes,
+        max_merge_fan_in,
+        current_timestamp_ns,
+    )?;
     for record in records {
-        let record = record?;
+        builder.push(record?)?;
+    }
+    builder.finish()
+}
+
+/// Incremental front-end for the external MVCC pipeline. Async ranged readers
+/// push one decoded block at a time without first materializing the corpus.
+pub(crate) struct ExternalMvccBuilder {
+    task_directory: tempfile::TempDir,
+    max_run_buffer_bytes: u64,
+    max_merge_fan_in: usize,
+    current_timestamp_ns: i64,
+    stats: ExternalMvccStats,
+    runs: Vec<PathBuf>,
+    buffer: Vec<SpillRecord>,
+    buffered_bytes: u64,
+}
+
+impl ExternalMvccBuilder {
+    pub(crate) fn new(
+        scratch_root: &Path,
+        max_run_buffer_bytes: u64,
+        max_merge_fan_in: usize,
+        current_timestamp_ns: i64,
+    ) -> Result<Self> {
+        if max_run_buffer_bytes == 0 {
+            return Err(SstError::InvalidArgument(
+                "spill MVCC run buffer must be greater than zero".to_string(),
+            ));
+        }
+        if max_merge_fan_in < 2 {
+            return Err(SstError::InvalidArgument(
+                "spill MVCC merge fan-in must be at least two".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            task_directory: tempfile::Builder::new()
+                .prefix("proximadb-compaction-spill-")
+                .tempdir_in(scratch_root)?,
+            max_run_buffer_bytes,
+            max_merge_fan_in,
+            current_timestamp_ns,
+            stats: ExternalMvccStats::default(),
+            runs: Vec::new(),
+            buffer: Vec::new(),
+            buffered_bytes: 0,
+        })
+    }
+
+    pub(crate) fn push(&mut self, record: SpillRecord) -> Result<()> {
         let record_bytes = estimated_buffer_bytes(&record)?;
-        if !buffer.is_empty() && buffered_bytes.saturating_add(record_bytes) > max_run_buffer_bytes
+        if !self.buffer.is_empty()
+            && self.buffered_bytes.saturating_add(record_bytes) > self.max_run_buffer_bytes
         {
-            let path = task_directory
-                .path()
-                .join(format!("oid-pass-0000-run-{:06}.pxrun", runs.len()));
-            stats.scratch_bytes_written = stats
-                .scratch_bytes_written
-                .saturating_add(write_sorted_run(&path, &mut buffer)?);
-            runs.push(path);
-            buffered_bytes = 0;
+            self.flush_run()?;
         }
-        buffered_bytes = buffered_bytes.saturating_add(record_bytes);
-        stats.peak_run_buffer_bytes = stats.peak_run_buffer_bytes.max(buffered_bytes);
-        stats.input_records = stats.input_records.saturating_add(1);
-        buffer.push(record);
+        self.buffered_bytes = self.buffered_bytes.saturating_add(record_bytes);
+        self.stats.peak_run_buffer_bytes =
+            self.stats.peak_run_buffer_bytes.max(self.buffered_bytes);
+        self.stats.input_records = self.stats.input_records.saturating_add(1);
+        self.buffer.push(record);
+        Ok(())
     }
 
-    if !buffer.is_empty() {
-        let path = task_directory
+    fn flush_run(&mut self) -> Result<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        let path = self
+            .task_directory
             .path()
-            .join(format!("oid-pass-0000-run-{:06}.pxrun", runs.len()));
-        stats.scratch_bytes_written = stats
+            .join(format!("oid-pass-0000-run-{:06}.pxrun", self.runs.len()));
+        self.stats.scratch_bytes_written = self
+            .stats
             .scratch_bytes_written
-            .saturating_add(write_sorted_run(&path, &mut buffer)?);
-        runs.push(path);
+            .saturating_add(write_sorted_run(&path, &mut self.buffer)?);
+        self.runs.push(path);
+        self.buffered_bytes = 0;
+        Ok(())
     }
-    stats.initial_run_count = runs.len();
 
-    let mut pass = 0usize;
-    while runs.len() > max_merge_fan_in {
-        pass = pass.saturating_add(1);
-        let mut next_runs = Vec::with_capacity(runs.len().div_ceil(max_merge_fan_in));
-        for (group_index, group) in runs.chunks(max_merge_fan_in).enumerate() {
-            let output = task_directory
-                .path()
-                .join(format!("oid-pass-{pass:04}-run-{group_index:06}.pxrun"));
-            stats.max_open_runs = stats.max_open_runs.max(group.len());
-            stats.scratch_bytes_written = stats
-                .scratch_bytes_written
-                .saturating_add(merge_sorted_runs(group, &output)?);
-            next_runs.push(output);
+    pub(crate) fn finish(mut self) -> Result<ExternalMvccOutput> {
+        self.flush_run()?;
+        self.stats.initial_run_count = self.runs.len();
+
+        let mut pass = 0usize;
+        while self.runs.len() > self.max_merge_fan_in {
+            pass = pass.saturating_add(1);
+            let mut next_runs = Vec::with_capacity(self.runs.len().div_ceil(self.max_merge_fan_in));
+            for (group_index, group) in self.runs.chunks(self.max_merge_fan_in).enumerate() {
+                let output = self
+                    .task_directory
+                    .path()
+                    .join(format!("oid-pass-{pass:04}-run-{group_index:06}.pxrun"));
+                self.stats.max_open_runs = self.stats.max_open_runs.max(group.len());
+                self.stats.scratch_bytes_written = self
+                    .stats
+                    .scratch_bytes_written
+                    .saturating_add(merge_sorted_runs(group, &output)?);
+                next_runs.push(output);
+            }
+            for old_run in &self.runs {
+                std::fs::remove_file(old_run)?;
+            }
+            self.runs = next_runs;
         }
-        for old_run in &runs {
+        self.stats.merge_pass_count = pass;
+
+        let output_path = self.task_directory.path().join("mvcc-winners.pxrun");
+        self.stats.max_open_runs = self.stats.max_open_runs.max(self.runs.len());
+        let (bytes_written, output_records) =
+            write_mvcc_winners(&self.runs, &output_path, self.current_timestamp_ns)?;
+        self.stats.scratch_bytes_written = self
+            .stats
+            .scratch_bytes_written
+            .saturating_add(bytes_written);
+        self.stats.output_records = output_records;
+        for old_run in &self.runs {
             std::fs::remove_file(old_run)?;
         }
-        runs = next_runs;
-    }
-    stats.merge_pass_count = pass;
 
-    let output_path = task_directory.path().join("mvcc-winners.pxrun");
-    stats.max_open_runs = stats.max_open_runs.max(runs.len());
-    let (bytes_written, output_records) =
-        write_mvcc_winners(&runs, &output_path, current_timestamp_ns)?;
-    stats.scratch_bytes_written = stats.scratch_bytes_written.saturating_add(bytes_written);
-    stats.output_records = output_records;
-    for old_run in &runs {
-        std::fs::remove_file(old_run)?;
+        Ok(ExternalMvccOutput {
+            task_directory: self.task_directory,
+            output_path,
+            stats: self.stats,
+        })
+    }
+}
+
+/// Read port used by spill compaction. Keeping it smaller than `FileSystem`
+/// makes the one-block-at-a-time contract directly testable with an in-memory
+/// range source while production delegates to the scheme-aware factory.
+#[async_trait]
+pub(crate) trait CompactionRangeSource: Send + Sync {
+    async fn size(&self, path: &str) -> Result<u64>;
+    async fn read_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>>;
+    async fn read_all(&self, path: &str) -> Result<Vec<u8>>;
+}
+
+#[async_trait]
+impl CompactionRangeSource for FilesystemFactory {
+    async fn size(&self, path: &str) -> Result<u64> {
+        Ok(self.metadata(path).await?.size)
     }
 
-    Ok(ExternalMvccOutput {
-        task_directory,
-        output_path,
-        stats,
-    })
+    async fn read_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>> {
+        Ok(FilesystemFactory::read_range(self, path, offset, length).await?)
+    }
+
+    async fn read_all(&self, path: &str) -> Result<Vec<u8>> {
+        Ok(FilesystemFactory::read(self, path).await?)
+    }
+}
+
+/// Physical shape of the compaction input pass. `largest_range_bytes` is the
+/// concrete assertion that coalesced inputs were never whole-object decoded.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct RangedInputStats {
+    pub(crate) input_files: usize,
+    pub(crate) coalesced_files: usize,
+    pub(crate) legacy_whole_file_fallbacks: usize,
+    pub(crate) block_range_reads: u64,
+    pub(crate) sq8_range_reads: u64,
+    pub(crate) largest_range_bytes: u64,
+}
+
+impl RangedInputStats {
+    fn observe_range(&mut self, length: u64) {
+        self.largest_range_bytes = self.largest_range_bytes.max(length);
+    }
+}
+
+/// Range-decode immutable inputs into external MVCC runs.
+///
+/// Coalesced PAX reads its header and footer once, then alternates one Region-D
+/// block with only that block's fixed-stride Region-B SQ8 rows. Legacy inputs
+/// remain mixed-read-safe through the canonical whole-file router, but only one
+/// legacy file is resident at a time. This fallback is observable and is not a
+/// claim of bounded memory for obsolete formats.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn resolve_external_mvcc_from_segments(
+    source: &dyn CompactionRangeSource,
+    input_paths: &[String],
+    scratch_root: &Path,
+    max_run_buffer_bytes: u64,
+    max_merge_fan_in: usize,
+    current_timestamp_ns: i64,
+    embedding_model_ids: &[String],
+    user_column_keys: &[String],
+    tenant_ctx: Option<&str>,
+) -> Result<(ExternalMvccOutput, RangedInputStats)> {
+    let mut builder = ExternalMvccBuilder::new(
+        scratch_root,
+        max_run_buffer_bytes,
+        max_merge_fan_in,
+        current_timestamp_ns,
+    )?;
+    let mut ordinal = 0u64;
+    let mut stats = RangedInputStats {
+        input_files: input_paths.len(),
+        ..RangedInputStats::default()
+    };
+
+    for path in input_paths {
+        let size = source.size(path).await?;
+        let prefix_len = size.min(72);
+        let prefix = source.read_range(path, 0, prefix_len).await?;
+        stats.observe_range(prefix_len);
+
+        match SegmentHeaderPrefix::parse(&prefix) {
+            Ok(header) => {
+                read_coalesced_segment_into_builder(
+                    source,
+                    path,
+                    size,
+                    &header,
+                    embedding_model_ids,
+                    user_column_keys,
+                    tenant_ctx,
+                    &mut ordinal,
+                    &mut builder,
+                    &mut stats,
+                )
+                .await?;
+                stats.coalesced_files = stats.coalesced_files.saturating_add(1);
+            }
+            Err(_) => {
+                let bytes = source.read_all(path).await?;
+                let records = crate::storage::engines::sst::segment_format::read_segment_records(
+                    &bytes,
+                    embedding_model_ids,
+                    user_column_keys,
+                    tenant_ctx,
+                )?;
+                stats.legacy_whole_file_fallbacks =
+                    stats.legacy_whole_file_fallbacks.saturating_add(1);
+                for record in records {
+                    builder.push(SpillRecord::new(ordinal, record))?;
+                    ordinal = ordinal.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    Ok((builder.finish()?, stats))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn read_coalesced_segment_into_builder(
+    source: &dyn CompactionRangeSource,
+    path: &str,
+    segment_size: u64,
+    header: &SegmentHeaderPrefix,
+    embedding_model_ids: &[String],
+    user_column_keys: &[String],
+    tenant_ctx: Option<&str>,
+    ordinal: &mut u64,
+    builder: &mut ExternalMvccBuilder,
+    stats: &mut RangedInputStats,
+) -> Result<()> {
+    validate_extent("footer", header.footer_off, header.footer_len, segment_size)?;
+    let footer_bytes = source
+        .read_range(path, header.footer_off, header.footer_len)
+        .await?;
+    stats.observe_range(header.footer_len);
+    let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+    if footer.rabitq_off != header.rabitq_off
+        || footer.rabitq_len != header.rabitq_len
+        || footer.sq8_off != header.sq8_off
+        || footer.sq8_len != header.sq8_len
+    {
+        return Err(SstError::Compaction(format!(
+            "spill input {path} header/footer region extents disagree"
+        )));
+    }
+    if footer.has_f32_tier {
+        return Err(SstError::Compaction(format!(
+            "spill input {path} has an exact-f32 tier; bounded exact-tier projection is required before spill"
+        )));
+    }
+    if footer.embed_count > 1 {
+        return Err(SstError::Compaction(format!(
+            "spill input {path} has {} embedding columns; bounded multi-embedding projection is not implemented",
+            footer.embed_count
+        )));
+    }
+
+    let (validity, codes_base, sq8_params) = if footer.sq8_len > 0 {
+        validate_extent("SQ8", footer.sq8_off, footer.sq8_len, segment_size)?;
+        let row_count = usize::try_from(footer.row_count).map_err(|_| {
+            SstError::Compaction(format!("spill input {path} row count exceeds usize"))
+        })?;
+        let dim = usize::try_from(footer.embed_dim).map_err(|_| {
+            SstError::Compaction(format!("spill input {path} dimension exceeds usize"))
+        })?;
+        let bitmap_len = proximadb_block_format::coalesced_sq8::bitmap_len(row_count);
+        let codes_offset = sq8_codes_offset(row_count);
+        let expected_len = codes_offset
+            .checked_add(row_count.checked_mul(dim).ok_or_else(|| {
+                SstError::Compaction(format!("spill input {path} SQ8 size overflows usize"))
+            })?)
+            .ok_or_else(|| {
+                SstError::Compaction(format!("spill input {path} SQ8 extent overflows usize"))
+            })?;
+        if expected_len as u64 > footer.sq8_len {
+            return Err(SstError::Compaction(format!(
+                "spill input {path} SQ8 region is truncated: expected {expected_len}, got {}",
+                footer.sq8_len
+            )));
+        }
+        let bitmap_offset = footer
+            .sq8_off
+            .saturating_add(sq8_region_header_len() as u64);
+        let validity = source
+            .read_range(path, bitmap_offset, bitmap_len as u64)
+            .await?;
+        stats.observe_range(bitmap_len as u64);
+        (
+            validity,
+            footer.sq8_off.saturating_add(codes_offset as u64),
+            Some(
+                proximadb_block_format::coalesced_sq8::params_from_min_scale(
+                    footer.sq8_min,
+                    footer.sq8_scale,
+                ),
+            ),
+        )
+    } else {
+        (Vec::new(), 0, None)
+    };
+
+    let mut global_row = 0usize;
+    for block in &footer.blocks {
+        validate_extent(
+            "Region D block",
+            block.offset,
+            block.size as u64,
+            segment_size,
+        )?;
+        let block_bytes = source
+            .read_range(path, block.offset, block.size as u64)
+            .await?;
+        stats.block_range_reads = stats.block_range_reads.saturating_add(1);
+        stats.observe_range(block.size as u64);
+        let reader = PaxBlockReader::open(&block_bytes)?;
+        let mut records = FlatRow::from_block_reader(&reader)?
+            .into_iter()
+            .map(|flat| flat.into_record(embedding_model_ids, user_column_keys, tenant_ctx))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        if records.len() != block.row_count as usize {
+            return Err(SstError::Compaction(format!(
+                "spill input {path} block row count mismatch: footer={}, decoded={}",
+                block.row_count,
+                records.len()
+            )));
+        }
+
+        if let Some(params) = &sq8_params {
+            let dim = footer.embed_dim as usize;
+            let code_len = records.len().checked_mul(dim).ok_or_else(|| {
+                SstError::Compaction(format!("spill input {path} block SQ8 size overflows"))
+            })?;
+            let code_offset = codes_base
+                .saturating_add((global_row as u64).saturating_mul(footer.embed_dim as u64));
+            let codes = source
+                .read_range(path, code_offset, code_len as u64)
+                .await?;
+            stats.sq8_range_reads = stats.sq8_range_reads.saturating_add(1);
+            stats.observe_range(code_len as u64);
+            if codes.len() != code_len {
+                return Err(SstError::Compaction(format!(
+                    "spill input {path} returned a short SQ8 block range"
+                )));
+            }
+            for (row_in_block, record) in records.iter_mut().enumerate() {
+                let row = global_row.saturating_add(row_in_block);
+                let present = validity
+                    .get(row >> 3)
+                    .is_some_and(|byte| (byte >> (row & 7)) & 1 == 1);
+                if present && record.embeddings.is_empty() {
+                    let start = row_in_block.saturating_mul(dim);
+                    let end = start.saturating_add(dim);
+                    let vector = sq8_decode_codes(&codes[start..end], params);
+                    record.embeddings.push(EmbeddingCell {
+                        modality: "dense".to_string(),
+                        dim: footer.embed_dim,
+                        values: EmbeddingValues::Fp32(vector),
+                        ..EmbeddingCell::default()
+                    });
+                }
+            }
+        }
+
+        for record in records {
+            builder.push(SpillRecord::new(*ordinal, record))?;
+            *ordinal = (*ordinal).saturating_add(1);
+        }
+        global_row = global_row.saturating_add(block.row_count as usize);
+    }
+    if global_row as u64 != footer.row_count {
+        return Err(SstError::Compaction(format!(
+            "spill input {path} footer rows={} but block table rows={global_row}",
+            footer.row_count
+        )));
+    }
+    Ok(())
+}
+
+fn validate_extent(name: &str, offset: u64, length: u64, segment_size: u64) -> Result<()> {
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| SstError::Compaction(format!("spill input {name} extent overflows u64")))?;
+    if end > segment_size {
+        return Err(SstError::Compaction(format!(
+            "spill input {name} extent {offset}..{end} exceeds segment size {segment_size}"
+        )));
+    }
+    Ok(())
 }
 
 fn estimated_buffer_bytes(record: &SpillRecord) -> Result<u64> {
@@ -498,7 +844,10 @@ impl FramedRunReader {
 mod tests {
     use super::*;
     use crate::core::search::mvcc_resolution::MvccResolver;
-    use proximadb_records::ProximaRecord;
+    use proximadb_block_format::{BlockCompression, BlockMode, VectorQuant};
+    use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
+    use proximadb_storage_common::pax_block::PaxSegmentWriter;
+    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
     fn record(oid: &str, version: u64, created_at_ns: i64) -> ProximaRecord {
         ProximaRecord {
@@ -516,6 +865,54 @@ mod tests {
             .enumerate()
             .map(|(ordinal, record)| SpillRecord::new(ordinal as u64, record))
             .collect()
+    }
+
+    fn vector_record(oid: &str, seed: usize) -> ProximaRecord {
+        let values = (0..8)
+            .map(|dimension| (seed * 17 + dimension * 3) as f32 * 0.01)
+            .collect::<Vec<_>>();
+        ProximaRecord {
+            oid: oid.to_string(),
+            created_at_ns: seed as i64 + 1,
+            updated_at_ns: seed as i64 + 1,
+            embeddings: vec![EmbeddingCell {
+                model_id: "model_0".to_string(),
+                modality: "dense".to_string(),
+                dim: values.len() as u32,
+                values: EmbeddingValues::Fp32(values),
+                ..EmbeddingCell::default()
+            }],
+            ..ProximaRecord::default()
+        }
+    }
+
+    struct InMemoryRangeSource {
+        bytes: Vec<u8>,
+        range_reads: AtomicU64,
+        whole_reads: AtomicU64,
+    }
+
+    #[async_trait]
+    impl CompactionRangeSource for InMemoryRangeSource {
+        async fn size(&self, _path: &str) -> Result<u64> {
+            Ok(self.bytes.len() as u64)
+        }
+
+        async fn read_range(&self, _path: &str, offset: u64, length: u64) -> Result<Vec<u8>> {
+            self.range_reads.fetch_add(1, AtomicOrdering::Relaxed);
+            let start = usize::try_from(offset)
+                .map_err(|_| SstError::Storage("test range offset exceeds usize".to_string()))?;
+            let requested_end = offset.saturating_add(length);
+            let end = usize::try_from(requested_end)
+                .unwrap_or(usize::MAX)
+                .min(self.bytes.len());
+            Ok(self.bytes.get(start..end).unwrap_or_default().to_vec())
+        }
+
+        async fn read_all(&self, _path: &str) -> Result<Vec<u8>> {
+            self.whole_reads.fetch_add(1, AtomicOrdering::Relaxed);
+            Ok(self.bytes.clone())
+        }
     }
 
     #[test]
@@ -625,5 +1022,77 @@ mod tests {
             output.task_path().to_path_buf()
         };
         assert!(!task_path.exists());
+    }
+
+    #[tokio::test]
+    async fn coalesced_inputs_are_ranged_by_block_and_preserve_mvcc_vectors() {
+        let segment_dir = tempfile::tempdir().expect("segment tempdir");
+        let segment_path = segment_dir.path().join("input.pax");
+        let records = (0..64)
+            .rev()
+            .map(|i| vector_record(&format!("oid-{i:03}"), i))
+            .collect::<Vec<_>>();
+        let mut writer = PaxSegmentWriter::new(
+            &segment_path,
+            BlockMode::Pax,
+            BlockCompression::Lz4,
+            "collection",
+            0,
+            1,
+            Some(512),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_rerank_quant(VectorQuant::Sq8)
+        .with_coalesced_rabitq(true);
+        for record in &records {
+            writer.add_record(record).expect("add record");
+        }
+        writer.finish().expect("finish segment");
+        let bytes = std::fs::read(&segment_path).expect("read segment");
+        let source = InMemoryRangeSource {
+            bytes: bytes.clone(),
+            range_reads: AtomicU64::new(0),
+            whole_reads: AtomicU64::new(0),
+        };
+        let scratch = tempfile::tempdir().expect("scratch tempdir");
+
+        let (output, input_stats) = resolve_external_mvcc_from_segments(
+            &source,
+            &["az://container/input.pax".to_string()],
+            scratch.path(),
+            2_048,
+            3,
+            10_000,
+            &["model_0".to_string()],
+            &[],
+            None,
+        )
+        .await
+        .expect("ranged external MVCC");
+        let actual = output
+            .read_records()
+            .expect("read winners")
+            .into_iter()
+            .map(|record| record.record)
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual.len(), records.len());
+        assert!(actual.windows(2).all(|pair| pair[0].oid < pair[1].oid));
+        assert!(actual.iter().all(|record| {
+            record
+                .embeddings
+                .first()
+                .is_some_and(|embedding| embedding.dim == 8)
+        }));
+        assert_eq!(input_stats.coalesced_files, 1);
+        assert_eq!(input_stats.legacy_whole_file_fallbacks, 0);
+        assert!(input_stats.block_range_reads > 1);
+        assert_eq!(
+            source.whole_reads.load(AtomicOrdering::Relaxed),
+            0,
+            "coalesced compaction must never whole-object decode"
+        );
+        assert!(source.range_reads.load(AtomicOrdering::Relaxed) > 4);
+        assert!(input_stats.largest_range_bytes < bytes.len() as u64);
     }
 }
