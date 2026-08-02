@@ -1721,6 +1721,45 @@ impl SstConfig {
                         .to_string(),
                 );
             }
+            if !compaction.spill_scratch_amplification_factor.is_finite()
+                || compaction.spill_scratch_amplification_factor < 1.0
+            {
+                return Err(
+                    "compaction spill_scratch_amplification_factor must be finite and at least 1.0"
+                        .to_string(),
+                );
+            }
+            if !compaction.spill_available_disk_fraction.is_finite()
+                || !(0.0..=1.0).contains(&compaction.spill_available_disk_fraction)
+                || compaction.spill_available_disk_fraction == 0.0
+            {
+                return Err(
+                    "compaction spill_available_disk_fraction must be finite and in (0.0, 1.0]"
+                        .to_string(),
+                );
+            }
+            if compaction.spill_enabled {
+                if compaction.spill_working_memory_mb == 0 {
+                    return Err(
+                        "compaction spill_working_memory_mb must be greater than zero when spill is enabled"
+                            .to_string(),
+                    );
+                }
+                let spill_directory = compaction
+                    .spill_directory
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+                    .ok_or_else(|| {
+                        "compaction spill_directory is required when spill is enabled".to_string()
+                    })?;
+                if spill_directory.contains("://") {
+                    return Err(
+                        "compaction spill_directory must be a local filesystem path, not a URL"
+                            .to_string(),
+                    );
+                }
+            }
         }
         if let Some(path) = &self.cache_local_disk_path {
             if path.trim().is_empty() {
@@ -1870,6 +1909,31 @@ mod sst_config_validation_tests {
         compaction.memory_budget_fraction = 0.25;
         compaction.available_memory_fraction = 1.01;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn compaction_spill_policy_is_default_off_and_requires_local_scratch() {
+        let defaults = CompactionConfig::default();
+        assert!(!defaults.spill_enabled);
+
+        let mut config = SstConfig::default();
+        let compaction = config
+            .compaction_config
+            .get_or_insert_with(CompactionConfig::default);
+        compaction.spill_enabled = true;
+        assert!(config.validate().is_err());
+
+        let compaction = config
+            .compaction_config
+            .get_or_insert_with(CompactionConfig::default);
+        compaction.spill_directory = Some("az://container/scratch".to_string());
+        assert!(config.validate().is_err());
+
+        let compaction = config
+            .compaction_config
+            .get_or_insert_with(CompactionConfig::default);
+        compaction.spill_directory = Some("/var/lib/proximadb/compaction".to_string());
+        assert!(config.validate().is_ok());
     }
 
     #[test]

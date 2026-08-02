@@ -419,7 +419,10 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Caller-identity propagation — one foundation identity, resolved once, fail-closed composition
 | Proposed (2026-08-02)
 | Design review of the residual ABAC gaps after the records-read enforcement chain (#1379→#1391). Names the structural traps: per-surface identity types (the bridge tax that walls off `proximadb-api` handlers from any subject), the per-surface optional stamping of `tenant_stable_id`, and the seam's silent-open composition cell — an authenticated subject with an absent stable id (unminted tenant / no resolver) currently bypasses enforcement. Decision: complete the existing foundation primitive (`ResolvedRequestIdentity` gains `tenant_stable_id`, stamped once at resolution), make it the request carrier (REST middleware inserts the foundation Extension every crate can see), reduce `PortIdentity`/storage-context/billing to projections, and flip the seam rule to fail-closed on the absent policy key — sequenced strictly AFTER the default-tenant mint makes the stable id total. Slices: TD-ABAC-8 (carrier), TD-ABAC-9 (api-crate consumers), TD-ABAC-10 (pgwire constructor), TD-ABAC-11 (mint + strictness + cross-surface e2e ratchet).
-
+| link:ADR-088-deterministic-local-spill-compaction.adoc[ADR-088]
+| Deterministic local-spill compaction under independent RAM and scratch admission
+| Proposed (2026-08-02)
+| Adds a default-OFF alternate construction plan for compactions that cannot fit ADR-086's RAM envelope: block-ranged input, external MVCC and IVF orderings, and disk-backed PAX A/B/D/resolver construction under independent process-wide RAM and local-scratch reservations. The PAX format is unchanged; only the final segment is uploaded and published atomically. OSS owns the correctness mechanism and neutral meters, while Anvaiops owns tenant/economic placement policy. Tracked: TD-COMPACT-11.
 | link:ADR-0083-consolidated-catalog-identity-model.adoc[ADR-0083]
 | Consolidated catalog identity model — the composite is the SOLE canonical identity; retire the global u64
 | Accepted — Revision 2 (2026-07-30)

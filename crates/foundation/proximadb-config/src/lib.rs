@@ -872,6 +872,35 @@ pub struct CompactionConfig {
     /// Zero means automatic sizing from capacity and live availability.
     #[serde(default)]
     pub max_memory_mb: u64,
+
+    /// Enable deterministic local-disk spill when an otherwise eligible
+    /// compaction does not fit the in-memory projection. Default-off keeps the
+    /// existing execution path behavior-neutral until spill has baked.
+    #[serde(default)]
+    pub spill_enabled: bool,
+
+    /// Local scratch directory used only for recoverable compaction
+    /// intermediates. This must be a filesystem path, not an object-store URL.
+    #[serde(default)]
+    pub spill_directory: Option<String>,
+
+    /// Fixed RAM reservation for one spill compaction worker.
+    #[serde(default = "default_compaction_spill_working_memory_mb")]
+    pub spill_working_memory_mb: u64,
+
+    /// Conservative scratch-space reservation per byte of input segment data.
+    #[serde(default = "default_compaction_spill_scratch_amplification")]
+    pub spill_scratch_amplification_factor: f64,
+
+    /// Maximum share of currently available scratch space that all spill
+    /// compactions may reserve.
+    #[serde(default = "default_compaction_spill_available_disk_fraction")]
+    pub spill_available_disk_fraction: f64,
+
+    /// Optional absolute ceiling for all in-flight scratch reservations.
+    /// Zero means automatic sizing from live disk availability.
+    #[serde(default)]
+    pub spill_max_disk_mb: u64,
 }
 
 impl Default for CompactionConfig {
@@ -888,6 +917,12 @@ impl Default for CompactionConfig {
             memory_budget_fraction: default_compaction_memory_budget_fraction(),
             available_memory_fraction: default_compaction_available_memory_fraction(),
             max_memory_mb: 0,
+            spill_enabled: false,
+            spill_directory: None,
+            spill_working_memory_mb: default_compaction_spill_working_memory_mb(),
+            spill_scratch_amplification_factor: default_compaction_spill_scratch_amplification(),
+            spill_available_disk_fraction: default_compaction_spill_available_disk_fraction(),
+            spill_max_disk_mb: 0,
         }
     }
 }
@@ -905,6 +940,18 @@ fn default_compaction_memory_budget_fraction() -> f64 {
 }
 
 fn default_compaction_available_memory_fraction() -> f64 {
+    0.5
+}
+
+fn default_compaction_spill_working_memory_mb() -> u64 {
+    512
+}
+
+fn default_compaction_spill_scratch_amplification() -> f64 {
+    4.0
+}
+
+fn default_compaction_spill_available_disk_fraction() -> f64 {
     0.5
 }
 

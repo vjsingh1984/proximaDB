@@ -250,7 +250,7 @@ impl MvccResolver {
 
 /// Treat `record_version == 0` as version 1 for historical stored records.
 #[inline]
-fn effective_version(r: &ProximaRecord) -> u64 {
+pub(crate) fn effective_version(r: &ProximaRecord) -> u64 {
     if r.record_version == 0 {
         1
     } else {
@@ -259,7 +259,7 @@ fn effective_version(r: &ProximaRecord) -> u64 {
 }
 
 #[inline]
-fn is_append_only_oid(oid: &str) -> bool {
+pub(crate) fn is_append_only_oid(oid: &str) -> bool {
     oid.is_empty() || oid == "null" || oid == "none" || oid.trim().is_empty()
 }
 
