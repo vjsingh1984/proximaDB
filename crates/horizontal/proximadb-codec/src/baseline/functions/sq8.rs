@@ -58,9 +58,19 @@ impl Sq8Params {
 /// be represented by SQ8 and are carried via the null bitmap at the stripe
 /// layer). An empty / all-non-finite input yields a degenerate `[0, 0]` range.
 pub fn fit_params(values: &[f32]) -> Sq8Params {
+    fit_params_iter(values.iter().copied())
+}
+
+/// Fit SQ8 parameters from a stream of values without first flattening a
+/// segmented column into a second full-size `Vec<f32>`.
+///
+/// This is the canonical fitting kernel for both contiguous and segmented
+/// inputs. Keeping the reduction here prevents storage writers from copying an
+/// entire vector corpus merely to discover its min/max bounds.
+pub fn fit_params_iter(values: impl IntoIterator<Item = f32>) -> Sq8Params {
     let mut vmin = f32::INFINITY;
     let mut vmax = f32::NEG_INFINITY;
-    for &v in values {
+    for v in values {
         if v.is_finite() {
             if v < vmin {
                 vmin = v;
@@ -317,6 +327,18 @@ mod tests {
         assert_eq!(params.vmin, 0.0);
         assert_eq!(params.vmax, 1.0);
         assert_eq!(quantize_one(f32::NAN, &params), 0);
+    }
+
+    #[test]
+    fn streamed_fit_is_identical_to_contiguous_fit() {
+        let rows = [vec![-3.0, f32::NAN, 0.25], vec![7.5, f32::INFINITY, -1.25]];
+        let contiguous = rows.iter().flatten().copied().collect::<Vec<_>>();
+        let expected = fit_params(&contiguous);
+        let actual = fit_params_iter(rows.iter().flatten().copied());
+        assert_eq!(actual.scale.to_bits(), expected.scale.to_bits());
+        assert_eq!(actual.offset.to_bits(), expected.offset.to_bits());
+        assert_eq!(actual.vmin.to_bits(), expected.vmin.to_bits());
+        assert_eq!(actual.vmax.to_bits(), expected.vmax.to_bits());
     }
 
     #[test]

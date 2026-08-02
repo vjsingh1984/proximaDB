@@ -184,6 +184,22 @@ lazy_static! {
         "Wall-clock duration of completed LSM compactions",
         vec![0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
     );
+    pub static ref COMPACTION_MEMORY_RESERVED_BYTES: IntGauge = gauge(
+        "proximadb_compaction_memory_reserved_bytes",
+        "Projected peak resident bytes reserved by all in-flight compactions",
+    );
+    pub static ref COMPACTION_MEMORY_ADMISSION_WAITS_TOTAL: IntCounter = counter(
+        "proximadb_compaction_memory_admission_waits_total",
+        "Compaction tasks that waited for process-wide weighted memory admission",
+    );
+    pub static ref COMPACTION_QUEUE_DEPTH: IntGauge = gauge(
+        "proximadb_compaction_queue_depth",
+        "Compaction tasks queued across all collections",
+    );
+    pub static ref COMPACTION_RUNNING: IntGauge = gauge(
+        "proximadb_compaction_running",
+        "Compaction tasks currently executing across all collections",
+    );
 }
 
 /// Mirror monotonic cache-internal local-disk counters into Prometheus counters and
@@ -239,6 +255,10 @@ pub fn touch() {
     COMPACTIONS_TOTAL.get();
     COMPACTION_BYTES_READ_TOTAL.get();
     COMPACTION_BYTES_WRITTEN_TOTAL.get();
+    COMPACTION_MEMORY_RESERVED_BYTES.get();
+    COMPACTION_MEMORY_ADMISSION_WAITS_TOTAL.get();
+    COMPACTION_QUEUE_DEPTH.get();
+    COMPACTION_RUNNING.get();
     let _ = COMPACTION_SECONDS.get_sample_count();
 }
 

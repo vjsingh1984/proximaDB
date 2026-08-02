@@ -1,0 +1,23 @@
+[package]
+name = "proximadb-cdc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Change-Data-Capture event types + runtime — extracted from the root crate (TD-DECOMP-7)"
+
+[lib]
+name = "proximadb_cdc"
+path = "src/lib.rs"
+
+[dependencies]
+# `event` uses serde (derive) + serde_json (Value/ser) + rand (event-id gen).
+# Connector/sink/transform slices (later) add tokio/async-trait/prost/etc.
+# Integration-tier: may depend only on foundation/horizontal/contracts.
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

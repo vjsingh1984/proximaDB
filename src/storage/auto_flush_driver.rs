@@ -46,7 +46,7 @@ use crate::storage::write_fence::StorageWriteFence;
 pub struct AutoFlushDriver {
     policy: FlushPolicy,
     #[cfg(feature = "axis")]
-    axis_index_manager: Arc<AxisManager>,
+    axis_index_manager: Option<Arc<AxisManager>>,
     /// A6 storage-write fence (default-OFF). Captured at spawn time; on the live
     /// server it is injected into the storage engine post-construction, so this
     /// may be `None` here — acceptable at MVP (single-pod, fence default-OFF).
@@ -64,7 +64,7 @@ impl AutoFlushDriver {
     /// `flush_interval_secs = 0` and `wal_max_bytes = 0` makes this a no-op.
     pub fn spawn(
         policy: FlushPolicy,
-        #[cfg(feature = "axis")] axis_index_manager: Arc<AxisManager>,
+        #[cfg(feature = "axis")] axis_index_manager: Option<Arc<AxisManager>>,
         storage_write_fence: Option<Arc<dyn StorageWriteFence>>,
     ) {
         if !policy.needs_scheduler() {
@@ -184,7 +184,7 @@ impl AutoFlushDriver {
             pending.spawn(async move {
                 let start = Instant::now();
                 #[cfg(feature = "axis")]
-                let axis_arg: Option<&AxisManager> = Some(&task_axis);
+                let axis_arg: Option<&AxisManager> = task_axis.as_deref();
                 #[cfg(not(feature = "axis"))]
                 let axis_arg: Option<&()> = None;
                 let result = materialize_collection(

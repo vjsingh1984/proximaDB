@@ -131,6 +131,7 @@ members = [
     "crates/query/proximadb-vector-query",
     "crates/binding/proximadb-spark-jni",
     "crates/binding/proximadb-mongodb-parser",
+    "crates/integrations/proximadb-cdc",
 ]
 
 [workspace.package]
@@ -216,6 +217,7 @@ proximadb-relational-frontend = { path = "crates/query/proximadb-relational-fron
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
 proximadb-abac = { path = "crates/control/proximadb-abac" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-cdc = { path = "crates/integrations/proximadb-cdc" }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 arc-swap = "1.7"
 dashmap = "6.1.0"
@@ -363,6 +365,7 @@ proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-cdc = { workspace = true }
 proximadb-abac = { path = "crates/control/proximadb-abac", optional = true }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 proximadb-api = { path = "crates/platform/proximadb-api" }

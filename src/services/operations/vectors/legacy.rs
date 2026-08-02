@@ -81,17 +81,13 @@ use super::write::{
 };
 
 /// ADR-070 / ADR-081: AXIS is a configured projection, not an automatic cost
-/// paid by every vector collection. PAX-only collections carry no index config;
-/// the explicit RawF32 compatibility tag retains the established AXIS path.
+/// paid by every vector collection. PAX-only collections carry no index config.
+/// Encoding/layout tags are not index declarations and therefore cannot enable
+/// AXIS by themselves.
 #[cfg_attr(not(feature = "axis"), allow(dead_code))]
-fn collection_uses_axis_indexes(collection: &Collection) -> bool {
-    collection.config.as_ref().is_some_and(|config| {
-        !config.index_configs.is_empty()
-            || config
-                .tags
-                .iter()
-                .any(|tag| tag.trim().eq_ignore_ascii_case("pax_vector_format:off"))
-    })
+fn collection_uses_axis_indexes(axis_runtime_enabled: bool, collection: &Collection) -> bool {
+    axis_runtime_enabled
+        && crate::storage::traits::collection_declares_axis_index(collection.config.as_ref())
 }
 
 // Import vector query service contract (Phase 2.1)
@@ -520,6 +516,12 @@ pub struct VectorOperationsService {
     #[cfg(feature = "axis")]
     axis_index_manager: Arc<crate::index::AxisManager>,
 
+    /// Runtime AXIS master switch. The compile feature only makes the
+    /// capability available; no collection may feed, query, or maintain AXIS
+    /// while this process-level policy is false.
+    #[cfg(feature = "axis")]
+    axis_runtime_enabled: bool,
+
     /// Collection port for metadata and configuration (Phase 9 / Task #76)
     collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     /// Optional global cache orchestrator for richer cache stats/prefetch
@@ -827,7 +829,8 @@ impl VectorOperationsService {
             .validate_tenant_collection_access(&req.collection_id, tenant_context)
             .await?
             .to_string();
-        self.search_v1(req, None, None).await
+        self.search_v1(req, proximadb_runtime::PortIdentity::anonymous())
+            .await
     }
 
     /// Execute canonical rich-record vector search.
@@ -839,8 +842,7 @@ impl VectorOperationsService {
         &self,
         request: RichSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichSearchResponse> {
         // TD-METRICS-1: this — not the query-facade adapter — is the entry the
         // canonical REST v2 record search actually traverses (verified live:
@@ -853,8 +855,8 @@ impl VectorOperationsService {
             .search_records_with_tenant_context_inner(
                 request,
                 tenant_context,
-                subject,
-                tenant_stable_id,
+                identity.subject,
+                identity.tenant_stable_id,
             )
             .await;
         if result.is_err() {
@@ -934,27 +936,17 @@ impl VectorOperationsService {
         Ok(resp)
     }
 
-    /// Execute canonical rich-record get.
+    /// Execute canonical rich-record get: fetches the record, then admit-checks
+    /// the single result against `identity.subject`'s security predicate
+    /// (fail-closed on deny); a subject-less identity is a pass-through
+    /// (gRPC/internal callers). Enforcement is `abac-policy`-gated; default
+    /// builds pass the identity through ignored. (TD-ABAC-7: one method,
+    /// identity decides — no `_abac` twin.)
     pub async fn get_record_with_tenant_context(
         &self,
         request: RichRecordGetRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-    ) -> Result<RichRecordGetResponse> {
-        self.get_record_with_tenant_context_abac(request, tenant_context, None, None)
-            .await
-    }
-
-    /// ABAC-aware rich-record get: fetches the record, then admit-checks the
-    /// single result against the subject's security predicate (fail-closed on
-    /// deny). The gRPC/internal callers keep the no-subject delegate (no
-    /// enforcement); the REST v2 surface passes the request subject. Enforcement
-    /// is `abac-policy`-gated; default builds pass the subject through ignored.
-    pub async fn get_record_with_tenant_context_abac(
-        &self,
-        request: RichRecordGetRequest,
-        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichRecordGetResponse> {
         let collection_id = self
             .validate_tenant_collection_access(&request.collection_id, tenant_context)
@@ -983,10 +975,15 @@ impl VectorOperationsService {
 
         #[cfg(feature = "abac-policy")]
         let record = self
-            .admit_record_abac(record, subject, tenant_stable_id, &collection_id)
+            .admit_record_abac(
+                record,
+                identity.subject,
+                identity.tenant_stable_id,
+                &collection_id,
+            )
             .await;
         #[cfg(not(feature = "abac-policy"))]
-        let _ = (subject, tenant_stable_id);
+        let _ = identity;
 
         Ok(record)
     }
@@ -1397,8 +1394,7 @@ impl VectorOperationsService {
     pub async fn search_v1(
         &self,
         req: crate::proto::proximadb_v1::VectorSearchRequest,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let collection_id = req.collection_id.clone();
         let top_k = req.top_k as usize;
@@ -1418,8 +1414,8 @@ impl VectorOperationsService {
             include_vectors,
             include_metadata,
             filter,
-            subject,
-            tenant_stable_id,
+            identity.subject,
+            identity.tenant_stable_id,
         )
         .await
     }
@@ -1777,6 +1773,10 @@ impl VectorOperationsService {
             query_cache,
             #[cfg(feature = "axis")]
             axis_index_manager,
+            #[cfg(feature = "axis")]
+            // Fail closed for direct/internal construction. Production boot
+            // applies the configured runtime policy through the builder below.
+            axis_runtime_enabled: false,
             collection_port,
             orchestrator: None,
 
@@ -1796,6 +1796,35 @@ impl VectorOperationsService {
             directory_cache: None,
             affinity_registry: None,
         }
+    }
+
+    /// Apply the process-level AXIS policy resolved from
+    /// `storage.optimization.enable_axis_indexes`.
+    #[cfg(feature = "axis")]
+    pub fn with_axis_runtime_enabled(mut self, enabled: bool) -> Self {
+        self.axis_runtime_enabled = enabled;
+        self
+    }
+
+    /// Whether continuous reclustering may touch this collection.
+    ///
+    /// This intentionally checks all runtime gates before the discovery pass
+    /// reads any records: process policy, collection index intent, and an
+    /// already-published served index. Recluster maintains an index; it does
+    /// not bootstrap one by cloning the whole corpus.
+    #[cfg(feature = "axis")]
+    pub async fn has_reclusterable_axis_index(&self, collection_id: &str) -> Result<bool> {
+        if !self.axis_runtime_enabled {
+            return Ok(false);
+        }
+        let collection = self.get_or_load_collection(collection_id).await?;
+        if !collection_uses_axis_indexes(true, &collection) {
+            return Ok(false);
+        }
+        Ok(self
+            .axis_index_manager
+            .has_served_index(&collection.id)
+            .await)
     }
 
     /// Set tenant manager for multi-tenant support (builder-style)
@@ -4073,7 +4102,8 @@ impl VectorOperationsService {
         // the index. This avoids the 8.6GB RSS + minutes of IVF training for
         // cost-optimized, object-storage-backed collections.
         #[cfg(feature = "axis")]
-        let collection_has_axis_indexes = collection_uses_axis_indexes(&collection);
+        let collection_has_axis_indexes =
+            collection_uses_axis_indexes(self.axis_runtime_enabled, &collection);
         #[cfg(not(feature = "axis"))]
         let collection_has_axis_indexes = false;
 
@@ -4629,7 +4659,8 @@ impl VectorOperationsService {
         #[cfg(feature = "axis")]
         let collection = self.get_or_load_collection(&collection_id).await?;
         #[cfg(feature = "axis")]
-        let axis_duration = if collection_uses_axis_indexes(&collection) {
+        let axis_duration = if collection_uses_axis_indexes(self.axis_runtime_enabled, &collection)
+        {
             let axis_start = std::time::Instant::now();
             for record in vectors.iter() {
                 if let Err(e) = self
@@ -6371,8 +6402,9 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     async fn search(
         &self,
         mut request: crate::proto::proximadb_v1::VectorSearchRequest,
-        tenant_id: Option<&str>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let tenant_id = identity.tenant_id;
         // TD-XMODAL-8: the cross-modal `vector_search` UDTF reaches this port carrying the pgwire
         // connection tenant. Resolve the collection UNDER that tenant — the same tenant-scoped
         // name→canonical-id resolution the REST record path does via
@@ -6389,7 +6421,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         {
             request.collection_id = collection.id;
         }
-        self.search_v1(request, None, None).await
+        self.search_v1(request, identity).await
     }
 
     /// TD-XMODAL-4 S2: the single canonical native kernel for both the pgvector
@@ -6740,7 +6772,7 @@ mod axis_insert_gate_tests {
             }),
             ..Default::default()
         };
-        assert!(!collection_uses_axis_indexes(&collection));
+        assert!(!collection_uses_axis_indexes(true, &collection));
     }
 
     #[test]
@@ -6752,11 +6784,16 @@ mod axis_insert_gate_tests {
             }),
             ..Default::default()
         };
-        assert!(collection_uses_axis_indexes(&collection));
+        assert!(collection_uses_axis_indexes(true, &collection));
+
+        assert!(
+            !collection_uses_axis_indexes(false, &collection),
+            "the runtime master switch must win over collection index intent"
+        );
     }
 
     #[test]
-    fn raw_f32_compatibility_tag_feeds_axis() {
+    fn format_tag_without_index_config_does_not_feed_axis() {
         let collection = Collection {
             config: Some(CollectionConfig {
                 tags: vec!["pax_vector_format:off".to_string()],
@@ -6764,7 +6801,12 @@ mod axis_insert_gate_tests {
             }),
             ..Default::default()
         };
-        assert!(collection_uses_axis_indexes(&collection));
+        assert!(!collection_uses_axis_indexes(true, &collection));
+    }
+
+    #[test]
+    fn absent_collection_config_does_not_feed_axis() {
+        assert!(!collection_uses_axis_indexes(true, &Collection::default()));
     }
 }
 

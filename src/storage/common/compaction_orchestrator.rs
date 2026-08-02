@@ -730,6 +730,40 @@ impl StagingDetector {
         name.starts_with("__") || name.contains(".tmp") || name.contains(".staging")
     }
 
+    /// Check URL/path components *below* the listed data prefix.
+    ///
+    /// Flat object-store listings commonly return a tiered basename while the
+    /// authoritative URL retains a nested `__flush` or `__compact` component.
+    /// The prefix itself is deliberately excluded: Linux `tempfile` roots are
+    /// named `/tmp/.tmpXXXX`, and treating that ambient parent as staging makes
+    /// every file in a local test/embedded collection disappear from discovery.
+    pub fn is_staging_path_under(&self, data_prefix: &str, path: &str) -> bool {
+        fn without_local_scheme(value: &str) -> &str {
+            value.strip_prefix("file://").unwrap_or(value)
+        }
+
+        let prefix = without_local_scheme(data_prefix).trim_end_matches('/');
+        let candidate = without_local_scheme(path);
+        let relative = candidate.strip_prefix(prefix).and_then(|suffix| {
+            if suffix.is_empty() || suffix.starts_with('/') {
+                Some(suffix.trim_start_matches('/'))
+            } else {
+                None
+            }
+        });
+
+        match relative {
+            Some(relative) => relative
+                .split('/')
+                .filter(|component| !component.is_empty())
+                .any(|component| self.is_staging(component)),
+            None => path
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| self.is_staging(name)),
+        }
+    }
+
     /// Get staging prefix for atomic operations
     pub fn staging_prefix() -> &'static str {
         "__staging_"
@@ -799,8 +833,11 @@ impl TieredFileRegistry {
 
         for entry in entries {
             // Skip staging files/directories
-            if self.staging_detector.is_staging(&entry.name) {
-                debug!("⏭️  Skipping staging: {}", entry.name);
+            if self
+                .staging_detector
+                .is_staging_path_under(data_directory, &entry.url)
+            {
+                debug!("⏭️  Skipping staging object: {}", entry.url);
                 continue;
             }
 
@@ -1171,17 +1208,31 @@ mod tests {
     #[tokio::test]
     async fn cloud_prefix_discovery_lists_without_exact_prefix_object() {
         let segment_name = "L0_20260730T120000_deadbeef.pax";
+        let staged_segment_name = "L0_20260730T120001_cafebabe.pax";
         let filesystem = PrefixOnlyFileSystem {
             exists_calls: AtomicUsize::new(0),
-            entries: vec![DirEntry {
-                name: segment_name.to_string(),
-                url: format!("az://segments/1/data/{segment_name}"),
-                metadata: FsFileMetadata {
-                    size: 4096,
-                    is_directory: false,
-                    ..Default::default()
+            entries: vec![
+                DirEntry {
+                    name: segment_name.to_string(),
+                    url: format!("az://segments/1/data/{segment_name}"),
+                    metadata: FsFileMetadata {
+                        size: 4096,
+                        is_directory: false,
+                        ..Default::default()
+                    },
                 },
-            }],
+                DirEntry {
+                    // Flat object-store listings expose the basename here;
+                    // only the URL retains the __flush path component.
+                    name: staged_segment_name.to_string(),
+                    url: format!("az://segments/1/data/__flush/{staged_segment_name}"),
+                    metadata: FsFileMetadata {
+                        size: 8192,
+                        is_directory: false,
+                        ..Default::default()
+                    },
+                },
+            ],
         };
 
         let files = TieredFileRegistry::new()
@@ -1304,5 +1355,18 @@ mod tests {
         assert!(detector.is_staging("file.tmp"));
         assert!(detector.is_staging("file.staging"));
         assert!(!detector.is_staging("normal_file.sstable"));
+
+        assert!(!detector.is_staging_path_under(
+            "/tmp/.tmp-parent/data",
+            "file:///tmp/.tmp-parent/data/L0_20260802T010203_deadbeef.pax"
+        ));
+        assert!(detector.is_staging_path_under(
+            "az://segments/1/data",
+            "az://segments/1/data/__flush/L0_20260802T010203_deadbeef.pax"
+        ));
+        assert!(!detector.is_staging_path_under(
+            "az://segments/1/data",
+            "az://segments/1/database/L0_20260802T010203_deadbeef.pax"
+        ));
     }
 }

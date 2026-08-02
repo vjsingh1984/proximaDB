@@ -21,6 +21,12 @@
 //! regardless of the collection's catalog object id (the test harness mints
 //! name-shaped ids that don't parse as the numeric object id).
 //!
+//! The `v1_*` tests prove the same enforcement on the **v1 search path**
+//! (`search_v1` — the entry the REST v1 + `/progressive/search` routes reach via
+//! `ApiHandlersPort::handle_vector_search_v1_for_tenant` → `VectorOpsPort::search`;
+//! progressive is a thin delegate to the same v1 handler, so one v1 test covers
+//! both routes).
+//!
 //! Default-OFF: this file compiles only under `--features abac-policy`.
 
 #![cfg(all(test, feature = "abac-policy"))]
@@ -37,7 +43,7 @@ use proximadb_abac::{
 use proximadb_catalog::fc_metamodel::{AttrValue, Effect, PolicyBinding, Scope};
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord, ProximaTreeNode};
-use proximadb_runtime::{RichRecordGetRequest, RichSearchRequest};
+use proximadb_runtime::{PortIdentity, RichRecordGetRequest, RichSearchRequest};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -46,6 +52,15 @@ const DIM: u32 = 4;
 const TENANT: u64 = 7;
 const OID_ENG: &str = "abac/record/eng";
 const OID_HR: &str = "abac/record/hr";
+
+/// The port-seam identity for a named ABAC subject under [`TENANT`].
+fn subject_identity(subject: &str) -> PortIdentity<'_> {
+    PortIdentity {
+        tenant_id: None,
+        subject: Some(subject),
+        tenant_stable_id: Some(TENANT),
+    }
+}
 
 /// Admit `alice` (dept=eng) under a `dept=eng` row predicate, scoped to
 /// `Namespace(0)` so it matches `resolve_vector_read_context`'s
@@ -112,6 +127,30 @@ fn request() -> RichSearchRequest {
     }
 }
 
+/// The proto-typed request the v1 REST + progressive routes carry.
+fn v1_request() -> proximadb::proto::proximadb_v1::VectorSearchRequest {
+    proximadb::proto::proximadb_v1::VectorSearchRequest {
+        collection_id: COLLECTION.to_string(),
+        queries: vec![proximadb::proto::proximadb_v1::SearchQuery {
+            vector: vec![1.0, 0.0, 0.0, 0.0],
+            filters: Default::default(),
+            advanced_filter: None,
+        }],
+        top_k: 10,
+        include_fields: None,
+        search_params: None,
+        distance_metric_override: None,
+        search_optimization: None,
+    }
+}
+
+fn v1_result_ids(resp: &proximadb::proto::proximadb_v1::VectorOperationResponse) -> Vec<String> {
+    resp.results
+        .as_ref()
+        .map(|r| r.results.iter().map(|rec| rec.id.clone()).collect())
+        .unwrap_or_default()
+}
+
 /// Build the service + collection + records once; the per-subject assertions
 /// share it.
 async fn fixture() -> (
@@ -145,7 +184,7 @@ async fn admitted_subject_sees_only_accessible_records_on_rest_records_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_records_with_tenant_context(request(), None, Some("alice"), Some(TENANT))
+        .search_records_with_tenant_context(request(), None, subject_identity("alice"))
         .await
         .expect("abac search");
 
@@ -166,7 +205,7 @@ async fn denied_subject_gets_empty_results_on_rest_records_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_records_with_tenant_context(request(), None, Some("mallory"), Some(TENANT))
+        .search_records_with_tenant_context(request(), None, subject_identity("mallory"))
         .await
         .expect("abac search");
 
@@ -185,7 +224,7 @@ async fn none_subject_is_passthrough_on_rest_records_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .search_records_with_tenant_context(request(), None, None, None)
+        .search_records_with_tenant_context(request(), None, PortIdentity::anonymous())
         .await
         .expect("abac search");
 
@@ -196,7 +235,7 @@ async fn none_subject_is_passthrough_on_rest_records_path() {
     );
 }
 
-// ── get-by-id path (`get_record_with_tenant_context_abac`) ──
+// ── get-by-id path (`get_record_with_tenant_context`) ──
 //
 // A point lookup has no filter slot to push into, so enforcement is a post-check
 // on the single fetched record: denied subject ⇒ None (fail-closed); admitted
@@ -218,18 +257,13 @@ async fn admitted_subject_gets_only_accessible_record_on_getbyid_path() {
     let (svc, _collections) = fixture().await;
 
     let eng = svc
-        .get_record_with_tenant_context_abac(
-            get_request(OID_ENG),
-            None,
-            Some("alice"),
-            Some(TENANT),
-        )
+        .get_record_with_tenant_context(get_request(OID_ENG), None, subject_identity("alice"))
         .await
         .expect("abac get");
     assert!(eng.is_some(), "alice (dept=eng) may GET the eng record");
 
     let hr = svc
-        .get_record_with_tenant_context_abac(get_request(OID_HR), None, Some("alice"), Some(TENANT))
+        .get_record_with_tenant_context(get_request(OID_HR), None, subject_identity("alice"))
         .await
         .expect("abac get");
     assert!(
@@ -244,12 +278,7 @@ async fn denied_subject_gets_no_record_on_getbyid_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .get_record_with_tenant_context_abac(
-            get_request(OID_ENG),
-            None,
-            Some("mallory"),
-            Some(TENANT),
-        )
+        .get_record_with_tenant_context(get_request(OID_ENG), None, subject_identity("mallory"))
         .await
         .expect("abac get");
     assert!(
@@ -264,11 +293,66 @@ async fn none_subject_is_passthrough_on_getbyid_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .get_record_with_tenant_context_abac(get_request(OID_ENG), None, None, None)
+        .get_record_with_tenant_context(get_request(OID_ENG), None, PortIdentity::anonymous())
         .await
         .expect("abac get");
     assert!(
         resp.is_some(),
         "a None subject (gRPC/internal path) may GET the record (passthrough)"
+    );
+}
+
+/// v1/progressive path: an admitted subject sees only `dept=eng` records.
+#[tokio::test]
+async fn v1_admitted_subject_sees_only_accessible_records() {
+    let (svc, _collections) = fixture().await;
+
+    let resp = svc
+        .search_v1(v1_request(), subject_identity("alice"))
+        .await
+        .expect("v1 abac search");
+
+    let ids = v1_result_ids(&resp);
+    assert!(
+        ids.iter().any(|id| id == OID_ENG),
+        "alice (dept=eng) must see the eng record on the v1 path; got {ids:?}"
+    );
+    assert!(
+        !ids.iter().any(|id| id == OID_HR),
+        "the hr record must be filtered out on the v1 path; got {ids:?}"
+    );
+}
+
+/// v1/progressive path: a denied subject gets an EMPTY result — fail-closed.
+#[tokio::test]
+async fn v1_denied_subject_gets_empty_results() {
+    let (svc, _collections) = fixture().await;
+
+    let resp = svc
+        .search_v1(v1_request(), subject_identity("mallory"))
+        .await
+        .expect("v1 abac search");
+
+    let ids = v1_result_ids(&resp);
+    assert!(
+        ids.is_empty(),
+        "mallory (unbound) must be denied on the v1 path — empty results (fail-closed); got {ids:?}"
+    );
+}
+
+/// v1/progressive path: a `None` subject (internal callers) is passthrough.
+#[tokio::test]
+async fn v1_none_subject_is_passthrough() {
+    let (svc, _collections) = fixture().await;
+
+    let resp = svc
+        .search_v1(v1_request(), PortIdentity::anonymous())
+        .await
+        .expect("v1 search");
+
+    let ids = v1_result_ids(&resp);
+    assert!(
+        ids.iter().any(|id| id == OID_ENG) && ids.iter().any(|id| id == OID_HR),
+        "a None subject must see both records on the v1 path (passthrough); got {ids:?}"
     );
 }

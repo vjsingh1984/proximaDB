@@ -422,7 +422,8 @@ fn write_pax_segment_ordered(
     // file-level header region for RaBitQ-quantized writes (default ON per the
     // ADR-061 pre-GA in-place amendment; `PROXIMADB_PAX_COALESCED_RABITQ=0` opts
     // out to the legacy in-block RaBitQ layout for mixed-read / measurement).
-    .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled());
+    .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled())
+    .with_expected_rows(records.len());
     // TD-DELVEC-1 WI-3a: capture the OID→position resolver (footer region, WI-2c)
     // so a cold-resident delete (WI-3b) can set a deletion-vector bit without
     // rewriting the segment. Feature-gated; default builds are byte-for-byte
@@ -439,10 +440,12 @@ fn write_pax_segment_ordered(
     }
     let trace = pax_write_trace();
     let t_encode = std::time::Instant::now();
-    match &plan {
+    // Consume the ordering plan here so its row-order/runs/model allocations are
+    // released before the writer's Region A/B finalization peak.
+    match plan {
         Some(plan) => {
             let mut next_run = 1usize;
-            for (ordered_row, &i) in plan.order.iter().enumerate() {
+            for (ordered_row, i) in plan.order.into_iter().enumerate() {
                 if plan
                     .runs
                     .get(next_run)

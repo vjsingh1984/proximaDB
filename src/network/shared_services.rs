@@ -1413,6 +1413,12 @@ impl SharedServices {
         // SharedServices field that AppState/route-health read.
         let recall_probe_gate = Arc::new(crate::catalog::RecallProbeGate::new());
 
+        // The Cargo feature is compile-time capability only. This runtime
+        // master switch must also be on before AXIS is registered with serving
+        // or any AXIS background maintenance loop is started.
+        #[cfg(feature = "axis")]
+        let axis_runtime_enabled = storage_config.optimization.enable_axis_indexes;
+
         // Create AxisManager for index operations (AXIS-gated: the whole index
         // engine + its registrations vanish from a PAX-exact-scan build).
         #[cfg(feature = "axis")]
@@ -1458,15 +1464,19 @@ impl SharedServices {
 
             let m = Arc::new(axis_manager_inner);
             debug!("✅ SharedServices::new - AxisManager created successfully");
-            // Make AXIS manager available to graph-first entity store by default
-            crate::storage::entity_store::orion_backend::set_global_axis_manager(m.clone());
-            // Make AXIS manager available to SST engine for HNSW/IVF search
-            crate::storage::engines::sst::core::set_sst_axis_manager(m.clone());
-            debug!(
-                "✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search"
-            );
-            // ADR-078: register the same manager for the shared flush→AXIS hook.
-            crate::storage::common::axis_flush_hook::set_flush_axis_manager(m.clone());
+            if axis_runtime_enabled {
+                // Make AXIS available only when both its compile capability and
+                // process-level policy are enabled. Collection-level intent is
+                // checked at the ingest/search boundaries.
+                crate::storage::entity_store::orion_backend::set_global_axis_manager(m.clone());
+                crate::storage::engines::sst::core::set_sst_axis_manager(m.clone());
+                crate::storage::common::axis_flush_hook::set_flush_axis_manager(m.clone());
+                debug!("✅ SharedServices::new - AXIS runtime enabled and registered with serving");
+            } else {
+                info!(
+                    "AXIS capability compiled but runtime-disabled by storage.optimization.enable_axis_indexes=false"
+                );
+            }
             m
         };
 
@@ -1529,33 +1539,31 @@ impl SharedServices {
             // Start the AXIS EventLog consumer as a background task (AXIS-gated).
             // This polls the EventLog and builds AXIS indexes when flush events occur.
             #[cfg(feature = "axis")]
-            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            if axis_runtime_enabled {
+                let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+                // TD-LIFECYCLE-1: registered (not leaked) so a clean shutdown
+                // can stop the loop; see services::shutdown_registry.
+                crate::services::shutdown_registry::register("axis-eventlog-consumer", shutdown_tx);
+                if let Some(event_log_service) = crate::services::events::log::event_log_service() {
+                    let _consumer_handle =
+                        crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
+                            event_log_service.inner(),
+                            axis_manager.clone(),
+                            filesystem_factory.clone(),
+                            collection_cache.clone(),
+                            orchestrator.clone(),
+                            shutdown_rx,
+                        )
+                        .await;
 
-            // TD-LIFECYCLE-1: registered (not leaked) so a clean shutdown
-            // can stop the loop; see services::shutdown_registry.
-            #[cfg(feature = "axis")]
-            crate::services::shutdown_registry::register("axis-eventlog-consumer", shutdown_tx);
-
-            #[cfg(feature = "axis")]
-            if let Some(event_log_service) = crate::services::events::log::event_log_service() {
-                let _consumer_handle =
-                    crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
-                        event_log_service.inner(),
-                        axis_manager.clone(),
-                        filesystem_factory.clone(),
-                        collection_cache.clone(),
-                        orchestrator.clone(),
-                        shutdown_rx,
-                    )
-                    .await;
-
-                info!(
-                    "✅ SharedServices: AXIS EventLog consumer started - background index processing is available for collections that explicitly configure indexes"
-                );
-            } else {
-                warn!(
-                    "⚠️ SharedServices: EventLog service unavailable after initialization; AXIS consumer not started."
-                );
+                    info!(
+                        "✅ SharedServices: AXIS EventLog consumer started for explicitly indexed collections"
+                    );
+                } else {
+                    warn!(
+                        "⚠️ SharedServices: EventLog service unavailable after initialization; AXIS consumer not started."
+                    );
+                }
             }
         }
 
@@ -1595,6 +1603,8 @@ impl SharedServices {
             // the SharedServices field so search-path recordings and
             // operator inspection share state.
             .with_affinity_registry(affinity_registry.clone());
+            #[cfg(feature = "axis")]
+            let svc = svc.with_axis_runtime_enabled(axis_runtime_enabled);
             // FA-2 (abac-policy): wire the durable ABAC enforcer into the vector
             // service so `unified_search_native` enforces the subject's accessibility
             // predicate on every search (push-down for conjunctive policies, post-filter
@@ -2299,7 +2309,11 @@ impl SharedServices {
                 vector_operations_service.unified_engine(),
             );
             #[cfg(feature = "axis")]
-            let vs = vs.with_index_manager(axis_manager.clone());
+            let vs = if axis_runtime_enabled {
+                vs.with_index_manager(axis_manager.clone())
+            } else {
+                vs
+            };
             vs
         });
         let graph_store = Arc::new(
@@ -2698,6 +2712,7 @@ impl SharedServices {
                     catalog_manager.clone(),
                     axis_manager.clone(),
                 )
+                .with_axis_runtime_enabled(axis_runtime_enabled)
             }
             #[cfg(not(feature = "axis"))]
             {
@@ -2733,7 +2748,7 @@ impl SharedServices {
         // Phase-5 recall observer (AXIS-gated): the whole job probes AXIS-managed
         // IVF/HNSW recall, so it is not spawned in a PAX-exact-scan build.
         #[cfg(feature = "axis")]
-        {
+        if axis_runtime_enabled {
             // Phase-5 recall observer (TD-075 / F2): periodically probes
             // quantized-vs-exact recall per collection and feeds the shared
             // RecallProbeGate, so the quantized IVF route opens once recall is
@@ -2762,7 +2777,8 @@ impl SharedServices {
                 "✅ SharedServices: RecallObserver spawned (Phase 5 recall gate + F1 recall-degradation trigger)"
             );
         }
-        {
+        #[cfg(feature = "axis")]
+        if axis_runtime_enabled {
             // Trigger arm (T1.9): the write-volume drift watcher is the first
             // live producer — it counts each collection's own write batches since
             // its last completed recluster (per-collection, not a global-LSN
@@ -2798,7 +2814,7 @@ impl SharedServices {
         // Recall-drift sweeper (AXIS-gated): walks `recall_target:`-tagged
         // collections and emits axis_recall_drift_* metrics — no AXIS, no drift.
         #[cfg(feature = "axis")]
-        {
+        if axis_runtime_enabled {
             // Recall-drift sweeper: every 5 min, walk every
             // collection with a `recall_target:` tag and emit a
             // Prometheus drift observation
@@ -3413,7 +3429,7 @@ mod rank_services_wiring_tests {
         async fn search(
             &self,
             _request: crate::proto::proximadb_v1::VectorSearchRequest,
-            _tenant_id: Option<&str>,
+            _identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
             Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                 success: true,

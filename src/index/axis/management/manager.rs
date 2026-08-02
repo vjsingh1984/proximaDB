@@ -3478,6 +3478,14 @@ impl AxisManager {
         self.hnsw_indexes.read().await.contains_key(collection_id)
     }
 
+    /// Whether a published ANN index currently serves this collection.
+    ///
+    /// Continuous reclustering is maintenance for an existing served index;
+    /// it must not bootstrap one by first materializing the entire collection.
+    pub async fn has_served_index(&self, collection_id: &str) -> bool {
+        self.has_ivf_index(collection_id).await || self.has_hnsw_index(collection_id).await
+    }
+
     /// Phase 8 F1 recluster apply-step for HNSW-served collections: rebuild the
     /// collection's HNSW graph from a complete record set and **atomically swap**
     /// it in as the served index. Same atomic-swap pattern as the IVF path — a
@@ -5539,6 +5547,22 @@ mod recluster_apply_tests {
             !results.is_empty(),
             "ColdBinaryOnly index must serve Stage-1 despite a closed recall gate"
         );
+    }
+
+    #[tokio::test]
+    async fn served_index_presence_is_false_until_an_index_is_published() {
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+
+        assert!(!manager.has_served_index("pax-only").await);
+
+        let records = batch("served", 40, 8, 1);
+        assert!(
+            manager
+                .rebuild_and_swap_ivf_index("indexed", &records)
+                .await
+                .unwrap()
+        );
+        assert!(manager.has_served_index("indexed").await);
     }
 
     #[tokio::test]

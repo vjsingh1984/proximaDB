@@ -6748,6 +6748,7 @@ dependencies = [
  "proximadb-cache",
  "proximadb-catalog",
  "proximadb-catalog-introspection",
+ "proximadb-cdc",
  "proximadb-cks-local",
  "proximadb-clustering-kernel",
  "proximadb-codec",
@@ -7066,6 +7067,16 @@ dependencies = [
  "serde",
  "sqlparser 0.59.0",
  "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "proximadb-cdc"
+version = "0.2.0"
+dependencies = [
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

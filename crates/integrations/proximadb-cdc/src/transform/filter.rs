@@ -18,7 +18,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::cdc::event::{ChangeEvent, ConnectorType, Operation};
+use crate::event::{ChangeEvent, ConnectorType, Operation};
 
 /// Action to take after filter evaluation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -463,7 +463,7 @@ impl FilterRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{RecordState, SourceInfo};
+    use crate::event::{RecordState, SourceInfo};
     use std::collections::HashMap;
 
     fn create_test_event() -> ChangeEvent {

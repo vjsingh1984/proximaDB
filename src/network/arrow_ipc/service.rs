@@ -1223,7 +1223,14 @@ impl ProximaFlightService {
             "arrow_flight.v2.records.search",
             crate::observability::predicate_diagnostics::scope(async {
                 self.record_search_port
-                    .search_record(request, Some(tenant_id))
+                    .search_record(
+                        request,
+                        proximadb_runtime::PortIdentity {
+                            tenant_id: Some(tenant_id),
+                            subject: None,
+                            tenant_stable_id,
+                        },
+                    )
                     .await
             }),
         )

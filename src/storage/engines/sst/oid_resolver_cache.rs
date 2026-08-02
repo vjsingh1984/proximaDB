@@ -189,6 +189,27 @@ impl OidResolverCache {
             self.sub_bytes(resolver_bytes(&entry.resolver));
         }
     }
+
+    /// Remove all entries whose key starts with `prefix` (collection-drop / bulk
+    /// retire — TD-DELVEC-1 C3). Mirrors `invalidate` but scans every shard +
+    /// matches by prefix. Miss-safe (no-op if nothing matches).
+    pub fn invalidate_prefix(&self, prefix: &str) {
+        for shard_lock in self.shards.iter() {
+            let Some(mut shard) = shard_lock.write().ok() else {
+                continue;
+            };
+            let to_remove: Vec<String> = shard
+                .keys()
+                .filter(|k| k.starts_with(prefix))
+                .cloned()
+                .collect();
+            for key in to_remove {
+                if let Some(entry) = shard.remove(&key) {
+                    self.sub_bytes(resolver_bytes(&entry.resolver));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -234,6 +255,26 @@ mod tests {
         cache.invalidate("seg-a");
         assert!(cache.get("seg-a").is_none());
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn invalidate_prefix_removes_matching_keeps_others() {
+        // TD-DELVEC-1 C3: collection-drop invalidates all entries under a prefix.
+        let cache = OidResolverCache::new(1024 * 1024);
+        cache.put("file:///data/col-a/seg-1.pax".into(), resolver(3));
+        cache.put("file:///data/col-a/seg-2.pax".into(), resolver(3));
+        cache.put("file:///data/col-b/seg-1.pax".into(), resolver(3));
+        assert_eq!(cache.len(), 3);
+
+        // Drop collection col-a → its two resolvers invalidated; col-b survives.
+        cache.invalidate_prefix("file:///data/col-a/");
+        assert!(cache.get("file:///data/col-a/seg-1.pax").is_none());
+        assert!(cache.get("file:///data/col-a/seg-2.pax").is_none());
+        assert!(
+            cache.get("file:///data/col-b/seg-1.pax").is_some(),
+            "col-b must survive"
+        );
+        assert_eq!(cache.len(), 1);
     }
 
     #[test]

@@ -17,13 +17,16 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::rich_search::{RichSearchRequest, RichSearchResponse};
+use crate::service_ports::PortIdentity;
 
 #[async_trait]
 pub trait RecordSearchPort: Send + Sync {
-    /// Run a canonical v2 search for `request.collection_id` under `tenant_id`.
+    /// Run a canonical v2 search for `request.collection_id` under
+    /// `identity.tenant_id`; `identity.subject` drives ABAC at the shared seam
+    /// (TD-ABAC-7) — `None` subject = passthrough.
     async fn search_record(
         &self,
         request: RichSearchRequest,
-        tenant_id: Option<&str>,
+        identity: PortIdentity<'_>,
     ) -> Result<RichSearchResponse>;
 }
