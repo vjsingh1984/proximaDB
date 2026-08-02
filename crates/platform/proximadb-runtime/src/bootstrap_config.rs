@@ -805,8 +805,10 @@ mod tests {
 
     #[test]
     fn test_server_config_multi_port() {
-        let mut config = MultiServerConfig::default();
-        config.unified_mode = false;
+        let mut config = MultiServerConfig {
+            unified_mode: false,
+            ..Default::default()
+        };
 
         // Verify each protocol gets its own port
         let http_addr = config.http_bind_address();
@@ -848,8 +850,10 @@ mod tests {
     fn test_protocol_detection() {
         // Test the unified mode protocol detection configuration
         // (actual TCP-level detection happens at runtime, but we verify the config wiring)
-        let mut config = MultiServerConfig::default();
-        config.unified_mode = true;
+        let config = MultiServerConfig {
+            unified_mode: true,
+            ..Default::default()
+        };
 
         // In unified mode, all protocols share one address
         let unified = config.unified_bind_address();

@@ -1024,6 +1024,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // Deliberately exercises the deprecated v1 ExecuteHybridQuery dispatch (TD-143).
+    #[allow(deprecated)]
     async fn unified_handlers_route_vector_hybrid_and_sql_operations() {
         let collection = Arc::new(MockCollectionPort::default());
         let vector_ops = Arc::new(MockVectorOpsPort::default());
@@ -1122,6 +1124,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // Deliberately exercises the deprecated v1 ExecuteHybridQuery dispatch (TD-143).
+    #[allow(deprecated)]
     async fn unified_handlers_report_missing_query_adapter_explicitly_and_sql_arrays_lower() {
         let handlers = make_handlers(
             Arc::new(MockCollectionPort::default()),

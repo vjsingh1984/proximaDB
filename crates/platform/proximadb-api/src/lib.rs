@@ -425,6 +425,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // Deliberately exercises the deprecated v1 ExecuteHybridQuery dispatch (TD-143).
+    #[allow(deprecated)]
     async fn recording_api_port_captures_all_protocol_dispatch_shapes() {
         let port = RecordingApiPort::new();
 
