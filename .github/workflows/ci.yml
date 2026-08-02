@@ -1351,6 +1351,17 @@ jobs:
         with:
           prefix-key: "v1-rust-compile-benches"
           shared-key: "benches"
+      # sccache MUST be installed: this job sets RUSTC_WRAPPER=sccache, so without
+      # the action cargo dies instantly ("could not execute process `sccache`").
+      # The step was missing while the env + stats step were present — the job is
+      # gated on medium_tier, so it only runs on develop→qa promotions and the gap
+      # went unexercised until it hard-failed #1378 across every rerun.
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
       - name: Install Dependencies
         run: |
           sudo apt-get update
