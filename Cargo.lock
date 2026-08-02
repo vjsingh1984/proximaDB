@@ -9557,14 +9557,15 @@ dependencies = [
 
 [[package]]
 name = "sandhi-core"
-version = "0.1.2"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6642eaf1e45226ba5f62344ef6fce7e058861b3abba5e0e067b69c2fe51e011b"
+checksum = "bcd8167e137bcbdbf7c96f56a9e7cba4dcb16b6eeba53dc96efb0666d5f6e9bd"
 dependencies = [
  "schemars",
  "serde",
  "serde_json",
  "time",
+ "tracing",
 ]
 
 [[package]]
