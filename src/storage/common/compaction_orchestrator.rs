@@ -730,12 +730,38 @@ impl StagingDetector {
         name.starts_with("__") || name.contains(".tmp") || name.contains(".staging")
     }
 
-    /// Check every URL/path component. Flat object-store listings commonly
-    /// return a tiered filename as `DirEntry::name` while the authoritative
-    /// URL still contains `__flush` or `__compact`; basename-only filtering
-    /// can therefore compact an unpublished object and duplicate its rows.
-    pub fn is_staging_path(&self, path: &str) -> bool {
-        path.split('/').any(|component| self.is_staging(component))
+    /// Check URL/path components *below* the listed data prefix.
+    ///
+    /// Flat object-store listings commonly return a tiered basename while the
+    /// authoritative URL retains a nested `__flush` or `__compact` component.
+    /// The prefix itself is deliberately excluded: Linux `tempfile` roots are
+    /// named `/tmp/.tmpXXXX`, and treating that ambient parent as staging makes
+    /// every file in a local test/embedded collection disappear from discovery.
+    pub fn is_staging_path_under(&self, data_prefix: &str, path: &str) -> bool {
+        fn without_local_scheme(value: &str) -> &str {
+            value.strip_prefix("file://").unwrap_or(value)
+        }
+
+        let prefix = without_local_scheme(data_prefix).trim_end_matches('/');
+        let candidate = without_local_scheme(path);
+        let relative = candidate.strip_prefix(prefix).and_then(|suffix| {
+            if suffix.is_empty() || suffix.starts_with('/') {
+                Some(suffix.trim_start_matches('/'))
+            } else {
+                None
+            }
+        });
+
+        match relative {
+            Some(relative) => relative
+                .split('/')
+                .filter(|component| !component.is_empty())
+                .any(|component| self.is_staging(component)),
+            None => path
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| self.is_staging(name)),
+        }
     }
 
     /// Get staging prefix for atomic operations
@@ -807,7 +833,10 @@ impl TieredFileRegistry {
 
         for entry in entries {
             // Skip staging files/directories
-            if self.staging_detector.is_staging_path(&entry.url) {
+            if self
+                .staging_detector
+                .is_staging_path_under(data_directory, &entry.url)
+            {
                 debug!("⏭️  Skipping staging object: {}", entry.url);
                 continue;
             }
@@ -1326,5 +1355,18 @@ mod tests {
         assert!(detector.is_staging("file.tmp"));
         assert!(detector.is_staging("file.staging"));
         assert!(!detector.is_staging("normal_file.sstable"));
+
+        assert!(!detector.is_staging_path_under(
+            "/tmp/.tmp-parent/data",
+            "file:///tmp/.tmp-parent/data/L0_20260802T010203_deadbeef.pax"
+        ));
+        assert!(detector.is_staging_path_under(
+            "az://segments/1/data",
+            "az://segments/1/data/__flush/L0_20260802T010203_deadbeef.pax"
+        ));
+        assert!(!detector.is_staging_path_under(
+            "az://segments/1/data",
+            "az://segments/1/database/L0_20260802T010203_deadbeef.pax"
+        ));
     }
 }
