@@ -1198,6 +1198,7 @@ impl ProximaFlightService {
         &self,
         ticket: FlightSearchTicket,
         tenant_id: &str,
+        subject: Option<&str>,
     ) -> Result<Vec<arrow_array::RecordBatch>> {
         let include_vector = ticket.include_vector;
         let request = ticket.to_rich_request()?;
@@ -1227,7 +1228,7 @@ impl ProximaFlightService {
                         request,
                         proximadb_runtime::PortIdentity {
                             tenant_id: Some(tenant_id),
-                            subject: None,
+                            subject,
                             tenant_stable_id,
                         },
                     )
@@ -1556,7 +1557,11 @@ impl FlightService for ProximaFlightService {
             )?;
 
             let batches = self
-                .handle_v2_search(search_ticket, &auth_context.tenant_id)
+                .handle_v2_search(
+                    search_ticket,
+                    &auth_context.tenant_id,
+                    auth_context.user_id.as_deref(),
+                )
                 .await
                 .map_err(|e| TonicStatus::internal(format!("Search failed: {}", e)))?;
 
@@ -2708,6 +2713,7 @@ impl FlightService for ProximaFlightService {
                 self.handle_bulk_search_exchange(
                     collection_id,
                     auth_context.tenant_id,
+                    auth_context.user_id,
                     first_msg,
                     stream,
                 )
@@ -3154,6 +3160,7 @@ impl ProximaFlightService {
         &self,
         collection_id: String,
         tenant_id: String,
+        subject: Option<String>,
         first_msg: FlightData,
         mut stream: TonicStreaming<FlightData>,
     ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
@@ -3235,7 +3242,10 @@ impl ProximaFlightService {
                     include_vector,
                 };
 
-                let search_batches = match self.handle_v2_search(ticket, &tenant_id).await {
+                let search_batches = match self
+                    .handle_v2_search(ticket, &tenant_id, subject.as_deref())
+                    .await
+                {
                     Ok(batches) => batches,
                     Err(e) => {
                         let meta = serde_json::to_vec(&serde_json::json!({
