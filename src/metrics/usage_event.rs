@@ -55,9 +55,11 @@ fn next_request_id(kind: &str) -> String {
     format!("keu-{kind}-{millis}-{n}")
 }
 
-/// The neutral usage event — `sandhi` `usage-event.v1`. `additionalProperties:false`, so this
-/// struct carries exactly the schema's fields. Optional attribution fields are omitted when
-/// `None` (a valid encoding of the nullable schema fields).
+/// The neutral usage event — `sandhi` `usage-event.v1` (synced to the sandhi-core 0.1.5 schema).
+/// `additionalProperties:false`, so this struct carries exactly the schema's fields. Optional
+/// fields are omitted when `None` (a valid encoding of the nullable/defaulted schema fields);
+/// every non-required field here is `None` by default, so events that set none of them serialize
+/// byte-identically to the pre-sync emission.
 #[derive(Debug, Clone, Serialize)]
 pub struct UsageEvent {
     pub schema_version: &'static str,
@@ -84,6 +86,23 @@ pub struct UsageEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
 
+    // --- ADR-0005 D7 neutral identity (attribution metadata, never pricing; sandhi-core 0.1.5) ---
+    /// Caller-supplied key for at-most-once semantics across retries of one logical call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+    /// Agent-run identifier; groups every call one run makes (cost-tree root).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    /// Step within a run; child dimension under `run_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    /// Parent step/run for nested agents, so an agent's cost tree is reconstructable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// W3C `traceparent` value, linking the event into distributed traces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_context: Option<String>,
+
     /// Fresh (non-cached) input tokens — the provider's real usage count.
     pub tokens_in: u64,
     /// Completion tokens. Always 0 for embeddings (they emit vectors, not completion tokens).
@@ -91,8 +110,39 @@ pub struct UsageEvent {
     pub cache_creation_tokens: u64,
     pub cache_read_tokens: u64,
 
+    // --- Measurement provenance (schema defaults apply when omitted: `unavailable` /
+    // `provider_reported` / 1 attempt). `None` ⇒ key omitted, so pre-sync events stay
+    // byte-identical. The enum types are consumed from `sandhi-core` (serde-only dep, ADR-060)
+    // rather than re-mirrored, so their wire spellings can never drift. ---
+    /// Whether token counts are final, partial, or unavailable for this logical call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_completeness: Option<sandhi_core::UsageCompleteness>,
+    /// Whether counts were provider-measured or byte-estimated (Sandhi TD-0013 P3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_basis: Option<sandhi_core::UsageBasis>,
+    /// Number of upstream attempts made for this logical call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempts: Option<u32>,
+    /// Stable terminal outcome such as `success`, `error`, or `cancelled`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+    /// Provider-supplied request identifier when one was returned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_request_id: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu_seconds: Option<f64>,
+
+    /// Wall-clock duration of the logical call in milliseconds, measured at the adapter boundary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// Streams only: milliseconds from request start to the first delivered item.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_to_first_token_ms: Option<u64>,
+    /// Reasoning tokens when the provider reports them separately (OpenAI `reasoning_tokens`,
+    /// Gemini `thoughtsTokenCount`). Absent when folded into `tokens_out` or not reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
 }
 
 impl UsageEvent {
@@ -117,11 +167,24 @@ impl UsageEvent {
             group_id: tenant_id.map(str::to_string),
             route: Some(route.into()),
             session_id: None,
+            idempotency_key: None,
+            run_id: None,
+            step_id: None,
+            parent_id: None,
+            trace_context: None,
             tokens_in,
             tokens_out: 0,
             cache_creation_tokens: 0,
             cache_read_tokens: 0,
+            usage_completeness: None,
+            usage_basis: None,
+            attempts: None,
+            outcome: None,
+            upstream_request_id: None,
             gpu_seconds: None,
+            duration_ms: None,
+            time_to_first_token_ms: None,
+            reasoning_tokens: None,
         }
     }
 
@@ -152,11 +215,24 @@ impl UsageEvent {
             group_id: tenant_id.map(str::to_string),
             route: Some(route.into()),
             session_id: None,
+            idempotency_key: None,
+            run_id: None,
+            step_id: None,
+            parent_id: None,
+            trace_context: None,
             tokens_in,
             tokens_out,
             cache_creation_tokens,
             cache_read_tokens,
+            usage_completeness: None,
+            usage_basis: None,
+            attempts: None,
+            outcome: None,
+            upstream_request_id: None,
             gpu_seconds: None,
+            duration_ms: None,
+            time_to_first_token_ms: None,
+            reasoning_tokens: None,
         }
     }
 
@@ -202,7 +278,7 @@ fn build_generation_event(
         "ollama" | "vllm" => BACKEND_SELF_HOSTED,
         _ => BACKEND_EXTERNAL,
     };
-    Some(UsageEvent::generation_llm(
+    let mut event = UsageEvent::generation_llm(
         provider,
         model,
         tenant_id,
@@ -212,7 +288,12 @@ fn build_generation_event(
         usage.cache_read_tokens,
         route,
         backend,
-    ))
+    );
+    // sandhi-core 0.1.5 parsers surface separately-reported reasoning tokens (e.g. OpenAI
+    // o-series). Present ⇒ carried; otherwise omitted (not zero), same as sandhi's own
+    // `ParsedUsage` → event mapping, so non-reasoning events keep the pre-sync shape.
+    event.reasoning_tokens = (usage.reasoning_tokens > 0).then_some(usage.reasoning_tokens);
+    Some(event)
 }
 
 /// Emit the neutral usage event for one **generation-LLM** call. `provider` is the neutral slug
@@ -314,6 +395,163 @@ mod tests {
             build_generation_event("openai", "m", None, r#"{"choices":[]}"#, "query").is_none()
         );
         assert!(build_generation_event("openai", "m", None, "not json", "query").is_none());
+    }
+
+    /// The pre-0.1.5-sync wire shape: an event that sets none of the new optional fields must
+    /// serialize **byte-identically** to what this module emitted before the mirror-drift fix,
+    /// so downstream log pipelines see no change until a field is actually populated.
+    #[test]
+    fn pre_sync_shape_serializes_byte_identically() {
+        let mut ev = UsageEvent::external_embedding(
+            "azure_openai",
+            "text-embedding-3-small",
+            Some("tenant-abc"),
+            1234,
+            "embed_batch",
+        );
+        ev.request_id = "keu-emb-0-0".to_string();
+        ev.occurred_at = "2026-01-01T00:00:00+00:00".to_string();
+        let json = serde_json::to_string(&ev).unwrap();
+        assert_eq!(
+            json,
+            concat!(
+                "{\"schema_version\":\"1\",",
+                "\"request_id\":\"keu-emb-0-0\",",
+                "\"occurred_at\":\"2026-01-01T00:00:00+00:00\",",
+                "\"provider\":\"azure_openai\",",
+                "\"model\":\"text-embedding-3-small\",",
+                "\"backend\":\"external\",",
+                "\"group_id\":\"tenant-abc\",",
+                "\"route\":\"embed_batch\",",
+                "\"tokens_in\":1234,",
+                "\"tokens_out\":0,",
+                "\"cache_creation_tokens\":0,",
+                "\"cache_read_tokens\":0}"
+            )
+        );
+    }
+
+    /// Contract proof: whatever this mirror emits must deserialize into the **authoritative**
+    /// `sandhi_core::UsageEvent` (usage-event.v1), with omitted optionals landing on the schema
+    /// defaults.
+    #[test]
+    fn old_shape_deserializes_into_sandhi_core_event_with_defaults() {
+        let ev = UsageEvent::external_embedding("openai", "m", Some("t"), 10, "embed_batch");
+        let json = serde_json::to_string(&ev).unwrap();
+        let wire: sandhi_core::UsageEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(wire.tokens_in, 10);
+        assert_eq!(wire.backend, sandhi_core::Backend::External);
+        assert_eq!(
+            wire.usage_completeness,
+            sandhi_core::UsageCompleteness::Unavailable
+        );
+        assert_eq!(wire.usage_basis, sandhi_core::UsageBasis::ProviderReported);
+        assert_eq!(wire.attempts, 1);
+        assert!(wire.reasoning_tokens.is_none());
+        assert!(wire.duration_ms.is_none());
+    }
+
+    /// The additive usage-event.v1 fields round-trip with the schema's snake_case spellings,
+    /// through the authoritative crate type and back.
+    #[test]
+    fn new_optional_fields_round_trip_with_schema_spelling() {
+        let mut ev = UsageEvent::generation_llm(
+            "openai",
+            "o4-mini",
+            Some("tenant-x"),
+            50,
+            10,
+            0,
+            5,
+            "query",
+            BACKEND_EXTERNAL,
+        );
+        ev.usage_completeness = Some(sandhi_core::UsageCompleteness::Final);
+        ev.usage_basis = Some(sandhi_core::UsageBasis::Estimated);
+        ev.attempts = Some(2);
+        ev.outcome = Some("success".to_string());
+        ev.upstream_request_id = Some("req_abc".to_string());
+        ev.duration_ms = Some(1234);
+        ev.time_to_first_token_ms = Some(56);
+        ev.reasoning_tokens = Some(7);
+        ev.idempotency_key = Some("idem-1".to_string());
+        ev.run_id = Some("run-1".to_string());
+        ev.step_id = Some("step-2".to_string());
+        ev.parent_id = Some("run-0".to_string());
+        ev.trace_context = Some("00-abc-def-01".to_string());
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["usage_completeness"], "final");
+        assert_eq!(v["usage_basis"], "estimated");
+        assert_eq!(v["attempts"], 2);
+        assert_eq!(v["outcome"], "success");
+        assert_eq!(v["upstream_request_id"], "req_abc");
+        assert_eq!(v["duration_ms"], 1234);
+        assert_eq!(v["time_to_first_token_ms"], 56);
+        assert_eq!(v["reasoning_tokens"], 7);
+        assert_eq!(v["run_id"], "run-1");
+        // Round-trip through the authoritative sandhi-core event type.
+        let wire: sandhi_core::UsageEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(
+            wire.usage_completeness,
+            sandhi_core::UsageCompleteness::Final
+        );
+        assert_eq!(wire.usage_basis, sandhi_core::UsageBasis::Estimated);
+        assert_eq!(wire.attempts, 2);
+        assert_eq!(wire.reasoning_tokens, Some(7));
+        assert_eq!(wire.duration_ms, Some(1234));
+        assert_eq!(wire.time_to_first_token_ms, Some(56));
+        assert_eq!(wire.run_id.as_deref(), Some("run-1"));
+        assert_eq!(wire.step_id.as_deref(), Some("step-2"));
+        assert_eq!(wire.parent_id.as_deref(), Some("run-0"));
+        assert_eq!(wire.idempotency_key.as_deref(), Some("idem-1"));
+        assert_eq!(wire.trace_context.as_deref(), Some("00-abc-def-01"));
+        assert_eq!(wire.upstream_request_id.as_deref(), Some("req_abc"));
+        assert_eq!(wire.outcome.as_deref(), Some("success"));
+    }
+
+    /// sandhi-core 0.1.5 parsers surface `reasoning_tokens` (OpenAI o-series); the generation
+    /// path threads it through — present when reported, **absent** (not zero) otherwise, so
+    /// non-reasoning events keep the old shape.
+    #[test]
+    fn generation_event_surfaces_reasoning_tokens_when_reported() {
+        let body = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 50, "completion_tokens": 30,
+                "completion_tokens_details": { "reasoning_tokens": 12 }
+            }
+        })
+        .to_string();
+        let ev = build_generation_event("openai", "o4-mini", None, &body, "query").unwrap();
+        assert_eq!(ev.reasoning_tokens, Some(12));
+        assert_eq!(serde_json::to_value(&ev).unwrap()["reasoning_tokens"], 12);
+
+        let plain = serde_json::json!({ "usage": { "prompt_tokens": 5, "completion_tokens": 2 } })
+            .to_string();
+        let ev2 = build_generation_event("openai", "gpt-4o", None, &plain, "query").unwrap();
+        assert!(ev2.reasoning_tokens.is_none());
+        assert!(
+            serde_json::to_value(&ev2)
+                .unwrap()
+                .get("reasoning_tokens")
+                .is_none()
+        );
+    }
+
+    /// 0.1.5 meter hardening flows through: a malformed cache split (`cached > prompt`) clamps
+    /// fresh input to 0 instead of underflowing into a garbage meter value.
+    #[test]
+    fn hardened_parser_guards_flow_through() {
+        let body = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 10, "completion_tokens": 1,
+                "prompt_tokens_details": { "cached_tokens": 50 }
+            }
+        })
+        .to_string();
+        let ev = build_generation_event("openai", "m", None, &body, "query").unwrap();
+        assert_eq!(ev.tokens_in, 0);
+        assert_eq!(ev.cache_read_tokens, 50);
+        assert_eq!(ev.tokens_out, 1);
     }
 
     #[test]
