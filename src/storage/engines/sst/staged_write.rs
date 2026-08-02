@@ -73,29 +73,28 @@ impl StagedSegmentWrite {
     /// uploaded alongside as `{remote}.idx` and its scratch removed too.
     pub(crate) async fn finalize(mut self, factory: &Arc<FilesystemFactory>) -> Result<u64> {
         if let Some(remote) = self.remote_url.take() {
-            let bytes = tokio::fs::read(&self.local_path)
-                .await
-                .context("read locally staged segment for upload")?;
-            let _ = tokio::fs::remove_file(&self.local_path).await;
             let fs = factory
                 .get_filesystem(&remote)
                 .map_err(|e| anyhow::anyhow!("staging filesystem for {remote}: {e}"))?;
-            fs.write(&remote, &bytes, None)
+            let bytes = fs
+                .write_local_file(&remote, std::path::Path::new(&self.local_path), None)
                 .await
                 .map_err(|e| anyhow::anyhow!("upload staged segment to {remote}: {e}"))?;
+            let _ = tokio::fs::remove_file(&self.local_path).await;
             // Arrow sidecar pair (best-effort presence, mandatory upload if present).
             let sidecar = format!("{}.idx", self.local_path);
             if tokio::fs::try_exists(&sidecar).await.unwrap_or(false) {
-                let idx_bytes = tokio::fs::read(&sidecar)
-                    .await
-                    .context("read staged Arrow .idx sidecar")?;
+                fs.write_local_file(
+                    &format!("{remote}.idx"),
+                    std::path::Path::new(&sidecar),
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("upload Arrow sidecar to {remote}.idx: {e}"))?;
                 let _ = tokio::fs::remove_file(&sidecar).await;
-                fs.write(&format!("{remote}.idx"), &idx_bytes, None)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("upload Arrow sidecar to {remote}.idx: {e}"))?;
             }
-            tracing::debug!(remote = %remote, bytes = bytes.len(), "staged segment uploaded");
-            Ok(bytes.len() as u64)
+            tracing::debug!(remote = %remote, bytes, "staged segment uploaded");
+            Ok(bytes)
         } else {
             let meta = tokio::fs::metadata(&self.local_path)
                 .await

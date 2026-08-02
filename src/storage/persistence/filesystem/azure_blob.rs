@@ -39,8 +39,11 @@ use object_store::ObjectStore;
 use object_store::ObjectStoreExt;
 use object_store::azure::MicrosoftAzureBuilder;
 use object_store::path::Path as ObjPath;
-use object_store::{Attribute, Attributes, PutMode, PutOptions, PutPayload};
+use object_store::{
+    Attribute, Attributes, PutMode, PutMultipartOptions, PutOptions, PutPayload, WriteMultipart,
+};
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 
 use super::{
     DirEntry, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsFileMetadata, FsResult,
@@ -256,6 +259,59 @@ impl FileSystem for AzureBlobFileSystem {
             }
         }
         Ok(())
+    }
+
+    async fn write_local_file(
+        &self,
+        path: &str,
+        local_path: &std::path::Path,
+        options: Option<FileOptions>,
+    ) -> FsResult<u64> {
+        const CHUNK_BYTES: usize = 8 * 1024 * 1024;
+        const MAX_IN_FLIGHT: usize = 4;
+
+        let (container, blob) = Self::parse(path)?;
+        let store = self.store_for(&container)?;
+        let mut attributes = Attributes::new();
+        if let Some(tier) = options.as_ref().and_then(FileOptions::access_tier) {
+            attributes.insert(Attribute::StorageClass, tier.as_azure_access_tier().into());
+        }
+        let mut file = tokio::fs::File::open(local_path).await?;
+        let bytes = file.metadata().await?.len();
+        let upload = store
+            .put_multipart_opts(
+                &ObjPath::from(blob),
+                PutMultipartOptions {
+                    attributes,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|error| Self::net("Azure multipart begin", error))?;
+        let mut multipart = WriteMultipart::new_with_chunk_size(upload, CHUNK_BYTES);
+        let mut buffer = vec![0u8; CHUNK_BYTES];
+        loop {
+            if let Err(error) = multipart.wait_for_capacity(MAX_IN_FLIGHT).await {
+                let _ = multipart.abort().await;
+                return Err(Self::net("Azure multipart part", error));
+            }
+            let read = match file.read(&mut buffer).await {
+                Ok(read) => read,
+                Err(error) => {
+                    let _ = multipart.abort().await;
+                    return Err(error.into());
+                }
+            };
+            if read == 0 {
+                break;
+            }
+            multipart.write(&buffer[..read]);
+        }
+        multipart
+            .finish()
+            .await
+            .map_err(|error| Self::net("Azure multipart complete", error))?;
+        Ok(bytes)
     }
 
     async fn write_if_absent(
