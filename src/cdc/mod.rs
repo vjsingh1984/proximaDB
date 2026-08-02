@@ -116,7 +116,8 @@ pub use proximadb_cdc::error;
 // `crate::cdc::event::*` paths (source/coordinator/connectors/sinks/outbound) resolve
 // unchanged.
 pub use proximadb_cdc::event;
-pub mod metrics;
+// `metrics` now lives in `proximadb-cdc` (TD-DECOMP-8); re-exported so `crate::cdc::metrics::*` resolves unchanged.
+pub use proximadb_cdc::metrics;
 pub mod offset;
 pub mod outbound;
 pub mod sinks;

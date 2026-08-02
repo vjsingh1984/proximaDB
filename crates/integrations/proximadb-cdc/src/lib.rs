@@ -14,4 +14,5 @@
 
 pub mod error;
 pub mod event;
+pub mod metrics;
 pub mod transform;
