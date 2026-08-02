@@ -91,7 +91,7 @@ pub use subscriber::{SubscriberHandle, SubscriptionStatus, WalSubscriber};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{ChangeEvent, Operation, SourceInfo};
+    use crate::event::{ChangeEvent, Operation, SourceInfo};
 
     #[allow(dead_code)]
     fn create_test_event(lsn: u64) -> ChangeEvent {

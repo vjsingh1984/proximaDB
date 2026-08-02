@@ -34,8 +34,8 @@ use super::config::{OutboundConfig, StartPosition};
 use super::dedup::DeduplicationCache;
 use super::exactly_once::{ExactlyOnceConfig, ExactlyOnceManager, IdempotencyKey};
 use super::position::{Position, PositionTracker};
-use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::ChangeEvent;
+use crate::error::{CdcError, CdcResult};
+use crate::event::ChangeEvent;
 
 /// Status of a subscription
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -557,7 +557,7 @@ impl WalSubscriberBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{Operation, SourceInfo};
+    use crate::event::{Operation, SourceInfo};
 
     fn create_test_events(count: usize) -> Vec<ChangeEvent> {
         (0..count)

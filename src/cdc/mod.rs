@@ -119,7 +119,8 @@ pub use proximadb_cdc::event;
 // `metrics` now lives in `proximadb-cdc` (TD-DECOMP-8); re-exported so `crate::cdc::metrics::*` resolves unchanged.
 pub use proximadb_cdc::metrics;
 pub mod offset;
-pub mod outbound;
+// `outbound` now lives in `proximadb-cdc` (TD-DECOMP-10); re-exported.
+pub use proximadb_cdc::outbound;
 // `sinks` now lives in `proximadb-cdc` (TD-DECOMP-9); re-exported.
 pub use proximadb_cdc::sinks;
 pub mod source;

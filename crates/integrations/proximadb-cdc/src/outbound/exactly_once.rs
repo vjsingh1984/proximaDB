@@ -28,8 +28,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::ChangeEvent;
+use crate::error::{CdcError, CdcResult};
+use crate::event::ChangeEvent;
 
 fn unix_timestamp_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or_else(
@@ -577,7 +577,7 @@ impl ExactlyOnceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{Operation, SourceInfo};
+    use crate::event::{Operation, SourceInfo};
 
     fn create_test_event(lsn: u64) -> ChangeEvent {
         let mut event = ChangeEvent::new(
