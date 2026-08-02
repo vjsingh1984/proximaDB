@@ -120,7 +120,8 @@ pub use proximadb_cdc::event;
 pub use proximadb_cdc::metrics;
 pub mod offset;
 pub mod outbound;
-pub mod sinks;
+// `sinks` now lives in `proximadb-cdc` (TD-DECOMP-9); re-exported.
+pub use proximadb_cdc::sinks;
 pub mod source;
 // `transform` (mod/filter/schema/embedding) now lives in `proximadb-cdc` (TD-DECOMP-8);
 // re-exported so `crate::cdc::transform::*` paths resolve unchanged.

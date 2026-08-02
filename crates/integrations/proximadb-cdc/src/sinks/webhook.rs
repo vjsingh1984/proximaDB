@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cdc::event::ChangeEvent;
+use crate::event::ChangeEvent;
 
 use super::traits::{CdcSink, MessageFormat, RetryConfig, SinkError, SinkResult, SinkStats};
 
@@ -523,7 +523,7 @@ impl CdcSink for WebhookSink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{Operation, SourceInfo};
+    use crate::event::{Operation, SourceInfo};
 
     /// Throwaway credential for auth-wiring tests, sourced at runtime so no
     /// string literal is used as a cryptographic value

@@ -13,6 +13,10 @@ description = "Change-Data-Capture event types + runtime — extracted from the 
 name = "proximadb_cdc"
 path = "src/lib.rs"
 
+[features]
+# Kafka sink uses rdkafka when enabled; stubs otherwise (mirrors root's cdc-kafka feature).
+cdc-kafka = []
+
 [dependencies]
 # `event` uses serde (derive) + serde_json (Value/ser) + rand (event-id gen).
 # Connector/sink/transform slices (later) add tokio/async-trait/prost/etc.
@@ -21,3 +25,7 @@ rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+# sinks: async-trait (CdcSink trait), tracing (logging), reqwest (webhook HTTP).
+async-trait.workspace = true
+tracing.workspace = true
+reqwest = { version = "0.11", features = ["json"] }
