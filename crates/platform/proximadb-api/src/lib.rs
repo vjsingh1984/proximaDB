@@ -77,7 +77,7 @@ pub(crate) mod test_support {
     };
     use proximadb_runtime::{
         ApiHandlersPort, CollectionPort, CollectionSchemaMetadata, CollectionSchemaUpdate,
-        QueryAdapterPort, UnifiedHandlers, VectorOpsPort,
+        PortIdentity, QueryAdapterPort, UnifiedHandlers, VectorOpsPort,
     };
     use serde_json::Value as JsonValue;
 
@@ -201,10 +201,9 @@ pub(crate) mod test_support {
         async fn handle_vector_search_v1_for_tenant(
             &self,
             request: VectorSearchRequest,
-            tenant_id: Option<&str>,
-            _subject: Option<&str>,
-            _tenant_stable_id: Option<u64>,
+            identity: PortIdentity<'_>,
         ) -> Result<VectorOperationResponse> {
+            let tenant_id = identity.tenant_id;
             self.calls.lock().unwrap().push(ApiCall::VectorSearch {
                 tenant_id: tenant_id.map(ToOwned::to_owned),
                 collection_id: request.collection_id,
@@ -338,9 +337,7 @@ pub(crate) mod test_support {
         async fn search(
             &self,
             _request: VectorSearchRequest,
-            _tenant_id: Option<&str>,
-            _subject: Option<&str>,
-            _tenant_stable_id: Option<u64>,
+            _identity: PortIdentity<'_>,
         ) -> Result<VectorOperationResponse> {
             Ok(VectorOperationResponse::default())
         }
@@ -417,7 +414,7 @@ mod tests {
         CollectionConfig, CollectionOperation, CollectionRequest, HybridSearchRequest,
         VectorBatchRequest, VectorRecord, VectorSearchRequest,
     };
-    use proximadb_runtime::ApiHandlersPort;
+    use proximadb_runtime::{ApiHandlersPort, PortIdentity};
 
     use super::test_support::{ApiCall, RecordingApiPort, noop_unified_handlers};
 
@@ -428,6 +425,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // Deliberately exercises the deprecated v1 ExecuteHybridQuery dispatch (TD-143).
+    #[allow(deprecated)]
     async fn recording_api_port_captures_all_protocol_dispatch_shapes() {
         let port = RecordingApiPort::new();
 
@@ -452,9 +451,7 @@ mod tests {
                 collection_id: "tenant_docs".to_string(),
                 ..VectorSearchRequest::default()
             },
-            Some("tenant-a"),
-            None,
-            None,
+            PortIdentity::for_tenant("tenant-a"),
         )
         .await
         .unwrap();
@@ -598,7 +595,7 @@ mod tests {
         assert!(
             handlers
                 .vector_ops
-                .search(VectorSearchRequest::default(), None, None, None)
+                .search(VectorSearchRequest::default(), PortIdentity::anonymous())
                 .await
                 .unwrap()
                 .results

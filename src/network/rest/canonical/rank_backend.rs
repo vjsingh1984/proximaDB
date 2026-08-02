@@ -124,7 +124,7 @@ impl HybridSearchBackend for ProductionHybridBackend {
 
         let response = self
             .vector_ops
-            .search(request, None, None, None)
+            .search(request, proximadb_runtime::PortIdentity::anonymous())
             .await
             .map_err(|err| RankError::ModelInference {
                 model_id: "production_hybrid_backend.vector".to_string(),
@@ -188,9 +188,7 @@ mod tests {
         async fn search(
             &self,
             request: VectorSearchRequest,
-            _tenant_id: Option<&str>,
-            _subject: Option<&str>,
-            _tenant_stable_id: Option<u64>,
+            _identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<VectorOperationResponse> {
             *self.last_request.lock().unwrap() = Some(request.clone());
             if let Some(reason) = self.fail_with.lock().unwrap().clone() {

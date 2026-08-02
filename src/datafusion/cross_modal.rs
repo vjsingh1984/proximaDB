@@ -1140,9 +1140,7 @@ mod tests {
         async fn search(
             &self,
             _request: VectorSearchRequest,
-            _tenant_id: Option<&str>,
-            _subject: Option<&str>,
-            _tenant_stable_id: Option<u64>,
+            _identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<VectorOperationResponse> {
             let results = self
                 .matches
@@ -1747,14 +1745,12 @@ mod tests {
         async fn search(
             &self,
             _request: VectorSearchRequest,
-            tenant_id: Option<&str>,
-            _subject: Option<&str>,
-            _tenant_stable_id: Option<u64>,
+            identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<VectorOperationResponse> {
             self.seen
                 .lock()
                 .unwrap()
-                .push(tenant_id.map(str::to_string));
+                .push(identity.tenant_id.map(str::to_string));
             Ok(VectorOperationResponse {
                 results: Some(SearchResult {
                     results: vec![],

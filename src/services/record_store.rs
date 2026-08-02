@@ -1238,6 +1238,7 @@ impl TableRecordStore for VectorOpsTableRecordStore {
                     include_props: request.include_props,
                 },
                 tenant_context,
+                proximadb_runtime::PortIdentity::anonymous(),
             )
             .await
     }

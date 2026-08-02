@@ -1,5 +1,5 @@
 = TD-ABAC-7: Consolidate per-call identity params into one identity struct at the port seams
-:status: Open
+:status: Resolved
 :dim: D5
 :pillar: SEC
 
@@ -48,7 +48,9 @@ pub struct PortIdentity<'a> {
 
 * Replace the loose triple on `VectorOpsPort::search`,
   `ApiHandlersPort::handle_vector_search_v1_for_tenant`,
-  `search_v1`, `search_records_with_tenant_context` (+ the get-by-id twin)
+  `search_v1`, `search_records_with_tenant_context`, and the get-by-id pair
+  (`handle_record_get_for_tenant` / `get_record_with_tenant_context` — the
+  `_abac` twins collapse into the base methods, identity decides)
   with a single `identity: PortIdentity<'_>` param; provide
   `PortIdentity::anonymous()` for internal/test callers and a
   `From<&MiddlewareTenantContext>` bridge at the REST boundary (same pattern as

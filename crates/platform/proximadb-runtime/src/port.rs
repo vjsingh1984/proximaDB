@@ -9,6 +9,7 @@
 //! `ProximaValue` model. Protocol adapters are responsible for converting
 //! legacy wire values at the edge.
 
+use crate::service_ports::PortIdentity;
 use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_data_model::{ProximaType, ProximaValue};
@@ -105,14 +106,13 @@ pub trait ApiHandlersPort: Send + Sync {
 
     // ── Vector ────────────────────────────────────────────────────────────────
 
-    /// `subject` + `tenant_stable_id` identify the authenticated principal for
-    /// ABAC enforcement at the shared search seam; `None` = no policy evaluation.
+    /// `identity` carries the tenant scope + authenticated principal for ABAC
+    /// enforcement at the shared search seam (TD-ABAC-7);
+    /// [`PortIdentity::anonymous`] = no policy evaluation.
     async fn handle_vector_search_v1_for_tenant(
         &self,
         request: VectorSearchRequest,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: PortIdentity<'_>,
     ) -> Result<VectorOperationResponse>;
 
     async fn handle_vector_search_v1(

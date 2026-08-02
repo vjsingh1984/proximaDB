@@ -827,7 +827,8 @@ impl VectorOperationsService {
             .validate_tenant_collection_access(&req.collection_id, tenant_context)
             .await?
             .to_string();
-        self.search_v1(req, None, None).await
+        self.search_v1(req, proximadb_runtime::PortIdentity::anonymous())
+            .await
     }
 
     /// Execute canonical rich-record vector search.
@@ -839,8 +840,7 @@ impl VectorOperationsService {
         &self,
         request: RichSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichSearchResponse> {
         // TD-METRICS-1: this — not the query-facade adapter — is the entry the
         // canonical REST v2 record search actually traverses (verified live:
@@ -853,8 +853,8 @@ impl VectorOperationsService {
             .search_records_with_tenant_context_inner(
                 request,
                 tenant_context,
-                subject,
-                tenant_stable_id,
+                identity.subject,
+                identity.tenant_stable_id,
             )
             .await;
         if result.is_err() {
@@ -934,27 +934,17 @@ impl VectorOperationsService {
         Ok(resp)
     }
 
-    /// Execute canonical rich-record get.
+    /// Execute canonical rich-record get: fetches the record, then admit-checks
+    /// the single result against `identity.subject`'s security predicate
+    /// (fail-closed on deny); a subject-less identity is a pass-through
+    /// (gRPC/internal callers). Enforcement is `abac-policy`-gated; default
+    /// builds pass the identity through ignored. (TD-ABAC-7: one method,
+    /// identity decides — no `_abac` twin.)
     pub async fn get_record_with_tenant_context(
         &self,
         request: RichRecordGetRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-    ) -> Result<RichRecordGetResponse> {
-        self.get_record_with_tenant_context_abac(request, tenant_context, None, None)
-            .await
-    }
-
-    /// ABAC-aware rich-record get: fetches the record, then admit-checks the
-    /// single result against the subject's security predicate (fail-closed on
-    /// deny). The gRPC/internal callers keep the no-subject delegate (no
-    /// enforcement); the REST v2 surface passes the request subject. Enforcement
-    /// is `abac-policy`-gated; default builds pass the subject through ignored.
-    pub async fn get_record_with_tenant_context_abac(
-        &self,
-        request: RichRecordGetRequest,
-        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichRecordGetResponse> {
         let collection_id = self
             .validate_tenant_collection_access(&request.collection_id, tenant_context)
@@ -983,10 +973,15 @@ impl VectorOperationsService {
 
         #[cfg(feature = "abac-policy")]
         let record = self
-            .admit_record_abac(record, subject, tenant_stable_id, &collection_id)
+            .admit_record_abac(
+                record,
+                identity.subject,
+                identity.tenant_stable_id,
+                &collection_id,
+            )
             .await;
         #[cfg(not(feature = "abac-policy"))]
-        let _ = (subject, tenant_stable_id);
+        let _ = identity;
 
         Ok(record)
     }
@@ -1397,8 +1392,7 @@ impl VectorOperationsService {
     pub async fn search_v1(
         &self,
         req: crate::proto::proximadb_v1::VectorSearchRequest,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let collection_id = req.collection_id.clone();
         let top_k = req.top_k as usize;
@@ -1418,8 +1412,8 @@ impl VectorOperationsService {
             include_vectors,
             include_metadata,
             filter,
-            subject,
-            tenant_stable_id,
+            identity.subject,
+            identity.tenant_stable_id,
         )
         .await
     }
@@ -6371,10 +6365,9 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     async fn search(
         &self,
         mut request: crate::proto::proximadb_v1::VectorSearchRequest,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let tenant_id = identity.tenant_id;
         // TD-XMODAL-8: the cross-modal `vector_search` UDTF reaches this port carrying the pgwire
         // connection tenant. Resolve the collection UNDER that tenant — the same tenant-scoped
         // name→canonical-id resolution the REST record path does via
@@ -6391,7 +6384,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         {
             request.collection_id = collection.id;
         }
-        self.search_v1(request, subject, tenant_stable_id).await
+        self.search_v1(request, identity).await
     }
 
     /// TD-XMODAL-4 S2: the single canonical native kernel for both the pgvector

@@ -128,7 +128,7 @@ impl HybridPort for RestHybridPortImpl {
             };
             let resp = self
                 .vector_ops
-                .search(search_request, None, None, None)
+                .search(search_request, proximadb_runtime::PortIdentity::anonymous())
                 .await
                 .map_err(|e| anyhow!("Vector search failed: {}", e))?;
             resp.results
@@ -529,9 +529,7 @@ mod tests {
         async fn search(
             &self,
             request: proximadb_v1::VectorSearchRequest,
-            _tenant_id: Option<&str>,
-            _subject: Option<&str>,
-            _tenant_stable_id: Option<u64>,
+            _identity: proximadb_runtime::PortIdentity<'_>,
         ) -> Result<proximadb_v1::VectorOperationResponse> {
             *self.last_request.lock().unwrap() = Some(request);
             Ok(proximadb_v1::VectorOperationResponse {

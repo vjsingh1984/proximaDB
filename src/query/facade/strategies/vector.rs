@@ -243,7 +243,10 @@ impl QueryStrategy for VectorSearchStrategy {
         );
 
         // Execute search through VectorOps
-        let response = self.vector_ops.search_v1(proto_request, None, None).await?;
+        let response = self
+            .vector_ops
+            .search_v1(proto_request, proximadb_runtime::PortIdentity::anonymous())
+            .await?;
 
         let execution_time_ms = start.elapsed().as_millis() as u64;
 

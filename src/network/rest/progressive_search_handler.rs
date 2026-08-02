@@ -42,12 +42,7 @@ pub async fn progressive_search_handler(
     // Delegate directly to unified v1 handler
     let resp = state
         .api_handlers
-        .handle_vector_search_v1_for_tenant(
-            request,
-            Some(&tenant.tenant_id),
-            tenant.subject.as_deref(),
-            tenant.tenant_stable_id,
-        )
+        .handle_vector_search_v1_for_tenant(request, proximadb_runtime::PortIdentity::from(&tenant))
         .await
         .map_err(|e| {
             error!(
