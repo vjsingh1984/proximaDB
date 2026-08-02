@@ -235,7 +235,7 @@ async fn none_subject_is_passthrough_on_rest_records_path() {
     );
 }
 
-// ── get-by-id path (`get_record_with_tenant_context_abac`) ──
+// ── get-by-id path (`get_record_with_tenant_context`) ──
 //
 // A point lookup has no filter slot to push into, so enforcement is a post-check
 // on the single fetched record: denied subject ⇒ None (fail-closed); admitted
@@ -257,18 +257,13 @@ async fn admitted_subject_gets_only_accessible_record_on_getbyid_path() {
     let (svc, _collections) = fixture().await;
 
     let eng = svc
-        .get_record_with_tenant_context_abac(
-            get_request(OID_ENG),
-            None,
-            Some("alice"),
-            Some(TENANT),
-        )
+        .get_record_with_tenant_context(get_request(OID_ENG), None, subject_identity("alice"))
         .await
         .expect("abac get");
     assert!(eng.is_some(), "alice (dept=eng) may GET the eng record");
 
     let hr = svc
-        .get_record_with_tenant_context_abac(get_request(OID_HR), None, Some("alice"), Some(TENANT))
+        .get_record_with_tenant_context(get_request(OID_HR), None, subject_identity("alice"))
         .await
         .expect("abac get");
     assert!(
@@ -283,12 +278,7 @@ async fn denied_subject_gets_no_record_on_getbyid_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .get_record_with_tenant_context_abac(
-            get_request(OID_ENG),
-            None,
-            Some("mallory"),
-            Some(TENANT),
-        )
+        .get_record_with_tenant_context(get_request(OID_ENG), None, subject_identity("mallory"))
         .await
         .expect("abac get");
     assert!(
@@ -303,7 +293,7 @@ async fn none_subject_is_passthrough_on_getbyid_path() {
     let (svc, _collections) = fixture().await;
 
     let resp = svc
-        .get_record_with_tenant_context_abac(get_request(OID_ENG), None, None, None)
+        .get_record_with_tenant_context(get_request(OID_ENG), None, PortIdentity::anonymous())
         .await
         .expect("abac get");
     assert!(

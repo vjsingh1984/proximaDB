@@ -2355,7 +2355,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                     include_vector: req.include_vector,
                     include_props: true,
                 },
-                Some(tenant_id.as_str()),
+                proximadb_runtime::PortIdentity::for_tenant(tenant_id.as_str()),
             )
             .await
             .map_err(|e| Status::internal(format!("GetRecord failed: {e}")))?;

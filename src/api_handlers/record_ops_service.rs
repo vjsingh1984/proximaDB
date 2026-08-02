@@ -780,33 +780,20 @@ impl RecordOpsService {
     }
 
     /// Canonical rich-record get handler used by v2 REST/gRPC/internal callers.
-    /// Canonical rich-record get handler used by v2 REST/gRPC/internal callers.
     ///
-    /// Delegates to [`Self::handle_record_get_for_tenant_abac`] with no subject
-    /// (the gRPC/internal callers preserve today's behavior — no ABAC). The REST
-    /// v2 surface calls `_abac` directly with the request subject.
+    /// Threads `identity.subject` + `identity.tenant_stable_id` so a
+    /// provisioned policy admit-checks the fetched record (fail-closed on
+    /// deny); a subject-less identity (gRPC/internal callers) is a
+    /// pass-through. Enforcement is `abac-policy`-gated inside the vector
+    /// service (TD-ABAC-7: one method, identity decides — no `_abac` twin).
     pub async fn handle_record_get_for_tenant(
         &self,
         request: RichRecordGetRequest,
-        tenant_id: Option<&str>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichRecordGetResponse> {
-        self.handle_record_get_for_tenant_abac(request, tenant_id, None, None)
-            .await
-    }
-
-    /// ABAC-aware rich-record get: same as
-    /// [`Self::handle_record_get_for_tenant`] but threads the request subject
-    /// and tenant stable id so a provisioned policy admit-checks the fetched
-    /// record (fail-closed on deny). Enforcement is `abac-policy`-gated inside
-    /// the vector service; default builds are a pass-through.
-    pub async fn handle_record_get_for_tenant_abac(
-        &self,
-        request: RichRecordGetRequest,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
-    ) -> Result<RichRecordGetResponse> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let tenant_context = self
+            .collection_service
+            .load_tenant_context(identity.tenant_id)?;
         let request = RichRecordGetRequest {
             collection_id: match self
                 .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
@@ -821,12 +808,7 @@ impl RecordOpsService {
         };
 
         self.vector_operations_service
-            .get_record_with_tenant_context_abac(
-                request,
-                tenant_context.as_ref(),
-                subject,
-                tenant_stable_id,
-            )
+            .get_record_with_tenant_context(request, tenant_context.as_ref(), identity)
             .await
     }
 

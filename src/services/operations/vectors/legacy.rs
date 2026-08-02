@@ -934,27 +934,17 @@ impl VectorOperationsService {
         Ok(resp)
     }
 
-    /// Execute canonical rich-record get.
+    /// Execute canonical rich-record get: fetches the record, then admit-checks
+    /// the single result against `identity.subject`'s security predicate
+    /// (fail-closed on deny); a subject-less identity is a pass-through
+    /// (gRPC/internal callers). Enforcement is `abac-policy`-gated; default
+    /// builds pass the identity through ignored. (TD-ABAC-7: one method,
+    /// identity decides — no `_abac` twin.)
     pub async fn get_record_with_tenant_context(
         &self,
         request: RichRecordGetRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-    ) -> Result<RichRecordGetResponse> {
-        self.get_record_with_tenant_context_abac(request, tenant_context, None, None)
-            .await
-    }
-
-    /// ABAC-aware rich-record get: fetches the record, then admit-checks the
-    /// single result against the subject's security predicate (fail-closed on
-    /// deny). The gRPC/internal callers keep the no-subject delegate (no
-    /// enforcement); the REST v2 surface passes the request subject. Enforcement
-    /// is `abac-policy`-gated; default builds pass the subject through ignored.
-    pub async fn get_record_with_tenant_context_abac(
-        &self,
-        request: RichRecordGetRequest,
-        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-        subject: Option<&str>,
-        tenant_stable_id: Option<u64>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichRecordGetResponse> {
         let collection_id = self
             .validate_tenant_collection_access(&request.collection_id, tenant_context)
@@ -983,10 +973,15 @@ impl VectorOperationsService {
 
         #[cfg(feature = "abac-policy")]
         let record = self
-            .admit_record_abac(record, subject, tenant_stable_id, &collection_id)
+            .admit_record_abac(
+                record,
+                identity.subject,
+                identity.tenant_stable_id,
+                &collection_id,
+            )
             .await;
         #[cfg(not(feature = "abac-policy"))]
-        let _ = (subject, tenant_stable_id);
+        let _ = identity;
 
         Ok(record)
     }
