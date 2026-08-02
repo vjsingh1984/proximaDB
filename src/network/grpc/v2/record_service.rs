@@ -1484,6 +1484,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                             tenant_id: Some(tenant_id.as_str()),
                             subject: subject.as_deref(),
                             tenant_stable_id,
+                            // gRPC subjects come only from the authenticated
+                            // GrpcAuthContext — no assertion path.
+                            auth_class: if subject.is_some() {
+                                proximadb_tenant::AuthClass::Authenticated
+                            } else {
+                                proximadb_tenant::AuthClass::Anonymous
+                            },
                         },
                     )
                     .await;
@@ -1576,6 +1583,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                     tenant_id: Some(tenant_id.as_str()),
                     subject: subject.as_deref(),
                     tenant_stable_id,
+                    // gRPC subjects come only from the authenticated
+                    // GrpcAuthContext (grpc_auth::user_id) — no assertion path.
+                    auth_class: if subject.is_some() {
+                        proximadb_tenant::AuthClass::Authenticated
+                    } else {
+                        proximadb_tenant::AuthClass::Anonymous
+                    },
                 },
             )
             .await
@@ -2373,6 +2387,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                     tenant_id: Some(tenant_id.as_str()),
                     subject: subject.as_deref(),
                     tenant_stable_id,
+                    // gRPC subjects come only from the authenticated
+                    // GrpcAuthContext (grpc_auth::user_id) — no assertion path.
+                    auth_class: if subject.is_some() {
+                        proximadb_tenant::AuthClass::Authenticated
+                    } else {
+                        proximadb_tenant::AuthClass::Anonymous
+                    },
                 },
             )
             .await

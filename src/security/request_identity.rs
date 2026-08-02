@@ -108,6 +108,7 @@ pub async fn resolve_request_identity(
     asserted_subject: Option<&str>,
     trust: HeaderTrustPolicy,
     mode: &TenantDeploymentMode,
+    stable_id_resolver: Option<&dyn proximadb_tenant::TenantStableIdResolver>,
 ) -> Result<ResolvedIdentity, IdentityError> {
     let user_context: Option<UnifiedUserContext> = match (coordinator, credential) {
         (Some(coordinator), Some(credential)) => Some(
@@ -139,7 +140,9 @@ pub async fn resolve_request_identity(
                     tenant,
                     subject: Some(user_context.user_id.clone()),
                     auth_class: AuthClass::Authenticated,
-                },
+                    tenant_stable_id: None,
+                }
+                .stamp_stable_id(stable_id_resolver),
                 user_context: Some(user_context),
             })
         }
@@ -160,7 +163,9 @@ pub async fn resolve_request_identity(
                     tenant,
                     subject,
                     auth_class,
-                },
+                    tenant_stable_id: None,
+                }
+                .stamp_stable_id(stable_id_resolver),
                 user_context: None,
             })
         }
@@ -238,6 +243,7 @@ mod tests {
             Some("alice"),
             HeaderTrustPolicy::Open,
             &single_tenant_mode(),
+            None,
         )
         .await
         .expect("Open accepts bare assertions");
@@ -257,6 +263,7 @@ mod tests {
             Some("alice"),
             HeaderTrustPolicy::AuthenticatedOnly,
             &single_tenant_mode(),
+            None,
         )
         .await;
         let Err(err) = result else {
@@ -276,6 +283,7 @@ mod tests {
             None,
             HeaderTrustPolicy::Open,
             &single_tenant_mode(),
+            None,
         )
         .await
         .expect("anonymous resolves");
@@ -294,6 +302,7 @@ mod tests {
             None,
             HeaderTrustPolicy::Open,
             &TenantDeploymentMode::MultiTenant,
+            None,
         )
         .await;
         let Err(err) = result else {
