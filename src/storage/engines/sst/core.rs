@@ -89,6 +89,13 @@ pub fn get_warm_tier_caches() -> Option<(
 /// Reclaim all immutable PAX acceleration bytes below a successfully retired
 /// collection directory. No cache is a valid no-op (env-unset behavior).
 pub async fn purge_warm_tier_prefix(path_prefix: &str) -> usize {
+    // TD-DELVEC-1 C3: invalidate the OID resolver cache entries under this prefix
+    // (collection-drop) — BEFORE the warm_caches guard (the resolver cache is
+    // independent of the warm-tier pair). Mirrors C2's compaction-retire placement.
+    #[cfg(feature = "cold-deletion-vectors")]
+    if let Some(cache) = get_global_oid_resolver_cache() {
+        cache.invalidate_prefix(path_prefix);
+    }
     let Some((invariants, survivor)) = get_warm_tier_caches() else {
         return 0;
     };
