@@ -1,0 +1,31 @@
+= TD-ABAC-11: Default-tenant mint + flip the seam composition rule to fail-closed on absent stable id
+:status: Open
+:dim: D5
+:pillar: SEC
+
+Problem (the P1 of ADR-087): the seam's composition rule
+(`records_read_context`, `src/services/operations/vectors/legacy.rs`)
+enforces only on `(Some(subject), Some(tenant_stable_id))`. The cell
+`(Some(subject), None)` — authenticated subject, unminted tenant or no
+resolver wired — **passes through silently**. Enforcement strength therefore
+equals mint/resolver coverage, and the `GrpcAuthContext` doc-claim
+"unminted ⇒ fail-closed deny" is not what the seam implements. An attacker
+whose tenant is unminted is un-policed even where a policy intent exists.
+
+Next action (strict ordering — totality before strictness):
+1. **Default-tenant mint** (the long-pending PR3 of the TD-TENANT-1 track):
+   mint a stable id for the default/every tenant at catalog bootstrap +
+   binding-provisioning admin path keyed by tenant string, resolved at write.
+   Makes `tenant_stable_id` total for real deployments.
+2. **Flip the rule** in the same release train: enforcer wired ∧ subject
+   present ∧ stable id absent ⇒ DENY. Unit-test the full truth table
+   (enforcer × subject × stable id × auth_class) in isolation.
+3. **Cross-surface e2e ratchet**: provisioned policy exercised over
+   REST/gRPC/Flight/pgwire × admit/deny-fail-closed/passthrough (needs the
+   provisioning e2e fixture from step 1).
+
+Do NOT flip before the mint lands — it would fail-close every unminted
+dev/embedded deployment that wires an enforcer.
+
+Depends on [[TD-ABAC-8]] (carrier), mint. Ref ADR-087, ADR-0083,
+[[project_codesigned_vector_abac_pushdown_2026_07_30]] (PR3 note).

@@ -1,0 +1,25 @@
+= TD-ABAC-10: pgwire constructs the foundation identity (subject to the relational read boundary)
+:status: Open
+:dim: D5
+:pillar: SEC
+
+Problem: pgwire is the one network surface not yet constructing
+`ResolvedRequestIdentity`. Session tenant resolution has its own
+`DEFAULT_TENANT` semantics (`src/network/postgres/protocol.rs` ~:615, ~:2032)
+and no subject reaches the relational read boundary from psql sessions —
+although the boundary itself already accepts one
+(`execute_sql_v1(..., subject)`, TD-ABAC-3/5).
+
+Next action (ADR-087 §Decision 5): at pgwire startup/session establishment,
+build `ResolvedRequestIdentity` — tenant via the existing session resolution
+(DEFAULT_TENANT semantics preserved), subject from the pg user through
+`resolve_subject_assertion` under the deployment `HeaderTrustPolicy`
+(`auth_class = TrustAsserted` for trust auth; `Authenticated` when a real
+credential authenticated the session), `tenant_stable_id` stamped by the
+shared resolver (TD-ABAC-8). Carry it in session state; the SELECT lowering
+threads it to `execute_sql_v1`/the seam.
+
+Note: pgwire trust-auth subjects are spoofable by design — that is what
+`AuthClass::TrustAsserted` records; deployments gate via `HeaderTrustPolicy`.
+
+Depends on [[TD-ABAC-8]]. Ref ADR-087, TD-ABAC-3, TD-ABAC-5.

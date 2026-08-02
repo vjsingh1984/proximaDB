@@ -415,6 +415,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Byte-weighted, process-wide compaction memory admission
 | Accepted (2026-08-01)
 | Converts immutable input-segment bytes to a conservative peak-RSS reservation (initially 12x from a measured 9.85x 3.3M-vector run), admits against the tightest of cgroup-visible capacity, live available memory, and an optional absolute ceiling, and shares one weighted reservation counter across collections. Discovery packs deterministic whole-file morsels before materialization; if no pair fits, the level remains horizontal instead of risking an OOM. Tracked: TD-COMPACT-2/4.
+| link:ADR-087-caller-identity-propagation.adoc[ADR-087]
+| Caller-identity propagation — one foundation identity, resolved once, fail-closed composition
+| Proposed (2026-08-02)
+| Design review of the residual ABAC gaps after the records-read enforcement chain (#1379→#1391). Names the structural traps: per-surface identity types (the bridge tax that walls off `proximadb-api` handlers from any subject), the per-surface optional stamping of `tenant_stable_id`, and the seam's silent-open composition cell — an authenticated subject with an absent stable id (unminted tenant / no resolver) currently bypasses enforcement. Decision: complete the existing foundation primitive (`ResolvedRequestIdentity` gains `tenant_stable_id`, stamped once at resolution), make it the request carrier (REST middleware inserts the foundation Extension every crate can see), reduce `PortIdentity`/storage-context/billing to projections, and flip the seam rule to fail-closed on the absent policy key — sequenced strictly AFTER the default-tenant mint makes the stable id total. Slices: TD-ABAC-8 (carrier), TD-ABAC-9 (api-crate consumers), TD-ABAC-10 (pgwire constructor), TD-ABAC-11 (mint + strictness + cross-surface e2e ratchet).
+
 | link:ADR-0083-consolidated-catalog-identity-model.adoc[ADR-0083]
 | Consolidated catalog identity model — the composite is the SOLE canonical identity; retire the global u64
 | Accepted — Revision 2 (2026-07-30)
