@@ -5,10 +5,10 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Implemented; release revalidation in progress** (2026-08-01). ADR-086 accepted; deterministic unit and config tests green. The post-change bounded 3.3M run is the remaining promotion evidence.
+| Status | **Implemented; release revalidated** (2026-08-02). ADR-086 accepted; deterministic unit/config tests and the bounded 3.3M release/Azurite run are green.
 | Priority | **P1** — independent collection workers formerly had only a count limit and could double-spend process memory. The corrected 3.3M release/Azurite control measured 841.9 MiB input and +8,296 MiB RSS (**9.85x**) for one job.
 | Component | `src/storage/common/compaction_memory.rs`; `src/storage/common/compaction_utils.rs`; `src/storage/engines/sst/compaction.rs`; `proximadb-hardware` dynamic/cgroup-aware memory snapshot.
-| Evidence | link:../../_internal/status/COMPACTION_MEMORY_3M3_BASELINE_2026_08_01.adoc[3.3M release/Azurite baseline]. Historical 2026-07-23 attribution is retained in TD-COMPACT-2; its 40-126 GiB observations included now-fixed AXIS and PAX writer defects and are not the admission factor.
+| Evidence | link:../../_internal/status/COMPACTION_MEMORY_3M3_BASELINE_2026_08_01.adoc[3.3M release/Azurite baseline] and link:../../_internal/status/COMPACTION_MEMORY_3M3_BOUNDED_WRITER_2026_08_02.adoc[post-fix bounded-writer verification]. Historical 2026-07-23 attribution is retained in TD-COMPACT-2; its 40-126 GiB observations included now-fixed AXIS and PAX writer defects and are not the admission factor.
 |===
 
 == The finding
@@ -68,6 +68,16 @@ amplification rises (~log₃ vs log₅ passes/record — more PUT/GET churn on
 object storage); (c) slower convergence to the few-large-files state
 TD-FLUSH-3 wants for the read path. Treat as a stopgap until S1/S2 and the
 TD-COMPACT-2 write-phase fix land.
+
+S5 — **Next mechanism: explicit spill, not OS swap.** A spill execution mode
+keeps the RAM admission limit and adds an independent local scratch-byte
+reservation. Bounded sorted runs, incremental MVCC/deletion-vector resolution,
+deterministic sampled training, cell-partition streams, and region staging can
+then consolidate inputs larger than the in-memory morsel without increasing
+serving-process RAM. Scratch is disposable and no output becomes visible until
+one completed final object is uploaded and the manifest generation is
+atomically replaced. Remote/Spot placement is optional policy; the spill and
+publication correctness mechanisms belong in the engine.
 
 == Notes
 

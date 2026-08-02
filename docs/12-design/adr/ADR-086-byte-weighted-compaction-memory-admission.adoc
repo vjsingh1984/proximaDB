@@ -12,6 +12,7 @@
 |Amends |ADR-076 background compaction admission
 |Evidence
 |link:../../_internal/status/COMPACTION_MEMORY_3M3_BASELINE_2026_08_01.adoc[3.3M-vector release/Azurite memory profile]
+and link:../../_internal/status/COMPACTION_MEMORY_3M3_BOUNDED_WRITER_2026_08_02.adoc[post-fix bounded-writer verification]
 |===
 
 == Context
@@ -141,6 +142,13 @@ duration, and horizontal/no-pair decisions.
   a release-profile, object-store-path benchmark rather than intuition.
 * This decision bounds aggregate projected memory but does not make the writer
   streaming. TD-COMPACT-2's O(write-buffer) merge/write target remains open.
+* OS swap is not a compaction execution mode. The preferred follow-up is
+  deterministic application-managed spill with separate RAM and scratch-byte
+  reservations. Spill may enlarge the input morsel without relaxing the RAM
+  safety rail.
+* Neutral task telemetry, spill correctness, and atomic publication remain OSS
+  mechanisms. Provider-price, tenant-tier, Spot/on-demand, and fleet-placement
+  decisions are external control-plane policy.
 
 == Verification
 
@@ -155,3 +163,8 @@ The implementation must prove:
 * unchanged behavior when the automatic absolute ceiling (`0`) is used; and
 * a release/Azurite 3.3M-vector run showing that the configured bound changes
   merge geometry without recall loss or process-memory oversubscription.
+
+The 2026-08-02 verification satisfied the final release gate: five admitted
+morsels remained inside the 12x factor (maximum observed 10.75x), the collection
+settled at three segments under the 5 GiB ceiling, and object-cold recall@10 was
+0.981.

@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Proposed.** Measured 2026-07-23 on SIFT 1M (develop @ 02725d81a, post #1161/#1163) during the restart/recovery pressure tests.
+| Status | **Open; bounded writer measured.** The 2026-08-02 release/Azurite revalidation reduced a comparable large-task writer-tail delta by 75.6%, while the O(write-buffer) spill/streaming objective remains open.
 | Priority | **P0** — the OOM takes down the whole server (all tenants, all collections), not just the compaction. On memory-constrained nodes (Spot instances, small pods) any 1M-scale compaction is a self-inflicted outage; jetsam/OOM-killer takes the process mid-compaction, which then also triggers the unclean-restart WAL-replay cost (TD-IVF-1).
 | Component | `src/storage/engines/sst/compaction.rs` (`perform_unified_vectorrecord_compaction`, lines ~890–1138); `src/core/search/mvcc_resolution.rs`; `compactor_impl.rs` (`k_way_merge`, `compact_level_tiered`, `retrain_pca_model_for_compaction`).
 | Evidence | macOS jetsam: `memorystatus: killing largest compressed process proximadb-server [15323] 125835 MB`. Input: 6 L0 `.pax` files, 763 MB on disk, 1M × 128-dim f32 (512 MB raw vectors). Server RSS was ~11 GB before the compaction; footprint ballooned to ~126 GB (compressed accounting) within ~2–4 min and the process was killed. Peak-RSS sweep below.
@@ -78,10 +78,24 @@ The bounded-writer remediation is format-neutral:
 . stream header/A0/A/B/D/footer to the local staging file instead of building a
   second whole-segment output vector.
 
-The 5 GiB ceiling remains unchanged until the same release/Azurite 3.3M bed is
-rerun. A lower observed factor may justify a lower amplification reservation;
-a larger merge ceiling is justified only if measured peak RSS, retained RSS,
-recall, and final segment geometry all remain inside the node headroom.
+=== Bounded-writer release verdict (2026-08-02)
+
+The same release/Azurite 3.3M workload now passes with the bounded writer. A
+comparable large task moved from 385,695,616 input bytes / 11,353 MiB
+incremental RSS (30.86x) to 344,444,987 bytes / 2,773 MiB (8.44x): **75.6%
+less incremental RSS** and **72.7% lower amplification**. Across all five new
+morsels the largest observed ratio was 10.75x, so the 12.0x admission factor
+remains warranted. The complete trace, hashes, three-segment layout, recall,
+and GET controls are recorded in
+link:../../_internal/status/COMPACTION_MEMORY_3M3_BOUNDED_WRITER_2026_08_02.adoc[the
+post-fix evidence artifact].
+
+The 5 GiB serving-process ceiling remains unchanged. It produced three
+segments and held recall@10 at 0.981 object-cold, but total process RSS still
+reached 14,105 MiB because WAL/cache/allocator baseline is outside the
+compaction reservation. Larger consolidation should use explicit local spill
+with an independent scratch-byte reservation; OS swap is not an admission
+mechanism. The streaming/spill design remains the open S2 work.
 
 == The finding
 

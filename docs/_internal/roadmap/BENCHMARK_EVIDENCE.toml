@@ -790,3 +790,22 @@ hardware = "Local macOS arm64 (Apple Silicon, 64GB), serialized release run; Azu
 date = "2026-08-01"
 version = "e60fc85c9500f4e08e5cf3ff9946f04921d97b1a"
 notes = "Five L0 inputs totalled 882,773,394 B (841.9 MiB); compaction boundary RSS ~8,655 MiB and write-done RSS 16,951 MiB, delta 8,296 MiB = 9.85x. 5->1 in 38.991s; output 882,842,998 B. Recall@10 post-write/local-warm/object-cold = 0.998/0.995/0.993. This is the PRE-ADMISSION baseline but already includes the canonical/in-place copy reduction; it supports the 12.0 projection default and does not validate the post-change cap."
+
+[[claims]]
+id = "compaction_bounded_writer_3m3"
+claim = "The bounded PAX writer reduces the comparable 3.3M large-morsel writer-tail RSS delta from 11,353 MiB / 30.86x input to 2,773 MiB / 8.44x; all five post-fix morsels remain within the 12.0x admission factor (maximum observed 10.75x). Under a 5 GiB ceiling the collection settles at three segments and retains object-cold recall@10 0.981."
+metric = "task-relative incremental peak RSS/input bytes + absolute RSS + settled segment geometry + recall@10 + GET/query"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/COMPACTION_MEMORY_3M3_BOUNDED_WRITER_2026_08_02.adoc",
+  "docs/12-design/adr/ADR-086-byte-weighted-compaction-memory-admission.adoc",
+  "docs/10-quality/td/TD-COMPACT-2-compaction-memory-amplification-oom.adoc",
+  "docs/10-quality/td/TD-COMPACT-4-memory-aware-compaction-admission-control.adoc",
+]
+bench_source = "scripts/bench/sift1m_get_reduction.py"
+bench_command = "PROXIMADB_COUNT_FS_IO=1 PROXIMADB_TRACE_COMPACTION_MEM=1 <repo-python> scripts/bench/sift1m_get_reduction.py --binary target/release/proximadb-server --binary-source-revision 82c29d4eb66e706a8c65c37ea1fc84c240d4581f --root <fresh-root> --base-path <bigann10m.u8bin> --base-format u8bin --query-path <bigann-query.u8bin> --query-format u8bin --groundtruth-path <3.3m-top20.ivecs> --groundtruth-format ivecs --groundtruth-scope-rows 3300000 --rows 3300000 --batch-size 30000 --ingest-transport flight --write-buffer-mb 8192 --compaction-max-memory-mb 5120 --flush-vector-threshold 660000 --flush-floor-predicted-mb 96 --queries 100 --top-k 10 --nprobe 9 --azurite --storage-url az://<container>/<prefix>"
+artifact = "docs/_internal/status/COMPACTION_MEMORY_3M3_BOUNDED_WRITER_2026_08_02.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64 GiB), serialized release run; Azurite HTTP object path"
+date = "2026-08-02"
+version = "82c29d4eb66e706a8c65c37ea1fc84c240d4581f"
+notes = "Release binary SHA-256 8a0c584e8327ea6caf018d494f2a8796f828afc715391c274ac08fbc403792c8; result SHA-256 ae004366bae2bd053ac131449bdccacbde4d26686c28848e52bfa7eccbb36b16. Five task ratios: 5.97x, 10.75x, 8.44x, 0.59x, 5.23x. Absolute process peak 14,105 MiB; retained baseline is reported separately from task delta. Three PAX v3 segments total 882,860,995 B / 99 cells. nprobe=9 is per segment: 27 cells/query, object-cold 58.63 GET/query and 489.98 ms p50. A neighboring nprobe=8 control failed recall at 0.977 and is not the recommendation. Azurite is operation-count and relative-latency evidence, not Azure WAN latency."
