@@ -6372,6 +6372,8 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         &self,
         mut request: crate::proto::proximadb_v1::VectorSearchRequest,
         tenant_id: Option<&str>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         // TD-XMODAL-8: the cross-modal `vector_search` UDTF reaches this port carrying the pgwire
         // connection tenant. Resolve the collection UNDER that tenant — the same tenant-scoped
@@ -6389,7 +6391,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         {
             request.collection_id = collection.id;
         }
-        self.search_v1(request, None, None).await
+        self.search_v1(request, subject, tenant_stable_id).await
     }
 
     /// TD-XMODAL-4 S2: the single canonical native kernel for both the pgvector

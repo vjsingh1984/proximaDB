@@ -1141,6 +1141,8 @@ mod tests {
             &self,
             _request: VectorSearchRequest,
             _tenant_id: Option<&str>,
+            _subject: Option<&str>,
+            _tenant_stable_id: Option<u64>,
         ) -> anyhow::Result<VectorOperationResponse> {
             let results = self
                 .matches
@@ -1746,6 +1748,8 @@ mod tests {
             &self,
             _request: VectorSearchRequest,
             tenant_id: Option<&str>,
+            _subject: Option<&str>,
+            _tenant_stable_id: Option<u64>,
         ) -> anyhow::Result<VectorOperationResponse> {
             self.seen
                 .lock()

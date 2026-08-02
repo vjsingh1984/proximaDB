@@ -570,15 +570,19 @@ impl ApiHandlersPort for UnifiedHandlers {
         &self,
         request: VectorSearchRequest,
         tenant_id: Option<&str>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> Result<VectorOperationResponse> {
-        self.vector_ops.search(request, tenant_id).await
+        self.vector_ops
+            .search(request, tenant_id, subject, tenant_stable_id)
+            .await
     }
 
     async fn handle_vector_search_v1(
         &self,
         request: VectorSearchRequest,
     ) -> Result<VectorOperationResponse> {
-        self.vector_ops.search(request, None).await
+        self.vector_ops.search(request, None, None, None).await
     }
 
     async fn handle_vector_batch_v1_for_tenant(
@@ -828,6 +832,8 @@ mod tests {
             &self,
             request: VectorSearchRequest,
             tenant_id: Option<&str>,
+            _subject: Option<&str>,
+            _tenant_stable_id: Option<u64>,
         ) -> Result<VectorOperationResponse> {
             self.calls
                 .lock()
@@ -1044,6 +1050,8 @@ mod tests {
                     ..VectorSearchRequest::default()
                 },
                 Some("tenant-a"),
+                None,
+                None,
             )
             .await
             .unwrap();

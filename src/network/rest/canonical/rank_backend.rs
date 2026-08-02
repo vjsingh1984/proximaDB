@@ -122,12 +122,14 @@ impl HybridSearchBackend for ProductionHybridBackend {
             search_optimization: None,
         };
 
-        let response = self.vector_ops.search(request, None).await.map_err(|err| {
-            RankError::ModelInference {
+        let response = self
+            .vector_ops
+            .search(request, None, None, None)
+            .await
+            .map_err(|err| RankError::ModelInference {
                 model_id: "production_hybrid_backend.vector".to_string(),
                 reason: format!("vector search failed for '{collection}': {err}"),
-            }
-        })?;
+            })?;
 
         let results = response
             .results
@@ -187,6 +189,8 @@ mod tests {
             &self,
             request: VectorSearchRequest,
             _tenant_id: Option<&str>,
+            _subject: Option<&str>,
+            _tenant_stable_id: Option<u64>,
         ) -> anyhow::Result<VectorOperationResponse> {
             *self.last_request.lock().unwrap() = Some(request.clone());
             if let Some(reason) = self.fail_with.lock().unwrap().clone() {

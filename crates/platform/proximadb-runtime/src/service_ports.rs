@@ -96,10 +96,16 @@ pub trait CollectionPort: Send + Sync {
 #[async_trait]
 pub trait VectorOpsPort: Send + Sync {
     /// Execute a vector search, tenant-scoped when `tenant_id` is provided.
+    ///
+    /// `subject` + `tenant_stable_id` identify the authenticated principal for
+    /// ABAC enforcement at the shared search seam (`unified_search_v1_inner`);
+    /// `None` means no policy evaluation (internal/unauthenticated callers).
     async fn search(
         &self,
         request: VectorSearchRequest,
         tenant_id: Option<&str>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
     ) -> Result<VectorOperationResponse>;
 
     /// TD-XMODAL-4 S2: the **single canonical native vector-search kernel** — the
