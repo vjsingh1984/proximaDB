@@ -66,7 +66,7 @@ mod types;
 // Re-exports from decomposed submodules for backward compatibility
 pub use query::{
     ParsedQuantizationConfig, QuantizationLevel, QuantizationType, RlsRecordPredicate,
-    StorageQueryContext, StorageQueryMetadata,
+    StorageQueryContext, StorageQueryMetadata, collection_declares_axis_index,
 };
 pub use results::{CompactionResult, EngineHealth, EngineStatistics, FlushResult};
 pub use types::{

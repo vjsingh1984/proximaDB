@@ -3,7 +3,7 @@
 //! This module provides types used by storage engines during query execution,
 //! including row-level security predicates, search parameters, and metadata.
 
-use proximadb_proto::proximadb_v1::Collection;
+use proximadb_proto::proximadb_v1::{Collection, CollectionConfig};
 pub use proximadb_quantization_types::QuantizationType;
 use proximadb_search_types::block_prune::BlockPruneMode;
 use proximadb_storage_ports::{collection_data_path_typed, typed_identity_from_storage_assignment};
@@ -12,6 +12,15 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::{PerformanceTier, StorageFormatStrategy};
+
+/// Whether a collection explicitly declares an AXIS index.
+///
+/// This is the single collection-level serving predicate shared by query,
+/// insert, and flush paths. Storage-format and quantization tags affect the
+/// representation written to PAX; they are not index declarations.
+pub fn collection_declares_axis_index(config: Option<&CollectionConfig>) -> bool {
+    config.is_some_and(|config| !config.index_configs.is_empty())
+}
 
 /// Predicate evaluated by the storage engine at scan time for row-level security.
 ///
@@ -298,20 +307,9 @@ impl StorageQueryContext {
 
         let metadata = StorageQueryMetadata {
             collection_id: collection.id.clone(),
-            use_axis_indexes: config
-                .map(|c| {
-                    // AXIS when the collection has index_configs OR has opted out of
-                    // the co-designed PAX scan (`pax_vector_format:off`). index_configs
-                    // alone is too narrow a proxy: a collection that disables PAX falls
-                    // back to the legacy .sst + AXIS path, so the gate must not skip
-                    // AXIS for it (otherwise its AXIS store is never rebuilt from SST).
-                    let pax_off = c
-                        .tags
-                        .iter()
-                        .any(|t| t.trim().eq_ignore_ascii_case("pax_vector_format:off"));
-                    pax_off || !c.index_configs.is_empty()
-                })
-                .unwrap_or(false),
+            // Index declarations are authoritative. A storage-format or
+            // quantization tag changes representation, not serving policy.
+            use_axis_indexes: collection_declares_axis_index(config),
             has_quantization: config.and_then(|c| c.quantization.as_ref()).is_some(),
             dimension: config.map_or(0, |c| c.dimension as usize),
             distance_metric: config
@@ -614,5 +612,48 @@ mod tests {
         assert_eq!(metadata.collection_id, "");
         assert!(!metadata.use_axis_indexes);
         assert!(!metadata.has_quantization);
+    }
+
+    #[test]
+    fn query_context_requires_an_explicit_index_config_for_axis() {
+        use proximadb_proto::proximadb_v1::{CollectionConfig, IndexConfig};
+
+        let format_only = Arc::new(Collection {
+            config: Some(CollectionConfig {
+                tags: vec!["pax_vector_format:off".to_string()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let format_only_ctx = StorageQueryContext::new(
+            Arc::new(proximadb_search_types::search_params::SearchParams::default()),
+            format_only,
+        );
+        assert!(!format_only_ctx.metadata.use_axis_indexes);
+
+        let indexed = Arc::new(Collection {
+            config: Some(CollectionConfig {
+                index_configs: vec![IndexConfig::default()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let indexed_ctx = StorageQueryContext::new(
+            Arc::new(proximadb_search_types::search_params::SearchParams::default()),
+            indexed,
+        );
+        assert!(indexed_ctx.metadata.use_axis_indexes);
+    }
+
+    #[test]
+    fn collection_axis_declaration_fails_closed() {
+        assert!(!collection_declares_axis_index(None));
+        assert!(!collection_declares_axis_index(Some(
+            &CollectionConfig::default()
+        )));
+        assert!(collection_declares_axis_index(Some(&CollectionConfig {
+            index_configs: vec![proximadb_proto::proximadb_v1::IndexConfig::default()],
+            ..Default::default()
+        })));
     }
 }

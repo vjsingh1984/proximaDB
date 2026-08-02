@@ -107,7 +107,8 @@ async fn external_parquet_indexed_in_place_and_searchable_without_copy() {
         Arc::new(ExternalCollectionRegistry::new()),
         cat.clone(),
         axis.clone(),
-    );
+    )
+    .with_axis_runtime_enabled(true);
 
     // Register un-copied.
     let spec = ExternalCollectionSpec::parquet(
@@ -212,7 +213,8 @@ async fn external_hybrid_search_fuses_text_and_vector() {
     let cat = catalog_manager().await;
     let axis = Arc::new(AxisManager::new(AxisConfig::default()).await.unwrap());
     let svc =
-        ExternalCollectionService::new(Arc::new(ExternalCollectionRegistry::new()), cat, axis);
+        ExternalCollectionService::new(Arc::new(ExternalCollectionRegistry::new()), cat, axis)
+            .with_axis_runtime_enabled(true);
 
     let spec = ExternalCollectionSpec::parquet(
         "ext_hybrid",

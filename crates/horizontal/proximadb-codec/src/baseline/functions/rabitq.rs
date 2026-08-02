@@ -53,6 +53,29 @@ pub struct RaBitQCode {
     pub inv_factor: f32,
 }
 
+/// Reusable per-worker storage for RaBitQ encoding.
+///
+/// Segment encoders process millions of rows. Allocating residual, normalized,
+/// and rotated vectors for every row causes allocator fragmentation and a large
+/// retained-RSS tail even though only a handful of rows are active at once.
+/// One scratch value per worker bounds those allocations to `O(workers * dim)`.
+#[derive(Debug, Default)]
+pub struct RaBitQEncodeScratch {
+    residual: Vec<f32>,
+    unit: Vec<f32>,
+    rotated: Vec<f32>,
+}
+
+impl RaBitQEncodeScratch {
+    pub fn new(dim: usize) -> Self {
+        Self {
+            residual: Vec::with_capacity(dim),
+            unit: Vec::with_capacity(dim),
+            rotated: Vec::with_capacity(dim),
+        }
+    }
+}
+
 /// SplitMix64 — a tiny, dependency-free deterministic PRNG so the rotation is
 /// reproducible from `seed` on both encode and decode.
 struct SplitMix64(u64);
@@ -205,27 +228,86 @@ fn packed_len(dim: usize) -> usize {
 /// Encode one vector to a [`RaBitQCode`] using a prebuilt `rotation`
 /// (`build_rotation(params.dim, params.seed)`).
 pub fn encode(vector: &[f32], params: &RaBitQParams, rotation: &[f32]) -> RaBitQCode {
+    let mut scratch = RaBitQEncodeScratch::new(params.dim);
+    let mut bits = vec![0u8; packed_len(params.dim)];
+    let encoded = encode_into(vector, params, rotation, &mut bits, &mut scratch);
+    let (dist_to_centroid, inv_factor) = encoded.unwrap_or((0.0, 0.0));
+    RaBitQCode {
+        bits,
+        dist_to_centroid,
+        inv_factor,
+    }
+}
+
+/// Encode into caller-owned bits using reusable scratch storage.
+///
+/// The arithmetic order intentionally matches [`encode`] so the optimized
+/// segment writer remains byte-identical to the established on-disk format.
+/// Returns `(distance_to_centroid, inverse_factor)`.
+pub fn encode_into(
+    vector: &[f32],
+    params: &RaBitQParams,
+    rotation: &[f32],
+    bits: &mut [u8],
+    scratch: &mut RaBitQEncodeScratch,
+) -> Result<(f32, f32)> {
     let dim = params.dim;
+    if dim == 0 {
+        bail!("RaBitQ encode requires dim > 0");
+    }
+    if vector.len() != dim || params.centroid.len() != dim {
+        bail!(
+            "RaBitQ encode dimension mismatch: vector={}, centroid={}, dim={dim}",
+            vector.len(),
+            params.centroid.len()
+        );
+    }
+    if rotation.len() != dim.saturating_mul(dim) {
+        bail!(
+            "RaBitQ rotation length {} != dim squared {}",
+            rotation.len(),
+            dim.saturating_mul(dim)
+        );
+    }
+    if bits.len() != packed_len(dim) {
+        bail!(
+            "RaBitQ output length {} != packed length {}",
+            bits.len(),
+            packed_len(dim)
+        );
+    }
+
     // residual = v - centroid
-    let residual: Vec<f32> = vector
-        .iter()
-        .zip(params.centroid.iter())
-        .map(|(&v, &c)| v - c)
-        .collect();
-    let dist_to_centroid = residual.iter().map(|v| v * v).sum::<f32>().sqrt();
+    scratch.residual.clear();
+    scratch.residual.extend(
+        vector
+            .iter()
+            .zip(params.centroid.iter())
+            .map(|(&v, &c)| v - c),
+    );
+    let dist_to_centroid = scratch.residual.iter().map(|v| v * v).sum::<f32>().sqrt();
 
     // unit residual, then rotate.
-    let unit: Vec<f32> = if dist_to_centroid > 1e-12 {
-        residual.iter().map(|v| v / dist_to_centroid).collect()
+    scratch.unit.clear();
+    if dist_to_centroid > 1e-12 {
+        scratch
+            .unit
+            .extend(scratch.residual.iter().map(|v| v / dist_to_centroid));
     } else {
-        vec![0.0; dim]
-    };
-    let rotated = apply_rotation(rotation, &unit);
+        scratch.unit.resize(dim, 0.0);
+    }
+    scratch.rotated.clear();
+    scratch.rotated.extend(rotation.chunks(dim).map(|row| {
+        row.iter()
+            .zip(&scratch.unit)
+            .map(|(a, b)| a * b)
+            .sum::<f32>()
+    }));
 
     // sign bits + factor = <x̄, õ> = (1/√D) Σ|õ_i|
-    let mut bits = vec![0u8; packed_len(dim)];
+    bits.fill(0);
     let mut abs_sum = 0.0f32;
-    for (i, &val) in rotated.iter().enumerate() {
+    for (i, &val) in scratch.rotated.iter().enumerate() {
         if val >= 0.0 {
             bits[i / 8] |= 1u8 << (i % 8);
         }
@@ -235,11 +317,7 @@ pub fn encode(vector: &[f32], params: &RaBitQParams, rotation: &[f32]) -> RaBitQ
     let factor = inv_sqrt_d * abs_sum; // ⟨x̄, õ⟩ ∈ [0,1]
     let inv_factor = if factor > 1e-6 { 1.0 / factor } else { 0.0 };
 
-    RaBitQCode {
-        bits,
-        dist_to_centroid,
-        inv_factor,
-    }
+    Ok((dist_to_centroid, inv_factor))
 }
 
 /// Rotate a query's residual once per query: `q̃ = P · (query − centroid)`.
@@ -557,6 +635,80 @@ mod tests {
             let set = code.bits[i / 8] & (1u8 << (i % 8)) != 0;
             assert_eq!(set, val >= 0.0, "bit {i} sign mismatch");
         }
+    }
+
+    #[test]
+    fn reusable_encode_is_byte_identical_and_rejects_bad_shapes() {
+        let dim = 32;
+        let seed = 73;
+        let corpus = [
+            (0..dim).map(|i| i as f32 * 0.25).collect::<Vec<_>>(),
+            (0..dim).map(|i| (i as f32 * 0.3).sin()).collect::<Vec<_>>(),
+        ];
+        let refs = corpus.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let params = fit_params(&refs, dim, seed);
+        let rotation = build_rotation(dim, seed);
+        // Allocation-heavy reference retained in the test to pin the exact
+        // arithmetic order and therefore the persisted code bytes.
+        let residual = corpus[1]
+            .iter()
+            .zip(&params.centroid)
+            .map(|(&value, &centroid)| value - centroid)
+            .collect::<Vec<_>>();
+        let expected_distance = residual
+            .iter()
+            .map(|value| value * value)
+            .sum::<f32>()
+            .sqrt();
+        let unit = if expected_distance > 1e-12 {
+            residual
+                .iter()
+                .map(|value| value / expected_distance)
+                .collect::<Vec<_>>()
+        } else {
+            vec![0.0; dim]
+        };
+        let rotated = apply_rotation(&rotation, &unit);
+        let mut expected_bits = vec![0u8; dim.div_ceil(8)];
+        let mut abs_sum = 0.0f32;
+        for (index, &value) in rotated.iter().enumerate() {
+            if value >= 0.0 {
+                expected_bits[index / 8] |= 1u8 << (index % 8);
+            }
+            abs_sum += value.abs();
+        }
+        let factor = abs_sum / (dim as f32).sqrt();
+        let expected_inverse = if factor > 1e-6 { 1.0 / factor } else { 0.0 };
+        let mut bits = vec![0u8; dim.div_ceil(8)];
+        let mut scratch = RaBitQEncodeScratch::new(dim);
+        let (distance, inverse) =
+            encode_into(&corpus[1], &params, &rotation, &mut bits, &mut scratch)
+                .expect("valid shapes encode");
+        assert_eq!(bits, expected_bits);
+        assert_eq!(distance.to_bits(), expected_distance.to_bits());
+        assert_eq!(inverse.to_bits(), expected_inverse.to_bits());
+
+        assert!(
+            encode_into(
+                &corpus[1][..dim - 1],
+                &params,
+                &rotation,
+                &mut bits,
+                &mut scratch
+            )
+            .is_err()
+        );
+        let short_len = bits.len() - 1;
+        assert!(
+            encode_into(
+                &corpus[1],
+                &params,
+                &rotation,
+                &mut bits[..short_len],
+                &mut scratch
+            )
+            .is_err()
+        );
     }
 
     #[test]

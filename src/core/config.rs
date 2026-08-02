@@ -1695,6 +1695,32 @@ impl SstConfig {
                      recommendation [1.0, 1.5]; segment accumulation or rewrite churn may result"
                 );
             }
+            if !compaction.memory_amplification_factor.is_finite()
+                || compaction.memory_amplification_factor < 1.0
+            {
+                return Err(
+                    "compaction memory_amplification_factor must be finite and at least 1.0"
+                        .to_string(),
+                );
+            }
+            if !compaction.memory_budget_fraction.is_finite()
+                || !(0.0..=1.0).contains(&compaction.memory_budget_fraction)
+                || compaction.memory_budget_fraction == 0.0
+            {
+                return Err(
+                    "compaction memory_budget_fraction must be finite and in (0.0, 1.0]"
+                        .to_string(),
+                );
+            }
+            if !compaction.available_memory_fraction.is_finite()
+                || !(0.0..=1.0).contains(&compaction.available_memory_fraction)
+                || compaction.available_memory_fraction == 0.0
+            {
+                return Err(
+                    "compaction available_memory_fraction must be finite and in (0.0, 1.0]"
+                        .to_string(),
+                );
+            }
         }
         if let Some(path) = &self.cache_local_disk_path {
             if path.trim().is_empty() {
@@ -1819,6 +1845,30 @@ mod sst_config_validation_tests {
             compaction.level_multiplier = 1.0;
             compaction.higher_level_file_threshold = 1;
         }
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn compaction_memory_policy_fails_closed_on_invalid_ratios() {
+        let mut config = SstConfig::default();
+        let compaction = config
+            .compaction_config
+            .get_or_insert_with(CompactionConfig::default);
+        compaction.memory_amplification_factor = 0.99;
+        assert!(config.validate().is_err());
+
+        let compaction = config
+            .compaction_config
+            .get_or_insert_with(CompactionConfig::default);
+        compaction.memory_amplification_factor = 12.0;
+        compaction.memory_budget_fraction = 0.0;
+        assert!(config.validate().is_err());
+
+        let compaction = config
+            .compaction_config
+            .get_or_insert_with(CompactionConfig::default);
+        compaction.memory_budget_fraction = 0.25;
+        compaction.available_memory_fraction = 1.01;
         assert!(config.validate().is_err());
     }
 

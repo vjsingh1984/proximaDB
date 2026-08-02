@@ -64,7 +64,7 @@ use crate::segment_layout::{
     LosslessTransformTag, ParameterScope, SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN,
     SEG_LAYOUT_VERSION, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentFooterIndex, SegmentHeaderPrefix,
     SourceFidelity, SourceRole, StatsKind, StripeEncodingDescriptor, TierRole, VectorTransform,
-    compression_flags, is_coalesced_segment, segment_tail,
+    compression_flags, is_coalesced_segment,
 };
 
 /// File extension for PAX segment files.
@@ -539,6 +539,99 @@ struct TwoLevelState {
     cell_end_blocks: Vec<u32>,
 }
 
+/// Cluster-ordered embedding-0 vectors retained for the coalesced A/B regions.
+///
+/// One contiguous allocation replaces `Vec<Option<Vec<f32>>>`, which created
+/// one allocation per record and left a multi-gigabyte allocator RSS tail after
+/// million-row compactions. Missing rows occupy a zero-filled fixed-width slot;
+/// the compact validity bitmap determines whether encoders observe that slot.
+#[derive(Default)]
+struct CoalescedVectorBuffer {
+    dim: usize,
+    expected_rows: usize,
+    values: Vec<f32>,
+    valid: Vec<bool>,
+}
+
+impl CoalescedVectorBuffer {
+    fn push(&mut self, values: Option<&[f32]>) -> Result<usize> {
+        if self.valid.is_empty() && self.expected_rows > 0 {
+            self.valid
+                .try_reserve_exact(self.expected_rows)
+                .map_err(|error| anyhow::anyhow!("reserve coalesced validity bitmap: {error}"))?;
+        }
+        match values {
+            Some(values) if !values.is_empty() => {
+                if self.dim == 0 {
+                    self.dim = values.len();
+                    let prior_values = self.valid.len().checked_mul(self.dim).ok_or_else(|| {
+                        anyhow::anyhow!("coalesced vector buffer size exceeds usize")
+                    })?;
+                    let observed_rows = self.valid.len().checked_add(1).ok_or_else(|| {
+                        anyhow::anyhow!("coalesced vector row count exceeds usize")
+                    })?;
+                    let expected_values = self
+                        .expected_rows
+                        .max(observed_rows)
+                        .checked_mul(self.dim)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("coalesced vector reservation exceeds usize")
+                        })?;
+                    self.values
+                        .try_reserve_exact(expected_values)
+                        .map_err(|error| {
+                            anyhow::anyhow!("reserve coalesced vector buffer: {error}")
+                        })?;
+                    self.values.resize(prior_values, 0.0);
+                }
+                if values.len() != self.dim {
+                    bail!(
+                        "coalesced vector dim {} != established dim {}",
+                        values.len(),
+                        self.dim
+                    );
+                }
+                self.values.extend_from_slice(values);
+                self.valid.push(true);
+                values
+                    .len()
+                    .checked_mul(std::mem::size_of::<f32>())
+                    .ok_or_else(|| anyhow::anyhow!("coalesced vector byte size exceeds usize"))
+            }
+            _ => {
+                if self.dim > 0 {
+                    let next_len = self.values.len().checked_add(self.dim).ok_or_else(|| {
+                        anyhow::anyhow!("coalesced vector buffer size exceeds usize")
+                    })?;
+                    self.values.resize(next_len, 0.0);
+                }
+                self.valid.push(false);
+                Ok(0)
+            }
+        }
+    }
+
+    fn dim(&self) -> usize {
+        self.dim
+    }
+
+    fn with_expected_rows(mut self, expected_rows: usize) -> Self {
+        self.expected_rows = expected_rows;
+        self
+    }
+
+    fn refs(&self) -> Vec<Option<&[f32]>> {
+        if self.dim == 0 {
+            return Vec::new();
+        }
+        self.values
+            .chunks_exact(self.dim)
+            .zip(&self.valid)
+            .map(|(values, valid)| valid.then_some(values))
+            .collect()
+    }
+}
+
 /// TD-COMPACT-1 S2: cumulative writer sub-phase timers, allocated only when
 /// `PROXIMADB_TRACE_PAX_WRITE` is set at writer construction. Buckets cover the
 /// per-record `add_record` work plus the finish-time coalesced region encodes;
@@ -630,9 +723,9 @@ pub struct PaxSegmentWriter {
     /// on, data blocks are written as `VectorQuant::Sq8` (the survivor-rerank
     /// data) — the unchanged SQ8 decode path reconstructs + reranks them.
     coalesced_rabitq: bool,
-    /// Embedding-0 f32 vectors in cluster (add) order, buffered for the
-    /// segment-level RaBitQ region. Populated only when `coalesced_rabitq` is on.
-    rabitq_vectors: Vec<Option<Vec<f32>>>,
+    /// Embedding-0 f32 vectors in cluster (add) order, buffered contiguously for
+    /// the segment-level RaBitQ/SQ8 regions. Populated only in coalesced mode.
+    rabitq_vectors: CoalescedVectorBuffer,
     /// TD-RDSTRAT-8: the two-level-IVF coarse model + boundary bookkeeping.
     /// Present ⇒ emit the v3 layout (`[prefix][A0][A][B][D][footer]`): the
     /// current block is force-flushed at every coarse-cell boundary (blocks
@@ -712,7 +805,7 @@ impl PaxSegmentWriter {
             block_radii: Vec::new(),
             block_transformed_sq8_columns: Vec::new(),
             coalesced_rabitq: false,
-            rabitq_vectors: Vec::new(),
+            rabitq_vectors: CoalescedVectorBuffer::default(),
             two_level: None,
             per_row_estimate: 0,
             compute_oid_resolver: false,
@@ -826,6 +919,15 @@ impl PaxSegmentWriter {
     pub fn with_coalesced_rabitq(mut self, enabled: bool) -> Self {
         self.coalesced_rabitq = enabled;
         self.current_writer = self.fresh_block_writer();
+        self
+    }
+
+    /// Pre-size corpus-wide coalesced bookkeeping from the already-admitted
+    /// record count. Reservation itself is fallible and occurs on first append,
+    /// so allocation failure is returned through [`Self::add_record`].
+    pub fn with_expected_rows(mut self, expected_rows: usize) -> Self {
+        self.rabitq_vectors =
+            std::mem::take(&mut self.rabitq_vectors).with_expected_rows(expected_rows);
         self
     }
 
@@ -963,12 +1065,11 @@ impl PaxSegmentWriter {
             // extraction silently dropped non-Fp32 embeddings (e.g. after ingest-time
             // canonical-precision coercion) → garbage SQ8 params → 0.35% recall.
             let t = trace_on.then(Instant::now);
-            let v = record.embeddings.first().map(|e| e.values.to_fp32_owned());
+            let values = record.embeddings.first().map(|cell| cell.as_fp32_cow());
+            rabitq_bytes = self.rabitq_vectors.push(values.as_deref())?;
             if let Some(t) = t {
                 d_rabitq = t.elapsed();
-                rabitq_bytes = v.as_ref().map_or(0, |v| v.len() * 4);
             }
-            self.rabitq_vectors.push(v);
         }
 
         // Encoding-aware size estimate: compute the per-row byte cost from the
@@ -1193,13 +1294,7 @@ impl PaxSegmentWriter {
         // Coalesced-RaBitQ requires embedding-0 f32 vectors to build the region.
         // If there are none (a non-vector or malformed batch), fall through to the
         // legacy layout rather than failing the flush — mixed-read-safe.
-        let coalesced_dim = self
-            .rabitq_vectors
-            .iter()
-            .flatten()
-            .next()
-            .map(|v| v.len())
-            .unwrap_or(0) as u32;
+        let coalesced_dim = self.rabitq_vectors.dim() as u32;
 
         let result = if self.coalesced_rabitq && coalesced_dim > 0 {
             self.finish_coalesced(coalesced_dim, capture_sq8)
@@ -1436,7 +1531,7 @@ impl PaxSegmentWriter {
         // 1. Build the coalesced RaBitQ region (single segment centroid) over the
         //    cluster-ordered embedding-0 vectors. `self.file_buf` already holds the
         //    blocks at 0-based offsets (relative to the blocks region).
-        let refs: Vec<Option<&[f32]>> = self.rabitq_vectors.iter().map(|o| o.as_deref()).collect();
+        let refs = self.rabitq_vectors.refs();
         let seed = RABITQ_SEED_BASE ^ (col_id::EMBED_BASE as u64);
         // TD-COMPACT-1 S2: the finish-time Region A encode (fit + rotation +
         // per-vector RaBitQ) accumulates into the `rabitq` bucket, Region B
@@ -1453,6 +1548,24 @@ impl PaxSegmentWriter {
         if let (Some(t), Some(tr)) = (t, self.write_trace.as_deref_mut()) {
             tr.rerank_encode += t.elapsed();
         }
+        if let Some(tr) = self.write_trace.as_deref_mut() {
+            let live_buffers = self
+                .file_buf
+                .capacity()
+                .saturating_add(
+                    self.rabitq_vectors
+                        .values
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<f32>()),
+                )
+                .saturating_add(region_bytes.capacity())
+                .saturating_add(sq8_region_bytes.capacity());
+            tr.peak_buffered_bytes = tr.peak_buffered_bytes.max(live_buffers);
+        }
+        // Both coalesced tiers are now encoded. Release the full f32 corpus
+        // before footer assembly, file publication, and optional cache seeding.
+        drop(refs);
+        self.rabitq_vectors = CoalescedVectorBuffer::default();
 
         // TD-RDSTRAT-8: geometry first — A0's byte length is deterministic from
         // (k_c, dim, n_comp), so every downstream offset is known BEFORE A0's
@@ -1618,32 +1731,27 @@ impl PaxSegmentWriter {
             a0_len,
         };
 
-        // 4. Assemble: header [+ A0] + Region A + Region B + blocks +
-        //    [footer][footer_len][magic].
-        let mut out = Vec::with_capacity(
-            header_len as usize
-                + a0_len as usize
-                + region_bytes.len()
-                + sq8_region_bytes.len()
-                + opr_len as usize
-                + self.file_buf.len()
-                + footer_body.len()
-                + 16,
-        );
+        // 4. Stream the already-ordered regions into the local staging file.
+        // The former assembly allocated a second whole-segment `Vec` and copied
+        // Region D into it while `file_buf` remained live. Sequential writes are
+        // byte-identical and remove that output-size peak from compaction RSS.
         let header_bytes = header.to_bytes();
-        out.extend_from_slice(&header_bytes);
-        if let Some(a0) = &a0_bytes {
-            out.extend_from_slice(a0);
-        }
-        out.extend_from_slice(&region_bytes);
-        out.extend_from_slice(&sq8_region_bytes);
-        if let Some(opr) = &opr_bytes {
-            out.extend_from_slice(opr);
-        }
-        out.extend_from_slice(&self.file_buf);
-        out.extend(segment_tail(&footer_body));
-
-        let total_bytes = self.write_file(&out)?;
+        let mut trailer = Vec::with_capacity(16);
+        trailer.extend_from_slice(&(footer_body.len() as u64).to_le_bytes());
+        trailer.extend_from_slice(SEGMENT_MAGIC);
+        let total_bytes = self.write_coalesced_file(
+            &header_bytes,
+            a0_bytes.as_deref(),
+            &region_bytes,
+            &sq8_region_bytes,
+            opr_bytes.as_deref(),
+            &footer_body,
+            &trailer,
+        )?;
+        // Region D has reached the local staging file and is no longer needed.
+        // Releasing it here keeps cache-on-write Arc construction from
+        // overlapping a segment-sized compressed block buffer.
+        self.file_buf = Vec::new();
         let cache_seed = capture_sq8.map(|include_sq8| {
             let rabitq_header_len = rabitq_region_header_len(dim).min(region_bytes.len());
             PaxCacheSeed {
@@ -1680,6 +1788,43 @@ impl PaxSegmentWriter {
         let mut f = std::fs::File::create(&self.path)?;
         f.write_all(buf)?;
         Ok(buf.len() as u64)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_coalesced_file(
+        &self,
+        header: &[u8],
+        a0: Option<&[u8]>,
+        rabitq: &[u8],
+        sq8: &[u8],
+        oid_resolver: Option<&[u8]>,
+        footer: &[u8],
+        tail: &[u8],
+    ) -> Result<u64> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::File::create(&self.path)?;
+        let mut total = 0u64;
+        for part in [
+            Some(header),
+            a0,
+            Some(rabitq),
+            Some(sq8),
+            oid_resolver,
+            Some(&self.file_buf),
+            Some(footer),
+            Some(tail),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            file.write_all(part)?;
+            total = total
+                .checked_add(part.len() as u64)
+                .ok_or_else(|| anyhow::anyhow!("PAX segment length exceeds u64"))?;
+        }
+        Ok(total)
     }
 
     /// Test-only: finish writing a **legacy v1** segment (segment index without
@@ -2060,6 +2205,29 @@ mod tests {
     use super::*;
     use proximadb_records::ProximaRecord;
 
+    #[test]
+    fn coalesced_vector_buffer_is_contiguous_and_preserves_null_rows() -> Result<()> {
+        let mut buffer = CoalescedVectorBuffer::default();
+        buffer.push(None)?;
+        buffer.push(Some(&[1.0, 2.0, 3.0]))?;
+        buffer.push(None)?;
+        buffer.push(Some(&[4.0, 5.0, 6.0]))?;
+
+        assert_eq!(buffer.dim(), 3);
+        assert_eq!(buffer.values.len(), 12);
+        assert_eq!(
+            buffer.refs(),
+            vec![
+                None,
+                Some(&[1.0, 2.0, 3.0][..]),
+                None,
+                Some(&[4.0, 5.0, 6.0][..])
+            ]
+        );
+        assert!(buffer.push(Some(&[7.0, 8.0])).is_err());
+        Ok(())
+    }
+
     fn make_record(oid: &str, tenant: &str, ts: i64) -> ProximaRecord {
         ProximaRecord {
             oid: oid.into(),
@@ -2148,7 +2316,7 @@ mod tests {
     }
 
     #[test]
-    fn coalesced_footer_assigns_actual_clustered_sq8_encoding() -> Result<()> {
+    fn coalesced_footer_does_not_advertise_hoisted_sq8_as_block_transform() -> Result<()> {
         use proximadb_records::{EmbeddingCell, EmbeddingValues};
 
         const ROWS_PER_CLUSTER: usize = 256;
@@ -2190,17 +2358,20 @@ mod tests {
         let segment = std::fs::read(&path)?;
         let footer = SegmentFooterIndex::locate_in_segment(&segment)?
             .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
-        let transformed = footer.encoding_map.iter().find(|descriptor| {
-            descriptor.physical_column_id == col_id::EMBED_BASE
-                && descriptor.transform_tag == LosslessTransformTag::ClusteredForBitpackU8
-        });
-        let transformed =
-            transformed.ok_or_else(|| anyhow::anyhow!("clustered SQ8 descriptor missing"))?;
-        assert!(footer.block_tier_assignments.iter().any(|assignment| {
-            assignment.physical_column_id == col_id::EMBED_BASE
-                && assignment.descriptor_id == transformed.descriptor_id
-        }));
-        assert_eq!(transformed.rebuild_source_id, EXTERNAL_CANONICAL_SOURCE_ID);
+        assert!(
+            footer.encoding_map.iter().all(|descriptor| {
+                descriptor.physical_column_id != col_id::EMBED_BASE
+                    || descriptor.transform_tag != LosslessTransformTag::ClusteredForBitpackU8
+            }),
+            "coalesced SQ8 lives in Region B, so Region D must not advertise a block transform"
+        );
+        assert!(
+            footer
+                .block_tier_assignments
+                .iter()
+                .all(|assignment| assignment.physical_column_id != col_id::EMBED_BASE),
+            "hoisted Region B has no per-block SQ8 assignment"
+        );
         Ok(())
     }
 
@@ -2285,8 +2456,8 @@ mod tests {
 
     /// TD-RDSTRAT-5 S1: with `with_block_centroids(true)`, the segment writer
     /// returns one centroid per block = the exact mean of that block's embedding-0
-    /// f32 vectors. Block-cutting is by current-block row count (`row_count*1024 >=
-    /// threshold`), so `threshold = 2*1024` puts exactly 2 rows per block.
+    /// f32 vectors. This fixture cuts an explicit block boundary so its
+    /// two-block shape is independent of the encoding-aware byte estimator.
     #[test]
     fn block_centroids_are_exact_per_block_means() {
         use proximadb_records::{EmbeddingCell, EmbeddingValues};
@@ -2320,12 +2491,18 @@ mod tests {
         )
         .with_quant(VectorQuant::RawF32)
         .with_block_centroids(true);
-        for r in [
+        for (row, r) in [
             rec("a", vec![0.0, 0.0]),
             rec("b", vec![2.0, 2.0]),
             rec("c", vec![10.0, 10.0]),
             rec("d", vec![12.0, 12.0]),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if row == 2 {
+                w.flush_current_block().unwrap();
+            }
             w.add_record(&r).unwrap();
         }
         let meta = w.finish().unwrap();
@@ -2463,12 +2640,18 @@ mod tests {
         )
         .with_quant(VectorQuant::RawF32)
         .with_block_centroids(true);
-        for r in [
+        for (row, r) in [
             rec("a", vec![0.0, 0.0]),
             rec("b", vec![2.0, 2.0]),
             rec("c", vec![7.0, 7.0]), // identical pair: zero spread
             rec("d", vec![7.0, 7.0]),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if row == 2 {
+                w.flush_current_block().unwrap();
+            }
             w.add_record(&r).unwrap();
         }
         let meta = w.finish().unwrap();
@@ -2547,7 +2730,13 @@ mod tests {
         .with_quant(VectorQuant::RawF32)
         .with_block_centroids(true);
         // block 0: fills 0 & 4 → mean 2; block 1: fills 10 & 20 → mean 15.
-        for r in [rec("a", 0.0), rec("b", 4.0), rec("c", 10.0), rec("d", 20.0)] {
+        for (row, r) in [rec("a", 0.0), rec("b", 4.0), rec("c", 10.0), rec("d", 20.0)]
+            .into_iter()
+            .enumerate()
+        {
+            if row == 2 {
+                w.flush_current_block().unwrap();
+            }
             w.add_record(&r).unwrap();
         }
         let meta = w.finish().unwrap();

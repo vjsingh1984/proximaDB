@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Proposed.** Measured 2026-07-23 during the restart/recovery pressure tests (develop @ 02725d81a, post #1163).
+| Status | **S1 resolved; S1b remains.** Search, direct insert, and flush now share one fail-closed `index_configs` predicate, additionally dominated by the process runtime gate. The superlinear trainer allocation for collections that explicitly opt into AXIS remains open.
 | Priority | **P0 — this path is the primary memory-kill driver, not just a CPU tax.** Controlled measurement (single-collection server, NO compaction): ingesting 120k × 128-dim (61 MB raw) then letting the insert-path training fire took RSS from 4.35 GB to a **55.6 GB peak (+51.2 GB)** and the training **did not complete within 15.5 min** (64 GB machine, deep in swap). At 1M after an unclean restart it ran **>43 min at ~90–300% CPU, RSS 10→39.5 GB and climbing** until manually killed. The 126 GB jetsam kill originally attributed to compaction (TD-COMPACT-2) is predominantly THIS path — the compaction-window peak (55.6 GB) is indistinguishable from the AXIS-only control (55.59 GB). All of it on a collection that never asked for AXIS.
 | Component | `src/index/axis/management/manager.rs` (`insert_into_ivf` :2069, incremental train :2217); `src/index/axis/clustering.rs` (`train_model` :255); config `enable_axis_indexes` (`proximadb-config/src/lib.rs:939–963`, default **true**; also `config/config.toml:60`).
 | Evidence | Collection `sift1m` created via REST v2 with `index_specs: []` (verified by GET). Live ingest run: `🎯 Training clustering model for collection 1 with 634000 vectors` (14:20:59). Post-unclean-kill restart: recovery flushes correctly skip AXIS (zero training lines at boot — #1163 works), but ~2.5 min later the WAL-replayed inserts hit the AXIS incremental path: `Training PCA model: 916000 vectors` (1 s) then `🎯 Training clustering model for collection 1 with 1000000 vectors` — still ~90% CPU 13+ min later. Handoff Test 1's "idle CPU < 5%" assertion fails on unclean restarts because of this path.
@@ -40,6 +40,25 @@ REMAINING scope (why this TD stays open at reduced priority):
    pinned to the commit that closed it, so a regression test can guard it —
    the death-spiral evidence below documents the failure mode to protect
    against.
+
+== Status update — three-gate enforcement (2026-08-01)
+
+S1 is now closed across all serving feeds:
+
+* compile without `axis` removes the AXIS-only discovery modules;
+* `storage.optimization.enable_axis_indexes=false` prevents manager
+  registration, insert/search feed, flush hooks, and AXIS background loops;
+* absent/empty `index_configs` fails the shared collection predicate used by
+  query context, direct insert, and flush;
+* `pax_vector_format:off` remains a PAX representation/quantization choice and
+  no longer masquerades as an index declaration;
+* reclustering additionally requires an already-published IVF/HNSW index before
+  it performs the storage-inclusive corpus read.
+
+The last bullet closes a later manifestation of the same failure class: a
+3.3M-vector PAX-only collection was materialized and trained by the 60-second
+discovery watcher concurrently with compaction. That run is not valid
+compaction-memory evidence and must be repeated after this fix.
 
 == The finding
 

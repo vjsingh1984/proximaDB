@@ -411,6 +411,10 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Persistent PAX warm tier and post-publication cache population
 | Accepted (2026-07-29)
 | Adds a real restart-persistent, checksum-verified local-disk tier behind both PAX warm caches; promotes local hits to DRAM, writes through authoritative misses, and seeds writer-owned invariant/SQ8 bytes only after atomic publication. Corrects the legacy `NvmeBackend` assumption (it is memory-only), makes coarse-probe metadata population default-on, purges DRAM/local/replay entries after compaction input deletion, and adds bounded prefix coalescing. Tracked: TD-CACHE-9 and TD-SEARCH-3.
+| link:ADR-086-byte-weighted-compaction-memory-admission.adoc[ADR-086]
+| Byte-weighted, process-wide compaction memory admission
+| Accepted (2026-08-01)
+| Converts immutable input-segment bytes to a conservative peak-RSS reservation (initially 12x from a measured 9.85x 3.3M-vector run), admits against the tightest of cgroup-visible capacity, live available memory, and an optional absolute ceiling, and shares one weighted reservation counter across collections. Discovery packs deterministic whole-file morsels before materialization; if no pair fits, the level remains horizontal instead of risking an OOM. Tracked: TD-COMPACT-2/4.
 | link:ADR-0083-consolidated-catalog-identity-model.adoc[ADR-0083]
 | Consolidated catalog identity model — the composite is the SOLE canonical identity; retire the global u64
 | Accepted — Revision 2 (2026-07-30)

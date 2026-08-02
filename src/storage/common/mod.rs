@@ -5,6 +5,7 @@
 
 pub mod axis_flush_hook;
 pub mod bitmap;
+pub mod compaction_memory;
 pub mod compaction_orchestrator;
 pub mod compaction_utils;
 pub mod flush_handler_trait;
@@ -15,6 +16,7 @@ pub mod mmap_vectors;
 pub mod compaction_test_utils;
 
 pub use bitmap::*;
+pub use compaction_memory::*;
 pub use compaction_orchestrator::*;
 pub use compaction_utils::*;
 pub use flush_handler_trait::*;

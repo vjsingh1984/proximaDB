@@ -32,9 +32,11 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{Result, bail};
+#[cfg(test)]
+use proximadb_codec::functions::rabitq::encode;
 use proximadb_codec::functions::rabitq::{
-    QueryLut, build_rotation, build_rotation_cached, encode, fit_params, rank_candidates,
-    rank_candidates_ip, rotate_query,
+    QueryLut, RaBitQEncodeScratch, build_rotation, build_rotation_cached, encode_into, fit_params,
+    rank_candidates, rank_candidates_ip, rotate_query,
 };
 use proximadb_codec::{RaBitQCode, RaBitQParams};
 
@@ -174,6 +176,12 @@ pub fn encode_region(
             buf[bitmap_off + (i >> 3)] |= 1u8 << (i & 7);
         }
     }
+    // Allocate the final payload once. Workers fill disjoint fixed-stride rows
+    // in place with one reusable scratch buffer per worker. The former
+    // `Vec<Vec<u8>>` retained one allocation per row before concatenation.
+    let codes_off = buf.len();
+    buf.resize(region_len(dim, n), 0u8);
+    let codes = &mut buf[codes_off..];
     // TD-FLUSH-5: pass 2 (per-row encode) is embarrassingly parallel — row
     // i's bytes depend only on vectors[i] + the shared immutable
     // params/rotation fit in pass 1 (which stays sequential so the float
@@ -191,35 +199,33 @@ pub fn encode_region(
             .num_threads(encode_pool_threads())
             .build()
             .map_err(|e| anyhow::anyhow!("encode pool: {e}"))?;
-        let rows: Vec<Vec<u8>> = pool.install(|| {
-            vectors
-                .par_iter()
-                .map(|v| match v {
-                    Some(vec) => {
-                        let code = encode(vec, &params, &rotation);
-                        let mut row = Vec::with_capacity(stride);
-                        row.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
-                        row.extend_from_slice(&code.inv_factor.to_le_bytes());
-                        row.extend_from_slice(&code.bits);
-                        row
-                    }
-                    None => vec![0u8; stride],
-                })
-                .collect()
-        });
-        for row in rows {
-            buf.extend_from_slice(&row);
-        }
+        pool.install(|| {
+            codes
+                .par_chunks_mut(stride)
+                .zip(vectors.par_iter())
+                .try_for_each_init(
+                    || RaBitQEncodeScratch::new(dim_us),
+                    |scratch, (row, vector)| -> Result<()> {
+                        if let Some(vector) = vector {
+                            let (scalars, bits) = row.split_at_mut(8);
+                            let (distance, inverse) =
+                                encode_into(vector, &params, &rotation, bits, scratch)?;
+                            scalars[..4].copy_from_slice(&distance.to_le_bytes());
+                            scalars[4..].copy_from_slice(&inverse.to_le_bytes());
+                        }
+                        Ok(())
+                    },
+                )
+        })?;
     } else {
-        for v in vectors {
-            match v {
-                Some(vec) => {
-                    let code = encode(vec, &params, &rotation);
-                    buf.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
-                    buf.extend_from_slice(&code.inv_factor.to_le_bytes());
-                    buf.extend_from_slice(&code.bits);
-                }
-                None => buf.extend(std::iter::repeat_n(0u8, stride)),
+        let mut scratch = RaBitQEncodeScratch::new(dim_us);
+        for (row, vector) in codes.chunks_mut(stride).zip(vectors) {
+            if let Some(vector) = vector {
+                let (scalars, bits) = row.split_at_mut(8);
+                let (distance, inverse) =
+                    encode_into(vector, &params, &rotation, bits, &mut scratch)?;
+                scalars[..4].copy_from_slice(&distance.to_le_bytes());
+                scalars[4..].copy_from_slice(&inverse.to_le_bytes());
             }
         }
     }
