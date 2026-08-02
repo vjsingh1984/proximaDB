@@ -109,6 +109,15 @@ background-only merged-vector copy. Admission is defense in depth around the
 remaining real materialization, not permission to preserve known duplicate
 representations.
 
+The PAX write boundary follows the same rule. Coalesced f32 inputs use one
+fixed-width contiguous arena, Region A/B encoders fill their pre-sized final
+payloads directly with one reusable scratch arena per worker, SQ8 fitting
+reduces over segmented rows, and final regions stream to the local staging
+file. Corpus-wide f32 buffers are released as soon as A/B encoding completes;
+the compressed block buffer is released after staging-file publication. The
+admission factor budgets irreducible live state, not millions of avoidable
+per-row allocations or a second whole-segment assembly buffer.
+
 === D6 — Expose the decision
 
 Prometheus exports process-wide queue depth, running count, projected reserved

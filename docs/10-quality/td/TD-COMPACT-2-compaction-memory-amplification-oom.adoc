@@ -42,6 +42,47 @@ materializes its admitted morsel. Status remains open until the post-change
 3.3M bound is measured and the streaming design removes the measured 9.85x
 factor rather than merely budgeting it.
 
+=== Post-admission writer-tail localization (2026-08-01)
+
+The serialized follow-up run (`ef5cc387e`, release/Azurite, 3.3M vectors,
+5 GiB absolute compaction ceiling) proves that admission and allocation shape
+are separate controls. No compaction reservations overlapped, yet the largest
+task admitted 385,695,616 input bytes at a 4,628,347,392-byte projection and
+grew process RSS by approximately 11,353 MiB (**30.86x input bytes**). The
+writer reported only 903,758,542 logical buffered bytes. The next task began
+from the elevated RSS baseline, demonstrating allocator retention rather than
+a second active reservation.
+
+The code trace accounts for the missing logical-to-RSS gap:
+
+* the PAX writer retained `Vec<Option<Vec<f32>>>`, one independent allocation
+  per row, while the canonical records remained live;
+* SQ8 fitting flattened the same complete f32 corpus into another vector;
+* both parallel Region A and Region B encoders collected `Vec<Vec<u8>>`, one
+  retained output allocation per row, before concatenating into their final
+  region;
+* final PAX publication allocated a second whole-segment vector and copied the
+  compressed Region D buffer into it; and
+* the clustering order/model stayed live through region finalization.
+
+The bounded-writer remediation is format-neutral:
+
+. retain coalesced vectors in one fixed-width contiguous buffer plus a compact
+  validity bitmap;
+. fit SQ8 min/max directly over segmented rows;
+. pre-size the final A/B payloads and let bounded Rayon workers fill disjoint
+  row slices in place;
+. reuse one RaBitQ residual/unit/rotation scratch arena per worker;
+. release f32 vectors and the clustering plan before footer/cache finalization;
+  and
+. stream header/A0/A/B/D/footer to the local staging file instead of building a
+  second whole-segment output vector.
+
+The 5 GiB ceiling remains unchanged until the same release/Azurite 3.3M bed is
+rerun. A lower observed factor may justify a lower amplification reservation;
+a larger merge ceiling is justified only if measured peak RSS, retained RSS,
+recall, and final segment geometry all remain inside the node headroom.
+
 == The finding
 
 Explicitly exercising the L0→L1 compaction path on a 1M-vector SIFT collection
