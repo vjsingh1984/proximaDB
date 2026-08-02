@@ -342,4 +342,4 @@ correlation_threshold = 0.7
 - link:../11-usecases/IBKRTRADING_DOGFOOD.adoc[ibkrtrading Dogfood]
 
 **Discord**: (to be created)
-**Email**: singhvjd@gmail.com
+**Email**: vijay@anvaiops.com

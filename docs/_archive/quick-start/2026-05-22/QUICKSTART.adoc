@@ -576,7 +576,7 @@ pip install --force-reinstall proximadb-python
 
 * **GitHub Issues**: https://github.com/anvai-labs/proximaDB/issues
 * **Discussions**: https://github.com/anvai-labs/proximaDB/discussions
-* **Email**: singhvjd@gmail.com
+* **Email**: vijay@anvaiops.com
 
 == License
 

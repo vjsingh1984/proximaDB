@@ -266,4 +266,4 @@ Apache-2.0
 
 For questions or issues:
 - GitHub: https://github.com/anvai-labs/proximaDB/issues
-- Email: singhvjd@gmail.com
+- Email: vijay@anvaiops.com

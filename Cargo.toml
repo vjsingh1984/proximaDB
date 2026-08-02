@@ -3,7 +3,7 @@ name = "proximadb"
 version = "0.2.2"
 edition = "2024"
 autobenches = false
-authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
+authors = ["Vijaykumar Singh <vijay@anvaiops.com>"]
 description = "ProximaDB - Cloud-native vector database engineered for AI-first applications"
 license = "Apache-2.0"
 repository = "https://github.com/anvai-labs/proximaDB"
@@ -139,7 +139,7 @@ version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
-authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
+authors = ["Vijaykumar Singh <vijay@anvaiops.com>"]
 repository = "https://github.com/anvai-labs/proximaDB"
 homepage = "https://github.com/anvai-labs/proximaDB"
 

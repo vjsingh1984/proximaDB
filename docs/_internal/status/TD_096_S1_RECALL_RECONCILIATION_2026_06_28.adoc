@@ -5,9 +5,8 @@
 == Context
 
 TD-096 was opened against an in-code claim that SST block-pruning collapses
-recall to ~5%. The S1 slice (per
-`docs/_internal/status/TD_064_096_110_122_RECONCILE_AND_HANDOFFS_2026_06_28.adoc`)
-is to *measure* and *reconcile* that claim — "trace, don't assert" — and the
+recall to ~5%. The S1 slice is to *measure* and *reconcile* that claim —
+"trace, don't assert" — and the
 output gates whether S2 (route-disclosure, reusing TD-064's ADR-011 types) is
 justified at all. If the recall premise does not hold, TD-096 is downgraded to
 documented guidance (no code).
