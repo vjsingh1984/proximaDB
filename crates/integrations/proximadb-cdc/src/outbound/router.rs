@@ -24,7 +24,7 @@ use std::sync::RwLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::cdc::event::{ChangeEvent, Operation};
+use crate::event::{ChangeEvent, Operation};
 
 /// Rule for routing events
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -583,7 +583,7 @@ fn pattern_matches(pattern: &str, value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{RecordState, SourceInfo};
+    use crate::event::{RecordState, SourceInfo};
     use std::collections::HashMap;
 
     fn create_test_event(collection: &str, op: Operation) -> ChangeEvent {

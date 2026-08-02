@@ -15,5 +15,6 @@
 pub mod error;
 pub mod event;
 pub mod metrics;
+pub mod outbound;
 pub mod sinks;
 pub mod transform;
