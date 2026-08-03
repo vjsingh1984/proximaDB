@@ -42,6 +42,9 @@ The current code cannot be fixed by adding a temporary `Vec` serialization:
 * Reserve RAM and scratch process-wide with RAII release and metrics.
 * Let discovery pack a spill-eligible whole-file morsel without relaxing the
   in-memory cap.
+* Reserve at least 10x compressed input bytes by default: the 2026-08-03
+  release/Azurite 3.3M task measured a 7.532x live-scratch peak and invalidated
+  the initial 4x estimate.
 
 === S2 — Block-ranged canonical input stream
 
@@ -82,6 +85,8 @@ The current code cannot be fixed by adding a temporary `Vec` serialization:
   creation/cleanup on a shared local or managed RWO scratch root.
 * Add failure injection for ENOSPC, corrupt run, cancellation, upload failure,
   and stale task ownership.
+* Retain the training rescan obligation across higher-level work so an L0
+  published during a long spill cannot be stranded until a future write.
 
 === S6 — Release evidence
 

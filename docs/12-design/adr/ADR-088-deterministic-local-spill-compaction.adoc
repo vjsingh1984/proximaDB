@@ -74,6 +74,15 @@ local-spill: projected_ram = configured bounded working set
              projected_scratch = input_bytes * conservative scratch amplification
 ----
 
+The release/Azurite 3.3M proof on 2026-08-03 invalidated the initial 4x scratch
+assumption. A 706,307,501-byte four-segment input reached 5,319,977,219 bytes of
+simultaneously live scratch (7.532x) while holding the external cell-order run,
+ordered-f32 spool, Region-D blocks, and encoded regions. The default is therefore
+10x: 33% headroom over that measured peak. This reservation is intentionally
+conservative; it does not cause extra writes. Future schema/dimension evidence
+may raise the ratchet or replace the ratio with a footer-derived byte model, but
+must never silently lower it below the measured envelope.
+
 The spill plan is admitted only when its fixed RAM reservation fits current
 cgroup/process headroom *and* its scratch reservation fits both process-wide
 reserved scratch and current filesystem availability. Reservations are RAII
@@ -185,6 +194,12 @@ declares a bounded local-file upload path. Azure and S3 multipart publication
 qualify; the current whole-object compatibility, encryption, and GCS paths fail
 spill closed until they gain streaming implementations.
 
+The training guard is also a rescan obligation. It remains held across every
+task in a follow-up chain, including a long higher-level spill. The terminal
+worker checks L0 again at threshold one before releasing the guard. This closes
+the measured race where a final flush published an untrained L0 during a 76.8s
+L1 spill and no subsequent write existed to re-arm compaction.
+
 == Consequences
 
 * Small merges retain the faster in-memory path.
@@ -212,6 +227,8 @@ The gate may be promoted only after all of the following pass:
   leave all source segments readable and reclaim scratch;
 . process-wide RAM and scratch reservations prevent cross-collection
   oversubscription and release through every exit path;
+. a flush that publishes L0 during a higher-level spill is discovered by the
+  completion rescan and promoted without requiring another write;
 . spill disabled is behavior-identical to ADR-086;
 . release/Azurite 3.3M compaction consolidates beyond the 5 GiB in-memory cap,
   keeps incremental RSS within the spill working-set reservation, recall@10

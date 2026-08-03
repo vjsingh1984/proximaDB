@@ -1915,6 +1915,7 @@ mod sst_config_validation_tests {
     fn compaction_spill_policy_is_default_off_and_requires_local_scratch() {
         let defaults = CompactionConfig::default();
         assert!(!defaults.spill_enabled);
+        assert_eq!(defaults.spill_scratch_amplification_factor, 10.0);
 
         let mut config = SstConfig::default();
         let compaction = config

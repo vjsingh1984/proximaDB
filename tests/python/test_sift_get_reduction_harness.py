@@ -385,6 +385,33 @@ def test_resource_sampler_reports_process_and_scratch_peaks(tmp_path: Path) -> N
     }
 
 
+def test_scratch_sampler_tolerates_run_retirement_during_scan(tmp_path: Path) -> None:
+    run = tmp_path / "retired.pxrun"
+    run.write_bytes(b"run")
+
+    def disappearing_stat(*, follow_symlinks: bool):
+        assert not follow_symlinks
+        run.unlink()
+        raise FileNotFoundError(run)
+
+    entry = SimpleNamespace(
+        path=str(run),
+        is_dir=lambda *, follow_symlinks: False,
+        is_file=lambda *, follow_symlinks: True,
+        stat=disappearing_stat,
+    )
+
+    class Entries:
+        def __enter__(self):
+            return iter([entry])
+
+        def __exit__(self, *_args):
+            return False
+
+    with patch.object(HARNESS.os, "scandir", return_value=Entries()):
+        assert HARNESS.directory_size_bytes(tmp_path) == 0
+
+
 def test_config_records_controlled_geometry_flush_floor(tmp_path: Path) -> None:
     config_path = tmp_path / "benchmark.toml"
 

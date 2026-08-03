@@ -84,12 +84,22 @@ def directory_size_bytes(root: Path) -> int:
     stack = [root]
     while stack:
         directory = stack.pop()
-        with os.scandir(directory) as entries:
-            for entry in entries:
-                if entry.is_dir(follow_symlinks=False):
-                    stack.append(Path(entry.path))
-                elif entry.is_file(follow_symlinks=False):
-                    total += entry.stat(follow_symlinks=False).st_size
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except FileNotFoundError:
+                        # Spill phases atomically retire runs while sampling.
+                        # A disappearing entry contributes zero to this sample.
+                        continue
+        except FileNotFoundError:
+            # A completed task may reclaim its whole directory after it was
+            # queued by the parent scan.
+            continue
     return total
 
 
@@ -1272,7 +1282,7 @@ def write_config(
     compaction_spill_enabled: bool = False,
     compaction_spill_directory: Path | None = None,
     compaction_spill_working_memory_mb: int = 512,
-    compaction_spill_scratch_amplification_factor: float = 4.0,
+    compaction_spill_scratch_amplification_factor: float = 10.0,
     compaction_spill_available_disk_fraction: float = 0.5,
     compaction_spill_max_disk_mb: int = 0,
 ) -> None:
@@ -1979,7 +1989,7 @@ def main() -> int:
     parser.add_argument(
         "--compaction-spill-scratch-amplification-factor",
         type=float,
-        default=4.0,
+        default=10.0,
     )
     parser.add_argument(
         "--compaction-spill-available-disk-fraction",

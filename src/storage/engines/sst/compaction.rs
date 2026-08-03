@@ -205,20 +205,24 @@ pub struct SstCompactionTask {
     pub precision_hint: Option<proximadb_records::EmbeddingScalarType>,
 }
 
-fn training_follow_up_threshold(source_level: u8, output_file: &Path) -> Option<usize> {
+fn training_follow_up_threshold(
+    training_chain_active: bool,
+    source_level: u8,
+    output_file: &Path,
+) -> Option<usize> {
     let writes_trained_pax = source_level == 0
         && output_file
             .extension()
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| extension.eq_ignore_ascii_case("pax"));
-    writes_trained_pax.then_some(1)
+    (training_chain_active || writes_trained_pax).then_some(1)
 }
 
 fn retain_training_guard_for_follow_up(
     training_chain_active: bool,
     scheduled_follow_up_level: Option<u8>,
 ) -> bool {
-    training_chain_active && scheduled_follow_up_level == Some(0)
+    training_chain_active && scheduled_follow_up_level.is_some()
 }
 
 /// Priority levels for compaction tasks
@@ -1247,8 +1251,11 @@ impl Compaction {
                 // Schedule before releasing the current active marker, keeping
                 // the quiescence barrier closed across the hand-off.
                 let mut scheduled_follow_up_level = None;
-                let follow_up_threshold =
-                    training_follow_up_threshold(task.level, &task.output_file);
+                let follow_up_threshold = training_follow_up_threshold(
+                    training_guard_active,
+                    task.level,
+                    &task.output_file,
+                );
                 if succeeded
                     && !shutdown_signal.load(Ordering::SeqCst)
                     && let Some(collection_dir) = task.output_file.parent()
@@ -1300,8 +1307,10 @@ impl Compaction {
 
                 // TD-COMPACT-6 D1: release the enqueue-time active marker and the
                 // per-collection training guard so the flush path can re-arm.
-                // A bounded L0 training follow-up retains the guard and the
-                // threshold-one reason until the untrained tail is drained.
+                // Retain the training guard across the complete follow-up
+                // chain, including higher-level spill. A flush can publish a
+                // new L0 while that longer task is running; the terminal
+                // threshold-one rescan must observe and train that late tail.
                 let retain_training_guard = retain_training_guard_for_follow_up(
                     training_guard_active,
                     scheduled_follow_up_level,

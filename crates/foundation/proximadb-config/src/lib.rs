@@ -889,6 +889,10 @@ pub struct CompactionConfig {
     pub spill_working_memory_mb: u64,
 
     /// Conservative scratch-space reservation per byte of input segment data.
+    /// The 10x default includes 33% headroom over the 7.53x logical scratch
+    /// peak measured by the release/Azurite 3.3M PAX spill benchmark. Scratch
+    /// expands compressed input into external record and f32/cell-order runs
+    /// while the disk-backed PAX writer builds its output components.
     #[serde(default = "default_compaction_spill_scratch_amplification")]
     pub spill_scratch_amplification_factor: f64,
 
@@ -948,7 +952,7 @@ fn default_compaction_spill_working_memory_mb() -> u64 {
 }
 
 fn default_compaction_spill_scratch_amplification() -> f64 {
-    4.0
+    10.0
 }
 
 fn default_compaction_spill_available_disk_fraction() -> f64 {

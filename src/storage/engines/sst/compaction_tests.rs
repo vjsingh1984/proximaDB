@@ -182,22 +182,27 @@ async fn td_compact6_worker_clears_training_in_flight_after_completion() {
 #[test]
 fn bounded_training_chain_keeps_threshold_one_until_l0_is_drained() {
     assert_eq!(
-        training_follow_up_threshold(0, &PathBuf::from("L1_output.pax")),
+        training_follow_up_threshold(false, 0, &PathBuf::from("L1_output.pax")),
         Some(1)
     );
     assert_eq!(
-        training_follow_up_threshold(1, &PathBuf::from("L2_output.pax")),
+        training_follow_up_threshold(false, 1, &PathBuf::from("L2_output.pax")),
         None
     );
     assert_eq!(
-        training_follow_up_threshold(0, &PathBuf::from("L1_output.arrow")),
+        training_follow_up_threshold(false, 0, &PathBuf::from("L1_output.arrow")),
         None
+    );
+    assert_eq!(
+        training_follow_up_threshold(true, 1, &PathBuf::from("L2_output.pax")),
+        Some(1),
+        "a higher-level task in the training chain must rescan a late L0"
     );
 
     assert!(retain_training_guard_for_follow_up(true, Some(0)));
     assert!(
-        !retain_training_guard_for_follow_up(true, Some(1)),
-        "a higher-level follow-up means the untrained L0 tail is drained"
+        retain_training_guard_for_follow_up(true, Some(1)),
+        "a higher-level follow-up must retain the guard until its terminal rescan"
     );
     assert!(
         !retain_training_guard_for_follow_up(true, None),
