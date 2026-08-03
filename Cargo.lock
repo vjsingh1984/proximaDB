@@ -7078,6 +7078,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "futures",
  "proximadb-config",
  "rand 0.8.6",
  "regex",
