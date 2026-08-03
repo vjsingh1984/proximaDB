@@ -697,6 +697,20 @@ impl PostgresProtocol {
             .map(proximadb_catalog::fc_metamodel::SubjectId)
     }
 
+    /// TD-ABAC-10b (ADR-087): the connection's tenant stable id — the ABAC
+    /// POLICY KEY — read from the ONE session identity (stamped once at the
+    /// handshake). The relational boundary DENIES a governed read when this is
+    /// absent, so it must travel with the subject, never be re-derived.
+    #[cfg(feature = "abac-policy")]
+    async fn session_tenant_stable_id(&self) -> Option<u64> {
+        self.session
+            .read()
+            .await
+            .identity
+            .as_ref()
+            .and_then(|id| id.tenant_stable_id)
+    }
+
     /// TD-ABAC-3: gate a pgwire SUBJECT assertion (startup `user`) through the
     /// SAME [`HeaderTrustPolicy`](proximadb_tenant::HeaderTrustPolicy) the tenant
     /// assertion uses. pgwire is trust auth, so the binding is always `None`;
@@ -1886,6 +1900,8 @@ impl PostgresProtocol {
         // resolves the row filter against.
         #[cfg(feature = "abac-policy")]
         let subject = self.session_subject().await;
+        #[cfg(feature = "abac-policy")]
+        let tenant_stable_id = self.session_tenant_stable_id().await;
         super::relational_pipeline::try_run_select(
             query,
             self.dml_service.as_ref(),
@@ -1906,6 +1922,8 @@ impl PostgresProtocol {
             olap_cache.as_deref(),
             #[cfg(feature = "abac-policy")]
             subject,
+            #[cfg(feature = "abac-policy")]
+            tenant_stable_id,
         )
         .await
     }
@@ -1971,6 +1989,8 @@ impl PostgresProtocol {
             // executes) must plan/run under the SAME subject execution uses.
             #[cfg(feature = "abac-policy")]
             let explain_subject = self.session_subject().await;
+            #[cfg(feature = "abac-policy")]
+            let explain_stable_id = self.session_tenant_stable_id().await;
             let routing = match self.dml_service.clone() {
                 Some(dml) if is_analyze => {
                     crate::network::postgres::relational_pipeline::explain_analyze_select_with_catalog(
@@ -1979,6 +1999,8 @@ impl PostgresProtocol {
                         Some(explain_tenant.as_str()),
                         #[cfg(feature = "abac-policy")]
                         explain_subject,
+                        #[cfg(feature = "abac-policy")]
+                        explain_stable_id,
                     )
                     .await
                 }
@@ -1989,6 +2011,8 @@ impl PostgresProtocol {
                         Some(explain_tenant.as_str()),
                         #[cfg(feature = "abac-policy")]
                         explain_subject,
+                        #[cfg(feature = "abac-policy")]
+                        explain_stable_id,
                     )
                     .await
                 }

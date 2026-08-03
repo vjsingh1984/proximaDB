@@ -147,21 +147,15 @@ pub trait ApiHandlersPort: Send + Sync {
 
     // ── SQL ───────────────────────────────────────────────────────────────────
 
+    /// `identity` (TD-ABAC-10b, ADR-087): tenant scope (TD-064) + authenticated
+    /// principal (TD-ABAC-5) + the tenant stable id (the ABAC policy key) as ONE
+    /// value. The relational read boundary needs the key to consult policy —
+    /// without it a governed subject is denied, never admitted.
     async fn execute_sql_v1(
         &self,
         query: String,
         parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
-        // TD-064: the authenticated tenant scopes relational SQL to the tenant's
-        // partition. `None` keeps the legacy unscoped behavior (callers that
-        // haven't been wired pass `None`); production gRPC/REST threads the real
-        // tenant from the request.
-        tenant_id: Option<&str>,
-        // TD-ABAC-5: the authenticated subject (principal id), threaded to ABAC
-        // enforcement at the relational read boundary. Opaque `&str` here because
-        // this port (runtime layer) cannot name `SubjectId` (catalog/control); the
-        // root-crate adapter converts it. `None` ⇒ anonymous/unwired ⇒ no
-        // enforcement (status quo). Enforcement is behind `abac-policy`.
-        subject: Option<&str>,
+        identity: PortIdentity<'_>,
     ) -> Result<ExecuteQueryResponse>;
 }

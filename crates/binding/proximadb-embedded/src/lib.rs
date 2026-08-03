@@ -4394,8 +4394,9 @@ impl EmbeddedProximaDB {
                             .collect()
                     }),
                     collection.map(str::to_string),
-                    None, // embedded single-process: no per-request tenant
-                    None, // TD-ABAC-5: embedded single-process: no per-request subject
+                    // Embedded is single-process with no per-request tenant or
+                    // subject, so there is no identity to carry (TD-ABAC-10b).
+                    proximadb_runtime::PortIdentity::anonymous(),
                 )
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {

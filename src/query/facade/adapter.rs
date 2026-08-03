@@ -720,9 +720,14 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
         &self,
         query: String,
         _collection: Option<String>,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> anyhow::Result<serde_json::Value> {
+        // TD-ABAC-10b (ADR-087): destructure the ONE carrier once; the policy
+        // key (`tenant_stable_id`) now reaches the relational boundary, so a
+        // governed gRPC/REST SQL subject can be ADMITTED instead of always
+        // denied for want of a key.
+        let tenant_id = identity.tenant_id;
+        let subject = identity.subject;
         use crate::query::QueryResultData;
 
         // EXPLAIN [ANALYZE] <DML> routing — parity with the ROOT handler's
@@ -813,6 +818,9 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
                 // TD-ABAC-5: the authenticated subject (gRPC/REST) → ABAC enforcement.
                 #[cfg(feature = "abac-policy")]
                 subject_id,
+                // TD-ABAC-10b: the policy key, carried on the identity.
+                #[cfg(feature = "abac-policy")]
+                identity.tenant_stable_id,
             )
             .await
         {

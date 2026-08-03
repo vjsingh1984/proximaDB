@@ -626,8 +626,7 @@ impl ApiHandlersPort for UnifiedHandlers {
         query: String,
         _parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
+        identity: PortIdentity<'_>,
     ) -> Result<ExecuteQueryResponse> {
         let adapter = self
             .query_adapter
@@ -635,9 +634,7 @@ impl ApiHandlersPort for UnifiedHandlers {
             .ok_or_else(|| anyhow!("SQL execution requires QueryAdapterPort (not wired)"))?;
 
         let start = Instant::now();
-        let json_result = adapter
-            .execute_sql(query, collection, tenant_id, subject)
-            .await?;
+        let json_result = adapter.execute_sql(query, collection, identity).await?;
 
         let records = json_result
             .get("records")
@@ -898,8 +895,7 @@ mod tests {
             &self,
             _query: String,
             _collection: Option<String>,
-            _tenant_id: Option<&str>,
-            _subject: Option<&str>,
+            _identity: PortIdentity<'_>,
         ) -> Result<serde_json::Value> {
             Ok(json!({
                 "columns": ["id", "score", "flag", "none", "obj"],
@@ -1084,8 +1080,7 @@ mod tests {
                 "select * from docs".to_string(),
                 None,
                 Some("docs".to_string()),
-                None,
-                None,
+                PortIdentity::anonymous(),
             )
             .await
             .unwrap();
@@ -1142,7 +1137,12 @@ mod tests {
         );
         assert!(
             handlers
-                .execute_sql_v1("select 1".to_string(), None, None, None, None)
+                .execute_sql_v1(
+                    "select 1".to_string(),
+                    None,
+                    None,
+                    PortIdentity::anonymous()
+                )
                 .await
                 .unwrap_err()
                 .to_string()
@@ -1171,8 +1171,7 @@ mod tests {
                 &self,
                 _query: String,
                 _collection: Option<String>,
-                _tenant_id: Option<&str>,
-                _subject: Option<&str>,
+                _identity: PortIdentity<'_>,
             ) -> Result<serde_json::Value> {
                 Ok(json!(["text", 7, false, null, {"shape": "object"}]))
             }
@@ -1184,7 +1183,12 @@ mod tests {
             Some(Arc::new(ArrayQueryAdapter)),
         );
         let sql = handlers
-            .execute_sql_v1("select values".to_string(), None, None, None, None)
+            .execute_sql_v1(
+                "select values".to_string(),
+                None,
+                None,
+                PortIdentity::anonymous(),
+            )
             .await
             .unwrap();
         assert_eq!(sql.rows_returned, 5);

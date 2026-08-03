@@ -978,10 +978,11 @@ pub async fn execute_sql(
             query_with_hint,
             sql_params_to_proxima_values(request.parameters.clone()),
             request.collection,
-            None,
-            // TD-ABAC-5: REST UnifiedUserContext extractor wiring is a follow-on;
-            // None ⇒ no ABAC enforcement on this surface yet.
-            None,
+            // NOTE: this handler is UNROUTED (dead code — the live REST SQL
+            // surface is the api-crate `create_hybrid_search_router`, which
+            // threads the real identity). Kept anonymous deliberately rather
+            // than inventing an identity source for a route nobody can reach.
+            proximadb_runtime::PortIdentity::anonymous(),
         )
         .await
     {

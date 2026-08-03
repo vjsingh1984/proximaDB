@@ -253,14 +253,17 @@ pub trait QueryAdapterPort: Send + Sync {
     /// adapter routes relational SELECT through the tenant-scoped relational
     /// pipeline (`try_run_select`, TD-121) before falling back to the facade.
     ///
-    /// `subject` (TD-ABAC-5) is the authenticated principal id, threaded to ABAC
-    /// enforcement. Opaque `&str` here (runtime layer can't name `SubjectId`);
-    /// the root-crate adapter converts it. `None` ⇒ no enforcement.
+    /// `identity` (TD-ABAC-10b, ADR-087) carries the tenant scope, the
+    /// authenticated principal, AND the tenant stable id — the ABAC POLICY KEY.
+    /// The key matters: the relational boundary reads it to consult policy and
+    /// DENIES when it is absent, so a flat `tenant/subject` pair (the previous
+    /// shape) could never admit a governed subject. Subject ids stay opaque
+    /// `&str` here (the runtime layer cannot name `SubjectId`); the root-crate
+    /// adapter lifts them.
     async fn execute_sql(
         &self,
         query: String,
         collection: Option<String>,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
+        identity: PortIdentity<'_>,
     ) -> Result<JsonValue>;
 }

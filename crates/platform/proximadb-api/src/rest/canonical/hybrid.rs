@@ -420,8 +420,12 @@ pub async fn execute_sql(
             query,
             parameters,
             request.collection,
-            identity.as_ref().map(|id| id.tenant.as_str()),
-            identity.as_ref().and_then(|id| id.subject.as_deref()),
+            // TD-ABAC-10b: project the foundation identity onto the port carrier
+            // so the tenant, the subject AND the policy key all arrive.
+            identity
+                .as_ref()
+                .map(|id| proximadb_runtime::PortIdentity::from(&id.0))
+                .unwrap_or_else(proximadb_runtime::PortIdentity::anonymous),
         )
         .await
     {
@@ -801,6 +805,8 @@ mod tests {
                 // TD-ABAC-9: the foundation identity Extension reaches the port.
                 tenant_id: Some("tenant-a".to_string()),
                 subject: Some("alice".to_string()),
+                // The policy key travels with the identity (TD-ABAC-10b).
+                tenant_stable_id: Some(7),
             }]
         );
     }

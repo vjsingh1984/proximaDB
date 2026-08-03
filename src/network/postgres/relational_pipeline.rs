@@ -280,12 +280,27 @@ pub async fn try_run_select(
     // `scan_table_relational` enforces ABAC. `None` ⇒ anonymous/internal ⇒ no
     // enforcement. Behind `abac-policy` (default-OFF).
     #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
+    // TD-ABAC-10b (ADR-087): the tenant's stable u64 — the ABAC POLICY KEY.
+    // `abac_row_filter` reads it off the storage `TenantContext`, so if it does
+    // not arrive here the relational boundary DENIES every governed read (it
+    // fail-closes on an absent key). Sourced from the caller's resolved
+    // identity, never re-derived. Behind `abac-policy` (default-OFF).
+    #[cfg(feature = "abac-policy")] tenant_stable_id: Option<u64>,
 ) -> Option<Result<ExecutionPipelineResult, String>> {
     // TD-064: the connection's tenant scopes every snapshot read to the tenant's
     // record partition (carried into the SnapshotCatalog → DmlTableReader).
     let tenant_ctx: Option<TenantContext> = tenant
         .filter(|t| !t.is_empty())
-        .map(TenantContext::for_tenant_id);
+        .map(TenantContext::for_tenant_id)
+        .map(|mut ctx| {
+            // TD-ABAC-10b: `for_tenant_id` leaves the stable id `None`; carry
+            // the resolved one so ABAC can consult policy instead of denying.
+            #[cfg(feature = "abac-policy")]
+            {
+                ctx.tenant_stable_id = tenant_stable_id;
+            }
+            ctx
+        });
     // ADR-018 Phase 2: Allow opting out with explicit "0" value
     if std::env::var("PROXIMADB_PGWIRE_RELATIONAL_PIPELINE")
         .ok()
@@ -2322,6 +2337,7 @@ async fn prepare_select_plan(
     dml: &Arc<DmlService>,
     tenant: Option<&str>,
     #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
+    #[cfg(feature = "abac-policy")] tenant_stable_id: Option<u64>,
 ) -> Option<(SnapshotCatalog, PhysicalPlan)> {
     let snapshot = build_snapshot(
         query,
@@ -2329,6 +2345,8 @@ async fn prepare_select_plan(
         tenant,
         #[cfg(feature = "abac-policy")]
         subject,
+        #[cfg(feature = "abac-policy")]
+        tenant_stable_id,
     )
     .await?;
     match plan_over_snapshot(sql, &snapshot)? {
@@ -2347,6 +2365,7 @@ async fn build_snapshot(
     dml: &Arc<DmlService>,
     tenant: Option<&str>,
     #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
+    #[cfg(feature = "abac-policy")] tenant_stable_id: Option<u64>,
 ) -> Option<SnapshotCatalog> {
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
@@ -2366,7 +2385,17 @@ async fn build_snapshot(
         tables,
         tenant: tenant
             .filter(|t| !t.is_empty())
-            .map(TenantContext::for_tenant_id),
+            .map(TenantContext::for_tenant_id)
+            .map(|mut ctx| {
+                // TD-ABAC-10b: EXPLAIN/ANALYZE carries the policy key too, so
+                // it plans (and, for ANALYZE, executes) under the same
+                // enforcement decision as the real query.
+                #[cfg(feature = "abac-policy")]
+                {
+                    ctx.tenant_stable_id = tenant_stable_id;
+                }
+                ctx
+            }),
         // TD-ABAC-10c: the EXPLAIN/ANALYZE snapshot carries the SAME client
         // subject execution does. This previously hardcoded `None`, so an
         // EXPLAIN disclosed row estimates — and EXPLAIN ANALYZE, which really
@@ -2395,6 +2424,7 @@ pub async fn explain_select_route_with_catalog(
     dml: &Arc<DmlService>,
     tenant: Option<&str>,
     #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
+    #[cfg(feature = "abac-policy")] tenant_stable_id: Option<u64>,
 ) -> Result<SelectRouteExplanation, String> {
     route_and_plan_select(
         sql,
@@ -2403,6 +2433,8 @@ pub async fn explain_select_route_with_catalog(
         tenant,
         #[cfg(feature = "abac-policy")]
         subject,
+        #[cfg(feature = "abac-policy")]
+        tenant_stable_id,
     )
     .await
 }
@@ -2416,6 +2448,7 @@ pub async fn explain_analyze_select_with_catalog(
     dml: &Arc<DmlService>,
     tenant: Option<&str>,
     #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
+    #[cfg(feature = "abac-policy")] tenant_stable_id: Option<u64>,
 ) -> Result<SelectRouteExplanation, String> {
     route_and_plan_select(
         sql,
@@ -2424,6 +2457,8 @@ pub async fn explain_analyze_select_with_catalog(
         tenant,
         #[cfg(feature = "abac-policy")]
         subject,
+        #[cfg(feature = "abac-policy")]
+        tenant_stable_id,
     )
     .await
 }
@@ -2439,6 +2474,7 @@ async fn route_and_plan_select(
     analyze: bool,
     tenant: Option<&str>,
     #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
+    #[cfg(feature = "abac-policy")] tenant_stable_id: Option<u64>,
 ) -> Result<SelectRouteExplanation, String> {
     let statements =
         Parser::parse_sql(&GenericDialect {}, sql).map_err(|e| format!("parse: {e}"))?;
@@ -2559,6 +2595,8 @@ async fn route_and_plan_select(
             tenant,
             #[cfg(feature = "abac-policy")]
             subject.clone(),
+            #[cfg(feature = "abac-policy")]
+            tenant_stable_id,
         )
         .await
         {
@@ -2611,6 +2649,8 @@ async fn route_and_plan_select(
                     tenant,
                     #[cfg(feature = "abac-policy")]
                     subject.clone(),
+                    #[cfg(feature = "abac-policy")]
+                    tenant_stable_id,
                 )
                 .await
                     && let Err(e) = lower_sql(sql, &snapshot)

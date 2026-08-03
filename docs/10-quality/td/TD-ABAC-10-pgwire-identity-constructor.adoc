@@ -1,5 +1,5 @@
 = TD-ABAC-10: pgwire constructs the foundation identity (subject to the relational read boundary)
-:status: Partial
+:status: Resolved
 :dim: D5
 :pillar: SEC
 
@@ -22,7 +22,7 @@ threads it to `execute_sql_v1`/the seam.
 Note: pgwire trust-auth subjects are spoofable by design — that is what
 `AuthClass::TrustAsserted` records; deployments gate via `HeaderTrustPolicy`.
 
-== Status: 10a + 10c DONE; 10b open
+== Status: 10a + 10b + 10c DONE (TD resolved)
 
 **10a (done)** — `Session.identity: Option<ResolvedRequestIdentity>` built at
 the startup handshake by the pure, unit-tested `PostgresProtocol::startup_identity`
@@ -32,17 +32,38 @@ plumbing — `catalog_manager` already reached it), so the ABAC policy key is
 stamped once per connection; the relational SELECT path reads
 `session.identity.subject` instead of re-deriving it per query.
 
-**10b (open) — carry the whole identity, not just the subject.** The
-relational read path still takes a bare `Option<SubjectId>`, so
-`tenant_stable_id`/`auth_class` do not survive to the enforcement point:
-widen `relational_pipeline::try_run_select` (~:253) → `SnapshotCatalog`
-(~:1606, ctors ~:554/:737/:763) → `DmlTableReader` (~:1702) →
-`services/dml/mod.rs::scan_table_relational` (~:1441, ABAC filter ~:1466) to
-carry `PortIdentity`; update the off-pgwire caller
-`query/facade/adapter.rs` (~:803). This is the prerequisite for
-[[TD-ABAC-11]]'s fail-closed flip on the relational path. Note the SQL ports
-(`ApiHandlersPort::execute_sql_v1`, `QueryAdapterPort::execute_sql`) still
-take flat `tenant_id`/`subject` with no stable id.
+**10b (DONE) — carry the whole identity, and a LIVE BUG it uncovered.**
+
+`DmlService::abac_row_filter` reads `tenant_stable_id` off the storage
+`TenantContext`, but the relational pipeline built that context with
+`TenantContext::for_tenant_id()`, which always leaves it `None` — and the
+filter treats an absent policy key as `Denied`. With `abac-policy` enabled and
+ABAC stores provisioned (which DOES arm the enforcer in `SharedServices`),
+**every governed relational SELECT returned zero rows**: the relational
+boundary could never admit anyone.
+
+Note the symmetry with the vector seam: ONE root cause (the policy key does not
+reach the enforcement point) produced OPPOSITE failure modes — silent-open on
+the records/vector seam, deny-everything on the relational boundary. That is
+exactly the divergence ADR-087's "resolve once, carry unchanged" removes.
+
+Fixed by carrying the key end-to-end:
+
+* pgwire: `session_tenant_stable_id()` → `try_run_select` → the snapshot's
+  `TenantContext` → `scan_table_relational`; the EXPLAIN chain
+  (`explain_*_with_catalog` → `route_and_plan_select` → `prepare_select_plan`
+  → `build_snapshot`) carries it too, so ANALYZE executes under the same
+  decision it displays.
+* The SQL ports (`ApiHandlersPort::execute_sql_v1`,
+  `QueryAdapterPort::execute_sql`) were widened from the flat
+  `tenant_id`/`subject` pair to `PortIdentity` — the same consolidation
+  TD-ABAC-7 applied to the vector ports, rather than adding a third loose
+  parameter. gRPC SQL now supplies the key from `grpc_auth::tenant_stable_id`
+  (its records paths already did); the api-crate hybrid SQL route projects the
+  foundation identity. `RecordingApiPort` asserts the key reaches the port.
+* Embedded passes `PortIdentity::anonymous()` — single-process, genuinely no
+  per-request identity; the unrouted root REST `execute_sql` handler likewise
+  (dead code, not given an invented identity source).
 
 **10c (DONE) — the three pgwire read paths that bypassed ABAC** (found by the
 2026-08-02 live-path survey; each was a *distinct* bypass). All three are
