@@ -11,7 +11,8 @@
 |Decider |Vijaykumar Singh
 |Amends |ADR-076 and ADR-086
 |Evidence
-|link:../../_internal/status/COMPACTION_MEMORY_3M3_BOUNDED_WRITER_2026_08_02.adoc[3.3M-vector bounded-writer release/Azurite profile]
+|link:../../_internal/status/COMPACTION_MEMORY_3M3_BOUNDED_WRITER_2026_08_02.adoc[3.3M-vector bounded-writer release/Azurite profile] +
+link:../../_internal/status/COMPACTION_SPILL_CACHE_3M3_2026_08_03.adoc[3.3M spill + disk-cache release/Azurite verification]
 |===
 
 == Context
@@ -82,6 +83,12 @@ ordered-f32 spool, Region-D blocks, and encoded regions. The default is therefor
 conservative; it does not cause extra writes. Future schema/dimension evidence
 may raise the ratchet or replace the ratio with a footer-derived byte model, but
 must never silently lower it below the measured envelope.
+
+The exact rebased cache-promotion run independently measured 7.492x live scratch
+for a 690,242,135-byte / 2.58M-row spill, inside its 10x reservation. Its whole-
+process RSS delta was 8.51 GB because the sampling window also contained flush,
+in-memory compaction, WAL, cache, and allocator state; it is not evidence that
+the complete serving process fits the 512 MiB spill working-set reservation.
 
 The spill plan is admitted only when its fixed RAM reservation fits current
 cgroup/process headroom *and* its scratch reservation fits both process-wide
@@ -234,8 +241,9 @@ The gate may be promoted only after all of the following pass:
   completion rescan and promoted without requiring another write;
 . spill disabled is behavior-identical to ADR-086;
 . release/Azurite 3.3M compaction consolidates beyond the 5 GiB in-memory cap,
-  keeps incremental RSS within the spill working-set reservation, recall@10
-  remains at least 0.98, and GETs/query improve over the three-segment control;
+  keeps every explicitly accounted spill buffer within its working-set
+  reservation, reports whole-process RSS separately, preserves recall@10 of at
+  least 0.98, and improves GETs/query over the three-segment control;
 . no temporary object-store writes are observed; and
 . `cargo clippy -- -D warnings`, the cold-deletion-vector feature build, restart
   recovery, and the server release build are green.

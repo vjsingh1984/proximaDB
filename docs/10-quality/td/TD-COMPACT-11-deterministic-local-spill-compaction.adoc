@@ -9,7 +9,8 @@
 |Priority |**P0** — stability is protected, but a memory-constrained serving node can never consolidate an oversized pair and therefore pays permanently higher query GET fanout.
 |Component |`src/storage/common/compaction_memory.rs`; `src/storage/engines/sst/compaction.rs`; `src/storage/engines/sst/block_cluster.rs`; `crates/storage/proximadb-storage-common/src/pax_block.rs`
 |Governing ADR |link:../../12-design/adr/ADR-088-deterministic-local-spill-compaction.adoc[ADR-088]
-|Evidence |link:../../_internal/status/COMPACTION_MEMORY_3M3_BOUNDED_WRITER_2026_08_02.adoc[3.3M release/Azurite bounded-writer evidence]
+|Evidence |link:../../_internal/status/COMPACTION_MEMORY_3M3_BOUNDED_WRITER_2026_08_02.adoc[3.3M release/Azurite bounded-writer evidence] +
+link:../../_internal/status/COMPACTION_SPILL_CACHE_3M3_2026_08_03.adoc[3.3M spill + disk-cache release/Azurite verification]
 |===
 
 == Defect
@@ -97,6 +98,13 @@ The current code cannot be fixed by adding a temporary `Vec` serialization:
 * Run release/Azurite at 3.3M with the same 5 GiB serving ceiling.
 * Record peak RSS, scratch peak, local bytes, object GET/PUT/DELETE operations,
   segment geometry, GETs/query, latency, and recall in `BENCHMARK_EVIDENCE.toml`.
+
+The 2026-08-03 exact-commit run completed the 3.3M functional/economic slice:
+one 2.58M-row spill peaked at 7.492x live scratch inside its 10x reservation;
+the settled two-segment corpus measured recall 0.985/0.987/0.983 and
+4.98/1.17/48.69 GET/query after-write/disk-warm/object-cold. Whole-process RSS
+and the injected-failure/determinism matrix remain open; this evidence does not
+close the TD.
 
 == Exit criteria
 
