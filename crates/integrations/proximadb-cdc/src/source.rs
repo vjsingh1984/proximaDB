@@ -282,7 +282,7 @@ impl CdcSource for MockSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{ConnectorType, Operation, SourceInfo};
+    use crate::event::{ConnectorType, Operation, SourceInfo};
 
     fn create_test_event(id: &str) -> ChangeEvent {
         ChangeEvent::new(
@@ -338,7 +338,7 @@ mod tests {
         let mut source = MockSource::new("mock", events);
         let (tx, mut rx) = mpsc::channel(10);
 
-        let offset_store = Arc::new(crate::cdc::offset::MemoryOffsetStore::new());
+        let offset_store = Arc::new(crate::offset::MemoryOffsetStore::new());
         let handle = source.start(tx, offset_store).await.unwrap();
 
         assert_eq!(source.status(), SourceStatus::Streaming);
@@ -362,7 +362,7 @@ mod tests {
         let mut source = MockSource::new("test", vec![]);
 
         let (tx, _rx) = mpsc::channel(10);
-        let offset_store = Arc::new(crate::cdc::offset::MemoryOffsetStore::new());
+        let offset_store = Arc::new(crate::offset::MemoryOffsetStore::new());
         let _ = source.start(tx, offset_store).await.unwrap();
 
         assert_eq!(source.status(), SourceStatus::Streaming);
