@@ -31,7 +31,7 @@
 use std::collections::HashMap;
 use std::io::{self, Cursor, Read};
 
-use crate::cdc::error::{CdcError, CdcResult};
+use crate::error::{CdcError, CdcResult};
 use serde_json;
 
 /// Helper trait for reading values

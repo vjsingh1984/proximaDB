@@ -32,11 +32,11 @@ use tracing::info;
 
 use super::config::{BinlogPosition, MySqlConfig};
 use super::decoder::{BinlogDecoder, BinlogEvent};
-use crate::cdc::config::SourceConfig;
-use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::{ChangeEvent, Operation, SourceInfo};
-use crate::cdc::offset::{Offset, OffsetStore};
-use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
+use crate::config::SourceConfig;
+use crate::error::{CdcError, CdcResult};
+use crate::event::{ChangeEvent, Operation, SourceInfo};
+use crate::offset::{Offset, OffsetStore};
+use crate::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 
 #[cfg(feature = "experimental-cdc-connectors")]
 use mysql_async::{Conn, Opts, Row as MySqlRow, prelude::*};
@@ -496,7 +496,7 @@ async fn run_mysql_binlog_stream(
     current_gtid: Arc<RwLock<Option<String>>>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> CdcResult<()> {
-    use crate::cdc::connectors::mysql::config::GtidMode;
+    use crate::connectors::mysql::config::GtidMode;
 
     // Create binlog streamer
     let mut streamer = MySqlBinlogStreamer::new(&mysql_config);
@@ -641,7 +641,7 @@ async fn convert_binlog_to_change_event(
     binlog_event: &BinlogEvent,
     server_id: &str,
 ) -> Option<ChangeEvent> {
-    use crate::cdc::event::RecordState;
+    use crate::event::RecordState;
     use std::collections::HashMap;
 
     // Extract operation type from binlog event
@@ -701,7 +701,7 @@ async fn convert_binlog_to_change_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::offset::MemoryOffsetStore;
+    use crate::offset::MemoryOffsetStore;
 
     async fn create_test_connector() -> MySqlConnector {
         let config = MySqlConfig::new("mysql://localhost/test").with_server_id(12345);

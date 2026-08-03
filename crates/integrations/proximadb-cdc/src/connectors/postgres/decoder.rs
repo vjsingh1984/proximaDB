@@ -33,7 +33,7 @@
 use std::collections::HashMap;
 use std::io::{self, Cursor, Read};
 
-use crate::cdc::error::{CdcError, CdcResult};
+use crate::error::{CdcError, CdcResult};
 
 /// Helper trait for reading big-endian values from a cursor
 trait ReadBigEndian {

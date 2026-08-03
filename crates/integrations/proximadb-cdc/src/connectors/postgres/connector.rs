@@ -28,11 +28,11 @@ use tracing::info;
 use super::config::PostgresConfig;
 use super::decoder::{ColumnValue, PgOutputDecoder, PgOutputEvent, TupleData};
 use super::replication::ReplicationStream;
-use crate::cdc::config::SourceConfig;
-use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::{ChangeEvent, Operation, RecordState, SourceInfo, TransactionInfo};
-use crate::cdc::offset::{Offset, OffsetStore};
-use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
+use crate::config::SourceConfig;
+use crate::error::{CdcError, CdcResult};
+use crate::event::{ChangeEvent, Operation, RecordState, SourceInfo, TransactionInfo};
+use crate::offset::{Offset, OffsetStore};
+use crate::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 
 /// PostgreSQL CDC connector
 pub struct PostgresConnector {
@@ -446,7 +446,7 @@ impl CdcSource for PostgresConnector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::offset::MemoryOffsetStore;
+    use crate::offset::MemoryOffsetStore;
 
     async fn create_test_connector() -> PostgresConnector {
         let pg_config = PostgresConfig::new("postgres://localhost/test")
