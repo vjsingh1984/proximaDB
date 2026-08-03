@@ -605,6 +605,30 @@ impl PostgresProtocol {
         self
     }
 
+    /// Attach the process-shared ABAC enforcer to this connection's DML service.
+    ///
+    /// pgwire constructs a small per-connection DML façade, unlike REST/gRPC's
+    /// shared façade. The underlying enforcer must nevertheless be the exact
+    /// composition-root instance so live admin writes and every transport read
+    /// one policy state. A non-unique DML Arc is a wiring error and remains
+    /// unenforced only with an explicit error log; production calls this before
+    /// any clone escapes the connection constructor.
+    #[cfg(feature = "abac-policy")]
+    pub fn with_abac_enforcer(
+        mut self,
+        enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
+    ) -> Self {
+        if let Some(enforcer) = enforcer {
+            match self.dml_service.as_mut().and_then(Arc::get_mut) {
+                Some(dml) => dml.set_abac_enforcer(enforcer),
+                None => tracing::error!(
+                    "pgwire ABAC enforcer could not be attached to the per-connection DML service"
+                ),
+            }
+        }
+        self
+    }
+
     pub fn with_tenant_deployment_mode(
         mut self,
         mode: proximadb_tenant::TenantDeploymentMode,

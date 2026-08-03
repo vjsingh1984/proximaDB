@@ -128,6 +128,10 @@ pub struct PostgresServer {
     tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
     /// Whether startup may omit the tenant/catalog and use a default.
     tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
+    /// The exact composition-root enforcer used by REST/gRPC and mutated by the
+    /// live ABAC admin API. Cloned into each pgwire DML façade at accept time.
+    #[cfg(feature = "abac-policy")]
+    abac_enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -172,6 +176,8 @@ impl PostgresServer {
             rate_limiter: None,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
+            #[cfg(feature = "abac-policy")]
+            abac_enforcer: None,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -270,6 +276,18 @@ impl PostgresServer {
         self
     }
 
+    /// Wire the process-shared live ABAC enforcer into every accepted pgwire
+    /// connection. This is independent of the direct-record-write option: reads
+    /// must remain governed under either storage configuration.
+    #[cfg(feature = "abac-policy")]
+    pub fn with_abac_enforcer(
+        mut self,
+        enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
+    ) -> Self {
+        self.abac_enforcer = enforcer;
+        self
+    }
+
     /// Start the PostgreSQL server
     pub async fn start(&self) -> Result<()> {
         let listener = TcpListener::bind(self.bind_address).await?;
@@ -314,6 +332,8 @@ impl PostgresServer {
                     let rate_limiter = self.rate_limiter.clone();
                     let tenant_header_trust = self.tenant_header_trust;
                     let tenant_deployment_mode = self.tenant_deployment_mode.clone();
+                    #[cfg(feature = "abac-policy")]
+                    let abac_enforcer = self.abac_enforcer.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
@@ -335,6 +355,8 @@ impl PostgresServer {
                             rate_limiter,
                             tenant_header_trust,
                             tenant_deployment_mode,
+                            #[cfg(feature = "abac-policy")]
+                            abac_enforcer,
                         )
                         .await
                         {
@@ -380,6 +402,9 @@ impl PostgresServer {
         rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
         tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
         tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
+        #[cfg(feature = "abac-policy")] abac_enforcer: Option<
+            Arc<crate::security::rls::AbacEnforcer>,
+        >,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
@@ -403,6 +428,7 @@ impl PostgresServer {
         let protocol = protocol.with_stable_id_resolver(Some(Arc::new(
             crate::security::CatalogTenantStableIdResolver::new(catalog_manager.clone()),
         )));
+        #[allow(unused_mut)] // feature build rebinds after attaching ABAC below
         let mut protocol = if let Some(direct_write_services) = direct_write_services {
             protocol.with_direct_catalog_manager(
                 catalog_manager,
@@ -412,6 +438,8 @@ impl PostgresServer {
         } else {
             protocol.with_catalog_manager(catalog_manager)
         };
+        #[cfg(feature = "abac-policy")]
+        let mut protocol = protocol.with_abac_enforcer(abac_enforcer);
         if let Some(pipeline) = rank_pipeline {
             protocol = protocol.with_rank_pipeline(
                 pipeline.services,

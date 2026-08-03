@@ -301,6 +301,32 @@ impl SystemCatalogState {
         self.inner.read().account_ids.values().copied().max()
     }
 
+    /// Snapshot the table identity rows used to recover the SystemCatalog's
+    /// transient allocator floors and namespace registry after WAL replay.
+    pub fn table_entries(&self) -> Vec<(TableIdentifier, Arc<CatalogTableSchema>)> {
+        self.inner
+            .read()
+            .tables
+            .iter()
+            .map(|(identifier, schema)| (identifier.clone(), schema.clone()))
+            .collect()
+    }
+
+    /// Highest durable object id across tables, columns, and indexes.
+    pub fn max_object_id(&self) -> Option<u64> {
+        self.inner
+            .read()
+            .tables
+            .values()
+            .flat_map(|schema| {
+                std::iter::once(schema.object_id)
+                    .chain(schema.columns.iter().map(|column| column.object_id))
+                    .chain(schema.indexes.iter().map(|index| index.object_id))
+            })
+            .flatten()
+            .max()
+    }
+
     /// The highest WAL sequence number folded in (replay watermark / snapshot
     /// cutover LSN).
     pub fn applied_seq(&self) -> u64 {

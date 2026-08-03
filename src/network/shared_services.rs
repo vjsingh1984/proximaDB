@@ -380,6 +380,12 @@ pub struct SharedServices {
     #[cfg(feature = "abac-policy")]
     pub abac_predicate_store: Option<Arc<proximadb_abac::FileSystemPredicateObjectStore>>,
 
+    /// Process-shared ABAC enforcer wired into every data-plane surface,
+    /// including pgwire's per-connection DML façade. Sharing this handle keeps
+    /// policy epoch/cache state and the three live durable stores convergent.
+    #[cfg(feature = "abac-policy")]
+    pub abac_enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
+
     /// The single canonical WAL-backed record store, built + WAL-recovered ONCE here and
     /// shared across ALL surfaces — the REST/gRPC `DmlService` and the pgwire direct-write
     /// path both route relational tables through this instance — so a write on any protocol
@@ -1594,6 +1600,8 @@ impl SharedServices {
         // is then hot-visible to every reader (TD-ABAC control-plane).
         #[cfg(feature = "abac-policy")]
         let abac_stores = Self::open_abac_stores(opt_config);
+        #[cfg(feature = "abac-policy")]
+        let abac_enforcer = abac_stores.as_ref().map(Self::build_enforcer_from_stores);
 
         // `directory_cache` constructed earlier (before SstEngine) so the
         // engine, the vector ops service, and the SharedServices public
@@ -1633,12 +1641,12 @@ impl SharedServices {
             // ⇒ no enforcer ⇒ no per-record filtering (the status quo). Mirrors the
             // DmlService wiring (`build_abac_enforcer`, TD-ABAC-2).
             #[cfg(feature = "abac-policy")]
-            let svc = match &abac_stores {
-                Some(stores) => {
+            let svc = match &abac_enforcer {
+                Some(enforcer) => {
                     debug!(
                         "✅ SharedServices::new - durable ABAC enforcer wired into VectorOperationsService"
                     );
-                    svc.with_abac_enforcer(Self::build_enforcer_from_stores(stores))
+                    svc.with_abac_enforcer(enforcer.clone())
                 }
                 None => svc,
             };
@@ -2580,10 +2588,10 @@ impl SharedServices {
         // DML read funnel. Fully behind `abac-policy` (default-OFF) ⇒ default
         // builds are byte-for-byte unchanged; `None` ⇒ no enforcement (status quo).
         #[cfg(feature = "abac-policy")]
-        let base_dml = match &abac_stores {
-            Some(stores) => {
+        let base_dml = match &abac_enforcer {
+            Some(enforcer) => {
                 debug!("✅ SharedServices::new - durable ABAC enforcer wired into DmlService");
-                base_dml.with_abac_enforcer(Self::build_enforcer_from_stores(stores))
+                base_dml.with_abac_enforcer(enforcer.clone())
             }
             None => base_dml,
         };
@@ -2981,6 +2989,8 @@ impl SharedServices {
                 abac_binding_store: abac_stores.as_ref().map(|s| s.bindings.clone()),
                 #[cfg(feature = "abac-policy")]
                 abac_predicate_store: abac_stores.as_ref().map(|s| s.predicate_objects.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_enforcer,
                 // TD-064 / LLD §5: per-collection recall-probe gate. Empty
                 // at startup; populated as the stats refresher / search path
                 // observe probe outcomes. Route-health surfaces per-scope

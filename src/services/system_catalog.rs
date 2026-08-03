@@ -105,6 +105,16 @@ pub struct SystemCatalog {
     /// Next durable account/tenant stable id. Recovered from the WAL/snapshot
     /// state at boot; u64 lets us detect u32 exhaustion instead of wrapping.
     account_floor: AtomicU64,
+    /// Next globally unique catalog object id (table/column/index). Recovered
+    /// from durable schemas at boot; starts at one because zero is reserved.
+    object_floor: AtomicU64,
+    /// Next stable namespace/collection ids. The typed ids are narrower than
+    /// object ids, so u64 floors let allocation detect exhaustion before casts.
+    namespace_floor: AtomicU64,
+    collection_floor: AtomicU64,
+    /// Stable namespace id per (account, logical namespace). Durable schemas
+    /// are the authority; this map is rebuilt from them after replay.
+    namespace_ids: parking_lot::RwLock<HashMap<(String, String), u16>>,
     appender: Arc<dyn TableWalAppender>,
     /// Serializes the durable-append → in-RAM-apply pair so concurrent DDL can
     /// never interleave such that a lower-LSN mutation applies after a higher
@@ -149,12 +159,18 @@ impl SystemCatalog {
         state: SystemCatalogState,
         appender: Arc<dyn TableWalAppender>,
     ) -> Self {
+        let (object_floor, namespace_floor, collection_floor, namespace_ids) =
+            Self::identity_allocator_seed(&state);
         let account_floor = state.max_account_id().map_or(1, |id| u64::from(id) + 1);
         Self {
             name: name.into(),
             role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
             account_floor: AtomicU64::new(account_floor),
+            object_floor: AtomicU64::new(object_floor),
+            namespace_floor: AtomicU64::new(namespace_floor),
+            collection_floor: AtomicU64::new(collection_floor),
+            namespace_ids: parking_lot::RwLock::new(namespace_ids),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: None,
@@ -176,6 +192,120 @@ impl SystemCatalog {
     /// The plane this catalog serves.
     pub fn role(&self) -> &proximadb_catalog::CatalogRole {
         &self.role
+    }
+
+    /// Recover every transient identity allocator from the durable table
+    /// schemas folded into `state`. Skipped ids are harmless; reuse is not.
+    fn identity_allocator_seed(
+        state: &SystemCatalogState,
+    ) -> (u64, u64, u64, HashMap<(String, String), u16>) {
+        let object_floor = state.max_object_id().map_or(1, |id| id.saturating_add(1));
+        let mut namespace_floor = 1_u64;
+        let mut collection_floor = 1_u64;
+        let mut namespace_ids = HashMap::new();
+        for (identifier, schema) in state.table_entries() {
+            if let Some(namespace_id) = schema.stable_namespace_id {
+                namespace_floor = namespace_floor.max(u64::from(namespace_id) + 1);
+                if let Some(account) = state
+                    .get_namespace(&identifier.namespace)
+                    .and_then(|namespace| namespace.tenant_id)
+                {
+                    namespace_ids.insert((account, identifier.namespace.join(".")), namespace_id);
+                }
+            }
+            if let Some(collection_id) = schema.stable_collection_id {
+                collection_floor = collection_floor.max(u64::from(collection_id) + 1);
+            }
+        }
+        (
+            object_floor,
+            namespace_floor,
+            collection_floor,
+            namespace_ids,
+        )
+    }
+
+    fn mint_object_id(&self, existing: Option<u64>) -> Result<u64> {
+        match existing {
+            Some(id) if id > 0 => {
+                let next = id
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow!("catalog object id space exhausted"))?;
+                self.object_floor.fetch_max(next, Ordering::SeqCst);
+                Ok(id)
+            }
+            Some(_) => Err(anyhow!("catalog object id zero is reserved")),
+            None => self.allocate_bounded(&self.object_floor, u64::MAX, "catalog object"),
+        }
+    }
+
+    fn allocate_bounded(&self, floor: &AtomicU64, max: u64, label: &str) -> Result<u64> {
+        floor
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |id| {
+                (id > 0 && id <= max).then(|| id.checked_add(1)).flatten()
+            })
+            .map_err(|_| anyhow!("{label} id space exhausted"))
+    }
+
+    async fn resolve_typed_triple(
+        &self,
+        account: &str,
+        namespace_key: &str,
+        existing_namespace: Option<u16>,
+        existing_collection: Option<u32>,
+    ) -> Result<Option<(u32, u16, u32)>> {
+        let Some(account_id) = self.account_id_u32(account).await? else {
+            return Ok(None);
+        };
+        let key = (account.to_string(), namespace_key.to_string());
+        let namespace_id = if let Some(id) = existing_namespace {
+            self.namespace_floor
+                .fetch_max(u64::from(id) + 1, Ordering::SeqCst);
+            let mut registry = self.namespace_ids.write();
+            match registry.get(&key) {
+                Some(current) if *current != id => {
+                    return Err(anyhow!(
+                        "stable namespace identity mismatch for '{}': {} != {}",
+                        namespace_key,
+                        current,
+                        id
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    registry.insert(key, id);
+                }
+            }
+            id
+        } else if let Some(id) = self.namespace_ids.read().get(&key).copied() {
+            id
+        } else {
+            let mut registry = self.namespace_ids.write();
+            if let Some(id) = registry.get(&key).copied() {
+                id
+            } else {
+                let id = self.allocate_bounded(
+                    &self.namespace_floor,
+                    u64::from(u16::MAX),
+                    "stable namespace",
+                )? as u16;
+                registry.insert(key, id);
+                id
+            }
+        };
+        let collection_id = match existing_collection {
+            Some(id) => {
+                self.collection_floor
+                    .fetch_max(u64::from(id) + 1, Ordering::SeqCst);
+                id
+            }
+            None => self.allocate_bounded(
+                &self.collection_floor,
+                u64::from(u32::MAX),
+                "stable collection",
+            )? as u32,
+        };
+        Ok(Some((account_id, namespace_id, collection_id)))
     }
 
     /// Open (or create) the catalog WAL at `wal_path`, restore the in-RAM
@@ -289,12 +419,18 @@ impl SystemCatalog {
             .filter(|n| *n > 0)
             .unwrap_or(DEFAULT_SNAPSHOT_THRESHOLD);
 
+        let (object_floor, namespace_floor, collection_floor, namespace_ids) =
+            Self::identity_allocator_seed(&state);
         let account_floor = state.max_account_id().map_or(1, |id| u64::from(id) + 1);
         Ok(Self {
             name: name.into(),
             role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
             account_floor: AtomicU64::new(account_floor),
+            object_floor: AtomicU64::new(object_floor),
+            namespace_floor: AtomicU64::new(namespace_floor),
+            collection_floor: AtomicU64::new(collection_floor),
+            namespace_ids: parking_lot::RwLock::new(namespace_ids),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: Some(SnapshotConfig {
@@ -527,6 +663,18 @@ impl SystemCatalog {
             self.account_floor
                 .fetch_max(u64::from(max) + 1, Ordering::SeqCst);
         }
+        // The adopted authority may also carry object/typed ids minted by the
+        // publisher after this pod booted. Re-seed every transient allocator and
+        // replace the namespace map while the catalog write lock is held, so a
+        // same-generation reload cannot later reuse an adopted id.
+        let (object_floor, namespace_floor, collection_floor, namespace_ids) =
+            Self::identity_allocator_seed(&self.state);
+        self.object_floor.fetch_max(object_floor, Ordering::SeqCst);
+        self.namespace_floor
+            .fetch_max(namespace_floor, Ordering::SeqCst);
+        self.collection_floor
+            .fetch_max(collection_floor, Ordering::SeqCst);
+        *self.namespace_ids.write() = namespace_ids;
         self.loaded_version.store(read.version, Ordering::SeqCst);
         self.loaded_generation
             .store(read.generation, Ordering::SeqCst);
@@ -791,6 +939,23 @@ impl Catalog for SystemCatalog {
         self.state.account_id_u32(account)
     }
 
+    async fn max_object_id(&self) -> Result<Option<u64>> {
+        Ok(self.state.max_object_id())
+    }
+
+    async fn mint_collection_typed_identity(
+        &self,
+        account: &str,
+        namespace_key: &str,
+    ) -> Result<Option<(u32, u16, u32)>> {
+        let account = account.trim();
+        if account.is_empty() {
+            return Ok(None);
+        }
+        self.resolve_typed_triple(account, namespace_key, None, None)
+            .await
+    }
+
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
@@ -821,6 +986,8 @@ impl Catalog for SystemCatalog {
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,
     ) -> Result<CatalogTableSchema> {
+        let mut schema = schema;
+        proximadb_catalog::schema::normalize_identity(&mut schema);
         validate_schema(&schema)?;
         if !self.state.namespace_exists(&identifier.namespace) {
             return Err(anyhow!(
@@ -830,6 +997,35 @@ impl Catalog for SystemCatalog {
         }
         if self.state.table_exists(identifier) {
             return Err(anyhow!("Table '{}' already exists", identifier));
+        }
+        schema.object_id = Some(self.mint_object_id(schema.object_id)?);
+        for column in &mut schema.columns {
+            column.object_id = Some(self.mint_object_id(column.object_id)?);
+        }
+        for index in &mut schema.indexes {
+            index.object_id = Some(self.mint_object_id(index.object_id)?);
+        }
+        let namespace = self
+            .state
+            .get_namespace(&identifier.namespace)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Namespace '{}' does not exist",
+                    identifier.namespace.join(".")
+                )
+            })?;
+        if let Some(account) = namespace.tenant_id.as_deref()
+            && let Some((_account_id, namespace_id, collection_id)) = self
+                .resolve_typed_triple(
+                    account,
+                    &identifier.namespace.join("."),
+                    schema.stable_namespace_id,
+                    schema.stable_collection_id,
+                )
+                .await?
+        {
+            schema.stable_namespace_id = Some(namespace_id);
+            schema.stable_collection_id = Some(collection_id);
         }
         self.commit(CatalogDelta::UpsertTable {
             identifier: identifier.clone(),
@@ -933,6 +1129,7 @@ impl Catalog for SystemCatalog {
         identifier: &TableIdentifier,
         index: CatalogIndex,
     ) -> Result<CatalogIndex> {
+        let mut index = index;
         let mut schema = self.require_table(identifier)?;
         if schema.indexes.iter().any(|i| i.name == index.name) {
             return Err(anyhow!(
@@ -950,6 +1147,7 @@ impl Catalog for SystemCatalog {
                 ));
             }
         }
+        index.object_id = Some(self.mint_object_id(index.object_id)?);
         schema.indexes.push(index.clone());
         schema.updated_at_ms = now_millis();
         self.commit(CatalogDelta::UpsertTable {
@@ -1107,6 +1305,50 @@ mod tests {
         let right = right?;
         assert_eq!(left, right);
         assert_eq!(cat.account_id_u32_lookup("acme"), left);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tenant_tables_receive_durable_total_object_and_typed_identity() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+        let namespace = nslevels(&["acme", "default"]);
+        let first = TableIdentifier::new(namespace.clone(), "orders");
+        let second = TableIdentifier::new(namespace.clone(), "customers");
+
+        let cat = SystemCatalog::open("default", &wal).await?;
+        cat.create_namespace_for_tenant(&namespace, HashMap::new(), Some("acme"))
+            .await?;
+        let orders = cat.create_table(&first, vec_schema("orders")).await?;
+        let customers = cat.create_table(&second, vec_schema("customers")).await?;
+
+        assert!(orders.object_id.is_some());
+        assert!(
+            orders
+                .columns
+                .iter()
+                .all(|column| column.object_id.is_some())
+        );
+        assert_eq!(orders.stable_namespace_id, customers.stable_namespace_id);
+        assert!(orders.stable_namespace_id.is_some());
+        assert_ne!(orders.stable_collection_id, customers.stable_collection_id);
+        let prior_max_object = cat.max_object_id().await?.expect("object ids minted");
+        let stable_namespace = orders.stable_namespace_id;
+        let prior_collection = customers.stable_collection_id.expect("typed collection id");
+        drop(cat);
+
+        let reopened = SystemCatalog::open("default", &wal).await?;
+        let third = TableIdentifier::new(namespace, "invoices");
+        let invoices = reopened
+            .create_table(&third, vec_schema("invoices"))
+            .await?;
+        assert_eq!(invoices.stable_namespace_id, stable_namespace);
+        assert!(
+            invoices
+                .stable_collection_id
+                .is_some_and(|id| id > prior_collection)
+        );
+        assert!(invoices.object_id.is_some_and(|id| id > prior_max_object));
         Ok(())
     }
 

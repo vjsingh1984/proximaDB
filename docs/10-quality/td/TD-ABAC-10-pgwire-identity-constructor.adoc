@@ -76,8 +76,10 @@ fail-closed guard with it.
 tenant foundation; vector/record and relational seams both consume it.
 Relational tests pin permit, unbound deny, missing-key deny, internal
 passthrough, legacy-schema deny, and fast-path ineligibility. The extracted
-REST handler test proves all four identity fields cross the SQL port. A live
-provisioned-policy surface matrix remains the release-evidence follow-on in
-[[TD-ABAC-11]].
+REST handler test proves all four identity fields cross the SQL port.
+`abac_relational_transport_e2e` now boots the real server and proves live
+pgwire deny-before-provision -> authenticated REST provision -> hot permit ->
+unbound-subject deny -> hot revoke, without reconnect or restart. The remaining
+non-relational transport rows are tracked in [[TD-ABAC-11]].
 
 Depends on [[TD-ABAC-8]]. Ref ADR-087, TD-ABAC-3, TD-ABAC-5, [[TD-ABAC-11]].

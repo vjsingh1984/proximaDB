@@ -119,8 +119,8 @@ carried unchanged to every consumer; everything else is a projection.**
   → relational read boundary.
 * TD-ABAC-11 — mint + strictness: default-tenant mint, binding-provisioning
   e2e fixture, flip the composition rule to fail-closed on the absent stable
-  id, cross-surface e2e ratchet (REST/gRPC/Flight/pgwire × admit/deny/
-  passthrough).
+  id, and the live pgwire-relational + authenticated REST control-plane ratchet.
+  REST SQL/gRPC/Flight live data-plane rows remain the release-evidence tail.
 
 == References
 
