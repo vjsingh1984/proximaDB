@@ -22,7 +22,7 @@ threads it to `execute_sql_v1`/the seam.
 Note: pgwire trust-auth subjects are spoofable by design — that is what
 `AuthClass::TrustAsserted` records; deployments gate via `HeaderTrustPolicy`.
 
-== Status: 10a DONE; 10b/10c open
+== Status: 10a + 10c DONE; 10b open
 
 **10a (done)** — `Session.identity: Option<ResolvedRequestIdentity>` built at
 the startup handshake by the pure, unit-tested `PostgresProtocol::startup_identity`
@@ -44,19 +44,41 @@ carry `PortIdentity`; update the off-pgwire caller
 (`ApiHandlersPort::execute_sql_v1`, `QueryAdapterPort::execute_sql`) still
 take flat `tenant_id`/`subject` with no stable id.
 
-**10c (open) — three pgwire read paths bypass ABAC** (found by the 2026-08-02
-live-path survey; each is a *distinct* bypass, not covered by 10a/10b):
+**10c (DONE) — the three pgwire read paths that bypassed ABAC** (found by the
+2026-08-02 live-path survey; each was a *distinct* bypass). All three are
+closed; how each was closed is recorded below because the choices differ:
 
-1. **pgvector search** — `protocol.rs` `execute_vector_search` (~:2221) calls
-   `unified_search_native` (~:2286) with a hardcoded
-   `ReadContext::system(Statistics, "pgwire [CLIENT-PLACEHOLDER]")` (~:2293):
-   ALL pgwire vector search is unenforced. Fix: pass the session identity, or
-   route through the enforced `unified_search_v1` seam.
-2. **Legacy single-table SELECT** — `execute_relational_query` (~:2896) →
-   `select_table_records_with_projection[_where]` (~:2926/:2945): tenant-scoped
-   only, no subject parameter at all.
-3. **EXPLAIN/ANALYZE** — `relational_pipeline.rs::build_snapshot` (~:2337)
-   hardcodes `subject: None` (~:2361), so an EXPLAIN can describe a plan over
-   rows the subject cannot read.
+1. **pgvector search** (was: hardcoded `ReadContext::system(Statistics,
+   "pgwire [CLIENT-PLACEHOLDER]")`, so ALL pgwire vector search was unenforced)
+   — now resolves the CLIENT context from the session identity through the ONE
+   composition rule `VectorOperationsService::records_read_context`, and emits
+   an EMPTY result set (fail-closed) when that rule denies.
+2. **Legacy single-table SELECT** (was: no subject parameter at all) — now
+   **fails closed**: under an armed enforcer + a governed subject the fallback
+   refuses with an actionable error instead of serving unenforced rows.
+   *Deliberately NOT enforced in place*: that path has its own scan machinery
+   with no row-filter wiring, so enforcing there would mean a SECOND
+   implementation of the one rule — the drift seam ADR-087 exists to remove.
+   The real fix is coverage: these shapes should be lowered by the enforcing
+   relational pipeline (the ANSI-SQL-over-pgwire direction anyway). Tracked as
+   the follow-on below.
+3. **EXPLAIN/ANALYZE** (was: `subject: None` hardcoded in `build_snapshot`) —
+   the subject is threaded through
+   `explain_select_route_with_catalog` / `explain_analyze_select_with_catalog`
+   → `route_and_plan_select` → `prepare_select_plan` → `build_snapshot`.
+   Severity note: EXPLAIN ANALYZE *executes* the query, so this was returning
+   actual rows the subject could not read — not merely plan estimates.
+
+**10c follow-on (open)**: grow relational-pipeline coverage so the legacy
+single-table fallback is unreachable for governed subjects, then delete the
+fail-closed guard with it.
+
+**Test posture**: the shared composition rule's truth table is pinned in
+`tests/abac_rest_record_search_integration_test.rs` (admit / deny / no-subject
+passthrough / **the TD-ABAC-11 known-open absent-stable-id cell**), so a
+surface that stops calling the rule is a bypass by construction and the
+TD-ABAC-11 flip must consciously update a failing test. Surface-level pgwire
+e2e (a real psql session against a provisioned policy) is gated on the
+binding-provisioning fixture in [[TD-ABAC-11]].
 
 Depends on [[TD-ABAC-8]]. Ref ADR-087, TD-ABAC-3, TD-ABAC-5, [[TD-ABAC-11]].

@@ -2321,8 +2321,16 @@ async fn prepare_select_plan(
     query: &SqlQuery,
     dml: &Arc<DmlService>,
     tenant: Option<&str>,
+    #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
 ) -> Option<(SnapshotCatalog, PhysicalPlan)> {
-    let snapshot = build_snapshot(query, dml, tenant).await?;
+    let snapshot = build_snapshot(
+        query,
+        dml,
+        tenant,
+        #[cfg(feature = "abac-policy")]
+        subject,
+    )
+    .await?;
     match plan_over_snapshot(sql, &snapshot)? {
         Ok(physical) => Some((snapshot, physical)),
         Err(_) => None,
@@ -2338,6 +2346,7 @@ async fn build_snapshot(
     query: &SqlQuery,
     dml: &Arc<DmlService>,
     tenant: Option<&str>,
+    #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
 ) -> Option<SnapshotCatalog> {
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
@@ -2358,10 +2367,13 @@ async fn build_snapshot(
         tenant: tenant
             .filter(|t| !t.is_empty())
             .map(TenantContext::for_tenant_id),
-        // EXPLAIN/ANALYZE path — no client subject threaded here (follow-on);
-        // `None` ⇒ no ABAC enforcement on this path.
+        // TD-ABAC-10c: the EXPLAIN/ANALYZE snapshot carries the SAME client
+        // subject execution does. This previously hardcoded `None`, so an
+        // EXPLAIN disclosed row estimates — and EXPLAIN ANALYZE, which really
+        // executes the query, returned actual rows — for data the subject
+        // cannot read.
         #[cfg(feature = "abac-policy")]
-        subject: None,
+        subject,
     })
 }
 
@@ -2382,8 +2394,17 @@ pub async fn explain_select_route_with_catalog(
     sql: &str,
     dml: &Arc<DmlService>,
     tenant: Option<&str>,
+    #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
 ) -> Result<SelectRouteExplanation, String> {
-    route_and_plan_select(sql, dml, false, tenant).await
+    route_and_plan_select(
+        sql,
+        dml,
+        false,
+        tenant,
+        #[cfg(feature = "abac-policy")]
+        subject,
+    )
+    .await
 }
 
 /// Catalog-aware `EXPLAIN ANALYZE SELECT`: like [`explain_select_route_with_catalog`]
@@ -2394,8 +2415,17 @@ pub async fn explain_analyze_select_with_catalog(
     sql: &str,
     dml: &Arc<DmlService>,
     tenant: Option<&str>,
+    #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
 ) -> Result<SelectRouteExplanation, String> {
-    route_and_plan_select(sql, dml, true, tenant).await
+    route_and_plan_select(
+        sql,
+        dml,
+        true,
+        tenant,
+        #[cfg(feature = "abac-policy")]
+        subject,
+    )
+    .await
 }
 
 /// Shared core for catalog-aware `EXPLAIN [ANALYZE] SELECT`. Routes the query, then for
@@ -2408,6 +2438,7 @@ async fn route_and_plan_select(
     dml: &Arc<DmlService>,
     analyze: bool,
     tenant: Option<&str>,
+    #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
 ) -> Result<SelectRouteExplanation, String> {
     let statements =
         Parser::parse_sql(&GenericDialect {}, sql).map_err(|e| format!("parse: {e}"))?;
@@ -2521,7 +2552,16 @@ async fn route_and_plan_select(
             crate::query::table_write_plan::ComputeBackend::Native
         )
     {
-        match prepare_select_plan(sql, query, dml, tenant).await {
+        match prepare_select_plan(
+            sql,
+            query,
+            dml,
+            tenant,
+            #[cfg(feature = "abac-policy")]
+            subject.clone(),
+        )
+        .await
+        {
             Some((snapshot, physical)) => {
                 let base_lines = explain_physical(&physical);
                 if analyze {
@@ -2565,7 +2605,14 @@ async fn route_and_plan_select(
                 // reason (ADR-064 / TD-TRACE-1) — the same decline the legacy path
                 // otherwise re-guesses from SQL text. A re-lower here is cheap and
                 // EXPLAIN is a cold, diagnostic path (never the hot query path).
-                if let Some(snapshot) = build_snapshot(query, dml, tenant).await
+                if let Some(snapshot) = build_snapshot(
+                    query,
+                    dml,
+                    tenant,
+                    #[cfg(feature = "abac-policy")]
+                    subject.clone(),
+                )
+                .await
                     && let Err(e) = lower_sql(sql, &snapshot)
                 {
                     explanation.lowering.declines.push(e.decline());

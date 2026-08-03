@@ -1049,6 +1049,19 @@ impl DmlService {
         self
     }
 
+    /// TD-ABAC-10c: whether row-level enforcement is armed on this service.
+    ///
+    /// Read-paths that CANNOT enforce (they lack the row-filter wiring
+    /// [`Self::abac_row_filter`] feeds) use this to fail closed rather than
+    /// serve unenforced rows — see the legacy single-table SELECT fallback in
+    /// the pgwire protocol. Deliberately not "enforce here too": a second
+    /// enforcement implementation for the same rows is the drift seam ADR-087
+    /// exists to remove.
+    #[cfg(feature = "abac-policy")]
+    pub fn has_abac_enforcer(&self) -> bool {
+        self.abac_enforcer.is_some()
+    }
+
     /// Execute a DML statement (single-tenant / unscoped).
     pub async fn execute(&self, statement: DmlStatement) -> Result<DmlResult> {
         self.execute_scoped(statement, None).await
