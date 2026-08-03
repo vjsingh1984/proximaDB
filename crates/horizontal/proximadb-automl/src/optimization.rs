@@ -14,8 +14,8 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use super::prediction::{FeatureVector, PerformancePredictor};
-use super::service::AutoMLConfig;
 use super::workload::WorkloadPattern;
+use crate::AutoMLConfig;
 
 /// Optimization goals
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
