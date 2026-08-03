@@ -73,17 +73,16 @@ silently running `open`. Unset ⇒ config value; default-safe, no flag-day.
    `database.rs` via `HeaderTrustPolicy::effective` (env > config > mode
    preset; unparseable env tightens to `authenticated-only`) and threaded
    through `MultiServer::with_tenant_header_trust` into every surface.
-3. **[PARTIAL] Stable-id resolution at the boundary (ADR-031).** The port
+3. **[DONE] Stable-id resolution at the boundary (ADR-031/ADR-087).** The port
    (`proximadb_tenant::TenantStableIdResolver`) + carry
    (`MiddlewareTenantContext::tenant_stable_id`, stamped when a resolver is
    wired via `TenantExtractor::with_stable_id_resolver`) shipped. REMAINING:
-   catalog-side tenant stable-id minting (a tenant-type `IdAllocator` space +
-   durable id on the tenant entity) — no tenant→u64 mapping exists in the
-   catalog yet, so no production resolver is wired. The string `tenant_id`
-   stays authoritative; the stable id is an optimization, never a second
-   source of truth. PR #956 already routes /documents auto-create through
-   `create_table → mint_stable_identity`; audit remaining DDL paths for bare
-   catalog writes when minting lands.
+   production resolver and both production mint authorities are wired. The
+   WAL-backed `SystemCatalog` persists the mapping as a canonical catalog delta
+   and snapshot state; `NativeCatalog` persists its account-registry sidecar.
+   Bootstrap mints `default`, and ABAC provisioning mints any new tenant before
+   its first policy write. The string `tenant_id` stays authoritative; the
+   stable id is a derived policy/path key, never a second source of truth.
 4. **[DONE] Gateway principal marker.** First-class
    `UnifiedUserContext::is_gateway_principal()` (a `gateway`/`operator` role
    or `gateway: "true"` metadata, stamped from credential data). The REST
@@ -92,8 +91,6 @@ silently running `open`. Unset ⇒ config value; default-safe, no flag-day.
 
 == Follow-ups (still open)
 
-* Catalog-side tenant stable-id minting + a production
-  `TenantStableIdResolver` (see item 3 above).
 * Credential-side stamping of the gateway role beyond JWTs (API-key config
   schema carries no roles today; SSO/mTLS untouched).
 * pgwire authenticated bindings: the surface still runs trust auth, so

@@ -2362,16 +2362,25 @@ impl PostgresProtocol {
         // DENIED ⇒ fail closed: emit an empty result set, never rows.
         #[cfg(feature = "abac-policy")]
         let read_context = {
-            let (subject, tenant_stable_id) = {
+            let (subject, tenant_stable_id, auth_class) = {
                 let session = self.session.read().await;
                 match session.identity.as_ref() {
-                    Some(identity) => (identity.subject.clone(), identity.tenant_stable_id),
-                    None => (None, None),
+                    Some(identity) => (
+                        identity.subject.clone(),
+                        identity.tenant_stable_id,
+                        identity.auth_class,
+                    ),
+                    None => (None, None, proximadb_tenant::AuthClass::Anonymous),
                 }
             };
             match self
                 .vector_ops
-                .records_read_context(subject.as_deref(), tenant_stable_id, &table_name)
+                .records_read_context(
+                    subject.as_deref(),
+                    tenant_stable_id,
+                    auth_class,
+                    &table_name,
+                )
                 .await
             {
                 Some(context) => context,

@@ -921,6 +921,27 @@ impl SharedServices {
             }
         }
 
+        // TD-ABAC-11 / ADR-087: make the policy-lookup key total before any
+        // authenticated request can reach an armed enforcer. This is an
+        // explicit bootstrap mutation, not an incidental side effect of the
+        // first table create. Both production catalog backends persist it
+        // (SystemCatalog WAL/snapshot; NativeCatalog account sidecar).
+        let default_tenant_stable_id = catalog_manager
+            .ensure_tenant_stable_id(proximadb_tenant::DEFAULT_TENANT)
+            .await
+            .context("Failed to mint the default tenant stable id at catalog bootstrap")?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "default catalog cannot mint a stable id for tenant '{}'",
+                    proximadb_tenant::DEFAULT_TENANT
+                )
+            })?;
+        info!(
+            tenant = proximadb_tenant::DEFAULT_TENANT,
+            tenant_stable_id = default_tenant_stable_id,
+            "✅ SharedServices: default tenant stable id is durable"
+        );
+
         // Phase P (Quantization Trait Convergence Plan): hoist the
         // TurboQuant store registry construction to BEFORE the
         // `collection_service` is built, so the SAME `Arc<dyn>` instance

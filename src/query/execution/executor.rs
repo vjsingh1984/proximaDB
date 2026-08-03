@@ -781,6 +781,7 @@ impl MultiModalQueryExecutor {
                     Some(search_config),
                     None,
                     None,
+                    proximadb_tenant::AuthClass::Anonymous,
                 )
                 .await?
             } else {

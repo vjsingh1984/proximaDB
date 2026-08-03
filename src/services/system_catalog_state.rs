@@ -44,6 +44,11 @@ use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry};
 /// implement it (it absorbs storage-plane fields that are not comparable).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CatalogDelta {
+    /// Mint (or replay) the durable account/tenant string -> stable u32 used by
+    /// ADR-0083 paths and ABAC policy lookup. The mapping is append-only: callers
+    /// serialize first mint under the SystemCatalog write lock, and replay simply
+    /// restores the committed value.
+    UpsertAccount { account: String, stable_id: u32 },
     /// Create or replace a namespace. Boxed to keep the enum small (the
     /// namespace carries the account/tenant/DR authority fields).
     UpsertNamespace { namespace: Box<CatalogNamespace> },
@@ -69,6 +74,7 @@ impl CatalogDelta {
     /// the bytes.
     pub fn routing_key(&self) -> String {
         match self {
+            CatalogDelta::UpsertAccount { account, .. } => format!("account:{account}"),
             CatalogDelta::UpsertNamespace { namespace } => {
                 format!("ns:{}", namespace.levels.join("."))
             }
@@ -109,6 +115,10 @@ impl CatalogDelta {
 /// contention is a non-issue; reads take the cheap shared lock.
 #[derive(Debug, Default)]
 struct CatalogInner {
+    /// Durable account/tenant string -> stable u32 registry. This is the
+    /// SystemCatalog equivalent of NativeCatalog's account_registry and is the
+    /// single policy-lookup key authority for normal server deployments.
+    account_ids: HashMap<String, u32>,
     /// Namespaces keyed by their `levels` path.
     namespaces: HashMap<Vec<String>, CatalogNamespace>,
     /// Tables keyed by full identifier. `Arc` so reads clone a pointer, not the
@@ -127,6 +137,9 @@ struct CatalogInner {
 impl CatalogInner {
     fn apply(&mut self, delta: CatalogDelta) {
         match delta {
+            CatalogDelta::UpsertAccount { account, stable_id } => {
+                self.account_ids.insert(account, stable_id);
+            }
             CatalogDelta::UpsertNamespace { namespace } => {
                 let key = namespace.levels.clone();
                 self.ns_children.entry(key.clone()).or_default();
@@ -168,6 +181,8 @@ impl CatalogInner {
 /// derivation of `tables` and is rebuilt on load.
 #[derive(Debug, Serialize, Deserialize)]
 struct CatalogSnapshot {
+    #[serde(default)]
+    account_ids: HashMap<String, u32>,
     namespaces: HashMap<Vec<String>, CatalogNamespace>,
     tables: HashMap<TableIdentifier, CatalogTableSchema>,
     #[serde(default)]
@@ -275,6 +290,17 @@ impl SystemCatalogState {
         self.inner.read().statistics.get(identifier).cloned()
     }
 
+    /// Read-only hot-path lookup used by TenantStableIdResolver.
+    pub fn account_id_u32(&self, account: &str) -> Option<u32> {
+        self.inner.read().account_ids.get(account).copied()
+    }
+
+    /// Highest committed account id, used to recover the allocator floor after
+    /// WAL/snapshot replay so ids are never reused across restarts.
+    pub fn max_account_id(&self) -> Option<u32> {
+        self.inner.read().account_ids.values().copied().max()
+    }
+
     /// The highest WAL sequence number folded in (replay watermark / snapshot
     /// cutover LSN).
     pub fn applied_seq(&self) -> u64 {
@@ -287,6 +313,7 @@ impl SystemCatalogState {
     pub fn to_snapshot_bytes(&self) -> Result<Vec<u8>> {
         let inner = self.inner.read();
         let snapshot = CatalogSnapshot {
+            account_ids: inner.account_ids.clone(),
             namespaces: inner.namespaces.clone(),
             tables: inner
                 .tables
@@ -343,6 +370,7 @@ impl SystemCatalogState {
             tables.insert(id, Arc::new(schema));
         }
         Ok(CatalogInner {
+            account_ids: snapshot.account_ids,
             namespaces: snapshot.namespaces,
             tables,
             ns_children,
