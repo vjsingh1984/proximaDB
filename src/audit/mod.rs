@@ -241,8 +241,6 @@ pub struct AuditAnalytics {
     pub summary: String,
 }
 
-/// Container for raw audit data collected for a reporting period
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg(test)]
 mod tests {
     use super::*;
