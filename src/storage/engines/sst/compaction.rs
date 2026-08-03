@@ -1459,9 +1459,7 @@ impl Compaction {
             )
         })?;
         let start_time = std::time::Instant::now();
-        let run_buffer_bytes = (plan.memory_bytes / 4)
-            .max(1024 * 1024)
-            .min(64 * 1024 * 1024);
+        let run_buffer_bytes = (plan.memory_bytes / 4).clamp(1024 * 1024, 64 * 1024 * 1024);
         let merge_fan_in = 32usize;
         let input_paths = task
             .input_files
