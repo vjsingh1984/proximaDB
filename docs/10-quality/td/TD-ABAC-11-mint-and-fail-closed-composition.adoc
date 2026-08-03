@@ -1,5 +1,5 @@
 = TD-ABAC-11: Default-tenant mint + flip the seam composition rule to fail-closed on absent stable id
-:status: In Progress
+:status: Resolved (stacked PR pending)
 :dim: D5
 :pillar: SEC
 
@@ -81,9 +81,11 @@ dev/embedded deployment that wires an enforcer.
   the same record ABAC seam. The live test proves deny-before-provision,
   row-predicate filtering, principal isolation, and hot revoke across all three
   RPC shapes.
-* **OPEN — remaining live surface row.** Add the provisioned-policy admit/deny/
-  passthrough ratchet for Flight. Its carrier and seam component tests are
-  pinned; they are not mislabeled as live evidence.
+* **DONE — authenticated Arrow Flight record-search live ratchet.** The
+  canonical `type: "vector_search"` `DoGet` ticket resolves the API-key subject
+  and stable tenant id once, then projects that identity into the shared
+  `RecordSearchPort`. The live test proves deny-before-provision, row-predicate
+  filtering, principal isolation, and hot revoke on an existing Flight client.
 
 Depends on [[TD-ABAC-8]] (carrier), mint. Ref ADR-087, ADR-0083,
 [[project_codesigned_vector_abac_pushdown_2026_07_30]] (PR3 note).
@@ -103,7 +105,6 @@ seam:
 
 The cross-surface e2e ratchet includes pgwire's, authenticated gRPC's, and
 canonical REST SQL's *relational* paths in addition to REST/gRPC/Flight records.
-All three SQL rows and canonical REST record search/point-get are now pinned
-after [[TD-ABAC-10]] 10c; authenticated gRPC unary/streaming search and
-point-get are also pinned. Flight stays open until it exercises live
-provisioned policy rather than only handler/seam components.
+All three SQL rows, canonical REST record search/point-get, authenticated gRPC
+unary/streaming search and point-get, and authenticated Flight record search
+are pinned with live provisioned-policy evidence after [[TD-ABAC-10]] 10c.
