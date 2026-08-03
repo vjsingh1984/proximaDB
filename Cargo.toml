@@ -64,6 +64,7 @@ members = [
     "crates/binding/proximadb-embedded",
     "crates/binding/proximadb-catalog-introspection",
     "crates/horizontal/proximadb-recall-bench",
+    "crates/horizontal/proximadb-resilience",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-serialization",
     "crates/horizontal/proximadb-security",
@@ -264,6 +265,7 @@ proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
+proximadb-resilience = { path = "crates/horizontal/proximadb-resilience" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
@@ -379,6 +381,7 @@ proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common"
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
+proximadb-resilience = { workspace = true }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
