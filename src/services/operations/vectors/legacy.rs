@@ -688,8 +688,12 @@ impl VectorOperationsService {
         ))
     }
 
-    /// Resolve the REST records-search read context for `(subject,
-    /// tenant_stable_id)`. Returns:
+    /// **The ONE read-context composition rule** (ADR-087): resolve
+    /// `(subject, tenant_stable_id)` into the read context every client-serving
+    /// vector read must carry. Every surface calls THIS — never a copy — so the
+    /// enforcement truth table has exactly one reviewable definition.
+    ///
+    /// Returns:
     /// - `Some(ReadContext::Client(ctx))` — admitted; the caller ANDs the
     ///   subject's security filter into the search (pushdown) / post-filters.
     /// - `Some(ReadContext::System(_))` — no enforcer wired, or no client
@@ -698,8 +702,14 @@ impl VectorOperationsService {
     /// - `None` — the subject was **denied**; the caller MUST fail closed
     ///   (return empty results). Mirrors the fusion contract
     ///   (`fusion_service.rs:529-554`).
+    ///
+    /// NOTE (TD-ABAC-11): the `(Some(subject), None)` cell — an authenticated
+    /// subject whose tenant carries no stable id — is passthrough TODAY and
+    /// flips to DENY once the default-tenant mint makes the id total. Because
+    /// this is the single definition, that flip is a one-line change here
+    /// rather than a per-surface sweep.
     #[cfg(feature = "abac-policy")]
-    async fn records_read_context(
+    pub async fn records_read_context(
         &self,
         subject: Option<&str>,
         tenant_stable_id: Option<u64>,

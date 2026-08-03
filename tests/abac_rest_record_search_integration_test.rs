@@ -357,3 +357,77 @@ async fn v1_none_subject_is_passthrough() {
         "a None subject must see both records on the v1 path (passthrough); got {ids:?}"
     );
 }
+
+// ── The ONE composition rule (ADR-087 / TD-ABAC-10c) ────────────────────────
+//
+// `records_read_context` is the single definition of "what does this
+// (subject, tenant_stable_id) get to read" — the REST/v1 seam AND the pgwire
+// pgvector path both resolve through it, so its truth table is pinned here
+// rather than re-asserted per surface. A surface that stops calling it is a
+// bypass by construction.
+
+/// Admitted subject ⇒ a CLIENT context (the security predicate is applied).
+#[tokio::test]
+async fn composition_rule_admits_a_bound_subject_as_client() {
+    let (svc, _collections) = fixture().await;
+
+    let context = svc
+        .records_read_context(Some("alice"), Some(TENANT), COLLECTION)
+        .await;
+
+    assert!(
+        matches!(context, Some(proximadb_abac::ReadContext::Client(_))),
+        "alice (dept=eng) must resolve to a Client context; got {context:?}"
+    );
+}
+
+/// Denied subject ⇒ `None`. THIS is the cell every caller must fail closed on:
+/// the REST seam returns empty results, and pgwire's pgvector path now emits an
+/// empty result set instead of the rows it used to serve unfiltered.
+#[tokio::test]
+async fn composition_rule_denies_an_unbound_subject_so_callers_fail_closed() {
+    let (svc, _collections) = fixture().await;
+
+    let context = svc
+        .records_read_context(Some("mallory"), Some(TENANT), COLLECTION)
+        .await;
+
+    assert!(
+        context.is_none(),
+        "an unbound subject must DENY (None) so every caller fails closed; got {context:?}"
+    );
+}
+
+/// No subject ⇒ System passthrough (internal/unauthenticated callers).
+#[tokio::test]
+async fn composition_rule_passes_through_when_there_is_no_client_subject() {
+    let (svc, _collections) = fixture().await;
+
+    let context = svc.records_read_context(None, None, COLLECTION).await;
+
+    assert!(
+        matches!(context, Some(proximadb_abac::ReadContext::System(_))),
+        "no subject ⇒ System passthrough; got {context:?}"
+    );
+}
+
+/// ⚠ TD-ABAC-11 KNOWN-OPEN CELL, pinned deliberately.
+///
+/// A subject WITH no `tenant_stable_id` (unminted tenant, or a surface with no
+/// resolver wired) is passthrough TODAY — enforcement strength currently equals
+/// mint coverage. ADR-087 flips this to DENY once the default-tenant mint makes
+/// the stable id total; when it does, THIS TEST MUST FLIP with it. It exists so
+/// that change is a conscious edit rather than a silent behavioral drift.
+#[tokio::test]
+async fn composition_rule_still_passes_through_a_subject_without_a_stable_id() {
+    let (svc, _collections) = fixture().await;
+
+    let context = svc
+        .records_read_context(Some("alice"), None, COLLECTION)
+        .await;
+
+    assert!(
+        matches!(context, Some(proximadb_abac::ReadContext::System(_))),
+        "TD-ABAC-11: absent stable id is passthrough until the mint lands; got {context:?}"
+    );
+}

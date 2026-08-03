@@ -679,6 +679,24 @@ impl PostgresProtocol {
         .stamp_stable_id(stable_id_resolver)
     }
 
+    /// TD-ABAC-10 (ADR-087): the connection's ABAC subject, read from the ONE
+    /// session identity built at the startup handshake — never re-derived from
+    /// `session.user` per query. `None` ⇒ no subject ⇒ passthrough (the
+    /// composition rule at the seam decides what that means).
+    ///
+    /// Every pgwire read path that enforces MUST source its subject here, so a
+    /// new path cannot silently become a bypass by forgetting to derive one.
+    #[cfg(feature = "abac-policy")]
+    async fn session_subject(&self) -> Option<proximadb_catalog::fc_metamodel::SubjectId> {
+        self.session
+            .read()
+            .await
+            .identity
+            .as_ref()
+            .and_then(|id| id.subject.clone())
+            .map(proximadb_catalog::fc_metamodel::SubjectId)
+    }
+
     /// TD-ABAC-3: gate a pgwire SUBJECT assertion (startup `user`) through the
     /// SAME [`HeaderTrustPolicy`](proximadb_tenant::HeaderTrustPolicy) the tenant
     /// assertion uses. pgwire is trust auth, so the binding is always `None`;
@@ -1867,16 +1885,7 @@ impl PostgresProtocol {
         // enforcement; otherwise the asserted user becomes the SubjectId ABAC
         // resolves the row filter against.
         #[cfg(feature = "abac-policy")]
-        // TD-ABAC-10 (ADR-087): the subject comes from the ONE session identity
-        // constructed at startup — no per-query re-derivation from `user`.
-        let subject = self
-            .session
-            .read()
-            .await
-            .identity
-            .as_ref()
-            .and_then(|id| id.subject.clone())
-            .map(proximadb_catalog::fc_metamodel::SubjectId);
+        let subject = self.session_subject().await;
         super::relational_pipeline::try_run_select(
             query,
             self.dml_service.as_ref(),
@@ -1958,12 +1967,18 @@ impl PostgresProtocol {
             // route-only disclosure when no DmlService is available.
             // TD-064: resolve EXPLAIN's schema/plan under the connection tenant.
             let explain_tenant = self.pgwire_resolve_read_tenant().await;
+            // TD-ABAC-10c: EXPLAIN (and especially EXPLAIN ANALYZE, which
+            // executes) must plan/run under the SAME subject execution uses.
+            #[cfg(feature = "abac-policy")]
+            let explain_subject = self.session_subject().await;
             let routing = match self.dml_service.clone() {
                 Some(dml) if is_analyze => {
                     crate::network::postgres::relational_pipeline::explain_analyze_select_with_catalog(
                         inner_query,
                         &dml,
                         Some(explain_tenant.as_str()),
+                        #[cfg(feature = "abac-policy")]
+                        explain_subject,
                     )
                     .await
                 }
@@ -1972,6 +1987,8 @@ impl PostgresProtocol {
                         inner_query,
                         &dml,
                         Some(explain_tenant.as_str()),
+                        #[cfg(feature = "abac-policy")]
+                        explain_subject,
                     )
                     .await
                 }
@@ -2337,6 +2354,47 @@ impl PostgresProtocol {
             metadata_filter.is_some()
         );
 
+        // TD-ABAC-10c (ADR-087): resolve the CLIENT read context from the
+        // session identity through the ONE composition rule every surface
+        // shares (`records_read_context`) — this path previously passed a
+        // hardcoded `System` context ("[CLIENT-PLACEHOLDER]"), so every pgwire
+        // pgvector search bypassed ABAC entirely. `None` ⇒ the subject was
+        // DENIED ⇒ fail closed: emit an empty result set, never rows.
+        #[cfg(feature = "abac-policy")]
+        let read_context = {
+            let (subject, tenant_stable_id) = {
+                let session = self.session.read().await;
+                match session.identity.as_ref() {
+                    Some(identity) => (identity.subject.clone(), identity.tenant_stable_id),
+                    None => (None, None),
+                }
+            };
+            match self
+                .vector_ops
+                .records_read_context(subject.as_deref(), tenant_stable_id, &table_name)
+                .await
+            {
+                Some(context) => context,
+                None => {
+                    warn!(
+                        target: "proximadb::tenant_audit",
+                        surface = "pgwire",
+                        collection = %table_name,
+                        subject = ?subject,
+                        "ABAC denied the pgwire vector search subject — failing closed (empty result)"
+                    );
+                    let fields = vec![
+                        FieldDescription::new("id", PgType::Text),
+                        FieldDescription::new("distance", PgType::Float8),
+                        FieldDescription::new("metadata", PgType::Jsonb),
+                    ];
+                    self.send_row_description(&fields).await?;
+                    self.send_command_complete("SELECT 0").await?;
+                    return Ok(());
+                }
+            }
+        };
+
         if let Some(ref vector) = query_vector {
             // Execute actual vector search
             match self
@@ -2348,10 +2406,7 @@ impl PostgresProtocol {
                     metadata_filter, // TD-100: mem0 metadata-scoped WHERE pushdown
                     None,            // Default config
                     #[cfg(feature = "abac-policy")]
-                    &proximadb_abac::ReadContext::system(
-                        proximadb_abac::SystemReadReason::Statistics,
-                        "pgwire [CLIENT-PLACEHOLDER]",
-                    ),
+                    &read_context,
                 )
                 .await
             {
@@ -2973,6 +3028,24 @@ impl PostgresProtocol {
         // machinery). If sqlparser can't parse the query (pg-specific syntax)
         // or its WHERE has an unsupported expression, fall back to the legacy
         // string-predicate path — over-inclusive full scan, never empty.
+        // TD-ABAC-10c (ADR-087): this LEGACY fallback has no row-filter wiring,
+        // so under an armed enforcer + a client subject it would serve
+        // unenforced rows — the bypass this closes. It fails CLOSED instead of
+        // growing a second enforcement implementation (two implementations of
+        // one rule is the drift seam ADR-087 removes). The real fix is
+        // coverage: shapes that reach this fallback should be lowered by the
+        // enforcing relational pipeline (the ANSI-SQL-over-pgwire mandate's
+        // direction anyway).
+        #[cfg(feature = "abac-policy")]
+        if self.session_subject().await.is_some() && dml_service.has_abac_enforcer() {
+            return Err(anyhow!(
+                "this query shape is not supported for a policy-governed subject: \
+                 it falls back to the legacy single-table reader, which cannot \
+                 apply row-level security. Rewrite it into a shape the relational \
+                 pipeline lowers, or run it as an ungoverned (no-subject) connection."
+            ));
+        }
+
         // TD-064: scope the legacy relational SELECT to the connection tenant.
         let read_tenant = self.pgwire_resolve_read_tenant().await;
         let read_tenant_ctx = (!read_tenant.is_empty())
