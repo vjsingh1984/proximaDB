@@ -1,0 +1,59 @@
+= Context Corridor Competitive Benchmark
+:toc: left
+:icons: font
+
+== Purpose
+
+This benchmark converts the co-design thesis into falsifiable economic proof. The comparison unit
+is not an isolated ANN kernel. It is the customer operation: write one typed context record and
+retrieve it with both a metadata boundary and vector similarity.
+
+The machine contract is `benches/context-corridor/scenario.toml` (`context-corridor-v1`). It compares ProximaDB with
+pgvector, Qdrant, Milvus, Elasticsearch, and SurrealDB using the same generated records, query set,
+filter selectivity, warmup, trial count, and result schema.
+
+== Co-design measurement loop
+
+[source,text]
+----
+workload
+   -> query-scoped trace
+      -> object requests + bytes + cache + compute + memory
+         -> identify the dominant physical dimension
+            -> change format/router/cache policy
+               -> accuracy + failure + economics gates
+                  -> publish raw evidence or reject the change
+----
+
+Every report must include recall, filtered recall, ingest rate, p50/p95/p99, peak RSS, object
+GET/PUT counts, bytes moved, cache hit ratio, and estimated cost per million queries. A performance
+claim that omits accuracy or physical-cost signals is not a ProximaDB co-design result.
+
+== Runnable slice
+
+The ProximaDB adapter is available now:
+
+[source,bash]
+----
+python3 scripts/bench/context_corridor.py \
+  --base-url http://127.0.0.1:5678 \
+  --records 1000 \
+  --dimension 32 \
+  --queries 200 \
+  --output artifacts/context-corridor/proximadb-local.json
+----
+
+This creates a deterministic SST collection, inserts typed records in batches, executes exact-vector
+queries behind metadata filters, records filtered Recall@10 and latency, and captures route-health
+signals. The resulting local baseline is explicitly `publication_eligible: false`.
+
+== Publication gate
+
+No cross-system winner, price/performance, or TAM-facing benchmark claim may be published until:
+
+* all six adapters are runnable;
+* each system runs at least five trials over at least one million records;
+* local, S3, Azure, and GCS configurations are represented where supported;
+* raw results, failed runs, commit/version, configuration, hardware, and dataset hash are retained;
+* accuracy is compared before latency or cost;
+* unsupported product differences are disclosed rather than normalized away.

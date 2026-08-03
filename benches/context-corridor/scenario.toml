@@ -1,0 +1,79 @@
+schema_version = 1
+scenario_id = "context-corridor-v1"
+hypothesis = "A canonical typed record removes an application-side vector-to-metadata join while retaining filtered retrieval accuracy and exposing physical cost signals."
+runner = "scripts/bench/context_corridor.py"
+
+[dataset]
+seed = 20260803
+dimensions = [32, 128, 768]
+record_scales = [1000, 100000, 1000000, 10000000]
+metadata_partition_count = 8
+publish_minimum_records = 1000000
+
+[protocol]
+warmup_queries = 20
+measured_queries = 200
+trials = 5
+required_backends = ["local", "s3", "azure", "gcs"]
+required_percentiles = [50, 95, 99]
+
+required_metrics = [
+  "recall_at_10",
+  "filtered_recall_at_10",
+  "ingest_records_per_second",
+  "latency_p50_ms",
+  "latency_p95_ms",
+  "latency_p99_ms",
+  "peak_rss_bytes",
+  "object_gets",
+  "object_puts",
+  "bytes_read",
+  "bytes_written",
+  "cache_hit_ratio",
+  "estimated_cost_per_million_queries",
+]
+
+[[system]]
+id = "proximadb"
+role = "candidate"
+adapter_status = "runnable"
+comparison_surface = "REST v2 typed record + filtered vector search"
+
+[[system]]
+id = "pgvector"
+role = "baseline"
+adapter_status = "planned"
+comparison_surface = "PostgreSQL table + JSONB filter + vector index"
+
+[[system]]
+id = "qdrant"
+role = "competitor"
+adapter_status = "planned"
+comparison_surface = "point payload + filtered vector search"
+
+[[system]]
+id = "milvus"
+role = "competitor"
+adapter_status = "planned"
+comparison_surface = "collection scalar fields + filtered ANN"
+
+[[system]]
+id = "elasticsearch"
+role = "competitor"
+adapter_status = "planned"
+comparison_surface = "document fields + kNN/hybrid search"
+
+[[system]]
+id = "surrealdb"
+role = "direct-category"
+adapter_status = "planned"
+comparison_surface = "multi-model record + vector index"
+
+[publication]
+require_raw_results = true
+require_commit_sha = true
+require_server_config = true
+require_hardware_manifest = true
+require_dataset_hash = true
+require_failed_runs = true
+forbid_cross_system_claims_until_all_adapters_runnable = true
