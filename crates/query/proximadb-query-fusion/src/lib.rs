@@ -1,3 +1,9 @@
+//! Query fusion + federated optimizer utilities.
+//! Extracted optimizer modules (plan_calibration, gls) moved from root (TD-DECOMP-17).
+
+pub mod gls;
+pub mod plan_calibration;
+
 use proximadb_data_model::DataModel;
 use std::collections::HashMap;
 
