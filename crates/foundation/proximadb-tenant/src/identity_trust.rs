@@ -229,7 +229,7 @@ pub fn resolve_tenant_assertion(
 /// system. Informational in the consolidation refactor: it does NOT change
 /// enforcement (a future hardening slice may refuse `TrustAsserted` as
 /// load-bearing).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthClass {
     /// A verified credential (API key / JWT / mTLS cert) was resolved by the
@@ -241,6 +241,7 @@ pub enum AuthClass {
     TrustAsserted,
     /// Nothing resolved (no credential, no assertion, anonymous/dev). No subject;
     /// enforcement does not apply.
+    #[default]
     Anonymous,
 }
 
@@ -268,6 +269,22 @@ pub struct ResolvedRequestIdentity {
     pub subject: Option<String>,
     /// How the identity was established — the auditable trust/auth distinction.
     pub auth_class: AuthClass,
+    /// ADR-087: the tenant's ADR-0083 stable u64 (the ABAC policy-lookup key),
+    /// stamped ONCE at identity resolution by the wired
+    /// [`TenantStableIdResolver`] — never re-derived downstream. `None` = no
+    /// resolver wired or the tenant is unminted; the enforcement seam treats
+    /// that cell per the composition rule (passthrough today; fail-closed once
+    /// the default-tenant mint lands, TD-ABAC-11).
+    pub tenant_stable_id: Option<u64>,
+}
+
+impl ResolvedRequestIdentity {
+    /// Stamp the stable id from the resolver (the ADR-087 stamp-once point).
+    /// A `None` resolver or an unminted tenant leaves it `None`.
+    pub fn stamp_stable_id(mut self, resolver: Option<&dyn TenantStableIdResolver>) -> Self {
+        self.tenant_stable_id = resolver.and_then(|r| r.stable_id_of(&self.tenant));
+        self
+    }
 }
 
 /// Reconcile a client-asserted **subject** (no authenticated binding) under the
@@ -524,9 +541,11 @@ mod tests {
             tenant: "acme".to_string(),
             subject: Some("alice".to_string()),
             auth_class: AuthClass::Authenticated,
+            tenant_stable_id: Some(7),
         };
         assert_eq!(id.tenant, "acme");
         assert_eq!(id.subject.as_deref(), Some("alice"));
         assert_eq!(id.auth_class, AuthClass::Authenticated);
+        assert_eq!(id.tenant_stable_id, Some(7));
     }
 }

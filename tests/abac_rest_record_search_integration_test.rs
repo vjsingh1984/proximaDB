@@ -59,6 +59,7 @@ fn subject_identity(subject: &str) -> PortIdentity<'_> {
         tenant_id: None,
         subject: Some(subject),
         tenant_stable_id: Some(TENANT),
+        auth_class: proximadb_tenant::AuthClass::Authenticated,
     }
 }
 

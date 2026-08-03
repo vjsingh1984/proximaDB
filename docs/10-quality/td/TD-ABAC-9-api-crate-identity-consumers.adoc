@@ -1,5 +1,5 @@
 = TD-ABAC-9: api-crate handlers consume the foundation identity (hybrid SQL subject gap)
-:status: Open
+:status: Resolved
 :dim: D5
 :pillar: SEC
 
