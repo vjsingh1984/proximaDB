@@ -28,6 +28,7 @@ serde_json.workspace = true
 tokio.workspace = true
 proximadb-config.workspace = true
 anyhow.workspace = true
+futures.workspace = true
 base64 = "0.22"
 # sinks: async-trait (CdcSink trait), tracing (logging), reqwest (webhook HTTP).
 async-trait.workspace = true

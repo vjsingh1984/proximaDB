@@ -344,9 +344,9 @@ impl CdcCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::config::OffsetStorageConfig;
-    use crate::cdc::event::{ConnectorType, Operation, SourceInfo};
-    use crate::cdc::source::MockSource;
+    use crate::config::OffsetStorageConfig;
+    use crate::event::{ConnectorType, Operation, SourceInfo};
+    use crate::source::MockSource;
 
     fn test_config() -> CdcConfig {
         CdcConfig {
