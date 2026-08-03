@@ -164,6 +164,10 @@ pub struct PaxBlockWriter {
     clustered_sq8_lossless: bool,
     /// Apply exact all-null elision and shared LZ4 to scalar stripes when smaller.
     lossless_scalar: bool,
+    /// Emit the additive canonical MVCC `record_version` stripe. Default OFF
+    /// until mixed-version PAX read/write evidence is baked; the stripe's
+    /// presence is its marker and older blocks decode as legacy version 1.
+    record_version_stripe: bool,
     /// Row offsets at which a new producer-defined cluster starts. Row zero is
     /// implicit. These boundaries are block-local and reset by [`Self::clear`].
     cluster_run_starts: Vec<usize>,
@@ -181,6 +185,7 @@ pub struct PaxBlockWriter {
     tenant_ids: Vec<String>,
     created_at: Vec<i64>,
     updated_at: Vec<i64>,
+    record_versions: Vec<u64>,
     valid_from: Vec<Option<i64>>,
     valid_to: Vec<Option<i64>>,
     actors: Vec<Option<String>>,
@@ -236,12 +241,14 @@ impl PaxBlockWriter {
             rerank_quant: VectorQuant::Sq8,
             clustered_sq8_lossless: false,
             lossless_scalar: false,
+            record_version_stripe: record_version_stripe_enabled(),
             cluster_run_starts: Vec::new(),
             hoist_vector_tier: false,
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
             updated_at: Vec::new(),
+            record_versions: Vec::new(),
             valid_from: Vec::new(),
             valid_to: Vec::new(),
             actors: Vec::new(),
@@ -305,6 +312,17 @@ impl PaxBlockWriter {
     pub fn with_lossless_scalar(mut self, enabled: bool) -> Self {
         self.lossless_scalar = enabled;
         self
+    }
+
+    /// Enable the additive fixed-width `u64` MVCC version stripe.
+    pub fn with_record_version(mut self, enabled: bool) -> Self {
+        self.record_version_stripe = enabled;
+        self
+    }
+
+    /// Whether this writer emits the additive MVCC version stripe.
+    pub fn writes_record_version(&self) -> bool {
+        self.record_version_stripe
     }
 
     /// Mark the next appended row as the start of a new cluster run.
@@ -397,6 +415,7 @@ impl PaxBlockWriter {
         // Computed BEFORE the fields are moved into the column buffers below.
         self.accumulated_metadata_bytes += flat.oid.len() + flat.tenant_id.len()
             + 8 + 8 // created_at_ns + updated_at_ns (i64 each)
+            + usize::from(self.record_version_stripe) * 8
             + flat.valid_from_ns.map_or(0, |_| 8)
             + flat.valid_to_ns.map_or(0, |_| 8)
             + flat.actor.as_ref().map_or(0, |s| s.len())
@@ -412,6 +431,9 @@ impl PaxBlockWriter {
         self.tenant_ids.push(flat.tenant_id);
         self.created_at.push(flat.created_at_ns);
         self.updated_at.push(flat.updated_at_ns);
+        if self.record_version_stripe {
+            self.record_versions.push(flat.record_version);
+        }
         self.valid_from.push(flat.valid_from_ns);
         self.valid_to.push(flat.valid_to_ns);
         self.actors.push(flat.actor);
@@ -521,6 +543,13 @@ impl PaxBlockWriter {
                 false,
                 &self.updated_at.iter().map(|&v| Some(v)).collect::<Vec<_>>(),
             )?);
+            if self.record_version_stripe {
+                stripes.push(self.build_u64_stripe(
+                    col_id::RECORD_VERSION,
+                    ColumnRole::Temporal,
+                    &self.record_versions,
+                ));
+            }
             stripes.push(self.build_i64_stripe(
                 col_id::VALID_FROM,
                 ColumnRole::Temporal,
@@ -790,6 +819,7 @@ impl PaxBlockWriter {
         self.tenant_ids.clear();
         self.created_at.clear();
         self.updated_at.clear();
+        self.record_versions.clear();
         self.valid_from.clear();
         self.valid_to.clear();
         self.actors.clear();
@@ -1267,6 +1297,49 @@ impl PaxBlockWriter {
             update_i64_bounds(&mut meta, *v);
         }
         Ok(ColumnStripe::new(meta, data))
+    }
+
+    fn build_u64_stripe(&self, id: i32, role: ColumnRole, vals: &[u64]) -> ColumnStripe {
+        let mut data = Vec::with_capacity(vals.len().saturating_mul(std::mem::size_of::<u64>()));
+        for value in vals {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        let (data, is_lz4_compressed) = self.encode_lossless_scalar(data, 0, vals.len());
+        let mut min_val = [0u8; 16];
+        let mut max_val = [0u8; 16];
+        if let Some(min) = vals.iter().min() {
+            min_val[..8].copy_from_slice(&min.to_le_bytes());
+        }
+        if let Some(max) = vals.iter().max() {
+            max_val[..8].copy_from_slice(&max.to_le_bytes());
+        }
+        let distinct_hint = vals
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>()
+            .len()
+            .min(u32::MAX as usize) as u32;
+        ColumnStripe::new(
+            ColumnMeta {
+                column_id: id,
+                role,
+                data_type_id: TypeId::U64.to_u8(),
+                encoding_id: ProximaScheme::Raw.to_marker(),
+                nullable: false,
+                has_bloom: false,
+                is_sorted: vals.windows(2).all(|pair| pair[0] <= pair[1]),
+                is_lz4_compressed,
+                stripe_offset: 0,
+                stripe_len: data.len() as u32,
+                null_count: 0,
+                distinct_hint,
+                min_val,
+                max_val,
+                bloom_offset: 0,
+                bloom_len: 0,
+            },
+            data,
+        )
     }
 
     fn build_bytes_stripe(
@@ -1833,6 +1906,12 @@ fn rabitq_enabled() -> bool {
 /// changes once readers that stamp tenant from context are deployed.
 fn drop_tenant_col_enabled() -> bool {
     std::env::var_os("PROXIMADB_PAX_DROP_TENANT_COL").is_some()
+}
+
+/// Default-off write gate for the additive MVCC version stripe. Readers detect
+/// the stripe by column ID and remain compatible with blocks written either way.
+fn record_version_stripe_enabled() -> bool {
+    std::env::var_os("PROXIMADB_PAX_RECORD_VERSION").is_some()
 }
 
 /// Encode a RaBitQ vector stripe: validity bitmap + per row

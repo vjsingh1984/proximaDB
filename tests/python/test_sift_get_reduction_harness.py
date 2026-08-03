@@ -333,6 +333,85 @@ def test_config_preserves_object_store_url(tmp_path: Path) -> None:
     assert "max_memory_mb = 4096" in config
 
 
+def test_config_arms_bounded_local_spill_explicitly(tmp_path: Path) -> None:
+    config_path = tmp_path / "benchmark.toml"
+    scratch = tmp_path / "managed-disk" / "compaction"
+
+    HARNESS.write_config(
+        config_path,
+        tmp_path,
+        5690,
+        128,
+        20_000,
+        "az://benchmarks/spill",
+        compaction_max_memory_mb=4096,
+        compaction_spill_enabled=True,
+        compaction_spill_directory=scratch,
+        compaction_spill_working_memory_mb=384,
+        compaction_spill_scratch_amplification_factor=3.5,
+        compaction_spill_available_disk_fraction=0.4,
+        compaction_spill_max_disk_mb=8192,
+    )
+
+    config = config_path.read_text()
+    assert "spill_enabled = true" in config
+    assert f'spill_directory = "{scratch}"' in config
+    assert "spill_working_memory_mb = 384" in config
+    assert "spill_scratch_amplification_factor = 3.5" in config
+    assert "spill_available_disk_fraction = 0.4" in config
+    assert "spill_max_disk_mb = 8192" in config
+
+
+def test_resource_sampler_reports_process_and_scratch_peaks(tmp_path: Path) -> None:
+    sampler = HARNESS.ProcessScratchSampler(123, tmp_path, interval_seconds=0.25)
+
+    with (
+        patch.object(sampler, "_process_rss_bytes", side_effect=[100, 180, 140]),
+        patch.object(sampler, "_scratch_bytes", side_effect=[10, 70, 20]),
+    ):
+        sampler.sample_once()
+        sampler.sample_once()
+        sampler.sample_once()
+
+    assert sampler.snapshot() == {
+        "sample_interval_seconds": 0.25,
+        "sample_count": 3,
+        "baseline_process_rss_bytes": 100,
+        "peak_process_rss_bytes": 180,
+        "peak_process_rss_delta_bytes": 80,
+        "baseline_scratch_bytes": 10,
+        "peak_scratch_bytes": 70,
+        "peak_scratch_delta_bytes": 60,
+    }
+
+
+def test_scratch_sampler_tolerates_run_retirement_during_scan(tmp_path: Path) -> None:
+    run = tmp_path / "retired.pxrun"
+    run.write_bytes(b"run")
+
+    def disappearing_stat(*, follow_symlinks: bool):
+        assert not follow_symlinks
+        run.unlink()
+        raise FileNotFoundError(run)
+
+    entry = SimpleNamespace(
+        path=str(run),
+        is_dir=lambda *, follow_symlinks: False,
+        is_file=lambda *, follow_symlinks: True,
+        stat=disappearing_stat,
+    )
+
+    class Entries:
+        def __enter__(self):
+            return iter([entry])
+
+        def __exit__(self, *_args):
+            return False
+
+    with patch.object(HARNESS.os, "scandir", return_value=Entries()):
+        assert HARNESS.directory_size_bytes(tmp_path) == 0
+
+
 def test_config_records_controlled_geometry_flush_floor(tmp_path: Path) -> None:
     config_path = tmp_path / "benchmark.toml"
 

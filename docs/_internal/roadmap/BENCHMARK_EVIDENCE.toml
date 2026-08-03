@@ -809,3 +809,21 @@ hardware = "Local macOS arm64 (Apple Silicon, 64 GiB), serialized release run; A
 date = "2026-08-02"
 version = "82c29d4eb66e706a8c65c37ea1fc84c240d4581f"
 notes = "Release binary SHA-256 8a0c584e8327ea6caf018d494f2a8796f828afc715391c274ac08fbc403792c8; result SHA-256 ae004366bae2bd053ac131449bdccacbde4d26686c28848e52bfa7eccbb36b16. Five task ratios: 5.97x, 10.75x, 8.44x, 0.59x, 5.23x. Absolute process peak 14,105 MiB; retained baseline is reported separately from task delta. Three PAX v3 segments total 882,860,995 B / 99 cells. nprobe=9 is per segment: 27 cells/query, object-cold 58.63 GET/query and 489.98 ms p50. A neighboring nprobe=8 control failed recall at 0.977 and is not the recommendation. Azurite is operation-count and relative-latency evidence, not Azure WAN latency."
+
+[[claims]]
+id = "compaction_local_spill_cache_3m3"
+claim = "An exact rebased release/Azurite 3.3M run proves the default-OFF deterministic spill path can merge a 690,242,135-byte / 2.58M-row morsel beyond the 5 GiB in-memory ceiling with a 7.492x live-scratch peak inside the 10x reservation, then stream Region A/B from retained local PAX staging into persistent disk cache. The settled two-segment corpus preserves recall >=0.983 and measures 4.98 GET/query first-after-write, 1.17 after process restart with disk warm, and 48.69 deliberately object-cold."
+metric = "spill live-scratch/input ratio + settled segment geometry + recall@10 + physical GET/query + Region A/B object bytes"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/COMPACTION_SPILL_CACHE_3M3_2026_08_03.adoc",
+  "docs/12-design/adr/ADR-088-deterministic-local-spill-compaction.adoc",
+  "docs/10-quality/td/TD-COMPACT-11-deterministic-local-spill-compaction.adoc",
+]
+bench_source = "scripts/bench/sift1m_get_reduction.py"
+bench_command = "<repo-python> scripts/bench/sift1m_get_reduction.py --binary target/release-server/proximadb-server --root <fresh-root> --base-path <bigann10m.u8bin> --base-format u8bin --query-path <bigann-query.u8bin> --query-format u8bin --groundtruth-path <3.3m-top20.ivecs> --groundtruth-format ivecs --groundtruth-scope-rows 3300000 --rows 3300000 --batch-size 30000 --ingest-transport flight --write-buffer-mb 8192 --compaction-max-memory-mb 5120 --compaction-spill --compaction-spill-working-memory-mb 512 --compaction-spill-scratch-amplification-factor 10 --compaction-spill-available-disk-fraction 0.5 --flush-vector-threshold 660000 --flush-interval-secs 15 --flush-floor-predicted-mb 96 --queries 100 --top-k 10 --max-segments 2 --post-write-max-gets 5 --local-warm-max-gets 10 --object-cold-max-gets 60 --min-recall 0.98 --max-p50-ms 550 --azurite --storage-url az://<container>/<prefix> --ivf-k 100 --nprobe 15"
+artifact = "docs/_internal/status/COMPACTION_SPILL_CACHE_3M3_2026_08_03.adoc"
+hardware = "Local macOS arm64 Apple Silicon, 64 GiB RAM, serialized release-server benchmark; Azurite localhost HTTP object path"
+date = "2026-08-03"
+version = "b4c1d3343d6cbfc799503918100b25aba0564165"
+notes = "Binary SHA-256 e62f464ea70f7bcb0339428202d26a4efb21224efba8b902d34cd218cc712e54; result SHA-256 62cf7a933a0ee90b98f74e4fb053751e5635694bfe1b86608ca8944175e8d37d. Qualifying spill: 4 L1 -> one 2.58M-row L2 in 74.198s; scratch delta 5,171,175,625 B / input 690,242,135 B = 7.492x. Final geometry: 2 L2, 3.3M rows, 903,573,016 B, 200 total cells. Region A/B object bytes were zero in both cached phases. Whole-process peak 11,927,437,312 B and delta 8,512,225,280 B include overlapping flush/in-memory compaction/WAL/cache/allocator state and are not attributed to the 512 MiB spill reservation. Disk-warm p50 58.56ms and Azurite cold p50 345.07ms do not meet the original 50ms aspiration. TD remains open for injected failures, deterministic-output matrix, and isolated memory proof."

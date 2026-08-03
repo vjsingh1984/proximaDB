@@ -205,20 +205,24 @@ pub struct SstCompactionTask {
     pub precision_hint: Option<proximadb_records::EmbeddingScalarType>,
 }
 
-fn training_follow_up_threshold(source_level: u8, output_file: &Path) -> Option<usize> {
+fn training_follow_up_threshold(
+    training_chain_active: bool,
+    source_level: u8,
+    output_file: &Path,
+) -> Option<usize> {
     let writes_trained_pax = source_level == 0
         && output_file
             .extension()
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| extension.eq_ignore_ascii_case("pax"));
-    writes_trained_pax.then_some(1)
+    (training_chain_active || writes_trained_pax).then_some(1)
 }
 
 fn retain_training_guard_for_follow_up(
     training_chain_active: bool,
     scheduled_follow_up_level: Option<u8>,
 ) -> bool {
-    training_chain_active && scheduled_follow_up_level == Some(0)
+    training_chain_active && scheduled_follow_up_level.is_some()
 }
 
 /// Priority levels for compaction tasks
@@ -311,6 +315,9 @@ pub struct Compaction {
     unified_reader: Arc<UnifiedSstableReader>,
     sst_compactor: Option<Arc<SstCompactor>>,
     filesystem_factory: Arc<FilesystemFactory>,
+    /// Process-owned local scratch namespace. Present only when spill is
+    /// enabled; every task receives a deterministic child with a manifest.
+    spill_scratch_owner: Option<crate::storage::engines::sst::compaction_spill::SpillScratchOwner>,
     /// New compaction orchestrator
     #[allow(dead_code)]
     compaction_orchestrator: Option<Arc<CompactionOrchestrator>>,
@@ -357,6 +364,10 @@ impl std::fmt::Debug for Compaction {
             .field("unified_reader", &"<unified_reader>")
             .field("sst_compactor", &self.sst_compactor.is_some())
             .field("filesystem_factory", &"<filesystem_factory>")
+            .field(
+                "spill_scratch_owner",
+                &self.spill_scratch_owner.as_ref().map(|owner| owner.path()),
+            )
             .finish()
     }
 }
@@ -385,6 +396,21 @@ fn compaction_output_format<P: AsRef<std::path::Path>>(input_files: &[P]) -> Blo
     // M1-3: legacy `.sst` / no-extension inputs compact FORWARD to PAX (the
     // streaming write path is retired; compaction no longer re-emits `.sst`).
     BlockFormat::PaxBlock
+}
+
+fn atomic_coordinator_staging(task: &SstCompactionTask) -> Result<StagingConfig> {
+    let parent = task.output_file.parent().ok_or_else(|| {
+        crate::core::StorageError::SstEngine(
+            "local-spill compaction output has no parent".to_string(),
+        )
+    })?;
+    Ok(StagingConfig {
+        base_url: parent.to_string_lossy().into_owned(),
+        collection_id: None,
+        operation_type: TransactionStageType::Compaction,
+        skip_uuid_subdir: true,
+        ..Default::default()
+    })
 }
 
 impl Compaction {
@@ -418,6 +444,36 @@ impl Compaction {
         config: SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) -> Result<Self> {
+        let spill_scratch_owner = if let Some(compaction_config) = config.compaction_config.as_ref()
+            && compaction_config.spill_enabled
+        {
+            let spill_directory = compaction_config
+                .spill_directory
+                .as_deref()
+                .filter(|path| !path.trim().is_empty())
+                .ok_or_else(|| {
+                    crate::core::StorageError::SstEngine(
+                        "compaction spill is enabled without a local spill_directory".to_string(),
+                    )
+                })?;
+            let owner = crate::storage::engines::sst::compaction_spill::SpillScratchOwner::open(
+                Path::new(spill_directory),
+            )
+            .map_err(|error| {
+                crate::core::StorageError::SstEngine(format!(
+                    "initialize compaction spill ownership at {spill_directory}: {error}"
+                ))
+            })?;
+            info!(
+                path = %owner.path().display(),
+                reclaimed_owner_directories = owner.reclaimed_owner_directories(),
+                "Compaction local-spill scratch owner initialized"
+            );
+            Some(owner)
+        } else {
+            None
+        };
+
         // Create unified reader with filesystem factory
         let filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(
@@ -497,6 +553,7 @@ impl Compaction {
             unified_reader,
             sst_compactor,
             filesystem_factory,
+            spill_scratch_owner,
             compaction_orchestrator: orchestrator,
             precision_resolver: Arc::new(OnceCell::new()),
             // TD-COMPACT-6 D1: disconnected empty set until
@@ -1093,7 +1150,7 @@ impl Compaction {
                     .cloned()
                     .unwrap_or_default();
                 let admission_started = std::time::Instant::now();
-                let Some(memory_reservation) = acquire_compaction_memory(
+                let Some(resource_reservation) = acquire_compaction_resources(
                     task.input_bytes,
                     &memory_config,
                     shutdown_signal.as_ref(),
@@ -1117,11 +1174,19 @@ impl Compaction {
                 }
                 crate::metrics::operational_metrics::COMPACTION_MEMORY_RESERVED_BYTES
                     .set(i64::try_from(reserved_compaction_memory_bytes()).unwrap_or(i64::MAX));
+                crate::metrics::operational_metrics::COMPACTION_SCRATCH_RESERVED_BYTES
+                    .set(i64::try_from(reserved_compaction_scratch_bytes()).unwrap_or(i64::MAX));
+                let resource_plan = resource_reservation.plan();
+                if resource_plan.mode == CompactionExecutionMode::LocalSpill {
+                    crate::metrics::operational_metrics::COMPACTION_SPILL_TOTAL.inc();
+                }
                 info!(
                     input_bytes = task.input_bytes,
-                    projected_memory_bytes = memory_reservation.reserved_bytes(),
+                    mode = ?resource_plan.mode,
+                    projected_memory_bytes = resource_plan.memory_bytes,
+                    projected_scratch_bytes = resource_plan.scratch_bytes,
                     admission_wait_ms = admission_wait.as_millis(),
-                    "Compaction memory reservation admitted"
+                    "Compaction resource reservation admitted"
                 );
                 let _running_metric = CompactionRunningMetricGuard::begin();
 
@@ -1131,7 +1196,10 @@ impl Compaction {
                 // hung on the worker. `perform_compaction` only reads through
                 // the Arc-shared reader/compactor/factory, so concurrent
                 // invocation across workers + flush is safe.
-                let succeeded = match compaction.perform_compaction(&task).await {
+                let succeeded = match compaction
+                    .perform_compaction_with_plan(&task, resource_plan)
+                    .await
+                {
                     Ok(compaction_stats) => {
                         info!(
                             "Compaction completed for level {} in {}ms: {} files merged -> {}",
@@ -1171,9 +1239,11 @@ impl Compaction {
                         false
                     }
                 };
-                drop(memory_reservation);
+                drop(resource_reservation);
                 crate::metrics::operational_metrics::COMPACTION_MEMORY_RESERVED_BYTES
                     .set(i64::try_from(reserved_compaction_memory_bytes()).unwrap_or(i64::MAX));
+                crate::metrics::operational_metrics::COMPACTION_SCRATCH_RESERVED_BYTES
+                    .set(i64::try_from(reserved_compaction_scratch_bytes()).unwrap_or(i64::MAX));
 
                 // A completed morsel changes the level geometry. Re-evaluate
                 // it immediately so higher-level compaction does not depend on
@@ -1181,8 +1251,11 @@ impl Compaction {
                 // Schedule before releasing the current active marker, keeping
                 // the quiescence barrier closed across the hand-off.
                 let mut scheduled_follow_up_level = None;
-                let follow_up_threshold =
-                    training_follow_up_threshold(task.level, &task.output_file);
+                let follow_up_threshold = training_follow_up_threshold(
+                    training_guard_active,
+                    task.level,
+                    &task.output_file,
+                );
                 if succeeded
                     && !shutdown_signal.load(Ordering::SeqCst)
                     && let Some(collection_dir) = task.output_file.parent()
@@ -1234,8 +1307,10 @@ impl Compaction {
 
                 // TD-COMPACT-6 D1: release the enqueue-time active marker and the
                 // per-collection training guard so the flush path can re-arm.
-                // A bounded L0 training follow-up retains the guard and the
-                // threshold-one reason until the untrained tail is drained.
+                // Retain the training guard across the complete follow-up
+                // chain, including higher-level spill. A flush can publish a
+                // new L0 while that longer task is running; the terminal
+                // threshold-one rescan must observe and train that late tail.
                 let retain_training_guard = retain_training_guard_for_follow_up(
                     training_guard_active,
                     scheduled_follow_up_level,
@@ -1286,6 +1361,31 @@ impl Compaction {
     /// persistent instance's config + atomic coordinator. Called by the
     /// background workers (which hold an `Arc<Compaction>` clone).
     async fn perform_compaction(&self, task: &SstCompactionTask) -> Result<SstCompactionStats> {
+        let config = self
+            .config
+            .compaction_config
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+        let plan = CompactionResourcePlan {
+            mode: CompactionExecutionMode::InMemory,
+            memory_bytes: projected_compaction_memory_bytes(task.input_bytes, &config),
+            scratch_bytes: 0,
+        };
+        self.perform_compaction_with_plan(task, plan).await
+    }
+
+    async fn perform_compaction_with_plan(
+        &self,
+        task: &SstCompactionTask,
+        plan: CompactionResourcePlan,
+    ) -> Result<SstCompactionStats> {
+        if plan.mode == CompactionExecutionMode::LocalSpill {
+            return Ok(self
+                .perform_local_spill_compaction(task, plan)
+                .await?
+                .base_stats);
+        }
         let enhanced_stats = self
             .perform_unified_canonical_compaction(
                 task,
@@ -1296,6 +1396,490 @@ impl Compaction {
             )
             .await?;
         Ok(enhanced_stats.base_stats)
+    }
+
+    /// Retire immutable inputs only after their replacement is published (or
+    /// after MVCC proves the replacement is empty). Cache and deletion-vector
+    /// invalidation share the same boundary so no path can leave dead segment
+    /// state resident merely because it used the spill executor.
+    async fn retire_task_inputs(&self, task: &SstCompactionTask) -> Result<()> {
+        let warm_caches = crate::storage::engines::sst::core::get_warm_tier_caches();
+        #[cfg(feature = "cold-deletion-vectors")]
+        let dv_store =
+            crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore::new(
+                self.filesystem_factory.clone(),
+            );
+        let mut retirement_errors = Vec::new();
+        for input_file in &task.input_files {
+            let input_path = input_file.to_string_lossy();
+            if let Err(error) = retire_compaction_input(&self.filesystem_factory, &input_path).await
+            {
+                retirement_errors.push(format!("{}: {error}", input_file.display()));
+                continue;
+            }
+            purge_retired_segment_cache_entries(&input_path, warm_caches.as_ref()).await;
+            #[cfg(feature = "cold-deletion-vectors")]
+            if let Err(error) = dv_store.remove(&input_path).await {
+                retirement_errors.push(format!("{}.dv: {error}", input_file.display()));
+            }
+        }
+        if retirement_errors.is_empty() {
+            Ok(())
+        } else {
+            Err(crate::core::StorageError::SstEngine(format!(
+                "compaction failed to retire {} input(s): {}",
+                retirement_errors.len(),
+                retirement_errors.join("; ")
+            )))
+        }
+    }
+
+    /// Execute the bounded construction selected by dual-resource admission.
+    /// Inputs remain authoritative until the final PAX has been uploaded and
+    /// atomically published; every scratch owner is RAII-cleaned on error.
+    async fn perform_local_spill_compaction(
+        &self,
+        task: &SstCompactionTask,
+        plan: CompactionResourcePlan,
+    ) -> Result<EnhancedSstCompactionStats> {
+        use crate::storage::engines::sst::compaction_spill::{
+            ExternalClusterOutput, ExternalMvccOutput, SpillTaskScratch, cluster_external_mvcc,
+            resolve_external_mvcc_from_segments,
+        };
+
+        enum SpillOrdering {
+            Ivf(ExternalClusterOutput),
+            Mvcc(ExternalMvccOutput),
+        }
+
+        if compaction_output_format(&task.input_files) != BlockFormat::PaxBlock
+            || task
+                .input_files
+                .iter()
+                .any(|path| path.extension().and_then(|value| value.to_str()) != Some("pax"))
+        {
+            return Err(crate::core::StorageError::SstEngine(
+                "local-spill compaction currently requires PAX-only inputs".to_string(),
+            ));
+        }
+        let scratch_owner = self.spill_scratch_owner.as_ref().ok_or_else(|| {
+            crate::core::StorageError::SstEngine(
+                "local-spill execution has no process-owned scratch namespace".to_string(),
+            )
+        })?;
+        let start_time = std::time::Instant::now();
+        let mut memtrace = CompactionMemTrace::new();
+        let cache_on_write = std::env::var("PROXIMADB_CACHE_ON_WRITE")
+            .ok()
+            .and_then(|value| crate::core::config::CacheOnWritePolicy::parse(&value))
+            .unwrap_or(self.config.cache_on_write);
+        let run_buffer_bytes = (plan.memory_bytes / 4).clamp(1024 * 1024, 64 * 1024 * 1024);
+        let merge_fan_in = 32usize;
+        let input_paths = task
+            .input_files
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let output_path = task.output_file.to_string_lossy().into_owned();
+        let mut task_scratch = SpillTaskScratch::begin(
+            scratch_owner.path(),
+            task.collection_object_id,
+            task.level,
+            &input_paths,
+            task.input_bytes,
+            &output_path,
+            plan.memory_bytes,
+            plan.scratch_bytes,
+        )
+        .map_err(|error| {
+            crate::core::StorageError::SstEngine(format!(
+                "initialize local-spill task scratch: {error}"
+            ))
+        })?;
+        let scratch_root = task_scratch.path().to_path_buf();
+
+        #[cfg(feature = "cold-deletion-vectors")]
+        let dv_store =
+            crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore::new(
+                self.filesystem_factory.clone(),
+            );
+        #[cfg(feature = "cold-deletion-vectors")]
+        let deleted_positions = {
+            let mut all = Vec::with_capacity(input_paths.len());
+            for path in &input_paths {
+                let _ = dv_store.load(path).await;
+                let positions = if let Some(vector) = dv_store.get(path).await {
+                    vector.deleted_positions().into_iter().collect()
+                } else {
+                    std::collections::HashSet::new()
+                };
+                all.push(positions);
+            }
+            all
+        };
+        #[cfg(not(feature = "cold-deletion-vectors"))]
+        let deleted_positions: Vec<std::collections::HashSet<u32>> = Vec::new();
+
+        let (winners, input_stats) = resolve_external_mvcc_from_segments(
+            self.filesystem_factory.as_ref(),
+            &input_paths,
+            &scratch_root,
+            run_buffer_bytes,
+            merge_fan_in,
+            Self::current_time_ns(),
+            &[],
+            &[],
+            None,
+            &deleted_positions,
+        )
+        .await
+        .map_err(|error| {
+            crate::core::StorageError::SstEngine(format!(
+                "local-spill ranged MVCC pass failed: {error}"
+            ))
+        })?;
+        let mvcc_stats = *winners.stats();
+        memtrace.stage(
+            "spill_mvcc_resolved",
+            usize::try_from(mvcc_stats.output_records).unwrap_or(usize::MAX),
+        );
+        task_scratch
+            .update_phase("mvcc-resolved", Some(&input_stats.source_sizes))
+            .map_err(|error| {
+                crate::core::StorageError::SstEngine(format!(
+                    "update local-spill MVCC manifest: {error}"
+                ))
+            })?;
+        if mvcc_stats.output_records == 0 {
+            task_scratch
+                .update_phase("empty-retirement", None)
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "update empty local-spill manifest: {error}"
+                    ))
+                })?;
+            self.retire_task_inputs(task).await?;
+            {
+                use crate::metrics::operational_metrics as metrics;
+                metrics::COMPACTIONS_TOTAL.inc();
+                metrics::COMPACTION_BYTES_READ_TOTAL.inc_by(task.input_bytes);
+                metrics::COMPACTION_SECONDS.observe(start_time.elapsed().as_secs_f64());
+            }
+            return Ok(EnhancedSstCompactionStats {
+                base_stats: SstCompactionStats {
+                    total_compactions: 1,
+                    bytes_written: 0,
+                    bytes_read: task.input_bytes,
+                    files_merged: task.input_files.len() as u64,
+                    avg_compaction_time_ms: start_time.elapsed().as_millis() as u64,
+                    last_compaction_time: Some(Utc::now()),
+                    expired_records_deleted: 0,
+                    tombstones_removed: 0,
+                },
+                deleted_vector_ids: Vec::new(),
+                merged_vectors: Vec::new(),
+                recommend_full_rebuild: false,
+            });
+        }
+
+        let use_ivf = crate::storage::engines::sst::block_cluster::block_cluster_enabled()
+            && crate::storage::engines::sst::block_cluster::ivf_probe_enabled()
+            && mvcc_stats.output_records >= 64;
+        let ordering = if use_ivf {
+            task_scratch
+                .update_phase("ivf-ordering", None)
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "update local-spill IVF manifest: {error}"
+                    ))
+                })?;
+            SpillOrdering::Ivf(
+                cluster_external_mvcc(
+                    winners,
+                    &scratch_root,
+                    run_buffer_bytes,
+                    merge_fan_in,
+                    plan.memory_bytes,
+                )
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "local-spill IVF ordering failed: {error}"
+                    ))
+                })?,
+            )
+        } else {
+            SpillOrdering::Mvcc(winners)
+        };
+        memtrace.stage(
+            "spill_ordering_ready",
+            usize::try_from(mvcc_stats.output_records).unwrap_or(usize::MAX),
+        );
+        task_scratch
+            .update_phase("pax-construction", None)
+            .map_err(|error| {
+                crate::core::StorageError::SstEngine(format!(
+                    "update local-spill PAX manifest: {error}"
+                ))
+            })?;
+        let staging_config = atomic_coordinator_staging(task)?;
+        let atomic_operation = if let Some(coordinator) = &self.atomic_coordinator {
+            Some(
+                coordinator
+                    .begin_atomic_operation(&staging_config)
+                    .await
+                    .map_err(|error| {
+                        crate::core::StorageError::SstEngine(format!(
+                            "begin local-spill atomic publication: {error}"
+                        ))
+                    })?,
+            )
+        } else {
+            None
+        };
+        let publication_target = if let Some(operation) = &atomic_operation {
+            let filename = task
+                .output_file
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| {
+                    crate::core::StorageError::SstEngine(
+                        "local-spill output has no UTF-8 filename".to_string(),
+                    )
+                })?;
+            format!(
+                "{}/{}",
+                operation.staging_url.trim_end_matches('/'),
+                filename
+            )
+        } else {
+            task.output_file.to_string_lossy().into_owned()
+        };
+
+        let write_result: Result<(
+            u64,
+            crate::storage::engines::sst::staged_write::StagedSegmentWrite,
+        )> = async {
+            let staged = crate::storage::engines::sst::staged_write::StagedSegmentWrite::begin_in(
+                &publication_target,
+                &scratch_root,
+            )
+            .await
+            .map_err(|error| {
+                crate::core::StorageError::SstEngine(format!(
+                    "prepare local-spill publication: {error}"
+                ))
+            })?;
+            let target_block = task
+                .block_size_kb
+                .and_then(|kilobytes| usize::try_from(kilobytes).ok())
+                .and_then(|kilobytes| kilobytes.checked_mul(1024));
+            let collection_id = task.collection_identity.collection_id.to_string();
+            let model = match &ordering {
+                SpillOrdering::Ivf(output) => Some(output.model().clone()),
+                SpillOrdering::Mvcc(_) => None,
+            };
+            let mut writer =
+                crate::storage::engines::sst::segment_format::pax_spill_compaction_writer(
+                    Path::new(staged.local_path()),
+                    &scratch_root,
+                    &collection_id,
+                    1,
+                    proximadb_block_format::VectorQuant::Sq8,
+                    target_block,
+                    usize::try_from(mvcc_stats.output_records).map_err(|_| {
+                        crate::core::StorageError::SstEngine(
+                            "local-spill output row count exceeds usize".to_string(),
+                        )
+                    })?,
+                    model,
+                )
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "create disk-backed PAX writer: {error}"
+                    ))
+                })?;
+            let mut append = |mut record: ProximaRecord| {
+                if let Some(target) = task.precision_hint {
+                    for embedding in &mut record.embeddings {
+                        embedding.coerce_to_precision(target);
+                    }
+                }
+                writer.add_record(&record).map_err(|error| {
+                    crate::storage::engines::sst::error::SstError::Compaction(format!(
+                        "append local-spill PAX row: {error}"
+                    ))
+                })
+            };
+            match &ordering {
+                SpillOrdering::Ivf(output) => output.for_each_record(&mut append),
+                SpillOrdering::Mvcc(output) => {
+                    output.for_each_record(|item| append(item.into_record()))
+                }
+            }
+            .map_err(|error| {
+                crate::core::StorageError::SstEngine(format!(
+                    "stream local-spill rows into PAX: {error}"
+                ))
+            })?;
+            writer.finish().map_err(|error| {
+                crate::core::StorageError::SstEngine(format!(
+                    "finish disk-backed PAX segment: {error}"
+                ))
+            })?;
+            task_scratch
+                .update_phase("uploading", None)
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "update local-spill upload manifest: {error}"
+                    ))
+                })?;
+            let bytes = staged
+                .upload_bounded_retaining_local(&self.filesystem_factory)
+                .await
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "upload local-spill PAX segment: {error}"
+                    ))
+                })?;
+            Ok((bytes, staged))
+        }
+        .await;
+
+        let (bytes_written, staged) = match write_result {
+            Ok(output) => output,
+            Err(error) => {
+                if let (Some(coordinator), Some(operation)) =
+                    (&self.atomic_coordinator, &atomic_operation)
+                {
+                    let _ = coordinator
+                        .abort_atomic_operation(
+                            &operation.operation_id,
+                            "local-spill construction or upload failed",
+                        )
+                        .await;
+                }
+                return Err(error);
+            }
+        };
+        memtrace.stage(
+            "spill_pax_uploaded",
+            usize::try_from(mvcc_stats.output_records).unwrap_or(usize::MAX),
+        );
+        if let (Some(coordinator), Some(operation)) = (&self.atomic_coordinator, &atomic_operation)
+            && let Err(error) = coordinator
+                .finalize_atomic_operation(&operation.operation_id)
+                .await
+        {
+            let _ = coordinator
+                .abort_atomic_operation(
+                    &operation.operation_id,
+                    "local-spill atomic publication failed",
+                )
+                .await;
+            return Err(crate::core::StorageError::SstEngine(format!(
+                "publish local-spill PAX segment: {error}"
+            )));
+        }
+        if let Err(error) = task_scratch.update_phase("published", None) {
+            warn!(%error, "Local-spill publication committed but manifest update failed");
+        }
+
+        // D6 for the disk-backed writer: promote from the retained local PAX
+        // only after the final path is visible. Cloud scratch still exists at
+        // `staged.local_path()`; a local atomic rename moves that file to the
+        // task output, so select whichever path remains present.
+        if cache_on_write.includes_invariants()
+            && let Some((invariants, survivor)) =
+                crate::storage::engines::sst::core::get_warm_tier_caches()
+        {
+            let retained_path = Path::new(staged.local_path());
+            let final_local = output_path.strip_prefix("file://").unwrap_or(&output_path);
+            let cache_source = if retained_path.exists() {
+                retained_path
+            } else {
+                Path::new(final_local)
+            };
+            match
+                crate::storage::engines::sst::segment_format::install_pax_cache_seed_from_local_file(
+                    &output_path,
+                    cache_source,
+                    cache_on_write.includes_survivors(),
+                    Some(&invariants),
+                    Some(&survivor),
+                )
+                .await
+            {
+                Ok(seeded_to_disk) => info!(
+                    output = %output_path,
+                    source = %cache_source.display(),
+                    seeded_to_disk,
+                    include_survivors = cache_on_write.includes_survivors(),
+                    "post-publication local-spill cache promotion completed"
+                ),
+                Err(error) => warn!(
+                    output = %output_path,
+                    source = %cache_source.display(),
+                    %error,
+                    "post-publication local-spill cache promotion failed"
+                ),
+            }
+        }
+        drop(staged);
+
+        self.retire_task_inputs(task).await.map_err(|error| {
+            crate::core::StorageError::SstEngine(format!(
+                "local-spill compaction published {} but input retirement failed: {error}",
+                task.output_file.display()
+            ))
+        })?;
+        if let Err(error) = task_scratch.update_phase("retired", None) {
+            warn!(%error, "Local-spill retirement committed but manifest update failed");
+        }
+        memtrace.stage(
+            "spill_inputs_retired",
+            usize::try_from(mvcc_stats.output_records).unwrap_or(usize::MAX),
+        );
+
+        let elapsed = start_time.elapsed();
+        let cluster_stats = match &ordering {
+            SpillOrdering::Ivf(output) => Some(*output.stats()),
+            SpillOrdering::Mvcc(_) => None,
+        };
+        info!(
+            input_files = task.input_files.len(),
+            input_bytes = task.input_bytes,
+            output_bytes = bytes_written,
+            input_records = mvcc_stats.input_records,
+            output_records = mvcc_stats.output_records,
+            mvcc_scratch_bytes = mvcc_stats.scratch_bytes_written,
+            input_range_reads = input_stats.block_range_reads + input_stats.sq8_range_reads,
+            largest_input_range_bytes = input_stats.largest_range_bytes,
+            ivf_scratch_bytes = cluster_stats.map_or(0, |stats| stats.scratch_bytes_written),
+            elapsed_ms = elapsed.as_millis(),
+            "Local-spill compaction completed"
+        );
+        {
+            use crate::metrics::operational_metrics as metrics;
+            metrics::COMPACTIONS_TOTAL.inc();
+            metrics::COMPACTION_BYTES_READ_TOTAL.inc_by(task.input_bytes);
+            metrics::COMPACTION_BYTES_WRITTEN_TOTAL.inc_by(bytes_written);
+            metrics::COMPACTION_SECONDS.observe(elapsed.as_secs_f64());
+        }
+        Ok(EnhancedSstCompactionStats {
+            base_stats: SstCompactionStats {
+                total_compactions: 1,
+                bytes_written,
+                bytes_read: task.input_bytes,
+                files_merged: task.input_files.len() as u64,
+                avg_compaction_time_ms: elapsed.as_millis() as u64,
+                last_compaction_time: Some(Utc::now()),
+                expired_records_deleted: 0,
+                tombstones_removed: 0,
+            },
+            deleted_vector_ids: Vec::new(),
+            merged_vectors: Vec::new(),
+            recommend_full_rebuild: false,
+        })
     }
 
     /// Unified canonical-record compaction path.

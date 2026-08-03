@@ -188,6 +188,14 @@ lazy_static! {
         "proximadb_compaction_memory_reserved_bytes",
         "Projected peak resident bytes reserved by all in-flight compactions",
     );
+    pub static ref COMPACTION_SCRATCH_RESERVED_BYTES: IntGauge = gauge(
+        "proximadb_compaction_scratch_reserved_bytes",
+        "Projected local scratch bytes reserved by all in-flight compactions",
+    );
+    pub static ref COMPACTION_SPILL_TOTAL: IntCounter = counter(
+        "proximadb_compaction_spill_total",
+        "Compactions admitted with the deterministic local-spill execution plan",
+    );
     pub static ref COMPACTION_MEMORY_ADMISSION_WAITS_TOTAL: IntCounter = counter(
         "proximadb_compaction_memory_admission_waits_total",
         "Compaction tasks that waited for process-wide weighted memory admission",
@@ -256,6 +264,8 @@ pub fn touch() {
     COMPACTION_BYTES_READ_TOTAL.get();
     COMPACTION_BYTES_WRITTEN_TOTAL.get();
     COMPACTION_MEMORY_RESERVED_BYTES.get();
+    COMPACTION_SCRATCH_RESERVED_BYTES.get();
+    COMPACTION_SPILL_TOTAL.get();
     COMPACTION_MEMORY_ADMISSION_WAITS_TOTAL.get();
     COMPACTION_QUEUE_DEPTH.get();
     COMPACTION_RUNNING.get();

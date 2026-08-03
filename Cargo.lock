@@ -8372,6 +8372,7 @@ dependencies = [
  "proximadb-block-format",
  "proximadb-cache",
  "proximadb-catalog",
+ "proximadb-codec",
  "proximadb-compression-types",
  "proximadb-data-model",
  "proximadb-filter-expression",

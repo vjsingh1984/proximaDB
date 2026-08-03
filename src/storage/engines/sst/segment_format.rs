@@ -18,6 +18,7 @@
 //! starts with the columnar version byte `0x01` or a compression marker
 //! `0x02..=0x0E` — disjoint from `PBLK`, so the legacy path is never mis-routed.
 
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -332,7 +333,7 @@ fn write_pax_segment_compacted_internal(
     capture_sq8: Option<bool>,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     use crate::storage::engines::sst::block_cluster;
-    let cluster = block_cluster::block_cluster_enabled();
+    let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
     // TD-RDSTRAT-8 rev 3: compaction is the ONLY write path that emits the
     // persisted-IVF-probe (v3) layout. Training is default ON;
     // `PROXIMADB_PAX_WRITE_A0_TRAIN=0` is the kill-switch. Production flush stays
@@ -382,6 +383,55 @@ fn write_pax_segment_compacted_internal(
         probe_model,
         capture_sq8,
     )
+}
+
+/// Construct the PAX writer used after the external spill pipeline has already
+/// resolved MVCC and produced final IVF cell order. This is the same writer
+/// policy as [`write_pax_segment_compacted_internal`] without re-materializing
+/// records or fitting a second model.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pax_spill_compaction_writer(
+    path: &Path,
+    scratch_root: &Path,
+    collection_id: &str,
+    embedding_count: usize,
+    rerank_quant: VectorQuant,
+    target_block: Option<usize>,
+    expected_rows: usize,
+    two_level: Option<proximadb_storage_common::coarse_directory::CoarseModel>,
+) -> Result<PaxSegmentWriter> {
+    if !coalesced_rabitq_enabled() {
+        anyhow::bail!("local-spill compaction requires the coalesced RaBitQ PAX layout");
+    }
+    let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
+    let mut writer = PaxSegmentWriter::new(
+        path,
+        BlockMode::Pax,
+        BlockCompression::Zstd,
+        collection_id,
+        0,
+        embedding_count.max(1),
+        target_block,
+    )
+    .with_quant(VectorQuant::RaBitQ)
+    .with_f32_tier(false)
+    .with_rerank_quant(rerank_quant)
+    .with_lossless_clustered(lossless_clustered_enabled() && two_level.is_some())
+    .with_lossless_scalar(lossless_scalar_enabled())
+    // The spill path is itself default-off. Preserve canonical MVCC sequence
+    // in its output so every later compaction has an exact version authority.
+    .with_record_version(true)
+    .with_block_centroids(cluster)
+    .with_coalesced_rabitq(true)
+    .with_expected_rows(expected_rows);
+    #[cfg(feature = "cold-deletion-vectors")]
+    {
+        writer = writer.with_oid_resolver(true);
+    }
+    if let Some(model) = two_level {
+        writer = writer.with_two_level(model);
+    }
+    writer.with_local_spill(scratch_root)
 }
 
 /// Shared writer loop for the flush (bootstrap-ordered) and compaction
@@ -1218,7 +1268,16 @@ impl SegmentInvariantsCache {
                 return InvariantLookup::Miss;
             }
         };
-        let region_bytes = store.get(&Self::l2_region_key(path)).await.ok().flatten();
+        // A0-backed segments probe bounded Region-A ranges. Rehydrating their
+        // complete Region A here would make a process restart consume memory
+        // proportional to the largest compacted segment, defeating the spill
+        // writer's bound. One-level segments have no ranged probe path and
+        // therefore retain the existing whole-region promotion behavior.
+        let region_bytes = if control.a0_bytes.is_some() {
+            None
+        } else {
+            store.get(&Self::l2_region_key(path)).await.ok().flatten()
+        };
         let value = Arc::new(SegmentInvariants {
             region_bytes,
             ..control
@@ -1248,6 +1307,68 @@ impl SegmentInvariantsCache {
             }
         }
         self.put(path, inv);
+    }
+
+    /// Persist control bytes plus a file-backed Region A without first
+    /// materializing the full region in DRAM. The control entry is admitted to
+    /// L1 immediately; probed Region-A ranges are served from L2 through
+    /// [`Self::get_region_range`] after restart or under DRAM pressure.
+    pub async fn seed_control_and_region_from_file(
+        &self,
+        path: String,
+        control: Arc<SegmentInvariants>,
+        local_path: &std::path::Path,
+        region_off: u64,
+        region_len: u64,
+    ) -> std::io::Result<bool> {
+        let Some(store) = &self.l2_store else {
+            self.put(path, control);
+            return Ok(false);
+        };
+        let encoded = Arc::from(encode_invariant_control(&control));
+        store
+            .put(Self::l2_control_key(&path), L2Class::Invariants, encoded)
+            .await?;
+        store
+            .put_file_range(
+                Self::l2_region_key(&path),
+                L2Class::Invariants,
+                local_path,
+                region_off,
+                region_len,
+            )
+            .await?;
+        self.put(path, control);
+        Ok(true)
+    }
+
+    /// Read one Region-A subrange relative to the region start. DRAM is checked
+    /// first; persistent L2 is range-verified without hydrating the full region.
+    async fn get_region_range(&self, path: &str, relative_off: u64, len: u64) -> Option<Arc<[u8]>> {
+        if let Some(region) = self.get(path).and_then(|entry| entry.region_bytes.clone()) {
+            let start = usize::try_from(relative_off).ok()?;
+            let len = usize::try_from(len).ok()?;
+            let end = start.checked_add(len)?;
+            return region.get(start..end).map(Arc::from);
+        }
+        let store = self.l2_store.as_ref()?;
+        match store
+            .get_range(&Self::l2_region_key(path), relative_off, len)
+            .await
+        {
+            Ok(Some(bytes)) => {
+                self.l2_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                crate::observability::io_trace::record_l2s(1, 0);
+                Some(bytes)
+            }
+            Ok(None) | Err(_) => {
+                self.l2_misses
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                crate::observability::io_trace::record_l2s(0, 1);
+                None
+            }
+        }
     }
 
     pub fn l2_stats(&self) -> L2CacheStats {
@@ -1524,6 +1645,113 @@ pub async fn install_pax_cache_seed(
     {
         tracing::warn!("post-publication SQ8 cache seed failed for {path}: {error}");
     }
+}
+
+fn read_local_segment_range(
+    file: &mut std::fs::File,
+    path: &Path,
+    offset: u64,
+    len: u64,
+) -> anyhow::Result<Vec<u8>> {
+    let len = usize::try_from(len)
+        .map_err(|_| anyhow::anyhow!("local PAX range exceeds address space: {len}"))?;
+    file.seek(SeekFrom::Start(offset)).map_err(|error| {
+        anyhow::anyhow!("seek local PAX {} at {offset}: {error}", path.display())
+    })?;
+    let mut bytes = vec![0u8; len];
+    file.read_exact(&mut bytes).map_err(|error| {
+        anyhow::anyhow!(
+            "read local PAX {} range {offset}+{}: {error}",
+            path.display(),
+            len
+        )
+    })?;
+    Ok(bytes)
+}
+
+/// Promote immutable Region A/B bytes from a disk-backed writer's local PAX
+/// after its final object-store path has been atomically published.
+///
+/// Large regions stream into persistent L2 in fixed-size chunks. Only the
+/// header, A0, RaBitQ parameters, and footer are materialized, so enabling
+/// cache-on-write does not undo local-spill compaction's memory bound.
+pub async fn install_pax_cache_seed_from_local_file(
+    published_path: &str,
+    local_path: &Path,
+    include_sq8: bool,
+    invariants: Option<&SegmentInvariantsCache>,
+    survivor: Option<&SurvivorRangeCache>,
+) -> anyhow::Result<bool> {
+    use proximadb_storage_common::segment_layout::{
+        SEG_HEADER_PREFIX_V3_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
+    };
+
+    let mut file = std::fs::File::open(local_path)
+        .map_err(|error| anyhow::anyhow!("open local PAX {}: {error}", local_path.display()))?;
+    let file_len = file
+        .metadata()
+        .map_err(|error| anyhow::anyhow!("stat local PAX {}: {error}", local_path.display()))?
+        .len();
+    let header_len = (SEG_HEADER_PREFIX_V3_LEN as u64).min(file_len);
+    let header_bytes = read_local_segment_range(&mut file, local_path, 0, header_len)?;
+    let header = SegmentHeaderPrefix::parse(&header_bytes)
+        .map_err(|error| anyhow::anyhow!("parse local PAX header: {error}"))?;
+    let footer_bytes =
+        read_local_segment_range(&mut file, local_path, header.footer_off, header.footer_len)?;
+    let footer = SegmentFooterIndex::parse(&footer_bytes)
+        .map_err(|error| anyhow::anyhow!("parse local PAX footer: {error}"))?;
+    let a0_bytes = if header.a0_len > 0 {
+        Some(Arc::from(read_local_segment_range(
+            &mut file,
+            local_path,
+            header.a0_off,
+            header.a0_len,
+        )?))
+    } else {
+        None
+    };
+    let rabitq_header_len =
+        u64::try_from(proximadb_block_format::region_header_len(footer.embed_dim))
+            .map_err(|_| anyhow::anyhow!("RaBitQ header length exceeds u64"))?
+            .min(header.rabitq_len);
+    let rabitq_header_bytes = Arc::from(read_local_segment_range(
+        &mut file,
+        local_path,
+        header.rabitq_off,
+        rabitq_header_len,
+    )?);
+    let control = Arc::new(SegmentInvariants {
+        header_bytes,
+        region_bytes: None,
+        footer_bytes,
+        a0_bytes,
+        rabitq_header_bytes: Some(rabitq_header_bytes),
+    });
+
+    let mut seeded = false;
+    if let Some(cache) = invariants {
+        seeded |= cache
+            .seed_control_and_region_from_file(
+                published_path.to_string(),
+                control,
+                local_path,
+                header.rabitq_off,
+                header.rabitq_len,
+            )
+            .await?;
+    }
+    if include_sq8 && let Some(cache) = survivor {
+        seeded |= cache
+            .seed_parent_region_from_file(
+                published_path,
+                header.sq8_off,
+                header.sq8_len,
+                local_path,
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("seed local PAX SQ8 region: {error}"))?;
+    }
+    Ok(seeded)
 }
 
 /// TD-CACHE-1 S1: prefill a segment's CONTROL-plane invariants (header prefix,
@@ -1909,6 +2137,7 @@ async fn coarse_probe_survivors(
     trace_on: bool,
     cached: Option<&SegmentInvariants>,
     prefix: &[u8],
+    invariants_cache: Option<&SegmentInvariantsCache>,
     survivor_cache: Option<&SurvivorRangeCache>,
 ) -> Result<Option<CoarseProbeResult>> {
     use proximadb_storage_common::coarse_directory::{CoarseDirectory, project_with_model};
@@ -2040,9 +2269,15 @@ async fn coarse_probe_survivors(
                     let len = usize::try_from(len).ok()?;
                     region.get(start..start.checked_add(len)?)
                 });
+        let relative_off = fetch.start.saturating_sub(header.rabitq_off);
         let bytes: Vec<u8> = if let Some(bytes) = cached_region_slice {
             bytes.to_vec()
         } else if let Some(bytes) = prefetched_slice(prefix, fetch.start, len) {
+            bytes.to_vec()
+        } else if let Some(bytes) = match invariants_cache {
+            Some(cache) => cache.get_region_range(path, relative_off, len).await,
+            None => None,
+        } {
             bytes.to_vec()
         } else if let Some(sc) = survivor_cache {
             sc.get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
@@ -2255,6 +2490,7 @@ pub async fn rabitq_search_segment_coalesced(
             trace_on,
             cached.as_deref(),
             &header_bytes,
+            cache,
             survivor_cache,
         )
         .await
@@ -2705,9 +2941,17 @@ mod tests {
         assert!(matches!(lookup, InvariantLookup::L2(_)));
         assert_eq!(promoted.header_bytes, original.header_bytes);
         assert_eq!(promoted.footer_bytes, original.footer_bytes);
+        assert!(
+            promoted.region_bytes.is_none(),
+            "A0-backed segments must not hydrate complete Region A after restart"
+        );
         assert_eq!(
-            promoted.region_bytes.as_deref(),
-            original.region_bytes.as_deref()
+            reopened
+                .get_region_range(path, 1, b"region-a".len() as u64 - 1)
+                .await
+                .expect("bounded Region A range")
+                .as_ref(),
+            &b"egion-a"[..]
         );
         assert_eq!(promoted.a0_bytes.as_deref(), original.a0_bytes.as_deref());
         assert_eq!(
@@ -2724,6 +2968,132 @@ mod tests {
             reopened.get_or_promote(path).await,
             InvariantLookup::Miss
         ));
+
+        let one_level_path = "file:///tenant-a/collection-a/segment-one-level.px";
+        let one_level = Arc::new(SegmentInvariants {
+            header_bytes: vec![1],
+            region_bytes: Some(Arc::from(&b"whole-region"[..])),
+            footer_bytes: vec![2],
+            a0_bytes: None,
+            rabitq_header_bytes: Some(Arc::from(&b"params"[..])),
+        });
+        reopened
+            .put_with_l2(one_level_path.to_string(), one_level.clone())
+            .await;
+        drop(reopened);
+        let one_level_store =
+            Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("reopen one-level L2"));
+        let one_level_cache = SegmentInvariantsCache::with_l2(1 << 20, one_level_store);
+        let promoted = one_level_cache
+            .get_or_promote(one_level_path)
+            .await
+            .value()
+            .expect("one-level persistent hit");
+        assert_eq!(
+            promoted.region_bytes.as_deref(),
+            one_level.region_bytes.as_deref(),
+            "one-level scans still require their complete Region A"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_pax_seed_streams_regions_into_persistent_cache() {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        use proximadb_storage_common::coarse_directory::CoarseModel;
+
+        const DIM: usize = 8;
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let segment_path = dir.path().join("spill-output.pax");
+        let model = CoarseModel {
+            dim: DIM as u32,
+            n_comp: 1,
+            pca_mean: vec![0.0; DIM],
+            pca_components: vec![0.1; DIM],
+            centroids: vec![-1.0, 1.0],
+            radii: vec![1.0, 1.0],
+            cell_rows: vec![2, 2],
+            seed: 7,
+            trained_on: 4,
+        };
+        let mut writer = PaxSegmentWriter::new(
+            &segment_path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "collection",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_rerank_quant(VectorQuant::Sq8)
+        .with_coalesced_rabitq(true)
+        .with_two_level(model);
+        for row in 0..4usize {
+            let mut record = rec(&format!("row-{row}"), row as i64, vec![row as f32; DIM]);
+            record.embeddings[0] = EmbeddingCell {
+                modality: "dense".to_string(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(vec![row as f32; DIM]),
+                ..EmbeddingCell::default()
+            };
+            writer.add_record(&record).expect("append record");
+        }
+        writer.finish().expect("finish PAX");
+        let segment = std::fs::read(&segment_path).expect("read PAX");
+        let header = SegmentHeaderPrefix::parse(&segment).expect("parse PAX header");
+
+        let cache_path = dir.path().join("cache");
+        let store = Arc::new(
+            PersistentByteStore::open(&cache_path, 1 << 20).expect("open persistent cache"),
+        );
+        let invariants = SegmentInvariantsCache::with_l2(1 << 20, store.clone());
+        let survivor = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(store));
+        let published = "az://container/data/1/L2_output.pax";
+        assert!(
+            install_pax_cache_seed_from_local_file(
+                published,
+                &segment_path,
+                true,
+                Some(&invariants),
+                Some(&survivor),
+            )
+            .await
+            .expect("install local PAX seed")
+        );
+        let control = invariants.get(published).expect("control cached in DRAM");
+        assert!(
+            control.region_bytes.is_none(),
+            "streaming seed must not materialize Region A in DRAM"
+        );
+        let region_slice = invariants
+            .get_region_range(published, 1, header.rabitq_len - 1)
+            .await
+            .expect("Region A range from L2");
+        assert_eq!(
+            region_slice.as_ref(),
+            &segment[(header.rabitq_off + 1) as usize
+                ..(header.rabitq_off + header.rabitq_len) as usize]
+        );
+        let sq8_slice = survivor
+            .get_or_fetch_in_parent(
+                CacheKind::QuantizedCodes,
+                published,
+                header.sq8_off + 1,
+                header.sq8_len - 1,
+                header.sq8_off,
+                header.sq8_len,
+                || async {
+                    Err(proximadb_storage_filesystem_types::FilesystemError::Io(
+                        std::io::Error::other("object loader must not run"),
+                    ))
+                },
+            )
+            .await
+            .expect("Region B range from L2");
+        assert_eq!(
+            sq8_slice.as_ref(),
+            &segment[(header.sq8_off + 1) as usize..(header.sq8_off + header.sq8_len) as usize]
+        );
     }
 
     /// TD-COMPACT-9: a REAL (Some) coarse-probe config must WIN and must NOT be

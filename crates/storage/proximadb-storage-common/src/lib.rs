@@ -51,6 +51,7 @@ pub mod ranged_segment;
 pub mod segment_layout;
 pub mod smart_io_metrics;
 pub mod spatial_encoding;
+pub mod spill_regions;
 pub mod storage_error;
 pub mod storage_path;
 pub mod storage_profile;

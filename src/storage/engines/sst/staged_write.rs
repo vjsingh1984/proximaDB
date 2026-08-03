@@ -30,9 +30,25 @@ impl StagedSegmentWrite {
     /// Prepare a staged write for `target_url` (the full staging FILE url,
     /// e.g. `az://c/…/__flush/L0_x.pax` or `file:///…/__flush/L0_x.pax`).
     pub(crate) async fn begin(target_url: &str) -> Result<Self> {
+        Self::begin_with_scratch(target_url, None).await
+    }
+
+    /// Prepare a staged write while placing remote-upload scratch below the
+    /// caller's already-admitted local directory. Spill compaction must not
+    /// escape its reserved filesystem by silently falling back to system tmp.
+    pub(crate) async fn begin_in(target_url: &str, scratch_root: &std::path::Path) -> Result<Self> {
+        Self::begin_with_scratch(target_url, Some(scratch_root)).await
+    }
+
+    async fn begin_with_scratch(
+        target_url: &str,
+        scratch_root: Option<&std::path::Path>,
+    ) -> Result<Self> {
         let is_remote = target_url.contains("://") && !target_url.starts_with("file://");
         if is_remote {
-            let scratch = std::env::temp_dir().join("proximadb-flush-staging");
+            let scratch = scratch_root
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| std::env::temp_dir().join("proximadb-flush-staging"));
             tokio::fs::create_dir_all(&scratch)
                 .await
                 .context("create local segment-staging scratch dir")?;
@@ -71,31 +87,97 @@ impl StagedSegmentWrite {
     /// of the time in review round 1 of this fix). Sidecar-aware: an Arrow
     /// segment's `{path}.idx` (required by `ArrowBlockReader::open`) is
     /// uploaded alongside as `{remote}.idx` and its scratch removed too.
-    pub(crate) async fn finalize(mut self, factory: &Arc<FilesystemFactory>) -> Result<u64> {
-        if let Some(remote) = self.remote_url.take() {
-            let bytes = tokio::fs::read(&self.local_path)
+    pub(crate) async fn finalize(self, factory: &Arc<FilesystemFactory>) -> Result<u64> {
+        self.finalize_with_policy(factory, false).await
+    }
+
+    /// Finalize only when a remote backend guarantees bounded-memory upload.
+    /// The local direct-write path is already bounded and needs no backend
+    /// capability check.
+    pub(crate) async fn finalize_bounded(self, factory: &Arc<FilesystemFactory>) -> Result<u64> {
+        self.finalize_with_policy(factory, true).await
+    }
+
+    /// Upload through a bounded backend while retaining remote scratch until
+    /// this guard is dropped. Spill compaction uses the retained local PAX for
+    /// post-publication cache promotion, avoiding an object-store reread and a
+    /// segment-sized in-memory seed.
+    pub(crate) async fn upload_bounded_retaining_local(
+        &self,
+        factory: &Arc<FilesystemFactory>,
+    ) -> Result<u64> {
+        if let Some(remote) = &self.remote_url {
+            let fs = factory
+                .get_filesystem(remote)
+                .map_err(|e| anyhow::anyhow!("staging filesystem for {remote}: {e}"))?;
+            if !fs.supports_bounded_local_file_write() {
+                anyhow::bail!(
+                    "{} backend does not guarantee bounded local-file publication for {remote}",
+                    fs.filesystem_type()
+                );
+            }
+            let bytes = fs
+                .write_local_file(remote, std::path::Path::new(&self.local_path), None)
                 .await
-                .context("read locally staged segment for upload")?;
-            let _ = tokio::fs::remove_file(&self.local_path).await;
+                .map_err(|e| anyhow::anyhow!("upload staged segment to {remote}: {e}"))?;
+            let sidecar = format!("{}.idx", self.local_path);
+            if tokio::fs::try_exists(&sidecar)
+                .await
+                .context("probe staged Arrow sidecar")?
+            {
+                fs.write_local_file(
+                    &format!("{remote}.idx"),
+                    std::path::Path::new(&sidecar),
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("upload Arrow sidecar to {remote}.idx: {e}"))?;
+            }
+            tracing::debug!(remote = %remote, bytes, "staged segment uploaded and retained locally");
+            Ok(bytes)
+        } else {
+            let meta = tokio::fs::metadata(&self.local_path)
+                .await
+                .context("stat locally written segment")?;
+            Ok(meta.len())
+        }
+    }
+
+    async fn finalize_with_policy(
+        mut self,
+        factory: &Arc<FilesystemFactory>,
+        require_bounded_remote: bool,
+    ) -> Result<u64> {
+        if let Some(remote) = self.remote_url.clone() {
             let fs = factory
                 .get_filesystem(&remote)
                 .map_err(|e| anyhow::anyhow!("staging filesystem for {remote}: {e}"))?;
-            fs.write(&remote, &bytes, None)
+            if require_bounded_remote && !fs.supports_bounded_local_file_write() {
+                anyhow::bail!(
+                    "{} backend does not guarantee bounded local-file publication for {remote}",
+                    fs.filesystem_type()
+                );
+            }
+            let bytes = fs
+                .write_local_file(&remote, std::path::Path::new(&self.local_path), None)
                 .await
                 .map_err(|e| anyhow::anyhow!("upload staged segment to {remote}: {e}"))?;
+            let _ = tokio::fs::remove_file(&self.local_path).await;
             // Arrow sidecar pair (best-effort presence, mandatory upload if present).
             let sidecar = format!("{}.idx", self.local_path);
             if tokio::fs::try_exists(&sidecar).await.unwrap_or(false) {
-                let idx_bytes = tokio::fs::read(&sidecar)
-                    .await
-                    .context("read staged Arrow .idx sidecar")?;
+                fs.write_local_file(
+                    &format!("{remote}.idx"),
+                    std::path::Path::new(&sidecar),
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("upload Arrow sidecar to {remote}.idx: {e}"))?;
                 let _ = tokio::fs::remove_file(&sidecar).await;
-                fs.write(&format!("{remote}.idx"), &idx_bytes, None)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("upload Arrow sidecar to {remote}.idx: {e}"))?;
             }
-            tracing::debug!(remote = %remote, bytes = bytes.len(), "staged segment uploaded");
-            Ok(bytes.len() as u64)
+            self.remote_url.take();
+            tracing::debug!(remote = %remote, bytes, "staged segment uploaded");
+            Ok(bytes)
         } else {
             let meta = tokio::fs::metadata(&self.local_path)
                 .await

@@ -363,6 +363,212 @@ fn hilbert_cell_order(centroids: &[Vec<f32>]) -> (Vec<usize>, Vec<usize>) {
 /// the same.
 const PAX_IVF_KMEANS_SEED: u64 = 0x5041_585F_4956_4631;
 
+/// Bounded, deterministic training geometry shared by the in-memory and local
+/// spill compaction paths. The spill path uses `sample_step` to revisit its
+/// checksummed winner run without retaining the raw corpus in RAM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct IvfTrainingShape {
+    pub(crate) k: usize,
+    pub(crate) n_components: usize,
+    pub(crate) train_sample: usize,
+    pub(crate) sample_step: usize,
+}
+
+pub(crate) fn ivf_training_shape(usable_rows: usize, dim: usize) -> Option<IvfTrainingShape> {
+    if usable_rows < MIN_ROWS_FOR_IVF || dim == 0 {
+        return None;
+    }
+    let k = ivf_fine_cell_count(usable_rows, dim).min(usable_rows);
+    let train_sample = std::env::var("PROXIMADB_IVF_TRAIN_SAMPLE")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| default_train_sample(k))
+        .min(usable_rows);
+    Some(IvfTrainingShape {
+        k,
+        n_components: ivf_projection_dims(dim, k),
+        train_sample,
+        sample_step: usable_rows.div_ceil(train_sample).max(1),
+    })
+}
+
+/// Assignment returned by the shared persisted-f32 IVF classifier.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct IvfAssignment {
+    pub(crate) source_cell: usize,
+    pub(crate) cell_rank: usize,
+    pub(crate) pc1: f32,
+    pub(crate) distance_sq: f32,
+}
+
+/// Fitted classifier used by both compaction implementations. Keeping the
+/// source-centroid order until all rows are assigned lets radius/count
+/// accumulation remain O(k), then [`Self::finish_model`] emits A0 arrays in
+/// the Hilbert order used by the physical segment.
+pub(crate) struct IvfProbeClassifier {
+    dim: usize,
+    n_comp: usize,
+    pca_mean: Vec<f32>,
+    pca_components: Vec<f32>,
+    centroids: Vec<Vec<f32>>,
+    cell_order: Vec<usize>,
+    cell_rank: Vec<usize>,
+    trained_on: usize,
+}
+
+impl IvfProbeClassifier {
+    pub(crate) fn classify(&self, vector: &[f32]) -> Option<IvfAssignment> {
+        use proximadb_storage_common::coarse_directory::project_with_model;
+
+        if vector.len() != self.dim || self.centroids.is_empty() {
+            return None;
+        }
+        let coords = project_with_model(&self.pca_mean, &self.pca_components, self.n_comp, vector);
+        let mut source_cell = 0usize;
+        let mut distance_sq = f32::INFINITY;
+        for (cell, centroid) in self.centroids.iter().enumerate() {
+            let distance = coords
+                .iter()
+                .zip(centroid)
+                .map(|(left, right)| (left - right) * (left - right))
+                .sum::<f32>();
+            if distance < distance_sq {
+                source_cell = cell;
+                distance_sq = distance;
+            }
+        }
+        Some(IvfAssignment {
+            source_cell,
+            cell_rank: self.cell_rank[source_cell],
+            pc1: coords.first().copied().unwrap_or(0.0),
+            distance_sq,
+        })
+    }
+
+    pub(crate) fn cell_count(&self) -> usize {
+        self.centroids.len()
+    }
+
+    pub(crate) fn finish_model(
+        self,
+        source_cell_rows: &[u64],
+        source_cell_radii_sq: &[f32],
+    ) -> Option<proximadb_storage_common::coarse_directory::CoarseModel> {
+        if source_cell_rows.len() != self.centroids.len()
+            || source_cell_radii_sq.len() != self.centroids.len()
+        {
+            return None;
+        }
+        let n_comp = u16::try_from(self.n_comp).ok()?;
+        let dim = u32::try_from(self.dim).ok()?;
+        let centroids = self
+            .cell_order
+            .iter()
+            .flat_map(|&cell| self.centroids[cell].iter().copied())
+            .collect();
+        let radii = self
+            .cell_order
+            .iter()
+            .map(|&cell| source_cell_radii_sq[cell].sqrt())
+            .collect();
+        let cell_rows = self
+            .cell_order
+            .iter()
+            .map(|&cell| source_cell_rows[cell])
+            .collect();
+        Some(proximadb_storage_common::coarse_directory::CoarseModel {
+            dim,
+            n_comp,
+            pca_mean: self.pca_mean,
+            pca_components: self.pca_components,
+            centroids,
+            radii,
+            cell_rows,
+            seed: PAX_IVF_KMEANS_SEED,
+            trained_on: self.trained_on as u64,
+        })
+    }
+}
+
+/// Persisted-f32 PCA projection. Spill compaction creates this after its first
+/// sampled pass, then projects the same sampled positions during a second pass;
+/// raw high-dimensional samples are therefore never retained in RAM.
+pub(crate) struct IvfPcaProjection {
+    pca_mean: Vec<f32>,
+    pca_components: Vec<f32>,
+    n_comp: usize,
+}
+
+impl IvfPcaProjection {
+    pub(crate) fn from_finalized(
+        pca: &crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA,
+    ) -> Option<Self> {
+        let pca_mean = pca
+            .mean()
+            .iter()
+            .map(|&value| value as f32)
+            .collect::<Vec<_>>();
+        let components = pca.components()?;
+        let n_comp = components.len();
+        if n_comp == 0 {
+            return None;
+        }
+        let pca_components = components
+            .iter()
+            .flat_map(|row| row.iter().map(|&value| value as f32))
+            .collect::<Vec<_>>();
+        Some(Self {
+            pca_mean,
+            pca_components,
+            n_comp,
+        })
+    }
+
+    pub(crate) fn project(&self, vector: &[f32]) -> Vec<f32> {
+        proximadb_storage_common::coarse_directory::project_with_model(
+            &self.pca_mean,
+            &self.pca_components,
+            self.n_comp,
+            vector,
+        )
+    }
+}
+
+/// Complete the shared classifier from persisted PCA and a low-dimensional
+/// deterministic sample. Both paths train k-means on the exact f32 projection
+/// used by the reader.
+pub(crate) fn finish_ivf_probe_classifier(
+    projection: IvfPcaProjection,
+    shape: IvfTrainingShape,
+    sample_coords: &[Vec<f32>],
+) -> Option<IvfProbeClassifier> {
+    let k = shape.k.min(sample_coords.len());
+    let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering_seeded(
+        sample_coords,
+        k,
+        15,
+        1e-3,
+        PAX_IVF_KMEANS_SEED,
+    ) else {
+        return None;
+    };
+    if centroids.is_empty() {
+        return None;
+    }
+    let (cell_order, cell_rank) = hilbert_cell_order(&centroids);
+    Some(IvfProbeClassifier {
+        dim: projection.pca_mean.len(),
+        n_comp: projection.n_comp,
+        pca_mean: projection.pca_mean,
+        pca_components: projection.pca_components,
+        centroids,
+        cell_order,
+        cell_rank,
+        trained_on: sample_coords.len(),
+    })
+}
+
 /// Compaction-grade PCA+IVF plan, including the contiguous IVF-cell runs.
 pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan> {
     use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
@@ -538,7 +744,6 @@ pub struct IvfProbePlan {
 /// layout (fail-safe, never a worse segment).
 pub fn cluster_plan_ivf_probe(records: &[ProximaRecord], idx: usize) -> Option<IvfProbePlan> {
     use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
-    use proximadb_storage_common::coarse_directory::{CoarseModel, project_with_model};
 
     let usable: Vec<(usize, &[f32])> = records
         .iter()
@@ -556,86 +761,47 @@ pub fn cluster_plan_ivf_probe(records: &[ProximaRecord], idx: usize) -> Option<I
     let trace_ivf = std::env::var_os("PROXIMADB_TRACE_IVF_FLUSH").is_some();
     let t_start = std::time::Instant::now();
 
-    // IOP-derived cell count + projection law — the SAME recipe the single-level
-    // plan uses (rev 3: reuse the existing plan, do not train a second quantizer).
-    let k = ivf_fine_cell_count(usable.len(), dim);
-    let n_comp_target = ivf_projection_dims(dim, k);
-
-    // PCA sample-train (TD-WLP-4b), deterministic stride — shared knob with the
-    // single-level plan.
-    let pca_sample = std::env::var("PROXIMADB_IVF_TRAIN_SAMPLE")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(50_000)
-        .min(usable.len());
-    let pca_step = if usable.len() > pca_sample {
-        (usable.len() / pca_sample).max(1)
-    } else {
-        1
-    };
-    let mut pca = IncrementalPCA::new(dim, n_comp_target);
-    for (_, v) in usable.iter().step_by(pca_step) {
+    let shape = ivf_training_shape(usable.len(), dim)?;
+    let mut pca = IncrementalPCA::new(dim, shape.n_components);
+    for (_, v) in usable.iter().step_by(shape.sample_step) {
         pca.add_sample(v);
     }
     pca.finalize();
     let t_pca = std::time::Instant::now();
 
-    // Truncate the model to persisted (f32) precision FIRST; all coordinates
-    // below come from the shared projection kernel over this exact model.
-    let pca_mean: Vec<f32> = pca.mean().iter().map(|&x| x as f32).collect();
-    let components = pca.components()?;
-    let n_comp = components.len();
-    if n_comp == 0 {
-        return None;
-    }
-    let pca_components: Vec<f32> = components
-        .iter()
-        .flat_map(|row| row.iter().map(|&x| x as f32))
-        .collect();
+    let projection = IvfPcaProjection::from_finalized(&pca)?;
     let coords: Vec<Vec<f32>> = usable
         .iter()
-        .map(|(_, v)| project_with_model(&pca_mean, &pca_components, n_comp, v))
+        .map(|(_, vector)| projection.project(vector))
         .collect();
     let t_proj = std::time::Instant::now();
 
-    // k-means over the f32-projected sample — the plan we persist IS the
-    // single-level IVF plan, so same seed + iterations. Assignment below covers
-    // ALL rows.
-    let sample_coords: Vec<Vec<f32>> = coords.iter().step_by(pca_step).cloned().collect();
-    let k = k.min(sample_coords.len());
-    let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering_seeded(
-        &sample_coords,
-        k,
-        15,
-        1e-3,
-        PAX_IVF_KMEANS_SEED,
-    ) else {
-        return None;
-    };
-    if centroids.is_empty() {
-        return None;
-    }
+    let sample_coords = coords
+        .iter()
+        .step_by(shape.sample_step)
+        .cloned()
+        .collect::<Vec<_>>();
+    let classifier = finish_ivf_probe_classifier(projection, shape, &sample_coords)?;
+    let cell_count = classifier.cell_count();
+    let n_comp = classifier.n_comp;
     let t_kmeans = std::time::Instant::now();
-    let assignments = proximadb_clustering_kernel::kmeans_assign(&coords, &centroids);
-    // Per-cell max member→centroid distance in PCA space (diagnostic/calibration
-    // radius only; rev 3 does not use it as a correctness bound).
-    let mut radii_sq = vec![0f32; centroids.len()];
-    for (i, &cell) in assignments.iter().enumerate() {
-        let d: f32 = coords[i]
-            .iter()
-            .zip(&centroids[cell])
-            .map(|(a, b)| (a - b) * (a - b))
-            .sum();
-        if d > radii_sq[cell] {
-            radii_sq[cell] = d;
+    let classified = usable
+        .iter()
+        .map(|(_, vector)| classifier.classify(vector))
+        .collect::<Option<Vec<_>>>()?;
+    let assignments = classified
+        .iter()
+        .map(|assignment| assignment.source_cell)
+        .collect::<Vec<_>>();
+    let mut radii_sq = vec![0f32; cell_count];
+    let mut counts = vec![0u64; cell_count];
+    for assignment in &classified {
+        counts[assignment.source_cell] = counts[assignment.source_cell].saturating_add(1);
+        if assignment.distance_sq > radii_sq[assignment.source_cell] {
+            radii_sq[assignment.source_cell] = assignment.distance_sq;
         }
     }
     let t_assign = std::time::Instant::now();
-
-    // Hilbert emission order over the centroids: near cells are near in the file,
-    // so multi-cell probes coalesce into few ranged GETs.
-    let (cell_order, cell_rank) = hilbert_cell_order(&centroids);
 
     // Rows: usable ordered by (cell rank, PC1, index); unusable last, stably (the
     // no-embedding tail — outside every cell, unreachable by ANN anyway).
@@ -645,40 +811,15 @@ pub fn cluster_plan_ivf_probe(records: &[ProximaRecord], idx: usize) -> Option<I
         &usable_orig,
         &coords,
         &assignments,
-        &cell_rank,
+        &classifier.cell_rank,
     );
-
-    // Emission-ordered model arrays + per-cell row counts (empty cells stay — A0
-    // is dense in k so centroid ranks map 1:1 to cell entries).
-    let mut counts = vec![0u64; centroids.len()];
-    for &c in &assignments {
-        counts[c] += 1;
-    }
-    let centroids_flat: Vec<f32> = cell_order
-        .iter()
-        .flat_map(|&c| centroids[c].iter().copied())
-        .collect();
-    let radii: Vec<f32> = cell_order.iter().map(|&c| radii_sq[c].sqrt()).collect();
-    let cell_rows: Vec<u64> = cell_order.iter().map(|&c| counts[c]).collect();
-
-    let n_comp_u16 = u16::try_from(n_comp).ok()?;
-    let model = CoarseModel {
-        dim: dim as u32,
-        n_comp: n_comp_u16,
-        pca_mean,
-        pca_components,
-        centroids: centroids_flat,
-        radii,
-        cell_rows,
-        seed: PAX_IVF_KMEANS_SEED,
-        trained_on: sample_coords.len() as u64,
-    };
+    let model = classifier.finish_model(&counts, &radii_sq)?;
     let t_end = std::time::Instant::now();
     if trace_ivf {
         eprintln!(
             "[IVF probe compaction] N={n} dim={dim} k={k} n_comp={n_comp} | pca_fit {pca:.0} ms  project {proj:.0} ms  kmeans {km:.0} ms  assign+radii {asg:.0} ms  order {ord:.0} ms  | total {tot:.0} ms",
             n = usable.len(),
-            k = centroids.len(),
+            k = cell_count,
             pca = (t_pca - t_start).as_secs_f64() * 1e3,
             proj = (t_proj - t_pca).as_secs_f64() * 1e3,
             km = (t_kmeans - t_proj).as_secs_f64() * 1e3,
