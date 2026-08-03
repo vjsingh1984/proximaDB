@@ -109,6 +109,18 @@ is discarded. This removes the current corpus-sized deleted-OID set from the
 spill path. Input deletion-vector objects remain live until the replacement is
 published and the old inputs are retired.
 
+The implementation also closes a pre-existing authority gap found by the real
+PAX spill test: `ProximaRecord.record_version` was not persisted in PAX, so any
+post-flush compaction could reinterpret every row as legacy version 1. Column 14
+is now an additive, fixed-width `u64` version stripe. Its presence is the format
+marker; old blocks omit it and decode to the resolver's existing zero/version-1
+sentinel, while a present but malformed stripe fails closed. General PAX writes
+remain behind the default-OFF `PROXIMADB_PAX_RECORD_VERSION` bake gate. Local-
+spill output enables it under spill's own default-OFF gate so a later rewrite
+does not discard MVCC authority. The uncompressed cost is exactly 8 bytes/row
+(7.45 GiB at one billion rows) before the existing optional lossless scalar
+compression layer.
+
 === D4 — Train once from a bounded deterministic sample
 
 The MVCC pass reports survivor and usable-vector counts. A second sequential

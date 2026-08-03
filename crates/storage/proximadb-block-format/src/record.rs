@@ -49,6 +49,10 @@ pub mod col_id {
     pub const EDGE_TGT: i32 = 11;
     pub const EDGE_TYPE: i32 = 12;
     pub const EDGE_WEIGHT: i32 = 13;
+    /// Canonical MVCC sequence. Absent in older PAX blocks and decoded as zero
+    /// (the resolver's legacy version-1 sentinel), making this additive stripe
+    /// mixed-read-safe.
+    pub const RECORD_VERSION: i32 = 14;
     /// First column ID for embedding stripes (embedding_0, embedding_1, …).
     pub const EMBED_BASE: i32 = 20;
     /// First column ID for user-defined columns from CatalogTableSchema.
@@ -174,6 +178,12 @@ pub fn canonical_columns() -> Vec<ColumnDescriptor> {
             role: ColumnRole::Edge,
             nullable: true,
         },
+        ColumnDescriptor {
+            column_id: col_id::RECORD_VERSION,
+            name: "record_version".into(),
+            role: ColumnRole::Temporal,
+            nullable: false,
+        },
     ]
 }
 
@@ -189,6 +199,7 @@ pub struct FlatRow {
     pub tenant_id: String,
     pub created_at_ns: i64,
     pub updated_at_ns: i64,
+    pub record_version: u64,
     pub valid_from_ns: Option<i64>,
     pub valid_to_ns: Option<i64>,
     pub actor: Option<String>,
@@ -272,6 +283,7 @@ impl FlatRow {
             tenant_id: record.tenant_id.clone(),
             created_at_ns: record.created_at_ns,
             updated_at_ns: record.updated_at_ns,
+            record_version: record.record_version,
             valid_from_ns: record.valid_from_ns,
             valid_to_ns: record.valid_to_ns,
             actor: record.actor.clone(),
@@ -371,6 +383,7 @@ impl FlatRow {
             tenant_id,
             created_at_ns: self.created_at_ns,
             updated_at_ns: self.updated_at_ns,
+            record_version: self.record_version,
             valid_from_ns: self.valid_from_ns,
             valid_to_ns: self.valid_to_ns,
             actor: self.actor,
@@ -409,6 +422,10 @@ impl FlatRow {
             .unwrap_or_default();
         let updated = reader
             .decode_i64_stripe(col_id::UPDATED_AT)
+            .unwrap_or_default();
+        let record_versions = reader
+            .decode_u64_stripe(col_id::RECORD_VERSION)
+            .map_err(|error| anyhow::anyhow!("record_version stripe: {error}"))?
             .unwrap_or_default();
         let valid_from = reader
             .decode_i64_stripe(col_id::VALID_FROM)
@@ -475,6 +492,7 @@ impl FlatRow {
                 tenant_id: at(&tenants, i).unwrap_or_default(),
                 created_at_ns: created.get(i).copied().flatten().unwrap_or(0),
                 updated_at_ns: updated.get(i).copied().flatten().unwrap_or(0),
+                record_version: record_versions.get(i).copied().unwrap_or(0),
                 valid_from_ns: valid_from.get(i).copied().flatten(),
                 valid_to_ns: valid_to.get(i).copied().flatten(),
                 actor: at(&actors, i),
@@ -686,6 +704,61 @@ mod tests {
         let emb0 = embeddings[0].as_ref().unwrap();
         assert!((emb0[0] - 0.1f32).abs() < 1e-6);
         assert!((emb0[3] - 0.4f32).abs() < 1e-6);
+    }
+
+    #[test]
+    fn record_version_stripe_is_exact_and_mixed_read_safe() {
+        let versions = [1, u32::MAX as u64 + 17, u64::MAX - 1];
+        let mut writer = PaxBlockWriter::new(
+            BlockMode::Pax,
+            BlockCompression::None,
+            "collection_versions",
+            0,
+            1,
+        )
+        .with_record_version(true);
+        for (row, version) in versions.into_iter().enumerate() {
+            let mut record = rich_record(&format!("record-{row}"));
+            record.record_version = version;
+            writer.add_record(&record).unwrap();
+        }
+        let block = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+        assert_eq!(
+            reader.decode_u64_stripe(col_id::RECORD_VERSION).unwrap(),
+            Some(versions.to_vec())
+        );
+        let decoded = FlatRow::from_block_reader(&reader).unwrap();
+        assert_eq!(
+            decoded
+                .iter()
+                .map(|row| row.record_version)
+                .collect::<Vec<_>>(),
+            versions
+        );
+
+        let mut legacy_writer = PaxBlockWriter::new(
+            BlockMode::Pax,
+            BlockCompression::None,
+            "collection_legacy",
+            0,
+            1,
+        )
+        .with_record_version(false);
+        legacy_writer.add_record(&rich_record("legacy")).unwrap();
+        let legacy_block = legacy_writer.flush().unwrap();
+        let legacy_reader = PaxBlockReader::open(&legacy_block).unwrap();
+        assert_eq!(
+            legacy_reader
+                .decode_u64_stripe(col_id::RECORD_VERSION)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            FlatRow::from_block_reader(&legacy_reader).unwrap()[0].record_version,
+            0,
+            "an absent stripe must preserve the resolver's legacy sentinel"
+        );
     }
 
     /// Catalog-resolution: with the flag on, the per-row tenant stripe is dropped

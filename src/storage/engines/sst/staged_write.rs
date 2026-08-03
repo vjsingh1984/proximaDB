@@ -30,9 +30,25 @@ impl StagedSegmentWrite {
     /// Prepare a staged write for `target_url` (the full staging FILE url,
     /// e.g. `az://c/…/__flush/L0_x.pax` or `file:///…/__flush/L0_x.pax`).
     pub(crate) async fn begin(target_url: &str) -> Result<Self> {
+        Self::begin_with_scratch(target_url, None).await
+    }
+
+    /// Prepare a staged write while placing remote-upload scratch below the
+    /// caller's already-admitted local directory. Spill compaction must not
+    /// escape its reserved filesystem by silently falling back to system tmp.
+    pub(crate) async fn begin_in(target_url: &str, scratch_root: &std::path::Path) -> Result<Self> {
+        Self::begin_with_scratch(target_url, Some(scratch_root)).await
+    }
+
+    async fn begin_with_scratch(
+        target_url: &str,
+        scratch_root: Option<&std::path::Path>,
+    ) -> Result<Self> {
         let is_remote = target_url.contains("://") && !target_url.starts_with("file://");
         if is_remote {
-            let scratch = std::env::temp_dir().join("proximadb-flush-staging");
+            let scratch = scratch_root
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| std::env::temp_dir().join("proximadb-flush-staging"));
             tokio::fs::create_dir_all(&scratch)
                 .await
                 .context("create local segment-staging scratch dir")?;

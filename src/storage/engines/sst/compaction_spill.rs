@@ -1,7 +1,7 @@
 //! Deterministic, bounded local-scratch primitives for canonical compaction.
 
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -50,6 +50,10 @@ impl SpillRecord {
         self.record.schema_version = self.schema_version;
         self
     }
+
+    pub(crate) fn into_record(self) -> ProximaRecord {
+        self.record
+    }
 }
 
 /// Auditable resource-shape statistics for one external MVCC pass.
@@ -81,7 +85,10 @@ impl ExternalMvccOutput {
         &self.stats
     }
 
-    fn for_each_record(&self, mut visitor: impl FnMut(SpillRecord) -> Result<()>) -> Result<()> {
+    pub(crate) fn for_each_record(
+        &self,
+        mut visitor: impl FnMut(SpillRecord) -> Result<()>,
+    ) -> Result<()> {
         let mut reader = FramedRunReader::open(&self.output_path)?;
         while let Some(record) = reader.read_next()? {
             visitor(record)?;
@@ -319,6 +326,7 @@ pub(crate) async fn resolve_external_mvcc_from_segments(
     embedding_model_ids: &[String],
     user_column_keys: &[String],
     tenant_ctx: Option<&str>,
+    deleted_positions: &[HashSet<u32>],
 ) -> Result<(ExternalMvccOutput, RangedInputStats)> {
     let mut builder = ExternalMvccBuilder::new(
         scratch_root,
@@ -332,7 +340,8 @@ pub(crate) async fn resolve_external_mvcc_from_segments(
         ..RangedInputStats::default()
     };
 
-    for path in input_paths {
+    for (input_index, path) in input_paths.iter().enumerate() {
+        let deleted_rows = deleted_positions.get(input_index);
         let size = source.size(path).await?;
         let prefix_len = size.min(72);
         let prefix = source.read_range(path, 0, prefix_len).await?;
@@ -348,6 +357,7 @@ pub(crate) async fn resolve_external_mvcc_from_segments(
                     embedding_model_ids,
                     user_column_keys,
                     tenant_ctx,
+                    deleted_rows,
                     &mut ordinal,
                     &mut builder,
                     &mut stats,
@@ -365,7 +375,12 @@ pub(crate) async fn resolve_external_mvcc_from_segments(
                 )?;
                 stats.legacy_whole_file_fallbacks =
                     stats.legacy_whole_file_fallbacks.saturating_add(1);
-                for record in records {
+                for (row, record) in records.into_iter().enumerate() {
+                    if u32::try_from(row).ok().is_some_and(|position| {
+                        deleted_rows.is_some_and(|set| set.contains(&position))
+                    }) {
+                        continue;
+                    }
                     builder.push(SpillRecord::new(ordinal, record))?;
                     ordinal = ordinal.saturating_add(1);
                 }
@@ -385,6 +400,7 @@ async fn read_coalesced_segment_into_builder(
     embedding_model_ids: &[String],
     user_column_keys: &[String],
     tenant_ctx: Option<&str>,
+    deleted_rows: Option<&HashSet<u32>>,
     ordinal: &mut u64,
     builder: &mut ExternalMvccBuilder,
     stats: &mut RangedInputStats,
@@ -522,7 +538,14 @@ async fn read_coalesced_segment_into_builder(
             }
         }
 
-        for record in records {
+        for (row_in_block, record) in records.into_iter().enumerate() {
+            let source_row = global_row.saturating_add(row_in_block);
+            if u32::try_from(source_row)
+                .ok()
+                .is_some_and(|position| deleted_rows.is_some_and(|set| set.contains(&position)))
+            {
+                continue;
+            }
             builder.push(SpillRecord::new(*ordinal, record))?;
             *ordinal = (*ordinal).saturating_add(1);
         }
@@ -1447,7 +1470,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn coalesced_inputs_are_ranged_by_block_and_preserve_mvcc_vectors() {
+    async fn coalesced_inputs_are_ranged_and_apply_deletion_positions() {
         let segment_dir = tempfile::tempdir().expect("segment tempdir");
         let segment_path = segment_dir.path().join("input.pax");
         let records = (0..64)
@@ -1477,6 +1500,7 @@ mod tests {
             whole_reads: AtomicU64::new(0),
         };
         let scratch = tempfile::tempdir().expect("scratch tempdir");
+        let deleted = HashSet::from([0u32]);
 
         let (output, input_stats) = resolve_external_mvcc_from_segments(
             &source,
@@ -1488,6 +1512,7 @@ mod tests {
             &["model_0".to_string()],
             &[],
             None,
+            &[deleted],
         )
         .await
         .expect("ranged external MVCC");
@@ -1498,7 +1523,11 @@ mod tests {
             .map(|record| record.record)
             .collect::<Vec<_>>();
 
-        assert_eq!(actual.len(), records.len());
+        assert_eq!(actual.len(), records.len() - 1);
+        assert!(
+            actual.iter().all(|record| record.oid != "oid-063"),
+            "the deletion vector must be applied to the input's physical row position"
+        );
         assert!(actual.windows(2).all(|pair| pair[0].oid < pair[1].oid));
         assert!(actual.iter().all(|record| {
             record

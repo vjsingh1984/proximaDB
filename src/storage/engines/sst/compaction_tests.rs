@@ -691,6 +691,158 @@ async fn canonical_compaction_round_trips_real_pax_inputs() -> anyhow::Result<()
     Ok(())
 }
 
+#[tokio::test]
+async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -> anyhow::Result<()>
+{
+    use crate::storage::common::compaction_memory::{
+        CompactionExecutionMode, CompactionResourceUsage, plan_compaction_resources,
+    };
+    use crate::storage::engines::sst::segment_format::{
+        read_segment_records, write_pax_segment_compacted,
+    };
+    use proximadb_block_format::VectorQuant;
+    use proximadb_hardware::MemorySnapshot;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
+    use tempfile::tempdir;
+
+    const MIB: u64 = 1024 * 1024;
+    struct RecordVersionGate(Option<std::ffi::OsString>);
+    impl RecordVersionGate {
+        fn enable() -> Self {
+            let previous = std::env::var_os("PROXIMADB_PAX_RECORD_VERSION");
+            // SAFETY: CI runs each test in an isolated nextest process. This
+            // test is the only code in that process touching this unique gate.
+            unsafe { std::env::set_var("PROXIMADB_PAX_RECORD_VERSION", "1") };
+            Self(previous)
+        }
+    }
+    impl Drop for RecordVersionGate {
+        fn drop(&mut self) {
+            // SAFETY: paired restoration in the same isolated test process.
+            unsafe {
+                match self.0.take() {
+                    Some(previous) => std::env::set_var("PROXIMADB_PAX_RECORD_VERSION", previous),
+                    None => std::env::remove_var("PROXIMADB_PAX_RECORD_VERSION"),
+                }
+            }
+        }
+    }
+    let root = tempdir()?;
+    let scratch = root.path().join("spill");
+    let input_a = root.path().join("segment_L0_a.pax");
+    let input_b = root.path().join("segment_L0_b.pax");
+    let output = root.path().join("segment_L1_compacted.pax");
+    let records = |version: u64, value_offset: f32| {
+        (0..128usize)
+            .map(|row| ProximaRecord {
+                oid: format!("oid-{row:04}"),
+                record_version: version,
+                tenant_id: "tenant-42".to_string(),
+                created_at_ns: version as i64,
+                updated_at_ns: version as i64,
+                embeddings: vec![EmbeddingCell::new_fp32(
+                    "sift",
+                    "dense_vector",
+                    8,
+                    (0..8)
+                        .map(|dimension| row as f32 + dimension as f32 * 0.01 + value_offset)
+                        .collect(),
+                )],
+                ..ProximaRecord::default()
+            })
+            .collect::<Vec<_>>()
+    };
+    {
+        let _record_version_gate = RecordVersionGate::enable();
+        write_pax_segment_compacted(
+            &input_a,
+            &records(1, 0.0),
+            "7",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(1_024),
+        )?;
+        write_pax_segment_compacted(
+            &input_b,
+            &records(2, 100.0),
+            "7",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(1_024),
+        )?;
+    }
+    let input_bytes = std::fs::metadata(&input_a)?.len() + std::fs::metadata(&input_b)?.len();
+
+    let mut config = SstConfig::default();
+    let policy = config
+        .compaction_config
+        .get_or_insert_with(crate::core::config::CompactionConfig::default);
+    policy.memory_amplification_factor = 12.0;
+    policy.memory_budget_fraction = 1.0;
+    policy.available_memory_fraction = 1.0;
+    policy.max_memory_mb = 64;
+    policy.spill_enabled = true;
+    policy.spill_directory = Some(scratch.to_string_lossy().into_owned());
+    policy.spill_working_memory_mb = 32;
+    policy.spill_scratch_amplification_factor = 4.0;
+    policy.spill_available_disk_fraction = 1.0;
+
+    let planning_input_bytes = input_bytes.max(10 * MIB);
+    let plan = plan_compaction_resources(
+        planning_input_bytes,
+        policy,
+        MemorySnapshot {
+            total_bytes: 64 * MIB,
+            available_bytes: 64 * MIB,
+        },
+        1_024 * MIB,
+        CompactionResourceUsage::default(),
+    )
+    .ok_or_else(|| anyhow::anyhow!("forced spill plan was not admitted"))?;
+    assert_eq!(plan.mode, CompactionExecutionMode::LocalSpill);
+
+    let compaction = Compaction::new(config).await?;
+    let task = CompactionTask {
+        collection_object_id: 7,
+        collection_identity: crate::core::stable_id::CollectionIdentity {
+            account_id: 1,
+            namespace_id: 2,
+            collection_id: 7,
+        },
+        level: 0,
+        input_files: vec![input_a.clone(), input_b.clone()],
+        input_bytes,
+        output_file: output.clone(),
+        priority: CompactionPriority::High,
+        block_size_kb: Some(1),
+        compression_config: None,
+        precision_hint: None,
+    };
+    let stats = compaction.perform_compaction_with_plan(&task, plan).await?;
+
+    assert_eq!(stats.files_merged, 2);
+    assert!(stats.bytes_written > 0);
+    assert!(output.exists());
+    assert!(!input_a.exists());
+    assert!(!input_b.exists());
+    let output_records = read_segment_records(&std::fs::read(&output)?, &[], &[], None)?;
+    assert_eq!(output_records.len(), 128);
+    assert!(
+        output_records
+            .iter()
+            .all(|record| record.record_version == 2)
+    );
+    assert!(
+        std::fs::read_dir(&scratch)?.next().is_none(),
+        "all external runs and disk-backed PAX components must be reclaimed"
+    );
+    Ok(())
+}
+
 /// With a CanonicalPrecisionResolver wired in and a fp16 collection
 /// in the catalog, Compaction::check_compaction_needed must stamp
 /// produced CompactionTask.precision_hint = Some(Fp16). The two

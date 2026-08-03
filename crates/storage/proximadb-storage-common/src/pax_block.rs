@@ -795,6 +795,9 @@ pub struct PaxSegmentWriter {
     lossless_clustered: bool,
     /// Exact scalar all-null elision and post-codec LZ4. Default OFF.
     lossless_scalar: bool,
+    /// Additive canonical MVCC `record_version` stripe. Default OFF; the local
+    /// spill path enables it because spill itself is an opt-in write format.
+    record_version_stripe: bool,
     /// P-Shred (ADR-055): `(prop_key, user_col_id)` to shred into typed user-columns —
     /// re-applied to every block writer so all blocks in the segment shred uniformly.
     shred_spec: Vec<(String, i32)>,
@@ -894,6 +897,7 @@ impl PaxSegmentWriter {
             embedding_count,
         );
 
+        let record_version_stripe = writer.writes_record_version();
         Self {
             path: path.as_ref().to_path_buf(),
             mode,
@@ -907,6 +911,7 @@ impl PaxSegmentWriter {
             rerank_quant: VectorQuant::Sq8,
             lossless_clustered: false,
             lossless_scalar: false,
+            record_version_stripe,
             shred_spec: Vec::new(),
             current_writer: writer,
             index: SegmentIndex { blocks: Vec::new() },
@@ -1017,6 +1022,14 @@ impl PaxSegmentWriter {
         self
     }
 
+    /// Enable the additive canonical MVCC `record_version` stripe in every
+    /// block emitted by this segment.
+    pub fn with_record_version(mut self, enabled: bool) -> Self {
+        self.record_version_stripe = enabled;
+        self.current_writer = self.fresh_block_writer();
+        self
+    }
+
     /// Mark the next appended record as the start of a producer-defined cluster.
     pub fn start_cluster_run(&mut self) {
         self.current_writer.start_cluster_run();
@@ -1121,6 +1134,7 @@ impl PaxSegmentWriter {
         .with_rerank_quant(self.rerank_quant)
         .with_clustered_sq8_lossless(self.lossless_clustered)
         .with_lossless_scalar(self.lossless_scalar)
+        .with_record_version(self.record_version_stripe)
         .with_hoist_vector_tier(self.coalesced_rabitq)
         .with_shred_spec(self.shred_spec.clone())
     }

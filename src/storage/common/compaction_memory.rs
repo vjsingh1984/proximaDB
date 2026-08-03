@@ -114,6 +114,32 @@ fn fraction_of(bytes: u64, fraction: f64) -> u64 {
         .min(u64::MAX as f64) as u64
 }
 
+fn scratch_budget_bytes(config: &CompactionConfig, available_bytes: u64) -> u64 {
+    let mut budget = fraction_of(available_bytes, config.spill_available_disk_fraction);
+    if config.spill_max_disk_mb > 0 {
+        budget = budget.min(config.spill_max_disk_mb.saturating_mul(MIB));
+    }
+    budget
+}
+
+/// Return live free bytes on the filesystem that owns `path`.
+///
+/// The spill directory is created during compaction-manager construction, so
+/// admission can fail closed when it is missing. Longest-prefix selection is
+/// required for nested mounts (for example, a managed disk mounted below the
+/// container root); using the root filesystem's free bytes would otherwise
+/// admit work the scratch volume cannot hold.
+pub fn available_scratch_bytes(path: &std::path::Path) -> Option<u64> {
+    let canonical = path.canonicalize().ok()?;
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    disks
+        .list()
+        .iter()
+        .filter(|disk| canonical.starts_with(disk.mount_point()))
+        .max_by_key(|disk| disk.mount_point().components().count())
+        .map(sysinfo::Disk::available_space)
+}
+
 fn projected_bytes(input_bytes: u64, amplification: f64) -> Option<u64> {
     if !amplification.is_finite() || amplification < 1.0 {
         return None;
@@ -154,14 +180,7 @@ pub fn plan_compaction_resources(
         return None;
     }
 
-    let mut scratch_budget_bytes = fraction_of(
-        available_scratch_bytes,
-        config.spill_available_disk_fraction,
-    );
-    if config.spill_max_disk_mb > 0 {
-        scratch_budget_bytes =
-            scratch_budget_bytes.min(config.spill_max_disk_mb.saturating_mul(MIB));
-    }
+    let scratch_budget_bytes = scratch_budget_bytes(config, available_scratch_bytes);
     let remaining_scratch_bytes = scratch_budget_bytes.saturating_sub(usage.scratch_bytes);
     let spill_scratch_bytes =
         projected_bytes(input_bytes, config.spill_scratch_amplification_factor)?;
@@ -178,15 +197,38 @@ pub fn plan_compaction_resources(
 
 /// Current input-byte budget after accounting for every running collection.
 pub fn current_compaction_input_budget(config: &CompactionConfig) -> CompactionMemoryBudget {
-    compaction_memory_budget(
-        config,
-        memory_snapshot(),
-        global_admission().reserved_bytes(),
-    )
+    let usage = global_resource_admission().usage();
+    let mut budget = compaction_memory_budget(config, memory_snapshot(), usage.memory_bytes);
+    if !config.spill_enabled
+        || config.spill_working_memory_mb.saturating_mul(MIB) > budget.remaining_bytes
+    {
+        return budget;
+    }
+
+    let available = config
+        .spill_directory
+        .as_deref()
+        .and_then(|path| available_scratch_bytes(std::path::Path::new(path)))
+        .unwrap_or(0);
+    let remaining_scratch =
+        scratch_budget_bytes(config, available).saturating_sub(usage.scratch_bytes);
+    let spill_max_input = if config.spill_scratch_amplification_factor.is_finite()
+        && config.spill_scratch_amplification_factor >= 1.0
+    {
+        ((remaining_scratch as f64) / config.spill_scratch_amplification_factor).floor() as u64
+    } else {
+        0
+    };
+    budget.max_input_bytes = budget.max_input_bytes.max(spill_max_input);
+    budget
 }
 
 pub fn reserved_compaction_memory_bytes() -> u64 {
-    global_admission().reserved_bytes()
+    global_resource_admission().usage().memory_bytes
+}
+
+pub fn reserved_compaction_scratch_bytes() -> u64 {
+    global_resource_admission().usage().scratch_bytes
 }
 
 /// One process-wide weighted coordinator. A count semaphore cannot distinguish
@@ -317,6 +359,59 @@ impl Drop for CompactionResourceReservation {
         usage.scratch_bytes = usage.scratch_bytes.saturating_sub(self.plan.scratch_bytes);
         drop(usage);
         self.admission.notify.notify_waiters();
+    }
+}
+
+fn global_resource_admission() -> &'static Arc<CompactionResourceAdmission> {
+    static ADMISSION: OnceLock<Arc<CompactionResourceAdmission>> = OnceLock::new();
+    ADMISSION.get_or_init(|| Arc::new(CompactionResourceAdmission::default()))
+}
+
+/// Wait until one complete execution shape can reserve both currencies.
+/// Resource planning happens before any input read, sampling, sorting, or
+/// encoding. The live memory and filesystem snapshots are refreshed while a
+/// task waits; shutdown is cancellation-safe through the RAII reservation.
+pub async fn acquire_compaction_resources(
+    input_bytes: u64,
+    config: &CompactionConfig,
+    shutdown: &AtomicBool,
+) -> Option<CompactionResourceReservation> {
+    let admission = global_resource_admission();
+
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            return None;
+        }
+
+        let notified = admission.notify.notified();
+        let snapshot = memory_snapshot();
+        let usage = admission.usage();
+        let available_scratch = if config.spill_enabled {
+            config
+                .spill_directory
+                .as_deref()
+                .and_then(|path| available_scratch_bytes(std::path::Path::new(path)))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        if let Some(plan) =
+            plan_compaction_resources(input_bytes, config, snapshot, available_scratch, usage)
+        {
+            let memory_budget = compaction_memory_budget(config, snapshot, 0);
+            let budget = CompactionResourceBudget {
+                memory_bytes: memory_budget.effective_budget_bytes,
+                scratch_bytes: scratch_budget_bytes(config, available_scratch),
+            };
+            if let Some(reservation) = admission.try_reserve(plan, budget) {
+                return Some(reservation);
+            }
+        }
+
+        tokio::select! {
+            _ = notified => {}
+            _ = tokio::time::sleep(ADMISSION_RECHECK_INTERVAL) => {}
+        }
     }
 }
 
@@ -567,5 +662,22 @@ mod tests {
 
         drop(first);
         assert_eq!(admission.usage(), CompactionResourceUsage::default());
+    }
+
+    #[test]
+    fn scratch_capacity_comes_from_the_filesystem_owning_the_configured_path() {
+        let root = tempfile::tempdir().expect("scratch filesystem root");
+        let managed_disk = root.path().join("managed-disk").join("compaction");
+        std::fs::create_dir_all(&managed_disk).expect("create nested scratch directory");
+
+        assert!(
+            available_scratch_bytes(&managed_disk).is_some_and(|bytes| bytes > 0),
+            "an existing nested scratch path must resolve to its owning mount"
+        );
+        assert_eq!(
+            available_scratch_bytes(&root.path().join("missing")),
+            None,
+            "admission must fail closed when the configured path is absent"
+        );
     }
 }

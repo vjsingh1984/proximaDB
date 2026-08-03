@@ -332,7 +332,7 @@ fn write_pax_segment_compacted_internal(
     capture_sq8: Option<bool>,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     use crate::storage::engines::sst::block_cluster;
-    let cluster = block_cluster::block_cluster_enabled();
+    let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
     // TD-RDSTRAT-8 rev 3: compaction is the ONLY write path that emits the
     // persisted-IVF-probe (v3) layout. Training is default ON;
     // `PROXIMADB_PAX_WRITE_A0_TRAIN=0` is the kill-switch. Production flush stays
@@ -382,6 +382,55 @@ fn write_pax_segment_compacted_internal(
         probe_model,
         capture_sq8,
     )
+}
+
+/// Construct the PAX writer used after the external spill pipeline has already
+/// resolved MVCC and produced final IVF cell order. This is the same writer
+/// policy as [`write_pax_segment_compacted_internal`] without re-materializing
+/// records or fitting a second model.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pax_spill_compaction_writer(
+    path: &Path,
+    scratch_root: &Path,
+    collection_id: &str,
+    embedding_count: usize,
+    rerank_quant: VectorQuant,
+    target_block: Option<usize>,
+    expected_rows: usize,
+    two_level: Option<proximadb_storage_common::coarse_directory::CoarseModel>,
+) -> Result<PaxSegmentWriter> {
+    if !coalesced_rabitq_enabled() {
+        anyhow::bail!("local-spill compaction requires the coalesced RaBitQ PAX layout");
+    }
+    let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
+    let mut writer = PaxSegmentWriter::new(
+        path,
+        BlockMode::Pax,
+        BlockCompression::Zstd,
+        collection_id,
+        0,
+        embedding_count.max(1),
+        target_block,
+    )
+    .with_quant(VectorQuant::RaBitQ)
+    .with_f32_tier(false)
+    .with_rerank_quant(rerank_quant)
+    .with_lossless_clustered(lossless_clustered_enabled() && two_level.is_some())
+    .with_lossless_scalar(lossless_scalar_enabled())
+    // The spill path is itself default-off. Preserve canonical MVCC sequence
+    // in its output so every later compaction has an exact version authority.
+    .with_record_version(true)
+    .with_block_centroids(cluster)
+    .with_coalesced_rabitq(true)
+    .with_expected_rows(expected_rows);
+    #[cfg(feature = "cold-deletion-vectors")]
+    {
+        writer = writer.with_oid_resolver(true);
+    }
+    if let Some(model) = two_level {
+        writer = writer.with_two_level(model);
+    }
+    writer.with_local_spill(scratch_root)
 }
 
 /// Shared writer loop for the flush (bootstrap-ordered) and compaction

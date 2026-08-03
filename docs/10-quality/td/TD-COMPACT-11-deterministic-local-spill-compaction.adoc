@@ -51,6 +51,8 @@ The current code cannot be fixed by adding a temporary `Vec` serialization:
   input concurrently.
 * Apply versioned deletion vectors by source position before the record loses
   its segment/row identity.
+* Persist canonical `u64 record_version` in an additive PAX stripe; treat absence
+  as the legacy version-1 sentinel and corruption as an error.
 
 === S3 — Deterministic external MVCC and IVF order
 
