@@ -13,6 +13,7 @@
 //! foundation/horizontal/contracts.
 
 pub mod config;
+pub mod connectors;
 pub mod error;
 pub mod event;
 pub mod metrics;

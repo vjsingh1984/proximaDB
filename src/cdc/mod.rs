@@ -108,7 +108,8 @@
 
 // `config` now lives in `proximadb-cdc` (TD-DECOMP-11); re-exported.
 pub use proximadb_cdc::config;
-pub mod connectors;
+// `connectors` now lives in `proximadb-cdc` (TD-DECOMP-12); re-exported.
+pub use proximadb_cdc::connectors;
 pub mod coordinator;
 // `error` now lives in `proximadb-cdc` (TD-DECOMP-8); re-exported so `crate::cdc::error::*`
 // paths resolve unchanged.

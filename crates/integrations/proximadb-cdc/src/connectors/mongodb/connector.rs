@@ -33,11 +33,11 @@ use tracing::info;
 
 use super::change_event::{ChangeStreamOperation, MongoChangeEvent, ResumeToken};
 use super::config::MongoDbConfig;
-use crate::cdc::config::SourceConfig;
-use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::{ChangeEvent, Operation, RecordState, SourceInfo};
-use crate::cdc::offset::{Offset, OffsetStore};
-use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
+use crate::config::SourceConfig;
+use crate::error::{CdcError, CdcResult};
+use crate::event::{ChangeEvent, Operation, RecordState, SourceInfo};
+use crate::offset::{Offset, OffsetStore};
+use crate::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 
 #[cfg(feature = "experimental-cdc-connectors")]
 use mongodb::{
@@ -694,8 +694,8 @@ fn document_to_record_state(doc: &serde_json::Value) -> RecordState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::connectors::mongodb::change_event::{DocumentKey, Namespace};
-    use crate::cdc::offset::MemoryOffsetStore;
+    use crate::connectors::mongodb::change_event::{DocumentKey, Namespace};
+    use crate::offset::MemoryOffsetStore;
 
     async fn create_test_connector() -> MongoDbConnector {
         let config = MongoDbConfig::new("mongodb://localhost:27017").with_database("testdb");

@@ -7075,7 +7075,9 @@ dependencies = [
 name = "proximadb-cdc"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "proximadb-config",
  "rand 0.8.6",
  "regex",
@@ -7084,6 +7086,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-postgres",
  "tracing",
  "uuid",
 ]
