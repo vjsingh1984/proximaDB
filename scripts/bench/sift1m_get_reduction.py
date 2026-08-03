@@ -37,6 +37,7 @@ import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -59,6 +60,11 @@ METRICS = (
     "proximadb_cache_local_disk_misses_total",
     "proximadb_cache_local_disk_bytes",
     "proximadb_compactions_total",
+    "proximadb_compaction_bytes_read_total",
+    "proximadb_compaction_bytes_written_total",
+    "proximadb_compaction_memory_reserved_bytes",
+    "proximadb_compaction_scratch_reserved_bytes",
+    "proximadb_compaction_spill_total",
     "proximadb_wal_size_bytes",
     "proximadb_ivf_cells_total",
     "proximadb_ivf_cells_probed_total",
@@ -68,6 +74,129 @@ METRICS = (
     "proximadb_ivf_fetch_rounds_total",
     "proximadb_ivf_whole_region_fallback_total",
 )
+
+
+def directory_size_bytes(root: Path) -> int:
+    """Return allocated logical bytes below ``root`` without following links."""
+    if not root.exists():
+        return 0
+    total = 0
+    stack = [root]
+    while stack:
+        directory = stack.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    total += entry.stat(follow_symlinks=False).st_size
+    return total
+
+
+class ProcessScratchSampler:
+    """Low-rate external sampler for one server and its admitted scratch root."""
+
+    def __init__(
+        self,
+        process_id: int,
+        scratch_root: Path,
+        interval_seconds: float = 0.25,
+    ):
+        if process_id <= 0:
+            raise RuntimeError("resource sampler requires a positive process id")
+        if interval_seconds <= 0:
+            raise RuntimeError("resource sampler interval must be positive")
+        self.process_id = process_id
+        self.scratch_root = scratch_root
+        self.interval_seconds = interval_seconds
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._error: Exception | None = None
+        self._sample_count = 0
+        self._baseline_rss: int | None = None
+        self._peak_rss = 0
+        self._baseline_scratch: int | None = None
+        self._peak_scratch = 0
+
+    def _process_rss_bytes(self) -> int:
+        proc_statm = Path(f"/proc/{self.process_id}/statm")
+        if proc_statm.exists():
+            fields = proc_statm.read_text().split()
+            if len(fields) < 2:
+                raise RuntimeError(
+                    f"cannot parse RSS for server process {self.process_id}"
+                )
+            return int(fields[1]) * os.sysconf("SC_PAGE_SIZE")
+        completed = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(self.process_id)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        raw = completed.stdout.strip()
+        if completed.returncode != 0 or not raw:
+            raise RuntimeError(
+                f"cannot sample RSS for server process {self.process_id}"
+            )
+        return int(raw.splitlines()[-1].strip()) * 1024
+
+    def _scratch_bytes(self) -> int:
+        return directory_size_bytes(self.scratch_root)
+
+    def sample_once(self) -> None:
+        rss = self._process_rss_bytes()
+        scratch = self._scratch_bytes()
+        if self._baseline_rss is None:
+            self._baseline_rss = rss
+            self._baseline_scratch = scratch
+        self._peak_rss = max(self._peak_rss, rss)
+        self._peak_scratch = max(self._peak_scratch, scratch)
+        self._sample_count += 1
+
+    def _run(self) -> None:
+        try:
+            while not self._stop.wait(self.interval_seconds):
+                self.sample_once()
+        except Exception as error:  # surfaced synchronously by stop()
+            self._error = error
+            self._stop.set()
+
+    def start(self) -> None:
+        if self._thread is not None:
+            raise RuntimeError("resource sampler was already started")
+        self.sample_once()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="proximadb-benchmark-resource-sampler",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._thread is None:
+            return
+        self._stop.set()
+        self._thread.join(timeout=max(5.0, self.interval_seconds * 4))
+        self._thread = None
+        if self._error is not None:
+            raise RuntimeError(f"resource sampler failed: {self._error}")
+
+    def snapshot(self) -> dict:
+        if self._sample_count == 0:
+            raise RuntimeError("resource sampler recorded no samples")
+        baseline_rss = self._baseline_rss or 0
+        baseline_scratch = self._baseline_scratch or 0
+        return {
+            "sample_interval_seconds": self.interval_seconds,
+            "sample_count": self._sample_count,
+            "baseline_process_rss_bytes": baseline_rss,
+            "peak_process_rss_bytes": self._peak_rss,
+            "peak_process_rss_delta_bytes": max(0, self._peak_rss - baseline_rss),
+            "baseline_scratch_bytes": baseline_scratch,
+            "peak_scratch_bytes": self._peak_scratch,
+            "peak_scratch_delta_bytes": max(0, self._peak_scratch - baseline_scratch),
+        }
 
 
 def compute_profile(machine: str | None = None) -> dict:
@@ -1140,8 +1269,21 @@ def write_config(
     flush_interval_secs: int = 12,
     flush_floor_predicted_mb: int = 128,
     compaction_max_memory_mb: int = 0,
+    compaction_spill_enabled: bool = False,
+    compaction_spill_directory: Path | None = None,
+    compaction_spill_working_memory_mb: int = 512,
+    compaction_spill_scratch_amplification_factor: float = 4.0,
+    compaction_spill_available_disk_fraction: float = 0.5,
+    compaction_spill_max_disk_mb: int = 0,
 ) -> None:
     data = root / "data"
+    if compaction_spill_enabled and compaction_spill_directory is None:
+        raise RuntimeError("enabled compaction spill requires a local directory")
+    spill_directory_line = (
+        f'spill_directory = "{compaction_spill_directory}"\n'
+        if compaction_spill_directory is not None
+        else ""
+    )
     config = f"""[server]
 node_id = "sift1m-get-reduction"
 bind_address = "127.0.0.1"
@@ -1164,6 +1306,11 @@ memory_amplification_factor = 12.0
 memory_budget_fraction = 0.25
 available_memory_fraction = 0.5
 max_memory_mb = {compaction_max_memory_mb}
+spill_enabled = {str(compaction_spill_enabled).lower()}
+{spill_directory_line}spill_working_memory_mb = {compaction_spill_working_memory_mb}
+spill_scratch_amplification_factor = {compaction_spill_scratch_amplification_factor}
+spill_available_disk_fraction = {compaction_spill_available_disk_fraction}
+spill_max_disk_mb = {compaction_spill_max_disk_mb}
 
 [[storage.storage_locations]]
 url = "{storage_url}"
@@ -1812,6 +1959,39 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--compaction-spill",
+        action="store_true",
+        help=(
+            "enable deterministic application-managed local spill; defaults "
+            "to a scratch directory below --root"
+        ),
+    )
+    parser.add_argument(
+        "--compaction-spill-directory",
+        type=Path,
+        help="explicit local/managed-disk scratch directory",
+    )
+    parser.add_argument(
+        "--compaction-spill-working-memory-mb",
+        type=int,
+        default=512,
+    )
+    parser.add_argument(
+        "--compaction-spill-scratch-amplification-factor",
+        type=float,
+        default=4.0,
+    )
+    parser.add_argument(
+        "--compaction-spill-available-disk-fraction",
+        type=float,
+        default=0.5,
+    )
+    parser.add_argument(
+        "--compaction-spill-max-disk-mb",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
         "--flush-vector-threshold",
         type=int,
         default=100_000,
@@ -1914,6 +2094,20 @@ def main() -> int:
         raise RuntimeError("--write-buffer-mb must be positive")
     if args.compaction_max_memory_mb < 0:
         raise RuntimeError("--compaction-max-memory-mb must be non-negative")
+    if args.compaction_spill_directory is not None and not args.compaction_spill:
+        raise RuntimeError("--compaction-spill-directory requires --compaction-spill")
+    if args.compaction_spill_working_memory_mb <= 0:
+        raise RuntimeError("--compaction-spill-working-memory-mb must be positive")
+    if args.compaction_spill_scratch_amplification_factor < 1.0:
+        raise RuntimeError(
+            "--compaction-spill-scratch-amplification-factor must be at least 1"
+        )
+    if not 0 < args.compaction_spill_available_disk_fraction <= 1.0:
+        raise RuntimeError(
+            "--compaction-spill-available-disk-fraction must be in (0, 1]"
+        )
+    if args.compaction_spill_max_disk_mb < 0:
+        raise RuntimeError("--compaction-spill-max-disk-mb must be non-negative")
     if args.flush_vector_threshold <= 0:
         raise RuntimeError("--flush-vector-threshold must be positive")
     if args.flush_floor_predicted_mb < 0:
@@ -2081,6 +2275,11 @@ def main() -> int:
 
     root = args.root.resolve()
     require_empty_directory(root)
+    spill_directory = (
+        args.compaction_spill_directory.resolve()
+        if args.compaction_spill_directory is not None
+        else root / "compaction-scratch"
+    )
     storage_url = args.storage_url or f"file://{root / 'data' / 'sst'}"
     storage_scheme = urlparse(storage_url).scheme
     if storage_scheme not in {"file", "adls", "az", "azure"}:
@@ -2110,6 +2309,12 @@ def main() -> int:
         flush_interval_secs,
         args.flush_floor_predicted_mb,
         args.compaction_max_memory_mb,
+        args.compaction_spill,
+        spill_directory if args.compaction_spill else None,
+        args.compaction_spill_working_memory_mb,
+        args.compaction_spill_scratch_amplification_factor,
+        args.compaction_spill_available_disk_fraction,
+        args.compaction_spill_max_disk_mb,
     )
     server_url = f"http://127.0.0.1:{args.port}"
     local_disk = root / "local-disk-cache"
@@ -2230,6 +2435,18 @@ def main() -> int:
             "memory_budget_fraction": 0.25,
             "available_memory_fraction": 0.5,
             "max_memory_mb": args.compaction_max_memory_mb,
+            "spill_enabled": args.compaction_spill,
+            "spill_directory": (
+                str(spill_directory) if args.compaction_spill else None
+            ),
+            "spill_working_memory_mb": (args.compaction_spill_working_memory_mb),
+            "spill_scratch_amplification_factor": (
+                args.compaction_spill_scratch_amplification_factor
+            ),
+            "spill_available_disk_fraction": (
+                args.compaction_spill_available_disk_fraction
+            ),
+            "spill_max_disk_mb": args.compaction_spill_max_disk_mb,
         },
         "thresholds": {
             "post_write_max_gets_per_query": args.post_write_max_gets,
@@ -2245,6 +2462,7 @@ def main() -> int:
     }
 
     active: OwnedServer | None = None
+    resource_sampler: ProcessScratchSampler | None = None
     failures: list[str] = []
     try:
         active = OwnedServer(
@@ -2259,6 +2477,14 @@ def main() -> int:
             azure_emulator=args.azurite,
         )
         active.start()
+        if args.compaction_spill:
+            if active.process is None:
+                raise RuntimeError("spill resource sampling requires a live server")
+            resource_sampler = ProcessScratchSampler(
+                active.process.pid,
+                spill_directory,
+            )
+            resource_sampler.start()
         (
             collection_id,
             ingest_seconds,
@@ -2317,6 +2543,22 @@ def main() -> int:
                     f"forced ivf_k={args.ivf_k} was not persisted: {wrong_cells}"
                 )
         result["settled_geometry"] = geometry
+        if resource_sampler is not None:
+            resource_sampler.stop()
+            result["compaction_resource_observation"] = resource_sampler.snapshot()
+            resource_sampler = None
+        materialized_metrics = scrape(server_url)
+        result["compaction_metrics_after_materialization"] = {
+            name: materialized_metrics[name]
+            for name in (
+                "proximadb_compactions_total",
+                "proximadb_compaction_bytes_read_total",
+                "proximadb_compaction_bytes_written_total",
+                "proximadb_compaction_memory_reserved_bytes",
+                "proximadb_compaction_scratch_reserved_bytes",
+                "proximadb_compaction_spill_total",
+            )
+        }
         post_write = run_query_sweep(
             server_url,
             collection_id,
@@ -2427,6 +2669,12 @@ def main() -> int:
         result["error"] = str(error)
         raise
     finally:
+        if resource_sampler is not None:
+            try:
+                resource_sampler.stop()
+                result["compaction_resource_observation"] = resource_sampler.snapshot()
+            except Exception as sampler_error:
+                result["resource_sampler_error"] = str(sampler_error)
         if active is not None:
             active.stop()
         output = root / "result.json"
