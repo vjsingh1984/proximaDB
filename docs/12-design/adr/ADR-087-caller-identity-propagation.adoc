@@ -121,8 +121,9 @@ carried unchanged to every consumer; everything else is a projection.**
   e2e fixture, flip the composition rule to fail-closed on the absent stable
   id, and live pgwire + credential-authenticated gRPC relational ratchets using
   the authenticated REST policy-control plane, plus canonical `POST /api/v2/sql`
-  as a thin adapter over the same typed SQL authority. Canonical REST/gRPC
-  record and Flight live data-plane rows remain the release-evidence tail.
+  as a thin adapter over the same typed SQL authority. Canonical REST record
+  search/point-get now have live row-policy evidence; gRPC record and Flight
+  live data-plane rows remain the release-evidence tail.
 
 == References
 

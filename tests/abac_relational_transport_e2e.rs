@@ -1,7 +1,7 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-//! Live relational ABAC provisioning ratchet (TD-ABAC-10b / TD-ABAC-11).
+//! Live cross-surface ABAC provisioning ratchet (TD-ABAC-10b / TD-ABAC-11).
 //!
 //! This is deliberately a transport test, not another component test. It boots
 //! one real server and crosses the production surfaces involved in the operator
@@ -12,6 +12,7 @@
 //!                                      v
 //! authenticated gRPC ExecuteQuery -> relational DML scan
 //! authenticated REST /api/v2/sql ----> shared typed SQL port
+//! authenticated REST record reads ---> shared record ABAC seam
 //!                                      ^
 //! authenticated REST policy control -> shared live ABAC stores
 //! ```
@@ -351,6 +352,59 @@ async fn rest_sql_row_count(
         .as_array()
         .unwrap_or_else(|| panic!("REST SQL response has no rows array: {body}"))
         .len()
+}
+
+async fn rest_record_search_ids(
+    client: &HttpClient,
+    server: &LiveServer,
+    api_key: &str,
+    collection: &str,
+) -> Vec<String> {
+    let response = client
+        .post(server.admin_url(&format!("/api/v2/collections/{collection}/search")))
+        .header(reqwest::header::AUTHORIZATION, format!("Api-Key {api_key}"))
+        .json(&json!({
+            "vector": [1.0, 0.0, 0.0, 0.0],
+            "top_k": 10
+        }))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("REST record search: {error}"));
+    let status = response.status();
+    let body: Value = response.json().await.expect("REST search JSON body");
+    assert!(
+        status.is_success(),
+        "REST record search failed with {status}: {body}"
+    );
+    body["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("REST search response has no results: {body}"))
+        .iter()
+        .map(|result| {
+            result["id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("REST search result has no id: {result}"))
+                .to_string()
+        })
+        .collect()
+}
+
+async fn rest_record_get_status(
+    client: &HttpClient,
+    server: &LiveServer,
+    api_key: &str,
+    collection: &str,
+    record_id: &str,
+) -> StatusCode {
+    client
+        .get(server.admin_url(&format!(
+            "/api/v2/collections/{collection}/records/{record_id}?include_vector=false"
+        )))
+        .header(reqwest::header::AUTHORIZATION, format!("Api-Key {api_key}"))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("REST record get: {error}"))
+        .status()
 }
 
 /// The root crate's debug-build server future exceeds Tokio's 2 MiB default
@@ -694,5 +748,173 @@ async fn rest_sql_reads_follow_live_policy_provision_and_revoke_inner() {
         rest_sql_row_count(&http, &server, ALICE_KEY, &sql).await,
         0,
         "REST SQL must observe the hot revoke"
+    );
+}
+
+/// Canonical REST record search and point-get must consume the same hot policy
+/// stores as the operator control plane. The stored predicate is deliberately
+/// row-selective so this proves enforcement, not merely route authentication.
+#[test]
+fn rest_records_follow_live_row_policy_provision_and_revoke() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    runtime.block_on(rest_records_follow_live_row_policy_provision_and_revoke_inner());
+}
+
+async fn rest_records_follow_live_row_policy_provision_and_revoke_inner() {
+    let server = LiveServer::start().await.expect("start live server");
+    let http = HttpClient::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("HTTP client");
+    let operator_auth = format!("Api-Key {OPERATOR_KEY}");
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let collection = format!("abac_rest_records_{suffix}");
+    let eng_id = "record-eng";
+    let hr_id = "record-hr";
+
+    let response = http
+        .post(server.admin_url("/api/v2/collections"))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "name": collection,
+            "dimension": 4,
+            "engine": "sst",
+            "enable_proxima_record": true
+        }))
+        .send()
+        .await
+        .expect("create record collection");
+    assert_admin_success(response, "create record collection").await;
+
+    let response = http
+        .post(server.admin_url(&format!("/api/v2/collections/{collection}/records/batch")))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "records": [
+                {
+                    "id": eng_id,
+                    "vector": [1.0, 0.0, 0.0, 0.0],
+                    "props": {"dept": "eng"}
+                },
+                {
+                    "id": hr_id,
+                    "vector": [0.99, 0.01, 0.0, 0.0],
+                    "props": {"dept": "hr"}
+                }
+            ],
+            "validate_schema": false
+        }))
+        .send()
+        .await
+        .expect("insert record fixtures");
+    let inserted = assert_admin_success(response, "insert record fixtures").await;
+    assert_eq!(inserted["inserted_count"], 2);
+
+    assert!(
+        rest_record_search_ids(&http, &server, ALICE_KEY, &collection)
+            .await
+            .is_empty(),
+        "an unprovisioned REST record principal must fail closed"
+    );
+    assert_eq!(
+        rest_record_get_status(&http, &server, ALICE_KEY, &collection, eng_id).await,
+        StatusCode::NOT_FOUND,
+        "unprovisioned point-get must hide the record"
+    );
+
+    let response = http
+        .post(server.admin_url("/api/v2/abac/attribute-bindings"))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "subject_id": "alice",
+            "tenant": TENANT,
+            "attrs": {"dept": {"Str": "eng"}}
+        }))
+        .send()
+        .await
+        .expect("provision alice attributes");
+    let binding = assert_admin_success(response, "provision alice attributes").await;
+
+    let predicate_object_id = 4_000_000_000_u64;
+    let response = http
+        .put(server.admin_url(&format!(
+            "/api/v2/abac/predicate-objects/{predicate_object_id}"
+        )))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "Comparison": {
+                "field": "dept",
+                "operator": "Equals",
+                "value": "eng"
+            }
+        }))
+        .send()
+        .await
+        .expect("provision row predicate");
+    assert_admin_success(response, "provision row predicate").await;
+
+    let policy_object_id = predicate_object_id + 1;
+    let policy_path = format!("/api/v2/abac/policy-bindings/{TENANT}/{policy_object_id}");
+    let response = http
+        .put(server.admin_url(&policy_path))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "scope": {"Namespace": 0},
+            "effect": "Permit",
+            "predicate_ref": predicate_object_id
+        }))
+        .send()
+        .await
+        .expect("provision record permit");
+    let policy = assert_admin_success(response, "provision record permit").await;
+    assert_eq!(
+        policy["tenant_stable_id"].as_u64(),
+        binding["tenant_stable_id"].as_u64()
+    );
+
+    let alice_ids = rest_record_search_ids(&http, &server, ALICE_KEY, &collection).await;
+    assert_eq!(alice_ids, vec![eng_id.to_string()]);
+    assert_eq!(
+        rest_record_get_status(&http, &server, ALICE_KEY, &collection, eng_id).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        rest_record_get_status(&http, &server, ALICE_KEY, &collection, hr_id).await,
+        StatusCode::NOT_FOUND,
+        "point-get must post-filter a row that violates the stored predicate"
+    );
+    assert!(
+        rest_record_search_ids(&http, &server, BOB_KEY, &collection)
+            .await
+            .is_empty(),
+        "an unbound authenticated principal must remain denied"
+    );
+
+    let response = http
+        .delete(server.admin_url(&policy_path))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .send()
+        .await
+        .expect("revoke record permit");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(
+        rest_record_search_ids(&http, &server, ALICE_KEY, &collection)
+            .await
+            .is_empty(),
+        "record search must observe the hot revoke"
+    );
+    assert_eq!(
+        rest_record_get_status(&http, &server, ALICE_KEY, &collection, eng_id).await,
+        StatusCode::NOT_FOUND,
+        "point-get must observe the hot revoke"
     );
 }
