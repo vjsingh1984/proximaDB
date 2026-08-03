@@ -56,6 +56,8 @@ implemented subsystem. In particular:
 * distributed execution and full PostgreSQL parity remain Experimental;
 * SST is the supported engine; selecting another engine changes the support tier;
 * this quickstart proves local storage; S3, Azure, and GCS remain Beta evidence targets;
+* the MVP is single-tenant; metadata filters are not an authorization boundary;
+* multi-tenant ABAC remains Beta until stable-ID minting and fail-closed cross-surface tests land;
 * conditional writes, update/delete by filter, and patch are not supported.
 
 Consult link:../SUPPORTED_SURFACE.adoc[the complete support matrix] before expanding a production

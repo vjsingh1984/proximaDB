@@ -25,7 +25,7 @@ link:docs/00-product/MVP_TRUST_CORRIDOR.toml[machine-checked MVP trust corridor]
 
 Modern vector systems increasingly include document payloads, metadata filters, hybrid search,
 and distributed operation. ProximaDB therefore does not differentiate by pretending those features
-are absent. Its wager is narrower: one governed context record, served through standard interfaces,
+are absent. Its wager is narrower: one typed context record, served through standard interfaces,
 with workload-specific projections and object-economics evidence behind it.
 
 |===

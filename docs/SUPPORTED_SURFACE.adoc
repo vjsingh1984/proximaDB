@@ -53,7 +53,7 @@ level; this contract wins on any disagreement about what is customer-facing.
 
 The broad matrix below describes the whole product. The smaller customer acquisition promise is
 **Object-storage-native context serving for SQL, JSON, and vectors**, delivered initially through
-single-node SST and canonical REST v2 record operations. Its machine-readable contract is
+single-tenant, single-node SST and canonical REST v2 record operations. Its machine-readable contract is
 link:./00-product/MVP_TRUST_CORRIDOR.toml[MVP_TRUST_CORRIDOR.toml].
 
 The corridor is intentionally stricter than this matrix: create, typed batch write, get, filtered
@@ -63,6 +63,9 @@ enter the MVP promise until their listed security, recovery, conformance, and ev
 The quickstart uses local storage. S3, Azure, and GCS are co-design/evidence targets and remain Beta
 for the MVP until the same correctness, crash/restart, bounded-memory, and economic suite passes on
 each backend.
+Metadata filters in the smoke are query correctness boundaries, not authorization evidence.
+Multi-tenant ABAC remains Beta until stable tenant IDs are total, missing IDs fail closed, and the
+cross-surface REST/gRPC/Flight/pgwire admit/deny matrix passes.
 
 == Canonical API Surface
 

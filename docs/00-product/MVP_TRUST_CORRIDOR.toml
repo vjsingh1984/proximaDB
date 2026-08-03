@@ -17,6 +17,12 @@ object_store_backends = ["s3", "azure", "gcs"]
 object_store_tier = "beta"
 graduation_gate = "The same crash/restart, correctness, memory, and context-economics suite passes on each backend with dated evidence."
 
+[security]
+tenancy_mode = "single-tenant"
+metadata_filters_are_authorization = false
+multi_tenant_abac_tier = "beta"
+graduation_gate = "Stable tenant IDs are total, absent IDs fail closed, and REST, gRPC, Flight, and pgwire pass cross-surface admit/deny tests."
+
 [[surface]]
 id = "collection_create"
 tier = "supported"
@@ -70,6 +76,12 @@ evidence = ["tests/release_smoke_v2.rs"]
 id = "pgwire"
 tier = "beta"
 reason = "Autocommit SQL subset; multi-tenant ABAC propagation and bypass closure are not yet complete."
+tracking = ["docs/10-quality/td/TD-ABAC-10-pgwire-identity-constructor.adoc", "docs/10-quality/td/TD-ABAC-11-mint-and-fail-closed-composition.adoc"]
+
+[[exclusion]]
+id = "multi_tenant_abac"
+tier = "beta"
+reason = "Metadata filters are query predicates, not authorization. Stable-ID totality and fail-closed cross-surface ABAC are incomplete."
 tracking = ["docs/10-quality/td/TD-ABAC-10-pgwire-identity-constructor.adoc", "docs/10-quality/td/TD-ABAC-11-mint-and-fail-closed-composition.adoc"]
 
 [[exclusion]]

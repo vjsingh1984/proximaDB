@@ -23,7 +23,7 @@ link:../12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.ad
 Warehouse & Engineering course correction] for the active architectural direction.
 
 *Executable MVP contract (2026-08-03):* acquisition starts one step narrower, with canonical REST
-v2 typed context records, metadata scan, and vector retrieval on single-node SST. The exact promise,
+v2 typed context records, metadata scan, and vector retrieval on single-tenant, single-node SST. The exact promise,
 exclusions, release evidence, and activation targets are machine-readable in
 link:MVP_TRUST_CORRIDOR.toml[MVP_TRUST_CORRIDOR.toml]. pgwire joins that corridor only after its
 identity/ABAC gates close; its implementation presence alone is not a support claim.

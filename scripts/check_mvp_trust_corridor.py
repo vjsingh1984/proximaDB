@@ -35,6 +35,7 @@ def validate_contract(data: dict) -> list[str]:
         "default_engine",
         "promise",
         "storage",
+        "security",
         "surface",
         "exclusion",
         "release",
@@ -56,6 +57,13 @@ def validate_contract(data: dict) -> list[str]:
         errors.append("object-store production maturity must remain Beta until its gate closes")
     if set(storage.get("object_store_backends", [])) != {"s3", "azure", "gcs"}:
         errors.append("the co-design evidence matrix must cover S3, Azure, and GCS")
+    security = data.get("security", {})
+    if security.get("tenancy_mode") != "single-tenant":
+        errors.append("the MVP remains single-tenant until fail-closed ABAC is proven")
+    if security.get("metadata_filters_are_authorization") is not False:
+        errors.append("metadata filters must never be represented as authorization")
+    if security.get("multi_tenant_abac_tier") != "beta":
+        errors.append("multi-tenant ABAC must remain Beta until its cross-surface gate closes")
 
     ids: set[str] = set()
     openapi = _text("docs/openapi/proximadb-openapi.yaml")
@@ -208,7 +216,7 @@ def main() -> int:
 
     print(
         "MVP trust corridor OK: 7 canonical v2 operations, SST, single-node, "
-        "2 release targets, explicit Beta/Experimental exclusions."
+        "single-tenant boundary, 2 release targets, explicit Beta/Experimental exclusions."
     )
     return 0
 

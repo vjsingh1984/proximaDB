@@ -220,7 +220,7 @@ def run_smoke(base_url: str, tenant: str | None = None, timeout: float = 15.0) -
         ids = _record_ids(payload)
         if "runbook-data" in ids or not expected_team_ids.issubset(ids):
             raise SmokeFailure(
-                "filtered_search: tenant-like metadata filter leaked or under-returned; "
+                "filtered_search: metadata filter leaked or under-returned; "
                 f"received {ids}"
             )
         return payload
