@@ -606,6 +606,75 @@ fn abac_security_is_pushdown(
     abac_filter_is_conjunctive(security) && user_filter.is_none_or(abac_filter_is_conjunctive)
 }
 
+/// Pure ADR-087 composition decision. `auth_class` is deliberately an input
+/// even though it does not change authorization today: authenticated and
+/// trust-asserted subjects are equally deny-biased, while provenance remains
+/// available for audit. Keeping this pure pins the complete
+/// enforcer x subject x stable-id x auth-class truth table.
+#[cfg(feature = "abac-policy")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordsReadComposition {
+    Passthrough,
+    ResolvePolicy,
+    DenyMissingStableId,
+}
+
+#[cfg(feature = "abac-policy")]
+fn records_read_composition(
+    enforcer_wired: bool,
+    subject_present: bool,
+    stable_id_present: bool,
+    _auth_class: proximadb_tenant::AuthClass,
+) -> RecordsReadComposition {
+    if !enforcer_wired || !subject_present {
+        RecordsReadComposition::Passthrough
+    } else if !stable_id_present {
+        RecordsReadComposition::DenyMissingStableId
+    } else {
+        RecordsReadComposition::ResolvePolicy
+    }
+}
+
+#[cfg(all(test, feature = "abac-policy"))]
+mod records_read_composition_tests {
+    use super::{RecordsReadComposition, records_read_composition};
+    use proximadb_tenant::AuthClass;
+
+    #[test]
+    fn full_enforcer_subject_stable_id_auth_class_truth_table() {
+        for enforcer_wired in [false, true] {
+            for subject_present in [false, true] {
+                for stable_id_present in [false, true] {
+                    for auth_class in [
+                        AuthClass::Authenticated,
+                        AuthClass::TrustAsserted,
+                        AuthClass::Anonymous,
+                    ] {
+                        let expected = if !enforcer_wired || !subject_present {
+                            RecordsReadComposition::Passthrough
+                        } else if !stable_id_present {
+                            RecordsReadComposition::DenyMissingStableId
+                        } else {
+                            RecordsReadComposition::ResolvePolicy
+                        };
+                        assert_eq!(
+                            records_read_composition(
+                                enforcer_wired,
+                                subject_present,
+                                stable_id_present,
+                                auth_class,
+                            ),
+                            expected,
+                            "enforcer={enforcer_wired} subject={subject_present} \
+                             stable_id={stable_id_present} auth_class={auth_class}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl VectorOperationsService {
     /// Create service with a shared context for cross-cutting concerns
     pub fn new_with_context(
@@ -703,21 +772,33 @@ impl VectorOperationsService {
     ///   (return empty results). Mirrors the fusion contract
     ///   (`fusion_service.rs:529-554`).
     ///
-    /// NOTE (TD-ABAC-11): the `(Some(subject), None)` cell — an authenticated
-    /// subject whose tenant carries no stable id — is passthrough TODAY and
-    /// flips to DENY once the default-tenant mint makes the id total. Because
-    /// this is the single definition, that flip is a one-line change here
-    /// rather than a per-surface sweep.
+    /// TD-ABAC-11: when an enforcer and subject are present, an absent stable id
+    /// DENIES. The policy key is required to consult the authority; inability to
+    /// consult cannot mean allow. Default-tenant bootstrap and provisioning mint
+    /// the key before this strictness rule is reached.
     #[cfg(feature = "abac-policy")]
     pub async fn records_read_context(
         &self,
         subject: Option<&str>,
         tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
         collection_id: &str,
     ) -> Option<proximadb_abac::ReadContext> {
         use proximadb_catalog::fc_metamodel::SubjectId;
-        match (subject, tenant_stable_id) {
-            (Some(subject), Some(tenant_stable_id)) => {
+        match records_read_composition(
+            self.abac_enforcer.is_some(),
+            subject.is_some(),
+            tenant_stable_id.is_some(),
+            auth_class,
+        ) {
+            RecordsReadComposition::ResolvePolicy => {
+                let (Some(subject), Some(tenant_stable_id)) = (subject, tenant_stable_id) else {
+                    tracing::error!(
+                        target: "proximadb::tenant_audit",
+                        "ABAC composition invariant violated; denying"
+                    );
+                    return None;
+                };
                 match self
                     .resolve_vector_read_context(
                         &SubjectId(subject.to_string()),
@@ -734,9 +815,23 @@ impl VectorOperationsService {
                     )),
                 }
             }
-            _ => Some(proximadb_abac::ReadContext::system(
+            RecordsReadComposition::DenyMissingStableId => {
+                tracing::warn!(
+                    target: "proximadb::tenant_audit",
+                    subject = subject,
+                    auth_class = %auth_class,
+                    collection = collection_id,
+                    "ABAC denied a subject whose tenant has no stable policy key"
+                );
+                None
+            }
+            RecordsReadComposition::Passthrough => Some(proximadb_abac::ReadContext::system(
                 proximadb_abac::SystemReadReason::Statistics,
-                "records_search (no client subject)",
+                if self.abac_enforcer.is_none() {
+                    "records_search (no abac enforcer)"
+                } else {
+                    "records_search (no client subject)"
+                },
             )),
         }
     }
@@ -867,6 +962,7 @@ impl VectorOperationsService {
                 tenant_context,
                 identity.subject,
                 identity.tenant_stable_id,
+                identity.auth_class,
             )
             .await;
         if result.is_err() {
@@ -883,6 +979,7 @@ impl VectorOperationsService {
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
         subject: Option<&str>,
         tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
     ) -> Result<RichSearchResponse> {
         // Authorize before touching data, matching `search_v1_with_tenant_context`.
         let collection_id = self
@@ -910,6 +1007,7 @@ impl VectorOperationsService {
                 filter,
                 subject,
                 tenant_stable_id,
+                auth_class,
             )
             .await?;
         let Some(search_result) = response.results else {
@@ -989,6 +1087,7 @@ impl VectorOperationsService {
                 record,
                 identity.subject,
                 identity.tenant_stable_id,
+                identity.auth_class,
                 &collection_id,
             )
             .await;
@@ -1009,13 +1108,14 @@ impl VectorOperationsService {
         record: Option<RichSearchResult>,
         subject: Option<&str>,
         tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
         collection_id: &str,
     ) -> Option<RichSearchResult> {
         use crate::core::search::sql_value_filter::proxima_value_to_json;
         use crate::security::rls::filter_lattice::admits_with_security;
 
         match self
-            .records_read_context(subject, tenant_stable_id, collection_id)
+            .records_read_context(subject, tenant_stable_id, auth_class, collection_id)
             .await
         {
             // Denied ⇒ fail-closed: the record is not returned.
@@ -1426,6 +1526,7 @@ impl VectorOperationsService {
             filter,
             identity.subject,
             identity.tenant_stable_id,
+            identity.auth_class,
         )
         .await
     }
@@ -1449,6 +1550,7 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         subject: Option<&str>,
         tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         // P4 advisor observability: capture per-search latency so
         // the post-search hook can populate the recall-residual /
@@ -1478,6 +1580,7 @@ impl VectorOperationsService {
                 cfg,
                 subject,
                 tenant_stable_id,
+                auth_class,
             )
             .await?;
 
@@ -2810,6 +2913,7 @@ impl VectorOperationsService {
         config: Option<UnifiedSearchConfig>,
         subject: Option<&str>,
         tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
     ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
         let (results, _explain) = self
             .unified_search_v1_inner(
@@ -2820,6 +2924,7 @@ impl VectorOperationsService {
                 config,
                 subject,
                 tenant_stable_id,
+                auth_class,
             )
             .await?;
         Ok(results)
@@ -2839,6 +2944,7 @@ impl VectorOperationsService {
         config: Option<UnifiedSearchConfig>,
         subject: Option<&str>,
         tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
     ) -> Result<(
         Vec<crate::proto::proximadb_v1::SearchResult>,
         Option<crate::query::explain::VectorObjectEconomyExplain>,
@@ -2852,14 +2958,14 @@ impl VectorOperationsService {
         // key can't distinguish subjects — see below. Denied ⇒ fail-closed empty.
         #[cfg(feature = "abac-policy")]
         let (filter, post_filter) = match self
-            .records_read_context(subject, tenant_stable_id, collection_id)
+            .records_read_context(subject, tenant_stable_id, auth_class, collection_id)
             .await
         {
             None => return Ok((Vec::new(), None)),
             Some(read_ctx) => self.apply_abac_vector_filter(filter, &read_ctx),
         };
         #[cfg(not(feature = "abac-policy"))]
-        let _ = (subject, tenant_stable_id);
+        let _ = (subject, tenant_stable_id, auth_class);
         #[cfg(not(feature = "abac-policy"))]
         let post_filter: Option<FilterExpression> = None;
 
@@ -3740,7 +3846,16 @@ impl VectorOperationsService {
         // For StaleOk requests and cache hits the explain is None,
         // matching the helper's documented contract.
         let (results, explain) = self
-            .unified_search_v1_inner(collection_id, query_vector, k, filter, config, None, None)
+            .unified_search_v1_inner(
+                collection_id,
+                query_vector,
+                k,
+                filter,
+                config,
+                None,
+                None,
+                proximadb_tenant::AuthClass::Anonymous,
+            )
             .await?;
         hints.vector_object_economy = explain;
         Ok((results, hints))
@@ -6362,6 +6477,7 @@ impl VectorQueryService for VectorOperationsService {
                 None, // Use default config
                 None,
                 None,
+                proximadb_tenant::AuthClass::Anonymous,
             )
             .await
             .map_err(|e| proximadb_kernel::error::QueryError::VectorSearch(e.to_string()))?;

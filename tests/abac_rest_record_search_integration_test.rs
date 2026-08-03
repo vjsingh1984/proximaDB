@@ -372,7 +372,12 @@ async fn composition_rule_admits_a_bound_subject_as_client() {
     let (svc, _collections) = fixture().await;
 
     let context = svc
-        .records_read_context(Some("alice"), Some(TENANT), COLLECTION)
+        .records_read_context(
+            Some("alice"),
+            Some(TENANT),
+            proximadb_tenant::AuthClass::Authenticated,
+            COLLECTION,
+        )
         .await;
 
     assert!(
@@ -389,7 +394,12 @@ async fn composition_rule_denies_an_unbound_subject_so_callers_fail_closed() {
     let (svc, _collections) = fixture().await;
 
     let context = svc
-        .records_read_context(Some("mallory"), Some(TENANT), COLLECTION)
+        .records_read_context(
+            Some("mallory"),
+            Some(TENANT),
+            proximadb_tenant::AuthClass::Authenticated,
+            COLLECTION,
+        )
         .await;
 
     assert!(
@@ -403,7 +413,14 @@ async fn composition_rule_denies_an_unbound_subject_so_callers_fail_closed() {
 async fn composition_rule_passes_through_when_there_is_no_client_subject() {
     let (svc, _collections) = fixture().await;
 
-    let context = svc.records_read_context(None, None, COLLECTION).await;
+    let context = svc
+        .records_read_context(
+            None,
+            None,
+            proximadb_tenant::AuthClass::Anonymous,
+            COLLECTION,
+        )
+        .await;
 
     assert!(
         matches!(context, Some(proximadb_abac::ReadContext::System(_))),
@@ -411,23 +428,23 @@ async fn composition_rule_passes_through_when_there_is_no_client_subject() {
     );
 }
 
-/// ⚠ TD-ABAC-11 KNOWN-OPEN CELL, pinned deliberately.
-///
-/// A subject WITH no `tenant_stable_id` (unminted tenant, or a surface with no
-/// resolver wired) is passthrough TODAY — enforcement strength currently equals
-/// mint coverage. ADR-087 flips this to DENY once the default-tenant mint makes
-/// the stable id total; when it does, THIS TEST MUST FLIP with it. It exists so
-/// that change is a conscious edit rather than a silent behavioral drift.
+/// TD-ABAC-11 strict cell: an armed enforcer cannot consult policy without the
+/// tenant stable id, so a present subject MUST be denied.
 #[tokio::test]
-async fn composition_rule_still_passes_through_a_subject_without_a_stable_id() {
+async fn composition_rule_denies_a_subject_without_a_stable_id() {
     let (svc, _collections) = fixture().await;
 
     let context = svc
-        .records_read_context(Some("alice"), None, COLLECTION)
+        .records_read_context(
+            Some("alice"),
+            None,
+            proximadb_tenant::AuthClass::Authenticated,
+            COLLECTION,
+        )
         .await;
 
     assert!(
-        matches!(context, Some(proximadb_abac::ReadContext::System(_))),
-        "TD-ABAC-11: absent stable id is passthrough until the mint lands; got {context:?}"
+        context.is_none(),
+        "TD-ABAC-11: subject + absent stable id must deny; got {context:?}"
     );
 }

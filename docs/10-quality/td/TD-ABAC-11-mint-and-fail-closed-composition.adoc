@@ -1,5 +1,5 @@
 = TD-ABAC-11: Default-tenant mint + flip the seam composition rule to fail-closed on absent stable id
-:status: Open
+:status: In Progress
 :dim: D5
 :pillar: SEC
 
@@ -26,6 +26,26 @@ Next action (strict ordering — totality before strictness):
 
 Do NOT flip before the mint lands — it would fail-close every unminted
 dev/embedded deployment that wires an enforcer.
+
+== Implementation status (2026-08-03)
+
+* **DONE — stable-id totality on production catalog backends.** The normal
+  WAL-backed `SystemCatalog` now commits account/tenant mappings through its
+  canonical WAL and snapshot, recovers the allocator floor, and serializes
+  concurrent first mint. `NativeCatalog` serializes its existing durable
+  registry mint. `SharedServices` mints `default` before serving requests.
+* **DONE — provisioning mint.** ABAC policy and attribute writes mint-or-resolve
+  the path/body tenant string through the catalog before persisting a binding;
+  no dummy table is required. Read/delete paths remain lookup-only.
+* **DONE — vector/record seam strictness.** Enforcer + subject + absent stable id
+  now denies for search and point-get, with the full
+  `enforcer x subject x stable-id x auth-class` truth table pinned in a pure
+  unit test. `AuthClass` is audit provenance and intentionally does not weaken
+  the deny rule.
+* **OPEN — relational seam + cross-surface ratchet.** TD-ABAC-10 10b must carry
+  the stable id through `scan_table_relational`; only then can the relational
+  composition point flip and REST/gRPC/Flight/pgwire provisioned-policy e2e be
+  a truthful release gate.
 
 Depends on [[TD-ABAC-8]] (carrier), mint. Ref ADR-087, ADR-0083,
 [[project_codesigned_vector_abac_pushdown_2026_07_30]] (PR3 note).

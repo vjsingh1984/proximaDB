@@ -31,6 +31,15 @@ impl CatalogTenantStableIdResolver {
     pub fn new(catalog_manager: Arc<CatalogManager>) -> Self {
         Self { catalog_manager }
     }
+
+    /// Control-plane mint-or-return path. Request paths remain lookup-only via
+    /// [`TenantStableIdResolver::stable_id_of`]; bootstrap and ABAC provisioning
+    /// use this before publishing any state keyed by the stable id.
+    pub async fn ensure_stable_id(&self, tenant_id: &str) -> anyhow::Result<Option<u64>> {
+        self.catalog_manager
+            .ensure_tenant_stable_id(tenant_id)
+            .await
+    }
 }
 
 impl TenantStableIdResolver for CatalogTenantStableIdResolver {

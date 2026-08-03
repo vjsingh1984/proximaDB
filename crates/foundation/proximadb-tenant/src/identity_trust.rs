@@ -273,8 +273,8 @@ pub struct ResolvedRequestIdentity {
     /// stamped ONCE at identity resolution by the wired
     /// [`TenantStableIdResolver`] — never re-derived downstream. `None` = no
     /// resolver wired or the tenant is unminted; the enforcement seam treats
-    /// that cell per the composition rule (passthrough today; fail-closed once
-    /// the default-tenant mint lands, TD-ABAC-11).
+    /// that cell fail-closed (TD-ABAC-11). Catalog bootstrap/provisioning makes
+    /// the id total on supported production catalog backends.
     pub tenant_stable_id: Option<u64>,
 }
 
