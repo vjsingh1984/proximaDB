@@ -7,7 +7,7 @@ name = "proximadb_embedded"
 version = "0.2.2"
 description = "ProximaDB - High-performance vector database with embedded mode"
 authors = [
-    {name = "Vijaykumar Singh", email = "singhvjd@gmail.com"}
+    {name = "Vijaykumar Singh", email = "vijay@anvaiops.com"}
 ]
 license = {text = "Apache-2.0"}
 readme = "README.adoc"

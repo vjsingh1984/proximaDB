@@ -7,7 +7,7 @@ name = "proximadb_embedded"
 version = "0.2.2"
 description = "ProximaDB Embedded - In-process vector database for Python with zero network overhead"
 authors = [
-    {name = "Vijaykumar Singh", email = "singhvjd@gmail.com"}
+    {name = "Vijaykumar Singh", email = "vijay@anvaiops.com"}
 ]
 license = {text = "Apache-2.0"}
 readme = "README.md"

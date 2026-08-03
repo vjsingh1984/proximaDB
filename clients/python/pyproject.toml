@@ -10,7 +10,7 @@ name = "proximadb"
 version = "0.2.2"
 description = "Python client SDK for ProximaDB - Cloud-native vector database engineered for AI-first applications"
 authors = [
-    {name = "Vijaykumar Singh", email = "singhvjd@gmail.com"}
+    {name = "Vijaykumar Singh", email = "vijay@anvaiops.com"}
 ]
 license = {text = "Apache-2.0"}
 readme = "README.md"

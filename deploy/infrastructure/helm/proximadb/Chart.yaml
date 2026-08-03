@@ -15,7 +15,7 @@ sources:
   - https://github.com/anvai-labs/proximaDB
 maintainers:
   - name: Vijaykumar Singh
-    email: singhvjd@gmail.com
+    email: vijay@anvaiops.com
     url: https://github.com/vjsingh1984
 engine: gotpl
 kubeVersion: ">=1.26.0-0"

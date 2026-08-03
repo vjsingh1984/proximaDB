@@ -464,7 +464,7 @@ mod tests {
         use crate::alerting::{AlertSeverity, ObservabilityAlert as Alert};
         use std::collections::HashMap;
 
-        // This test sends a real email to singhvjd@gmail.com
+        // This test uses a non-routable recipient.
         // Configure your SMTP settings before running this test
         let manager = NotificationManager::new();
 
@@ -480,7 +480,7 @@ mod tests {
             password: std::env::var("SMTP_PASSWORD").expect("SMTP_PASSWORD must be set"),
             from: std::env::var("SMTP_FROM")
                 .unwrap_or_else(|_| "noreply@proximadb.test".to_string()),
-            recipients: vec!["singhvjd@gmail.com".to_string()],
+            recipients: vec!["noreply@proximadb.test".to_string()],
         };
 
         // Register email channel
@@ -521,6 +521,6 @@ mod tests {
             result.err()
         );
 
-        println!("✅ Successfully sent test email to singhvjd@gmail.com");
+        println!("✅ Successfully sent test email");
     }
 }

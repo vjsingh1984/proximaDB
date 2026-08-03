@@ -2230,7 +2230,7 @@ components:
       type: http
 info:
   contact:
-    email: singhvjd@gmail.com
+    email: vijay@anvaiops.com
     name: Vijaykumar Singh
   description: SDK-facing ProximaDB REST contract. This specification is v2-first and centers on ProximaRecord, typed schemas, record search, and collection lifecycle operations. Legacy v1 compatibility routes are intentionally not part of this publishable SDK surface.
   license:
