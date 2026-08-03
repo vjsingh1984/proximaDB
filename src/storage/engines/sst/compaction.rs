@@ -1468,6 +1468,7 @@ impl Compaction {
             )
         })?;
         let start_time = std::time::Instant::now();
+        let mut memtrace = CompactionMemTrace::new();
         let run_buffer_bytes = (plan.memory_bytes / 4).clamp(1024 * 1024, 64 * 1024 * 1024);
         let merge_fan_in = 32usize;
         let input_paths = task
@@ -1533,6 +1534,11 @@ impl Compaction {
                 "local-spill ranged MVCC pass failed: {error}"
             ))
         })?;
+        let mvcc_stats = *winners.stats();
+        memtrace.stage(
+            "spill_mvcc_resolved",
+            usize::try_from(mvcc_stats.output_records).unwrap_or(usize::MAX),
+        );
         task_scratch
             .update_phase("mvcc-resolved", Some(&input_stats.source_sizes))
             .map_err(|error| {
@@ -1540,7 +1546,6 @@ impl Compaction {
                     "update local-spill MVCC manifest: {error}"
                 ))
             })?;
-        let mvcc_stats = *winners.stats();
         if mvcc_stats.output_records == 0 {
             task_scratch
                 .update_phase("empty-retirement", None)
@@ -1601,6 +1606,10 @@ impl Compaction {
         } else {
             SpillOrdering::Mvcc(winners)
         };
+        memtrace.stage(
+            "spill_ordering_ready",
+            usize::try_from(mvcc_stats.output_records).unwrap_or(usize::MAX),
+        );
         task_scratch
             .update_phase("pax-construction", None)
             .map_err(|error| {
@@ -1744,6 +1753,10 @@ impl Compaction {
                 return Err(error);
             }
         };
+        memtrace.stage(
+            "spill_pax_uploaded",
+            usize::try_from(mvcc_stats.output_records).unwrap_or(usize::MAX),
+        );
         if let (Some(coordinator), Some(operation)) = (&self.atomic_coordinator, &atomic_operation)
             && let Err(error) = coordinator
                 .finalize_atomic_operation(&operation.operation_id)
@@ -1772,6 +1785,10 @@ impl Compaction {
         if let Err(error) = task_scratch.update_phase("retired", None) {
             warn!(%error, "Local-spill retirement committed but manifest update failed");
         }
+        memtrace.stage(
+            "spill_inputs_retired",
+            usize::try_from(mvcc_stats.output_records).unwrap_or(usize::MAX),
+        );
 
         let elapsed = start_time.elapsed();
         let cluster_stats = match &ordering {
