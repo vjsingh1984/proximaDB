@@ -122,8 +122,8 @@ carried unchanged to every consumer; everything else is a projection.**
   id, and live pgwire + credential-authenticated gRPC relational ratchets using
   the authenticated REST policy-control plane, plus canonical `POST /api/v2/sql`
   as a thin adapter over the same typed SQL authority. Canonical REST record
-  search/point-get now have live row-policy evidence; gRPC record and Flight
-  live data-plane rows remain the release-evidence tail.
+  search/point-get and authenticated gRPC v2 unary/streaming search + point-get
+  now have live row-policy evidence; Flight remains the release-evidence tail.
 
 == References
 

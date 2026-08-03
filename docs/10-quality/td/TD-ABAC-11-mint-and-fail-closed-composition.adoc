@@ -76,9 +76,14 @@ dev/embedded deployment that wires an enforcer.
   matching row, point-get post-filtering hides the non-matching row, an unbound
   API-key principal remains denied, and policy revoke is hot-visible without a
   server restart.
-* **OPEN — remaining live surface rows.** Add provisioned-policy admit/deny/
-  passthrough ratchets for gRPC records/search and Flight. Their carrier and
-  seam component tests are pinned; they are not mislabeled as live evidence.
+* **DONE — authenticated gRPC v2 record/search live ratchet.** Credential-bound
+  unary search, streaming search, and point-get carry the full identity into
+  the same record ABAC seam. The live test proves deny-before-provision,
+  row-predicate filtering, principal isolation, and hot revoke across all three
+  RPC shapes.
+* **OPEN — remaining live surface row.** Add the provisioned-policy admit/deny/
+  passthrough ratchet for Flight. Its carrier and seam component tests are
+  pinned; they are not mislabeled as live evidence.
 
 Depends on [[TD-ABAC-8]] (carrier), mint. Ref ADR-087, ADR-0083,
 [[project_codesigned_vector_abac_pushdown_2026_07_30]] (PR3 note).
@@ -99,5 +104,6 @@ seam:
 The cross-surface e2e ratchet includes pgwire's, authenticated gRPC's, and
 canonical REST SQL's *relational* paths in addition to REST/gRPC/Flight records.
 All three SQL rows and canonical REST record search/point-get are now pinned
-after [[TD-ABAC-10]] 10c; the gRPC record and Flight rows stay open until they
-exercise live provisioned policy rather than only handler/seam components.
+after [[TD-ABAC-10]] 10c; authenticated gRPC unary/streaming search and
+point-get are also pinned. Flight stays open until it exercises live
+provisioned policy rather than only handler/seam components.
