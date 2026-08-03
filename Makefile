@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: env-gate-check all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check tenant-ingress-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check query-conformance-check docs-claim-check design-status-check status-asof-check release-smoke cloud-emulator-test
+.PHONY: env-gate-check all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check mvp-contract-check mvp-smoke-test context-benchmark-check workspace-boundaries-check tenant-path-check tenant-ingress-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check query-conformance-check docs-claim-check design-status-check status-asof-check release-smoke cloud-emulator-test
 
 # Default target
 all: build test
@@ -116,6 +116,18 @@ capability-matrix-check:
 	@echo "🧭 Validating capability matrix..."
 	python3 scripts/validate_capability_matrix.py
 
+mvp-contract-check:
+	@echo "🎯 Validating the MVP trust corridor..."
+	python3 scripts/check_mvp_trust_corridor.py
+
+mvp-smoke-test:
+	@echo "🧪 Testing the canonical v2 MVP smoke client..."
+	python3 -m unittest discover -s tests/scripts -p 'test_mvp_smoke.py'
+
+context-benchmark-check:
+	@echo "📐 Validating the context-corridor benchmark contract..."
+	python3 scripts/validate_context_benchmark.py
+
 deterministic-commit-contract-check:
 	@echo "🧷 Validating deterministic commit contract..."
 	python3 scripts/check_deterministic_commit_contract.py
@@ -193,7 +205,7 @@ tenant-ingress-check:
 	@echo "Validating deployment-aware tenant ingress..."
 	python3 scripts/check_tenant_ingress_contract.py
 
-work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check design-status-check status-asof-check capability-matrix-check workspace-boundaries-check tenant-path-check tenant-ingress-check panic-policy-module-guard hygiene-check env-gate-check
+work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check design-status-check status-asof-check capability-matrix-check mvp-contract-check mvp-smoke-test context-benchmark-check workspace-boundaries-check tenant-path-check tenant-ingress-check panic-policy-module-guard hygiene-check env-gate-check
 	@echo "✅ work-commit-check: deterministic architecture and commit guardrails passed"
 
 validated-commit-check: work-commit-check

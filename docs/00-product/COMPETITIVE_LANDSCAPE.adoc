@@ -9,12 +9,11 @@ support claims defer to link:../SUPPORTED_SURFACE.adoc[the support contract].
 
 == The Thesis
 
-AI agents do not operate on a single data model. Assembling context for an agent means
-joining episodic events, semantic vectors, a relational graph, and operational documents —
-today that is four or five specialized stores stitched together with brittle ETL and
-application-side joins. ProximaDB's differentiation is multi-model in *one* engine: one
-deployable binary, one SQL-compatible query interface, cross-model joins in one query
-(see the Positioning Statement in link:PRD.adoc[PRD]).
+AI agents assemble context rather than retrieve an isolated vector. ProximaDB's executable MVP
+thesis is therefore one governed record carrying identity, typed JSON properties, and an embedding,
+served by metadata scan and vector retrieval through one canonical API. Workload-specific graph,
+document, temporal, and observability projections remain the longer-term architecture; they do not
+enter the customer promise until recovery and conformance are proven.
 
 == Category Comparison
 
@@ -22,31 +21,32 @@ deployable binary, one SQL-compatible query interface, cross-model joins in one 
 |===
 | Category | Representative systems | Limitation ProximaDB addresses
 
-| Vector database
-| Pinecone, Milvus, Weaviate
-| Single data model. Vectors are necessary but insufficient — agents need documents,
-graphs, and temporal data alongside embeddings. Forces application-side joins across
-systems.
+| Vector and hybrid retrieval
+| Pinecone, Milvus, Weaviate, Qdrant, pgvector, Elasticsearch
+| These products already provide substantial combinations of vectors, payloads/documents,
+filters, hybrid retrieval, tenancy, or distributed operation. ProximaDB must demonstrate lower
+context-assembly and object-I/O cost; feature-count rhetoric is not differentiation.
 
 | Multi-model database
 | ArangoDB, SurrealDB
-| Generic approach without workload-specialized engines. One storage engine cannot
-optimize for both sub-millisecond vector search and high-throughput time-series
-ingestion simultaneously.
+| SurrealDB is a direct category competitor, not an adjacent generic database. ProximaDB's
+distinct bet is canonical durable records plus rebuildable, workload-specialized projections
+co-designed with cache, network, object storage, and governance.
 
 | Data platform
 | Snowflake, Databricks
-| Too broad. Optimized for batch analytics and data warehousing, not for low-latency
-serving, embedded deployment, or real-time event processing at the edge.
+| Incumbent distribution, governance, SQL, and lakehouse reach are formidable. The opening is a
+smaller operational context-serving path with a single binary and transparent per-query economics.
 
 | Single-model specialists
 | Neo4j (graphs only), TimescaleDB (time-series only)
-| Best-in-class for their one model, but contextual workloads span models; each added
-store adds an ETL pipeline and an operational surface.
+| Best-in-class execution remains the benchmark. ProximaDB should integrate or coexist until its
+corresponding Beta projection earns durability, accuracy, and operator evidence.
 |===
 
-*Migration path*: ProximaDB speaks the Postgres wire protocol with a pgvector-compatible
-distance operator, so pgvector-shaped workloads have a low-friction on-ramp.
+*Migration direction*: ProximaDB's Beta Postgres wire surface includes a pgvector-compatible
+distance operator. It becomes a supported migration path only after the pgwire identity/ABAC and
+SQL-subset conformance gates close.
 
 == Honest Positioning
 
@@ -59,11 +59,12 @@ warehouse (Snowflake, BigQuery, Databricks) today; for general-purpose OLTP with
 multi-table transactions, use PostgreSQL today (see the Non-Goals section of
 link:VISION.adoc[Vision]).
 
-The bet is that agent memory does not need five best-in-class distributed systems — it
-needs episodic events + semantic vectors + relational graph + documents answered from one
-engine, in one query. That is the surface ProximaDB optimizes for.
+The long-term bet is that agent context does not need five independently operated systems. The MVP
+tests the smallest valuable portion of that thesis first: typed properties and vectors answered
+from one governed record. Each additional projection must earn its place with recovery,
+conformance, and economic evidence.
 
-No benchmark numbers are claimed here; reproducible comparisons against Milvus, Qdrant,
-Weaviate, and Chroma are a stated roadmap milestone in link:VISION.adoc[Vision], and any
-published performance figure must trace to a measured entry in the benchmark evidence
-ledger referenced by the support contract.
+No benchmark numbers are claimed here. The GTM gate is reproducible **economic proof** against
+pgvector, Qdrant, Milvus, Elasticsearch, and SurrealDB: recall, filtered accuracy, p95/p99 latency,
+peak RSS, object requests, bytes transferred, and cost per query. Any published figure must trace
+to a measured entry in the benchmark evidence ledger referenced by the support contract.

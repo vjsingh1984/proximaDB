@@ -9,6 +9,10 @@ ProximaDB aims to be "The Context Database" -- a unified engine for vectors, doc
 time-series, and events, purpose-built for AI agents, real-time analytics, and mission-critical
 applications. Dogfooded in production algorithmic trading.
 
+The market-facing wedge is **Object-storage-native context serving for SQL, JSON, and vectors**:
+one governed record, standard interfaces outside, and co-designed storage/query/cache economics
+inside. This wedge is deliberately smaller than the durable vision.
+
 [IMPORTANT]
 ====
 This document states the *broad, durable vision*. The *narrow, reliable surface actually
@@ -18,6 +22,9 @@ aspirational. The *near-term wedge* is *pgwire/relational + vector/context over 
 storage* per link:../12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc[the
 2026-06-04 course correction]: the multi-model vision is delivered incrementally through a
 relational/warehouse-compatible front door, not all at once.
+The exact adoption promise is machine-checked in
+link:MVP_TRUST_CORRIDOR.toml[MVP_TRUST_CORRIDOR.toml]; a capability outside that corridor cannot
+become an MVP or GA claim merely because implementation code exists.
 ====
 
 == Executive Summary
@@ -62,14 +69,16 @@ multi-faceted context to applications that reason over data, not merely retrieve
 |===
 | Category | Limitation
 
-| **Vector Database** (Pinecone, Milvus, Weaviate)
-| Single data model. Vectors are necessary but insufficient -- agents need documents, graphs, and
-temporal data alongside embeddings. Forces application-side joins across systems.
+| **Vector Database** (Pinecone, Milvus, Weaviate, Qdrant)
+| Strong vector retrieval products increasingly include document payloads, metadata filters,
+hybrid retrieval, tenancy, and distributed operation. ProximaDB must win on governed cross-context
+composition and measured object economics, not on the obsolete claim that these products store
+only vectors.
 
 | **Multi-model Database** (ArangoDB, SurrealDB)
-| Generic approach without workload-specialized engines. Performance suffers because one storage
-engine cannot optimize for both sub-millisecond vector search and high-throughput time-series
-ingestion simultaneously.
+| This is the direct category comparison. ProximaDB's proposed advantage is a canonical record with
+specialized rebuildable projections and one trace-driven cost model. That advantage remains a
+hypothesis until reproducible workload and cost evidence proves it.
 
 | **Data Platform** (Snowflake, Databricks)
 | Too broad. Optimized for batch analytics and data warehousing, not for low-latency serving,

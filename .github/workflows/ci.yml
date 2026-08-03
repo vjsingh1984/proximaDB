@@ -401,6 +401,12 @@ jobs:
       # a doc:line that no longer exists.
       - name: Validate benchmark evidence ledger
         run: python3 scripts/validate_benchmark_evidence.py
+      - name: Validate MVP Trust Corridor
+        run: python3 scripts/check_mvp_trust_corridor.py
+      - name: Test canonical MVP smoke client
+        run: python3 -m unittest discover -s tests/scripts -p 'test_mvp_smoke.py'
+      - name: Validate context-corridor benchmark contract
+        run: python3 scripts/validate_context_benchmark.py
 
   # T4.2 (pre-release foundations) — Proto compatibility gate.
   # Runs `make proto-check`: cargo-checks the proximadb-proto crate AND
