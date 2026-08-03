@@ -1069,6 +1069,34 @@ type SearchEntitiesResponse struct {
 	Total   int32                `json:"total"`
 }
 
+// SqlRequest One SQL statement executed through the shared SQL authority.
+//
+// Parameter binding is intentionally not advertised yet: the relational
+// execution port currently has no typed binding contract. Callers must not be
+// offered a field that an adapter would silently ignore or interpolate.
+type SqlRequest struct {
+	// Collection Optional collection context used by vector/graph SQL extensions.
+	Collection *string `json:"collection,omitempty"`
+	Query      string  `json:"query"`
+
+	// TimeoutMs Per-request deadline. Defaults to 30 seconds and is capped at 5 minutes.
+	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
+}
+
+// SqlResponse Stable JSON envelope for SQL reads and writes.
+//
+// For reads, `rows_returned` is the row count. For DDL/DML, the shared SQL
+// authority reports the affected count in `rows_returned` and `rows` is empty.
+type SqlResponse struct {
+	ColumnTypes     []string                 `json:"column_types"`
+	Columns         []string                 `json:"columns"`
+	ExecutionTimeMs int64                    `json:"execution_time_ms"`
+	RequestId       string                   `json:"request_id"`
+	Rows            []map[string]interface{} `json:"rows"`
+	RowsReturned    int64                    `json:"rows_returned"`
+	RowsScanned     int64                    `json:"rows_scanned"`
+}
+
 // TextFieldInput Input format for TEXT fields
 //
 // TEXT fields are stored in dedicated columns with optional chunking
@@ -1633,6 +1661,12 @@ type ExplainQueryParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// ExecuteSqlParams defines parameters for ExecuteSql.
+type ExecuteSqlParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // GetHealthParams defines parameters for GetHealth.
 type GetHealthParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
@@ -1722,6 +1756,9 @@ type ExecuteQueryJSONRequestBody = QueryRequest
 
 // ExplainQueryJSONRequestBody defines body for ExplainQuery for application/json ContentType.
 type ExplainQueryJSONRequestBody = ExplainQueryRequest
+
+// ExecuteSqlJSONRequestBody defines body for ExecuteSql for application/json ContentType.
+type ExecuteSqlJSONRequestBody = SqlRequest
 
 // Getter for additional properties for BatchEdgesResponse. Returns the specified
 // element and whether it was found
@@ -3446,6 +3483,11 @@ type ClientInterface interface {
 
 	ExplainQuery(ctx context.Context, params *ExplainQueryParams, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ExecuteSqlWithBody request with any body
+	ExecuteSqlWithBody(ctx context.Context, params *ExecuteSqlParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ExecuteSql(ctx context.Context, params *ExecuteSqlParams, body ExecuteSqlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetHealth request
 	GetHealth(ctx context.Context, params *GetHealthParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -4226,6 +4268,30 @@ func (c *Client) ExplainQueryWithBody(ctx context.Context, params *ExplainQueryP
 
 func (c *Client) ExplainQuery(ctx context.Context, params *ExplainQueryParams, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExplainQueryRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ExecuteSqlWithBody(ctx context.Context, params *ExecuteSqlParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteSqlRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ExecuteSql(ctx context.Context, params *ExecuteSqlParams, body ExecuteSqlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteSqlRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6648,6 +6714,61 @@ func NewExplainQueryRequestWithBody(server string, params *ExplainQueryParams, c
 	return req, nil
 }
 
+// NewExecuteSqlRequest calls the generic ExecuteSql builder with application/json body
+func NewExecuteSqlRequest(server string, params *ExecuteSqlParams, body ExecuteSqlJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExecuteSqlRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewExecuteSqlRequestWithBody generates requests for ExecuteSql with any type of body
+func NewExecuteSqlRequestWithBody(server string, params *ExecuteSqlParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/sql")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewGetHealthRequest generates requests for GetHealth
 func NewGetHealthRequest(server string, params *GetHealthParams) (*http.Request, error) {
 	var err error
@@ -6987,6 +7108,11 @@ type ClientWithResponsesInterface interface {
 	ExplainQueryWithBodyWithResponse(ctx context.Context, params *ExplainQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error)
 
 	ExplainQueryWithResponse(ctx context.Context, params *ExplainQueryParams, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error)
+
+	// ExecuteSqlWithBodyWithResponse request with any body
+	ExecuteSqlWithBodyWithResponse(ctx context.Context, params *ExecuteSqlParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteSqlHTTPResp, error)
+
+	ExecuteSqlWithResponse(ctx context.Context, params *ExecuteSqlParams, body ExecuteSqlJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteSqlHTTPResp, error)
 
 	// GetHealthWithResponse request
 	GetHealthWithResponse(ctx context.Context, params *GetHealthParams, reqEditors ...RequestEditorFn) (*GetHealthHTTPResp, error)
@@ -8270,6 +8396,40 @@ func (r ExplainQueryHTTPResp) ContentType() string {
 	return ""
 }
 
+type ExecuteSqlHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SqlResponse
+	JSON400      *ErrorResponse
+	JSON408      *ErrorResponse
+	JSON409      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r ExecuteSqlHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExecuteSqlHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExecuteSqlHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetHealthHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -8919,6 +9079,23 @@ func (c *ClientWithResponses) ExplainQueryWithResponse(ctx context.Context, para
 		return nil, err
 	}
 	return ParseExplainQueryHTTPResp(rsp)
+}
+
+// ExecuteSqlWithBodyWithResponse request with arbitrary body returning *ExecuteSqlHTTPResp
+func (c *ClientWithResponses) ExecuteSqlWithBodyWithResponse(ctx context.Context, params *ExecuteSqlParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteSqlHTTPResp, error) {
+	rsp, err := c.ExecuteSqlWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteSqlHTTPResp(rsp)
+}
+
+func (c *ClientWithResponses) ExecuteSqlWithResponse(ctx context.Context, params *ExecuteSqlParams, body ExecuteSqlJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteSqlHTTPResp, error) {
+	rsp, err := c.ExecuteSql(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteSqlHTTPResp(rsp)
 }
 
 // GetHealthWithResponse request returning *GetHealthHTTPResp
@@ -10302,6 +10479,60 @@ func ParseExplainQueryHTTPResp(rsp *http.Response) (*ExplainQueryHTTPResp, error
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExecuteSqlHTTPResp parses an HTTP response from a ExecuteSqlWithResponse call
+func ParseExecuteSqlHTTPResp(rsp *http.Response) (*ExecuteSqlHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExecuteSqlHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SqlResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 408:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON408 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

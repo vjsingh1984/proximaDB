@@ -11,14 +11,14 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.error_response import ErrorResponse
-from ...models.query_request import QueryRequest
-from ...models.query_response import QueryResponse
+from ...models.sql_request import SqlRequest
+from ...models.sql_response import SqlResponse
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
-    body: QueryRequest,
+    body: SqlRequest,
     x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -27,7 +27,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/api/v2/query",
+        "url": "/api/v2/sql",
     }
 
     _body = body.to_dict()
@@ -41,15 +41,27 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[ErrorResponse, QueryResponse]]:
+) -> Optional[Union[ErrorResponse, SqlResponse]]:
     if response.status_code == 200:
-        response_200 = QueryResponse.from_dict(response.json())
+        response_200 = SqlResponse.from_dict(response.json())
 
         return response_200
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
+    if response.status_code == 408:
+        response_408 = ErrorResponse.from_dict(response.json())
+
+        return response_408
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -58,7 +70,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[ErrorResponse, QueryResponse]]:
+) -> Response[Union[ErrorResponse, SqlResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -70,28 +82,29 @@ def _build_response(
 def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: QueryRequest,
+    body: SqlRequest,
     x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, QueryResponse]]:
-    """Execute AQL or UQL through the shared query facade.
+) -> Response[Union[ErrorResponse, SqlResponse]]:
+    """Execute one authenticated SQL statement.
 
-     The canonical unified query surface: UQL (unified multi-modal), federated SQL
-    extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-    UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
-    this endpoint remains their canonical home. Authenticated programmatic SQL
-    is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
-    replacement for this UQL/federated surface.
+     The required foundation identity is inserted by the root tenant middleware
+    after authentication. A router mounted without that middleware fails closed
+    at extraction instead of constructing an anonymous authorization carrier.
 
     Args:
         x_tenant_id (Union[Unset, str]):
-        body (QueryRequest):
+        body (SqlRequest): One SQL statement executed through the shared SQL authority.
+
+            Parameter binding is intentionally not advertised yet: the relational
+            execution port currently has no typed binding contract. Callers must not be
+            offered a field that an adapter would silently ignore or interpolate.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, QueryResponse]]
+        Response[Union[ErrorResponse, SqlResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -109,28 +122,29 @@ def sync_detailed(
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: QueryRequest,
+    body: SqlRequest,
     x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, QueryResponse]]:
-    """Execute AQL or UQL through the shared query facade.
+) -> Optional[Union[ErrorResponse, SqlResponse]]:
+    """Execute one authenticated SQL statement.
 
-     The canonical unified query surface: UQL (unified multi-modal), federated SQL
-    extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-    UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
-    this endpoint remains their canonical home. Authenticated programmatic SQL
-    is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
-    replacement for this UQL/federated surface.
+     The required foundation identity is inserted by the root tenant middleware
+    after authentication. A router mounted without that middleware fails closed
+    at extraction instead of constructing an anonymous authorization carrier.
 
     Args:
         x_tenant_id (Union[Unset, str]):
-        body (QueryRequest):
+        body (SqlRequest): One SQL statement executed through the shared SQL authority.
+
+            Parameter binding is intentionally not advertised yet: the relational
+            execution port currently has no typed binding contract. Callers must not be
+            offered a field that an adapter would silently ignore or interpolate.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, QueryResponse]
+        Union[ErrorResponse, SqlResponse]
     """
 
     return sync_detailed(
@@ -143,28 +157,29 @@ def sync(
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: QueryRequest,
+    body: SqlRequest,
     x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, QueryResponse]]:
-    """Execute AQL or UQL through the shared query facade.
+) -> Response[Union[ErrorResponse, SqlResponse]]:
+    """Execute one authenticated SQL statement.
 
-     The canonical unified query surface: UQL (unified multi-modal), federated SQL
-    extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-    UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
-    this endpoint remains their canonical home. Authenticated programmatic SQL
-    is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
-    replacement for this UQL/federated surface.
+     The required foundation identity is inserted by the root tenant middleware
+    after authentication. A router mounted without that middleware fails closed
+    at extraction instead of constructing an anonymous authorization carrier.
 
     Args:
         x_tenant_id (Union[Unset, str]):
-        body (QueryRequest):
+        body (SqlRequest): One SQL statement executed through the shared SQL authority.
+
+            Parameter binding is intentionally not advertised yet: the relational
+            execution port currently has no typed binding contract. Callers must not be
+            offered a field that an adapter would silently ignore or interpolate.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, QueryResponse]]
+        Response[Union[ErrorResponse, SqlResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -180,28 +195,29 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: QueryRequest,
+    body: SqlRequest,
     x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, QueryResponse]]:
-    """Execute AQL or UQL through the shared query facade.
+) -> Optional[Union[ErrorResponse, SqlResponse]]:
+    """Execute one authenticated SQL statement.
 
-     The canonical unified query surface: UQL (unified multi-modal), federated SQL
-    extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-    UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
-    this endpoint remains their canonical home. Authenticated programmatic SQL
-    is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
-    replacement for this UQL/federated surface.
+     The required foundation identity is inserted by the root tenant middleware
+    after authentication. A router mounted without that middleware fails closed
+    at extraction instead of constructing an anonymous authorization carrier.
 
     Args:
         x_tenant_id (Union[Unset, str]):
-        body (QueryRequest):
+        body (SqlRequest): One SQL statement executed through the shared SQL authority.
+
+            Parameter binding is intentionally not advertised yet: the relational
+            execution port currently has no typed binding contract. Callers must not be
+            offered a field that an adapter would silently ignore or interpolate.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, QueryResponse]
+        Union[ErrorResponse, SqlResponse]
     """
 
     return (

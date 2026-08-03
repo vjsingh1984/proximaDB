@@ -721,7 +721,7 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
         query: String,
         _collection: Option<String>,
         identity: proximadb_runtime::PortIdentity<'_>,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<proximadb_runtime::SqlExecutionResult> {
         use crate::query::QueryResultData;
         let tenant_id = identity.tenant_id;
 
@@ -744,11 +744,13 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
                     .map_err(|e| anyhow!("EXPLAIN failed: {}", e))?;
                     let plan_json = serde_json::to_string_pretty(&explanation)
                         .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e));
-                    return Ok(serde_json::json!({
-                        "columns": ["QUERY PLAN"],
-                        "column_types": ["jsonb"],
-                        "records": [{ "QUERY PLAN": plan_json }],
-                    }));
+                    return Ok(proximadb_runtime::SqlExecutionResult {
+                        columns: vec!["QUERY PLAN".to_string()],
+                        column_types: vec!["JSONB".to_string()],
+                        rows: vec![vec![proximadb_data_model::ProximaValue::String(plan_json)]],
+                        rows_scanned: 1,
+                        ..Default::default()
+                    });
                 }
                 Ok(None) => return Err(anyhow!("Invalid EXPLAIN statement")),
                 Err(e) => return Err(anyhow!("EXPLAIN parse error: {}", e)),
@@ -771,13 +773,11 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
         )
         .await?
         {
-            return Ok(serde_json::json!({
-                "columns": [],
-                "column_types": [],
-                "records": [],
-                // Surfaced as `rows_returned` by the runtime handler (writes).
-                "rows_affected": rows_affected,
-            }));
+            return Ok(proximadb_runtime::SqlExecutionResult {
+                rows_affected: Some(rows_affected),
+                rows_scanned: rows_affected,
+                ..Default::default()
+            });
         }
 
         // TD-121 relational SELECT routing — parity with the runtime handler's
@@ -807,7 +807,7 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
             .await
         {
             return match outcome {
-                Ok(result) => Ok(pipeline_result_to_json(result)),
+                Ok(result) => Ok(pipeline_result_to_sql_result(result)),
                 Err(msg) => Err(anyhow!("Relational query execution failed: {msg}")),
             };
         }
@@ -918,46 +918,37 @@ pub async fn try_sql_write_dispatch(
     Ok(None)
 }
 
-/// Convert a relational-pipeline (`try_run_select`) result into the SQL
-/// port-path JSON envelope (`{ columns, column_types, records }`), reusing
-/// [`shape_sql_records`] so the relational route (TD-121) shapes an identical
-/// response to the facade path (TD-104 parity). Each `ProximaValue` cell is
-/// serialized via its `serde::Serialize` impl.
-fn pipeline_result_to_json(
+/// Preserve a relational-pipeline result as typed SQL output. No wire-format
+/// conversion occurs at this application seam.
+fn pipeline_result_to_sql_result(
     result: crate::query::execution::ExecutionPipelineResult,
-) -> serde_json::Value {
-    let col_names: Vec<String> = result
+) -> proximadb_runtime::SqlExecutionResult {
+    let columns: Vec<String> = result
         .schema
         .columns
         .iter()
         .map(|c| c.name.clone())
         .collect();
-    let records: Vec<serde_json::Value> = result
-        .rows
-        .into_iter()
-        .map(|row| {
-            let mut obj = serde_json::Map::new();
-            for (name, cell) in col_names.iter().zip(row.iter()) {
-                obj.insert(
-                    name.clone(),
-                    serde_json::to_value(cell).unwrap_or(serde_json::Value::Null),
-                );
-            }
-            serde_json::Value::Object(obj)
-        })
+    let column_types = result
+        .schema
+        .columns
+        .iter()
+        .map(|c| format!("{:?}", c.ty))
         .collect();
-    shape_sql_records(records)
+    let rows_scanned = result.rows.len() as u64;
+    proximadb_runtime::SqlExecutionResult {
+        columns,
+        column_types,
+        rows: result.rows,
+        rows_scanned,
+        ..Default::default()
+    }
 }
 
-/// Assemble the SQL port-path response envelope that the runtime handler's
-/// `execute_sql_v1` parses: `{ "columns", "column_types", "records" }`.
-///
-/// Columns and their coarse types are derived from the first record's object
-/// keys, mirroring the ROOT handler's `convert_query_result_to_sql_response`
-/// so the port path shapes an identical `ExecuteQueryResponse`. This is the
-/// contract that was previously broken — the adapter emitted `{ "rows": … }`,
-/// which the runtime handler does not read (TD-104 / seam S1).
-fn shape_sql_records(records: Vec<serde_json::Value>) -> serde_json::Value {
+/// Normalize the legacy facade's JSON-shaped fallback into canonical typed
+/// rows. This is the one migration bridge for non-relational facade results;
+/// every downstream consumer receives `ProximaValue` rather than JSON.
+fn shape_sql_records(records: Vec<serde_json::Value>) -> proximadb_runtime::SqlExecutionResult {
     let mut columns: Vec<String> = Vec::new();
     let mut column_types: Vec<String> = Vec::new();
     if let Some(serde_json::Value::Object(map)) = records.first() {
@@ -965,13 +956,33 @@ fn shape_sql_records(records: Vec<serde_json::Value>) -> serde_json::Value {
             columns.push(k.clone());
             column_types.push(infer_json_type(v));
         }
+    } else if !records.is_empty() {
+        columns.push("value".to_string());
+        column_types.push(infer_json_type(&records[0]));
     }
 
-    serde_json::json!({
-        "columns": columns,
-        "column_types": column_types,
-        "records": records,
-    })
+    let rows = records
+        .iter()
+        .map(|record| match record {
+            serde_json::Value::Object(map) => columns
+                .iter()
+                .map(|column| {
+                    map.get(column).map_or(
+                        proximadb_data_model::ProximaValue::Null,
+                        proximadb_records::conversions::json_to_proxima,
+                    )
+                })
+                .collect(),
+            value => vec![proximadb_records::conversions::json_to_proxima(value)],
+        })
+        .collect();
+    proximadb_runtime::SqlExecutionResult {
+        columns,
+        column_types,
+        rows,
+        rows_scanned: records.len() as u64,
+        ..Default::default()
+    }
 }
 
 /// Infer a coarse SQL type label for a JSON value (column-type metadata).
@@ -1005,38 +1016,32 @@ fn infer_json_type(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod sql_envelope_tests {
     use super::{infer_json_type, shape_sql_records};
+    use proximadb_data_model::ProximaValue;
 
     #[test]
-    fn shape_emits_columns_types_and_records_keys() {
-        // The runtime handler reads `columns`/`column_types`/`records` — NOT the
-        // old `rows` key. This guards the contract that was previously broken.
+    fn shape_normalizes_json_fallback_to_typed_rows() {
         let records = vec![serde_json::json!({"id": 7, "name": "alice", "score": 0.5})];
-        let env = shape_sql_records(records.clone());
+        let result = shape_sql_records(records);
 
-        let cols: Vec<String> = env["columns"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap().to_string())
-            .collect();
         // serde_json::Map preserves insertion order? It is BTreeMap by default →
         // keys are sorted. Assert as a set to stay order-agnostic.
-        assert_eq!(cols.len(), 3);
-        assert!(cols.contains(&"id".to_string()));
-        assert!(cols.contains(&"name".to_string()));
-        assert!(cols.contains(&"score".to_string()));
-
-        assert_eq!(env["column_types"].as_array().unwrap().len(), 3);
-        assert_eq!(env["records"].as_array().unwrap().len(), 1);
-        assert!(env.get("rows").is_none(), "must not emit legacy `rows` key");
+        assert_eq!(result.columns.len(), 3);
+        assert!(result.columns.contains(&"id".to_string()));
+        assert!(result.columns.contains(&"name".to_string()));
+        assert!(result.columns.contains(&"score".to_string()));
+        assert_eq!(result.column_types.len(), 3);
+        assert_eq!(result.rows.len(), 1);
+        assert!(result.rows[0].contains(&ProximaValue::Int64(7)));
+        assert!(result.rows[0].contains(&ProximaValue::String("alice".to_string())));
+        assert!(result.rows[0].contains(&ProximaValue::Float64(0.5)));
     }
 
     #[test]
     fn shape_empty_records_yields_empty_columns() {
-        let env = shape_sql_records(vec![]);
-        assert_eq!(env["columns"].as_array().unwrap().len(), 0);
-        assert_eq!(env["column_types"].as_array().unwrap().len(), 0);
-        assert_eq!(env["records"].as_array().unwrap().len(), 0);
+        let result = shape_sql_records(vec![]);
+        assert!(result.columns.is_empty());
+        assert!(result.column_types.is_empty());
+        assert!(result.rows.is_empty());
     }
 
     #[test]

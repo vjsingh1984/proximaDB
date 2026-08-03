@@ -11,6 +11,7 @@
 //! pgwire setup + trust-auth SELECT ----+
 //!                                      v
 //! authenticated gRPC ExecuteQuery -> relational DML scan
+//! authenticated REST /api/v2/sql ----> shared typed SQL port
 //!                                      ^
 //! authenticated REST policy control -> shared live ABAC stores
 //! ```
@@ -29,8 +30,8 @@ use std::time::Duration;
 
 use proximadb::core::Config;
 use proximadb::database::ProximaDB;
-use proximadb::proto::proximadb_v2::V2QueryRequest;
 use proximadb::proto::proximadb_v2::proxima_record_service_client::ProximaRecordServiceClient;
+use proximadb::proto::proximadb_v2::{V2QueryRequest, V2QueryResponse};
 use proximadb::security::SecurityMode;
 use proximadb::security::auth_service::{
     ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, MtlsConfig, SSOConfig,
@@ -297,7 +298,7 @@ async fn connect_grpc(server: &LiveServer) -> GrpcClient {
     }
 }
 
-async fn grpc_row_count(client: &mut GrpcClient, api_key: &str, sql: &str) -> usize {
+async fn grpc_query(client: &mut GrpcClient, api_key: &str, sql: &str) -> V2QueryResponse {
     let mut request = tonic::Request::new(V2QueryRequest {
         query: sql.to_string(),
         collection_id: String::new(),
@@ -318,7 +319,37 @@ async fn grpc_row_count(client: &mut GrpcClient, api_key: &str, sql: &str) -> us
         .await
         .unwrap_or_else(|error| panic!("gRPC ExecuteQuery `{sql}`: {error}"))
         .into_inner()
-        .rows
+}
+
+async fn grpc_row_count(client: &mut GrpcClient, api_key: &str, sql: &str) -> usize {
+    grpc_query(client, api_key, sql).await.rows.len()
+}
+
+async fn rest_sql_row_count(
+    client: &HttpClient,
+    server: &LiveServer,
+    api_key: &str,
+    sql: &str,
+) -> usize {
+    let response = client
+        .post(server.admin_url("/api/v2/sql"))
+        .header(reqwest::header::AUTHORIZATION, format!("Api-Key {api_key}"))
+        .json(&json!({"query": sql}))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("REST SQL `{sql}`: {error}"));
+    let status = response.status();
+    let body: Value = response
+        .json()
+        .await
+        .unwrap_or_else(|error| panic!("REST SQL `{sql}` returned invalid JSON: {error}"));
+    assert!(
+        status.is_success(),
+        "REST SQL `{sql}` failed with {status}: {body}"
+    );
+    body["rows"]
+        .as_array()
+        .unwrap_or_else(|| panic!("REST SQL response has no rows array: {body}"))
         .len()
 }
 
@@ -437,9 +468,9 @@ async fn pgwire_reads_follow_live_rest_policy_provision_and_revoke_inner() {
     );
 }
 
-/// The supported programmatic SQL surface is authenticated gRPC
-/// `ProximaRecordService.ExecuteQuery` (not the retired SQL-over-REST route).
-/// Keep this as a separate live ratchet from pgwire: gRPC obtains the subject
+/// The protobuf programmatic SQL surface is authenticated gRPC
+/// `ProximaRecordService.ExecuteQuery`. Keep this as a separate live ratchet
+/// from pgwire and REST: gRPC obtains the subject
 /// from a verified API key and therefore proves the load-bearing authenticated
 /// carrier, not pgwire's deliberately trust-asserted user name.
 #[test]
@@ -522,10 +553,24 @@ async fn grpc_reads_follow_live_rest_policy_provision_and_revoke_inner() {
         binding["tenant_stable_id"].as_u64()
     );
 
+    let permitted = grpc_query(&mut alice, ALICE_KEY, &sql).await;
     assert_eq!(
-        grpc_row_count(&mut alice, ALICE_KEY, &sql).await,
+        permitted.rows.len(),
         2,
         "the existing authenticated gRPC client must observe the hot permit"
+    );
+    assert!(
+        permitted.rows.iter().all(|row| {
+            row.values.get("id").is_some_and(|value| {
+                value.value.as_ref().is_some_and(|inner| {
+                    !matches!(
+                        inner,
+                        proximadb::proto::proximadb_v2::typed_value::Value::TextValue(_)
+                    )
+                })
+            })
+        }),
+        "v2 gRPC SQL must carry native TypedValue cells, not JSON-wrapped v1 SqlValue"
     );
     assert_eq!(
         grpc_row_count(&mut bob, BOB_KEY, &sql).await,
@@ -548,5 +593,106 @@ async fn grpc_reads_follow_live_rest_policy_provision_and_revoke_inner() {
         grpc_row_count(&mut alice, ALICE_KEY, &sql).await,
         0,
         "the existing authenticated gRPC client must observe the hot revoke"
+    );
+}
+
+/// The canonical SQL-over-REST surface must carry the same verified identity
+/// and reach the same ABAC-protected relational scan as pgwire and gRPC.
+#[test]
+fn rest_sql_reads_follow_live_policy_provision_and_revoke() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    runtime.block_on(rest_sql_reads_follow_live_policy_provision_and_revoke_inner());
+}
+
+async fn rest_sql_reads_follow_live_policy_provision_and_revoke_inner() {
+    let server = LiveServer::start().await.expect("start live server");
+    let setup = connect(&server, "setup-operator").await;
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let table = format!("abac_rest_sql_live_{suffix}");
+    exec(
+        &setup,
+        &format!("CREATE TABLE {table} (id INT PRIMARY KEY, value INT)"),
+    )
+    .await;
+    exec(&setup, &format!("INSERT INTO {table} VALUES (1, 10)")).await;
+    exec(&setup, &format!("INSERT INTO {table} VALUES (2, 20)")).await;
+
+    let object_id = table_object_id(&setup, &table).await;
+    let table_scope = u32::try_from(object_id).expect("ABAC table scope is u32");
+    let sql = format!("SELECT id FROM {table}");
+    let http = HttpClient::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("HTTP client");
+
+    assert_eq!(
+        rest_sql_row_count(&http, &server, ALICE_KEY, &sql).await,
+        0,
+        "an authenticated but unprovisioned REST SQL subject must fail closed"
+    );
+
+    let operator_auth = format!("Api-Key {OPERATOR_KEY}");
+    let response = http
+        .post(server.admin_url("/api/v2/abac/attribute-bindings"))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "subject_id": "alice",
+            "tenant": TENANT,
+            "attrs": {}
+        }))
+        .send()
+        .await
+        .expect("provision alice binding");
+    let binding = assert_admin_success(response, "provision attribute binding").await;
+
+    let policy_object_id = object_id + 3_000_000_000;
+    let policy_path = format!("/api/v2/abac/policy-bindings/{TENANT}/{policy_object_id}");
+    let response = http
+        .put(server.admin_url(&policy_path))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "scope": {"Table": table_scope},
+            "effect": "Permit"
+        }))
+        .send()
+        .await
+        .expect("provision table permit");
+    let policy = assert_admin_success(response, "provision table permit").await;
+    assert_eq!(
+        policy["tenant_stable_id"].as_u64(),
+        binding["tenant_stable_id"].as_u64()
+    );
+
+    assert_eq!(
+        rest_sql_row_count(&http, &server, ALICE_KEY, &sql).await,
+        2,
+        "REST SQL must observe the hot permit"
+    );
+    assert_eq!(
+        rest_sql_row_count(&http, &server, BOB_KEY, &sql).await,
+        0,
+        "the table permit must not admit another REST principal"
+    );
+
+    let response = http
+        .delete(server.admin_url(&policy_path))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .send()
+        .await
+        .expect("revoke table permit");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        rest_sql_row_count(&http, &server, ALICE_KEY, &sql).await,
+        0,
+        "REST SQL must observe the hot revoke"
     );
 }

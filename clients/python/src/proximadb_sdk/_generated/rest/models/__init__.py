@@ -109,6 +109,9 @@ from .schema_response import SchemaResponse
 from .search_entities_request import SearchEntitiesRequest
 from .search_entities_request_filters import SearchEntitiesRequestFilters
 from .search_entities_response import SearchEntitiesResponse
+from .sql_request import SqlRequest
+from .sql_response import SqlResponse
+from .sql_response_rows_item import SqlResponseRowsItem
 from .text_field_input import TextFieldInput
 from .text_field_output import TextFieldOutput
 from .traverse_request import TraverseRequest
@@ -229,6 +232,9 @@ __all__ = (
     "SearchEntitiesRequest",
     "SearchEntitiesRequestFilters",
     "SearchEntitiesResponse",
+    "SqlRequest",
+    "SqlResponse",
+    "SqlResponseRowsItem",
     "TextFieldInput",
     "TextFieldOutput",
     "TraverseRequest",

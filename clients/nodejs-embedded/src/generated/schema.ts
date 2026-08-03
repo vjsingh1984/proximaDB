@@ -721,9 +721,10 @@ export interface paths {
          * Execute AQL or UQL through the shared query facade.
          * @description The canonical unified query surface: UQL (unified multi-modal), federated SQL
          *     extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-         *     pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
-         *     pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
-         *     only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
+         *     UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
+         *     this endpoint remains their canonical home. Authenticated programmatic SQL
+         *     is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
+         *     replacement for this UQL/federated surface.
          */
         post: operations["executeQuery"];
         delete?: never;
@@ -743,6 +744,28 @@ export interface paths {
         put?: never;
         /** Explain an AQL or UQL query through the shared query facade. */
         post: operations["explainQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/sql": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute one authenticated SQL statement.
+         * @description The required foundation identity is inserted by the root tenant middleware
+         *     after authentication. A router mounted without that middleware fails closed
+         *     at extraction instead of constructing an anonymous authorization carrier.
+         */
+        post: operations["executeSql"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1831,6 +1854,41 @@ export interface components {
             results: components["schemas"]["EntitySearchResult"][];
             /** Format: int32 */
             total: number;
+        };
+        /**
+         * @description One SQL statement executed through the shared SQL authority.
+         *
+         *     Parameter binding is intentionally not advertised yet: the relational
+         *     execution port currently has no typed binding contract. Callers must not be
+         *     offered a field that an adapter would silently ignore or interpolate.
+         */
+        SqlRequest: {
+            /** @description Optional collection context used by vector/graph SQL extensions. */
+            collection?: string | null;
+            query: string;
+            /**
+             * Format: int64
+             * @description Per-request deadline. Defaults to 30 seconds and is capped at 5 minutes.
+             */
+            timeout_ms?: number | null;
+        };
+        /**
+         * @description Stable JSON envelope for SQL reads and writes.
+         *
+         *     For reads, `rows_returned` is the row count. For DDL/DML, the shared SQL
+         *     authority reports the affected count in `rows_returned` and `rows` is empty.
+         */
+        SqlResponse: {
+            column_types: string[];
+            columns: string[];
+            /** Format: int64 */
+            execution_time_ms: number;
+            request_id: string;
+            rows: Record<string, never>[];
+            /** Format: int64 */
+            rows_returned: number;
+            /** Format: int64 */
+            rows_scanned: number;
         };
         /**
          * @description Input format for TEXT fields
@@ -3529,6 +3587,69 @@ export interface operations {
             };
             /** @description Invalid request. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    executeSql: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SqlRequest"];
+            };
+        };
+        responses: {
+            /** @description SQL result or write count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SqlResponse"];
+                };
+            };
+            /** @description Invalid SQL request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Query deadline exceeded. */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Write lock conflict. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SQL execution failure. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -2325,7 +2325,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         let resp = self
             .api_handlers
-            .execute_sql_v1(
+            .execute_sql(
                 q.query,
                 None,
                 collection,
@@ -2353,14 +2353,25 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                     Status::internal(format!("ExecuteQuery failed: {e}"))
                 }
             })?;
+        let rows_returned = resp.rows_affected.unwrap_or(resp.rows.len() as u64);
         let rows = resp
             .rows
             .into_iter()
             .map(|row| {
                 let values = row
-                    .fields
                     .into_iter()
-                    .filter_map(|f| f.value.map(|v| (f.key, sql_value_to_typed(&v))))
+                    .enumerate()
+                    .map(|(index, value)| {
+                        let column = resp
+                            .columns
+                            .get(index)
+                            .cloned()
+                            .unwrap_or_else(|| format!("column_{index}"));
+                        (
+                            column,
+                            proximadb_records::proto_v2::proxima_value_to_typed_value(&value),
+                        )
+                    })
                     .collect();
                 V2QueryRow { values }
             })
@@ -2368,7 +2379,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         Ok(Response::new(V2QueryResponse {
             rows,
             columns: resp.columns,
-            rows_returned: resp.rows_returned,
+            rows_returned,
             execution_time_ms: resp.execution_time_ms,
         }))
     }
@@ -2515,17 +2526,6 @@ fn collection_to_v2(c: crate::proto::proximadb_v1::Collection) -> V2Collection {
         }),
         created_at: c.created_at,
         updated_at: c.updated_at,
-    }
-}
-
-/// Map a v1 SqlValue to a v2 TypedValue. Values are carried as JSON text (the
-/// v1 proto is serde-serializable); the SDK decodes the text. Full per-type
-/// TypedValue mapping is a follow-up refinement.
-fn sql_value_to_typed(v: &crate::proto::proximadb_v1::SqlValue) -> proximadb_v2::TypedValue {
-    let text = serde_json::to_string(v).unwrap_or_default();
-    proximadb_v2::TypedValue {
-        declared_type: proximadb_v2::ColumnDataType::Text as i32,
-        value: Some(proximadb_v2::typed_value::Value::TextValue(text)),
     }
 }
 

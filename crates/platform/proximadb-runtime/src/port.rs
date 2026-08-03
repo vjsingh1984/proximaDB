@@ -147,6 +147,17 @@ pub trait ApiHandlersPort: Send + Sync {
 
     // ── SQL ───────────────────────────────────────────────────────────────────
 
+    /// Execute SQL while retaining canonical `ProximaValue` cells across the
+    /// application boundary. New transports must use this method.
+    async fn execute_sql(
+        &self,
+        query: String,
+        parameters: Option<Vec<ProximaValue>>,
+        collection: Option<String>,
+        identity: crate::service_ports::PortIdentity<'_>,
+    ) -> Result<crate::service_ports::SqlExecutionResult>;
+
+    /// Legacy v1 protobuf compatibility adapter.
     async fn execute_sql_v1(
         &self,
         query: String,

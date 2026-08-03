@@ -77,7 +77,7 @@ pub(crate) mod test_support {
     };
     use proximadb_runtime::{
         ApiHandlersPort, CollectionPort, CollectionSchemaMetadata, CollectionSchemaUpdate,
-        PortIdentity, QueryAdapterPort, UnifiedHandlers, VectorOpsPort,
+        PortIdentity, QueryAdapterPort, SqlExecutionResult, UnifiedHandlers, VectorOpsPort,
     };
     use serde_json::Value as JsonValue;
 
@@ -285,6 +285,46 @@ pub(crate) mod test_support {
             });
             Ok(self.sql_response.lock().unwrap().clone())
         }
+
+        async fn execute_sql(
+            &self,
+            query: String,
+            parameters: Option<Vec<ProximaValue>>,
+            collection: Option<String>,
+            identity: proximadb_runtime::PortIdentity<'_>,
+        ) -> Result<SqlExecutionResult> {
+            self.calls.lock().unwrap().push(ApiCall::Sql {
+                query,
+                parameter_count: parameters.as_ref().map(Vec::len),
+                collection,
+                tenant_id: identity.tenant_id.map(ToOwned::to_owned),
+                subject: identity.subject.map(ToOwned::to_owned),
+                tenant_stable_id: identity.tenant_stable_id,
+                auth_class: identity.auth_class,
+            });
+            let response = self.sql_response.lock().unwrap().clone();
+            Ok(SqlExecutionResult {
+                columns: response.columns,
+                column_types: response.column_types,
+                rows: response
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        row.fields
+                            .iter()
+                            .map(|field| {
+                                field.value.as_ref().map_or(ProximaValue::Null, |value| {
+                                    proximadb_records::conversions::sql_value_to_proxima(value)
+                                })
+                            })
+                            .collect()
+                    })
+                    .collect(),
+                rows_scanned: response.rows_scanned,
+                execution_time_ms: response.execution_time_ms,
+                ..Default::default()
+            })
+        }
     }
 
     struct NoopCollectionPort;
@@ -400,8 +440,8 @@ pub(crate) mod test_support {
             _query: String,
             _collection: Option<String>,
             _identity: PortIdentity<'_>,
-        ) -> Result<JsonValue> {
-            Ok(JsonValue::Array(Vec::new()))
+        ) -> Result<SqlExecutionResult> {
+            Ok(SqlExecutionResult::default())
         }
     }
 
@@ -653,7 +693,8 @@ mod tests {
                 )
                 .await
                 .unwrap()
-                .is_array()
+                .rows
+                .is_empty()
         );
     }
 }
