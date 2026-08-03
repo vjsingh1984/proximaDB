@@ -286,32 +286,40 @@ impl SstEngine {
     /// error or for non-`SST1` segments (Arrow/PAX), so the gate then falls through
     /// to the normal approximate/orchestrated path.
     async fn segment_vector_count(&self, storage_url: &str) -> usize {
-        use crate::storage::engines::sst::SstableHeader;
         let files = match self.discover_sstable_files(storage_url).await {
             Ok(files) => files,
             Err(_) => return 0,
         };
         let mut total = 0usize;
         for file_path in &files {
-            let Ok(fs) = self.filesystem().get_filesystem(file_path) else {
-                continue;
-            };
-            let Ok(prefix) = fs.read_range(file_path, 0, 8).await else {
-                continue;
-            };
-            if prefix.len() < 8 || &prefix[0..4] != b"SST1" {
-                continue;
-            }
-            let header_len =
-                u32::from_le_bytes([prefix[4], prefix[5], prefix[6], prefix[7]]) as u64;
-            let Ok(header_data) = fs.read_range(file_path, 8, header_len).await else {
-                continue;
-            };
-            if let Ok(header) = bincode::deserialize::<SstableHeader>(&header_data) {
-                total += header.entry_count as usize;
+            if let Ok(Some(entry_count)) = self.legacy_sst_entry_count(file_path).await {
+                total = total.saturating_add(entry_count);
             }
         }
         total
+    }
+
+    /// Read the count carried by a legacy `SST1` header.
+    ///
+    /// Current PAX files expose no useful count through this legacy header, so
+    /// their durable suffix is enough to return `None` without a paid magic
+    /// probe. Unknown/non-PAX paths still sniff the header for mixed-format
+    /// safety.
+    async fn legacy_sst_entry_count(&self, file_path: &str) -> Result<Option<usize>> {
+        use crate::storage::engines::sst::SstableHeader;
+
+        if file_path.ends_with(".pax") {
+            return Ok(None);
+        }
+        let fs = self.filesystem().get_filesystem(file_path)?;
+        let prefix = fs.read_range(file_path, 0, 8).await?;
+        if prefix.len() < 8 || &prefix[0..4] != b"SST1" {
+            return Ok(None);
+        }
+        let header_len = u32::from_le_bytes([prefix[4], prefix[5], prefix[6], prefix[7]]) as u64;
+        let header_data = fs.read_range(file_path, 8, header_len).await?;
+        let header: SstableHeader = bincode::deserialize(&header_data)?;
+        Ok(Some(header.entry_count as usize))
     }
 
     /// TD-165: exact brute-force search over the collection's segment(s), bypassing
@@ -363,6 +371,7 @@ impl SstEngine {
     /// L2-validated (recall 0.932 @ N=100k). Other metrics stay on the generic scan
     /// until the cascade is metric-generalized + re-validated (follow-up).
     #[allow(clippy::too_many_arguments)]
+    #[cfg_attr(not(feature = "cold-deletion-vectors"), allow(unused_variables))]
     async fn try_pax_cascade(
         &self,
         sstable_path: &str,
@@ -372,6 +381,7 @@ impl SstEngine {
         distance_metric: DistanceMetric,
         collection_id: &str,
         collection_root: &str,
+        snapshot_lsn: u64,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
         use proximadb_block_format::RankMetric;
         // Map the query metric to a cascade rank metric. Dot/max-IP and exotic
@@ -419,6 +429,30 @@ impl SstEngine {
                 )
                 .await?;
                 if let Some(hits) = coalesced_hits {
+                    // TD-DELVEC-1 WI-4 slice 2: merge-on-read on the RaBitQ ANN
+                    // path — warm this segment's deletion vector, then drop hits
+                    // whose row position (`CascadeHit::position`, the global row
+                    // index the coalesced scan scored = the space the DV keys on)
+                    // is deleted as of the scan's snapshot LSN. A cold delete is
+                    // invisible on the cascade path too. Best-effort: no DV store
+                    // or a load failure ⇒ no skipping (degraded, not a query
+                    // failure). Under the default build this filter is cfg'd out.
+                    #[cfg(feature = "cold-deletion-vectors")]
+                    let hits = if let Some(dv) = self.deletion_vector_store.as_ref() {
+                        let _ = dv.load(sstable_path).await;
+                        let mut kept = Vec::with_capacity(hits.len());
+                        for h in hits {
+                            if !dv
+                                .is_deleted_as_of(sstable_path, h.position, snapshot_lsn)
+                                .await
+                            {
+                                kept.push(h);
+                            }
+                        }
+                        kept
+                    } else {
+                        hits
+                    };
                     let records = hits
                         .into_iter()
                         .map(|h| {
@@ -1086,6 +1120,23 @@ impl SstEngine {
             storage_url
         );
 
+        // TD-DELVEC-1 WI-4: capture the scan's snapshot LSN once per direct-scan
+        // invocation for merge-on-read deletion-vector filtering in
+        // `search_pax_file_exact`. Captured at this convergence point — every route
+        // that reaches a `.pax` exact read funnels through here (exact segment scan,
+        // orchestrated AXIS fallback, and plain direct search) — so cold deletes are
+        // hidden uniformly across all of them. A later capture is strictly correct
+        // for slice 1's "hide deletes" goal (a larger LSN surfaces more deletes to
+        // the filter). Falls back to u64::MAX (see all deletes) when no freshness
+        // source is wired.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let snapshot_lsn = match self.freshness_lsn_source_ref() {
+            Some(src) => src.current_lsn(collection_id).await,
+            None => u64::MAX,
+        };
+        #[cfg(not(feature = "cold-deletion-vectors"))]
+        let snapshot_lsn: u64 = u64::MAX;
+
         let mut all_candidates = Vec::new();
 
         // Phase 7.2 warm-path profiling: emit per-phase elapsed
@@ -1215,6 +1266,7 @@ impl SstEngine {
                                     distance_metric,
                                     collection_id,
                                     storage_url,
+                                    snapshot_lsn,
                                 )
                                 .await
                             {
@@ -1251,6 +1303,7 @@ impl SstEngine {
                                 filter_owned.clone(),
                                 k,
                                 distance_metric,
+                                snapshot_lsn,
                             )
                             .await
                         } else {
@@ -1321,6 +1374,7 @@ impl SstEngine {
                             distance_metric,
                             collection_id,
                             storage_url,
+                            snapshot_lsn,
                         )
                         .await
                     {
@@ -1373,6 +1427,7 @@ impl SstEngine {
                         filter_expression.cloned(),
                         k,
                         distance_metric,
+                        snapshot_lsn,
                     )
                     .await
                 } else {
@@ -1574,6 +1629,18 @@ impl SstEngine {
         use_parallel_morsels: bool,
         use_vectorized: bool,
     ) -> Result<Vec<OptimizedSearchRecord>> {
+        // TD-DELVEC-1 WI-4: capture the scan's snapshot LSN once per single-file
+        // scan (the parallel/arc path's per-file entry) for merge-on-read filtering
+        // in `search_pax_file_exact`. See `fallback_to_direct_search` for the
+        // rationale; u64::MAX (see all deletes) when no freshness source is wired.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let snapshot_lsn = match self.freshness_lsn_source_ref() {
+            Some(src) => src.current_lsn(collection_id).await,
+            None => u64::MAX,
+        };
+        #[cfg(not(feature = "cold-deletion-vectors"))]
+        let snapshot_lsn: u64 = u64::MAX;
+
         // PAX RaBitQ→SQ8 cascade first for `.pax` under a validated metric.
         let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path.ends_with(".pax")
             && matches!(
@@ -1589,6 +1656,7 @@ impl SstEngine {
                     distance_metric,
                     collection_id,
                     storage_url,
+                    snapshot_lsn,
                 )
                 .await
             {
@@ -1628,6 +1696,7 @@ impl SstEngine {
                 filter_expression.cloned(),
                 k,
                 distance_metric,
+                snapshot_lsn,
             )
             .await
         } else if use_pipeline {
@@ -2057,6 +2126,16 @@ impl SstEngine {
     async fn load_sst_header_centroid(&self, file_path: &str) -> Result<Option<(Vec<f32>, f32)>> {
         use crate::storage::engines::sst::SstableHeader;
 
+        // Discovery already classifies current PAX segments by their durable
+        // `.pax` suffix. PAX has its partitioning model in Region A0, not in a
+        // legacy SST1 header centroid, so probing its first 8 bytes can only
+        // return `None`. Avoid one paid ranged GET per PAX segment per query.
+        // Unknown and legacy paths still take the magic-sniff path below,
+        // preserving mixed-format reads.
+        if file_path.ends_with(".pax") {
+            return Ok(None);
+        }
+
         let fs = self.filesystem().get_filesystem(file_path)?;
 
         // Read just the first part of the file to get header
@@ -2365,6 +2444,7 @@ impl SstEngine {
     /// cascade; everything else falls here instead of hitting the
     /// ProximaBlocks-only `sstable_reader` (which cannot decode `.pax`). Recall
     /// is exact for `RawF32` quant and dequantization-bound for `RaBitQ`/`SQ8`.
+    #[cfg_attr(not(feature = "cold-deletion-vectors"), allow(unused_variables))]
     async fn search_pax_file_exact(
         &self,
         pax_path: &str,
@@ -2372,6 +2452,7 @@ impl SstEngine {
         filter_expression: Option<FilterExpression>,
         limit: usize,
         distance_metric: DistanceMetric,
+        snapshot_lsn: u64,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         use proximadb_distance_kernel::engine::{SimilarityResult, UnifiedDistanceCompute};
         use std::sync::Arc;
@@ -2397,11 +2478,34 @@ impl SstEngine {
             records.len()
         );
 
+        // TD-DELVEC-1 WI-4: warm this segment's deletion vector (lazy-load the
+        // `.dv`) so merge-on-read can skip deleted positions below. Best-effort —
+        // a load failure just means no skipping for this segment (the tombstone
+        // still provides read-coherence via is_record_dead until the DV is the
+        // sole mechanism).
+        #[cfg(feature = "cold-deletion-vectors")]
+        if let Some(dv) = &self.deletion_vector_store {
+            let _ = dv.load(pax_path).await;
+        }
+
         let distance_computer = UnifiedDistanceCompute::new(distance_metric);
         let mut candidates: Vec<OptimizedSearchRecord> =
             Vec::with_capacity(records.len().min(limit));
 
-        for record in &records {
+        for (pos, record) in records.iter().enumerate() {
+            // TD-DELVEC-1 WI-4: merge-on-read — skip positions whose deletion
+            // vector bit is set as of the scan's snapshot LSN (captured by the
+            // caller at the direct-scan convergence point). A cold delete is
+            // invisible here.
+            #[cfg(feature = "cold-deletion-vectors")]
+            if let Some(dv) = &self.deletion_vector_store
+                && dv
+                    .is_deleted_as_of(pax_path, pos as u32, snapshot_lsn)
+                    .await
+            {
+                continue;
+            }
+
             // Apply the metadata filter at record level (canonical props), mirroring
             // the ProximaBlocks scan path — PAX is the default format, so filter
             // support here is required, not optional (the Arrow path skips it).
@@ -2650,6 +2754,49 @@ mod tests {
 
         // Test invalid storage URL
         assert!(engine.parse_storage_url("invalid_url").is_err());
+    }
+
+    #[tokio::test]
+    async fn pax_centroid_classification_does_not_probe_object() {
+        let engine = create_test_engine().await;
+        let missing_pax = "file:///definitely-missing/segment.pax";
+        assert!(
+            engine
+                .load_sst_header_centroid(missing_pax)
+                .await
+                .unwrap()
+                .is_none(),
+            "PAX carries its partition model in A0 and must not pay an SST1 magic GET"
+        );
+
+        let missing_legacy = "file:///definitely-missing/segment.sst";
+        assert!(
+            engine
+                .load_sst_header_centroid(missing_legacy)
+                .await
+                .is_err(),
+            "unknown/legacy paths must retain the mixed-format magic sniff"
+        );
+    }
+
+    #[tokio::test]
+    async fn pax_count_classification_does_not_probe_object() {
+        let engine = create_test_engine().await;
+        let missing_pax = "file:///definitely-missing/segment.pax";
+        assert!(
+            engine
+                .legacy_sst_entry_count(missing_pax)
+                .await
+                .unwrap()
+                .is_none(),
+            "PAX has no legacy SST1 count and must not pay a magic GET"
+        );
+
+        let missing_legacy = "file:///definitely-missing/segment.sst";
+        assert!(
+            engine.legacy_sst_entry_count(missing_legacy).await.is_err(),
+            "unknown/legacy count paths must retain the mixed-format magic sniff"
+        );
     }
 
     #[tokio::test]

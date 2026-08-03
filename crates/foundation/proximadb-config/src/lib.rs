@@ -579,95 +579,6 @@ impl Default for HardwareConfig {
     }
 }
 
-/// Metadata backend configuration for cloud and local storage.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetadataBackendConfig {
-    /// Backend type (filestore, memory).
-    pub backend_type: String,
-
-    /// Storage URL (file://, s3://, adls://, gcs://).
-    pub storage_url: String,
-
-    /// Cloud-specific configuration.
-    pub cloud_config: Option<CloudStorageConfig>,
-
-    /// In-memory cache size in megabytes for metadata.
-    pub cache_size_mb: Option<u64>,
-
-    /// Interval in seconds between metadata flush operations.
-    pub flush_interval_secs: Option<u64>,
-}
-
-impl Default for MetadataBackendConfig {
-    fn default() -> Self {
-        Self {
-            backend_type: "filestore".to_string(),
-            storage_url: "file://./metadata".to_string(),
-            cloud_config: None,
-            cache_size_mb: Some(256),
-            flush_interval_secs: Some(60),
-        }
-    }
-}
-
-/// Cloud storage configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CloudStorageConfig {
-    /// AWS S3 configuration.
-    pub s3_config: Option<S3Config>,
-
-    /// Azure Blob Storage configuration.
-    pub azure_config: Option<AzureConfig>,
-
-    /// Google Cloud Storage configuration.
-    pub gcs_config: Option<GcsConfig>,
-}
-
-/// AWS S3 configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct S3Config {
-    /// AWS region (e.g., "us-east-1").
-    pub region: String,
-    /// S3 bucket name.
-    pub bucket: String,
-    /// AWS access key ID (optional if using IAM role).
-    pub access_key_id: Option<String>,
-    /// AWS secret access key (optional if using IAM role).
-    pub secret_access_key: Option<String>,
-    /// Use IAM role-based authentication instead of static keys.
-    pub use_iam_role: bool,
-    /// Custom S3-compatible endpoint URL (e.g., MinIO).
-    pub endpoint: Option<String>,
-}
-
-/// Azure Blob Storage configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AzureConfig {
-    /// Azure Storage account name.
-    pub account_name: String,
-    /// Blob container name.
-    pub container: String,
-    /// Storage account access key (optional if using managed identity).
-    pub access_key: Option<String>,
-    /// Shared Access Signature token (optional).
-    pub sas_token: Option<String>,
-    /// Use Azure Managed Identity for authentication.
-    pub use_managed_identity: bool,
-}
-
-/// Google Cloud Storage configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GcsConfig {
-    /// Google Cloud project ID.
-    pub project_id: String,
-    /// GCS bucket name.
-    pub bucket: String,
-    /// Path to the service account JSON key file.
-    pub service_account_path: Option<String>,
-    /// Use GKE Workload Identity for authentication.
-    pub use_workload_identity: bool,
-}
-
 /// Filesystem configuration for performance optimization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemOptimizationConfig {
@@ -907,10 +818,25 @@ pub struct CompactionConfig {
     /// L0 file count threshold for compaction.
     pub l0_file_threshold: usize,
 
+    /// Query-visible file-count threshold for L1 and higher levels.
+    ///
+    /// This is intentionally lower than the L0 admission threshold: L0
+    /// batches writes, while every steady-state higher-level segment adds a
+    /// search cascade. Two is the smallest threshold that actually reduces
+    /// fanout: a pair of immutable segments is merged once, while the
+    /// single-file rewrite guard prevents pointless level promotion.
+    #[serde(default = "default_higher_level_file_threshold")]
+    pub higher_level_file_threshold: usize,
+
     /// L0 size threshold in MB for compaction.
     pub l0_size_threshold_mb: usize,
 
-    /// Multiplier for higher level thresholds.
+    /// Multiplier for higher-level file-count thresholds.
+    ///
+    /// Vector search pays a read-amplification cost for every query-visible
+    /// segment, so the default is deliberately `1.0`: every level consolidates
+    /// at the L0 threshold. A RocksDB-style `2.0` default optimizes write
+    /// amplification but lets L1/L2 segment counts grow geometrically.
     pub level_multiplier: f64,
 
     /// Maximum number of levels.
@@ -921,19 +847,65 @@ pub struct CompactionConfig {
 
     /// Target output file size in MB for size-based compaction.
     pub target_file_size_mb: usize,
+
+    /// Conservative peak-memory estimate per byte of input segment data.
+    ///
+    /// The initial `12.0` default includes headroom over the 9.85x incremental
+    /// RSS measured by the 3.3M-vector PAX compaction benchmark. This is an
+    /// admission estimate, not an allocation limit; operators can tighten it
+    /// as the streaming writer reduces measured amplification.
+    #[serde(default = "default_compaction_memory_amplification")]
+    pub memory_amplification_factor: f64,
+
+    /// Maximum share of process-visible capacity reserved for compactions.
+    /// Process-visible capacity is cgroup-constrained in containers.
+    #[serde(default = "default_compaction_memory_budget_fraction")]
+    pub memory_budget_fraction: f64,
+
+    /// Maximum share of currently available memory that compactions may
+    /// reserve. This live-pressure guard is applied in addition to the stable
+    /// capacity fraction.
+    #[serde(default = "default_compaction_available_memory_fraction")]
+    pub available_memory_fraction: f64,
+
+    /// Optional absolute ceiling for all in-flight compaction reservations.
+    /// Zero means automatic sizing from capacity and live availability.
+    #[serde(default)]
+    pub max_memory_mb: u64,
 }
 
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
             l0_file_threshold: 5,
+            higher_level_file_threshold: default_higher_level_file_threshold(),
             l0_size_threshold_mb: 256,
-            level_multiplier: 2.0,
+            level_multiplier: 1.0,
             max_levels: 7,
             strategy: "hybrid".to_string(),
             target_file_size_mb: 128,
+            memory_amplification_factor: default_compaction_memory_amplification(),
+            memory_budget_fraction: default_compaction_memory_budget_fraction(),
+            available_memory_fraction: default_compaction_available_memory_fraction(),
+            max_memory_mb: 0,
         }
     }
+}
+
+fn default_higher_level_file_threshold() -> usize {
+    2
+}
+
+fn default_compaction_memory_amplification() -> f64 {
+    12.0
+}
+
+fn default_compaction_memory_budget_fraction() -> f64 {
+    0.25
+}
+
+fn default_compaction_available_memory_fraction() -> f64 {
+    0.5
 }
 
 /// Performance optimization configuration.
@@ -949,15 +921,13 @@ pub struct OptimizationConfig {
 
     /// Enable AXIS indexes for approximate nearest neighbor search.
     ///
-    /// Default is `false` per ADR-070: the co-design PAX scan + survivor cache
-    /// is the default ANN path (recall@10=0.999, ~0.5ms hot for ~600 MB RAM
-    /// per collection, vs AXIS at ~1ms for ~8.6 GB RAM). AXIS remains
-    /// available per collection via `index_configs` (the #1145 gate:
-    /// `pax_off || !index_configs.is_empty()`), independent of this flag.
-    /// NOTE (TD-AXIS-2): this flag is not yet wired to boot-time AxisManager
-    /// initialization — the manager still constructs at startup either way;
-    /// the per-collection gate is what keeps AXIS cost off co-design
-    /// collections today.
+    /// Runtime master switch; the Cargo `axis` feature must also be compiled
+    /// and the collection must explicitly declare `index_configs`. Default is
+    /// `false` per ADR-070: the co-design PAX scan + survivor cache is the
+    /// default ANN path. The lightweight manager value may still be
+    /// constructed to keep the compile-time type graph stable, but it is not
+    /// registered with serving and no AXIS maintenance loops start while this
+    /// flag is false.
     #[serde(default = "default_enable_axis_indexes")]
     pub enable_axis_indexes: bool,
 
@@ -1055,92 +1025,14 @@ impl Default for AdvancedPruneConfig {
     }
 }
 
-/// WAL storage configuration supporting multiple directories and cloud storage.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalStorageConfig {
-    /// Distribution strategy for collections across storage locations.
-    pub distribution_strategy: WalDistributionStrategy,
-
-    /// Whether to keep each collection on a single WAL directory.
-    pub collection_affinity: bool,
-
-    /// Memory flush threshold per collection (bytes).
-    pub memory_flush_size_bytes: usize,
-
-    /// Global WAL size threshold for forced flush (bytes).
-    pub global_flush_threshold: usize,
-
-    /// WAL strategy type (Avro vs Bincode).
-    pub strategy_type: Option<String>,
-
-    /// Memtable type for memory structure.
-    pub memtable_type: Option<String>,
-
-    /// Sync mode for durability vs performance tradeoff.
-    pub sync_mode: Option<String>,
-
-    /// Batch threshold for operations.
-    pub batch_threshold: Option<usize>,
-
-    /// Write buffer size in MB.
-    pub write_buffer_size_mb: Option<usize>,
-
-    /// Maximum concurrent flush operations.
-    pub concurrent_flushes: Option<usize>,
-
-    /// Shrink factor for global threshold management (percentage).
-    pub global_shrink_factor: Option<f64>,
-
-    /// Global manifest location (optional - explicit configuration).
-    pub global_manifest_url: Option<String>,
-
-    /// ADR-069 D2 — time-based WAL flush interval (seconds); absent = engine default.
-    pub flush_interval_secs: Option<u64>,
-
-    /// ADR-069 D6 — per-collection WAL size budget (bytes) for capacity watermarks; absent = disabled.
-    pub wal_max_bytes: Option<usize>,
-
-    /// ADR-069 D3 — fraction of `wal_max_bytes` to force a flush at; absent = engine default.
-    pub high_watermark_pct: Option<f64>,
-
-    /// ADR-069 D3 — fraction of `wal_max_bytes` to apply write backpressure at; absent = engine default.
-    pub critical_watermark_pct: Option<f64>,
-}
-
-/// Strategy for distributing WAL segments across multiple storage directories.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub enum WalDistributionStrategy {
-    /// Round-robin across WAL directories.
-    RoundRobin,
-    /// Hash-based distribution (consistent).
-    Hash,
-    /// Load-balanced distribution (dynamic).
-    #[default]
-    LoadBalanced,
-}
-
-impl Default for WalStorageConfig {
-    fn default() -> Self {
-        Self {
-            global_manifest_url: None,
-            distribution_strategy: WalDistributionStrategy::LoadBalanced,
-            collection_affinity: true,
-            memory_flush_size_bytes: 10 * 1024 * 1024,
-            global_flush_threshold: 4 * 1024 * 1024 * 1024,
-            strategy_type: None,
-            memtable_type: None,
-            sync_mode: None,
-            batch_threshold: None,
-            write_buffer_size_mb: None,
-            concurrent_flushes: None,
-            global_shrink_factor: Some(0.4),
-            flush_interval_secs: None,
-            wal_max_bytes: None,
-            high_watermark_pct: None,
-            critical_watermark_pct: None,
-        }
-    }
-}
+// NOTE: `WalStorageConfig` + `WalDistributionStrategy` were RETIRED
+// (TD-CONFIG-CONSOLIDATE-1, Core Directive #19). They were a stranded
+// decomposition duplicate of the LIVE `WriteBufferUserConfig` (src/core/config.rs)
+// — extracted into this foundation crate but never wired into the assembled
+// `CoreStorageConfig`, and consumed only by a test-only `From<&WalStorageConfig>
+// for WALConfig`. Keeping the dead twin caused drift (fields added to each in
+// parallel). The canonical WAL config is `WriteBufferUserConfig`; do NOT
+// re-add a foundation twin.
 
 // ---------------------------------------------------------------------------
 // Embedding-precision rollout (PR 3 of EMBEDDING_PRECISION_LLD_2026_05_22)
@@ -1234,25 +1126,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wal_storage_defaults_match_root_runtime_expectations() {
-        let config = WalStorageConfig::default();
-
-        assert!(matches!(
-            config.distribution_strategy,
-            WalDistributionStrategy::LoadBalanced
-        ));
-        assert!(config.collection_affinity);
-        assert_eq!(config.memory_flush_size_bytes, 10 * 1024 * 1024);
-        assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024);
-        assert_eq!(config.global_shrink_factor, Some(0.4));
-        // ADR-069 / TD-WAL-1 S1: new flush-control fields default to None (engine defaults apply).
-        assert_eq!(config.flush_interval_secs, None);
-        assert_eq!(config.wal_max_bytes, None);
-        assert_eq!(config.high_watermark_pct, None);
-        assert_eq!(config.critical_watermark_pct, None);
-    }
-
-    #[test]
     fn hardware_defaults_match_root_runtime_expectations() {
         let config = HardwareConfig::default();
 
@@ -1264,17 +1137,6 @@ mod tests {
         assert!(config.enable_gpu_similarity);
         assert_eq!(config.gpu_min_vector_size, 64);
         assert_eq!(config.gpu_min_batch_size, 100);
-    }
-
-    #[test]
-    fn metadata_backend_defaults_match_root_runtime_expectations() {
-        let config = MetadataBackendConfig::default();
-
-        assert_eq!(config.backend_type, "filestore");
-        assert_eq!(config.storage_url, "file://./metadata");
-        assert!(config.cloud_config.is_none());
-        assert_eq!(config.cache_size_mb, Some(256));
-        assert_eq!(config.flush_interval_secs, Some(60));
     }
 
     #[test]
@@ -1457,8 +1319,16 @@ mod tests {
         let config = CompactionConfig::default();
 
         assert_eq!(config.l0_file_threshold, 5);
+        assert_eq!(
+            config.higher_level_file_threshold, 2,
+            "two query-visible files must consolidate instead of stranding a pair"
+        );
         assert_eq!(config.l0_size_threshold_mb, 256);
-        assert_eq!(config.level_multiplier, 2.0);
+        assert_eq!(
+            config.level_multiplier, 1.0,
+            "vector-search levels must consolidate at the L0 threshold; \
+             a RocksDB-style 2.0 multiplier strands query-visible segments"
+        );
         assert_eq!(config.max_levels, 7);
         assert_eq!(config.strategy, "hybrid");
         assert_eq!(config.target_file_size_mb, 128);

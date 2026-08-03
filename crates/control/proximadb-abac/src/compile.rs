@@ -29,6 +29,8 @@
 //! *compile* time; the store holds the already-lowered `FilterExpression`.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 use proximadb_catalog::fc_metamodel::ObjectId;
 use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
@@ -64,7 +66,13 @@ pub trait PredicateObjectStore {
     /// Look up the predicate object registered under `id`. Returns `None` when
     /// unknown, revoked, or in another tenant's scope — [`compile_security_filter`]
     /// treats `None` as fail-closed.
-    fn get(&self, id: ObjectId) -> Option<&FilterExpression>;
+    ///
+    /// Returns an **owned** `FilterExpression` (not a borrow) so a durable
+    /// implementation can hold its cache behind a lock — a reference could not
+    /// escape the read guard. The single consumer
+    /// ([`compile_security_filter`]) already cloned the borrow, so this removes a
+    /// clone rather than adding one.
+    fn get(&self, id: ObjectId) -> Option<FilterExpression>;
 }
 
 /// An in-memory [`PredicateObjectStore`] — the reference implementation.
@@ -98,9 +106,162 @@ impl Default for InMemoryPredicateObjectStore {
 }
 
 impl PredicateObjectStore for InMemoryPredicateObjectStore {
-    fn get(&self, id: ObjectId) -> Option<&FilterExpression> {
-        self.objects.get(&id)
+    fn get(&self, id: ObjectId) -> Option<FilterExpression> {
+        self.objects.get(&id).cloned()
     }
+}
+
+// ===========================================================================
+// FileSystemPredicateObjectStore — durable backing (Phase 5b)
+// ===========================================================================
+
+/// A [`PredicateObjectStore`] backed by an atomic-rename JSON snapshot on the
+/// filesystem — the durable counterpart to [`InMemoryPredicateObjectStore`],
+/// modeled on [`FileSystemPolicyBindingStore`](crate::FileSystemPolicyBindingStore).
+///
+/// This is the second half of the durable substrate that makes ABAC row-level
+/// enforcement work in production: a `PolicyBinding.predicate_ref` points here,
+/// and [`compile_security_filter`] resolves it. Without a durable predicate
+/// store, a binding that carries a predicate ref resolves against an empty
+/// in-memory store in production and denies fail-closed — so only
+/// predicate-free table-level grants evaluated end-to-end. With this store,
+/// admin-defined row predicates (e.g. `dept == $subject.dept`) survive a restart.
+///
+/// **OSS mechanism** (ADR-060): atomic temp-file + rename, load-on-open,
+/// best-effort persist — the same mechanism
+/// [`FileSystemAttributeAuthority`](crate::FileSystemAttributeAuthority) and
+/// [`FileSystemPolicyBindingStore`] use. The commercial crate supplies the
+/// IdP-administered production store; this is the development/reference impl.
+///
+/// Predicate objects are keyed by global catalog `ObjectId` (not tenant-
+/// partitioned), matching [`InMemoryPredicateObjectStore`] and the enforcer's
+/// single shared store — a predicate ref resolves the same `FilterExpression`
+/// regardless of tenant. `Send + Sync` (held by the enforcer behind a shared
+/// `Arc<dyn PredicateObjectStore + Send + Sync>`). The in-memory cache is behind
+/// a [`RwLock`] so an admin write through a shared `Arc` handle is visible to the
+/// live enforcer without a restart (hot-reload): writes take the write-lock and
+/// persist; reads take the read-lock.
+pub struct FileSystemPredicateObjectStore {
+    inner: RwLock<InMemoryPredicateObjectStore>,
+    path: PathBuf,
+}
+
+impl FileSystemPredicateObjectStore {
+    /// Open (or create) the store at `path`. If the file exists, predicate
+    /// objects are loaded — this is the **restart-recovery** path. A missing
+    /// file is an empty store (every ref fails to resolve → deny), not an error.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, PredicateStoreError> {
+        let path = path.as_ref().to_path_buf();
+        let mut inner = InMemoryPredicateObjectStore::new();
+        if path.exists() {
+            let data = std::fs::read(&path).map_err(|e| PredicateStoreError::Unavailable {
+                detail: format!("read {}: {e}", path.display()),
+            })?;
+            let objects: Vec<(ObjectId, FilterExpression)> = serde_json::from_slice(&data)
+                .map_err(|e| PredicateStoreError::Unavailable {
+                    detail: format!("deserialize {}: {e}", path.display()),
+                })?;
+            for (id, expr) in objects {
+                inner.register(id, expr);
+            }
+        }
+        Ok(Self {
+            inner: RwLock::new(inner),
+            path,
+        })
+    }
+
+    /// Register or replace a predicate object and persist immediately (atomic rename).
+    ///
+    /// Takes `&self` (not `&mut self`): the in-memory cache lives behind a
+    /// [`RwLock`], so a shared `Arc<FileSystemPredicateObjectStore>` handle can
+    /// mutate the store — the admin-provisioning path (TD-ABAC control-plane)
+    /// writes through the same instance the live enforcer reads, and the change
+    /// is visible without a restart.
+    pub fn register(&self, id: ObjectId, expr: FilterExpression) {
+        {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.register(id, expr);
+        }
+        let _ = self.persist();
+    }
+
+    /// Remove a predicate object and persist immediately. Subsequent resolves of
+    /// `id` fail-closed. `&self` for the same hot-reload reason as [`register`](Self::register).
+    pub fn revoke(&self, id: ObjectId) {
+        {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.revoke(id);
+        }
+        let _ = self.persist();
+    }
+
+    /// A snapshot of the stored predicate objects — for inspection/audit. Owned
+    /// (not an iterator borrowing `&self`) because the cache is behind a [`RwLock`].
+    pub fn objects(&self) -> Vec<(ObjectId, FilterExpression)> {
+        self.inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .objects
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect()
+    }
+
+    /// Write the full predicate-object set atomically (temp + rename). Re-reads
+    /// the live cache under the read-lock — so it always reflects the latest
+    /// committed state (no lost update under concurrent admin writes).
+    fn persist(&self) -> Result<(), PredicateStoreError> {
+        let objects: Vec<(ObjectId, FilterExpression)> = self
+            .inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .objects
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        let json =
+            serde_json::to_vec_pretty(&objects).map_err(|e| PredicateStoreError::Unavailable {
+                detail: format!("serialize predicate objects: {e}"),
+            })?;
+        let tmp = self.path.with_extension("tmp");
+        std::fs::write(&tmp, &json).map_err(|e| PredicateStoreError::Unavailable {
+            detail: format!("write {}: {e}", tmp.display()),
+        })?;
+        std::fs::rename(&tmp, &self.path).map_err(|e| PredicateStoreError::Unavailable {
+            detail: format!("rename {} → {}: {e}", tmp.display(), self.path.display()),
+        })?;
+        Ok(())
+    }
+}
+
+impl PredicateObjectStore for FileSystemPredicateObjectStore {
+    fn get(&self, id: ObjectId) -> Option<FilterExpression> {
+        self.inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .objects
+            .get(&id)
+            .cloned()
+    }
+}
+
+/// Why a predicate-object store could not be consulted (mirrors
+/// [`PolicyStoreError`](crate::PolicyStoreError)). Only the **outage** case is
+/// modeled — a missing predicate ref is *not* an error, it is a fail-closed
+/// deny (see [`compile_security_filter`]). Callers must treat [`Unavailable`] as
+/// deny: an authorization substrate does not degrade to "allow" when its source
+/// of truth is unreachable.
+///
+/// [`Unavailable`]: PredicateStoreError::Unavailable
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PredicateStoreError {
+    /// The store could not be read or written (file IO, deserialization).
+    #[error("predicate object store unavailable: {detail}")]
+    Unavailable {
+        /// Operator-facing detail.
+        detail: String,
+    },
 }
 
 /// Compile `refs` into a single security `FilterExpression` by resolving each
@@ -124,7 +285,7 @@ pub fn compile_security_filter(
     let mut resolved: Vec<FilterExpression> = Vec::with_capacity(refs.len());
     for id in refs {
         match store.get(*id) {
-            Some(expr) => resolved.push(expr.clone()),
+            Some(expr) => resolved.push(expr),
             None => {
                 // A missing predicate ref is a deny — the policy references
                 // something the store cannot find, and the safe answer is
@@ -269,5 +430,79 @@ mod tests {
             }
             _ => panic!("unsatisfiable must be an And"),
         }
+    }
+
+    // --- FileSystemPredicateObjectStore: restart recovery (Phase-5b ratchet) ---
+
+    fn unique_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "proximadb-abac-pred-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    #[test]
+    fn fs_predicate_store_objects_survive_a_restart() {
+        let dir = unique_dir("restart");
+        let path = dir.join("predicates.json");
+
+        // Write phase: register predicate 42 (dept=eng) + 7 (clearance>=3), drop.
+        {
+            let store = FileSystemPredicateObjectStore::open(&path).expect("open");
+            store.register(42, eq_dept("eng"));
+            store.register(7, gt_clearance(3));
+            assert!(path.exists(), "persist wrote the file");
+        }
+
+        // Read phase: reopen — both predicates must survive, byte-identical.
+        let store = FileSystemPredicateObjectStore::open(&path).expect("reopen");
+        assert_eq!(store.get(42), Some(eq_dept("eng")));
+        assert_eq!(store.get(7), Some(gt_clearance(3)));
+        assert!(store.get(999).is_none(), "unknown ref resolves None (deny)");
+
+        // compile_security_filter — the production enforcement path — resolves
+        // the restarted refs, and a missing ref compiles to the fail-closed deny.
+        assert!(compile_security_filter(&[42, 7], &store).is_some());
+        assert!(
+            compile_security_filter(&[42, 999], &store).is_some(),
+            "a missing ref compiles to the unsatisfiable deny, not None"
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn fs_predicate_store_register_and_revoke_persist() {
+        let dir = unique_dir("revoke");
+        let path = dir.join("predicates.json");
+
+        {
+            let store = FileSystemPredicateObjectStore::open(&path).expect("open");
+            store.register(42, eq_dept("eng"));
+            store.revoke(42);
+        }
+        let store = FileSystemPredicateObjectStore::open(&path).expect("reopen");
+        assert!(
+            store.get(42).is_none(),
+            "revoked predicate must not survive restart"
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn fs_predicate_store_missing_file_is_empty_not_error() {
+        let dir = unique_dir("missing");
+        let path = dir.join("nope.json");
+        let store = FileSystemPredicateObjectStore::open(&path).expect("missing ⇒ empty store");
+        assert!(store.get(42).is_none());
+        let _ = std::fs::remove_dir(&dir);
     }
 }

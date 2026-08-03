@@ -76,7 +76,6 @@ use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::trait_components::path_resolver::{
     collection_data_path_typed, collection_index_path_typed, collection_wal_path_typed,
-    typed_paths_enabled,
 };
 use proximadb_storage_common::storage_path::StoragePath;
 
@@ -730,24 +729,34 @@ impl CollectionService {
         if let Some(recall_target) =
             crate::services::collection::recall_target::parse_recall_target(&enriched_config)
         {
-            let applied = crate::services::collection::recall_target::apply_advisor_to_indexes(
-                &mut enriched_config,
-                recall_target,
-            );
-            for advice in &applied {
-                tracing::info!(
-                    target: "collection.recall_target",
-                    collection = %enriched_config.name,
-                    index = %advice.index_name,
-                    recall_target = recall_target,
-                    algorithm = %advice.output.kind.label(),
-                    clamped_by_budget = advice.output.clamped_by_budget,
-                    projected_recall = ?advice.output.projected_recall,
-                    estimated_memory_mb = advice.output.estimated_memory_mb,
-                    estimated_per_query_work = advice.output.estimated_per_query_work,
-                    rationale = %advice.output.rationale,
-                    "auto-sized index from recall_target"
+            // The advisor sizes AXIS HNSW/IVF params — skipped in a PAX-exact-scan
+            // (`axis` off) build; the recall_target tag is still parsed above so the
+            // rest of collection-create is unaffected.
+            #[cfg(feature = "axis")]
+            {
+                let applied = crate::services::collection::recall_target::apply_advisor_to_indexes(
+                    &mut enriched_config,
+                    recall_target,
                 );
+                for advice in &applied {
+                    tracing::info!(
+                        target: "collection.recall_target",
+                        collection = %enriched_config.name,
+                        index = %advice.index_name,
+                        recall_target = recall_target,
+                        algorithm = %advice.output.kind.label(),
+                        clamped_by_budget = advice.output.clamped_by_budget,
+                        projected_recall = ?advice.output.projected_recall,
+                        estimated_memory_mb = advice.output.estimated_memory_mb,
+                        estimated_per_query_work = advice.output.estimated_per_query_work,
+                        rationale = %advice.output.rationale,
+                        "auto-sized index from recall_target"
+                    );
+                }
+            }
+            #[cfg(not(feature = "axis"))]
+            {
+                let _ = recall_target;
             }
         }
 
@@ -1087,12 +1096,13 @@ impl CollectionService {
         // The account string is derived from the tenant context inside
         // `mint_typed_identity_for_collection` (Phase 4 collapses tenant into
         // account; see the helper for the rationale + the Phase 5 forward-note).
-        let typed_identity = if typed_paths_enabled() {
-            self.mint_typed_identity_for_collection(tenant_context, &enriched_config.name, &uuid)
-                .await
-        } else {
-            None
-        };
+        // ADR-0083 rev2 D3: the composite is ALWAYS minted (not env-gated) —
+        // it is the sole collection identity. The PATH layout stays env-gated
+        // (typed_paths_enabled), but the composite on StorageAssignment is
+        // always Some so admission/flush/compaction can key on it.
+        let typed_identity = self
+            .mint_typed_identity_for_collection(tenant_context, &enriched_config.name, &uuid)
+            .await;
 
         // Create storage directories (tenant-isolated if multi-tenant mode)
         let tenant_id = tenant_context.map(|ctx| ctx.tenant_id.as_str());
@@ -2003,10 +2013,13 @@ impl CollectionService {
         // `MiddlewareTenantContext.account_id` is a separate (Phase 5) field not
         // threaded to the storage-layer `StorageTenantContext` yet; when it is,
         // prefer it here. Until then the tenant IS the account (Phase 4 collapse).
-        let account = tenant_context.map(|ctx| ctx.tenant_id.as_str())?;
-        if account.is_empty() {
-            return None;
-        }
+        // ADR-0083 rev2 D3: always mint — assign "default" account for
+        // embedded/single-tenant paths (no tenant_context). The composite is
+        // the sole collection identity, so it must be Some on every create.
+        let account = tenant_context
+            .map(|ctx| ctx.tenant_id.as_str())
+            .filter(|a| !a.is_empty())
+            .unwrap_or("default");
         // Derive the namespace_key the SAME way `upsert_collection_catalog_asset`
         // → `collection_table_identifier` scopes the asset: parse the qualified
         // name, default the namespace to `["default"]` when bare (mirrors
@@ -2201,6 +2214,19 @@ impl CollectionService {
                             warn!(
                                 "⚠️ Failed to check existence of collection directory {}: {}",
                                 collection_dir, e
+                            );
+                        }
+                    }
+                    if cleaned_components == 3 {
+                        let purged = crate::storage::engines::sst::core::purge_warm_tier_prefix(
+                            &collection_dir,
+                        )
+                        .await;
+                        if purged > 0 {
+                            debug!(
+                                collection_dir,
+                                purged,
+                                "Reclaimed retired collection entries from the PAX warm tier"
                             );
                         }
                     }

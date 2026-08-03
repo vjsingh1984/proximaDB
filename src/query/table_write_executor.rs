@@ -15,6 +15,8 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::{ReadContext, SystemReadReason};
 use proximadb_catalog::{
     CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema, ColumnConstraint,
 };
@@ -245,6 +247,11 @@ impl TableRecordSourceReader for TableRecordStoreSourceReader {
                     // TD-113 family: scope the SELECT-source scan to the tenant's
                     // record partition (was `None` → unscoped/cross-tenant read).
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::Statistics,
+                        "table_write_executor [CLIENT-PLACEHOLDER]",
+                    ),
                 )
                 .await?;
             cursor.buffered_records = Some(records);
@@ -510,6 +517,11 @@ async fn enforce_foreign_keys_for_batch(
                         include_props: false,
                     },
                     None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::ForeignKeyResolution,
+                        "table_write_executor",
+                    ),
                 )
                 .await?
                 .is_some();
@@ -979,6 +991,7 @@ mod tests {
             _table_schema: &CatalogTableSchema,
             _request: TableRecordGetRequest,
             _tenant_context: Option<&TenantContext>,
+            #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
         ) -> Result<TableRecordGetResponse> {
             Ok(None)
         }
@@ -1121,6 +1134,7 @@ mod tests {
             _table_schema: &CatalogTableSchema,
             _request: TableRecordGetRequest,
             _tenant_context: Option<&TenantContext>,
+            #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
         ) -> Result<TableRecordGetResponse> {
             Ok(None)
         }
@@ -1130,6 +1144,7 @@ mod tests {
             _table_schema: &CatalogTableSchema,
             _request: TableRecordScanRequest,
             _tenant_context: Option<&TenantContext>,
+            #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
         ) -> Result<Vec<ProximaRecord>> {
             Ok(self.records.clone())
         }
@@ -1365,6 +1380,7 @@ mod tests {
             _table_schema: &CatalogTableSchema,
             request: TableRecordGetRequest,
             _tenant_context: Option<&TenantContext>,
+            #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
         ) -> Result<TableRecordGetResponse> {
             Ok(self.existing_parent_keys.contains(&request.key).then(|| {
                 crate::services::operations::vectors::RichSearchResult {
@@ -1698,6 +1714,7 @@ mod tests {
             _table_schema: &CatalogTableSchema,
             _request: TableRecordGetRequest,
             _tenant_context: Option<&TenantContext>,
+            #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
         ) -> Result<TableRecordGetResponse> {
             Ok(None)
         }
@@ -1707,6 +1724,7 @@ mod tests {
             _table_schema: &CatalogTableSchema,
             _request: TableRecordScanRequest,
             _tenant_context: Option<&TenantContext>,
+            #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
         ) -> Result<Vec<ProximaRecord>> {
             Ok(Vec::new())
         }

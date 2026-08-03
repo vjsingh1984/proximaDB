@@ -1448,6 +1448,8 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         request: Request<TypedSearchRequest>,
     ) -> Result<Response<TypedSearchResponse>, Status> {
         let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
+        let subject = grpc_auth::user_id(&request);
+        let tenant_stable_id = grpc_auth::tenant_stable_id(&request);
         grpc_auth::enforce_data_plane_request(
             &request,
             "search",
@@ -1476,7 +1478,21 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             crate::observability::predicate_diagnostics::scope(async {
                 let outcome = self
                     .record_ops
-                    .handle_record_search_for_tenant(search_request, Some(tenant_id.as_str()))
+                    .handle_record_search_for_tenant(
+                        search_request,
+                        proximadb_runtime::PortIdentity {
+                            tenant_id: Some(tenant_id.as_str()),
+                            subject: subject.as_deref(),
+                            tenant_stable_id,
+                            // gRPC subjects come only from the authenticated
+                            // GrpcAuthContext — no assertion path.
+                            auth_class: if subject.is_some() {
+                                proximadb_tenant::AuthClass::Authenticated
+                            } else {
+                                proximadb_tenant::AuthClass::Anonymous
+                            },
+                        },
+                    )
                     .await;
                 let tq = crate::observability::predicate_diagnostics::take_turboquant_hints();
                 (outcome, tq)
@@ -1534,6 +1550,8 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         request: Request<TypedSearchRequest>,
     ) -> Result<Response<Self::SearchStreamStream>, Status> {
         let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
+        let subject = grpc_auth::user_id(&request);
+        let tenant_stable_id = grpc_auth::tenant_stable_id(&request);
         grpc_auth::enforce_data_plane_request(
             &request,
             "search",
@@ -1559,7 +1577,21 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Execute search
         let response = self
             .record_ops
-            .handle_record_search_for_tenant(search_request, Some(tenant_id.as_str()))
+            .handle_record_search_for_tenant(
+                search_request,
+                proximadb_runtime::PortIdentity {
+                    tenant_id: Some(tenant_id.as_str()),
+                    subject: subject.as_deref(),
+                    tenant_stable_id,
+                    // gRPC subjects come only from the authenticated
+                    // GrpcAuthContext (grpc_auth::user_id) — no assertion path.
+                    auth_class: if subject.is_some() {
+                        proximadb_tenant::AuthClass::Authenticated
+                    } else {
+                        proximadb_tenant::AuthClass::Anonymous
+                    },
+                },
+            )
             .await
             .map_err(|e| Status::internal(format!("Search stream failed: {}", e)))?;
 
@@ -2281,6 +2313,9 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         request: Request<V2QueryRequest>,
     ) -> Result<Response<V2QueryResponse>, Status> {
         let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
+        // TD-ABAC-5: capture the authenticated subject before the request is moved;
+        // threaded to ABAC enforcement at the relational read boundary.
+        let user_id = grpc_auth::user_id(&request);
         let q = request.into_inner();
         let collection = if q.collection_id.is_empty() {
             None
@@ -2289,7 +2324,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         let resp = self
             .api_handlers
-            .execute_sql_v1(q.query, None, collection, Some(tenant_id.as_str()))
+            .execute_sql_v1(
+                q.query,
+                None,
+                collection,
+                Some(tenant_id.as_str()),
+                user_id.as_deref(),
+            )
             .await
             .map_err(|e| {
                 // A DML lock conflict → ABORTED (retryable); other errors → INTERNAL.
@@ -2330,6 +2371,8 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         request: Request<proximadb_v2::GetRecordRequest>,
     ) -> Result<Response<proximadb_v2::GetRecordResponse>, Status> {
         let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
+        let subject = grpc_auth::user_id(&request);
+        let tenant_stable_id = grpc_auth::tenant_stable_id(&request);
         let req = request.into_inner();
         let result = self
             .record_ops
@@ -2340,7 +2383,18 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                     include_vector: req.include_vector,
                     include_props: true,
                 },
-                Some(tenant_id.as_str()),
+                proximadb_runtime::PortIdentity {
+                    tenant_id: Some(tenant_id.as_str()),
+                    subject: subject.as_deref(),
+                    tenant_stable_id,
+                    // gRPC subjects come only from the authenticated
+                    // GrpcAuthContext (grpc_auth::user_id) — no assertion path.
+                    auth_class: if subject.is_some() {
+                        proximadb_tenant::AuthClass::Authenticated
+                    } else {
+                        proximadb_tenant::AuthClass::Anonymous
+                    },
+                },
             )
             .await
             .map_err(|e| Status::internal(format!("GetRecord failed: {e}")))?;

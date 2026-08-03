@@ -359,6 +359,27 @@ pub struct SharedServices {
     #[cfg(feature = "experimental-ledger")]
     pub ledger_store: Arc<proximadb_ledger::LedgerService<proximadb_ledger::DurableLedger>>,
 
+    /// Durable ABAC attribute-authority handle (TD-ABAC control-plane /
+    /// `abac-policy`). The SAME `Arc<FileSystemAttributeAuthority>` instance the
+    /// live enforcer reads — so an admin provision written through this handle is
+    /// visible without a restart (hot-reload). `None` unless `abac-policy` is on
+    /// and `<data_dir>/abac/attribute-bindings.json` opens cleanly.
+    #[cfg(feature = "abac-policy")]
+    pub abac_authority: Option<Arc<proximadb_abac::FileSystemAttributeAuthority>>,
+
+    /// Durable ABAC policy-binding store handle (TD-ABAC control-plane /
+    /// `abac-policy`). Shared with the live enforcer; the admin policy-binding
+    /// endpoints (TD-ABAC control-plane PR-B) write through this handle. `None`
+    /// when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_binding_store: Option<Arc<proximadb_abac::FileSystemPolicyBindingStore>>,
+
+    /// Durable ABAC predicate-object store handle (TD-ABAC control-plane /
+    /// `abac-policy`). Shared with the live enforcer; the admin predicate-object
+    /// endpoints register/revoke through this handle. `None` when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_predicate_store: Option<Arc<proximadb_abac::FileSystemPredicateObjectStore>>,
+
     /// The single canonical WAL-backed record store, built + WAL-recovered ONCE here and
     /// shared across ALL surfaces — the REST/gRPC `DmlService` and the pgwire direct-write
     /// path both route relational tables through this instance — so a write on any protocol
@@ -461,6 +482,18 @@ pub struct SharedServices {
     >,
 }
 
+/// The three durable ABAC substrate stores, each behind a shared `Arc` handle so
+/// the live `AbacEnforcer`(s) and the admin-provisioning writer observe the SAME
+/// instance — a runtime provision is visible to the enforcer without a restart
+/// (hot-reload, TD-ABAC control-plane). Opened once in
+/// [`SharedServices::open_abac_stores`].
+#[cfg(feature = "abac-policy")]
+struct AbacDurableStores {
+    authority: Arc<proximadb_abac::FileSystemAttributeAuthority>,
+    bindings: Arc<proximadb_abac::FileSystemPolicyBindingStore>,
+    predicate_objects: Arc<proximadb_abac::FileSystemPredicateObjectStore>,
+}
+
 impl SharedServices {
     /// Borrow the TurboQuant registry, if any. Convenience getter so call
     /// sites don't have to feature-gate the field access locally — this
@@ -521,6 +554,121 @@ impl SharedServices {
                 }
             }
         }
+    }
+
+    /// Open the three durable ABAC substrate stores (`FileSystem*`) from
+    /// `<data_dir>/abac/` once at boot, each behind a shared `Arc` handle. The
+    /// live [`AbacEnforcer`](crate::security::rls::AbacEnforcer)(s) and the
+    /// admin-provisioning writer share these SAME instances, so a runtime
+    /// provision is visible to the enforcer without a restart (hot-reload,
+    /// TD-ABAC control-plane).
+    ///
+    /// Returns `None` on default builds (the feature is OFF) and when there is no
+    /// `data_dir` or a store cannot be opened — i.e. the status quo (no
+    /// enforcement). It never synthesizes an allow: absent ⇒ no enforcer ⇒ no
+    /// filtering, the same state as today.
+    #[cfg(feature = "abac-policy")]
+    fn open_abac_stores(
+        opt_config: Option<&crate::core::config::Config>,
+    ) -> Option<AbacDurableStores> {
+        use proximadb_abac::{
+            FileSystemAttributeAuthority, FileSystemPolicyBindingStore,
+            FileSystemPredicateObjectStore,
+        };
+
+        let data_dir = opt_config?.server.data_dir.clone();
+        let abac_dir = std::path::Path::new(&data_dir).join("abac");
+        // A missing `data_dir` (embedded/ephemeral paths) ⇒ no durable substrate ⇒
+        // no enforcer. Best-effort dir creation; a create failure ⇒ None too.
+        if std::fs::create_dir_all(&abac_dir).is_err() {
+            tracing::warn!(
+                "abac-policy: could not create abac dir at {}",
+                abac_dir.display()
+            );
+            return None;
+        }
+
+        let authority =
+            match FileSystemAttributeAuthority::open(abac_dir.join("attribute-bindings.json")) {
+                Ok(a) => Arc::new(a),
+                Err(e) => {
+                    tracing::error!(
+                        "abac-policy: failed to open attribute authority at {}: {e}; \
+                         enforcement DISABLED (no enforcer)",
+                        abac_dir.display()
+                    );
+                    return None;
+                }
+            };
+        let bindings =
+            match FileSystemPolicyBindingStore::open(abac_dir.join("policy-bindings.json")) {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    tracing::error!(
+                        "abac-policy: failed to open policy binding store at {}: {e}; \
+                     enforcement DISABLED (no enforcer)",
+                        abac_dir.display()
+                    );
+                    return None;
+                }
+            };
+        // TD-ABAC-4: durable predicate-object store — resolves the
+        // `PolicyBinding.predicate_ref` ObjectIds to their `FilterExpression`s so
+        // row-level enforcement (not just predicate-free table grants) works in
+        // production. Empty ⇒ every predicate ref resolves fail-closed.
+        let predicate_objects =
+            match FileSystemPredicateObjectStore::open(abac_dir.join("predicate-objects.json")) {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    tracing::error!(
+                        "abac-policy: failed to open predicate object store at {}: {e}; \
+                     enforcement DISABLED (no enforcer)",
+                        abac_dir.display()
+                    );
+                    return None;
+                }
+            };
+
+        tracing::info!(
+            "abac-policy: durable ABAC stores active at {} (authority + policy binding store + predicate object store)",
+            abac_dir.display()
+        );
+        Some(AbacDurableStores {
+            authority,
+            bindings,
+            predicate_objects,
+        })
+    }
+
+    /// Build a process-shared [`AbacEnforcer`] from already-opened shared stores,
+    /// cloning the `Arc` handles so the enforcer reads the same instances an admin
+    /// writer mutates (hot-reload). The policy-epoch source is in-memory today
+    /// (follow-on: durable epochs).
+    #[cfg(feature = "abac-policy")]
+    fn build_enforcer_from_stores(
+        stores: &AbacDurableStores,
+    ) -> Arc<crate::security::rls::AbacEnforcer> {
+        use proximadb_abac::InMemoryPolicyEpochs;
+        let enforcer = crate::security::rls::AbacEnforcer::new(
+            stores.authority.clone(),
+            stores.predicate_objects.clone(),
+            Arc::new(InMemoryPolicyEpochs::new()),
+        )
+        .with_binding_store(stores.bindings.clone());
+        Arc::new(enforcer)
+    }
+
+    /// Open the durable stores and build the enforcer in one shot. Test-only
+    /// convenience — production shares the opened stores across the vector/DML
+    /// enforcers AND `AppState` (see [`open_abac_stores`] +
+    /// [`build_enforcer_from_stores`]) so an admin provision is hot-visible to
+    /// every reader. Gated to `test` so it carries no dead-code weight in
+    /// `--lib` builds.
+    #[cfg(all(feature = "abac-policy", test))]
+    fn build_abac_enforcer(
+        opt_config: Option<&crate::core::config::Config>,
+    ) -> Option<Arc<crate::security::rls::AbacEnforcer>> {
+        Self::open_abac_stores(opt_config).map(|s| Self::build_enforcer_from_stores(&s))
     }
 
     /// Create shared services with full business logic configuration
@@ -1129,11 +1277,41 @@ impl SharedServices {
         // Create SST engine
         debug!("🔧 SharedServices::new - Creating SST engine...");
         let sst_engine = {
-            let mut engine = crate::storage::engines::sst::SstEngine::new()
-                .await?
-                .with_directory_cache(directory_cache.clone());
+            let sst_config = storage_config.effective_sst_config();
+            let distance_compute =
+                Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
+            let mut engine = crate::storage::engines::sst::SstEngine::new_with_config(
+                sst_config,
+                filesystem_factory.clone(),
+                distance_compute,
+            )
+            .await?
+            .with_directory_cache(directory_cache.clone());
             if let Some(src) = freshness_lsn_source.clone() {
                 engine = engine.with_freshness_lsn_source(src);
+            }
+
+            // Catalog-driven storage-URL resolution: attach the catalog/config
+            // resolver so `get_collection_storage_url` resolves the real
+            // per-collection location (retires the `/data/collections/{id}`
+            // placeholder; the catalog is the single source of truth). Catalog
+            // first → `ConfigFallbackResolver` default, wrapped in `CachedResolver`.
+            // (WAL injection deferred: the WAL's fallback returns the base-location
+            // PREFIX, while these resolvers return the ROOT `{base}/{id}`;
+            // reconciling those contracts is a follow-up. SstEngine resolving
+            // correctly already achieves write/read agreement.)
+            {
+                use crate::storage::trait_components::path_resolver::{
+                    CachedResolver, CatalogResolver, CollectionPathResolver, CompositeResolver,
+                    ConfigFallbackResolver,
+                };
+                let chain: Vec<Arc<dyn CollectionPathResolver>> = vec![
+                    Arc::new(CatalogResolver::new()),
+                    Arc::new(ConfigFallbackResolver::default()),
+                ];
+                engine = engine.with_path_resolver(Arc::new(CachedResolver::new(Arc::new(
+                    CompositeResolver::new(chain),
+                ))));
             }
 
             // Attach tier-migration integration when configured. Reads
@@ -1235,63 +1413,72 @@ impl SharedServices {
         // SharedServices field that AppState/route-health read.
         let recall_probe_gate = Arc::new(crate::catalog::RecallProbeGate::new());
 
-        // Create AxisManager for index operations
-        debug!("🔧 SharedServices::new - Creating AxisManager for index operations...");
-        let mut axis_manager_inner =
-            crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?;
-        axis_manager_inner.set_recall_probe_gate(recall_probe_gate.clone());
-        // ADR-023 R3 Slice 4: give AXIS the shared FilesystemFactory so index
-        // persistence + cold-load can dispatch by scheme (s3/adls/gs/file).
-        axis_manager_inner.set_filesystem_factory(filesystem_factory.clone());
-        // Route index persistence through an object-store URI when configured
-        // (PROXIMADB_INDEX_PERSIST_URL=s3://bucket/prefix | adls://… | gs://…) —
-        // the cold-load path then reads only [header]+[COLD]+probed clusters via
-        // byte-range GETs. Otherwise persist under the local data dir so a cold
-        // collection warms from disk on first query (TD-087 Slice B; no-op without
-        // a data dir).
-        if let Ok(url) = std::env::var("PROXIMADB_INDEX_PERSIST_URL") {
-            axis_manager_inner.set_index_persist_url(url);
-        } else if let Some(cfg) = opt_config {
-            axis_manager_inner.set_index_persist_dir(cfg.server.data_dir.join("axis_indexes"));
-        }
+        // The Cargo feature is compile-time capability only. This runtime
+        // master switch must also be on before AXIS is registered with serving
+        // or any AXIS background maintenance loop is started.
+        #[cfg(feature = "axis")]
+        let axis_runtime_enabled = storage_config.optimization.enable_axis_indexes;
 
-        // CATALOG_OBJECT_MODEL #3 read-port: make catalog-resolved index locations
-        // live for ALL collections — boot-present AND runtime-created — by injecting
-        // a catalog resolver that AXIS pulls from on demand (and memoizes). For each
-        // collection's VectorAnn projection, an explicit `projection.location` is
-        // honored (relocated/tiered indexes); `PROXIMADB_INDEX_CATALOG_PATHS=1`
-        // additionally opts the fleet into the DrPathBuilder `indexes/<projection>/`
-        // layout. Default-off and additive: with no projection locations set the
-        // resolver returns `None` and AXIS keeps the `index_persist_url`/`dir`
-        // convention (mixed-safe). The resolver is catalog-free at the AXIS seam —
-        // this adapter lives in the control layer (dependency inversion).
-        {
-            let migrate = std::env::var_os("PROXIMADB_INDEX_CATALOG_PATHS").is_some();
-            axis_manager_inner.set_index_location_resolver(Arc::new(
-                crate::catalog::index_location_resolver::CatalogIndexLocationResolver::new(
-                    catalog_manager.clone(),
-                    migrate,
-                ),
-            ));
-        }
+        // Create AxisManager for index operations (AXIS-gated: the whole index
+        // engine + its registrations vanish from a PAX-exact-scan build).
+        #[cfg(feature = "axis")]
+        let axis_manager = {
+            debug!("🔧 SharedServices::new - Creating AxisManager for index operations...");
+            let mut axis_manager_inner =
+                crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?;
+            axis_manager_inner.set_recall_probe_gate(recall_probe_gate.clone());
+            // ADR-023 R3 Slice 4: give AXIS the shared FilesystemFactory so index
+            // persistence + cold-load can dispatch by scheme (s3/adls/gs/file).
+            axis_manager_inner.set_filesystem_factory(filesystem_factory.clone());
+            // Route index persistence through an object-store URI when configured
+            // (PROXIMADB_INDEX_PERSIST_URL=s3://bucket/prefix | adls://… | gs://…) —
+            // the cold-load path then reads only [header]+[COLD]+probed clusters via
+            // byte-range GETs. Otherwise persist under the local data dir so a cold
+            // collection warms from disk on first query (TD-087 Slice B; no-op
+            // without a data dir).
+            if let Ok(url) = std::env::var("PROXIMADB_INDEX_PERSIST_URL") {
+                axis_manager_inner.set_index_persist_url(url);
+            } else if let Some(cfg) = opt_config {
+                axis_manager_inner.set_index_persist_dir(cfg.server.data_dir.join("axis_indexes"));
+            }
 
-        let axis_manager = Arc::new(axis_manager_inner);
-        debug!("✅ SharedServices::new - AxisManager created successfully");
+            // CATALOG_OBJECT_MODEL #3 read-port: make catalog-resolved index locations
+            // live for ALL collections — boot-present AND runtime-created — by injecting
+            // a catalog resolver that AXIS pulls from on demand (and memoizes). For each
+            // collection's VectorAnn projection, an explicit `projection.location` is
+            // honored (relocated/tiered indexes); `PROXIMADB_INDEX_CATALOG_PATHS=1`
+            // additionally opts the fleet into the DrPathBuilder `indexes/<projection>/`
+            // layout. Default-off and additive: with no projection locations set the
+            // resolver returns `None` and AXIS keeps the `index_persist_url`/`dir`
+            // convention (mixed-safe). The resolver is catalog-free at the AXIS seam —
+            // this adapter lives in the control layer (dependency inversion).
+            {
+                let migrate = std::env::var_os("PROXIMADB_INDEX_CATALOG_PATHS").is_some();
+                axis_manager_inner.set_index_location_resolver(Arc::new(
+                    crate::catalog::index_location_resolver::CatalogIndexLocationResolver::new(
+                        catalog_manager.clone(),
+                        migrate,
+                    ),
+                ));
+            }
 
-        // Make AXIS manager available to graph-first entity store by default
-        crate::storage::entity_store::orion_backend::set_global_axis_manager(axis_manager.clone());
-
-        // Make AXIS manager available to SST engine for HNSW/IVF search
-        crate::storage::engines::sst::core::set_sst_axis_manager(axis_manager.clone());
-        debug!(
-            "✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search"
-        );
-
-        // ADR-078: register the same manager for the shared flush→AXIS hook.
-        // VIPER/HELIX/NOVA construct `axis_manager: None` and nothing ever set
-        // it, which is precisely why they routed flush notifications through the
-        // AXIS queue instead of indexing directly. This gives them a handle.
-        crate::storage::common::axis_flush_hook::set_flush_axis_manager(axis_manager.clone());
+            let m = Arc::new(axis_manager_inner);
+            debug!("✅ SharedServices::new - AxisManager created successfully");
+            if axis_runtime_enabled {
+                // Make AXIS available only when both its compile capability and
+                // process-level policy are enabled. Collection-level intent is
+                // checked at the ingest/search boundaries.
+                crate::storage::entity_store::orion_backend::set_global_axis_manager(m.clone());
+                crate::storage::engines::sst::core::set_sst_axis_manager(m.clone());
+                crate::storage::common::axis_flush_hook::set_flush_axis_manager(m.clone());
+                debug!("✅ SharedServices::new - AXIS runtime enabled and registered with serving");
+            } else {
+                info!(
+                    "AXIS capability compiled but runtime-disabled by storage.optimization.enable_axis_indexes=false"
+                );
+            }
+            m
+        };
 
         // Create VectorOperationsService with optimized architecture and two-stage search
         debug!(
@@ -1349,53 +1536,93 @@ impl SharedServices {
         } else {
             info!("✅ SharedServices: EventLog service initialized successfully");
 
-            // Start the AXIS EventLog consumer as a background task
-            // This polls the EventLog and builds AXIS indexes when flush events occur
-            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            // Start the AXIS EventLog consumer as a background task (AXIS-gated).
+            // This polls the EventLog and builds AXIS indexes when flush events occur.
+            #[cfg(feature = "axis")]
+            if axis_runtime_enabled {
+                let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+                // TD-LIFECYCLE-1: registered (not leaked) so a clean shutdown
+                // can stop the loop; see services::shutdown_registry.
+                crate::services::shutdown_registry::register("axis-eventlog-consumer", shutdown_tx);
+                if let Some(event_log_service) = crate::services::events::log::event_log_service() {
+                    let _consumer_handle =
+                        crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
+                            event_log_service.inner(),
+                            axis_manager.clone(),
+                            filesystem_factory.clone(),
+                            collection_cache.clone(),
+                            orchestrator.clone(),
+                            shutdown_rx,
+                        )
+                        .await;
 
-            // TD-LIFECYCLE-1: registered (not leaked) so a clean shutdown
-            // can stop the loop; see services::shutdown_registry.
-            crate::services::shutdown_registry::register("axis-eventlog-consumer", shutdown_tx);
-
-            if let Some(event_log_service) = crate::services::events::log::event_log_service() {
-                let _consumer_handle =
-                    crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
-                        event_log_service.inner(),
-                        axis_manager.clone(),
-                        filesystem_factory.clone(),
-                        collection_cache.clone(),
-                        orchestrator.clone(),
-                        shutdown_rx,
-                    )
-                    .await;
-
-                info!(
-                    "✅ SharedServices: AXIS EventLog consumer started - background index processing is available for collections that explicitly configure indexes"
-                );
-            } else {
-                warn!(
-                    "⚠️ SharedServices: EventLog service unavailable after initialization; AXIS consumer not started."
-                );
+                    info!(
+                        "✅ SharedServices: AXIS EventLog consumer started for explicitly indexed collections"
+                    );
+                } else {
+                    warn!(
+                        "⚠️ SharedServices: EventLog service unavailable after initialization; AXIS consumer not started."
+                    );
+                }
             }
         }
+
+        // Open the durable ABAC stores ONCE here (outer scope) so the
+        // vector-service enforcer, the DmlService enforcer, and the AppState
+        // admin handles all share the SAME store instances — a runtime provision
+        // is then hot-visible to every reader (TD-ABAC control-plane).
+        #[cfg(feature = "abac-policy")]
+        let abac_stores = Self::open_abac_stores(opt_config);
 
         // `directory_cache` constructed earlier (before SstEngine) so the
         // engine, the vector ops service, and the SharedServices public
         // field all share the same `Arc`.
-        let vector_operations_service = Arc::new(
-            VectorOperationsService::new(
-                sst_engine,
-                wal_manager,
-                axis_manager.clone(),
-                collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
-            )
+        let vector_operations_service = {
+            let svc = {
+                #[cfg(feature = "axis")]
+                {
+                    VectorOperationsService::new(
+                        sst_engine,
+                        wal_manager,
+                        axis_manager.clone(),
+                        collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+                    )
+                }
+                #[cfg(not(feature = "axis"))]
+                {
+                    VectorOperationsService::new(
+                        sst_engine,
+                        wal_manager,
+                        collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+                    )
+                }
+            }
             .with_orchestrator(Some(orchestrator.clone()))
             .with_directory_cache(directory_cache.clone())
             // Phase 7.2: thread the same affinity registry held by
             // the SharedServices field so search-path recordings and
             // operator inspection share state.
-            .with_affinity_registry(affinity_registry.clone()),
-        );
+            .with_affinity_registry(affinity_registry.clone());
+            #[cfg(feature = "axis")]
+            let svc = svc.with_axis_runtime_enabled(axis_runtime_enabled);
+            // FA-2 (abac-policy): wire the durable ABAC enforcer into the vector
+            // service so `unified_search_native` enforces the subject's accessibility
+            // predicate on every search (push-down for conjunctive policies, post-filter
+            // otherwise). Default-OFF ⇒ default builds are byte-for-byte unchanged; `None`
+            // ⇒ no enforcer ⇒ no per-record filtering (the status quo). Mirrors the
+            // DmlService wiring (`build_abac_enforcer`, TD-ABAC-2).
+            #[cfg(feature = "abac-policy")]
+            let svc = match &abac_stores {
+                Some(stores) => {
+                    debug!(
+                        "✅ SharedServices::new - durable ABAC enforcer wired into VectorOperationsService"
+                    );
+                    svc.with_abac_enforcer(Self::build_enforcer_from_stores(stores))
+                }
+                None => svc,
+            };
+            Arc::new(svc)
+        };
 
         info!(
             "✅ SharedServices: VectorOperationsService created successfully - 40-60% performance boost enabled"
@@ -2077,12 +2304,18 @@ impl SharedServices {
         debug!(
             "🔧 SharedServices::new - Creating MultiModelStorageFacade for federated queries..."
         );
-        let vector_store = Arc::new(
-            crate::storage::multimodel::VectorStore::with_engine(
+        let vector_store = Arc::new({
+            let vs = crate::storage::multimodel::VectorStore::with_engine(
                 vector_operations_service.unified_engine(),
-            )
-            .with_index_manager(axis_manager.clone()),
-        );
+            );
+            #[cfg(feature = "axis")]
+            let vs = if axis_runtime_enabled {
+                vs.with_index_manager(axis_manager.clone())
+            } else {
+                vs
+            };
+            vs
+        });
         let graph_store = Arc::new(
             crate::storage::multimodel::GraphStore::new(Default::default())
                 .with_service(graph_service.clone()),
@@ -2321,6 +2554,18 @@ impl SharedServices {
             Some(cks) => base_dml.with_conditional_key_store(cks.clone()),
             None => base_dml,
         };
+        // TD-ABAC-2 (Phase 5b): construct the durable ABAC enforcer (authority +
+        // policy binding store, both at <data_dir>/abac/) and DI it into the
+        // DML read funnel. Fully behind `abac-policy` (default-OFF) ⇒ default
+        // builds are byte-for-byte unchanged; `None` ⇒ no enforcement (status quo).
+        #[cfg(feature = "abac-policy")]
+        let base_dml = match &abac_stores {
+            Some(stores) => {
+                debug!("✅ SharedServices::new - durable ABAC enforcer wired into DmlService");
+                base_dml.with_abac_enforcer(Self::build_enforcer_from_stores(stores))
+            }
+            None => base_dml,
+        };
         let dml_service_for_grpc = Arc::new(match dml_lock_service {
             Some(lock_service) => base_dml.with_dml_lock_service(lock_service),
             None => base_dml,
@@ -2459,13 +2704,24 @@ impl SharedServices {
                 Arc::new(crate::services::external_collection::ExternalCollectionRegistry::new())
             }
         };
-        let external_collection_service = Arc::new(
-            crate::services::external_collection::ExternalCollectionService::new(
-                external_collection_registry,
-                catalog_manager.clone(),
-                axis_manager.clone(),
-            ),
-        );
+        let external_collection_service = Arc::new({
+            #[cfg(feature = "axis")]
+            {
+                crate::services::external_collection::ExternalCollectionService::new(
+                    external_collection_registry,
+                    catalog_manager.clone(),
+                    axis_manager.clone(),
+                )
+                .with_axis_runtime_enabled(axis_runtime_enabled)
+            }
+            #[cfg(not(feature = "axis"))]
+            {
+                crate::services::external_collection::ExternalCollectionService::new(
+                    external_collection_registry,
+                    catalog_manager.clone(),
+                )
+            }
+        });
         {
             let executor = Arc::new(
                 crate::services::discovery::DiscoveryJobExecutor::new(
@@ -2489,7 +2745,10 @@ impl SharedServices {
             );
             info!("✅ SharedServices: DiscoveryJobExecutor spawned (Phase 8 CS/CD loop)");
         }
-        {
+        // Phase-5 recall observer (AXIS-gated): the whole job probes AXIS-managed
+        // IVF/HNSW recall, so it is not spawned in a PAX-exact-scan build.
+        #[cfg(feature = "axis")]
+        if axis_runtime_enabled {
             // Phase-5 recall observer (TD-075 / F2): periodically probes
             // quantized-vs-exact recall per collection and feeds the shared
             // RecallProbeGate, so the quantized IVF route opens once recall is
@@ -2518,7 +2777,8 @@ impl SharedServices {
                 "✅ SharedServices: RecallObserver spawned (Phase 5 recall gate + F1 recall-degradation trigger)"
             );
         }
-        {
+        #[cfg(feature = "axis")]
+        if axis_runtime_enabled {
             // Trigger arm (T1.9): the write-volume drift watcher is the first
             // live producer — it counts each collection's own write batches since
             // its last completed recluster (per-collection, not a global-LSN
@@ -2551,7 +2811,10 @@ impl SharedServices {
                 "✅ SharedServices: DriftWatcher spawned (Phase 8 F1 trigger arm — write-volume drift)"
             );
         }
-        {
+        // Recall-drift sweeper (AXIS-gated): walks `recall_target:`-tagged
+        // collections and emits axis_recall_drift_* metrics — no AXIS, no drift.
+        #[cfg(feature = "axis")]
+        if axis_runtime_enabled {
             // Recall-drift sweeper: every 5 min, walk every
             // collection with a `recall_target:` tag and emit a
             // Prometheus drift observation
@@ -2687,6 +2950,16 @@ impl SharedServices {
                 conditional_key_store,
                 #[cfg(feature = "experimental-ledger")]
                 ledger_store,
+                // TD-ABAC control-plane: the three durable ABAC store handles,
+                // cloned from the single `abac_stores` trio opened above so the
+                // admin-provisioning endpoints share the SAME instances the live
+                // enforcer reads (hot-reload). `None` when ABAC is off.
+                #[cfg(feature = "abac-policy")]
+                abac_authority: abac_stores.as_ref().map(|s| s.authority.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_binding_store: abac_stores.as_ref().map(|s| s.bindings.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_predicate_store: abac_stores.as_ref().map(|s| s.predicate_objects.clone()),
                 // TD-064 / LLD §5: per-collection recall-probe gate. Empty
                 // at startup; populated as the stats refresher / search path
                 // observe probe outcomes. Route-health surfaces per-scope
@@ -2872,40 +3145,6 @@ impl SharedServices {
     fn convert_toml_to_wal_config(
         toml_config: &crate::core::config::WriteBufferUserConfig,
     ) -> crate::storage::persistence::write_ahead_log::config::WALConfig {
-        use crate::storage::persistence::write_ahead_log::config::{
-            MemTableConfig, MemTableType, PerformanceConfig, SyncMode, WALConfig,
-        };
-
-        // Create performance config with values from TOML
-        info!(
-            "📋 Converting WALConfig from TOML: memory_flush_size_bytes={} ({}MB), vector_count_threshold={}, write_buffer_size_mb={}MB",
-            toml_config.memory_flush_size_bytes,
-            toml_config.memory_flush_size_bytes / (1024 * 1024),
-            toml_config.vector_count_threshold,
-            toml_config.write_buffer_size_mb
-        );
-
-        let performance = PerformanceConfig {
-            memory_flush_size_bytes: toml_config.memory_flush_size_bytes,
-            global_flush_threshold: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
-            batch_threshold: toml_config.vector_count_threshold,
-            sync_mode: match toml_config.sync_mode.to_lowercase().as_str() {
-                "perbatch" => SyncMode::PerBatch,
-                "periodic" => SyncMode::Periodic,
-                "none" => SyncMode::Never,
-                _ => SyncMode::PerBatch,
-            },
-            // ADR-069/TD-WAL-1: the tiered-flush knobs (time RPO floor + capacity
-            // watermarks) — the live server path where they actually reach the engine.
-            flush_interval_secs: toml_config.flush_interval_secs,
-            // TD-FLUSH-3 S1: the predicted-segment flush floor.
-            flush_floor_predicted_mb: toml_config.flush_floor_predicted_mb,
-            wal_max_bytes: toml_config.wal_max_bytes,
-            high_watermark_pct: toml_config.high_watermark_pct,
-            critical_watermark_pct: toml_config.critical_watermark_pct,
-            ..Default::default()
-        };
-
         // ADR-069 S1 guardrail: the WAL belongs on a local reattachable disk
         // (object-store WAL was the pre-pivot architecture and pays an I/O
         // round-trip per append). Warn — at `error` level when a durability-
@@ -2938,38 +3177,15 @@ impl SharedServices {
             }
         }
 
-        // Create memtable config
-        let memtable = MemTableConfig {
-            global_memory_limit: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
-            memtable_type: match toml_config.memtable_type.to_lowercase().as_str() {
-                "btree" => MemTableType::BTree,
-                "skiplist" => MemTableType::SkipList,
-                _ => MemTableType::BTree,
-            },
-            ..Default::default()
-        };
-
-        // Create multi-disk config with WAL directory
-        let multi_disk = crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
-            data_directories: vec![toml_config.write_buffer_directory.clone()],
-            distribution_strategy: crate::storage::persistence::write_ahead_log::config::DiskDistributionStrategy::RoundRobin,
-            collection_affinity: true,
-        };
-
-        WALConfig {
-            performance,
-            memtable,
-            multi_disk,
-            enable_mvcc: true,                  // Enable MVCC for consistency
-            enable_ttl: true,                   // Enable TTL support
-            enable_background_compaction: true, // Enable background compaction
-            enable_optimized_writer: toml_config.enable_wal, // Use enable_wal to control optimized writer
-            global_manifest_url: toml_config.global_manifest_url.clone(),
-            // ADR-069 S1: opt-in local WAL root (TOML `[storage.wal_config]
-            // .wal_local_dir`); env `PROXIMADB_WAL_LOCAL_DIR` overrides at read time.
-            wal_local_dir: toml_config.wal_local_dir.clone(),
-            ..Default::default()
-        }
+        // TD-CONFIG-CONSOLIDATE-1 step 2: delegate the field-mapping to the SINGLE
+        // canonical conversion (`WriteBufferUserConfig::to_engine_config`), then
+        // apply the one server-only override — the optimized writer follows
+        // `enable_wal` (the embedded path intentionally keeps it off). Removes the
+        // dual-maintenance drift where every new WAL field had to be wired into BOTH
+        // converters (the wal_local_dir near-miss during ADR-069 S1).
+        let mut cfg = toml_config.to_engine_config();
+        cfg.enable_optimized_writer = toml_config.enable_wal;
+        cfg
     }
 }
 
@@ -3213,7 +3429,7 @@ mod rank_services_wiring_tests {
         async fn search(
             &self,
             _request: crate::proto::proximadb_v1::VectorSearchRequest,
-            _tenant_id: Option<&str>,
+            _identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
             Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                 success: true,
@@ -3505,5 +3721,136 @@ mod join_storage_url_tests {
         assert!(local_storage_path("adls://container/data").is_none());
         assert!(local_storage_path("s3://bucket/data").is_none());
         assert!(local_storage_path("abfs://container/data").is_none());
+    }
+}
+
+// ============================================================================
+// ABAC composition-root integration test (TD-ABAC-2/3/4)
+// ============================================================================
+//
+// The durable substrate (authority #1310 + bindings #1331 + predicate objects
+// #1335) and the pgwire subject activation (#1333) are each proven in isolation:
+// the abac-crate tests prove each `FileSystem*` store survives a restart, and
+// #1324's `abac_relational_enforcement_tests` proves the enforcer + scan filter
+// rows. The ONE integration point nothing covered was the composition root —
+// `build_abac_enforcer` loading all THREE durable files into a working enforcer.
+// These tests close that gap: seed the durable trio, call the real
+// `build_abac_enforcer`, and assert it produces an enforcer that enforces.
+#[cfg(all(test, feature = "abac-policy"))]
+mod abac_composition_root_tests {
+    use super::SharedServices;
+    use crate::core::config::Config;
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+    use crate::security::rls::AbacScanResult;
+    use proximadb_abac::{
+        AttributeBinding, FileSystemAttributeAuthority, FileSystemPolicyBindingStore,
+        FileSystemPredicateObjectStore,
+    };
+    use proximadb_catalog::fc_metamodel::{
+        AttrValue, Effect, PolicyBinding, Scope, SubjectId, Target,
+    };
+    use serde_json::json;
+
+    fn unique_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "proximadb-abac-comproot-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// Seed the durable trio, then exercise the REAL composition-root builder
+    /// (`build_abac_enforcer`) — proving the three `FileSystem*` stores load into a
+    /// working enforcer. This is the integration point no isolated unit test covers.
+    #[test]
+    fn build_abac_enforcer_loads_the_durable_trio_into_a_working_enforcer() {
+        let dir = unique_dir();
+        let abac_dir = dir.join("abac");
+        std::fs::create_dir_all(&abac_dir).expect("abac dir");
+
+        // 1. durable authority: alice → dept=eng in tenant 7.
+        {
+            let auth = FileSystemAttributeAuthority::open(abac_dir.join("attribute-bindings.json"))
+                .expect("open authority");
+            auth.upsert(
+                AttributeBinding::new("alice", 7).with_attr("dept", AttrValue::Str("eng".into())),
+            );
+        }
+        // 2. durable policy bindings: permit table 200 under predicate ref 42.
+        {
+            let bindings =
+                FileSystemPolicyBindingStore::open(abac_dir.join("policy-bindings.json"))
+                    .expect("open binding store");
+            bindings.replace_tenant(
+                7,
+                vec![PolicyBinding {
+                    object_id: 1,
+                    tenant_stable_id: 7,
+                    scope: Scope::Table(200),
+                    effect: Effect::Permit,
+                    predicate_ref: Some(42),
+                    field_mask: None,
+                }],
+            );
+        }
+        // 3. durable predicate objects: ref 42 → dept == "eng".
+        {
+            let preds =
+                FileSystemPredicateObjectStore::open(abac_dir.join("predicate-objects.json"))
+                    .expect("open predicate store");
+            preds.register(
+                42,
+                FilterExpression::Comparison {
+                    field: "dept".to_string(),
+                    operator: ComparisonOperator::Equals,
+                    value: json!("eng"),
+                },
+            );
+        }
+
+        // Composition root: build the enforcer from the data_dir (reads all 3 files).
+        let mut config = Config::default();
+        config.server.data_dir = dir.clone();
+        let enforcer = SharedServices::build_abac_enforcer(Some(&config))
+            .expect("durable substrate present ⇒ enforcer built");
+
+        let target = Target {
+            namespace: 3,
+            table: 200,
+            column: None,
+        };
+
+        // alice (dept=eng) ⇒ Restricted to dept=eng rows — the full chain
+        // (authority resolve → binding compose → predicate resolve) works through
+        // the composition root.
+        match enforcer.predicate_for(&SubjectId("alice".into()), 7, target) {
+            AbacScanResult::Restricted(_) => {}
+            _ => panic!("alice must be Restricted via the durable substrate"),
+        }
+        // An unbound subject ⇒ Denied (no attribute binding in the authority).
+        assert!(
+            matches!(
+                enforcer.predicate_for(&SubjectId("mallory".into()), 7, target),
+                AbacScanResult::Denied(_)
+            ),
+            "an unbound subject must be denied"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No `data_dir` (embedded/ephemeral paths) ⇒ no durable substrate ⇒ `None`.
+    /// This is the documented fail-open-to-status-quo behavior (never a
+    /// synthesized allow).
+    #[test]
+    fn build_abac_enforcer_returns_none_without_a_config() {
+        assert!(
+            SharedServices::build_abac_enforcer(None).is_none(),
+            "no opt_config ⇒ no enforcer (status quo)"
+        );
     }
 }

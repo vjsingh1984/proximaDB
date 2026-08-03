@@ -59,6 +59,10 @@ use crate::query::cache::invalidation_coordinator::CacheInvalidationCoordinator;
 use crate::query::cache::query_result_cache::{QueryKey, QueryResultCache, StructuralKey};
 use crate::services::dml::DmlService;
 use crate::storage::tenant::context::TenantContext;
+// TD-ABAC-3: the authenticated/Asserted subject threaded into the relational
+// read funnel so ABAC enforces on real client SELECTs (behind `abac-policy`).
+#[cfg(feature = "abac-policy")]
+use proximadb_catalog::fc_metamodel::SubjectId;
 
 use super::types::PgType;
 
@@ -272,6 +276,10 @@ pub async fn try_run_select(
     // execution; a miss falls through normally and the result is stamped on the
     // real-data success paths.
     result_cache: Option<&QueryResultCache<ExecutionPipelineResult>>,
+    // TD-ABAC-3: the connection subject, threaded into every SnapshotCatalog so
+    // `scan_table_relational` enforces ABAC. `None` ⇒ anonymous/internal ⇒ no
+    // enforcement. Behind `abac-policy` (default-OFF).
+    #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
 ) -> Option<Result<ExecutionPipelineResult, String>> {
     // TD-064: the connection's tenant scopes every snapshot read to the tenant's
     // record partition (carried into the SnapshotCatalog → DmlTableReader).
@@ -547,6 +555,8 @@ pub async fn try_run_select(
                     dml: dml.clone(),
                     tables: tables.clone(),
                     tenant: tenant_ctx.clone(),
+                    #[cfg(feature = "abac-policy")]
+                    subject: subject.clone(),
                 };
                 // Setup (planning/route) time is attributed here; the native engine
                 // records its own `native-vectorized` compute sample inside the run.
@@ -728,6 +738,8 @@ pub async fn try_run_select(
                 dml: dml.clone(),
                 tables: tables.clone(),
                 tenant: tenant_ctx.clone(),
+                #[cfg(feature = "abac-policy")]
+                subject: subject.clone(),
             };
             shadow_probe_native_parquet(
                 sql,
@@ -752,6 +764,8 @@ pub async fn try_run_select(
         dml: dml.clone(),
         tables,
         tenant: tenant_ctx,
+        #[cfg(feature = "abac-policy")]
+        subject,
     };
     // Lower + plan via the shared planning path (so EXPLAIN discloses exactly this
     // plan). `None` → lowering declined → fall through to legacy. From the planned
@@ -1595,6 +1609,12 @@ struct SnapshotCatalog {
     /// TD-064: connection tenant scope threaded into every snapshot reader so
     /// relational scans/point-lookups read the tenant's record partition.
     tenant: Option<TenantContext>,
+    /// TD-ABAC-3: the connection's subject (Asserted under `Open` trust, or
+    /// rejected at the handshake under strict). Threaded into every snapshot
+    /// reader so `scan_table_relational` can enforce ABAC on real client SELECTs.
+    /// `None` ⇒ no subject (anonymous/internal) ⇒ no enforcement (status quo).
+    #[cfg(feature = "abac-policy")]
+    subject: Option<SubjectId>,
 }
 
 impl CatalogLookup for SnapshotCatalog {
@@ -1618,6 +1638,8 @@ impl ReaderFactory for SnapshotCatalog {
             full_schema: prepared.schema.clone(),
             pk_columns: prepared.pk_columns.clone(),
             tenant: self.tenant.clone(),
+            #[cfg(feature = "abac-policy")]
+            subject: self.subject.clone(),
             open_state: None,
         }))
     }
@@ -1686,6 +1708,9 @@ struct DmlTableReader {
     pk_columns: Vec<usize>,
     /// TD-064: connection tenant scope for this reader's record partition.
     tenant: Option<TenantContext>,
+    /// TD-ABAC-3: connection subject for ABAC enforcement on this reader's scans.
+    #[cfg(feature = "abac-policy")]
+    subject: Option<SubjectId>,
     open_state: Option<ReaderOpenState>,
 }
 
@@ -1781,6 +1806,13 @@ impl RelationalReader for DmlTableReader {
                 row_pred_ref,
                 limit,
                 self.tenant.as_ref(),
+                // TD-ABAC-3: the connection subject, threaded from the pgwire
+                // auth layer (Asserted `user`, gated by `HeaderTrustPolicy` at the
+                // handshake). When present, `scan_table_relational` AND-combines
+                // the ABAC row filter with the user WHERE (#1324); `None`
+                // (anonymous/internal) ⇒ no enforcement.
+                #[cfg(feature = "abac-policy")]
+                self.subject.as_ref(),
             )
             .await
             .map_err(|e| ReaderError::Storage(e.to_string()))?;
@@ -2326,6 +2358,10 @@ async fn build_snapshot(
         tenant: tenant
             .filter(|t| !t.is_empty())
             .map(TenantContext::for_tenant_id),
+        // EXPLAIN/ANALYZE path — no client subject threaded here (follow-on);
+        // `None` ⇒ no ABAC enforcement on this path.
+        #[cfg(feature = "abac-policy")]
+        subject: None,
     })
 }
 

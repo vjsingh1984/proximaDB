@@ -721,6 +721,7 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
         query: String,
         _collection: Option<String>,
         tenant_id: Option<&str>,
+        subject: Option<&str>,
     ) -> anyhow::Result<serde_json::Value> {
         use crate::query::QueryResultData;
 
@@ -791,6 +792,13 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
         // so this is a no-op unless the flag is set.
         // namespace=None: SQL port path has no pgwire search_path.
         let olap_result_cache = crate::network::postgres::relational_pipeline::olap_result_cache();
+        // TD-ABAC-5: convert the opaque runtime-trait subject string → SubjectId at
+        // this root-crate boundary (the runtime port can't name SubjectId). Behind
+        // `abac-policy`; when off the string is unused (no enforcement).
+        #[cfg(feature = "abac-policy")]
+        let subject_id = subject.map(|s| proximadb_catalog::fc_metamodel::SubjectId(s.to_string()));
+        #[cfg(not(feature = "abac-policy"))]
+        let _ = subject;
         if let Some(dml) = self.dml_service.as_ref()
             && let Some(outcome) = crate::network::postgres::relational_pipeline::try_run_select(
                 &query,
@@ -802,6 +810,9 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
                 false,
                 None,
                 olap_result_cache.as_deref(),
+                // TD-ABAC-5: the authenticated subject (gRPC/REST) → ABAC enforcement.
+                #[cfg(feature = "abac-policy")]
+                subject_id,
             )
             .await
         {

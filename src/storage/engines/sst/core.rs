@@ -86,6 +86,50 @@ pub fn get_warm_tier_caches() -> Option<(
     GLOBAL_WARM_TIER_CACHES.get().cloned()
 }
 
+/// Reclaim all immutable PAX acceleration bytes below a successfully retired
+/// collection directory. No cache is a valid no-op (env-unset behavior).
+pub async fn purge_warm_tier_prefix(path_prefix: &str) -> usize {
+    // TD-DELVEC-1 C3: invalidate the OID resolver cache entries under this prefix
+    // (collection-drop) — BEFORE the warm_caches guard (the resolver cache is
+    // independent of the warm-tier pair). Mirrors C2's compaction-retire placement.
+    #[cfg(feature = "cold-deletion-vectors")]
+    if let Some(cache) = get_global_oid_resolver_cache() {
+        cache.invalidate_prefix(path_prefix);
+    }
+    let Some((invariants, survivor)) = get_warm_tier_caches() else {
+        return 0;
+    };
+    let invariant_entries = invariants.invalidate_prefix_all(path_prefix).await;
+    invariant_entries + survivor.purge_prefix(path_prefix).await
+}
+
+/// TD-DELVEC-1 WI-3c / C2: process-global OID resolver cache (sibling to
+/// `GLOBAL_WARM_TIER_CACHES`). Hoisted to module scope so compaction's retire
+/// path (`purge_retired_segment_cache_entries`) can invalidate entries for
+/// compacted-away segments via `get_global_oid_resolver_cache()`. `None` inner =
+/// cache disabled (`PROXIMADB_OID_RESOLVER_CACHE_MB == 0`).
+#[cfg(feature = "cold-deletion-vectors")]
+static GLOBAL_OID_RESOLVER_CACHE: std::sync::OnceLock<
+    Option<Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>>,
+> = std::sync::OnceLock::new();
+
+/// The process-global OID resolver cache, if an engine armed one (mb > 0).
+/// Borrowed (not cloned) — `invalidate` only needs `&self`.
+#[cfg(feature = "cold-deletion-vectors")]
+pub fn get_global_oid_resolver_cache()
+-> Option<&'static Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>> {
+    GLOBAL_OID_RESOLVER_CACHE.get().and_then(Option::as_ref)
+}
+
+/// Test-only setter (the production path uses the constructor's `get_or_init`).
+/// Set-once; benign across tests (invalidate is miss-safe on unique paths).
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+pub fn set_global_oid_resolver_cache_for_tests(
+    cache: Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>,
+) {
+    let _ = GLOBAL_OID_RESOLVER_CACHE.set(Some(cache));
+}
+
 // Global PCA model cache for Z-Order spatial encoding
 // Uses lazy_static for thread-safe initialization
 lazy_static::lazy_static! {
@@ -338,6 +382,22 @@ pub struct SstEngine {
     pub(crate) segment_invariants_cache:
         Option<Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>>,
 
+    /// TD-DELVEC-1 WI-3c: per-segment OID→position resolver cache. Feature-gated
+    /// `cold-deletion-vectors`. Empty on boot; lazy-filled by the resolve path
+    /// (`read_resolver` on cache miss). Compaction invalidates on retire.
+    #[cfg(feature = "cold-deletion-vectors")]
+    pub(crate) oid_resolver_cache:
+        Option<Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>>,
+
+    /// TD-DELVEC-1 WI-3a-remaining-A: durable, CAS'd per-segment deletion-vector
+    /// store. Feature-gated `cold-deletion-vectors`. Per-engine (authoritative
+    /// owned state, not a shared cache), keyed by segment path; lazy-filled on
+    /// first touch + reload. Wired end-to-end (WI-3b delete, WI-4 merge-on-read,
+    /// WI-5 recovery reconcile, WI-6 compaction).
+    #[cfg(feature = "cold-deletion-vectors")]
+    pub(crate) deletion_vector_store:
+        Option<Arc<crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore>>,
+
     /// ADR-065 Q3: ranged RAM cache for survivor (Region B SQ8) + OID (Region D)
     /// byte ranges. Hot repeat queries skip the per-range `fs.read_range` GETs.
     /// Default `None` (read path byte-for-byte unchanged); opt in via
@@ -374,6 +434,14 @@ pub struct SstEngine {
     freshness_lsn_source: Option<
         Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
     >,
+
+    /// DIP storage-URL resolver (optional). When set, `get_collection_storage_url`
+    /// resolves the collection's real `base_location` through it (catalog → config
+    /// fallback chain); the `/data/collections/{id}` placeholder is retired.
+    /// Mirrors the WAL's `path_resolver` + this struct's `freshness_lsn_source`.
+    /// Wired by `SharedServices::new`.
+    pub(crate) path_resolver:
+        Option<Arc<dyn crate::storage::trait_components::path_resolver::CollectionPathResolver>>,
 
     /// ADR-081 regression hook: rejected preflights must not reach the
     /// vector-proportional sort boundary.
@@ -530,6 +598,47 @@ impl SstEngine {
             config.coarse_probe.as_ref(),
         );
 
+        static SHARED_LOCAL_DISK_STORE: std::sync::OnceLock<
+            Option<Arc<proximadb_cache::PersistentByteStore>>,
+        > = std::sync::OnceLock::new();
+        let local_disk_store = SHARED_LOCAL_DISK_STORE
+            .get_or_init(|| {
+                let path = std::env::var("PROXIMADB_CACHE_LOCAL_DISK_PATH")
+                    .ok()
+                    .filter(|path| !path.trim().is_empty())
+                    .or_else(|| config.cache_local_disk_path.clone());
+                let max_gb = std::env::var("PROXIMADB_CACHE_LOCAL_DISK_MAX_GB")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(config.cache_local_disk_max_gb);
+                path.and_then(|path| {
+                    if path.contains("://") {
+                        tracing::warn!(
+                            "persistent PAX cache disabled: local-disk path must be a filesystem path"
+                        );
+                        return None;
+                    }
+                    if max_gb == 0 {
+                        tracing::warn!(
+                            "persistent PAX cache disabled: local-disk budget is zero GiB"
+                        );
+                        return None;
+                    }
+                    let root = std::path::PathBuf::from(path).join("pax-warm-tier-v1");
+                    let max_bytes = max_gb.saturating_mul(1024 * 1024 * 1024);
+                    match proximadb_cache::PersistentByteStore::open(root, max_bytes) {
+                        Ok(store) => Some(Arc::new(store)),
+                        Err(error) => {
+                            tracing::warn!(
+                                "persistent PAX cache disabled: unable to open local-disk tier: {error}"
+                            );
+                            None
+                        }
+                    }
+                })
+            })
+            .clone();
+
         static SHARED_INVARIANTS_CACHE: std::sync::OnceLock<
             Option<Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>>,
         > = std::sync::OnceLock::new();
@@ -540,11 +649,16 @@ impl SstEngine {
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(config.segment_invariants_cache_mb);
                 (mb > 0).then(|| {
-                    Arc::new(
+                    Arc::new(if let Some(store) = &local_disk_store {
+                        crate::storage::engines::sst::segment_format::SegmentInvariantsCache::with_l2(
+                            (mb as usize) * 1024 * 1024,
+                            store.clone(),
+                        )
+                    } else {
                         crate::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
                             (mb as usize) * 1024 * 1024,
-                        ),
-                    )
+                        )
+                    })
                 })
             })
             .clone();
@@ -577,9 +691,10 @@ impl SstEngine {
                         policy.resolver(budget_bytes, tenant_to_tier)
                     });
                 Arc::new(
-                    crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::with_resolver(
+                    crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::with_resolver_and_l2(
                         budget_bytes,
                         resolver,
+                        local_disk_store.clone(),
                     ),
                 )
             })
@@ -596,6 +711,36 @@ impl SstEngine {
                 set_warm_tier_caches(inv.clone(), surv.clone());
             }
         }
+
+        // TD-DELVEC-1 WI-3c: process-global OID resolver cache (sibling to the
+        // invariants cache). Feature-gated; 0 disables (lazy-load on each delete).
+        #[cfg(feature = "cold-deletion-vectors")]
+        let oid_resolver_cache = GLOBAL_OID_RESOLVER_CACHE
+            .get_or_init(|| {
+                let mb = std::env::var("PROXIMADB_OID_RESOLVER_CACHE_MB")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(config.oid_resolver_cache_mb);
+                (mb > 0).then(|| {
+                    Arc::new(
+                        crate::storage::engines::sst::oid_resolver_cache::OidResolverCache::new(
+                            (mb as usize) * 1024 * 1024,
+                        ),
+                    )
+                })
+            })
+            .clone();
+
+        // TD-DELVEC-1 WI-3a-remaining-A: per-engine deletion-vector store. Not a
+        // process-global singleton (unlike the resolver cache): the DV store is
+        // authoritative owned state for this engine's segments, so per-engine
+        // ownership is the natural model + avoids the OnceLock test hazard.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let deletion_vector_store = Some(std::sync::Arc::new(
+            crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore::new(
+                filesystem.clone(),
+            ),
+        ));
 
         Ok(Self {
             config,
@@ -618,8 +763,13 @@ impl SstEngine {
             directory_cache: None,
             segment_invariants_cache,
             survivor_cache,
+            #[cfg(feature = "cold-deletion-vectors")]
+            oid_resolver_cache,
+            #[cfg(feature = "cold-deletion-vectors")]
+            deletion_vector_store,
             tiering_integration: None,
             freshness_lsn_source: None,
+            path_resolver: None,
             #[cfg(test)]
             flush_sort_invocations: std::sync::atomic::AtomicU64::new(0),
         })
@@ -713,6 +863,18 @@ impl SstEngine {
         source: Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
     ) -> Self {
         self.freshness_lsn_source = Some(source);
+        self
+    }
+
+    /// Attach the catalog/config storage-URL resolver. When set,
+    /// `get_collection_storage_url` resolves the real `base_location` through it
+    /// (retiring the `/data/collections/{id}` placeholder). When unset, the
+    /// method default-constructs a `ConfigFallbackResolver`.
+    pub fn with_path_resolver(
+        mut self,
+        resolver: Arc<dyn crate::storage::trait_components::path_resolver::CollectionPathResolver>,
+    ) -> Self {
+        self.path_resolver = Some(resolver);
         self
     }
 

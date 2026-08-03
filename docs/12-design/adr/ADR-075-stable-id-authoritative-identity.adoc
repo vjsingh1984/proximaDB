@@ -65,6 +65,31 @@ This amends ADR-031's _"string remains authoritative"_ framing and ADR-027's
 implicit string-keyed path contract: the DrPath authority is the **stable id**,
 and the string segment is a derived compat render.
 
+=== Runtime representation rule
+
+Numeric identities remain numeric wherever the receiving type system can carry
+them. In particular:
+
+* catalog-global collection identity is `object_id: u64`;
+* path-local collection identity is `CollectionId(u32)` and is meaningful only
+  inside its `(AccountId(u32), NamespaceId(u16))` scope;
+* tenant fairness, scheduling, admission, and cache isolation key on the
+  authoritative numeric tenant/collection ids;
+* base62 is an object-key rendering at the path boundary, never an in-memory
+  identity; and
+* aliases and decimal text are accepted only at lookup or transitional
+  storage-port boundaries, then resolved once through the catalog.
+
+The global `object_id` and path-local `CollectionId` are not interchangeable.
+Code must name the distinction rather than narrowing a global id into the path
+id or widening a path id and treating it as globally unique.
+
+The admission-first flush and persistent PAX warm-tier slices apply this rule:
+collection scheduling uses catalog-global `u64` ids, cache tenant scopes compare
+stable `u64` ids directly, and display aliases cannot impersonate an equal
+decimal stable id. Existing string-bearing storage traits are migration seams,
+not precedent for new runtime identity fields.
+
 == Consequences
 
 * **Rename-safe paths** — renaming a tenant/namespace/collection never moves or

@@ -63,6 +63,10 @@ pub struct WalFileInfo {
     /// Ordered token parsed from the object name. The tenant is populated from
     /// the authenticated envelope when the object is read.
     pub recovery_token: Option<RecoveryToken>,
+    /// The durable manifest `global_lsn` allocated for this batch (TD-DELVEC-1
+    /// WI-5 P0). Set on the write path; `0` when parsed from a path (reads don't
+    /// need it — only the write path returns it for DV-bit keying).
+    pub global_lsn: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -328,6 +332,11 @@ impl WriteAheadLogDiskManager {
         let file_name = file_url.split('/').next_back().unwrap_or("").to_string();
 
         use crate::storage::persistence::write_ahead_log::manifest;
+        // TD-DELVEC-1 WI-5 P0: capture the durable `global_lsn` allocated for this
+        // batch (synchronous inside `append_async`) so the write path can return it
+        // for deletion-vector bit keying. Stays `0` if there is no manifest service
+        // or the (non-fatal) append failed — callers fall back to the memtable seq.
+        let mut global_lsn = 0u64;
         if let Some(manifest_service) = manifest::get_service() {
             let format_str = match format {
                 SerializationFormat::ProtocolBuffers => "proto",
@@ -348,8 +357,9 @@ impl WriteAheadLogDiskManager {
             );
             // Async append (non-blocking, high performance); non-fatal if manifest
             // channel is closed (e.g. singleton background worker from a prior run).
-            if let Err(e) = manifest_service.append_async(entry).await {
-                warn!("⚠️  Manifest append failed (non-fatal): {}", e);
+            match manifest_service.append_async(entry).await {
+                Ok(lsn) => global_lsn = lsn,
+                Err(e) => warn!("⚠️  Manifest append failed (non-fatal): {}", e),
             }
         }
 
@@ -368,6 +378,7 @@ impl WriteAheadLogDiskManager {
             format,
             encryption_metadata,
             recovery_token: Some(recovery_token),
+            global_lsn,
         };
 
         debug!("✅ Successfully wrote WAL batch to disk: {:?}", file_info);
@@ -710,6 +721,7 @@ impl WriteAheadLogDiskManager {
             format,
             encryption_metadata: None, // Path parsing doesn't have encryption metadata
             recovery_token,
+            global_lsn: 0, // Not recoverable from the path; reads don't need it.
         })
     }
 }

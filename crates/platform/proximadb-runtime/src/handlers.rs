@@ -33,7 +33,7 @@ use crate::port::{
     ApiHandlersPort, CollectionSchemaColumn, CollectionSchemaEnforcement, CollectionSchemaMetadata,
     CollectionSchemaUpdate, CollectionTextStorage,
 };
-use crate::service_ports::{CollectionPort, QueryAdapterPort, VectorOpsPort};
+use crate::service_ports::{CollectionPort, PortIdentity, QueryAdapterPort, VectorOpsPort};
 
 /// Global request counter for generating unique request IDs.
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -569,16 +569,18 @@ impl ApiHandlersPort for UnifiedHandlers {
     async fn handle_vector_search_v1_for_tenant(
         &self,
         request: VectorSearchRequest,
-        tenant_id: Option<&str>,
+        identity: PortIdentity<'_>,
     ) -> Result<VectorOperationResponse> {
-        self.vector_ops.search(request, tenant_id).await
+        self.vector_ops.search(request, identity).await
     }
 
     async fn handle_vector_search_v1(
         &self,
         request: VectorSearchRequest,
     ) -> Result<VectorOperationResponse> {
-        self.vector_ops.search(request, None).await
+        self.vector_ops
+            .search(request, PortIdentity::anonymous())
+            .await
     }
 
     async fn handle_vector_batch_v1_for_tenant(
@@ -625,6 +627,7 @@ impl ApiHandlersPort for UnifiedHandlers {
         _parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
         tenant_id: Option<&str>,
+        subject: Option<&str>,
     ) -> Result<ExecuteQueryResponse> {
         let adapter = self
             .query_adapter
@@ -632,7 +635,9 @@ impl ApiHandlersPort for UnifiedHandlers {
             .ok_or_else(|| anyhow!("SQL execution requires QueryAdapterPort (not wired)"))?;
 
         let start = Instant::now();
-        let json_result = adapter.execute_sql(query, collection, tenant_id).await?;
+        let json_result = adapter
+            .execute_sql(query, collection, tenant_id, subject)
+            .await?;
 
         let records = json_result
             .get("records")
@@ -824,8 +829,9 @@ mod tests {
         async fn search(
             &self,
             request: VectorSearchRequest,
-            tenant_id: Option<&str>,
+            identity: PortIdentity<'_>,
         ) -> Result<VectorOperationResponse> {
+            let tenant_id = identity.tenant_id;
             self.calls
                 .lock()
                 .unwrap()
@@ -893,6 +899,7 @@ mod tests {
             _query: String,
             _collection: Option<String>,
             _tenant_id: Option<&str>,
+            _subject: Option<&str>,
         ) -> Result<serde_json::Value> {
             Ok(json!({
                 "columns": ["id", "score", "flag", "none", "obj"],
@@ -1017,6 +1024,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // Deliberately exercises the deprecated v1 ExecuteHybridQuery dispatch (TD-143).
+    #[allow(deprecated)]
     async fn unified_handlers_route_vector_hybrid_and_sql_operations() {
         let collection = Arc::new(MockCollectionPort::default());
         let vector_ops = Arc::new(MockVectorOpsPort::default());
@@ -1039,7 +1048,7 @@ mod tests {
                     collection_id: "tenant".to_string(),
                     ..VectorSearchRequest::default()
                 },
-                Some("tenant-a"),
+                PortIdentity::for_tenant("tenant-a"),
             )
             .await
             .unwrap();
@@ -1075,6 +1084,7 @@ mod tests {
                 "select * from docs".to_string(),
                 None,
                 Some("docs".to_string()),
+                None,
                 None,
             )
             .await
@@ -1114,6 +1124,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // Deliberately exercises the deprecated v1 ExecuteHybridQuery dispatch (TD-143).
+    #[allow(deprecated)]
     async fn unified_handlers_report_missing_query_adapter_explicitly_and_sql_arrays_lower() {
         let handlers = make_handlers(
             Arc::new(MockCollectionPort::default()),
@@ -1130,7 +1142,7 @@ mod tests {
         );
         assert!(
             handlers
-                .execute_sql_v1("select 1".to_string(), None, None, None)
+                .execute_sql_v1("select 1".to_string(), None, None, None, None)
                 .await
                 .unwrap_err()
                 .to_string()
@@ -1160,6 +1172,7 @@ mod tests {
                 _query: String,
                 _collection: Option<String>,
                 _tenant_id: Option<&str>,
+                _subject: Option<&str>,
             ) -> Result<serde_json::Value> {
                 Ok(json!(["text", 7, false, null, {"shape": "object"}]))
             }
@@ -1171,7 +1184,7 @@ mod tests {
             Some(Arc::new(ArrayQueryAdapter)),
         );
         let sql = handlers
-            .execute_sql_v1("select values".to_string(), None, None, None)
+            .execute_sql_v1("select values".to_string(), None, None, None, None)
             .await
             .unwrap();
         assert_eq!(sql.rows_returned, 5);

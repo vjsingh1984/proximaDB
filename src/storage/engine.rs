@@ -1,4 +1,5 @@
 use crate::core::{StorageConfig, String, VectorId};
+#[cfg(feature = "axis")]
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
@@ -26,7 +27,10 @@ pub struct StorageEngine {
     #[allow(dead_code)]
     disk_manager: Arc<DiskManager>,
     write_ahead_log_manager: Arc<WriteAheadLogManager>,
+    #[cfg(feature = "axis")]
     axis_index_manager: Arc<AxisManager>,
+    #[cfg(feature = "axis")]
+    axis_runtime_enabled: bool,
     compaction_manager: Arc<Compaction>,
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 
@@ -132,23 +136,28 @@ impl StorageEngine {
             .first()
             .cloned()
             .unwrap_or_else(|| PathBuf::from("./data"));
+        #[cfg(feature = "axis")]
+        let axis_runtime_enabled = config.optimization.enable_axis_indexes;
         // Initialize AXIS index manager with default configuration
-        let axis_config = AxisConfig::default();
-        let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
-
-        // Make AXIS manager available to SST engine for HNSW/IVF search
-        crate::storage::engines::sst::core::set_sst_axis_manager(axis_index_manager.clone());
-        // Also expose the concrete AxisManager for the WAL-layer inline flush trigger
-        // (resolved via `crate::index::get_global_axis_manager`), so an inline flush
-        // clears the AXIS projection exactly like the periodic/shutdown paths.
-        crate::index::set_global_axis_manager(axis_index_manager.clone());
-        info!("✅ AXIS manager registered with SST engine for HNSW/IVF search");
+        #[cfg(feature = "axis")]
+        let axis_index_manager = {
+            let axis_config = AxisConfig::default();
+            let m = Arc::new(AxisManager::new(axis_config).await?);
+            if axis_runtime_enabled {
+                // Make AXIS available only after both the compile capability
+                // and process runtime policy are enabled.
+                crate::storage::engines::sst::core::set_sst_axis_manager(m.clone());
+                crate::index::set_global_axis_manager(m.clone());
+                info!("✅ AXIS runtime enabled and registered with storage serving");
+            }
+            m
+        };
 
         // Build the one configured SST instance used by every flush and its
         // background compaction. Keeping this Arc prevents the worker-owning
         // instance from being discarded and a second default engine from being
         // constructed by the materializer.
-        let sst_config = config.sst_config.clone().unwrap_or_default();
+        let sst_config = config.effective_sst_config();
         let distance_compute =
             Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
         let canonical_sst_storage = Arc::new(
@@ -176,7 +185,10 @@ impl StorageEngine {
             canonical_sst_storage,
             disk_manager,
             write_ahead_log_manager,
+            #[cfg(feature = "axis")]
             axis_index_manager,
+            #[cfg(feature = "axis")]
+            axis_runtime_enabled,
             compaction_manager,
             filesystem,
             distance_compute,
@@ -247,9 +259,16 @@ impl StorageEngine {
             crate::storage::persistence::write_ahead_log::flush_policy::FlushPolicy::from_performance(
                 &self.config.wal_config.to_engine_config().performance,
             );
+        #[cfg(feature = "axis")]
         crate::storage::auto_flush_driver::AutoFlushDriver::spawn(
             flush_policy,
-            self.axis_index_manager.clone(),
+            self.axis_runtime_enabled
+                .then(|| self.axis_index_manager.clone()),
+            self.storage_write_fence.clone(),
+        );
+        #[cfg(not(feature = "axis"))]
+        crate::storage::auto_flush_driver::AutoFlushDriver::spawn(
+            flush_policy,
             self.storage_write_fence.clone(),
         );
 
@@ -308,7 +327,9 @@ impl StorageEngine {
     ) -> crate::storage::Result<
         crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult,
     > {
-        use crate::storage::flush_materializer::{CollectionFlushPlan, materialize_collection};
+        use crate::storage::flush_materializer::{
+            flush_plan_from_collection_meta, materialize_collection,
+        };
         use crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult;
         use crate::storage::persistence::write_ahead_log::{
             get_global_write_buffer_behavior, list_collections_from_catalog,
@@ -357,7 +378,7 @@ impl StorageEngine {
         let mut failed_collections: Vec<(String, String)> = Vec::new();
 
         for collection_id in &collections_to_flush {
-            // The server keys the write buffer by canonical UUID, so resolve by id.
+            // The server keys the write buffer by the catalog L1 object id.
             let Some(meta) = catalog.iter().find(|c| &c.id == collection_id) else {
                 tracing::warn!(
                     "⚠️ STORAGE_ENGINE: No catalog metadata for collection '{}'; cannot resolve engine, skipping",
@@ -367,25 +388,16 @@ impl StorageEngine {
                 continue;
             };
 
-            let config = meta.config.as_ref();
-            let assignment = meta.storage_assignment.as_ref();
-            let engine_type = assignment
-                .map(|a| a.engine)
-                .or_else(|| config.and_then(|c| c.storage_engine))
-                .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
-            let dimension = config.map(|c| c.dimension).unwrap_or(0);
-            let base_location = assignment
-                .map(|a| a.base_location.clone())
-                .unwrap_or_default();
-            let tenant_id = proximadb_tenant::tenant_id_of(meta);
-
-            let plan = CollectionFlushPlan {
-                wal_key: collection_id.clone(),
-                canonical_id: collection_id.clone(),
-                base_location,
-                engine_type,
-                dimension,
-                tenant_id,
+            let plan = match flush_plan_from_collection_meta(meta) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    tracing::warn!(
+                        collection_id,
+                        "STORAGE_ENGINE: catalog identity resolution failed: {error}"
+                    );
+                    failed_collections.push((collection_id.clone(), error.to_string()));
+                    continue;
+                }
             };
 
             // A6 fence is applied inside `materialize_collection` (default-OFF), so a
@@ -398,13 +410,19 @@ impl StorageEngine {
             // SST route honors SearchMode); gated by the insert→SIGINT→restart→search
             // round-trip in runtime-evidence/TD163_SERVER_FLUSH_MATERIALIZATION_2026_06_26.md.
             // Shutdown is terminal, so the freed batches are never re-flushed.
+            #[cfg(feature = "axis")]
+            let axis_arg: Option<&AxisManager> = self
+                .axis_runtime_enabled
+                .then_some(self.axis_index_manager.as_ref());
+            #[cfg(not(feature = "axis"))]
+            let axis_arg: Option<&()> = None;
             match materialize_collection(
                 &write_buffer,
                 &plan,
                 self.storage_write_fence.as_ref(),
                 None,
                 true,
-                Some(&self.axis_index_manager),
+                axis_arg,
             )
             .await
             {
@@ -781,13 +799,16 @@ impl StorageEngine {
         let exists = self.exists(collection_id, id).await?;
 
         // Remove from search index
-        if exists {
+        #[cfg(feature = "axis")]
+        if exists && self.axis_runtime_enabled {
             self.axis_index_manager
                 .delete(collection_id, id.clone())
                 .await?;
 
             // Deferred: collection stats are now maintained through the catalog.
         }
+        // With AXIS compiled out there is no in-memory index to mutate; the record
+        // is tombstoned in the SST path below and filtered on read (canonical predicate).
 
         // Mark as deleted in SST storage using tombstone
         if exists {
@@ -889,12 +910,6 @@ impl StorageEngine {
         tracing::debug!(
             "📁 Collection directories created, SST tree will be initialized on first access"
         );
-
-        // Ensure search index strategy exists for the collection
-        self.axis_index_manager
-            .ensure_collection_strategy(&collection_id)
-            .await
-            .map_err(|e| crate::core::StorageError::IndexError(e.to_string()))?;
 
         tracing::info!(
             "✅ Created collection: {} with directories at {}",
@@ -1110,9 +1125,12 @@ impl StorageEngine {
             }
 
             // Remove AXIS indexes for collection
-            self.axis_index_manager
-                .drop_collection(collection_id)
-                .await?;
+            #[cfg(feature = "axis")]
+            if self.axis_runtime_enabled {
+                self.axis_index_manager
+                    .drop_collection(collection_id)
+                    .await?;
+            }
 
             // Clean up SST files for the dropped collection
             if let Some(sst_storage) = self.sst_storages.get(collection_id) {
@@ -1177,10 +1195,14 @@ impl StorageEngine {
     // Use VectorOperationsService::search_vectors() with metadata filters instead
 
     /// Get search index statistics
+    #[cfg(feature = "axis")]
     pub async fn index_stats(
         &self,
         collection_id: &str,
     ) -> crate::storage::Result<Option<HashMap<String, serde_json::Value>>> {
+        if !self.axis_runtime_enabled {
+            return Ok(None);
+        }
         // Get AXIS index statistics
         match self
             .axis_index_manager
@@ -1203,13 +1225,32 @@ impl StorageEngine {
         }
     }
 
+    /// Get search index statistics — AXIS compiled out: no index stats available.
+    #[cfg(not(feature = "axis"))]
+    pub async fn index_stats(
+        &self,
+        _collection_id: &str,
+    ) -> crate::storage::Result<Option<HashMap<String, serde_json::Value>>> {
+        Ok(None)
+    }
+
     /// Optimize search index
+    #[cfg(feature = "axis")]
     pub async fn optimize_index(&self, collection_id: &str) -> crate::storage::Result<()> {
+        if !self.axis_runtime_enabled {
+            return Ok(());
+        }
         // Trigger AXIS analysis and optimization
         self.axis_index_manager
             .analyze_and_optimize(collection_id)
             .await
             .map_err(|e| crate::core::StorageError::IndexError(e.to_string()))
+    }
+
+    /// Optimize search index — AXIS compiled out: exact scan needs no optimization.
+    #[cfg(not(feature = "axis"))]
+    pub async fn optimize_index(&self, _collection_id: &str) -> crate::storage::Result<()> {
+        Ok(())
     }
 
     /// Batch insert multiple vectors into a collection

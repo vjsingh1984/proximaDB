@@ -9,6 +9,7 @@
 //! `ProximaValue` model. Protocol adapters are responsible for converting
 //! legacy wire values at the edge.
 
+use crate::service_ports::PortIdentity;
 use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_data_model::{ProximaType, ProximaValue};
@@ -105,10 +106,13 @@ pub trait ApiHandlersPort: Send + Sync {
 
     // ── Vector ────────────────────────────────────────────────────────────────
 
+    /// `identity` carries the tenant scope + authenticated principal for ABAC
+    /// enforcement at the shared search seam (TD-ABAC-7);
+    /// [`PortIdentity::anonymous`] = no policy evaluation.
     async fn handle_vector_search_v1_for_tenant(
         &self,
         request: VectorSearchRequest,
-        tenant_id: Option<&str>,
+        identity: PortIdentity<'_>,
     ) -> Result<VectorOperationResponse>;
 
     async fn handle_vector_search_v1(
@@ -153,5 +157,11 @@ pub trait ApiHandlersPort: Send + Sync {
         // haven't been wired pass `None`); production gRPC/REST threads the real
         // tenant from the request.
         tenant_id: Option<&str>,
+        // TD-ABAC-5: the authenticated subject (principal id), threaded to ABAC
+        // enforcement at the relational read boundary. Opaque `&str` here because
+        // this port (runtime layer) cannot name `SubjectId` (catalog/control); the
+        // root-crate adapter converts it. `None` ⇒ anonymous/unwired ⇒ no
+        // enforcement (status quo). Enforcement is behind `abac-policy`.
+        subject: Option<&str>,
     ) -> Result<ExecuteQueryResponse>;
 }

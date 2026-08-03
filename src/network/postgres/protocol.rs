@@ -112,6 +112,11 @@ pub struct PostgresProtocol {
     tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
     /// Request-tenant presence/defaulting contract for this deployment.
     tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
+    /// TD-ABAC-10 (ADR-087): resolver stamping `tenant_stable_id` on the
+    /// session identity ONCE at the startup handshake (the same catalog-backed
+    /// resolver REST/gRPC/Arrow use). `None` = unwired ⇒ identity carries no
+    /// stable id (pgwire ABAC inert for policy lookup, same default REST had).
+    stable_id_resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -452,6 +457,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            stable_id_resolver: None,
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
@@ -509,6 +515,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            stable_id_resolver: None,
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
@@ -558,6 +565,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            stable_id_resolver: None,
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
@@ -584,6 +592,16 @@ impl PostgresProtocol {
     /// the same `HeaderTrustPolicy` REST/gRPC/Arrow Flight enforce.
     pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
         self.tenant_header_trust = policy;
+        self
+    }
+
+    /// TD-ABAC-10 (ADR-087): wire the catalog-backed stable-id resolver so the
+    /// session identity carries the ABAC policy key, stamped once at startup.
+    pub fn with_stable_id_resolver(
+        mut self,
+        resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
+    ) -> Self {
+        self.stable_id_resolver = resolver;
         self
     }
 
@@ -626,6 +644,73 @@ impl PostgresProtocol {
                     "rejected bare pgwire tenant assertion"
                 );
                 Err(error.to_string())
+            }
+        }
+    }
+
+    /// TD-ABAC-10 (ADR-087): build the connection's ONE caller identity from
+    /// the gate-accepted startup values. Pure (no `self`, no I/O beyond the
+    /// resolver lookup) so the truth table is unit-testable in isolation —
+    /// ADR-087's "one reviewable identity function" principle.
+    ///
+    /// pgwire runs trust auth, so an accepted `user` is a client *assertion*,
+    /// never a credential ⇒ [`AuthClass::TrustAsserted`](proximadb_tenant::AuthClass);
+    /// empty/`anonymous` ⇒ no subject ⇒ `Anonymous` (the same non-assertion rule
+    /// [`Self::check_pgwire_subject_assertion`] applies). The strict-policy
+    /// REJECTION of a bare subject stays in that gate, which runs first — this
+    /// function only classifies what the gate already admitted. The stable id
+    /// (the ABAC policy key) is stamped exactly once, here.
+    fn startup_identity(
+        tenant: &str,
+        user: &str,
+        stable_id_resolver: Option<&dyn proximadb_tenant::TenantStableIdResolver>,
+    ) -> proximadb_tenant::ResolvedRequestIdentity {
+        let subject = Some(user.trim().to_string()).filter(|s| !s.is_empty() && s != "anonymous");
+        proximadb_tenant::ResolvedRequestIdentity {
+            tenant: tenant.to_string(),
+            auth_class: if subject.is_some() {
+                proximadb_tenant::AuthClass::TrustAsserted
+            } else {
+                proximadb_tenant::AuthClass::Anonymous
+            },
+            subject,
+            tenant_stable_id: None,
+        }
+        .stamp_stable_id(stable_id_resolver)
+    }
+
+    /// TD-ABAC-3: gate a pgwire SUBJECT assertion (startup `user`) through the
+    /// SAME [`HeaderTrustPolicy`](proximadb_tenant::HeaderTrustPolicy) the tenant
+    /// assertion uses. pgwire is trust auth, so the binding is always `None`;
+    /// under `Open` (the default) the asserted subject is accepted (same trust
+    /// class as the tenant assertion), under a strict policy a bare subject
+    /// assertion is rejected at the handshake so ABAC enforcement is not
+    /// spoofable on a strict deployment. `anonymous`/empty = no assertion.
+    #[cfg(feature = "abac-policy")]
+    fn check_pgwire_subject_assertion(&self, asserted: &str) -> std::result::Result<(), String> {
+        use proximadb_tenant::identity_trust::resolve_tenant_assertion;
+
+        let asserted = asserted.trim();
+        if asserted.is_empty() || asserted == "anonymous" {
+            return Ok(());
+        }
+        // Reuse the shared bare-assertion policy check — its `(Some, None)` arm is
+        // generic over any client-asserted identity with no authenticated binding,
+        // which is exactly the subject case under pgwire trust auth.
+        match resolve_tenant_assertion(Some(asserted), None, self.tenant_header_trust) {
+            Ok(_) => Ok(()),
+            Err(_error) => {
+                warn!(
+                    target: "proximadb::tenant_audit",
+                    surface = "pgwire",
+                    policy = %self.tenant_header_trust,
+                    "rejected bare pgwire subject assertion '{asserted}'"
+                );
+                Err(format!(
+                    "subject '{asserted}' asserted without authenticated credentials; \
+                     this deployment requires a subject-bound credential (header-trust={})",
+                    self.tenant_header_trust
+                ))
             }
         }
     }
@@ -876,12 +961,32 @@ impl PostgresProtocol {
             return Err(anyhow!("pgwire tenant assertion rejected: {message}"));
         }
 
+        // TD-ABAC-3: gate the startup `user` (the ABAC subject assertion) through
+        // the same trust policy as the tenant — so a strict deployment rejects a
+        // bare, unauthenticated subject at the handshake rather than letting ABAC
+        // enforce against a spoofable id. Default-OFF surface (`abac-policy`);
+        // under `Open` (default) the assertion is accepted like the tenant's.
+        #[cfg(feature = "abac-policy")]
+        if let Some(user) = params.get("user")
+            && let Err(message) = self.check_pgwire_subject_assertion(user)
+        {
+            self.send_error("FATAL", "28000", &message).await?;
+            return Err(anyhow!("pgwire subject assertion rejected: {message}"));
+        }
+
         // Store parameters in session
         {
             let mut session = self.session.write().await;
             if let Some(user) = params.get("user") {
                 session.user = user.clone();
             }
+            // TD-ABAC-10 (ADR-087): construct the ONE session identity from the
+            // gate-accepted startup values (pure fn — see `startup_identity`).
+            session.identity = Some(Self::startup_identity(
+                &startup_tenant,
+                &session.user,
+                self.stable_id_resolver.as_deref(),
+            ));
             session.database = startup_tenant;
             // Open-core cache tier hook: a `proximadb_tier` startup parameter
             // (control-plane supplied) records the connection tenant's tier for
@@ -1757,6 +1862,21 @@ impl PostgresProtocol {
         // to the pre-cache behavior.
         let namespace = self.session.read().await.current_schema();
         let olap_cache = super::relational_pipeline::olap_result_cache();
+        // TD-ABAC-3: build the ABAC subject from the (already trust-gated at the
+        // handshake) connection user. `anonymous`/empty ⇒ no subject ⇒ no
+        // enforcement; otherwise the asserted user becomes the SubjectId ABAC
+        // resolves the row filter against.
+        #[cfg(feature = "abac-policy")]
+        // TD-ABAC-10 (ADR-087): the subject comes from the ONE session identity
+        // constructed at startup — no per-query re-derivation from `user`.
+        let subject = self
+            .session
+            .read()
+            .await
+            .identity
+            .as_ref()
+            .and_then(|id| id.subject.clone())
+            .map(proximadb_catalog::fc_metamodel::SubjectId);
         super::relational_pipeline::try_run_select(
             query,
             self.dml_service.as_ref(),
@@ -1775,6 +1895,8 @@ impl PostgresProtocol {
             true,
             Some(namespace.as_str()),
             olap_cache.as_deref(),
+            #[cfg(feature = "abac-policy")]
+            subject,
         )
         .await
     }
@@ -2225,6 +2347,11 @@ impl PostgresProtocol {
                     top_k,
                     metadata_filter, // TD-100: mem0 metadata-scoped WHERE pushdown
                     None,            // Default config
+                    #[cfg(feature = "abac-policy")]
+                    &proximadb_abac::ReadContext::system(
+                        proximadb_abac::SystemReadReason::Statistics,
+                        "pgwire [CLIENT-PLACEHOLDER]",
+                    ),
                 )
                 .await
             {

@@ -6748,6 +6748,7 @@ dependencies = [
  "proximadb-cache",
  "proximadb-catalog",
  "proximadb-catalog-introspection",
+ "proximadb-cdc",
  "proximadb-cks-local",
  "proximadb-clustering-kernel",
  "proximadb-codec",
@@ -6941,6 +6942,7 @@ dependencies = [
  "proximadb-query-filter",
  "proximadb-records",
  "proximadb-runtime",
+ "proximadb-tenant",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -7004,10 +7006,14 @@ dependencies = [
 name = "proximadb-cache"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
+ "crc32fast",
  "dashmap",
  "moka",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
  "tokio",
 ]
 
@@ -7063,6 +7069,23 @@ dependencies = [
  "sqlparser 0.59.0",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "proximadb-cdc"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "proximadb-config",
+ "rand 0.8.6",
+ "regex",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -7249,6 +7272,7 @@ dependencies = [
  "num_cpus",
  "numpy",
  "proximadb",
+ "proximadb-abac",
  "proximadb-data-model",
  "proximadb-embedded-common",
  "proximadb-hardware",
@@ -7685,7 +7709,10 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-kernel",
  "proximadb-proto",
+ "proximadb-rank-core",
+ "proximadb-rank-onnx",
  "proximadb-records",
+ "proximadb-search-types",
  "proximadb-tenant",
  "regex",
  "reqwest 0.11.27",
@@ -8138,9 +8165,13 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
+ "dashmap",
+ "futures",
  "num_cpus",
  "proximadb-config",
  "proximadb-data-model",
+ "proximadb-distance-types",
  "proximadb-filter-expression",
  "proximadb-graph-query",
  "proximadb-hardware",
@@ -8148,11 +8179,14 @@ dependencies = [
  "proximadb-proto",
  "proximadb-records",
  "proximadb-search-types",
+ "proximadb-tenant",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "sysinfo",
  "thiserror 1.0.69",
  "tokio",
+ "tonic",
  "tracing",
  "uuid",
 ]
@@ -9532,14 +9566,15 @@ dependencies = [
 
 [[package]]
 name = "sandhi-core"
-version = "0.1.2"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6642eaf1e45226ba5f62344ef6fce7e058861b3abba5e0e067b69c2fe51e011b"
+checksum = "bcd8167e137bcbdbf7c96f56a9e7cba4dcb16b6eeba53dc96efb0666d5f6e9bd"
 dependencies = [
  "schemars",
  "serde",
  "serde_json",
  "time",
+ "tracing",
 ]
 
 [[package]]

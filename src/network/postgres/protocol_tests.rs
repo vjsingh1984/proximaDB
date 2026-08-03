@@ -1388,3 +1388,71 @@ fn legacy_from_shape_guard_flags_multi_table_selects() {
         );
     }
 }
+
+// ── TD-ABAC-10 (ADR-087): the pgwire session-identity truth table ────────────
+//
+// `startup_identity` is the ONE place pgwire turns gate-accepted startup values
+// into the caller identity every downstream read consumes, so its truth table is
+// tested in isolation rather than through a TCP handshake.
+
+/// A resolver that mints a stable id only for the tenants it knows — models the
+/// real catalog resolver's "unminted tenant ⇒ None" behavior.
+struct FakeStableIds(&'static str, u64);
+
+impl proximadb_tenant::TenantStableIdResolver for FakeStableIds {
+    fn stable_id_of(&self, tenant_id: &str) -> Option<u64> {
+        (tenant_id == self.0).then_some(self.1)
+    }
+}
+
+#[test]
+fn startup_identity_classifies_an_asserted_user_as_trust_asserted_and_stamps_the_stable_id() {
+    let resolver = FakeStableIds("acme", 42);
+    let identity = PostgresProtocol::startup_identity("acme", "alice", Some(&resolver));
+
+    assert_eq!(identity.tenant, "acme");
+    assert_eq!(identity.subject.as_deref(), Some("alice"));
+    // pgwire is trust auth — an accepted `user` is an assertion, never a
+    // credential. Enforcement still applies; the class is the audit trail.
+    assert_eq!(
+        identity.auth_class,
+        proximadb_tenant::AuthClass::TrustAsserted
+    );
+    // The ABAC policy key is stamped exactly once, here.
+    assert_eq!(identity.tenant_stable_id, Some(42));
+}
+
+#[test]
+fn startup_identity_treats_empty_and_anonymous_users_as_no_subject() {
+    let resolver = FakeStableIds("acme", 42);
+    for user in ["", "   ", "anonymous"] {
+        let identity = PostgresProtocol::startup_identity("acme", user, Some(&resolver));
+        assert_eq!(
+            identity.subject, None,
+            "user {user:?} must not be a subject"
+        );
+        assert_eq!(
+            identity.auth_class,
+            proximadb_tenant::AuthClass::Anonymous,
+            "user {user:?} must be anonymous"
+        );
+        // The tenant is still resolved (and still stamped) without a subject.
+        assert_eq!(identity.tenant_stable_id, Some(42));
+    }
+}
+
+#[test]
+fn startup_identity_leaves_the_stable_id_absent_when_unminted_or_unwired() {
+    // Unminted tenant (resolver wired, no id for this tenant).
+    let resolver = FakeStableIds("acme", 42);
+    let unminted = PostgresProtocol::startup_identity("other", "alice", Some(&resolver));
+    assert_eq!(unminted.subject.as_deref(), Some("alice"));
+    assert_eq!(
+        unminted.tenant_stable_id, None,
+        "an unminted tenant carries no policy key"
+    );
+
+    // No resolver wired at all.
+    let unwired = PostgresProtocol::startup_identity("acme", "alice", None);
+    assert_eq!(unwired.tenant_stable_id, None);
+}

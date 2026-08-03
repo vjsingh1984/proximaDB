@@ -273,7 +273,7 @@ pub struct ExplainResult {
     pub performance_hints: Vec<String>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod execution_tests {
     use super::*;
 

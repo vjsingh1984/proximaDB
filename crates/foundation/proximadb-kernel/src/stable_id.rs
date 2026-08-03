@@ -26,6 +26,20 @@
 /// Global customer identity (billing/auth). Assigned by the control plane.
 pub type AccountId = u32;
 
+/// Stable tenant identity from the control-plane/catalog tenant registry.
+///
+/// Tenant display names and aliases are accepted only at identity-resolution
+/// boundaries. Authorization, ownership, and cache attribution use this native
+/// value after resolution.
+pub type TenantStableId = u64;
+
+/// Globally unique, never-reused catalog object identity for a collection.
+///
+/// This is distinct from [`CollectionId`]: `CollectionId` is a compact u32
+/// scoped by `(account, namespace)` for physical path composition, while this
+/// u64 identifies the catalog object globally for admission and scheduling.
+pub type CollectionObjectId = u64;
+
 /// Regional deployment scope (us-east, eu-west). Per-account, auth-assigned.
 pub type WorkspaceId = u16;
 
@@ -99,7 +113,7 @@ impl ToPathSegment for u32 {
 /// `DrPathBuilder` / `DrCollectionPath` (the SaaS mandate: every object-store
 /// write is prefixed via DrPathBuilder, the single allowlisted path builder).
 /// DrCollectionPath consumes a `CollectionIdentity` via `build_from_identity`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct CollectionIdentity {
     pub account_id: AccountId,
     pub namespace_id: NamespaceId,
@@ -129,15 +143,19 @@ mod tests {
 
     #[test]
     fn u16_path_segment_is_zero_padded_to_3() {
+        assert_eq!(0u16.to_path_segment(), "000");
         assert_eq!(1u16.to_path_segment(), "001");
         assert_eq!(10u16.to_path_segment(), "00A"); // base62: 10 = 'A' (uppercase)
         assert_eq!(1000u16.to_path_segment().len(), 3);
+        assert_eq!(u16::MAX.to_path_segment().len(), 3);
     }
 
     #[test]
     fn u32_path_segment_is_zero_padded_to_6() {
+        assert_eq!(0u32.to_path_segment(), "000000");
         assert_eq!(1u32.to_path_segment(), "000001");
         assert_eq!(42u32.to_path_segment().len(), 6);
+        assert_eq!(u32::MAX.to_path_segment().len(), 6);
     }
 
     #[test]

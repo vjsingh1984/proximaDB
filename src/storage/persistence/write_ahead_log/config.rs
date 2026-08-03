@@ -427,106 +427,6 @@ pub struct CollectionWalConfig {
     pub default_ttl_days: Option<u32>,
 }
 
-// Conversion from core config to WAL config
-impl From<&crate::core::config::WalStorageConfig> for WALConfig {
-    fn from(core_config: &crate::core::config::WalStorageConfig) -> Self {
-        // WAL uses storage_locations - will be populated by caller
-        // Default to a safe fallback
-        let distribution_strategy = match core_config.distribution_strategy {
-            crate::core::config::WalDistributionStrategy::RoundRobin => {
-                DiskDistributionStrategy::RoundRobin
-            }
-            crate::core::config::WalDistributionStrategy::Hash => DiskDistributionStrategy::Hash,
-            crate::core::config::WalDistributionStrategy::LoadBalanced => {
-                DiskDistributionStrategy::LoadBalanced
-            }
-        };
-        let mut wal_config = WALConfig {
-            multi_disk: MultiDiskConfig {
-                data_directories: vec!["file://./data".to_string()],
-                distribution_strategy,
-                collection_affinity: core_config.collection_affinity,
-            },
-            performance: WalPerformanceConfig {
-                memory_flush_size_bytes: core_config.memory_flush_size_bytes,
-                global_flush_threshold: core_config.global_flush_threshold,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        // Apply optional configuration overrides from config.toml
-        if let Some(strategy_type) = &core_config.strategy_type {
-            wal_config.strategy_type = match strategy_type.as_str() {
-                "Avro" => WriteBufferStrategyType::AvroBatch,
-                "Bincode" => WriteBufferStrategyType::BincodeBatch,
-                "AvroBatch" => WriteBufferStrategyType::AvroBatch,
-                "BincodeBatch" => WriteBufferStrategyType::BincodeBatch,
-                "Proto" => WriteBufferStrategyType::ProtoBatch,
-                "ProtoBatch" => WriteBufferStrategyType::ProtoBatch,
-                _ => WriteBufferStrategyType::default(),
-            };
-        }
-
-        if let Some(memtable_type) = &core_config.memtable_type {
-            wal_config.memtable.memtable_type = match memtable_type.as_str() {
-                "BTree" => MemTableType::BTree,
-                "HashMap" => MemTableType::HashMap,
-                "SkipList" => MemTableType::SkipList,
-                "Art" => MemTableType::Art,
-                _ => MemTableType::default(),
-            };
-        }
-
-        if let Some(sync_mode) = &core_config.sync_mode {
-            wal_config.performance.sync_mode = match sync_mode.as_str() {
-                "Always" => SyncMode::Always,
-                "PerBatch" => SyncMode::PerBatch,
-                "Periodic" => SyncMode::Periodic,
-                "Never" => SyncMode::Never,
-                "MemoryOnly" => SyncMode::MemoryOnly,
-                _ => SyncMode::PerBatch, // Default to balanced mode
-            };
-        }
-
-        if let Some(batch_threshold) = core_config.batch_threshold {
-            wal_config.performance.batch_threshold = batch_threshold;
-        }
-
-        if let Some(write_buffer_mb) = core_config.write_buffer_size_mb {
-            wal_config.performance.write_buffer_size = write_buffer_mb * 1024 * 1024;
-            // Convert MB to bytes
-        }
-
-        if let Some(concurrent_flushes) = core_config.concurrent_flushes {
-            wal_config.performance.concurrent_flushes = concurrent_flushes;
-        }
-
-        if let Some(global_shrink_factor) = core_config.global_shrink_factor {
-            wal_config.performance.global_shrink_factor = global_shrink_factor;
-        }
-
-        // ADR-069 / TD-WAL-1 S1: WAL flush-control overrides (inert until S2/S3).
-        wal_config.performance.flush_interval_secs = core_config
-            .flush_interval_secs
-            .unwrap_or(wal_config.performance.flush_interval_secs);
-        wal_config.performance.wal_max_bytes = core_config
-            .wal_max_bytes
-            .unwrap_or(wal_config.performance.wal_max_bytes);
-        if let Some(pct) = core_config.high_watermark_pct {
-            wal_config.performance.high_watermark_pct = pct;
-        }
-        if let Some(pct) = core_config.critical_watermark_pct {
-            wal_config.performance.critical_watermark_pct = pct;
-        }
-
-        // Set global manifest URL from TOML config
-        wal_config.global_manifest_url = core_config.global_manifest_url.clone();
-
-        wal_config
-    }
-}
-
 impl WALConfig {
     /// Create configuration optimized for high-throughput writes
     pub fn high_throughput() -> Self {
@@ -945,32 +845,6 @@ mod tests {
         assert_eq!(p.wal_max_bytes, 0, "capacity budget off by default");
         assert_eq!(p.high_watermark_pct, 0.80);
         assert_eq!(p.critical_watermark_pct, 0.95);
-    }
-
-    #[test]
-    fn wal_storage_config_overrides_flush_triggers() {
-        use crate::core::config::WalStorageConfig;
-        // Absent overrides (None) leave the runtime performance defaults intact
-        // (the 300s time floor — ADR-069 D2).
-        let base = WALConfig::from(&WalStorageConfig::default());
-        assert_eq!(base.performance.flush_interval_secs, 300);
-        assert_eq!(base.performance.wal_max_bytes, 0);
-        assert_eq!(base.performance.high_watermark_pct, 0.80);
-        assert_eq!(base.performance.critical_watermark_pct, 0.95);
-
-        // Present overrides (ADR-069 D2/D3/D6) flow through to WalPerformanceConfig.
-        let core = WalStorageConfig {
-            flush_interval_secs: Some(300),
-            wal_max_bytes: Some(25 * 1024 * 1024 * 1024),
-            high_watermark_pct: Some(0.75),
-            critical_watermark_pct: Some(0.9),
-            ..WalStorageConfig::default()
-        };
-        let cfg = WALConfig::from(&core);
-        assert_eq!(cfg.performance.flush_interval_secs, 300);
-        assert_eq!(cfg.performance.wal_max_bytes, 25 * 1024 * 1024 * 1024);
-        assert_eq!(cfg.performance.high_watermark_pct, 0.75);
-        assert_eq!(cfg.performance.critical_watermark_pct, 0.9);
     }
 
     #[tokio::test]

@@ -537,8 +537,14 @@ impl MultiServer {
                 ))
                 .layer(tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator.clone().map(|sc| {
+                        let stable_id_resolver =
+                            Arc::new(crate::security::CatalogTenantStableIdResolver::new(
+                                self.shared_services.catalog_manager.clone(),
+                            ))
+                                as Arc<dyn proximadb_tenant::TenantStableIdResolver>;
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
+                            .with_stable_id_resolver(stable_id_resolver)
                     })
                 } else {
                     None
@@ -706,6 +712,8 @@ impl MultiServer {
             let arrow_bind_target = self.config.arrow_bind_target();
             let arrow_target_log = format!("{arrow_bind_target:?}");
             let arrow_record_ops = services.record_ops.clone();
+            // TD-FLIGHT-1: same RecordOpsService Arc, coerced to the search port.
+            let arrow_record_search = services.record_ops.clone();
             let arrow_vector_ops = services.vector_operations_service.clone();
             let arrow_collection = services.collection_service.clone();
             let arrow_graph = services.graph_service.clone();
@@ -721,7 +729,6 @@ impl MultiServer {
             // three see identical routing decisions.
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
-            let api_handlers = services.api_handlers.clone();
             let tenant_header_trust = self.tenant_header_trust;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
 
@@ -729,14 +736,18 @@ impl MultiServer {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
                 let flight_service = ProximaFlightService::from_services(
-                    api_handlers,
                     arrow_record_ops,
+                    arrow_record_search,
                     arrow_vector_ops,
                     arrow_collection,
                     arrow_graph,
                 )
                 .with_tenant_header_trust(tenant_header_trust)
-                .with_tenant_deployment_mode(tenant_deployment_mode);
+                .with_tenant_deployment_mode(tenant_deployment_mode)
+                .with_stable_id_resolver(Some(Arc::new(
+                    crate::security::CatalogTenantStableIdResolver::new(catalog_manager.clone()),
+                )
+                    as Arc<dyn proximadb_tenant::TenantStableIdResolver>));
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
@@ -1130,7 +1141,8 @@ impl MultiServer {
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service =
                 crate::network::arrow_ipc::service::ProximaFlightService::from_services(
-                    services.api_handlers.clone(),
+                    services.record_ops.clone(),
+                    // same RecordOpsService Arc, coerced to the v2 search port (TD-FLIGHT-1)
                     services.record_ops.clone(),
                     services.vector_operations_service.clone(),
                     services.collection_service.clone(),
@@ -1143,7 +1155,13 @@ impl MultiServer {
                 })
                 .with_tenant_header_trust(self.tenant_header_trust)
                 .with_tenant_deployment_mode(self.tenant_deployment_mode.clone())
-                .with_catalog_manager(Some(services.catalog_manager.clone()));
+                .with_catalog_manager(Some(services.catalog_manager.clone()))
+                .with_stable_id_resolver(Some(Arc::new(
+                    crate::security::CatalogTenantStableIdResolver::new(
+                        services.catalog_manager.clone(),
+                    ),
+                )
+                    as Arc<dyn proximadb_tenant::TenantStableIdResolver>));
             let flight_server =
                 arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
                     .max_encoding_message_size(512 * 1024 * 1024)
@@ -1155,8 +1173,14 @@ impl MultiServer {
                 ))
                 .layer(tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator.clone().map(|sc| {
+                        let stable_id_resolver =
+                            Arc::new(crate::security::CatalogTenantStableIdResolver::new(
+                                self.shared_services.catalog_manager.clone(),
+                            ))
+                                as Arc<dyn proximadb_tenant::TenantStableIdResolver>;
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
+                            .with_stable_id_resolver(stable_id_resolver)
                     })
                 } else {
                     None
@@ -1523,8 +1547,14 @@ impl MultiServer {
                 ))
                 .layer(tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator.clone().map(|sc| {
+                        let stable_id_resolver =
+                            Arc::new(crate::security::CatalogTenantStableIdResolver::new(
+                                self.shared_services.catalog_manager.clone(),
+                            ))
+                                as Arc<dyn proximadb_tenant::TenantStableIdResolver>;
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
+                            .with_stable_id_resolver(stable_id_resolver)
                     })
                 } else {
                     None
@@ -1629,6 +1659,8 @@ impl MultiServer {
             // `arrow_target_log` (the value has no `Display` impl).
             let arrow_target_log = format!("{arrow_bind_target:?}");
             let arrow_record_ops = services.record_ops.clone();
+            // TD-FLIGHT-1: same RecordOpsService Arc, coerced to the search port.
+            let arrow_record_search = services.record_ops.clone();
             let arrow_vector_ops = services.vector_operations_service.clone();
             let arrow_collection = services.collection_service.clone();
             let arrow_graph = services.graph_service.clone();
@@ -1644,7 +1676,6 @@ impl MultiServer {
             // three see identical routing decisions.
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
-            let api_handlers = services.api_handlers.clone();
             let tenant_header_trust = self.tenant_header_trust;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
 
@@ -1652,14 +1683,18 @@ impl MultiServer {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
                 let flight_service = ProximaFlightService::from_services(
-                    api_handlers,
                     arrow_record_ops,
+                    arrow_record_search,
                     arrow_vector_ops,
                     arrow_collection,
                     arrow_graph,
                 )
                 .with_tenant_header_trust(tenant_header_trust)
-                .with_tenant_deployment_mode(tenant_deployment_mode);
+                .with_tenant_deployment_mode(tenant_deployment_mode)
+                .with_stable_id_resolver(Some(Arc::new(
+                    crate::security::CatalogTenantStableIdResolver::new(catalog_manager.clone()),
+                )
+                    as Arc<dyn proximadb_tenant::TenantStableIdResolver>));
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))

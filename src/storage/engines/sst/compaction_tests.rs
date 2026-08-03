@@ -1,3 +1,6 @@
+use super::{
+    MergedVectorTracking, retain_training_guard_for_follow_up, training_follow_up_threshold,
+};
 use crate::storage::engines::sst::blocks::SstRecord;
 use crate::storage::engines::sst::{
     Compaction, CompactionPriority, CompactionStats, CompactionTask, SstConfig,
@@ -27,8 +30,11 @@ async fn test_compaction_task_scheduling() {
     let manager = Compaction::new(config).await.unwrap();
 
     let task = CompactionTask {
+        collection_object_id: 1,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         input_files: vec![],
+        input_bytes: 0,
         output_file: PathBuf::from("/tmp/output.db"),
         priority: CompactionPriority::Medium,
         block_size_kb: None,
@@ -49,18 +55,21 @@ async fn td_compact6_schedule_dedups_same_output_at_enqueue() {
     let manager = Compaction::new(SstConfig::default()).await.unwrap();
     // No start_workers → task is never consumed; queue + active reflect enqueue.
     let mk_task = || CompactionTask {
+        collection_object_id: 1,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         input_files: vec![PathBuf::from("/nonexistent/proxima_d1_test/input.pax")],
+        input_bytes: 0,
         output_file: PathBuf::from("/nonexistent/proxima_d1_test/compacted_L1.pax"),
         priority: CompactionPriority::Medium,
         block_size_kb: None,
         compression_config: None,
         precision_hint: None,
     };
-    manager.schedule_compaction(mk_task()).await.unwrap();
+    assert!(manager.schedule_compaction(mk_task()).await.unwrap());
     // Second schedule for the same output file is deduped at enqueue (the
     // active marker was inserted atomically with the first schedule's check).
-    manager.schedule_compaction(mk_task()).await.unwrap();
+    assert!(!manager.schedule_compaction(mk_task()).await.unwrap());
     assert_eq!(
         manager.active_compaction_count().await,
         1,
@@ -71,6 +80,39 @@ async fn td_compact6_schedule_dedups_same_output_at_enqueue() {
         1,
         "the deduped second schedule did not enqueue a second task"
     );
+}
+
+#[tokio::test]
+async fn compaction_morsel_admission_rejects_overlapping_inputs() {
+    use crate::core::stable_id::ToPathSegment;
+
+    let manager = Compaction::new(SstConfig::default()).await.unwrap();
+    let input = PathBuf::from(format!(
+        "/nonexistent/morsel/{}.pax",
+        10u32.to_path_segment()
+    ));
+    let task = |segment_id: crate::core::stable_id::SegmentId| CompactionTask {
+        collection_object_id: 1,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
+        level: 1,
+        input_files: vec![input.clone()],
+        input_bytes: 0,
+        output_file: PathBuf::from(format!(
+            "/nonexistent/morsel/{}.pax",
+            segment_id.to_path_segment()
+        )),
+        priority: CompactionPriority::Medium,
+        block_size_kb: None,
+        compression_config: None,
+        precision_hint: None,
+    };
+
+    assert!(manager.schedule_compaction(task(1)).await.unwrap());
+    assert!(
+        !manager.schedule_compaction(task(2)).await.unwrap(),
+        "a different output name must not admit the same input morsel twice"
+    );
+    assert_eq!(manager.pending_task_count().await, 1);
 }
 
 /// TD-COMPACT-6 (ADR-076 D1): on the async path the flush caller sets the
@@ -101,11 +143,14 @@ async fn td_compact6_worker_clears_training_in_flight_after_completion() {
     );
 
     let task = CompactionTask {
+        collection_object_id: 1,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         // Nonexistent input → the worker's perform_compaction errors, but it
         // STILL runs release_task_state (the post-match cleanup), which is the
         // path under test. No real files needed.
         input_files: vec![coll_dir.join("input.pax")],
+        input_bytes: 0,
         output_file: coll_dir.join("compacted_L1.pax"),
         priority: CompactionPriority::Medium,
         block_size_kb: None,
@@ -132,6 +177,33 @@ async fn td_compact6_worker_clears_training_in_flight_after_completion() {
     );
 
     let _ = manager.stop().await;
+}
+
+#[test]
+fn bounded_training_chain_keeps_threshold_one_until_l0_is_drained() {
+    assert_eq!(
+        training_follow_up_threshold(0, &PathBuf::from("L1_output.pax")),
+        Some(1)
+    );
+    assert_eq!(
+        training_follow_up_threshold(1, &PathBuf::from("L2_output.pax")),
+        None
+    );
+    assert_eq!(
+        training_follow_up_threshold(0, &PathBuf::from("L1_output.arrow")),
+        None
+    );
+
+    assert!(retain_training_guard_for_follow_up(true, Some(0)));
+    assert!(
+        !retain_training_guard_for_follow_up(true, Some(1)),
+        "a higher-level follow-up means the untrained L0 tail is drained"
+    );
+    assert!(
+        !retain_training_guard_for_follow_up(true, None),
+        "the guard must clear when no follow-up was admitted"
+    );
+    assert!(!retain_training_guard_for_follow_up(false, Some(0)));
 }
 
 // Unit tests for expired record deletion during compaction
@@ -209,8 +281,11 @@ async fn test_sst_compaction_expired_deletion_unit() -> anyhow::Result<()> {
 
     // Create compaction task
     let _task = CompactionTask {
+        collection_object_id: 1,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
         level: 0,
         input_files: vec![input_file],
+        input_bytes: 0,
         output_file: output_file.clone(),
         priority: CompactionPriority::Medium,
         block_size_kb: None,
@@ -397,6 +472,223 @@ fn epoch_millis_accepts_seconds_millis_micros_and_nanos() {
         1_782_912_345_678
     );
     assert_eq!(Compaction::epoch_millis(0), 0);
+}
+
+/// TD-COMPACT-2: compaction must keep the canonical record envelope intact.
+/// The former ProximaRecord -> VectorRecord -> ProximaRecord pivot discarded
+/// tenancy/labels and cloned the dense vector. Pointer equality locks the
+/// ownership contract in addition to the logical fields.
+#[test]
+fn canonical_compaction_prepare_preserves_record_and_embedding_ownership() {
+    use proximadb_records::{EmbeddingCell, EmbeddingValues, LabelSet, ProximaRecord};
+
+    let now_ns = 1_800_000_000_000_000_000i64;
+    let mut labels = LabelSet::new();
+    labels.insert("retained-label");
+    let record = ProximaRecord {
+        oid: "owned-record".to_string(),
+        record_version: 1,
+        tenant_id: "tenant-stable-id".to_string(),
+        permitted_principals: vec!["reader-7".to_string()],
+        created_at_ns: now_ns - 1_000,
+        updated_at_ns: now_ns - 500,
+        embeddings: vec![EmbeddingCell::new_fp32(
+            "sift",
+            "dense_vector",
+            4,
+            vec![1.0, 2.0, 3.0, 4.0],
+        )],
+        labels,
+        ..ProximaRecord::default()
+    };
+    let original_ptr = record.embeddings[0]
+        .values
+        .as_fp32_slice()
+        .map(<[f32]>::as_ptr);
+
+    let prepared =
+        Compaction::prepare_canonical_records(vec![record], now_ns, MergedVectorTracking::Disabled);
+
+    assert_eq!(prepared.records.len(), 1);
+    let retained = &prepared.records[0];
+    assert_eq!(retained.tenant_id, "tenant-stable-id");
+    assert_eq!(retained.permitted_principals, vec!["reader-7"]);
+    assert!(retained.labels.contains("retained-label"));
+    assert!(matches!(
+        retained.embeddings[0].values,
+        EmbeddingValues::Fp32(_)
+    ));
+    let retained_ptr = retained.embeddings[0]
+        .values
+        .as_fp32_slice()
+        .map(<[f32]>::as_ptr);
+    assert_eq!(retained_ptr, original_ptr);
+    assert!(prepared.merged_vectors.is_empty());
+}
+
+#[test]
+fn background_compaction_skips_dead_merged_vector_stats_copy() {
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
+
+    let now_ns = 1_800_000_000_000_000_000i64;
+    let make_record = || ProximaRecord {
+        oid: "tracked-record".to_string(),
+        record_version: 1,
+        created_at_ns: now_ns - 1_000,
+        updated_at_ns: now_ns - 500,
+        embeddings: vec![EmbeddingCell::new_fp32(
+            "sift",
+            "dense_vector",
+            2,
+            vec![1.0, 2.0],
+        )],
+        ..ProximaRecord::default()
+    };
+
+    let background = Compaction::prepare_canonical_records(
+        vec![make_record()],
+        now_ns,
+        MergedVectorTracking::Disabled,
+    );
+    assert_eq!(background.records.len(), 1);
+    assert!(background.merged_vectors.is_empty());
+
+    let enhanced = Compaction::prepare_canonical_records(
+        vec![make_record()],
+        now_ns,
+        MergedVectorTracking::Enabled,
+    );
+    assert_eq!(enhanced.records.len(), 1);
+    assert_eq!(enhanced.merged_vectors.len(), 1);
+    assert_eq!(enhanced.merged_vectors[0].id, "tracked-record");
+}
+
+#[test]
+fn canonical_compaction_prepare_accounts_expiry_and_old_tombstones() {
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
+
+    let now_ns = 1_800_000_000_000_000_000i64;
+    let active = ProximaRecord {
+        oid: "active".to_string(),
+        record_version: 1,
+        created_at_ns: now_ns - 1_000,
+        updated_at_ns: now_ns - 500,
+        embeddings: vec![EmbeddingCell::new_fp32(
+            "sift",
+            "dense_vector",
+            2,
+            vec![1.0, 2.0],
+        )],
+        ..ProximaRecord::default()
+    };
+    let expired = ProximaRecord {
+        oid: "expired".to_string(),
+        valid_to_ns: Some(now_ns - 1),
+        ..active.clone()
+    };
+    let old_tombstone = ProximaRecord {
+        oid: "deleted".to_string(),
+        created_at_ns: now_ns - 2 * 60 * 60 * 1_000_000_000,
+        updated_at_ns: now_ns - 2 * 60 * 60 * 1_000_000_000,
+        valid_to_ns: Some(now_ns - 1),
+        embeddings: Vec::new(),
+        ..ProximaRecord::default()
+    };
+
+    let prepared = Compaction::prepare_canonical_records(
+        vec![active, expired, old_tombstone],
+        now_ns,
+        MergedVectorTracking::Disabled,
+    );
+
+    assert_eq!(prepared.records.len(), 1);
+    assert_eq!(prepared.records[0].oid, "active");
+    assert_eq!(prepared.expired_records_count, 1);
+    assert_eq!(prepared.tombstones_removed_count, 1);
+    assert_eq!(prepared.deleted_vector_ids, vec!["deleted", "expired"]);
+}
+
+#[tokio::test]
+async fn canonical_compaction_round_trips_real_pax_inputs() -> anyhow::Result<()> {
+    use crate::storage::engines::sst::segment_format::{read_segment_records, write_pax_segment};
+    use proximadb_block_format::VectorQuant;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
+    use tempfile::tempdir;
+
+    let dir = tempdir()?;
+    let input_a = dir.path().join("segment_L0_a.pax");
+    let input_b = dir.path().join("segment_L0_b.pax");
+    let output = dir.path().join("segment_L1_compacted.pax");
+    let make_record = |oid: &str, value: f32| ProximaRecord {
+        oid: oid.to_string(),
+        record_version: 1,
+        tenant_id: "tenant-42".to_string(),
+        created_at_ns: 1_700_000_000_000_000_000,
+        updated_at_ns: 1_700_000_000_000_000_000,
+        embeddings: vec![EmbeddingCell::new_fp32(
+            "sift",
+            "dense_vector",
+            4,
+            vec![value; 4],
+        )],
+        ..ProximaRecord::default()
+    };
+    write_pax_segment(
+        &input_a,
+        &[make_record("a", 1.0), make_record("b", 2.0)],
+        "collection-7",
+        1,
+        VectorQuant::Sq8,
+        None,
+    )?;
+    write_pax_segment(
+        &input_b,
+        &[make_record("c", 3.0), make_record("d", 4.0)],
+        "collection-7",
+        1,
+        VectorQuant::Sq8,
+        None,
+    )?;
+
+    let config = SstConfig::default();
+    let compaction = Compaction::new(config.clone()).await?;
+    let task = CompactionTask {
+        collection_object_id: 7,
+        collection_identity: crate::core::stable_id::CollectionIdentity::default(),
+        level: 0,
+        input_files: vec![input_a.clone(), input_b.clone()],
+        input_bytes: 0,
+        output_file: output.clone(),
+        priority: CompactionPriority::High,
+        block_size_kb: None,
+        compression_config: None,
+        precision_hint: None,
+    };
+    let stats = compaction
+        .perform_compaction_enhanced(&task, &config, None, None)
+        .await?;
+
+    assert_eq!(stats.base_stats.files_merged, 2);
+    assert_eq!(stats.merged_vectors.len(), 4);
+    assert!(output.exists());
+    assert!(!input_a.exists());
+    assert!(!input_b.exists());
+
+    let output_bytes = std::fs::read(&output)?;
+    let output_records = read_segment_records(&output_bytes, &[], &[], None)?;
+    assert_eq!(output_records.len(), 4);
+    assert!(
+        output_records
+            .iter()
+            .all(|record| record.tenant_id == "tenant-42")
+    );
+    let mut oids: Vec<&str> = output_records
+        .iter()
+        .map(|record| record.oid.as_str())
+        .collect();
+    oids.sort_unstable();
+    assert_eq!(oids, vec!["a", "b", "c", "d"]);
+    Ok(())
 }
 
 /// With a CanonicalPrecisionResolver wired in and a fp16 collection

@@ -106,17 +106,30 @@
 //!
 //! See `docs/guides/cdc-debezium-integration.adoc` for detailed setup.
 
-pub mod config;
+// `config` now lives in `proximadb-cdc` (TD-DECOMP-11); re-exported.
+pub use proximadb_cdc::config;
 pub mod connectors;
 pub mod coordinator;
-pub mod error;
-pub mod event;
-pub mod metrics;
-pub mod offset;
-pub mod outbound;
-pub mod sinks;
-pub mod source;
-pub mod transform;
+// `error` now lives in `proximadb-cdc` (TD-DECOMP-8); re-exported so `crate::cdc::error::*`
+// paths resolve unchanged.
+pub use proximadb_cdc::error;
+// `event` now lives in `proximadb-cdc` (TD-DECOMP-7); re-exported so the existing
+// `crate::cdc::event::*` paths (source/coordinator/connectors/sinks/outbound) resolve
+// unchanged.
+pub use proximadb_cdc::event;
+// `metrics` now lives in `proximadb-cdc` (TD-DECOMP-8); re-exported so `crate::cdc::metrics::*` resolves unchanged.
+pub use proximadb_cdc::metrics;
+// `offset` now lives in `proximadb-cdc` (TD-DECOMP-11); re-exported.
+pub use proximadb_cdc::offset;
+// `outbound` now lives in `proximadb-cdc` (TD-DECOMP-10); re-exported.
+pub use proximadb_cdc::outbound;
+// `sinks` now lives in `proximadb-cdc` (TD-DECOMP-9); re-exported.
+pub use proximadb_cdc::sinks;
+// `source` now lives in `proximadb-cdc` (TD-DECOMP-11); re-exported.
+pub use proximadb_cdc::source;
+// `transform` (mod/filter/schema/embedding) now lives in `proximadb-cdc` (TD-DECOMP-8);
+// re-exported so `crate::cdc::transform::*` paths resolve unchanged.
+pub use proximadb_cdc::transform;
 
 // Re-export main types
 pub use config::{CdcConfig, SinkConfig, SourceConfig, TransformConfig};

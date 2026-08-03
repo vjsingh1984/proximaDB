@@ -377,8 +377,14 @@ pub async fn hybrid_index(
 ///
 /// Delegates to `ApiHandlersPort::execute_sql_v1`.  An optional `seeding` hint in the
 /// request body is prepended as a SQL comment (`-- SEEDING: …`) before dispatch.
+///
+/// TD-ABAC-9 (ADR-087): consumes the foundation identity Extension inserted by
+/// the root tenant middleware, threading the authenticated tenant + subject to
+/// the relational read boundary. `None` (Extension absent — e.g. a router
+/// mounted without the tenant layer) preserves the legacy unscoped behavior.
 pub async fn execute_sql(
     State(state): State<RestAppState>,
+    identity: Option<axum::Extension<proximadb_tenant::ResolvedRequestIdentity>>,
     Json(request): Json<SqlQueryRequest>,
 ) -> RestResult<Json<serde_json::Value>> {
     if request.query.trim().is_empty() {
@@ -410,7 +416,13 @@ pub async fn execute_sql(
 
     match state
         .handlers
-        .execute_sql_v1(query, parameters, request.collection, None)
+        .execute_sql_v1(
+            query,
+            parameters,
+            request.collection,
+            identity.as_ref().map(|id| id.tenant.as_str()),
+            identity.as_ref().and_then(|id| id.subject.as_deref()),
+        )
         .await
     {
         Ok(v1_resp) => {
@@ -722,6 +734,7 @@ mod tests {
 
         let err = execute_sql(
             State(RestAppState::new(port.clone())),
+            None,
             Json(SqlQueryRequest {
                 query: "   ".to_string(),
                 parameters: None,
@@ -759,6 +772,12 @@ mod tests {
 
         let Json(body) = execute_sql(
             State(RestAppState::new(port.clone())),
+            Some(axum::Extension(proximadb_tenant::ResolvedRequestIdentity {
+                tenant: "tenant-a".to_string(),
+                subject: Some("alice".to_string()),
+                auth_class: proximadb_tenant::AuthClass::Authenticated,
+                tenant_stable_id: Some(7),
+            })),
             Json(SqlQueryRequest {
                 query: "select answer from docs".to_string(),
                 parameters: Some(vec![sql_value(Value::StringValue("doc-1".to_string()))]),
@@ -779,6 +798,9 @@ mod tests {
                 query: "-- SEEDING: AVERAGE\nselect answer from docs".to_string(),
                 parameter_count: Some(1),
                 collection: Some("docs".to_string()),
+                // TD-ABAC-9: the foundation identity Extension reaches the port.
+                tenant_id: Some("tenant-a".to_string()),
+                subject: Some("alice".to_string()),
             }]
         );
     }

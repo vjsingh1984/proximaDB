@@ -730,6 +730,40 @@ impl StagingDetector {
         name.starts_with("__") || name.contains(".tmp") || name.contains(".staging")
     }
 
+    /// Check URL/path components *below* the listed data prefix.
+    ///
+    /// Flat object-store listings commonly return a tiered basename while the
+    /// authoritative URL retains a nested `__flush` or `__compact` component.
+    /// The prefix itself is deliberately excluded: Linux `tempfile` roots are
+    /// named `/tmp/.tmpXXXX`, and treating that ambient parent as staging makes
+    /// every file in a local test/embedded collection disappear from discovery.
+    pub fn is_staging_path_under(&self, data_prefix: &str, path: &str) -> bool {
+        fn without_local_scheme(value: &str) -> &str {
+            value.strip_prefix("file://").unwrap_or(value)
+        }
+
+        let prefix = without_local_scheme(data_prefix).trim_end_matches('/');
+        let candidate = without_local_scheme(path);
+        let relative = candidate.strip_prefix(prefix).and_then(|suffix| {
+            if suffix.is_empty() || suffix.starts_with('/') {
+                Some(suffix.trim_start_matches('/'))
+            } else {
+                None
+            }
+        });
+
+        match relative {
+            Some(relative) => relative
+                .split('/')
+                .filter(|component| !component.is_empty())
+                .any(|component| self.is_staging(component)),
+            None => path
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| self.is_staging(name)),
+        }
+    }
+
     /// Get staging prefix for atomic operations
     pub fn staging_prefix() -> &'static str {
         "__staging_"
@@ -758,16 +792,39 @@ impl TieredFileRegistry {
         data_directory: &str,
         extension: &str,
     ) -> Result<HashMap<u32, Vec<GenericFileMetadata>>> {
+        let fs = filesystem.get_filesystem(data_directory)?;
+        self.discover_files_on_filesystem(fs.as_ref(), data_directory, extension)
+            .await
+    }
+
+    /// Discover files through an already-resolved backend.
+    ///
+    /// A directory/prefix listing is the authoritative existence check. Flat
+    /// object stores do not materialize directory objects, so `exists(prefix)`
+    /// is false even when `prefix/L0_….pax` exists. An exists-before-list gate
+    /// therefore makes cloud compaction silently discover zero files.
+    async fn discover_files_on_filesystem(
+        &self,
+        fs: &dyn crate::storage::persistence::filesystem::FileSystem,
+        data_directory: &str,
+        extension: &str,
+    ) -> Result<HashMap<u32, Vec<GenericFileMetadata>>> {
         let mut files_by_level: HashMap<u32, Vec<GenericFileMetadata>> = HashMap::new();
 
-        let fs = filesystem.get_filesystem(data_directory)?;
-
-        if !fs.exists(data_directory).await? {
-            debug!("📁 Data directory does not exist: {}", data_directory);
-            return Ok(files_by_level);
-        }
-
-        let entries = fs.list(data_directory).await?;
+        let entries = match fs.list(data_directory).await {
+            Ok(entries) => entries,
+            Err(crate::storage::persistence::filesystem::FilesystemError::NotFound(_)) => {
+                debug!("📁 Data directory does not exist: {}", data_directory);
+                return Ok(files_by_level);
+            }
+            Err(crate::storage::persistence::filesystem::FilesystemError::Io(error))
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                debug!("📁 Data directory does not exist: {}", data_directory);
+                return Ok(files_by_level);
+            }
+            Err(error) => return Err(error.into()),
+        };
         debug!(
             "📋 Scanning {} entries in: {}",
             entries.len(),
@@ -776,8 +833,11 @@ impl TieredFileRegistry {
 
         for entry in entries {
             // Skip staging files/directories
-            if self.staging_detector.is_staging(&entry.name) {
-                debug!("⏭️  Skipping staging: {}", entry.name);
+            if self
+                .staging_detector
+                .is_staging_path_under(data_directory, &entry.url)
+            {
+                debug!("⏭️  Skipping staging object: {}", entry.url);
                 continue;
             }
 
@@ -1057,7 +1117,136 @@ impl FileMetadata for GenericFileMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::persistence::filesystem::{
+        DirEntry, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsFileMetadata,
+        FsResult,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+
+    #[derive(Debug)]
+    struct PrefixOnlyFileSystem {
+        exists_calls: AtomicUsize,
+        entries: Vec<DirEntry>,
+    }
+
+    impl PrefixOnlyFileSystem {
+        fn unsupported(operation: &str) -> FilesystemError {
+            FilesystemError::InvalidOperation(operation.to_string())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FileSystem for PrefixOnlyFileSystem {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        async fn read(&self, _path: &str) -> FsResult<Vec<u8>> {
+            Err(Self::unsupported("read"))
+        }
+
+        async fn write(
+            &self,
+            _path: &str,
+            _data: &[u8],
+            _options: Option<FileOptions>,
+        ) -> FsResult<()> {
+            Err(Self::unsupported("write"))
+        }
+
+        async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
+            Err(Self::unsupported("append"))
+        }
+
+        async fn delete(&self, _path: &str) -> FsResult<()> {
+            Err(Self::unsupported("delete"))
+        }
+
+        async fn exists(&self, _path: &str) -> FsResult<bool> {
+            self.exists_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(false)
+        }
+
+        async fn metadata(&self, _path: &str) -> FsResult<FsFileMetadata> {
+            Err(Self::unsupported("metadata"))
+        }
+
+        async fn list(&self, _path: &str) -> FsResult<Vec<DirEntry>> {
+            Ok(self.entries.clone())
+        }
+
+        async fn create_dir(&self, _path: &str) -> FsResult<()> {
+            Err(Self::unsupported("create_dir"))
+        }
+
+        async fn create_dir_all(&self, _path: &str) -> FsResult<()> {
+            Err(Self::unsupported("create_dir_all"))
+        }
+
+        async fn copy(&self, _from: &str, _to: &str) -> FsResult<()> {
+            Err(Self::unsupported("copy"))
+        }
+
+        async fn move_file(&self, _from: &str, _to: &str) -> FsResult<()> {
+            Err(Self::unsupported("move_file"))
+        }
+
+        fn filesystem_type(&self) -> &'static str {
+            "prefix-only-test"
+        }
+
+        async fn sync(&self) -> FsResult<()> {
+            Ok(())
+        }
+
+        async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
+            Err(Self::unsupported("open_file"))
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_prefix_discovery_lists_without_exact_prefix_object() {
+        let segment_name = "L0_20260730T120000_deadbeef.pax";
+        let staged_segment_name = "L0_20260730T120001_cafebabe.pax";
+        let filesystem = PrefixOnlyFileSystem {
+            exists_calls: AtomicUsize::new(0),
+            entries: vec![
+                DirEntry {
+                    name: segment_name.to_string(),
+                    url: format!("az://segments/1/data/{segment_name}"),
+                    metadata: FsFileMetadata {
+                        size: 4096,
+                        is_directory: false,
+                        ..Default::default()
+                    },
+                },
+                DirEntry {
+                    // Flat object-store listings expose the basename here;
+                    // only the URL retains the __flush path component.
+                    name: staged_segment_name.to_string(),
+                    url: format!("az://segments/1/data/__flush/{staged_segment_name}"),
+                    metadata: FsFileMetadata {
+                        size: 8192,
+                        is_directory: false,
+                        ..Default::default()
+                    },
+                },
+            ],
+        };
+
+        let files = TieredFileRegistry::new()
+            .discover_files_on_filesystem(&filesystem, "az://segments/1/data", "pax")
+            .await
+            .expect("prefix listing should discover child objects");
+
+        assert_eq!(filesystem.exists_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(files.get(&0).map(Vec::len), Some(1));
+        assert_eq!(
+            files[&0][0].path,
+            "az://segments/1/data/L0_20260730T120000_deadbeef.pax"
+        );
+    }
 
     #[tokio::test]
     async fn test_operation_conflicts() {
@@ -1166,5 +1355,18 @@ mod tests {
         assert!(detector.is_staging("file.tmp"));
         assert!(detector.is_staging("file.staging"));
         assert!(!detector.is_staging("normal_file.sstable"));
+
+        assert!(!detector.is_staging_path_under(
+            "/tmp/.tmp-parent/data",
+            "file:///tmp/.tmp-parent/data/L0_20260802T010203_deadbeef.pax"
+        ));
+        assert!(detector.is_staging_path_under(
+            "az://segments/1/data",
+            "az://segments/1/data/__flush/L0_20260802T010203_deadbeef.pax"
+        ));
+        assert!(!detector.is_staging_path_under(
+            "az://segments/1/data",
+            "az://segments/1/database/L0_20260802T010203_deadbeef.pax"
+        ));
     }
 }

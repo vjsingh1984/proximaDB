@@ -77,7 +77,7 @@ pub(crate) mod test_support {
     };
     use proximadb_runtime::{
         ApiHandlersPort, CollectionPort, CollectionSchemaMetadata, CollectionSchemaUpdate,
-        QueryAdapterPort, UnifiedHandlers, VectorOpsPort,
+        PortIdentity, QueryAdapterPort, UnifiedHandlers, VectorOpsPort,
     };
     use serde_json::Value as JsonValue;
 
@@ -118,6 +118,8 @@ pub(crate) mod test_support {
             query: String,
             parameter_count: Option<usize>,
             collection: Option<String>,
+            tenant_id: Option<String>,
+            subject: Option<String>,
         },
         Hybrid,
     }
@@ -201,8 +203,9 @@ pub(crate) mod test_support {
         async fn handle_vector_search_v1_for_tenant(
             &self,
             request: VectorSearchRequest,
-            tenant_id: Option<&str>,
+            identity: PortIdentity<'_>,
         ) -> Result<VectorOperationResponse> {
+            let tenant_id = identity.tenant_id;
             self.calls.lock().unwrap().push(ApiCall::VectorSearch {
                 tenant_id: tenant_id.map(ToOwned::to_owned),
                 collection_id: request.collection_id,
@@ -267,12 +270,15 @@ pub(crate) mod test_support {
             query: String,
             parameters: Option<Vec<ProximaValue>>,
             collection: Option<String>,
-            _tenant_id: Option<&str>,
+            tenant_id: Option<&str>,
+            subject: Option<&str>,
         ) -> Result<ExecuteQueryResponse> {
             self.calls.lock().unwrap().push(ApiCall::Sql {
                 query,
                 parameter_count: parameters.as_ref().map(Vec::len),
                 collection,
+                tenant_id: tenant_id.map(ToOwned::to_owned),
+                subject: subject.map(ToOwned::to_owned),
             });
             Ok(self.sql_response.lock().unwrap().clone())
         }
@@ -335,7 +341,7 @@ pub(crate) mod test_support {
         async fn search(
             &self,
             _request: VectorSearchRequest,
-            _tenant_id: Option<&str>,
+            _identity: PortIdentity<'_>,
         ) -> Result<VectorOperationResponse> {
             Ok(VectorOperationResponse::default())
         }
@@ -391,6 +397,7 @@ pub(crate) mod test_support {
             _query: String,
             _collection: Option<String>,
             _tenant_id: Option<&str>,
+            _subject: Option<&str>,
         ) -> Result<JsonValue> {
             Ok(JsonValue::Array(Vec::new()))
         }
@@ -411,7 +418,7 @@ mod tests {
         CollectionConfig, CollectionOperation, CollectionRequest, HybridSearchRequest,
         VectorBatchRequest, VectorRecord, VectorSearchRequest,
     };
-    use proximadb_runtime::ApiHandlersPort;
+    use proximadb_runtime::{ApiHandlersPort, PortIdentity};
 
     use super::test_support::{ApiCall, RecordingApiPort, noop_unified_handlers};
 
@@ -422,6 +429,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // Deliberately exercises the deprecated v1 ExecuteHybridQuery dispatch (TD-143).
+    #[allow(deprecated)]
     async fn recording_api_port_captures_all_protocol_dispatch_shapes() {
         let port = RecordingApiPort::new();
 
@@ -446,7 +455,7 @@ mod tests {
                 collection_id: "tenant_docs".to_string(),
                 ..VectorSearchRequest::default()
             },
-            Some("tenant-a"),
+            PortIdentity::for_tenant("tenant-a"),
         )
         .await
         .unwrap();
@@ -473,6 +482,7 @@ mod tests {
             "select * from docs".to_string(),
             None,
             Some("docs".to_string()),
+            None,
             None,
         )
         .await
@@ -513,6 +523,8 @@ mod tests {
                     query: "select * from docs".to_string(),
                     parameter_count: None,
                     collection: Some("docs".to_string()),
+                    tenant_id: None,
+                    subject: None,
                 },
             ]
         );
@@ -589,7 +601,7 @@ mod tests {
         assert!(
             handlers
                 .vector_ops
-                .search(VectorSearchRequest::default(), None)
+                .search(VectorSearchRequest::default(), PortIdentity::anonymous())
                 .await
                 .unwrap()
                 .results
@@ -631,7 +643,7 @@ mod tests {
             .unwrap();
         assert!(
             query
-                .execute_sql("select 1".to_string(), Some("docs".to_string()), None)
+                .execute_sql("select 1".to_string(), Some("docs".to_string()), None, None)
                 .await
                 .unwrap()
                 .is_array()

@@ -43,6 +43,10 @@ use tokio::sync::mpsc;
 
 use proximadb::core::search::SearchMode;
 use proximadb::services::operations::vectors::UnifiedSearchConfig;
+// FA-b: only used on the `#[cfg(feature = "abac-policy")]` trailing arg of
+// `unified_search_native`. Gated to match the optional `proximadb-abac` dep.
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::{ReadContext, SystemReadReason};
 
 /// Search result from streaming search
 #[derive(Debug, Clone)]
@@ -328,6 +332,11 @@ impl StreamingSearchExecutor {
                 self.top_k,
                 None, // No filter for now
                 Some(search_config),
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(
+                    SystemReadReason::Statistics,
+                    "embedded::streaming [CLIENT-PLACEHOLDER]",
+                ),
             )
             .await;
 

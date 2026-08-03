@@ -185,6 +185,17 @@ impl VersionedDeletionVector {
         total.saturating_sub(self.deleted_count_as_of(snapshot_lsn))
     }
 
+    /// All positions deleted at any generation (the union of every run's
+    /// bitmap). TD-DELVEC-1 WI-6: compaction consults this to physically drop
+    /// DV-deleted rows at the merge.
+    pub fn deleted_positions(&self) -> Vec<u32> {
+        let mut all = RoaringBitmap::new();
+        for bm in self.runs.values() {
+            all |= bm;
+        }
+        all.to_vec()
+    }
+
     /// Serialize as `[VDV_MAGIC | run_count u32 | (gen u64, body_len u32, roaring
     /// body)* ]`, all little-endian.
     pub fn serialize(&self) -> Result<Vec<u8>, BitmapError> {

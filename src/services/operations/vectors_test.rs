@@ -4,7 +4,7 @@
 //! particularly around optimized format handling, workload hints, error cases,
 //! and service lifecycle management.
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;

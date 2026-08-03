@@ -210,6 +210,111 @@ pub fn resolve_tenant_assertion(
     }
 }
 
+// ===========================================================================
+// Request identity — the unified tenant+subject+auth-class seam (TD-ABAC-6)
+// ===========================================================================
+//
+// `resolve_tenant_assertion` (above) is already the ONE tenant gate every
+// network surface calls (TD-TENANT-1). ABAC enforcement (TD-ABAC-2..5) added a
+// parallel *subject* concern and surfaced that each surface re-implements the
+// same identity pipeline. This section is the tenant+subject+auth-class
+// analogue: a single `ResolvedRequestIdentity` every surface produces, with the
+// trust-vs-auth distinction made explicit and auditable. Foundation hosts it
+// because tenant/subject ids are plain strings here (no catalog dep); the
+// `&str → SubjectId` lift stays at the root ABAC boundary.
+
+/// How a request's identity was established (TD-ABAC-6). Makes the
+/// trust-auth-vs-real-auth distinction — previously buried in comments (pgwire is
+/// advisory/spoofable; gRPC/REST/Arrow are load-bearing) — auditable in the type
+/// system. Informational in the consolidation refactor: it does NOT change
+/// enforcement (a future hardening slice may refuse `TrustAsserted` as
+/// load-bearing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AuthClass {
+    /// A verified credential (API key / JWT / mTLS cert) was resolved by the
+    /// `SecurityCoordinator`. Enforcement against this identity is load-bearing.
+    Authenticated,
+    /// Client-asserted with NO credential (pgwire trust auth, or a dev/embedded
+    /// path with no coordinator). Enforcement is advisory — spoofable unless the
+    /// deployment's [`HeaderTrustPolicy`] gates the assertion.
+    TrustAsserted,
+    /// Nothing resolved (no credential, no assertion, anonymous/dev). No subject;
+    /// enforcement does not apply.
+    #[default]
+    Anonymous,
+}
+
+impl std::fmt::Display for AuthClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Authenticated => write!(f, "authenticated"),
+            Self::TrustAsserted => write!(f, "trust-asserted"),
+            Self::Anonymous => write!(f, "anonymous"),
+        }
+    }
+}
+
+/// The resolved identity every network surface produces uniformly (TD-ABAC-6):
+/// the effective tenant, the principal (when one was resolved or policy-accepted),
+/// and how it was established. Bare strings (foundation can't name the catalog's
+/// `SubjectId`); the root `src/security/request_identity` lifts `subject` to
+/// `SubjectId` at the ABAC boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRequestIdentity {
+    /// The effective tenant after assertion-vs-binding reconciliation.
+    pub tenant: String,
+    /// The principal id, when one was resolved (credential) or policy-accepted
+    /// (bare assertion). `None` ⇒ anonymous ⇒ no subject ⇒ no ABAC enforcement.
+    pub subject: Option<String>,
+    /// How the identity was established — the auditable trust/auth distinction.
+    pub auth_class: AuthClass,
+    /// ADR-087: the tenant's ADR-0083 stable u64 (the ABAC policy-lookup key),
+    /// stamped ONCE at identity resolution by the wired
+    /// [`TenantStableIdResolver`] — never re-derived downstream. `None` = no
+    /// resolver wired or the tenant is unminted; the enforcement seam treats
+    /// that cell per the composition rule (passthrough today; fail-closed once
+    /// the default-tenant mint lands, TD-ABAC-11).
+    pub tenant_stable_id: Option<u64>,
+}
+
+impl ResolvedRequestIdentity {
+    /// Stamp the stable id from the resolver (the ADR-087 stamp-once point).
+    /// A `None` resolver or an unminted tenant leaves it `None`.
+    pub fn stamp_stable_id(mut self, resolver: Option<&dyn TenantStableIdResolver>) -> Self {
+        self.tenant_stable_id = resolver.and_then(|r| r.stable_id_of(&self.tenant));
+        self
+    }
+}
+
+/// Reconcile a client-asserted **subject** (no authenticated binding) under the
+/// deployment policy — the subject analogue of [`resolve_tenant_assertion`]'s
+/// `(Some, None)` bare-assertion arm, factored out so the subject gate is not
+/// pgwire-only. `Open` (default) accepts the assertion; `AuthenticatedOnly` /
+/// `GatewayOnly` reject it. `None`/empty/`"anonymous"` ⇒ no assertion ⇒ `Ok(None)`.
+///
+/// On authenticated surfaces the subject comes from the verified credential (no
+/// assertion, no gate) — this function is only for the trust-asserted path.
+pub fn resolve_subject_assertion(
+    asserted: Option<&str>,
+    policy: HeaderTrustPolicy,
+) -> Result<Option<String>, TenantAssertionError> {
+    let asserted = asserted
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "anonymous");
+    match asserted {
+        None => Ok(None),
+        Some(subject) => match policy {
+            HeaderTrustPolicy::Open => Ok(Some(subject.to_string())),
+            HeaderTrustPolicy::AuthenticatedOnly | HeaderTrustPolicy::GatewayOnly => {
+                Err(TenantAssertionError::UnauthenticatedAssertionRejected {
+                    asserted: subject.to_string(),
+                })
+            }
+        },
+    }
+}
+
 /// Role marking a gateway/service principal permitted to delegate tenants
 /// under [`HeaderTrustPolicy::GatewayOnly`]. Stamped from credential data
 /// (e.g. a `gateway: true` JWT claim) at `UnifiedUserContext` construction.
@@ -377,5 +482,70 @@ mod tests {
             serde_json::from_str::<HeaderTrustPolicy>("\"gateway-only\"").unwrap(),
             HeaderTrustPolicy::GatewayOnly
         );
+    }
+
+    // --- TD-ABAC-6: resolve_subject_assertion + AuthClass ---
+
+    #[test]
+    fn subject_bare_assertion_accepted_only_under_open() {
+        assert_eq!(
+            resolve_subject_assertion(Some("alice"), HeaderTrustPolicy::Open),
+            Ok(Some("alice".to_string()))
+        );
+        for policy in [
+            HeaderTrustPolicy::AuthenticatedOnly,
+            HeaderTrustPolicy::GatewayOnly,
+        ] {
+            assert!(matches!(
+                resolve_subject_assertion(Some("alice"), policy),
+                Err(TenantAssertionError::UnauthenticatedAssertionRejected { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn subject_none_empty_or_anonymous_is_no_assertion() {
+        for policy in [
+            HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::AuthenticatedOnly,
+            HeaderTrustPolicy::GatewayOnly,
+        ] {
+            assert_eq!(resolve_subject_assertion(None, policy), Ok(None));
+            assert_eq!(resolve_subject_assertion(Some(""), policy), Ok(None));
+            assert_eq!(resolve_subject_assertion(Some("  "), policy), Ok(None));
+            assert_eq!(
+                resolve_subject_assertion(Some("anonymous"), policy),
+                Ok(None)
+            );
+        }
+    }
+
+    #[test]
+    fn auth_class_displays_and_serdes_kebab() {
+        assert_eq!(AuthClass::Authenticated.to_string(), "authenticated");
+        assert_eq!(AuthClass::TrustAsserted.to_string(), "trust-asserted");
+        assert_eq!(AuthClass::Anonymous.to_string(), "anonymous");
+        assert_eq!(
+            serde_json::to_string(&AuthClass::TrustAsserted).unwrap(),
+            "\"trust-asserted\""
+        );
+        assert_eq!(
+            serde_json::from_str::<AuthClass>("\"authenticated\"").unwrap(),
+            AuthClass::Authenticated
+        );
+    }
+
+    #[test]
+    fn resolved_identity_carries_the_three_facets() {
+        let id = ResolvedRequestIdentity {
+            tenant: "acme".to_string(),
+            subject: Some("alice".to_string()),
+            auth_class: AuthClass::Authenticated,
+            tenant_stable_id: Some(7),
+        };
+        assert_eq!(id.tenant, "acme");
+        assert_eq!(id.subject.as_deref(), Some("alice"));
+        assert_eq!(id.auth_class, AuthClass::Authenticated);
+        assert_eq!(id.tenant_stable_id, Some(7));
     }
 }

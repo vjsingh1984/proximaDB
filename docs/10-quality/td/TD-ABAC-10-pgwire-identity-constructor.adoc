@@ -1,0 +1,62 @@
+= TD-ABAC-10: pgwire constructs the foundation identity (subject to the relational read boundary)
+:status: Partial
+:dim: D5
+:pillar: SEC
+
+Problem: pgwire is the one network surface not yet constructing
+`ResolvedRequestIdentity`. Session tenant resolution has its own
+`DEFAULT_TENANT` semantics (`src/network/postgres/protocol.rs` ~:615, ~:2032)
+and no subject reaches the relational read boundary from psql sessions —
+although the boundary itself already accepts one
+(`execute_sql_v1(..., subject)`, TD-ABAC-3/5).
+
+Next action (ADR-087 §Decision 5): at pgwire startup/session establishment,
+build `ResolvedRequestIdentity` — tenant via the existing session resolution
+(DEFAULT_TENANT semantics preserved), subject from the pg user through
+`resolve_subject_assertion` under the deployment `HeaderTrustPolicy`
+(`auth_class = TrustAsserted` for trust auth; `Authenticated` when a real
+credential authenticated the session), `tenant_stable_id` stamped by the
+shared resolver (TD-ABAC-8). Carry it in session state; the SELECT lowering
+threads it to `execute_sql_v1`/the seam.
+
+Note: pgwire trust-auth subjects are spoofable by design — that is what
+`AuthClass::TrustAsserted` records; deployments gate via `HeaderTrustPolicy`.
+
+== Status: 10a DONE; 10b/10c open
+
+**10a (done)** — `Session.identity: Option<ResolvedRequestIdentity>` built at
+the startup handshake by the pure, unit-tested `PostgresProtocol::startup_identity`
+(trust-asserted classification + the empty/`anonymous` non-assertion rule);
+the catalog-backed `TenantStableIdResolver` wired into pgwire (zero new
+plumbing — `catalog_manager` already reached it), so the ABAC policy key is
+stamped once per connection; the relational SELECT path reads
+`session.identity.subject` instead of re-deriving it per query.
+
+**10b (open) — carry the whole identity, not just the subject.** The
+relational read path still takes a bare `Option<SubjectId>`, so
+`tenant_stable_id`/`auth_class` do not survive to the enforcement point:
+widen `relational_pipeline::try_run_select` (~:253) → `SnapshotCatalog`
+(~:1606, ctors ~:554/:737/:763) → `DmlTableReader` (~:1702) →
+`services/dml/mod.rs::scan_table_relational` (~:1441, ABAC filter ~:1466) to
+carry `PortIdentity`; update the off-pgwire caller
+`query/facade/adapter.rs` (~:803). This is the prerequisite for
+[[TD-ABAC-11]]'s fail-closed flip on the relational path. Note the SQL ports
+(`ApiHandlersPort::execute_sql_v1`, `QueryAdapterPort::execute_sql`) still
+take flat `tenant_id`/`subject` with no stable id.
+
+**10c (open) — three pgwire read paths bypass ABAC** (found by the 2026-08-02
+live-path survey; each is a *distinct* bypass, not covered by 10a/10b):
+
+1. **pgvector search** — `protocol.rs` `execute_vector_search` (~:2221) calls
+   `unified_search_native` (~:2286) with a hardcoded
+   `ReadContext::system(Statistics, "pgwire [CLIENT-PLACEHOLDER]")` (~:2293):
+   ALL pgwire vector search is unenforced. Fix: pass the session identity, or
+   route through the enforced `unified_search_v1` seam.
+2. **Legacy single-table SELECT** — `execute_relational_query` (~:2896) →
+   `select_table_records_with_projection[_where]` (~:2926/:2945): tenant-scoped
+   only, no subject parameter at all.
+3. **EXPLAIN/ANALYZE** — `relational_pipeline.rs::build_snapshot` (~:2337)
+   hardcodes `subject: None` (~:2361), so an EXPLAIN can describe a plan over
+   rows the subject cannot read.
+
+Depends on [[TD-ABAC-8]]. Ref ADR-087, TD-ABAC-3, TD-ABAC-5, [[TD-ABAC-11]].

@@ -779,6 +779,8 @@ impl MultiModalQueryExecutor {
                     top_k,
                     filters.cloned(),
                     Some(search_config),
+                    None,
+                    None,
                 )
                 .await?
             } else {
@@ -1637,7 +1639,7 @@ impl MultiModalQueryExecutor {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod executor_tests {
     use super::*;
     use crate::graph::GraphOperationsService;

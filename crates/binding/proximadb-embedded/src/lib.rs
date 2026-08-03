@@ -114,6 +114,11 @@ pub use agent_memory::{
 pub use streaming::{EmbeddedSearchIterator, StreamingSearchConfig, StreamingSearchResult};
 
 use proximadb::core::config::{AdvancedPruneConfig, PruneModeConfig};
+// FA-b: only referenced on the `#[cfg(feature = "abac-policy")]` trailing arg of
+// `unified_search_native`. Embedded mode is abac-OFF by default; this import is
+// gated to match (the `proximadb-abac` dep is optional, behind the same feature).
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::{ReadContext, SystemReadReason};
 
 /// Embedded database configuration for multi-disk support
 #[derive(Debug, Clone)]
@@ -1867,7 +1872,18 @@ impl EmbeddedProximaDB {
             let results = self
                 .shared_services
                 .vector_operations_service
-                .unified_search_native(collection, query_vector, fetch_k, None, Some(config))
+                .unified_search_native(
+                    collection,
+                    query_vector,
+                    fetch_k,
+                    None,
+                    Some(config),
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::Statistics,
+                        "embedded [CLIENT-PLACEHOLDER]",
+                    ),
+                )
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))
@@ -2258,17 +2274,6 @@ impl EmbeddedProximaDB {
 
                 tracing::info!("🛑 EMBEDDED: Flushing all unflushed data to storage engines...");
 
-                // Get the base storage URL from our embedded config
-                let base_storage_url = if let Some(loc) = self.config.storage_locations.first() {
-                    loc.to_url()
-                } else {
-                    return Err(
-                        Box::new(std::io::Error::other("No storage locations configured"))
-                            as Box<dyn std::error::Error + Send + Sync>,
-                    );
-                };
-                tracing::debug!("EMBEDDED: Using base storage URL: {}", base_storage_url);
-
                 // Get the global write buffer to access unflushed data
                 let write_buffer = match get_global_write_buffer_behavior() {
                     Some(wb) => wb,
@@ -2304,57 +2309,43 @@ impl EmbeddedProximaDB {
                 for collection_id in &collections_to_flush {
                     tracing::info!("🔄 EMBEDDED: Flushing collection '{}'", collection_id);
 
-                    // Get the collection's metadata to find its configured storage engine
-                    let collection_metadata = self
+                    // Resolve the catalog-owned L1 object id, L2 addressing
+                    // composite, engine, and dimension once. Flush fails closed
+                    // when the WAL key has no catalog object; silently inventing
+                    // a path would retire WAL without publishing readable data.
+                    let collection_metadata = match self
                         .collection_port
                         .get_collection(collection_id, None)
-                        .await;
-
-                    // Resolve the canonical collection ID (UUID), storage path, engine, and dimension.
-                    // WAL uses the human-friendly collection name, but SST storage is keyed by UUID.
-                    let mut canonical_collection_id = collection_id.clone();
-                    let mut collection_name = collection_id.clone();
-                    let mut base_location_for_flush = base_storage_url.clone();
-                    let mut storage_engine_type =
-                        proximadb::proto::proximadb_v1::StorageEngine::Sst as i32;
-                    let mut collection_dimension: u32 = 0;
-
-                    if let Ok(Some(coll)) = &collection_metadata {
-                        canonical_collection_id = coll.id.clone();
-                        if let Some(cfg) = &coll.config {
-                            collection_name = cfg.name.clone();
-                            collection_dimension = cfg.dimension;
-                            storage_engine_type = cfg
-                                .storage_engine
-                                .unwrap_or(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32);
+                        .await
+                    {
+                        Ok(Some(metadata)) => metadata,
+                        Ok(None) => {
+                            failed_collections.push((
+                                collection_id.clone(),
+                                "no catalog metadata".to_string(),
+                            ));
+                            continue;
                         }
-
-                        // Prefer the persisted storage assignment path so we flush into the same directory
-                        if let Some(assign) = &coll.storage_assignment {
-                            base_location_for_flush = assign.base_location.clone();
-                            storage_engine_type = assign.engine;
+                        Err(error) => {
+                            failed_collections.push((collection_id.clone(), error.to_string()));
+                            continue;
                         }
-                    }
-
-                    // Resolve the owning tenant for the A6 fence (embedded is single-pod;
-                    // no fence is wired, so this is parity/forward-looking only).
-                    let tenant_id = match &collection_metadata {
-                        Ok(Some(c)) => proximadb_tenant::tenant_id_of(c),
-                        _ => None,
                     };
 
                     // Materialize this collection's unflushed batches via the shared
                     // helper (engine factory + flush() funnel + WAL cleanup + A6 fence).
                     // Embedded is single-pod: it passes no fence and reuses the running
                     // unified SST engine as the create-failure fallback.
-                    let plan = proximadb::storage::flush_materializer::CollectionFlushPlan {
-                        wal_key: collection_id.clone(),
-                        canonical_id: canonical_collection_id.clone(),
-                        base_location: base_location_for_flush.clone(),
-                        engine_type: storage_engine_type,
-                        dimension: collection_dimension,
-                        tenant_id,
+                    let plan = match proximadb::storage::flush_materializer::flush_plan_from_collection_meta(
+                        &collection_metadata,
+                    ) {
+                        Ok(plan) => plan,
+                        Err(error) => {
+                            failed_collections.push((collection_id.clone(), error.to_string()));
+                            continue;
+                        }
                     };
+                    let collection_name = plan.collection_name.clone();
                     let fallback_engine = self
                         .shared_services
                         .vector_operations_service
@@ -2362,17 +2353,24 @@ impl EmbeddedProximaDB {
                     // free_wal=true preserves embedded's existing behavior (delete the
                     // WAL after flush — no 2× overhead). Its cold-read recall gap is the
                     // same dependent TD as the server's.
+                    #[cfg(feature = "axis")]
                     let axis_manager = self
                         .shared_services
                         .vector_operations_service
                         .axis_index_manager();
+                    #[cfg(feature = "axis")]
+                    let axis_arg: Option<&proximadb::index::AxisManager> = Some(&axis_manager);
+                    // `axis` off (exact-scan embedded): no in-memory projection to reap
+                    // — the durable segment is the source of truth.
+                    #[cfg(not(feature = "axis"))]
+                    let axis_arg: Option<&()> = None;
                     match proximadb::storage::flush_materializer::materialize_collection(
                         &write_buffer,
                         &plan,
                         None,
                         Some(fallback_engine),
                         true,
-                        Some(&axis_manager),
+                        axis_arg,
                     )
                     .await
                     {
@@ -3809,6 +3807,7 @@ impl EmbeddedProximaDB {
                 graph_id: graph_id.to_string(),
                 // Embedded stays single-tenant by default (unscoped, byte-identical legacy behavior).
                 tenant: None,
+                tenant_stable_id: None, // FA-2 PR-D3: embedded path — no client subject
                 vector_collection: vector_collection.to_string(),
                 query_vector,
                 max_depth,
@@ -4396,6 +4395,7 @@ impl EmbeddedProximaDB {
                     }),
                     collection.map(str::to_string),
                     None, // embedded single-process: no per-request tenant
+                    None, // TD-ABAC-5: embedded single-process: no per-request subject
                 )
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {

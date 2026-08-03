@@ -31,9 +31,10 @@ use std::time::Instant;
 
 use tokio::sync::RwLock;
 
+#[cfg(feature = "axis")]
 use crate::index::AxisManager;
 use crate::metrics::wal_flush_metrics;
-use crate::storage::flush_materializer::{CollectionFlushPlan, materialize_collection};
+use crate::storage::flush_materializer::materialize_collection;
 use crate::storage::persistence::write_ahead_log::flush_policy::FlushPolicy;
 use crate::storage::persistence::write_ahead_log::{
     get_global_write_buffer_behavior, list_collections_from_catalog,
@@ -44,7 +45,8 @@ use crate::storage::write_fence::StorageWriteFence;
 /// ADR-069 flush policy.
 pub struct AutoFlushDriver {
     policy: FlushPolicy,
-    axis_index_manager: Arc<AxisManager>,
+    #[cfg(feature = "axis")]
+    axis_index_manager: Option<Arc<AxisManager>>,
     /// A6 storage-write fence (default-OFF). Captured at spawn time; on the live
     /// server it is injected into the storage engine post-construction, so this
     /// may be `None` here — acceptable at MVP (single-pod, fence default-OFF).
@@ -62,7 +64,7 @@ impl AutoFlushDriver {
     /// `flush_interval_secs = 0` and `wal_max_bytes = 0` makes this a no-op.
     pub fn spawn(
         policy: FlushPolicy,
-        axis_index_manager: Arc<AxisManager>,
+        #[cfg(feature = "axis")] axis_index_manager: Option<Arc<AxisManager>>,
         storage_write_fence: Option<Arc<dyn StorageWriteFence>>,
     ) {
         if !policy.needs_scheduler() {
@@ -71,6 +73,7 @@ impl AutoFlushDriver {
         let tick = policy.scheduler_tick_secs();
         let driver = Self {
             policy,
+            #[cfg(feature = "axis")]
             axis_index_manager,
             storage_write_fence,
             flush_clock: Arc::new(RwLock::new(HashMap::new())),
@@ -130,7 +133,7 @@ impl AutoFlushDriver {
             let mem_bytes = write_buffer.unflushed_bytes(collection_id).await;
             // Observation is emitted at the decision boundary: what /metrics shows
             // is exactly what the policy acted on.
-            wal_flush_metrics::set_wal_size(collection_id, mem_bytes as i64);
+            wal_flush_metrics::set_wal_size(collection_id, mem_bytes);
             wal_flush_metrics::set_budget(collection_id, budget, high, critical);
 
             let age = self.window_age_secs(collection_id).await;
@@ -157,48 +160,44 @@ impl AutoFlushDriver {
                 );
                 continue;
             };
-            let config = meta.config.as_ref();
-            let assignment = meta.storage_assignment.as_ref();
-            let engine_type = assignment
-                .map(|a| a.engine)
-                .or_else(|| config.and_then(|c| c.storage_engine))
-                .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
-            let dimension = config.map(|c| c.dimension).unwrap_or(0);
-            let base_location = assignment
-                .map(|a| a.base_location.clone())
-                .unwrap_or_default();
-            let tenant_id = proximadb_tenant::tenant_id_of(meta);
-
-            let plan = CollectionFlushPlan {
-                wal_key: collection_id.clone(),
-                canonical_id: collection_id.clone(),
-                base_location,
-                engine_type,
-                dimension,
-                tenant_id,
-            };
+            let plan =
+                match crate::storage::flush_materializer::flush_plan_from_collection_meta(meta) {
+                    Ok(plan) => plan,
+                    Err(error) => {
+                        tracing::warn!(
+                            collection_id,
+                            "ADR-069 auto-flush: catalog identity resolution failed: {error}"
+                        );
+                        continue;
+                    }
+                };
 
             // ADR-081 D4: submit independent collections concurrently. The
             // process-wide materializer permit pool bounds the actual work, and
             // its per-collection gate collapses overlap with inline/shutdown
             // triggers.
             let task_write_buffer = write_buffer.clone();
+            #[cfg(feature = "axis")]
             let task_axis = self.axis_index_manager.clone();
             let task_fence = self.storage_write_fence.clone();
             let reason_label = reason.as_str().to_string();
             pending.spawn(async move {
                 let start = Instant::now();
+                #[cfg(feature = "axis")]
+                let axis_arg: Option<&AxisManager> = task_axis.as_deref();
+                #[cfg(not(feature = "axis"))]
+                let axis_arg: Option<&()> = None;
                 let result = materialize_collection(
                     &task_write_buffer,
                     &plan,
                     task_fence.as_ref(),
                     None,
                     true,
-                    Some(&task_axis),
+                    axis_arg,
                 )
                 .await;
                 (
-                    plan.wal_key,
+                    plan.collection_object_id.to_string(),
                     reason_label,
                     start.elapsed().as_secs_f64(),
                     result,
@@ -216,18 +215,17 @@ impl AutoFlushDriver {
             };
             match result {
                 Ok(Some(outcome)) => {
-                    wal_flush_metrics::record_flush(
+                    let remaining = write_buffer.unflushed_bytes(&collection_id).await;
+                    wal_flush_metrics::record_successful_flush(
                         &collection_id,
                         &reason,
-                        true,
-                        outcome.bytes as i64,
-                        outcome.entries_flushed as i64,
+                        outcome.bytes,
+                        outcome.entries_flushed,
                         dur,
                         Self::now_unixtime(),
+                        remaining,
                     );
                     self.note_flushed(&collection_id).await;
-                    let remaining = write_buffer.unflushed_bytes(&collection_id).await;
-                    wal_flush_metrics::set_wal_size(&collection_id, remaining as i64);
                     tracing::info!(
                         "✅ ADR-081 auto-flush [{}] '{}': {} vectors, {} bytes in {:.3}s",
                         reason,
@@ -240,6 +238,8 @@ impl AutoFlushDriver {
                 Ok(None) => {
                     // Raced to empty; reset the window so we don't re-decide every tick.
                     self.note_flushed(&collection_id).await;
+                    let remaining = write_buffer.unflushed_bytes(&collection_id).await;
+                    wal_flush_metrics::set_wal_size(&collection_id, remaining);
                 }
                 Err(e) => {
                     wal_flush_metrics::record_flush(&collection_id, &reason, false, 0, 0, dur, 0);

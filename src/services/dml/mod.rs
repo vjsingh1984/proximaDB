@@ -38,6 +38,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::{ReadContext, SystemReadReason};
+#[cfg(feature = "abac-policy")]
+use proximadb_catalog::fc_metamodel::{SubjectId, Target};
 use proximadb_catalog::{
     CatalogColumn, CatalogStorageLayout, CatalogTableSchema, CatalogTableStatistics,
     relational::{
@@ -822,6 +826,11 @@ pub struct DmlService {
     /// a store is wired only at the composition root under the `oltp-integrity`
     /// feature, so default builds are behaviorally unchanged.
     conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
+    /// FA-c Phase 2: optional ABAC enforcer. When present (behind `abac-policy`)
+    /// and a client subject is supplied at a read boundary, relational scans
+    /// filter rows by the subject's policy. Absent by default.
+    #[cfg(feature = "abac-policy")]
+    abac_enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
 }
 
 /// ADR-025: `DmlService` is the authoritative post-snapshot delta source for the
@@ -998,6 +1007,8 @@ impl DmlService {
             table_write_executor,
             dml_lock_service: None,
             conditional_key_store: None,
+            #[cfg(feature = "abac-policy")]
+            abac_enforcer: None,
         }
     }
 
@@ -1025,6 +1036,16 @@ impl DmlService {
     /// Attach the tenant-scoped DML lock service.
     pub fn with_dml_lock_service(mut self, dml_lock_service: Arc<DmlLockService>) -> Self {
         self.dml_lock_service = Some(dml_lock_service);
+        self
+    }
+
+    /// FA-c Phase 2: wire an ABAC enforcer so relational scans filter rows by the
+    /// requesting subject's policy. Behind `abac-policy`; absent (no enforcement)
+    /// by default. The enforcer is a self-contained policy (holds authority +
+    /// predicate store + epochs + bindings).
+    #[cfg(feature = "abac-policy")]
+    pub fn with_abac_enforcer(mut self, enforcer: Arc<crate::security::rls::AbacEnforcer>) -> Self {
+        self.abac_enforcer = Some(enforcer);
         self
     }
 
@@ -1326,6 +1347,11 @@ impl DmlService {
                         },
                         None,
                         tenant_context,
+                        #[cfg(feature = "abac-policy")]
+                        &ReadContext::system(
+                            SystemReadReason::Statistics,
+                            "dml [CLIENT-PLACEHOLDER]",
+                        ),
                     )
                     .await?;
                 (RelationalSelectAccessPath::TableScan, records, 0)
@@ -1360,6 +1386,48 @@ impl DmlService {
         Ok(table_schema)
     }
 
+    /// FA-c Phase 2: resolve the ABAC row filter for a relational scan. Returns
+    /// `None` when enforcement does not apply (no enforcer wired, or no client
+    /// subject — e.g. an internal read). Otherwise resolves the subject's
+    /// authorization against the held policy; the caller short-circuits a
+    /// denied result to zero rows and AND-combines `Restricted` into the user
+    /// predicate. Fail-closed: a legacy table lacking stable object/namespace
+    /// ids, or a tenant without a stable id, yields `Denied`.
+    #[cfg(feature = "abac-policy")]
+    fn abac_row_filter(
+        &self,
+        subject: Option<&SubjectId>,
+        tenant_context: Option<&TenantContext>,
+        table_schema: &CatalogTableSchema,
+    ) -> Option<crate::security::rls::AbacScanResult> {
+        let enforcer = self.abac_enforcer.as_ref()?;
+        let subject = subject?;
+        // Enforcer + client subject are present ⇒ enforce. Fail-closed: a legacy
+        // table lacking stable object/namespace ids, or an unknown tenant stable
+        // id, denies rather than reading unfiltered.
+        let (Some(namespace), Some(table)) =
+            (table_schema.stable_namespace_id, table_schema.object_id)
+        else {
+            return Some(crate::security::rls::AbacScanResult::Denied(
+                proximadb_abac::DenyReason::NoApplicablePolicy,
+            ));
+        };
+        let Some(tenant) = tenant_context.and_then(|t| t.tenant_stable_id) else {
+            return Some(crate::security::rls::AbacScanResult::Denied(
+                proximadb_abac::DenyReason::NoApplicablePolicy,
+            ));
+        };
+        Some(enforcer.predicate_for(
+            subject,
+            tenant,
+            Target {
+                namespace,
+                table: table as u32,
+                column: None,
+            },
+        ))
+    }
+
     /// Scan a catalog table for the relational pipeline (PATH B), pushing the
     /// caller's row predicate + limit into the record-store scan and projecting
     /// matching records into `output_columns` order (or all columns when `None`).
@@ -1379,6 +1447,7 @@ impl DmlService {
         >,
         limit: Option<usize>,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] subject: Option<&SubjectId>,
     ) -> Result<(CatalogTableSchema, Vec<Vec<ProximaValue>>)> {
         let (table_schema, table_id_name) = self
             .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
@@ -1395,6 +1464,20 @@ impl DmlService {
             Some(cols) => Self::resolve_select_projection(&table_schema, cols)?,
             None => full_selected.clone(),
         };
+
+        // FA-c Phase 2: resolve the ABAC row filter EARLY (before the predicate
+        // borrow, so the deny short-circuit can move `table_schema`). A denied
+        // (or fail-closed) subject sees zero rows.
+        #[cfg(feature = "abac-policy")]
+        let abac_pred: Option<Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>> =
+            match self.abac_row_filter(subject, tenant_context, &table_schema) {
+                None => None,
+                Some(crate::security::rls::AbacScanResult::Denied(_)) => {
+                    return Ok((table_schema, Vec::new()));
+                }
+                Some(crate::security::rls::AbacScanResult::Restricted(p)) => Some(p),
+                Some(crate::security::rls::AbacScanResult::Unrestricted) => None,
+            };
 
         // Push the predicate INTO the store scan: project each record to a full
         // row and apply the caller's full-row predicate. The scan-predicate API is
@@ -1422,6 +1505,14 @@ impl DmlService {
                 Err(_) => false,
             }
         };
+        // FA-c Phase 2: AND-combine the ABAC row filter with the user predicate.
+        #[cfg(feature = "abac-policy")]
+        let combined_pred = move |record: &ProximaRecord| -> bool {
+            record_pred(record) && abac_pred.as_ref().is_none_or(|p| p(record))
+        };
+        #[cfg(feature = "abac-policy")]
+        let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&combined_pred);
+        #[cfg(not(feature = "abac-policy"))]
         let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&record_pred);
 
         let records = self
@@ -1437,6 +1528,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
 
@@ -1512,7 +1605,15 @@ impl DmlService {
 
         // 1. Snapshot the table's current rows (all columns, no predicate/limit).
         let (schema, rows) = self
-            .scan_table_relational(table_name, None, None, None, tenant_context)
+            .scan_table_relational(
+                table_name,
+                None,
+                None,
+                None,
+                tenant_context,
+                #[cfg(feature = "abac-policy")]
+                None,
+            )
             .await?;
 
         // 2. Column-order ProximaValue rows → ProximaRecord envelopes (props keyed by
@@ -1709,6 +1810,8 @@ impl DmlService {
                     include_props: true,
                 },
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
         match record {
@@ -1757,6 +1860,8 @@ impl DmlService {
                         include_props: true,
                     },
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
                 )
                 .await?;
             if let Some(rich) = record {
@@ -1820,6 +1925,8 @@ impl DmlService {
                         include_props: true,
                     },
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
                 )
                 .await?;
             if let Some(rich) = record {
@@ -1870,6 +1977,11 @@ impl DmlService {
                             include_props: true,
                         },
                         tenant_context,
+                        #[cfg(feature = "abac-policy")]
+                        &ReadContext::system(
+                            SystemReadReason::Statistics,
+                            "dml [CLIENT-PLACEHOLDER]",
+                        ),
                     )
                     .await?
                 else {
@@ -1914,6 +2026,11 @@ impl DmlService {
                                 include_props: true,
                             },
                             tenant_context,
+                            #[cfg(feature = "abac-policy")]
+                            &ReadContext::system(
+                                SystemReadReason::Statistics,
+                                "dml [CLIENT-PLACEHOLDER]",
+                            ),
                         )
                         .await?
                     else {
@@ -1946,6 +2063,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
         Ok((RelationalSelectAccessPath::TableScan, records))
@@ -2031,6 +2150,8 @@ impl DmlService {
                         include_props: true,
                     },
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
                 )
                 .await?;
             let primary_key = table_schema.primary_key.first().map(String::as_str);
@@ -2073,6 +2194,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
 
@@ -2106,6 +2229,8 @@ impl DmlService {
                     include_props,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
 
@@ -3082,6 +3207,11 @@ impl DmlService {
                                 include_props: false,
                             },
                             None,
+                            #[cfg(feature = "abac-policy")]
+                            &ReadContext::system(
+                                SystemReadReason::ForeignKeyResolution,
+                                "dml::fk_check",
+                            ),
                         )
                         .await?
                         .is_some()
@@ -3236,6 +3366,8 @@ impl DmlService {
                         include_props: true,
                     },
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
                 )
                 .await?
             else {
@@ -4715,6 +4847,11 @@ impl DmlService {
                     },
                     predicate,
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::ForeignKeyResolution,
+                        "dml::referencing_check",
+                    ),
                 )
                 .await?;
             if referencing.is_empty() {
@@ -4957,6 +5094,11 @@ impl DmlService {
                                 include_props: false,
                             },
                             tenant_context,
+                            #[cfg(feature = "abac-policy")]
+                            &ReadContext::system(
+                                SystemReadReason::ForeignKeyResolution,
+                                "dml::fk_check",
+                            ),
                         )
                         .await?
                         .is_some()
@@ -5010,6 +5152,11 @@ impl DmlService {
                             include_props: true,
                         },
                         tenant_context,
+                        #[cfg(feature = "abac-policy")]
+                        &ReadContext::system(
+                            SystemReadReason::Statistics,
+                            "dml [CLIENT-PLACEHOLDER]",
+                        ),
                     )
                     .await?
                 else {
@@ -5039,6 +5186,8 @@ impl DmlService {
                 },
                 predicate,
                 tenant_context,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "dml [CLIENT-PLACEHOLDER]"),
             )
             .await?;
         Ok(records.into_iter().map(|record| record.oid).collect())

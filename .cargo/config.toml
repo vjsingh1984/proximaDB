@@ -38,6 +38,10 @@ test-coverage-safe = "tarpaulin --skip-clean --timeout 600 --avoid-cfg-tarpaulin
 # Fast check (syntax only, no codegen) — typed-syntax loop, no linking
 check-fast = "check --all-targets --jobs 3"
 check-lib  = "check --lib --jobs 3"   # even tighter; library-only
+# L2 dev-fast lane: check with deps at -O1 (opt-in profile, see Cargo.toml
+# [profile.dev-fast]). Faster than the default dev/test check for dep-heavy
+# edits; artifacts are NOT shared with the test profile, so toggling recompiles.
+check-dev-fast = "check --profile dev-fast"
 
 # Parallel test run (for unit tests that don't share state).
 # Overrides the RUST_TEST_THREADS=1 from [env] via the inner --test-threads flag.

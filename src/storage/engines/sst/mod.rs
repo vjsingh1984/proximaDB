@@ -251,8 +251,45 @@ pub mod blocks;
 pub mod codebook_integration;
 pub mod collections;
 pub mod core;
+#[cfg(feature = "cold-deletion-vectors")]
+pub mod deletion_vector_store; // TD-DELVEC-1 WI-3a-remaining-A: CAS'd per-segment DV store
+// TD-DELVEC-1 WI-3b: cold-delete → DV-bit integration test (in-crate, to read
+// the pub(crate) DV store). The `tests/` dir isn't a compiled module, so the
+// test is wired in via #[path] under test + the feature.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_delete_dv_test.rs"]
+mod cold_delete_dv_test;
+// TD-DELVEC-1 WI-4 (slice 1): merge-on-read integration test — a cold delete is
+// invisible on the exact `.pax` scan path (`search_pax_file_exact`). In-crate
+// (#[path], like cold_delete_dv_test) to read the pub(crate) DV store + discovery.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_read_merge_test.rs"]
+mod cold_read_merge_test;
+// TD-DELVEC-1 WI-4 (slice 2): merge-on-read on the RaBitQ ANN cascade path — a
+// cold delete is invisible in an unfiltered Cosine scan over a coalesced RaBitQ
+// segment (`try_pax_cascade` filters hits by `CascadeHit::position`).
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_cascade_merge_test.rs"]
+mod cold_cascade_merge_test;
+// TD-DELVEC-1 WI-5 P1: post-recovery DV-bit reconciliation —
+// `reconcile_deletion_vectors` re-marks a tombstone's bit (the crash-strand
+// resurface fix). In-crate (#[path]) to call the feature-gated trait override
+// + read the pub(crate) DV store/discovery.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_recovery_reconcile_test.rs"]
+mod cold_recovery_reconcile_test;
+// TD-DELVEC-1 WI-6: compaction DV-awareness — `build_deleted_oids` collects the
+// DV-deleted oids so the merge drops them. In-crate (#[path]) to call the
+// pub(crate) feature-gated associated fn + segment helpers.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_compaction_dv_test.rs"]
+mod cold_compaction_dv_test;
 pub mod flush;
 pub mod manifest;
+#[cfg(feature = "cold-deletion-vectors")]
+pub mod oid_resolve; // TD-DELVEC-1 WI-3c-1c: resolve_oid_positions + read_resolver lazy-load
+#[cfg(feature = "cold-deletion-vectors")]
+pub mod oid_resolver_cache; // TD-DELVEC-1 WI-3c: per-segment OID→position resolver cache
 pub mod pca_manager; // PCA caching for Z-Order spatial encoding
 pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod search;

@@ -28,6 +28,7 @@ const READ_BATCH_SIZE: usize = 4096;
 /// Read all `(id, vector)` rows from the external source described by `spec`
 /// into `ProximaRecord`s (one dense embedding each). Validates that every
 /// vector matches `spec.dimension`.
+#[cfg_attr(not(feature = "axis"), allow(dead_code))]
 pub fn read_external_records(spec: &ExternalCollectionSpec) -> Result<Vec<ProximaRecord>> {
     let files = list_parquet_files(&spec.location)?;
     if files.is_empty() {
@@ -307,6 +308,7 @@ fn arrow_cell_to_proxima_value(array: &ArrayRef, row: usize) -> Option<ProximaVa
 }
 
 /// Extract `(id, vector)` rows from one batch into `ProximaRecord`s.
+#[cfg_attr(not(feature = "axis"), allow(dead_code))]
 fn extract_records(
     batch: &RecordBatch,
     spec: &ExternalCollectionSpec,
@@ -357,6 +359,7 @@ fn extract_records(
 
 /// Decode the vector column (FixedSizeList preferred, List fallback) to
 /// `Vec<Vec<f32>>`. Mirrors `columnar_query_reader.rs`.
+#[cfg_attr(not(feature = "axis"), allow(dead_code))]
 fn extract_vectors(
     col: &arrow_array::ArrayRef,
     num_rows: usize,

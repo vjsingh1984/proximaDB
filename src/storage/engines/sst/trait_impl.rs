@@ -55,6 +55,40 @@ impl UnifiedStorageFormat for SstEngine {
         self.flush_implementation(params).await
     }
 
+    /// TD-DELVEC-1 WI-5 P1: re-mark deletion-vector bits for recovery tombstones
+    /// (see `UnifiedStorageFormat::reconcile_deletion_vectors`). The just-flushed
+    /// `L0_recovery_*` segments exist on disk, so `resolve_oid_positions` can find
+    /// each tombstone's target row; the mark persists to `{segment}.dv` (disk-
+    /// authoritative, read by the canonical serving engine). Best-effort — a
+    /// resolve/mark failure logs + continues; the tombstone stays coherent.
+    #[cfg(feature = "cold-deletion-vectors")]
+    async fn reconcile_deletion_vectors(
+        &self,
+        collection_id: &str,
+        tombstones: &[(String, u64)],
+    ) -> Result<()> {
+        let Some(dv_store) = self.deletion_vector_store.as_ref() else {
+            return Ok(());
+        };
+        for (oid, lsn) in tombstones {
+            let hits = match self.resolve_oid_positions(collection_id, oid).await {
+                Ok(hits) => hits,
+                Err(e) => {
+                    tracing::warn!("recovery DV reconcile: resolve failed for {oid}: {e:?}");
+                    continue;
+                }
+            };
+            for (seg, pos) in hits {
+                if let Err(e) = dv_store.mark_deleted(&seg, pos, *lsn).await {
+                    tracing::warn!(
+                        "recovery DV reconcile: mark failed for {oid} @ {seg}:{pos} (gen {lsn}): {e:?}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// SST's LSM bulk-load override (Phase 2F-b).
     ///
     /// Same shape as NOVA's override — SST's `flush_implementation`
@@ -110,7 +144,16 @@ impl UnifiedStorageFormat for SstEngine {
         });
 
         let params = FlushParameters {
-            collection_id: Some(collection_id.to_string()),
+            collection_id: Some(
+                collection_id
+                    .parse::<u64>()
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "SST bulk ingest requires a numeric catalog object id, got {collection_id:?}: {error}"
+                        )
+                    })?
+                    .to_string(),
+            ),
             force: true,
             synchronous: true,
             hints: std::collections::HashMap::new(),
@@ -141,46 +184,85 @@ impl UnifiedStorageFormat for SstEngine {
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         info!("🔄 SST: Starting compaction operation");
 
-        // Use the compaction manager if available
-        if let Some(_compaction_manager) = self.compaction_manager() {
-            // Trigger compaction through the manager
-            // This would be implemented in the compaction module
-            Ok(CompactionResult {
-                success: true,
-                collections_affected: params
-                    .collection_id
-                    .as_ref()
-                    .map(|id| vec![id.clone()])
-                    .unwrap_or_default(),
-                entries_processed: Some(0),
-                entries_removed: Some(0),
-                bytes_read: Some(0),
-                bytes_written: Some(0),
-                input_files: Some(0),
-                output_files: Some(0),
-                duration_ms: Some(0),
-                completed_at: chrono::Utc::now(),
-                engine_metrics: std::collections::HashMap::new(),
-            })
+        let collection_id = params.get_collection_id()?;
+        let collection_object_id = params.get_collection_object_id()?;
+        let collection_dir = params.get_data_dir()?;
+        let compaction = self
+            .compaction_manager()
+            .ok_or_else(|| anyhow::anyhow!("SST compaction manager is unavailable"))?;
+        let configured_l0_threshold = self
+            .config()
+            .compaction_config
+            .as_ref()
+            .map(|config| config.l0_file_threshold)
+            .unwrap_or(self.config().compaction_threshold as usize);
+        let l0_threshold = if params.force {
+            1
         } else {
-            Ok(CompactionResult {
-                success: false,
-                collections_affected: params
-                    .collection_id
-                    .as_ref()
-                    .map(|id| vec![id.clone()])
-                    .unwrap_or_default(),
-                entries_processed: Some(0),
-                entries_removed: Some(0),
-                bytes_read: Some(0),
-                bytes_written: Some(0),
-                input_files: Some(0),
-                output_files: Some(0),
-                duration_ms: Some(0),
-                completed_at: chrono::Utc::now(),
-                engine_metrics: std::collections::HashMap::new(),
-            })
+            configured_l0_threshold
+        };
+        let precision_hint = params
+            .collection_config
+            .as_ref()
+            .and_then(|collection| collection.config.as_ref())
+            .and_then(|config| config.canonical_embedding_precision)
+            .and_then(|precision| {
+                use crate::proto::proximadb_v1::EmbeddingPrecision;
+                match EmbeddingPrecision::try_from(precision) {
+                    Ok(EmbeddingPrecision::Fp16) => {
+                        Some(proximadb_records::EmbeddingScalarType::Fp16)
+                    }
+                    Ok(EmbeddingPrecision::Bf16) => {
+                        Some(proximadb_records::EmbeddingScalarType::Bf16)
+                    }
+                    Ok(EmbeddingPrecision::Int8) => {
+                        Some(proximadb_records::EmbeddingScalarType::Int8Scalar)
+                    }
+                    Ok(EmbeddingPrecision::Uint8) => {
+                        Some(proximadb_records::EmbeddingScalarType::UInt8Scalar)
+                    }
+                    Ok(EmbeddingPrecision::Unspecified | EmbeddingPrecision::Fp32) | Err(_) => None,
+                }
+            });
+        let enqueued = compaction
+            .enqueue_due_compaction(
+                collection_object_id,
+                crate::core::stable_id::CollectionIdentity::default(),
+                std::path::Path::new(&collection_dir),
+                l0_threshold,
+                precision_hint,
+            )
+            .await?;
+
+        if enqueued && params.synchronous {
+            let timeout = std::time::Duration::from_millis(params.timeout_ms.unwrap_or(1_200_000));
+            if !compaction.await_compaction_quiescence(timeout).await {
+                return Err(anyhow::anyhow!(
+                    "SST compaction for collection {collection_object_id} did not quiesce within {}ms",
+                    timeout.as_millis()
+                ));
+            }
         }
+
+        Ok(CompactionResult {
+            success: true,
+            collections_affected: vec![collection_id],
+            entries_processed: None,
+            entries_removed: None,
+            bytes_read: None,
+            bytes_written: None,
+            input_files: None,
+            output_files: None,
+            duration_ms: None,
+            completed_at: chrono::Utc::now(),
+            engine_metrics: HashMap::from([
+                ("task_enqueued".to_string(), serde_json::json!(enqueued)),
+                (
+                    "synchronous".to_string(),
+                    serde_json::json!(params.synchronous),
+                ),
+            ]),
+        })
     }
 
     /// Get vector by ID
@@ -511,6 +593,32 @@ mod tests {
             serde_json::Value::String("sst".to_string())
         );
         assert!(metrics.contains_key("version"));
+    }
+
+    #[tokio::test]
+    async fn explicit_compaction_uses_real_scheduler_and_reports_noop() {
+        let engine = create_test_engine().await;
+        let directory = tempfile::tempdir().unwrap();
+        let data_dir = directory.path().join("7").join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let params = CompactionParameters {
+            collection_id: Some("7".to_string()),
+            synchronous: true,
+            hints: HashMap::from([(
+                "data_dir".to_string(),
+                serde_json::json!(data_dir.to_string_lossy()),
+            )]),
+            ..Default::default()
+        };
+
+        let result = engine.do_compact(&params).await.unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.collections_affected, vec!["7"]);
+        assert_eq!(
+            result.engine_metrics.get("task_enqueued"),
+            Some(&serde_json::json!(false))
+        );
     }
 
     async fn create_test_engine() -> SstEngine {

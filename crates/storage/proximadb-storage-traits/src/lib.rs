@@ -66,7 +66,7 @@ mod types;
 // Re-exports from decomposed submodules for backward compatibility
 pub use query::{
     ParsedQuantizationConfig, QuantizationLevel, QuantizationType, RlsRecordPredicate,
-    StorageQueryContext, StorageQueryMetadata,
+    StorageQueryContext, StorageQueryMetadata, collection_declares_axis_index,
 };
 pub use results::{CompactionResult, EngineHealth, EngineStatistics, FlushResult};
 pub use types::{
@@ -542,6 +542,23 @@ pub trait UnifiedStorageFormat: Send + Sync {
     /// this to inspect bounded metadata (for example, L0 watermarks) and reject
     /// work before sorting, clustering, encoding, or uploading records.
     async fn preflight_flush(&self, _params: &FlushParameters) -> Result<()> {
+        Ok(())
+    }
+
+    /// TD-DELVEC-1 WI-5 P1: re-mark deletion-vector bits for tombstones a crash
+    /// may have stranded between the WAL append (the commit) and `mark_deleted`.
+    /// Recovery calls this after the materialization flush with the just-replayed
+    /// tombstones — `(oid, manifest_lsn)`, where `manifest_lsn` is the durable
+    /// per-batch WAL `global_lsn` (the same space as the read side's
+    /// `snapshot_lsn`). Default no-op; the `SstEngine` impl (under
+    /// `cold-deletion-vectors`) resolves each oid → (segment, position) and marks
+    /// the DV bit. Disk-authoritative: the mark persists to `{segment}.dv`, which
+    /// the canonical serving engine `load`s on read.
+    async fn reconcile_deletion_vectors(
+        &self,
+        _collection_id: &str,
+        _tombstones: &[(String, u64)],
+    ) -> Result<()> {
         Ok(())
     }
 

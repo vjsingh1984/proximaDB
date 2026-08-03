@@ -43,6 +43,7 @@ use crate::errors::{ApiError, ApiResult};
 // handler's IVF dispatch arm can call `.advise(...)` on
 // IvfIndexAdvisor (P2.4 commit). HnswIndexAdvisor / HmgiIndexAdvisor
 // (P3) similarly require the trait in scope.
+#[cfg(feature = "axis")]
 use crate::index::axis::management::AnnIndexAdvisor;
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::canonical::handlers::AppState;
@@ -1564,6 +1565,7 @@ pub const ACTION_RAISE_MAX_EF_OR_BUMP_M: &str = "raise_max_ef_or_bump_m";
 ///
 /// The literal matches `SupportedAlgorithm::label()` so dashboards
 /// + SIEM filters can switch on the same string across surfaces.
+#[cfg_attr(not(feature = "axis"), allow(dead_code))]
 pub(super) fn active_algorithm_for(
     config: &crate::proto::proximadb_v1::CollectionConfig,
 ) -> &'static str {
@@ -1595,6 +1597,7 @@ pub(super) fn active_algorithm_for(
 /// `clamped == true` ALWAYS wins over kind, even when kind="none" —
 /// a "no-drift" status that's silently clamped is misleading; the
 /// real choice is "raise the cap or bump m".
+#[cfg_attr(not(feature = "axis"), allow(dead_code))]
 pub(super) fn recommended_action_for(kind: &str, clamped: bool) -> &'static str {
     if clamped {
         return ACTION_RAISE_MAX_EF_OR_BUMP_M;
@@ -1784,6 +1787,7 @@ impl ColdServingHealth {
     }
 
     /// Build from `AxisManager::cold_serving_status` output.
+    #[cfg(feature = "axis")]
     fn from_status(
         state: crate::index::axis::IvfServingState,
         fetched: usize,
@@ -2435,123 +2439,132 @@ pub async fn get_collection_route_health_v2(
 
     // ADR-023 R3 (c): patch the cold-serving block with live AXIS state — the
     // cold→warm window + per-cluster warm-fill progress for a loaded IVF index.
-    health.cold_serving = match crate::storage::engines::sst::core::get_sst_axis_manager() {
-        Some(axis) => match axis
-            .ivf_cold_serving_status(&collection_id_for_discovery)
-            .await
-        {
-            Some((state_str, fetched, total)) => {
-                use crate::index::axis::IvfServingState;
-                let state = match state_str.as_str() {
-                    "full_two_stage" => IvfServingState::FullTwoStage,
-                    "cold_binary_only" => IvfServingState::ColdBinaryOnly,
-                    _ => IvfServingState::ColdBinaryOnly, // Default fallback
-                };
-                ColdServingHealth::from_status(state, fetched, total)
-            }
+    // When the `axis` feature is off the builder default
+    // (`ColdServingHealth::unobservable()`) is left in place.
+    #[cfg(feature = "axis")]
+    {
+        health.cold_serving = match crate::storage::engines::sst::core::get_sst_axis_manager() {
+            Some(axis) => match axis
+                .ivf_cold_serving_status(&collection_id_for_discovery)
+                .await
+            {
+                Some((state_str, fetched, total)) => {
+                    use crate::index::axis::IvfServingState;
+                    let state = match state_str.as_str() {
+                        "full_two_stage" => IvfServingState::FullTwoStage,
+                        "cold_binary_only" => IvfServingState::ColdBinaryOnly,
+                        _ => IvfServingState::ColdBinaryOnly, // Default fallback
+                    };
+                    ColdServingHealth::from_status(state, fetched, total)
+                }
+                None => ColdServingHealth::unobservable(),
+            },
             None => ColdServingHealth::unobservable(),
-        },
-        None => ColdServingHealth::unobservable(),
-    };
+        };
+    }
 
     // Patch the recall_drift block when the collection has a
     // `recall_target:<float>` tag. Otherwise the builder default
-    // (RecallDriftHealth::unwired()) is correct.
-    if let Some(recall_target) =
-        crate::services::collection::recall_target::parse_recall_target(&config)
+    // (RecallDriftHealth::unwired()) is correct. When the `axis`
+    // feature is off the builder default is left in place.
+    #[cfg(feature = "axis")]
     {
-        let baseline_n =
-            crate::services::collection::recall_target::parse_target_vector_count(&config)
-                .unwrap_or(100_000);
-        let current_n = non_negative_stat(stats.vector_count);
-        let metric = match config
-            .distance_metric
-            .and_then(|v| crate::proto::proximadb_v1::DistanceMetric::try_from(v).ok())
+        if let Some(recall_target) =
+            crate::services::collection::recall_target::parse_recall_target(&config)
         {
-            Some(crate::proto::proximadb_v1::DistanceMetric::Cosine) => {
-                crate::compute::distance_computation::DistanceMetric::Cosine
-            }
-            Some(crate::proto::proximadb_v1::DistanceMetric::Euclidean) => {
-                crate::compute::distance_computation::DistanceMetric::Euclidean
-            }
-            Some(crate::proto::proximadb_v1::DistanceMetric::DotProduct) => {
-                crate::compute::distance_computation::DistanceMetric::DotProduct
-            }
-            _ => crate::compute::distance_computation::DistanceMetric::Cosine,
-        };
-        let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
-        let max_ef_search =
-            crate::services::collection::recall_target::parse_max_ef_search(&config);
-        let report = crate::index::axis::management::detect_recall_drift(
-            crate::index::axis::management::RecallDriftInput {
-                baseline_n,
-                current_n,
-                recall_target,
-                top_k,
-                dimension: config.dimension,
-                distance_metric: metric,
+            let baseline_n =
+                crate::services::collection::recall_target::parse_target_vector_count(&config)
+                    .unwrap_or(100_000);
+            let current_n = non_negative_stat(stats.vector_count);
+            let metric = match config
+                .distance_metric
+                .and_then(|v| crate::proto::proximadb_v1::DistanceMetric::try_from(v).ok())
+            {
+                Some(crate::proto::proximadb_v1::DistanceMetric::Cosine) => {
+                    crate::compute::distance_computation::DistanceMetric::Cosine
+                }
+                Some(crate::proto::proximadb_v1::DistanceMetric::Euclidean) => {
+                    crate::compute::distance_computation::DistanceMetric::Euclidean
+                }
+                Some(crate::proto::proximadb_v1::DistanceMetric::DotProduct) => {
+                    crate::compute::distance_computation::DistanceMetric::DotProduct
+                }
+                _ => crate::compute::distance_computation::DistanceMetric::Cosine,
+            };
+            let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
+            let max_ef_search =
+                crate::services::collection::recall_target::parse_max_ef_search(&config);
+            let report = crate::index::axis::management::detect_recall_drift(
+                crate::index::axis::management::RecallDriftInput {
+                    baseline_n,
+                    current_n,
+                    recall_target,
+                    top_k,
+                    dimension: config.dimension,
+                    distance_metric: metric,
+                    max_ef_search,
+                },
+            );
+            let kind: &'static str = match report.drift_kind {
+                crate::index::axis::management::DriftKind::None => "none",
+                crate::index::axis::management::DriftKind::EfSearchOnly => "ef_search_only",
+                crate::index::axis::management::DriftKind::EfConstructionOrM => "rebuild_required",
+                // IVF variants — when the route-health handler grows
+                // an IVF dispatch path (P2 commit 4) these branches
+                // will fire on `detect_ivf_recall_drift` output. For
+                // now the HNSW-only handler can't produce them.
+                crate::index::axis::management::DriftKind::NprobeOnly => "ef_search_only",
+                crate::index::axis::management::DriftKind::NlistOrQuantizer => "rebuild_required",
+            };
+            let baseline_params = Some(RecallAdvisedParams {
+                m: report.baseline_params.m,
+                ef_construction: report.baseline_params.ef_construction,
+                ef_search: report.baseline_params.ef_search,
+            });
+            let current_params = Some(RecallAdvisedParams {
+                m: report.current_params.m,
+                ef_construction: report.current_params.ef_construction,
+                ef_search: report.current_params.ef_search,
+            });
+            let clamped = report.current_params.clamped_by_max_ef;
+            let projected = report.current_params.projected_recall_if_clamped;
+            health.recall_drift = RecallDriftHealth {
+                wired: true,
+                recall_target: Some(recall_target),
+                baseline_vector_count: Some(baseline_n),
+                current_vector_count: Some(current_n),
+                kind,
+                needs_rebuild: report.needs_rebuild(),
+                hot_swap_possible: report.hot_swap_possible(),
+                summary: report.summary,
+                baseline_params,
+                current_params,
+                recommended_action: recommended_action_for(kind, clamped),
                 max_ef_search,
-            },
-        );
-        let kind: &'static str = match report.drift_kind {
-            crate::index::axis::management::DriftKind::None => "none",
-            crate::index::axis::management::DriftKind::EfSearchOnly => "ef_search_only",
-            crate::index::axis::management::DriftKind::EfConstructionOrM => "rebuild_required",
-            // IVF variants — when the route-health handler grows
-            // an IVF dispatch path (P2 commit 4) these branches
-            // will fire on `detect_ivf_recall_drift` output. For
-            // now the HNSW-only handler can't produce them.
-            crate::index::axis::management::DriftKind::NprobeOnly => "ef_search_only",
-            crate::index::axis::management::DriftKind::NlistOrQuantizer => "rebuild_required",
-        };
-        let baseline_params = Some(RecallAdvisedParams {
-            m: report.baseline_params.m,
-            ef_construction: report.baseline_params.ef_construction,
-            ef_search: report.baseline_params.ef_search,
-        });
-        let current_params = Some(RecallAdvisedParams {
-            m: report.current_params.m,
-            ef_construction: report.current_params.ef_construction,
-            ef_search: report.current_params.ef_search,
-        });
-        let clamped = report.current_params.clamped_by_max_ef;
-        let projected = report.current_params.projected_recall_if_clamped;
-        health.recall_drift = RecallDriftHealth {
-            wired: true,
-            recall_target: Some(recall_target),
-            baseline_vector_count: Some(baseline_n),
-            current_vector_count: Some(current_n),
-            kind,
-            needs_rebuild: report.needs_rebuild(),
-            hot_swap_possible: report.hot_swap_possible(),
-            summary: report.summary,
-            baseline_params,
-            current_params,
-            recommended_action: recommended_action_for(kind, clamped),
-            max_ef_search,
-            clamped_by_max_ef: clamped,
-            projected_recall_at_clamped_ef: projected,
-            // P2.4: dispatch on the collection's active algorithm.
-            // HNSW path runs the HNSW drift detector above; IVF
-            // collections report "ivf" so the recall-tune /
-            // recluster handlers route correctly. The drift block
-            // params above are the HNSW-shape report — IVF route-
-            // health surface gets the IVF-specific drift block in
-            // a follow-up commit; for now the algorithm literal
-            // is the key dispatch signal.
-            algorithm: active_algorithm_for(&config),
-        };
-        crate::metrics::recall_drift_metrics::record_recall_drift_observation(
-            &collection_id_for_discovery,
-            kind,
-        );
-    } else {
-        // No recall_target tag → emit the unwired one-hot so the
-        // gauge still surfaces this collection's state on dashboards.
-        crate::metrics::recall_drift_metrics::record_recall_drift_observation(
-            &collection_id_for_discovery,
-            "unwired",
-        );
+                clamped_by_max_ef: clamped,
+                projected_recall_at_clamped_ef: projected,
+                // P2.4: dispatch on the collection's active algorithm.
+                // HNSW path runs the HNSW drift detector above; IVF
+                // collections report "ivf" so the recall-tune /
+                // recluster handlers route correctly. The drift block
+                // params above are the HNSW-shape report — IVF route-
+                // health surface gets the IVF-specific drift block in
+                // a follow-up commit; for now the algorithm literal
+                // is the key dispatch signal.
+                algorithm: active_algorithm_for(&config),
+            };
+            crate::metrics::recall_drift_metrics::record_recall_drift_observation(
+                &collection_id_for_discovery,
+                kind,
+            );
+        } else {
+            // No recall_target tag → emit the unwired one-hot so the
+            // gauge still surfaces this collection's state on dashboards.
+            crate::metrics::recall_drift_metrics::record_recall_drift_observation(
+                &collection_id_for_discovery,
+                "unwired",
+            );
+        }
     }
 
     // Phase 8 (F1): patch the discovery block with live snapshot-coordinator
@@ -2664,6 +2677,9 @@ pub struct RecallTuneEfChange {
 
 /// Adaptive recall tune handler.
 ///
+/// This endpoint is gated on the `axis` feature — the whole handler is
+/// elided (and its route is not registered) when `axis` is off.
+///
 /// Reads `recall_target:` from the collection's tags, runs
 /// `detect_recall_drift`, then:
 ///
@@ -2680,6 +2696,7 @@ pub struct RecallTuneEfChange {
 /// `SystemAdmin` or `ConfigureSystem` permission. The auth gate
 /// matches `primary_pod::authorize_operator` because this endpoint
 /// **mutates** the live AXIS strategy.
+#[cfg(feature = "axis")]
 pub async fn post_collection_recall_tune_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
@@ -3145,6 +3162,10 @@ pub async fn post_collection_resume_v2(
 /// the HNSW graph — non-trivial CPU + memory — so it sits behind
 /// the same `SystemAdmin` / `ConfigureSystem` gate as
 /// `primary_pod`.
+/// When the `axis` feature is off the rebuild branch is elided and this
+/// handler short-circuits with a 501; the `tenant` / `state` extractors are
+/// then unused, so silence that one lint in a no-axis build only.
+#[cfg_attr(not(feature = "axis"), allow(unused_variables))]
 pub async fn post_collection_recluster_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
@@ -3164,199 +3185,228 @@ pub async fn post_collection_recluster_v2(
 
     require_recall_admin(user_context.as_ref().map(|e| &e.0), "recluster")?;
 
-    // (1) Fetch collection config to read the recall_target tag.
-    let request = CollectionRequest {
-        operation: CollectionOperation::CollectionGet as i32,
-        collection_id: Some(collection_id.clone()),
-        collection_config: None,
-        query_params: Default::default(),
-        options: Default::default(),
-        migration_config: Default::default(),
-    };
-    let resp = state
-        .api_handlers
-        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("not found") {
-                ApiError::CollectionNotFound(collection_id.clone())
-            } else {
-                ApiError::Internal(format!("Failed to get collection: {}", e))
+    // The recall-aware rebuild reads the live collection and downcasts to the
+    // concrete AXIS index manager to drive an advisor-sized graph swap. The
+    // whole sequence is gated on the `axis` feature; when it is off there is
+    // no manager to downcast, so surface a 501 rather than attempt the rebuild
+    // (the empty-id + admin gates above still run).
+    #[cfg(not(feature = "axis"))]
+    return Err(ApiError::NotImplemented(
+        "recluster requires the AXIS feature, which is not enabled in this build".to_string(),
+    ));
+
+    #[cfg(feature = "axis")]
+    {
+        // (1) Fetch collection config to read the recall_target tag.
+        let request = CollectionRequest {
+            operation: CollectionOperation::CollectionGet as i32,
+            collection_id: Some(collection_id.clone()),
+            collection_config: None,
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        };
+        let resp = state
+            .api_handlers
+            .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("not found") {
+                    ApiError::CollectionNotFound(collection_id.clone())
+                } else {
+                    ApiError::Internal(format!("Failed to get collection: {}", e))
+                }
+            })?;
+
+        let collection = resp.collection.unwrap_or_default();
+        let config = collection.config.unwrap_or_default();
+
+        let Some(recall_target) =
+            crate::services::collection::recall_target::parse_recall_target(&config)
+        else {
+            return Ok(Json(RecallReclusterResponse {
+                stability: "experimental",
+                collection_id,
+                applied: false,
+                reason: "collection has no recall_target: tag — nothing to size against"
+                    .to_string(),
+                rebuilt_vector_count: None,
+                sized: None,
+            }));
+        };
+
+        let Some(axis_manager) = crate::storage::engines::sst::core::get_sst_axis_manager() else {
+            return Ok(Json(RecallReclusterResponse {
+                stability: "experimental",
+                collection_id,
+                applied: false,
+                reason: "AXIS manager not registered for this deployment".to_string(),
+                rebuilt_vector_count: None,
+                sized: None,
+            }));
+        };
+
+        // (2) Read every record. Resolves the user-facing name to the
+        // canonical internal id (same as the discovery recluster pass).
+        let vector_ops = &state.vector_operations_service;
+        let internal_id = vector_ops
+            .resolve_collection_object_id(&collection_id)
+            .await
+            .map_err(|e| ApiError::NotFound(e.to_string()))?
+            .to_string();
+        let records = vector_ops
+            .list_all_records_with_tenant_context(internal_id.as_str(), None)
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to list records: {}", e)))?;
+
+        if records.is_empty() {
+            return Ok(Json(RecallReclusterResponse {
+                stability: "experimental",
+                collection_id,
+                applied: false,
+                reason: "collection has no records to rebuild".to_string(),
+                rebuilt_vector_count: Some(0),
+                sized: None,
+            }));
+        }
+
+        let count = records.len() as u64;
+        let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
+        let max_ef_search =
+            crate::services::collection::recall_target::parse_max_ef_search(&config);
+        let max_query_latency_ms =
+            crate::services::collection::recall_target::parse_max_query_latency_ms(&config);
+        let max_memory_mb =
+            crate::services::collection::recall_target::parse_max_memory_mb(&config);
+        let binary_rerank =
+            crate::services::collection::recall_target::parse_binary_rerank_allowed(&config);
+
+        // (3) Dispatch the rebuild on the collection's active
+        // algorithm. HNSW path stays untouched (existing behavior);
+        // IVF path calls the new advisor-aware rebuild and
+        // normalises the response shape via the `algorithm` literal
+        // and per-algorithm sized fields.
+        let active_algo = active_algorithm_for(&config);
+        let sized: Option<RecallReclusterSized> = match active_algo {
+            "ivf" => {
+                // Downcast to concrete AxisManager for recall-target advisor methods
+                let axis_mgr = axis_manager
+                    .as_any()
+                    .downcast_ref::<crate::index::axis::management::AxisManager>()
+                    .ok_or_else(|| {
+                        ApiError::Internal("AXIS manager downcast failed".to_string())
+                    })?;
+                let advised = axis_mgr
+                    .rebuild_and_swap_ivf_index_for_recall_target(
+                        internal_id.as_str(),
+                        &records,
+                        recall_target,
+                        top_k,
+                        max_query_latency_ms,
+                        max_memory_mb,
+                        binary_rerank,
+                    )
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("IVF rebuild failed: {}", e)))?;
+                let Some(advised) = advised else {
+                    return Ok(Json(RecallReclusterResponse {
+                        stability: "experimental",
+                        collection_id,
+                        applied: false,
+                        reason:
+                            "IVF advisor declined or no usable embeddings — recall_target may exceed IVF ceiling"
+                                .to_string(),
+                        rebuilt_vector_count: Some(count),
+                        sized: None,
+                    }));
+                };
+                let (nlist, nprobe, pq_enabled) = match &advised.algorithm {
+                    crate::index::axis::types::IndexAlgorithm::IVF {
+                        nlist,
+                        nprobe,
+                        quantizer,
+                    } => (*nlist, *nprobe, quantizer.is_some()),
+                    other => {
+                        unreachable!("IVF rebuild returned non-IVF algorithm spec: {:?}", other)
+                    }
+                };
+                Some(RecallReclusterSized {
+                    recall_target,
+                    algorithm: "ivf",
+                    m: None,
+                    ef_construction: None,
+                    ef_search: None,
+                    nlist: Some(nlist),
+                    nprobe: Some(nprobe),
+                    pq_enabled: Some(pq_enabled),
+                    rationale: advised.rationale,
+                })
             }
-        })?;
+            _ => {
+                // Downcast to concrete AxisManager for recall-target advisor methods
+                let axis_mgr = axis_manager
+                    .as_any()
+                    .downcast_ref::<crate::index::axis::management::AxisManager>()
+                    .ok_or_else(|| {
+                        ApiError::Internal("AXIS manager downcast failed".to_string())
+                    })?;
+                let advised = axis_mgr
+                    .rebuild_and_swap_hnsw_index_for_recall_target(
+                        internal_id.as_str(),
+                        &records,
+                        recall_target,
+                        top_k,
+                        max_ef_search,
+                    )
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("HNSW rebuild failed: {}", e)))?;
+                let Some(advised) = advised else {
+                    return Ok(Json(RecallReclusterResponse {
+                        stability: "experimental",
+                        collection_id,
+                        applied: false,
+                        reason: "no usable embeddings in record set".to_string(),
+                        rebuilt_vector_count: Some(count),
+                        sized: None,
+                    }));
+                };
+                Some(RecallReclusterSized {
+                    recall_target,
+                    algorithm: "hnsw",
+                    m: Some(advised.m),
+                    ef_construction: Some(advised.ef_construction),
+                    ef_search: Some(advised.ef_search),
+                    nlist: None,
+                    nprobe: None,
+                    pq_enabled: None,
+                    rationale: advised.rationale,
+                })
+            }
+        };
 
-    let collection = resp.collection.unwrap_or_default();
-    let config = collection.config.unwrap_or_default();
+        // After a rebuild the recall-drift state collapses to "none"
+        // for this collection (the new graph is sized exactly to the
+        // current advised params). Reflect that on the gauge so
+        // dashboards / alerts clear immediately rather than waiting
+        // for the next route-health GET or sweep tick.
+        crate::metrics::recall_drift_metrics::record_recall_drift_observation(
+            &collection_id,
+            "none",
+        );
 
-    let Some(recall_target) =
-        crate::services::collection::recall_target::parse_recall_target(&config)
-    else {
-        return Ok(Json(RecallReclusterResponse {
+        let reason = sized
+            .as_ref()
+            .map(|s| s.rationale.clone())
+            .unwrap_or_default();
+        Ok(Json(RecallReclusterResponse {
             stability: "experimental",
             collection_id,
-            applied: false,
-            reason: "collection has no recall_target: tag — nothing to size against".to_string(),
-            rebuilt_vector_count: None,
-            sized: None,
-        }));
-    };
-
-    let Some(axis_manager) = crate::storage::engines::sst::core::get_sst_axis_manager() else {
-        return Ok(Json(RecallReclusterResponse {
-            stability: "experimental",
-            collection_id,
-            applied: false,
-            reason: "AXIS manager not registered for this deployment".to_string(),
-            rebuilt_vector_count: None,
-            sized: None,
-        }));
-    };
-
-    // (2) Read every record. Resolves the user-facing name to the
-    // canonical internal id (same as the discovery recluster pass).
-    let vector_ops = &state.vector_operations_service;
-    let internal_id = vector_ops.resolve_collection_id(&collection_id).await;
-    let records = vector_ops
-        .list_all_records_with_tenant_context(internal_id.as_str(), None)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to list records: {}", e)))?;
-
-    if records.is_empty() {
-        return Ok(Json(RecallReclusterResponse {
-            stability: "experimental",
-            collection_id,
-            applied: false,
-            reason: "collection has no records to rebuild".to_string(),
-            rebuilt_vector_count: Some(0),
-            sized: None,
-        }));
+            applied: sized.is_some(),
+            reason,
+            rebuilt_vector_count: Some(count),
+            sized,
+        }))
     }
-
-    let count = records.len() as u64;
-    let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
-    let max_ef_search = crate::services::collection::recall_target::parse_max_ef_search(&config);
-    let max_query_latency_ms =
-        crate::services::collection::recall_target::parse_max_query_latency_ms(&config);
-    let max_memory_mb = crate::services::collection::recall_target::parse_max_memory_mb(&config);
-    let binary_rerank =
-        crate::services::collection::recall_target::parse_binary_rerank_allowed(&config);
-
-    // (3) Dispatch the rebuild on the collection's active
-    // algorithm. HNSW path stays untouched (existing behavior);
-    // IVF path calls the new advisor-aware rebuild and
-    // normalises the response shape via the `algorithm` literal
-    // and per-algorithm sized fields.
-    let active_algo = active_algorithm_for(&config);
-    let sized: Option<RecallReclusterSized> = match active_algo {
-        "ivf" => {
-            // Downcast to concrete AxisManager for recall-target advisor methods
-            let axis_mgr = axis_manager
-                .as_any()
-                .downcast_ref::<crate::index::axis::management::AxisManager>()
-                .ok_or_else(|| ApiError::Internal("AXIS manager downcast failed".to_string()))?;
-            let advised = axis_mgr
-                .rebuild_and_swap_ivf_index_for_recall_target(
-                    internal_id.as_str(),
-                    &records,
-                    recall_target,
-                    top_k,
-                    max_query_latency_ms,
-                    max_memory_mb,
-                    binary_rerank,
-                )
-                .await
-                .map_err(|e| ApiError::Internal(format!("IVF rebuild failed: {}", e)))?;
-            let Some(advised) = advised else {
-                return Ok(Json(RecallReclusterResponse {
-                    stability: "experimental",
-                    collection_id,
-                    applied: false,
-                    reason:
-                        "IVF advisor declined or no usable embeddings — recall_target may exceed IVF ceiling"
-                            .to_string(),
-                    rebuilt_vector_count: Some(count),
-                    sized: None,
-                }));
-            };
-            let (nlist, nprobe, pq_enabled) = match &advised.algorithm {
-                crate::index::axis::types::IndexAlgorithm::IVF {
-                    nlist,
-                    nprobe,
-                    quantizer,
-                } => (*nlist, *nprobe, quantizer.is_some()),
-                other => unreachable!("IVF rebuild returned non-IVF algorithm spec: {:?}", other),
-            };
-            Some(RecallReclusterSized {
-                recall_target,
-                algorithm: "ivf",
-                m: None,
-                ef_construction: None,
-                ef_search: None,
-                nlist: Some(nlist),
-                nprobe: Some(nprobe),
-                pq_enabled: Some(pq_enabled),
-                rationale: advised.rationale,
-            })
-        }
-        _ => {
-            // Downcast to concrete AxisManager for recall-target advisor methods
-            let axis_mgr = axis_manager
-                .as_any()
-                .downcast_ref::<crate::index::axis::management::AxisManager>()
-                .ok_or_else(|| ApiError::Internal("AXIS manager downcast failed".to_string()))?;
-            let advised = axis_mgr
-                .rebuild_and_swap_hnsw_index_for_recall_target(
-                    internal_id.as_str(),
-                    &records,
-                    recall_target,
-                    top_k,
-                    max_ef_search,
-                )
-                .await
-                .map_err(|e| ApiError::Internal(format!("HNSW rebuild failed: {}", e)))?;
-            let Some(advised) = advised else {
-                return Ok(Json(RecallReclusterResponse {
-                    stability: "experimental",
-                    collection_id,
-                    applied: false,
-                    reason: "no usable embeddings in record set".to_string(),
-                    rebuilt_vector_count: Some(count),
-                    sized: None,
-                }));
-            };
-            Some(RecallReclusterSized {
-                recall_target,
-                algorithm: "hnsw",
-                m: Some(advised.m),
-                ef_construction: Some(advised.ef_construction),
-                ef_search: Some(advised.ef_search),
-                nlist: None,
-                nprobe: None,
-                pq_enabled: None,
-                rationale: advised.rationale,
-            })
-        }
-    };
-
-    // After a rebuild the recall-drift state collapses to "none"
-    // for this collection (the new graph is sized exactly to the
-    // current advised params). Reflect that on the gauge so
-    // dashboards / alerts clear immediately rather than waiting
-    // for the next route-health GET or sweep tick.
-    crate::metrics::recall_drift_metrics::record_recall_drift_observation(&collection_id, "none");
-
-    let reason = sized
-        .as_ref()
-        .map(|s| s.rationale.clone())
-        .unwrap_or_default();
-    Ok(Json(RecallReclusterResponse {
-        stability: "experimental",
-        collection_id,
-        applied: sized.is_some(),
-        reason,
-        rebuilt_vector_count: Some(count),
-        sized,
-    }))
 }
 
 #[cfg(test)]

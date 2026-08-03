@@ -23,7 +23,8 @@
 
 use lazy_static::lazy_static;
 use prometheus::{
-    Histogram, IntCounter, IntGauge, register_histogram, register_int_counter, register_int_gauge,
+    Histogram, IntCounter, IntCounterVec, IntGauge, register_histogram, register_int_counter,
+    register_int_counter_vec, register_int_gauge,
 };
 
 fn counter(name: &str, help: &str) -> IntCounter {
@@ -48,6 +49,10 @@ fn gauge_vec(name: &str, help: &str, labels: &[&str]) -> prometheus::IntGaugeVec
         )
         .unwrap_or_else(|_| unreachable!("valid gauge-vec metric descriptor"))
     })
+}
+
+fn counter_vec(name: &str, help: &str, labels: &[&str]) -> Option<IntCounterVec> {
+    register_int_counter_vec!(name, help, labels).ok()
 }
 
 fn histogram(name: &str, help: &str, buckets: Vec<f64>) -> Histogram {
@@ -141,6 +146,21 @@ lazy_static! {
         "proximadb_segment_invariants_cache_bytes",
         "Resident bytes in the segment-invariants cache",
     );
+    pub static ref CACHE_LOCAL_DISK_HITS_TOTAL: Option<IntCounterVec> = counter_vec(
+        "proximadb_cache_local_disk_hits_total",
+        "Persistent local-cache hits that avoided an object-store GET",
+        &["tier"],
+    );
+    pub static ref CACHE_LOCAL_DISK_MISSES_TOTAL: Option<IntCounterVec> = counter_vec(
+        "proximadb_cache_local_disk_misses_total",
+        "Persistent local-cache namespace lookup misses; another local parent lookup may still avoid object storage",
+        &["tier"],
+    );
+    pub static ref CACHE_LOCAL_DISK_BYTES: prometheus::IntGaugeVec = gauge_vec(
+        "proximadb_cache_local_disk_bytes",
+        "Resident persistent local-cache bytes by PAX cache tier",
+        &["tier"],
+    );
     /// TD-COMPACT-1 S2: compaction I/O + wall-clock. Counters (event-sourced
     /// at compaction completion), scraped by /metrics/prometheus. A stuck-at-0
     /// bytes counter alongside advancing runs now points at the size probes
@@ -164,6 +184,44 @@ lazy_static! {
         "Wall-clock duration of completed LSM compactions",
         vec![0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
     );
+    pub static ref COMPACTION_MEMORY_RESERVED_BYTES: IntGauge = gauge(
+        "proximadb_compaction_memory_reserved_bytes",
+        "Projected peak resident bytes reserved by all in-flight compactions",
+    );
+    pub static ref COMPACTION_MEMORY_ADMISSION_WAITS_TOTAL: IntCounter = counter(
+        "proximadb_compaction_memory_admission_waits_total",
+        "Compaction tasks that waited for process-wide weighted memory admission",
+    );
+    pub static ref COMPACTION_QUEUE_DEPTH: IntGauge = gauge(
+        "proximadb_compaction_queue_depth",
+        "Compaction tasks queued across all collections",
+    );
+    pub static ref COMPACTION_RUNNING: IntGauge = gauge(
+        "proximadb_compaction_running",
+        "Compaction tasks currently executing across all collections",
+    );
+}
+
+/// Mirror monotonic cache-internal local-disk counters into Prometheus counters and
+/// publish the current resident-byte gauge.
+pub fn sync_local_disk_stats(tier: &str, stats: proximadb_cache::L2CacheStats) {
+    if let Some(family) = CACHE_LOCAL_DISK_HITS_TOTAL.as_ref() {
+        let hits = family.with_label_values(&[tier]);
+        let recorded_hits = hits.get();
+        if stats.hits > recorded_hits {
+            hits.inc_by(stats.hits - recorded_hits);
+        }
+    }
+    if let Some(family) = CACHE_LOCAL_DISK_MISSES_TOTAL.as_ref() {
+        let misses = family.with_label_values(&[tier]);
+        let recorded_misses = misses.get();
+        if stats.misses > recorded_misses {
+            misses.inc_by(stats.misses - recorded_misses);
+        }
+    }
+    CACHE_LOCAL_DISK_BYTES
+        .with_label_values(&[tier])
+        .set(stats.resident_bytes.min(i64::MAX as u64) as i64);
 }
 
 /// Force-initialize every lazy metric family at boot so they are REGISTERED
@@ -180,9 +238,27 @@ pub fn touch() {
     SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.get();
     SEGMENT_INVARIANTS_CACHE_MISSES_TOTAL.get();
     SEGMENT_INVARIANTS_CACHE_BYTES.get();
+    if let Some(family) = CACHE_LOCAL_DISK_HITS_TOTAL.as_ref() {
+        family.with_label_values(&["survivor"]).get();
+        family.with_label_values(&["invariants"]).get();
+    }
+    if let Some(family) = CACHE_LOCAL_DISK_MISSES_TOTAL.as_ref() {
+        family.with_label_values(&["survivor"]).get();
+        family.with_label_values(&["invariants"]).get();
+    }
+    CACHE_LOCAL_DISK_BYTES
+        .with_label_values(&["survivor"])
+        .get();
+    CACHE_LOCAL_DISK_BYTES
+        .with_label_values(&["invariants"])
+        .get();
     COMPACTIONS_TOTAL.get();
     COMPACTION_BYTES_READ_TOTAL.get();
     COMPACTION_BYTES_WRITTEN_TOTAL.get();
+    COMPACTION_MEMORY_RESERVED_BYTES.get();
+    COMPACTION_MEMORY_ADMISSION_WAITS_TOTAL.get();
+    COMPACTION_QUEUE_DEPTH.get();
+    COMPACTION_RUNNING.get();
     let _ = COMPACTION_SECONDS.get_sample_count();
 }
 
@@ -200,5 +276,18 @@ mod tests {
         assert_eq!(SURVIVOR_CACHE_HITS.get(), 7);
         SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.inc();
         assert!(SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.get() >= 1);
+        assert!(
+            CACHE_LOCAL_DISK_HITS_TOTAL.is_some() && CACHE_LOCAL_DISK_MISSES_TOTAL.is_some(),
+            "the exact persistent-cache metric families must register"
+        );
+        CACHE_LOCAL_DISK_BYTES
+            .with_label_values(&["survivor"])
+            .set(1024);
+        assert_eq!(
+            CACHE_LOCAL_DISK_BYTES
+                .with_label_values(&["survivor"])
+                .get(),
+            1024
+        );
     }
 }

@@ -68,11 +68,22 @@ fn record(row: usize) -> ProximaRecord {
     }
 }
 
-fn collection(id: &str, base_location: &str) -> Collection {
+/// Mint a catalog-style decimal collection object id (ADR-075: `CollectionObjectId = u64`).
+/// The SST flush / compaction-admission path is fail-closed on a decimal id
+/// (`FlushParams::get_collection_object_id`), so a bare-engine test must supply
+/// one — the human name lives in `CollectionConfig.name`. Mirrors the production
+/// catalog's monotonic mint without standing up the full catalog.
+fn next_object_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed).to_string()
+}
+
+fn collection(name: &str, base_location: &str) -> Collection {
     Collection {
-        id: id.to_string(),
+        id: next_object_id(),
         config: Some(CollectionConfig {
-            name: id.to_string(),
+            name: name.to_string(),
             dimension: DIM as u32,
             distance_metric: Some(DistanceMetric::Euclidean as i32),
             storage_engine: Some(StorageEngine::Sst as i32),

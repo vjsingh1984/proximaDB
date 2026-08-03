@@ -18,6 +18,10 @@ moka.workspace = true
 dashmap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+async-trait.workspace = true
+crc32fast.workspace = true
+sha2 = "0.10"
+tokio.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true }
+tempfile.workspace = true

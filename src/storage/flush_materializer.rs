@@ -26,7 +26,18 @@ use anyhow::{Context, Result};
 use dashmap::DashMap;
 use tokio::sync::{Mutex, OnceCell, Semaphore};
 
+#[cfg(feature = "axis")]
 use crate::index::AxisManager;
+
+/// Flush-path AXIS projection reap target threaded through the flush entry points.
+/// `Option<&AxisManager>` when AXIS is compiled in (the reap runs); `Option<&()>`
+/// otherwise — the reap is cfg-gated out, so this is always `None` off. Keeping one
+/// alias keeps the entry-point signatures identical across builds so callers don't
+/// branch on the feature.
+#[cfg(feature = "axis")]
+pub(crate) type AxisFlushArg<'a> = Option<&'a AxisManager>;
+#[cfg(not(feature = "axis"))]
+pub(crate) type AxisFlushArg<'a> = Option<&'a ()>;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, StorageAssignment, StorageEngine as ProtoStorageEngine,
 };
@@ -39,12 +50,19 @@ use crate::storage::write_fence::{
 /// Resolved materialization inputs for one collection. The caller fills these from
 /// its own metadata source (catalog for the server, collection port for embedded).
 pub struct CollectionFlushPlan {
-    /// Key used at write time in the WAL / global write buffer (collection name).
-    pub wal_key: String,
-    /// Canonical UUID used for the on-disk storage layout.
-    pub canonical_id: String,
+    /// Globally unique catalog object identity used for admission, scheduling,
+    /// WAL ownership, and cache ownership. This is resolved once at the catalog
+    /// boundary and remains native in the in-memory plan.
+    pub collection_object_id: crate::core::stable_id::CollectionObjectId,
+    /// Mutable display name used only to populate the transitional engine
+    /// configuration DTO and human-readable diagnostics.
+    pub collection_name: String,
     /// Base storage location (`file://…` / `s3://…`) for this collection.
     pub base_location: String,
+    /// Immutable L2 addressing composite used only for typed object-store path
+    /// composition. Admission and WAL ownership remain keyed by the L1
+    /// [`CollectionObjectId`](crate::core::stable_id::CollectionObjectId).
+    pub collection_identity: Option<crate::core::stable_id::CollectionIdentity>,
     /// Proto `StorageEngine` discriminant for the collection's configured engine.
     pub engine_type: i32,
     /// Vector dimension (required by VIPER/NOVA flush).
@@ -59,7 +77,7 @@ pub struct CollectionFlushPlan {
 /// three triggers, not *what* they materialize.
 pub fn flush_plan_from_collection_meta(
     meta: &crate::proto::proximadb_v1::Collection,
-) -> CollectionFlushPlan {
+) -> Result<CollectionFlushPlan> {
     let config = meta.config.as_ref();
     let assignment = meta.storage_assignment.as_ref();
     let engine_type = assignment
@@ -70,15 +88,45 @@ pub fn flush_plan_from_collection_meta(
     let base_location = assignment
         .map(|a| a.base_location.clone())
         .unwrap_or_default();
+    let collection_identity = match assignment.map(|assignment| {
+        (
+            assignment.typed_account_id,
+            assignment.typed_namespace_id,
+            assignment.typed_collection_id,
+        )
+    }) {
+        None | Some((None, None, None)) => None,
+        Some((Some(_), Some(_), Some(_))) => Some(
+            crate::storage::trait_components::path_resolver::typed_identity_from_storage_assignment(
+                assignment,
+            )
+            .context("catalog storage assignment has an out-of-range typed identity")?,
+        ),
+        Some(_) => {
+            anyhow::bail!(
+                "catalog storage assignment has an incomplete typed account/namespace/collection identity"
+            )
+        }
+    };
     let tenant_id = proximadb_tenant::tenant_id_of(meta);
-    CollectionFlushPlan {
-        wal_key: meta.id.clone(),
-        canonical_id: meta.id.clone(),
+    let collection_object_id = meta.id.parse().with_context(|| {
+        format!(
+            "catalog collection '{}' has a non-numeric object identity",
+            meta.id
+        )
+    })?;
+    Ok(CollectionFlushPlan {
+        collection_object_id,
+        collection_name: config
+            .map(|config| config.name.clone())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| collection_object_id.to_string()),
         base_location,
+        collection_identity,
         engine_type,
         dimension,
         tenant_id,
-    }
+    })
 }
 
 /// What a single collection's materialization produced.
@@ -96,7 +144,7 @@ pub struct CollectionFlushOutcome {
 /// Process-wide owner of flush engines, per-collection serialization, and
 /// bounded cross-collection admission (ADR-081).
 struct FlushExecutionCoordinator {
-    collection_gates: DashMap<String, Weak<Mutex<()>>>,
+    collection_gates: DashMap<crate::core::stable_id::CollectionIdentity, Weak<Mutex<()>>>,
     engines: DashMap<i32, Arc<OnceCell<Arc<dyn UnifiedStorageFormat>>>>,
     permits: Arc<Semaphore>,
 }
@@ -111,11 +159,7 @@ impl FlushExecutionCoordinator {
     }
 
     fn collection_gate(&self, plan: &CollectionFlushPlan) -> Arc<Mutex<()>> {
-        let key = format!(
-            "{}:{}",
-            plan.tenant_id.as_deref().unwrap_or(""),
-            plan.canonical_id
-        );
+        let key = plan.collection_identity.unwrap_or_default();
         if self.collection_gates.len() > 4_096 {
             self.collection_gates
                 .retain(|_, gate| gate.strong_count() > 0);
@@ -310,7 +354,7 @@ pub async fn materialize_collection(
     fence: Option<&Arc<dyn StorageWriteFence>>,
     fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     free_wal: bool,
-    axis_index_manager: Option<&AxisManager>,
+    axis_index_manager: AxisFlushArg<'_>,
 ) -> Result<Option<CollectionFlushOutcome>> {
     materialize_collection_with_coordinator_mode(
         flush_execution_coordinator(),
@@ -334,7 +378,7 @@ pub async fn materialize_collection_if_idle(
     fence: Option<&Arc<dyn StorageWriteFence>>,
     fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     free_wal: bool,
-    axis_index_manager: Option<&AxisManager>,
+    axis_index_manager: AxisFlushArg<'_>,
 ) -> Result<Option<CollectionFlushOutcome>> {
     materialize_collection_with_coordinator_mode(
         flush_execution_coordinator(),
@@ -363,7 +407,7 @@ async fn materialize_collection_with_coordinator(
     fence: Option<&Arc<dyn StorageWriteFence>>,
     fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     free_wal: bool,
-    axis_index_manager: Option<&AxisManager>,
+    axis_index_manager: AxisFlushArg<'_>,
 ) -> Result<Option<CollectionFlushOutcome>> {
     materialize_collection_with_coordinator_mode(
         coordinator,
@@ -386,9 +430,11 @@ async fn materialize_collection_with_coordinator_mode(
     fence: Option<&Arc<dyn StorageWriteFence>>,
     fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     free_wal: bool,
-    axis_index_manager: Option<&AxisManager>,
+    axis_index_manager: AxisFlushArg<'_>,
     collection_admission: CollectionAdmission,
 ) -> Result<Option<CollectionFlushOutcome>> {
+    let collection_id_text = plan.collection_object_id.to_string();
+
     // A6 storage-write fence — reject a displaced pod before touching storage.
     if write_fencing_enabled() {
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -396,7 +442,7 @@ async fn materialize_collection_with_coordinator_mode(
             true,
             fence,
             plan.tenant_id.as_deref(),
-            &plan.wal_key,
+            &collection_id_text,
             now_ms,
         )
         .await
@@ -405,12 +451,12 @@ async fn materialize_collection_with_coordinator_mode(
             tracing::warn!(
                 target: "proximadb.fence",
                 tenant_id = plan.tenant_id.as_deref().unwrap_or("<unknown>"),
-                collection_id = %plan.wal_key,
+                collection_object_id = plan.collection_object_id,
                 "🛡️ A6 fence: this pod is fenced out; rejecting stale-pod flush before storage write"
             );
             return Err(anyhow::anyhow!(
                 "A6 storage-write fence: pod is fenced out of collection '{}' (tenant '{}') — a live lease is held by another pod",
-                plan.wal_key,
+                plan.collection_object_id,
                 plan.tenant_id.as_deref().unwrap_or("<unknown>")
             ));
         }
@@ -426,14 +472,18 @@ async fn materialize_collection_with_coordinator_mode(
             Ok(guard) => guard,
             Err(_) => {
                 tracing::trace!(
-                    collection_id = %plan.wal_key,
+                    collection_object_id = plan.collection_object_id,
                     "inline flush collapsed into the collection's admitted materialization"
                 );
                 return Ok(None);
             }
         },
     };
-    if write_buffer.unflushed_batch_count(&plan.wal_key).await == 0 {
+    if write_buffer
+        .unflushed_batch_count(&collection_id_text)
+        .await
+        == 0
+    {
         return Ok(None);
     }
 
@@ -453,7 +503,7 @@ async fn materialize_collection_with_coordinator_mode(
         anyhow::anyhow!(
             "flush: collection '{}' declares an unrecognized storage engine id {} — \
              refusing to substitute a default engine",
-            plan.wal_key,
+            plan.collection_object_id,
             plan.engine_type
         )
     })?;
@@ -463,15 +513,27 @@ async fn materialize_collection_with_coordinator_mode(
 
     // Collection config carries engine + dimension + the on-disk layout path so the
     // flush writes into the same directory recovery reads from.
+    let (typed_account_id, typed_namespace_id, typed_collection_id) = match plan.collection_identity
+    {
+        Some(identity) => (
+            Some(identity.account_id),
+            Some(u32::from(identity.namespace_id)),
+            Some(identity.collection_id),
+        ),
+        None => (None, None, None),
+    };
     let collection_config = Collection {
-        id: plan.canonical_id.clone(),
+        id: collection_id_text.clone(),
         storage_assignment: Some(StorageAssignment {
             base_location: plan.base_location.clone(),
             engine: plan.engine_type,
+            typed_account_id,
+            typed_namespace_id,
+            typed_collection_id,
             ..Default::default()
         }),
         config: Some(CollectionConfig {
-            name: plan.wal_key.clone(),
+            name: plan.collection_name.clone(),
             storage_engine: Some(plan.engine_type),
             dimension: plan.dimension,
             ..Default::default()
@@ -482,42 +544,43 @@ async fn materialize_collection_with_coordinator_mode(
     // ADR-081 D3: engine admission occurs before a source claim and before
     // cloning any ProximaRecord. The preflight payload is metadata-only.
     let preflight_params = FlushParameters {
-        collection_id: Some(plan.canonical_id.clone()),
+        collection_id: Some(plan.collection_object_id.to_string()),
         force: true,
         synchronous: true,
         collection_config: Some(collection_config.clone()),
         ..Default::default()
     };
     if let Err(error) = engine.preflight_flush(&preflight_params).await {
-        crate::metrics::wal_flush_metrics::record_admission(&plan.wal_key, false);
+        crate::metrics::wal_flush_metrics::record_admission(&collection_id_text, false);
         return Err(error);
     }
-    crate::metrics::wal_flush_metrics::record_admission(&plan.wal_key, true);
+    crate::metrics::wal_flush_metrics::record_admission(&collection_id_text, true);
 
     // Exact source ownership is acquired only after engine admission. The
     // claim's Drop releases every batch on error or future cancellation.
-    let Some(mut claim) = write_buffer.claim_unflushed_batches(&plan.wal_key).await? else {
+    let Some(mut claim) = write_buffer
+        .claim_segment_materializable_batches(&collection_id_text)
+        .await?
+    else {
+        tracing::debug!(
+            collection_object_id = plan.collection_object_id,
+            "flush: no segment-materializable WAL batches; retaining deferred records in WAL"
+        );
         return Ok(None);
     };
-    let mut claim_ticket = FlushClaimTicket::new(&plan.wal_key, claim.batch_ids().len());
+    let mut claim_ticket = FlushClaimTicket::new(&collection_id_text, claim.batch_ids().len());
 
-    // Vector-proportional work starts here, inside the admitted job. Tombstones
-    // remain a WAL concern because the current segment writer requires a
-    // non-empty embedding.
+    // Vector-proportional work starts here, inside the admitted job. The claim
+    // contains only vector-only batches, so exact batch retirement cannot drop
+    // a tombstone that the current segment writer cannot represent.
     let vector_records: Vec<proximadb_records::ProximaRecord> = claim
         .batches()
         .iter()
         .flat_map(|batch| batch.vector_records.iter().cloned())
-        .filter(|record| {
-            record
-                .embeddings
-                .first()
-                .is_some_and(|embedding| !embedding.values.is_empty())
-        })
         .collect();
     let vector_count = vector_records.len() as u64;
     let flush_params = FlushParameters {
-        collection_id: Some(plan.canonical_id.clone()),
+        collection_id: Some(plan.collection_object_id.to_string()),
         force: true,
         synchronous: true,
         vector_records,
@@ -535,7 +598,7 @@ async fn materialize_collection_with_coordinator_mode(
         anyhow::bail!(
             "{} flush returned an unsuccessful publication result for '{}'; exact WAL claim retained for retry",
             engine.engine_name(),
-            plan.wal_key
+            plan.collection_object_id
         );
     }
     let bytes = result.bytes_written.unwrap_or(0);
@@ -552,8 +615,8 @@ async fn materialize_collection_with_coordinator_mode(
     // these dimensions is the commercial anvaiops control plane's concern, never OSS code.
     //
     // Tier "hot" is the write-time default: a fresh flush writes hot, and an unset
-    // `storage_class` ⇒ the account/backend default. `bytes == 0` (e.g. a tombstone-only flush)
-    // records nothing.
+    // `storage_class` ⇒ the account/backend default. A zero-byte engine
+    // publication records nothing.
     if bytes > 0 {
         let tenant = plan.tenant_id.as_deref();
         crate::metrics::consumption_metrics::record_object_store_op(tenant, "flush_write");
@@ -572,7 +635,7 @@ async fn materialize_collection_with_coordinator_mode(
             return Err(error).with_context(|| {
                 format!(
                     "flush segment published but exact WAL retirement failed for '{}'",
-                    plan.wal_key
+                    plan.collection_object_id
                 )
             });
         }
@@ -585,14 +648,14 @@ async fn materialize_collection_with_coordinator_mode(
         {
             tracing::warn!(
                 "flush: failed to delete WAL files for '{}': {}",
-                plan.wal_key,
+                plan.collection_object_id,
                 e
             );
         }
     } else {
         tracing::debug!(
             "flush: kept WAL for '{}' (free_wal=false) — recovery replays it for exact recall",
-            plan.wal_key
+            plan.collection_object_id
         );
     }
 
@@ -607,20 +670,25 @@ async fn materialize_collection_with_coordinator_mode(
     // flush encoded. Once the WAL delta reaches empty, the whole projection is
     // safe to reap.
     let collection_wal_empty = write_buffer
-        .get_unflushed_batches(&plan.wal_key)
+        .get_unflushed_batches(&collection_id_text)
         .await
         .map(|batches| batches.is_empty())
         .unwrap_or(false);
+    #[cfg(feature = "axis")]
     if collection_wal_empty
         && let Some(axis) = axis_index_manager
-        && let Err(e) = axis.clear_collection_vectors(&plan.canonical_id).await
+        && let Err(e) = axis.clear_collection_vectors(&collection_id_text).await
     {
         tracing::warn!(
             "flush: failed to clear in-memory collection_vectors for '{}': {}",
-            plan.canonical_id,
+            plan.collection_object_id,
             e
         );
     }
+    // When AXIS is compiled out there is no in-memory projection to reap; the
+    // durable segment written above is the sole source of truth.
+    #[cfg(not(feature = "axis"))]
+    let _ = (collection_wal_empty, axis_index_manager);
 
     Ok(Some(CollectionFlushOutcome {
         vectors_submitted: vector_count,
@@ -640,6 +708,7 @@ mod tests {
         StorageQueryContext,
     };
     use std::collections::HashMap;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::{Barrier, Notify};
 
@@ -663,6 +732,7 @@ mod tests {
         wait_for_release: bool,
         entered_flush: Notify,
         release_flush: Notify,
+        last_storage_assignment: Mutex<Option<StorageAssignment>>,
     }
 
     impl RecordingEngine {
@@ -679,6 +749,7 @@ mod tests {
                 wait_for_release: false,
                 entered_flush: Notify::new(),
                 release_flush: Notify::new(),
+                last_storage_assignment: Mutex::new(None),
             }
         }
 
@@ -722,6 +793,13 @@ mod tests {
 
         async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
             self.flush_calls.fetch_add(1, Ordering::SeqCst);
+            *self
+                .last_storage_assignment
+                .lock()
+                .expect("test storage-assignment lock") = params
+                .collection_config
+                .as_ref()
+                .and_then(|collection| collection.storage_assignment.clone());
             let active = self.active_flushes.fetch_add(1, Ordering::SeqCst) + 1;
             self.max_active_flushes.fetch_max(active, Ordering::SeqCst);
             let _active_guard = ActiveFlush(&self.active_flushes);
@@ -770,11 +848,17 @@ mod tests {
         }
     }
 
-    fn plan(collection_id: &str) -> CollectionFlushPlan {
+    fn plan(collection_object_id: u64) -> CollectionFlushPlan {
         CollectionFlushPlan {
-            wal_key: collection_id.to_string(),
-            canonical_id: collection_id.to_string(),
+            collection_object_id,
+            collection_name: format!("collection-{collection_object_id}"),
             base_location: "file:///tmp/adr081-tests".to_string(),
+            // Distinct composite per plan (ADR-0083 rev2: the flush gate keys on this).
+            collection_identity: Some(crate::core::stable_id::CollectionIdentity {
+                account_id: 1,
+                namespace_id: 1,
+                collection_id: collection_object_id as u32,
+            }),
             engine_type: ProtoStorageEngine::Sst as i32,
             dimension: 2,
             tenant_id: Some("test-tenant".to_string()),
@@ -795,11 +879,23 @@ mod tests {
         }
     }
 
-    async fn add_batch(write_buffer: &WALBehaviorWrapper, collection_id: &str, oid: &str) {
-        let records = vec![record(oid)];
+    fn tombstone(oid: &str) -> proximadb_records::ProximaRecord {
+        proximadb_records::ProximaRecord {
+            oid: oid.to_string(),
+            valid_to_ns: Some(0),
+            origin: Some("delete".to_string()),
+            ..Default::default()
+        }
+    }
+
+    async fn add_records_batch(
+        write_buffer: &WALBehaviorWrapper,
+        collection_object_id: u64,
+        records: Vec<proximadb_records::ProximaRecord>,
+    ) {
         write_buffer
             .add_vector_batch(
-                collection_id,
+                &collection_object_id.to_string(),
                 WALVectorBatch {
                     batch_id: BatchId::new(),
                     total_size_bytes: WALVectorBatch::estimate_records_size(&records),
@@ -813,18 +909,22 @@ mod tests {
             .expect("test batch must enter the WAL");
     }
 
+    async fn add_batch(write_buffer: &WALBehaviorWrapper, collection_object_id: u64, oid: &str) {
+        add_records_batch(write_buffer, collection_object_id, vec![record(oid)]).await;
+    }
+
     #[tokio::test]
     async fn adr081_rejection_happens_before_batch_claim_or_flush() {
         let coordinator = FlushExecutionCoordinator::new(1);
         let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
-        add_batch(&write_buffer, "rejected", "v0").await;
+        add_batch(&write_buffer, 101, "v0").await;
         let engine = Arc::new(RecordingEngine::new());
         engine.preflight_allowed.store(false, Ordering::SeqCst);
 
         let error = materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
-            &plan("rejected"),
+            &plan(101),
             None,
             Some(engine.clone()),
             true,
@@ -836,13 +936,10 @@ mod tests {
         assert!(error.to_string().contains("admission rejection"));
         assert_eq!(engine.preflight_calls.load(Ordering::SeqCst), 1);
         assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(
-            write_buffer.claimed_flush_batch_count("rejected").unwrap(),
-            0
-        );
+        assert_eq!(write_buffer.claimed_flush_batch_count("101").unwrap(), 0);
         assert_eq!(
             write_buffer
-                .get_unflushed_batches("rejected")
+                .get_unflushed_batches("101")
                 .await
                 .unwrap()
                 .len(),
@@ -857,7 +954,7 @@ mod tests {
         let records = vec![record("legacy-zero")];
         write_buffer
             .add_vector_batch(
-                "zero",
+                "102",
                 WALVectorBatch {
                     batch_id: BatchId::new(),
                     vector_records: Arc::new(records),
@@ -874,7 +971,7 @@ mod tests {
         let outcome = materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
-            &plan("zero"),
+            &plan(102),
             None,
             Some(engine.clone()),
             true,
@@ -888,12 +985,201 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tombstone_only_flush_is_retained_without_calling_segment_writer() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_records_batch(&write_buffer, 112, vec![tombstone("dead")]).await;
+        let engine = Arc::new(RecordingEngine::new());
+
+        let outcome = materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan(112),
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect("tombstone-only source remains durable in WAL");
+
+        assert!(outcome.is_none());
+        assert_eq!(engine.preflight_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(write_buffer.claimed_flush_batch_count("112").unwrap(), 0);
+        assert_eq!(
+            write_buffer
+                .get_unflushed_batches("112")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn vector_flush_retires_only_vector_batches_and_preserves_tombstones() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_records_batch(&write_buffer, 113, vec![record("live")]).await;
+        add_records_batch(&write_buffer, 113, vec![tombstone("dead")]).await;
+        let engine = Arc::new(RecordingEngine::new());
+
+        let outcome = materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan(113),
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect("vector-only source batch must publish")
+        .expect("one vector batch must produce a segment");
+
+        assert_eq!(outcome.vectors_submitted, 1);
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 1);
+        let remaining = write_buffer.get_unflushed_batches("113").await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].vector_records[0].oid, "dead");
+    }
+
+    #[tokio::test]
+    async fn mixed_vector_tombstone_batch_fails_closed_before_segment_write() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_records_batch(&write_buffer, 114, vec![record("live"), tombstone("dead")]).await;
+        let engine = Arc::new(RecordingEngine::new());
+
+        let error = materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &plan(114),
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect_err("mixed batch must not be partially published");
+
+        assert!(error.to_string().contains("mixed vector/tombstone"));
+        assert_eq!(engine.preflight_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(write_buffer.claimed_flush_batch_count("114").unwrap(), 0);
+        assert_eq!(
+            write_buffer
+                .get_unflushed_batches("114")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_storage_identity_reaches_the_engine_flush_boundary() {
+        let coordinator = FlushExecutionCoordinator::new(1);
+        let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
+        add_batch(&write_buffer, 111, "v0").await;
+        let engine = Arc::new(RecordingEngine::new());
+        let mut typed_plan = plan(111);
+        typed_plan.collection_identity = Some(crate::core::stable_id::CollectionIdentity {
+            account_id: 7,
+            namespace_id: 11,
+            collection_id: 13,
+        });
+
+        materialize_collection_with_coordinator(
+            &coordinator,
+            &write_buffer,
+            &typed_plan,
+            None,
+            Some(engine.clone()),
+            true,
+            None,
+        )
+        .await
+        .expect("typed flush must succeed")
+        .expect("typed flush must publish its batch");
+
+        let assignment = engine
+            .last_storage_assignment
+            .lock()
+            .expect("test storage-assignment lock")
+            .clone()
+            .expect("flush parameters must carry a storage assignment");
+        assert_eq!(assignment.typed_account_id, Some(7));
+        assert_eq!(assignment.typed_namespace_id, Some(11));
+        assert_eq!(assignment.typed_collection_id, Some(13));
+    }
+
+    #[test]
+    fn flush_plan_preserves_catalog_storage_identity() {
+        let mut collection = Collection {
+            id: "111".to_string(),
+            config: Some(CollectionConfig {
+                name: "typed-collection".to_string(),
+                dimension: 2,
+                storage_engine: Some(ProtoStorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: "file:///typed".to_string(),
+                engine: ProtoStorageEngine::Sst as i32,
+                typed_account_id: Some(7),
+                typed_namespace_id: Some(11),
+                typed_collection_id: Some(13),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let plan = flush_plan_from_collection_meta(&collection).expect("valid flush plan");
+        assert_eq!(
+            plan.collection_identity,
+            Some(crate::core::stable_id::CollectionIdentity {
+                account_id: 7,
+                namespace_id: 11,
+                collection_id: 13,
+            })
+        );
+
+        collection
+            .storage_assignment
+            .as_mut()
+            .expect("storage assignment")
+            .typed_namespace_id = None;
+        assert!(
+            flush_plan_from_collection_meta(&collection)
+                .err()
+                .expect("partial typed identity must fail closed")
+                .to_string()
+                .contains("incomplete typed account/namespace/collection identity")
+        );
+
+        collection
+            .storage_assignment
+            .as_mut()
+            .expect("storage assignment")
+            .typed_namespace_id = Some(u32::from(u16::MAX) + 1);
+        assert!(
+            flush_plan_from_collection_meta(&collection)
+                .err()
+                .expect("out-of-range typed identity must fail closed")
+                .to_string()
+                .contains("out-of-range typed identity")
+        );
+    }
+
+    #[tokio::test]
     async fn adr081_same_collection_contenders_publish_one_source_set_once() {
         let coordinator = FlushExecutionCoordinator::new(2);
         let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
-        add_batch(&write_buffer, "same", "v0").await;
+        add_batch(&write_buffer, 103, "v0").await;
         let engine = Arc::new(RecordingEngine::new());
-        let plan = plan("same");
+        let plan = plan(103);
 
         let (first, second) = tokio::join!(
             materialize_collection_with_coordinator(
@@ -924,7 +1210,7 @@ mod tests {
         assert_eq!(engine.flush_calls.load(Ordering::SeqCst), 1);
         assert!(
             write_buffer
-                .get_unflushed_batches("same")
+                .get_unflushed_batches("103")
                 .await
                 .unwrap()
                 .is_empty()
@@ -935,11 +1221,11 @@ mod tests {
     async fn adr081_different_collections_flush_in_parallel_within_global_bound() {
         let coordinator = FlushExecutionCoordinator::new(2);
         let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
-        add_batch(&write_buffer, "left", "left-v0").await;
-        add_batch(&write_buffer, "right", "right-v0").await;
+        add_batch(&write_buffer, 104, "left-v0").await;
+        add_batch(&write_buffer, 105, "right-v0").await;
         let engine = Arc::new(RecordingEngine::with_rendezvous(2));
-        let left = plan("left");
-        let right = plan("right");
+        let left = plan(104);
+        let right = plan(105);
 
         let (left_result, right_result) =
             tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -977,14 +1263,14 @@ mod tests {
     async fn adr081_failed_flush_releases_claim_for_retry() {
         let coordinator = FlushExecutionCoordinator::new(1);
         let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
-        add_batch(&write_buffer, "retry", "v0").await;
+        add_batch(&write_buffer, 106, "v0").await;
         let engine = Arc::new(RecordingEngine::new());
         engine.fail_flush.store(true, Ordering::SeqCst);
 
         materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
-            &plan("retry"),
+            &plan(106),
             None,
             Some(engine.clone()),
             true,
@@ -992,13 +1278,13 @@ mod tests {
         )
         .await
         .expect_err("first publication must fail");
-        assert_eq!(write_buffer.claimed_flush_batch_count("retry").unwrap(), 0);
+        assert_eq!(write_buffer.claimed_flush_batch_count("106").unwrap(), 0);
 
         engine.fail_flush.store(false, Ordering::SeqCst);
         let retry = materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
-            &plan("retry"),
+            &plan(106),
             None,
             Some(engine.clone()),
             true,
@@ -1014,14 +1300,14 @@ mod tests {
     async fn adr081_unsuccessful_result_does_not_retire_source() {
         let coordinator = FlushExecutionCoordinator::new(1);
         let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
-        add_batch(&write_buffer, "unsuccessful", "v0").await;
+        add_batch(&write_buffer, 107, "v0").await;
         let engine = Arc::new(RecordingEngine::new());
         engine.successful_result.store(false, Ordering::SeqCst);
 
         materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
-            &plan("unsuccessful"),
+            &plan(107),
             None,
             Some(engine),
             true,
@@ -1030,15 +1316,10 @@ mod tests {
         .await
         .expect_err("an unsuccessful result is not a durable publication");
 
+        assert_eq!(write_buffer.claimed_flush_batch_count("107").unwrap(), 0);
         assert_eq!(
             write_buffer
-                .claimed_flush_batch_count("unsuccessful")
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            write_buffer
-                .get_unflushed_batches("unsuccessful")
+                .get_unflushed_batches("107")
                 .await
                 .unwrap()
                 .len(),
@@ -1050,7 +1331,7 @@ mod tests {
     async fn adr081_cancellation_releases_claim_for_retry() {
         let coordinator = Arc::new(FlushExecutionCoordinator::new(1));
         let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
-        add_batch(&write_buffer, "cancel", "v0").await;
+        add_batch(&write_buffer, 108, "v0").await;
         let engine = Arc::new(RecordingEngine::blocking());
         let task_coordinator = coordinator.clone();
         let task_buffer = write_buffer.clone();
@@ -1060,7 +1341,7 @@ mod tests {
             materialize_collection_with_coordinator(
                 &task_coordinator,
                 &task_buffer,
-                &plan("cancel"),
+                &plan(108),
                 None,
                 Some(task_engine),
                 true,
@@ -1074,15 +1355,15 @@ mod tests {
         )
         .await
         .expect("flush must enter the engine");
-        assert_eq!(write_buffer.claimed_flush_batch_count("cancel").unwrap(), 1);
+        assert_eq!(write_buffer.claimed_flush_batch_count("108").unwrap(), 1);
 
         task.abort();
         let join_error = task.await.expect_err("aborted flush must be cancelled");
         assert!(join_error.is_cancelled());
-        assert_eq!(write_buffer.claimed_flush_batch_count("cancel").unwrap(), 0);
+        assert_eq!(write_buffer.claimed_flush_batch_count("108").unwrap(), 0);
         assert_eq!(
             write_buffer
-                .get_unflushed_batches("cancel")
+                .get_unflushed_batches("108")
                 .await
                 .unwrap()
                 .len(),
@@ -1094,7 +1375,7 @@ mod tests {
     async fn adr081_batch_appended_during_flush_remains_for_next_epoch() {
         let coordinator = Arc::new(FlushExecutionCoordinator::new(1));
         let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
-        add_batch(&write_buffer, "append", "old").await;
+        add_batch(&write_buffer, 109, "old").await;
         let engine = Arc::new(RecordingEngine::blocking());
         let task_coordinator = coordinator.clone();
         let task_buffer = write_buffer.clone();
@@ -1104,7 +1385,7 @@ mod tests {
             materialize_collection_with_coordinator(
                 &task_coordinator,
                 &task_buffer,
-                &plan("append"),
+                &plan(109),
                 None,
                 Some(task_engine),
                 true,
@@ -1118,14 +1399,14 @@ mod tests {
         )
         .await
         .expect("first source epoch must enter the engine");
-        add_batch(&write_buffer, "append", "new").await;
+        add_batch(&write_buffer, 109, "new").await;
         engine.release_flush.notify_one();
         task.await
             .expect("flush task must join")
             .expect("flush must succeed");
 
         let remaining = write_buffer
-            .get_unflushed_batches("append")
+            .get_unflushed_batches("109")
             .await
             .expect("new source epoch must remain readable");
         assert_eq!(remaining.len(), 1);
@@ -1136,15 +1417,15 @@ mod tests {
     async fn adr081_engine_instance_is_canonical_per_format() {
         let coordinator = FlushExecutionCoordinator::new(2);
         let write_buffer = Arc::new(WALBehaviorWrapper::new(MemtableConfig::default()));
-        add_batch(&write_buffer, "first", "v0").await;
-        add_batch(&write_buffer, "second", "v1").await;
+        add_batch(&write_buffer, 110, "v0").await;
+        add_batch(&write_buffer, 111, "v1").await;
         let canonical = Arc::new(RecordingEngine::new());
         let discarded = Arc::new(RecordingEngine::new());
 
         materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
-            &plan("first"),
+            &plan(110),
             None,
             Some(canonical.clone()),
             true,
@@ -1155,7 +1436,7 @@ mod tests {
         materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
-            &plan("second"),
+            &plan(111),
             None,
             Some(discarded.clone()),
             true,

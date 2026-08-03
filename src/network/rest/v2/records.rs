@@ -1679,13 +1679,17 @@ pub async fn search_with_typed_filters(
         egress_bytes,
         object_store_gets,
         object_store_bytes_read,
-    ) = crate::observability::io_trace::instrument(
+    ) = crate::observability::io_trace::instrument_with_stable_tenant(
         Some(tenant.tenant_id.clone()),
+        tenant.tenant_stable_id,
         "rest.v2.records.search",
         crate::observability::predicate_diagnostics::scope(async {
             let outcome = state
                 .record_ops
-                .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
+                .handle_record_search_for_tenant(
+                    search_request,
+                    proximadb_runtime::PortIdentity::from(&tenant),
+                )
                 .await;
             let downgraded =
                 crate::observability::predicate_diagnostics::take_quantized_downgrade();
@@ -2100,7 +2104,7 @@ pub async fn get_record_v2(
                 include_vector,
                 include_props: true,
             },
-            Some(&tenant.tenant_id),
+            proximadb_runtime::PortIdentity::from(&tenant),
         )
         .await
     {

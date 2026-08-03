@@ -69,6 +69,9 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
         // before either backing collection can be reached.
         let tenant_id = grpc_auth::resolved_tenant_id(&request)?;
         let principal = grpc_auth::user_id(&request);
+        // TD-TENANT-1 PR2: the tenant's stable u64 id (stamped by the gRPC auth
+        // layer) for ABAC per-record enforcement.
+        let tenant_stable_id = grpc_auth::tenant_stable_id(&request);
         let req = request.into_inner();
 
         if req.query_vector.is_empty() {
@@ -109,6 +112,9 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
             graph_id: req.graph_id.clone(),
             // Structural tenant boundary — scopes both fusion legs (TD-ENTITY-TENANT-1).
             tenant: Some(tenant_id.clone()),
+            // TD-TENANT-1 PR2: tenant stable id from the gRPC auth context
+            // (stamped by the auth layer via the wired TenantStableIdResolver).
+            tenant_stable_id,
             vector_collection: req.vector_collection.clone(),
             query_vector: req.query_vector.clone(),
             max_depth: if req.max_depth == 0 {

@@ -116,10 +116,10 @@ pub mod wal_operations; // WAL operations for vector and graph
 
 // Embedding-precision rollout (PR 4 of EMBEDDING_PRECISION_LLD_2026_05_22).
 pub mod v2_segment_header;
-// MARKED FOR REMOVAL: optimized_path_resolver uses assignment_service
-// pub mod optimized_path_resolver;
-// MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver
-// pub mod atomic_write_buffer_sync;
+// RETIRED (#1270 + TD-CONFIG-CONSOLIDATE-1 step 3): optimized_path_resolver +
+// atomic_write_buffer_sync modules + their files deleted. They used the removed
+// assignment_service and were commented out ('MARKED FOR REMOVAL') since #1270;
+// only the dead cross-ref between the two files remained.
 
 /// ADR-069 S1 opt-in local WAL root (`PROXIMADB_WAL_LOCAL_DIR`). When set to a
 /// directory/URL (e.g. `file:///waldisk`), the per-collection WAL is written
@@ -1202,6 +1202,7 @@ fn spawn_inline_flush(collection_id: String) {
         let Some(write_buffer) = get_global_write_buffer_behavior() else {
             return;
         };
+        #[cfg(feature = "axis")]
         let axis = crate::index::get_global_axis_manager();
         let catalog = list_collections_from_catalog().await;
         let Some(meta) = catalog.iter().find(|c| c.id == collection_id) else {
@@ -1211,7 +1212,16 @@ fn spawn_inline_flush(collection_id: String) {
             );
             return;
         };
-        let plan = flush_plan_from_collection_meta(meta);
+        let plan = match flush_plan_from_collection_meta(meta) {
+            Ok(plan) => plan,
+            Err(error) => {
+                tracing::warn!(
+                    collection_id,
+                    "inline size-flush: catalog identity resolution failed: {error}"
+                );
+                return;
+            }
+        };
 
         // TD-FLUSH-4: announce the start — a large-memtable materialize runs
         // tens of seconds and segments only become visible on completion
@@ -1222,15 +1232,11 @@ fn spawn_inline_flush(collection_id: String) {
             "🚿 inline size-flush starting (segments appear on completion)"
         );
         let start = std::time::Instant::now();
-        match materialize_collection_if_idle(
-            &write_buffer,
-            &plan,
-            None,
-            None,
-            true,
-            axis.as_deref(),
-        )
-        .await
+        #[cfg(feature = "axis")]
+        let axis_arg = axis.as_deref();
+        #[cfg(not(feature = "axis"))]
+        let axis_arg: Option<&()> = None;
+        match materialize_collection_if_idle(&write_buffer, &plan, None, None, true, axis_arg).await
         {
             Ok(Some(outcome)) => tracing::info!(
                 "✅ inline size-flush '{}': {} entries, {} bytes in {:.3}s",
@@ -2037,12 +2043,68 @@ impl WriteAheadLogManager {
         Ok(())
     }
 
-    /// Flush collection using modern batch operations
-    pub async fn flush_collection(&self, _collection_id: &str) -> Result<FlushResult> {
+    /// Materialize one collection's admitted WAL epoch to its catalog-selected
+    /// storage engine.
+    ///
+    /// This is the synchronous operator/API trigger. Size and timer triggers
+    /// enter the same canonical materializer asynchronously, while this method
+    /// waits on its per-collection gate and returns only after publication and
+    /// exact WAL-claim retirement complete.
+    pub async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
+        use crate::storage::flush_materializer::{
+            flush_plan_from_collection_meta, materialize_collection,
+        };
+
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let _wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        // WALBehaviorWrapper doesn't handle flushing directly - that's done by the flush coordinator
-        Ok(FlushResult::default())
+        let write_buffer = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let collection = resolve_collection_from_catalog(collection_id)
+            .await
+            .with_context(|| {
+                format!("cannot flush collection {collection_id:?}: catalog metadata was not found")
+            })?;
+        let plan = flush_plan_from_collection_meta(&collection)?;
+        #[cfg(feature = "axis")]
+        let axis = crate::index::get_global_axis_manager();
+        #[cfg(feature = "axis")]
+        let axis_arg = axis.as_deref();
+        #[cfg(not(feature = "axis"))]
+        let axis_arg: Option<&()> = None;
+        let started = std::time::Instant::now();
+        let outcome =
+            materialize_collection(&write_buffer, &plan, None, None, true, axis_arg).await?;
+
+        let (entries_flushed, bytes_written) = outcome
+            .map(|outcome| (outcome.entries_flushed, outcome.bytes))
+            .unwrap_or((0, 0));
+        // The operator-triggered path does not pass through AutoFlushDriver,
+        // so it must close the ADR-069 gauge itself.  In particular, a slow
+        // manual flush can overlap an auto-driver observation which publishes
+        // a non-zero value.  Once exact claim retirement completes above, the
+        // current write-buffer value is authoritative; leaving the sampled
+        // value behind reports phantom unflushed WAL forever.
+        let canonical_collection_id = plan.collection_object_id.to_string();
+        let remaining_bytes = write_buffer.unflushed_bytes(&canonical_collection_id).await;
+        crate::metrics::wal_flush_metrics::record_successful_flush(
+            &canonical_collection_id,
+            "manual",
+            bytes_written,
+            entries_flushed,
+            started.elapsed().as_secs_f64(),
+            Utc::now().timestamp(),
+            remaining_bytes,
+        );
+        let result = FlushResult {
+            success: true,
+            collections_affected: vec![canonical_collection_id],
+            entries_flushed: Some(entries_flushed),
+            bytes_written: Some(bytes_written),
+            duration_ms: Some(started.elapsed().as_millis() as u64),
+            ..Default::default()
+        };
+
+        let mut stats = self.stats.write().await;
+        stats.last_flush_time = Some(Utc::now());
+        Ok(result)
     }
 
     /// Force flush all collections - FOR TESTING ONLY
@@ -2053,18 +2115,13 @@ impl WriteAheadLogManager {
         Ok(())
     }
 
-    /// Force flush specific collection - FOR TESTING ONLY
-    /// WARNING: This method should only be used for testing and debugging
+    /// Synchronously force-flush one collection (operator/API surface).
     pub async fn force_flush_collection(
         &self,
         collection_id: &str,
         _storage_engine: Option<&str>,
     ) -> Result<()> {
-        tracing::warn!(
-            "⚠️ WAL MANAGER: FORCE FLUSH COLLECTION {} - TESTING ONLY",
-            collection_id
-        );
-        // Use modern batch API
+        tracing::info!("WAL manager: force-flush collection {}", collection_id);
         self.flush_collection(collection_id).await?;
         Ok(())
     }
@@ -2195,6 +2252,10 @@ impl WriteAheadLogManager {
             }
         }
 
+        // TD-DELVEC-1 WI-5 P0: capture the durable per-batch `global_lsn` (when this
+        // batch is synced to disk + the manifest append succeeds) so it can be
+        // returned for DV-bit keying instead of the ephemeral memtable sequence.
+        let mut durable_lsn: Option<u64> = None;
         // Then, persist to disk if sync mode requires it
         if self.should_sync_to_disk(collection_id).await? {
             info!(
@@ -2367,6 +2428,7 @@ impl WriteAheadLogManager {
                 .await
             {
                 Ok(file_info) => {
+                    durable_lsn = Some(file_info.global_lsn);
                     trace!("WAL: write_batch_with_sync SUCCESS: {:?}", file_info);
                 }
                 Err(e) => {
@@ -2391,7 +2453,12 @@ impl WriteAheadLogManager {
             );
         }
 
-        Ok(sequences)
+        // Return the durable per-batch `global_lsn` (broadcast one-per-record) when
+        // the batch was synced + the manifest allocated one; otherwise the ephemeral
+        // memtable sequences (MemoryOnly / append failure — no durability to key on).
+        // TD-DELVEC-1 WI-3b/WI-5: the cold-delete path keys DV bits on these LSNs.
+        let n = sequences.len();
+        Ok(durable_lsn.map(|l| vec![l; n]).unwrap_or(sequences))
     }
 
     /// Insert multiple vectors efficiently (modern API)

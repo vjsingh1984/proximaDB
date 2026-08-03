@@ -167,6 +167,7 @@
 //! - Queue depths
 //! - Cache hit rates
 
+#[cfg(feature = "axis")]
 pub mod advisor_observations;
 pub mod agent_checkpoint;
 pub mod agent_memory;
@@ -190,7 +191,9 @@ pub mod graph_collection;
 pub mod operations;
 pub mod queue_fs_adapter;
 pub mod rank_profile_store;
+#[cfg(feature = "axis")]
 pub mod recall_drift_sweeper;
+#[cfg(feature = "axis")]
 pub mod recall_observer;
 pub mod record_memtable;
 pub mod record_store;
@@ -251,6 +254,7 @@ pub use write_intent::{
 // Legacy compatibility exports (will be removed)
 pub use collection::manager as collection_service;
 pub use events::log as event_log_service;
+#[cfg(feature = "axis")]
 pub use events::persistence as event_log_persistence;
 pub use operations::vectors as vector_operations_service;
 pub use search::streaming as streaming_search;

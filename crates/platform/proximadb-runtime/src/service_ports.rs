@@ -90,16 +90,77 @@ pub trait CollectionPort: Send + Sync {
 
 // ── Vector operations ─────────────────────────────────────────────────────────
 
+/// The pre-resolution caller identity carried across port seams (TD-ABAC-7).
+///
+/// This is the RAW identity captured at the network boundary — not an
+/// authorization result (`AuthorizedReadContext` in `proximadb-abac` is what
+/// the enforcement seam *resolves from* it). Fields:
+///
+/// * `tenant_id` — the authoritative ADR-0083 string identity, used for
+///   tenant-scoped catalog/name resolution and `DrPathBuilder` paths.
+/// * `subject` — the authenticated principal (ABAC); `None` = unauthenticated
+///   / internal caller, which the seam treats as passthrough (no policy
+///   evaluation).
+/// * `tenant_stable_id` — the derived numeric projection of `tenant_id`
+///   (widened `account_u32`), the ABAC policy-lookup key. Never a second
+///   source of truth: the string stays authoritative.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PortIdentity<'a> {
+    pub tenant_id: Option<&'a str>,
+    pub subject: Option<&'a str>,
+    pub tenant_stable_id: Option<u64>,
+    /// How the identity was established (ADR-087) — audit-only at the seam:
+    /// enforcement stays deny-biased for any present subject regardless of
+    /// class; provenance-conditional policy is a future knob.
+    pub auth_class: proximadb_tenant::AuthClass,
+}
+
+impl<'a> PortIdentity<'a> {
+    /// No identity at all — internal/system callers; enforcement passthrough.
+    pub const fn anonymous() -> Self {
+        Self {
+            tenant_id: None,
+            subject: None,
+            tenant_stable_id: None,
+            auth_class: proximadb_tenant::AuthClass::Anonymous,
+        }
+    }
+
+    /// Tenant-scoped but with no authenticated ABAC principal.
+    pub const fn for_tenant(tenant_id: &'a str) -> Self {
+        Self {
+            tenant_id: Some(tenant_id),
+            subject: None,
+            tenant_stable_id: None,
+            auth_class: proximadb_tenant::AuthClass::Anonymous,
+        }
+    }
+}
+
+/// ADR-087: the borrowed port-seam projection of the one foundation identity.
+impl<'a> From<&'a proximadb_tenant::ResolvedRequestIdentity> for PortIdentity<'a> {
+    fn from(identity: &'a proximadb_tenant::ResolvedRequestIdentity) -> Self {
+        Self {
+            tenant_id: Some(identity.tenant.as_str()),
+            subject: identity.subject.as_deref(),
+            tenant_stable_id: identity.tenant_stable_id,
+            auth_class: identity.auth_class,
+        }
+    }
+}
+
 /// Port for vector CRUD and search operations.
 ///
 /// Implemented by root-crate `VectorOperationsService`.
 #[async_trait]
 pub trait VectorOpsPort: Send + Sync {
-    /// Execute a vector search, tenant-scoped when `tenant_id` is provided.
+    /// Execute a vector search, tenant-scoped when `identity.tenant_id` is
+    /// provided; `identity.subject` + `identity.tenant_stable_id` drive ABAC
+    /// enforcement at the shared search seam (`unified_search_v1_inner`).
     async fn search(
         &self,
         request: VectorSearchRequest,
-        tenant_id: Option<&str>,
+        identity: PortIdentity<'_>,
     ) -> Result<VectorOperationResponse>;
 
     /// TD-XMODAL-4 S2: the **single canonical native vector-search kernel** — the
@@ -191,10 +252,15 @@ pub trait QueryAdapterPort: Send + Sync {
     /// `tenant_id` scopes relational SQL to the tenant's partition (TD-064); the
     /// adapter routes relational SELECT through the tenant-scoped relational
     /// pipeline (`try_run_select`, TD-121) before falling back to the facade.
+    ///
+    /// `subject` (TD-ABAC-5) is the authenticated principal id, threaded to ABAC
+    /// enforcement. Opaque `&str` here (runtime layer can't name `SubjectId`);
+    /// the root-crate adapter converts it. `None` ⇒ no enforcement.
     async fn execute_sql(
         &self,
         query: String,
         collection: Option<String>,
         tenant_id: Option<&str>,
+        subject: Option<&str>,
     ) -> Result<JsonValue>;
 }

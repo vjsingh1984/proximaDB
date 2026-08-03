@@ -95,8 +95,8 @@ Compile is not evidence here — this changes the indexing path.
   it). Code-verified; the hook reads the same source the old queue re-read from
   disk.
 * Unit tests on the shared guard: absent config ⇒ no AXIS (ADR-070), empty
-  `index_configs` without the `pax_vector_format:off` tag ⇒ no AXIS, tag match
-  trimmed + case-insensitive, missing manager ⇒ quiet no-op.
+  `index_configs` ⇒ no AXIS, a `pax_vector_format:off` representation tag alone
+  ⇒ no AXIS, explicit index config ⇒ dispatch, missing manager ⇒ quiet no-op.
 * A recording-`IndexEngine` spy pins the dispatch: the guard, once passed,
   delivers the exact records + files to `handle_flushed_vectors` (explicit handle)
   *and* via the boot-registered global fallback (the path VIPER/HELIX/NOVA take,

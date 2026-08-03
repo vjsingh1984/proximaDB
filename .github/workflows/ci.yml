@@ -832,6 +832,11 @@ jobs:
           # by the default build. Keep them in the same mandatory matrix rather
           # than relying on a PR being correctly labelled as mechanical.
           - { label: "no-default-features",  pkg: proximadb,        args: "--no-default-features" }
+          # AXIS cfg feature (TD-AXIS-4 Superseded): default ON; this variant turns
+          # it OFF while keeping the other defaults on — the PAX-exact-scan build that
+          # excludes the AXIS index engine + its recall/advisor/drift surfaces. Catches
+          # cfg drift where axis code leaks out of the `#[cfg(feature = "axis")]` gates.
+          - { label: "no-axis", pkg: proximadb-server, args: "--no-default-features --features sql_frontend,graph-first-sks,unified-facade-routing,canonical-document-store,datafusion-integration,otlp-metering" }
           - { label: "experimental-engines", pkg: proximadb,        args: "--features experimental-engines" }
           # F3v (TD-DELVEC-1): cold-tier deletion vectors — feature-gated PAX flush-path
           # resolver capture. Check it compiles so cfg drift in that path is caught.
@@ -1346,9 +1351,17 @@ jobs:
         with:
           prefix-key: "v1-rust-compile-benches"
           shared-key: "benches"
-      # Install sccache (RUSTC_WRAPPER=sccache is set in this job's env). Without
-      # it the first rustc invocation dies: "sccache: No such file or directory".
+      # sccache MUST be installed: this job sets RUSTC_WRAPPER=sccache, so without
+      # the action cargo dies instantly ("could not execute process `sccache`").
+      # The step was missing while the env + stats step were present — the job is
+      # gated on medium_tier, so it only runs on develop→qa promotions and the gap
+      # went unexercised until it hard-failed #1378 across every rerun.
       - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -1521,6 +1534,76 @@ jobs:
           else
             cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
           fi
+
+  # ============================================================================
+  # TOUCHED-CRATE FAST LANE (D4 / TD-DECOMP-1 follow-up) — ADVISORY, never a gate.
+  # Gives seconds-to-minutes-scale unit-test feedback for LEAF / workspace-member
+  # edits by compiling only the crates whose source changed vs origin/develop
+  # (scripts/affected_crates.py — DIRECT crates only, no reverse-dependents). The
+  # required `rust-test` job still runs the full suite; this is the early signal.
+  # Advisory (continue-on-error) AND not in ci-success.needs, so a misfire can
+  # never block a merge. The root `proximadb` crate is deliberately SKIPPED here:
+  # a src/** edit maps to it, and compiling the ~850K-LOC monolith's lib would be
+  # both redundant with rust-test and OOM-prone (the #920 scenario rust-test works
+  # around with 12G swap + CARGO_BUILD_JOBS=1). This lane targets leaf edits,
+  # where it pays off — more so as TD-DECOMP-1 follow-ups move logic DOWN into
+  # leaf crates. rust-cache only (no sccache): leaf crates are small, and sccache
+  # adds the #920 OOM risk for no gain at this scale.
+  # ============================================================================
+  rust-affected-fast:
+    name: Rust touched-crate fast check (advisory)
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true        # advisory — never a merge gate (also not in ci-success.needs)
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so affected_crates.py's `git diff origin/develop...HEAD`
+          # (three-dot, merge-base) resolves across a large develop→main gap.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-affected-fast"
+          shared-key: "build"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Affected-only fast unit check
+        run: |
+          set -euo pipefail
+          pkgs="$(python3 scripts/affected_crates.py origin/develop)"
+          [ -n "$pkgs" ] || { echo 'No crate source changed — skipping.'; exit 0; }
+          # Bare positionals to cargo/nextest are TEST-NAME FILTERS, not package
+          # selectors — turn the space-separated list into -p args. Skip the root
+          # crate (proximadb): a src/** edit maps to it, but compiling its lib is
+          # redundant with rust-test and OOM-prone here (see job header).
+          root_seen=no
+          pkg_args=""
+          for p in $pkgs; do
+            if [ "$p" = "proximadb" ]; then
+              root_seen=yes
+            else
+              pkg_args="$pkg_args -p $p"
+            fi
+          done
+          [ "$root_seen" = "yes" ] && echo "Root crate 'proximadb' changed — covered by the required rust-test job; not re-run in this fast lane."
+          if [ -z "$pkg_args" ]; then
+            echo 'Only the root crate (or nothing leaf) changed — nothing fast to check here.'
+            exit 0
+          fi
+          echo "Affected leaf crates:$pkg_args"
+          cargo nextest run --lib --profile unit $pkg_args
 
   # TD-168 develop early-detection: run the CHEAP object-store Cool-tier tests
   # (scripts/run_cloud_emulator_tests.sh --fast — compiles only the small

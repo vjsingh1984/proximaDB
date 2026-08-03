@@ -1,5 +1,5 @@
 = TD-CONFIG-CONSOLIDATE-1: retire duplicate/dead config structs stranded by decomposition
-:status: S0 filed (2026-07-28)
+:status: S1 shipped (#1314, 2026-07-29); tripwire assessed + declined (see below)
 :owner: platform
 :relates: ADR-069 S1, Core Directive #19 (CLAUDE.md) / #32 (GEMINI.md)
 
@@ -27,14 +27,39 @@ The drift is not hypothetical: while wiring ADR-069 S1 (`wal_local_dir`) we near
   offender among config structs.
 
 == Plan (small, mixed-safe, sequential PRs)
-1. Retire `WalStorageConfig` + `WalDistributionStrategy` (dead) + the test-only `From` impl + its tests;
-   drop them from the re-export (`src/core/config.rs:~1630`). No serving-path caller changes exist.
-2. Fold `to_engine_config()` and `convert_toml_to_wal_config()` into one canonical converter.
-3. Dead-symbol sweep beyond config (records/tenant/index types) via the `.victor/project.db` code-graph
-   + `cargo-bloat` / `cargo +nightly udeps`; retire test-only-reachable types.
-4. **Tripwire:** add a `make work-commit-check` guard that fails when a `pub struct`/`pub enum` name is
-   defined in BOTH `src/core/config.rs` and `crates/foundation/proximadb-config/` (a duplicate, not a
-   re-export) — stops decomposition/worktree drift from re-creating twins.
+1. ✅ **S1 shipped (#1314, 2026-07-29):** retired `WalStorageConfig` +
+   `WalDistributionStrategy` (dead) + the test-only `From<&WalStorageConfig> for WALConfig` impl +
+   its test + the `wal_storage_defaults` foundation test + the `core/config.rs` re-export. Each site
+   carries a RETIRED note. Verified: 7427/7427 lib tests, fmt, clippy (`-D warnings`),
+   work-commit-check. Canonical WAL config remains `WriteBufferUserConfig`.
+2. ✅ **S2 shipped (#1323, 2026-07-30):** folded the two WAL converters — `to_engine_config` is the
+   single canonical conversion; `convert_toml_to_wal_config` delegates + applies server-only bits.
+   Fixed the latent embedded-path bug (it ignored sync_mode/memtable/flush-thresholds). Safe because
+   `multi_disk.data_directories` is overwritten by both callers. 7427/7427 tests green.
+3. Dead-symbol sweep — **S3 partial (sweep DONE, this PR; retirements incremental).** A two-agent
+   audit (foundation/config/control + storage engines) reduced ~200 naive candidates to a verified
+   inventory. **Retired in this PR:** the 2 already-`// MARKED FOR REMOVAL` WAL module files
+   (`optimized_path_resolver.rs`, `atomic_write_buffer_sync.rs` — finishes #1270; zero-risk, already
+   not compiled). **Inventory of remaining retirement targets (each its own small PR):**
+   * foundation/config (CONFIRMED-DEAD, the WalStorageConfig pattern): `MetadataBackendConfig` +
+     its transitive cluster `CloudStorageConfig`/`S3Config`/`AzureConfig`/`GcsConfig` (GcsConfig has a
+     live same-named twin in `gcs_store.rs`); `ProviderHealthStatus` (llm_config, test-only).
+   * storage (CONFIRMED-DEAD): `OptimizedWriteBufferWriter`, `ParallelWALSearch` (next in the #1270
+     stack), `SstEntry`, `ModularBlockReader`, `CompactionExecution<E>`, `StreamingFlushResult`,
+     `ZeroCopyFlushResult`, `CloudBackupStrategy`, `CollectionEffectiveConfig`.
+   * CANDIDATE-NEEDS-VERIFY: `TransactionalOperationsConfig`, `DeprecationWarning`/`VersionInfo`,
+     `FlushCycleState`, the `CloudBackupConfig` cluster.
+   * Orphaned modules (module-level decision, not per-type): `src/llm`, `src/cdc` (zero server wiring).
+4. **Tripwire — ASSESSED + DECLINED.** A name-collision guard (`pub struct` defined in BOTH
+   `src/core/config.rs` and `crates/foundation/proximadb-config/`) was prototyped + tested
+   (zero false positives on the current tree) but is too NARROW: the original incident was two
+   *differently-named* structs (`WalStorageConfig` vs `WriteBufferUserConfig`) for the same concept,
+   which a name check cannot catch. The signal that *would* catch it — a foundation struct whose
+   only consumers are `#[cfg(test)]` — is a heuristic with false-positive risk unsuitable as a hard
+   `work-commit-check` gate. Per mandate #12 (keep the harness lean; avoid low-value CI creep), the
+   rule (Core Directive #19, reviewed every PR) + the RETIRED site notes + this TD remain the
+   primary defense against concept-drift. Do NOT re-attempt a name-collision tripwire without
+   addressing this gap.
 
 == Guardrails
 Trace the live path before deleting (the dead twin is usually the *foundation extract*, not the core

@@ -628,7 +628,9 @@ impl FederatedExecutor {
                 search_optimization: None,
             };
 
-            let response = vector_ops.search_v1(request).await?;
+            let response = vector_ops
+                .search_v1(request, proximadb_runtime::PortIdentity::anonymous())
+                .await?;
             let records = response
                 .results
                 .map(|result| result.results)

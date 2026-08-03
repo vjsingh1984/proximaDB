@@ -33,7 +33,7 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{Result, bail};
-use proximadb_codec::functions::sq8::{Sq8Params, decode, fit_params, quantize_one};
+use proximadb_codec::functions::sq8::{Sq8Params, decode, fit_params_iter, quantize_one};
 
 /// `[n_rows u32][dim u32]` — the fixed part of the region header, before the
 /// 16 B `Sq8Params`.
@@ -141,13 +141,9 @@ pub fn encode_region(vectors: &[Option<&[f32]>], dim: u32) -> Result<(Vec<u8>, S
             );
         }
     }
-    // Flatten every present value for ONE segment-level params fit.
-    let total_present: usize = vectors.iter().map(|o| o.map_or(0, |v| v.len())).sum();
-    let mut flat: Vec<f32> = Vec::with_capacity(total_present);
-    for v in vectors.iter().flatten() {
-        flat.extend_from_slice(v);
-    }
-    let params = fit_params(&flat);
+    // Fit directly across segmented rows. The former flattening copy retained a
+    // second full f32 corpus during compaction (737 MiB at 1.44M × 128d).
+    let params = fit_params_iter(vectors.iter().flatten().flat_map(|v| v.iter().copied()));
 
     let n = vectors.len();
     let mut buf = Vec::with_capacity(region_len(dim, n));
@@ -165,6 +161,12 @@ pub fn encode_region(vectors: &[Option<&[f32]>], dim: u32) -> Result<(Vec<u8>, S
             buf[bitmap_off + (i >> 3)] |= 1u8 << (i & 7);
         }
     }
+    // Allocate the final payload once, then let workers fill disjoint fixed-size
+    // rows in place. The former `Vec<Vec<u8>>` allocated and retained one heap
+    // object per row before concatenation (millions of allocations at scale).
+    let codes_off = buf.len();
+    buf.resize(region_len(dim, n), 0u8);
+    let codes = &mut buf[codes_off..];
     // TD-FLUSH-5: pass 2 is per-row independent (row bytes = quantize of
     // vectors[i] against the pass-1 global params, which stay sequential for
     // bit-stable min/max). Ordered par_iter + in-order concat = byte-identical
@@ -177,27 +179,24 @@ pub fn encode_region(vectors: &[Option<&[f32]>], dim: u32) -> Result<(Vec<u8>, S
             .num_threads(crate::coalesced_rabitq::encode_pool_threads())
             .build()
             .map_err(|e| anyhow::anyhow!("encode pool: {e}"))?;
-        let rows: Vec<Vec<u8>> = pool.install(|| {
-            vectors
-                .par_iter()
-                .map(|v| match v {
-                    Some(vec) => vec.iter().map(|&f| quantize_one(f, &params)).collect(),
-                    None => vec![0u8; dim_us],
-                })
-                .collect()
-        });
-        for row in rows {
-            buf.extend_from_slice(&row);
-        }
-    } else {
-        for v in vectors {
-            match v {
-                Some(vec) => {
-                    for &f in *vec {
-                        buf.push(quantize_one(f, &params));
+        pool.install(|| {
+            codes
+                .par_chunks_mut(dim_us)
+                .zip(vectors.par_iter())
+                .for_each(|(row, vector)| {
+                    if let Some(vector) = vector {
+                        for (dst, &value) in row.iter_mut().zip(*vector) {
+                            *dst = quantize_one(value, &params);
+                        }
                     }
+                });
+        });
+    } else {
+        for (row, vector) in codes.chunks_mut(dim_us).zip(vectors) {
+            if let Some(vector) = vector {
+                for (dst, &value) in row.iter_mut().zip(*vector) {
+                    *dst = quantize_one(value, &params);
                 }
-                None => buf.extend(std::iter::repeat_n(0u8, dim_us)),
             }
         }
     }
@@ -236,9 +235,8 @@ impl<'a> Sq8Region<'a> {
         self.header.n_rows as usize
     }
 
-    /// Decode row `g` to f32 (None if `g` is out of range or null/absent).
-    /// Reuses the canonical [`decode`] kernel over the row's `dim`-byte run.
-    pub fn decode_row(&self, g: usize) -> Option<Vec<f32>> {
+    /// Borrow one row's fixed-stride SQ8 codes without decoding or allocating.
+    pub fn row_codes(&self, g: usize) -> Option<&[u8]> {
         let n = self.n_rows();
         let dim = self.header.dim as usize;
         if g >= n {
@@ -249,7 +247,14 @@ impl<'a> Sq8Region<'a> {
             return None;
         }
         let off = g * dim;
-        Some(decode(&self.codes[off..off + dim], &self.header.params))
+        self.codes.get(off..off + dim)
+    }
+
+    /// Decode row `g` to f32 (None if `g` is out of range or null/absent).
+    /// Reuses the canonical [`decode`] kernel over the row's `dim`-byte run.
+    pub fn decode_row(&self, g: usize) -> Option<Vec<f32>> {
+        self.row_codes(g)
+            .map(|codes| decode(codes, &self.header.params))
     }
 }
 
@@ -355,6 +360,9 @@ mod tests {
         assert_eq!(parsed.n_rows(), 8);
         assert!(parsed.decode_row(3).is_none(), "row 3 is null");
         assert!(parsed.decode_row(0).is_some());
+        assert!(parsed.row_codes(3).is_none(), "row 3 codes are null");
+        assert_eq!(parsed.row_codes(0).map(<[u8]>::len), Some(DIM));
+        assert!(parsed.row_codes(8).is_none(), "out-of-range row");
     }
 
     /// Header parse is fail-closed on truncation (no panic).

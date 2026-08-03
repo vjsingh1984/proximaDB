@@ -22,61 +22,39 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
-use proximadb_block_format::{
-    BLOCK_MAGIC, BlockCompression, BlockMode, RankMetric, VectorQuant, col_id,
-};
-use proximadb_cache::CacheKind;
+use proximadb_block_format::{BlockCompression, BlockMode, RankMetric, VectorQuant, col_id};
+use proximadb_cache::{CacheKind, L2CacheStats, L2Class, PersistentByteStore};
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::pax_block::{
     PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate, SegmentMeta,
 };
+// These three are now used only by this module's `#[cfg(test)]` suite — the
+// detection (`SegmentFormat` / `is_pax_segment`) and the PAX-decode body they
+// served moved down to `proximadb-storage-common`. Gated to test so the non-test
+// lib build stays warning-clean under clippy `-D warnings` (the CI gate).
+#[cfg(test)]
+use proximadb_block_format::BLOCK_MAGIC;
+#[cfg(test)]
 use proximadb_storage_common::segment_layout::{SegmentHeaderPrefix, is_coalesced_segment};
 
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache;
 
-/// On-disk format of a persisted vector segment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum SegmentFormat {
-    /// Legacy row-based block (raw f32). The default for segments written before P3
-    /// and for any manifest entry that predates the format field.
-    #[default]
-    ProximaBlocks,
-    /// Columnar PAX segment (carries SQ8 / RaBitQ codes; enables quantized ANN).
-    Pax,
-}
-
-impl SegmentFormat {
-    /// Detect a persisted segment's format from its raw bytes, mixed-read-safe.
-    ///
-    /// Returns [`SegmentFormat::ProximaBlocks`] for anything not recognisably a PAX
-    /// segment, so the legacy path is never mis-routed on truncated or unknown input.
-    pub fn detect(bytes: &[u8]) -> Self {
-        if is_pax_segment(bytes) {
-            SegmentFormat::Pax
-        } else {
-            SegmentFormat::ProximaBlocks
-        }
-    }
-}
-
-/// True iff `bytes` is a PAX segment: a recognised PAX head AND the trailing
-/// segment magic. Both ends are checked so a stray prefix or suffix alone can't
-/// false-positive. The head is EITHER the legacy block magic `PBLK` (block 0 at
-/// offset 0) OR the coalesced-RaBitQ header magic (ADR-062) — both tail with
-/// `SEGMENT_MAGIC`, so the trailing check is the common anchor.
-fn is_pax_segment(bytes: &[u8]) -> bool {
-    bytes.len() >= BLOCK_MAGIC.len() + SEGMENT_MAGIC.len()
-        && (bytes.starts_with(&BLOCK_MAGIC) || is_coalesced_segment(bytes))
-        && bytes.ends_with(SEGMENT_MAGIC)
-}
+// `SegmentFormat` (detection + `is_pax_segment`) now lives in the format layer —
+// `proximadb_storage_common::segment_layout` — so the mixed-format detection
+// primitive is unit-testable without linking the root crate. Re-exported here so
+// every existing `crate::storage::engines::sst::segment_format::SegmentFormat`
+// reference (and the router below) resolves unchanged (behavior-neutral move).
+pub use proximadb_storage_common::segment_layout::SegmentFormat;
 
 /// Decode a persisted vector segment back to records, routing on the detected format.
 ///
-/// PAX segments are decoded via the canonical inverse
-/// ([`PaxSegmentScanner::read_records`]); legacy segments via
-/// [`ProximaDataBlock::deserialize`]. This is the single mixed-read entry the
-/// Phase A.2 wiring will call from the cold-search, compaction, and recovery paths.
+/// PAX segments are decoded via the format-layer inverse
+/// ([`proximadb_storage_common::pax_block::read_pax_segment_records`]); legacy
+/// segments via [`ProximaDataBlock::deserialize`]. This root-level router is the
+/// single mixed-read entry called from the cold-search, compaction, and recovery
+/// paths. Its signature is unchanged from before the detection + PAX-decode logic
+/// moved down to `proximadb-storage-common` — the move is behavior-neutral.
 ///
 /// `embedding_model_ids` / `user_column_keys` are the collection's schema keys used
 /// to reconstruct PAX records positionally (empty slices = best-effort defaults);
@@ -92,46 +70,14 @@ pub fn read_segment_records(
     tenant_ctx: Option<&str>,
 ) -> Result<Vec<ProximaRecord>> {
     match SegmentFormat::detect(bytes) {
-        SegmentFormat::Pax => {
-            // ADR-065 Region B: a coalesced segment with an SQ8 region stores its
-            // vectors in Region B, NOT in the blocks (blocks are pure row data).
-            // read_records reconstructs from blocks alone, so it would silently drop
-            // the vectors — fail closed instead. The coalesced SEARCH path
-            // (rabitq_search_segment_coalesced) reads Region B directly; full
-            // Region-B read_records/compaction/recovery is a follow-up.
-            let mut scanner =
-                PaxSegmentScanner::from_bytes(bytes.to_vec(), ScanPredicate::default())?;
-            let mut recs =
-                scanner.read_records(embedding_model_ids, user_column_keys, tenant_ctx)?;
-            // ADR-065 Region B: a coalesced segment with an SQ8 region stores its
-            // vectors in Region B (blocks are pure row data). Overlay the SQ8
-            // vectors by row index — block row order == Region B cluster order, so
-            // recs[i] <-> Region B row i. (Exact-f32 preference via F32_TIER is a
-            // follow-up; this returns the SQ8 rerank vectors so compaction / recovery
-            // / full-read see the vectors rather than silently dropping them.)
-            if is_coalesced_segment(bytes)
-                && let Ok(h) = SegmentHeaderPrefix::parse(bytes)
-                && h.sq8_len > 0
-            {
-                let region = &bytes[h.sq8_off as usize..(h.sq8_off + h.sq8_len) as usize];
-                if let Ok(sq8) =
-                    proximadb_block_format::coalesced_sq8::Sq8Region::from_bytes(region)
-                {
-                    let dim = sq8.header.dim;
-                    for (i, rec) in recs.iter_mut().enumerate() {
-                        if let Some(v) = sq8.decode_row(i) {
-                            rec.embeddings.push(proximadb_records::EmbeddingCell {
-                                modality: "dense".into(),
-                                dim,
-                                values: proximadb_records::EmbeddingValues::Fp32(v),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                }
-            }
-            Ok(recs)
-        }
+        SegmentFormat::Pax => Ok(
+            proximadb_storage_common::pax_block::read_pax_segment_records(
+                bytes,
+                embedding_model_ids,
+                user_column_keys,
+                tenant_ctx,
+            )?,
+        ),
         SegmentFormat::ProximaBlocks => Ok(ProximaDataBlock::deserialize(bytes, None)?.records),
     }
 }
@@ -211,6 +157,57 @@ pub fn write_pax_segment_full(
     f32_tier: bool,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
+    Ok(write_pax_segment_full_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        None,
+    )?
+    .meta)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_full_with_cache_seed(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    include_sq8: bool,
+) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
+    write_pax_segment_full_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        Some(include_sq8),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_pax_segment_full_internal(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    capture_sq8: Option<bool>,
+) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     // TD-RDSTRAT-5 S1 / TD-WLP-4 (default ON, kill-switch
     // `PROXIMADB_PAX_BLOCK_CLUSTER=0`): reorder records by the model-free
     // sign-code bootstrap so spatially-close vectors co-locate into the same
@@ -258,6 +255,7 @@ pub fn write_pax_segment_full(
         cluster,
         plan,
         None, // two-level is compaction-only (TD-RDSTRAT-8)
+        capture_sq8,
     )
 }
 
@@ -282,6 +280,57 @@ pub fn write_pax_segment_compacted(
     f32_tier: bool,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
+    Ok(write_pax_segment_compacted_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        None,
+    )?
+    .meta)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_compacted_with_cache_seed(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    include_sq8: bool,
+) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
+    write_pax_segment_compacted_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        Some(include_sq8),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_pax_segment_compacted_internal(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    capture_sq8: Option<bool>,
+) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     use crate::storage::engines::sst::block_cluster;
     let cluster = block_cluster::block_cluster_enabled();
     // TD-RDSTRAT-8 rev 3: compaction is the ONLY write path that emits the
@@ -331,6 +380,7 @@ pub fn write_pax_segment_compacted(
         cluster,
         plan,
         probe_model,
+        capture_sq8,
     )
 }
 
@@ -349,7 +399,8 @@ fn write_pax_segment_ordered(
     cluster: bool,
     plan: Option<crate::storage::engines::sst::block_cluster::ClusterPlan>,
     two_level: Option<proximadb_storage_common::coarse_directory::CoarseModel>,
-) -> Result<SegmentMeta> {
+    capture_sq8: Option<bool>,
+) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     let lossless_clustered = lossless_clustered_enabled() && plan.is_some();
     let lossless_scalar = lossless_scalar_enabled();
     let mut writer = PaxSegmentWriter::new(
@@ -371,7 +422,8 @@ fn write_pax_segment_ordered(
     // file-level header region for RaBitQ-quantized writes (default ON per the
     // ADR-061 pre-GA in-place amendment; `PROXIMADB_PAX_COALESCED_RABITQ=0` opts
     // out to the legacy in-block RaBitQ layout for mixed-read / measurement).
-    .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled());
+    .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled())
+    .with_expected_rows(records.len());
     // TD-DELVEC-1 WI-3a: capture the OID→position resolver (footer region, WI-2c)
     // so a cold-resident delete (WI-3b) can set a deletion-vector bit without
     // rewriting the segment. Feature-gated; default builds are byte-for-byte
@@ -388,10 +440,12 @@ fn write_pax_segment_ordered(
     }
     let trace = pax_write_trace();
     let t_encode = std::time::Instant::now();
-    match &plan {
+    // Consume the ordering plan here so its row-order/runs/model allocations are
+    // released before the writer's Region A/B finalization peak.
+    match plan {
         Some(plan) => {
             let mut next_run = 1usize;
-            for (ordered_row, &i) in plan.order.iter().enumerate() {
+            for (ordered_row, i) in plan.order.into_iter().enumerate() {
                 if plan
                     .runs
                     .get(next_run)
@@ -411,7 +465,15 @@ fn write_pax_segment_ordered(
     }
     let encode_ms = t_encode.elapsed().as_secs_f64() * 1e3;
     let t_finalize = std::time::Instant::now();
-    let result = writer.finish();
+    let result = match capture_sq8 {
+        Some(include_sq8) => writer.finish_with_cache_seed(include_sq8),
+        None => writer.finish().map(
+            |meta| proximadb_storage_common::pax_block::PaxSegmentWrite {
+                meta,
+                cache_seed: None,
+            },
+        ),
+    };
     let finalize_ms = t_finalize.elapsed().as_secs_f64() * 1e3;
     // TD-COMPACT-1 S1: encode = per-record RaBitQ/SQ8 quantize; finalize =
     // serialize regions + footer. Combined with `cluster_plan` (logged by the
@@ -598,6 +660,12 @@ pub struct CascadeHit {
     /// materialization. `None` when no f32 tier is present (the caller gets
     /// id+score only, as before). Populated lazily for the top-k rows only.
     pub vector: Option<Vec<f32>>,
+    /// TD-DELVEC-1 WI-4 slice 2: the hit's global row position in the segment
+    /// (the index `read_segment_records` reconstructs positionally — the same
+    /// space the deletion vector keys on). Set at coalesced-scan hit construction
+    /// from the ranked row index `g`; consumed by `try_pax_cascade`'s merge-on-read
+    /// filter so a cold delete is invisible on the RaBitQ ANN path too.
+    pub position: u32,
 }
 
 /// Canonical resolver from a filter field name to its PAX column id for
@@ -646,6 +714,24 @@ fn env_u64_or(name: &str, default: u64) -> u64 {
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .unwrap_or(default)
+}
+
+/// Backend-derived Region-A probe coalescing policy.
+///
+/// Region A previously defaulted to gap-zero even though Regions B/D already
+/// used the backend I/O budget. That paid one operation per selected IVF cell
+/// on Azure. Selected logical slices are retained separately, so bridging a
+/// bounded gap changes only bytes transferred, never the rows passed to the
+/// ranker or recall.
+fn default_probe_range_policy(
+    path: &str,
+) -> crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+    let target =
+        proximadb_storage_common::iops_budget::IopsBudget::for_path(path).target_block_bytes();
+    crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+        max_gap_bytes: (target / 4).max(64 * 1024),
+        max_range_bytes: target,
+    }
 }
 
 /// A coalesced ranged GET over one or more survivor data blocks.
@@ -816,17 +902,23 @@ fn plan_probe_cell_ranges(
     out
 }
 
-/// Per-metric "lower = nearer" rerank score against a reconstructed vector.
-fn rerank_distance(metric: RankMetric, q: &[f32], v: &[f32]) -> f32 {
+/// Score one fixed-stride SQ8 row without materializing a decoded `Vec<f32>`.
+fn rerank_sq8_distance(
+    metric: RankMetric,
+    query: &[f32],
+    codes: &[u8],
+    params: &proximadb_codec::Sq8Params,
+    query_norm_squared: f32,
+) -> Option<f32> {
+    use proximadb_codec::functions::sq8;
+
     match metric {
-        RankMetric::L2 => q.iter().zip(v).map(|(a, b)| (a - b) * (a - b)).sum(),
+        RankMetric::L2 => sq8::l2_squared(codes, query, params),
+        RankMetric::DotProduct => sq8::dot_product(codes, query, params).map(|dot| -dot),
         RankMetric::Cosine => {
-            let dot: f32 = q.iter().zip(v).map(|(a, b)| a * b).sum();
-            let nq: f32 = q.iter().map(|a| a * a).sum::<f32>().sqrt();
-            let nv: f32 = v.iter().map(|a| a * a).sum::<f32>().sqrt();
-            1.0 - dot / (nq * nv + 1e-12)
+            let (dot, norm_squared) = sq8::dot_and_norm_squared(codes, query, params)?;
+            Some(1.0 - dot / ((query_norm_squared * norm_squared).sqrt() + 1e-12))
         }
-        RankMetric::DotProduct => -q.iter().zip(v).map(|(a, b)| a * b).sum::<f32>(),
     }
 }
 
@@ -923,6 +1015,9 @@ pub struct SegmentInvariantsCache {
     /// racing touches is irrelevant to eviction quality).
     tick: std::sync::atomic::AtomicU64,
     byte_budget: usize,
+    l2_store: Option<Arc<PersistentByteStore>>,
+    l2_hits: std::sync::atomic::AtomicU64,
+    l2_misses: std::sync::atomic::AtomicU64,
 }
 
 const INVARIANTS_CACHE_SHARDS: usize = 16;
@@ -961,6 +1056,111 @@ fn inv_bytes(inv: &SegmentInvariants) -> usize {
             .map_or(0, |bytes| bytes.len())
 }
 
+enum InvariantLookup {
+    L1(Arc<SegmentInvariants>),
+    L2(Arc<SegmentInvariants>),
+    Miss,
+}
+
+impl InvariantLookup {
+    fn value(&self) -> Option<Arc<SegmentInvariants>> {
+        match self {
+            Self::L1(value) | Self::L2(value) => Some(value.clone()),
+            Self::Miss => None,
+        }
+    }
+}
+
+const INVARIANT_CONTROL_MAGIC: &[u8; 8] = b"PXINV001";
+const OPTIONAL_BYTES_NONE: u64 = u64::MAX;
+
+fn encode_invariant_control(inv: &SegmentInvariants) -> Vec<u8> {
+    let a0_len = inv
+        .a0_bytes
+        .as_ref()
+        .map_or(OPTIONAL_BYTES_NONE, |bytes| bytes.len() as u64);
+    let rabitq_header_len = inv
+        .rabitq_header_bytes
+        .as_ref()
+        .map_or(OPTIONAL_BYTES_NONE, |bytes| bytes.len() as u64);
+    let mut out = Vec::with_capacity(
+        40 + inv.header_bytes.len()
+            + inv.footer_bytes.len()
+            + inv.a0_bytes.as_ref().map_or(0, |bytes| bytes.len())
+            + inv
+                .rabitq_header_bytes
+                .as_ref()
+                .map_or(0, |bytes| bytes.len()),
+    );
+    out.extend_from_slice(INVARIANT_CONTROL_MAGIC);
+    out.extend_from_slice(&(inv.header_bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(&(inv.footer_bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(&a0_len.to_le_bytes());
+    out.extend_from_slice(&rabitq_header_len.to_le_bytes());
+    out.extend_from_slice(&inv.header_bytes);
+    out.extend_from_slice(&inv.footer_bytes);
+    if let Some(bytes) = &inv.a0_bytes {
+        out.extend_from_slice(bytes);
+    }
+    if let Some(bytes) = &inv.rabitq_header_bytes {
+        out.extend_from_slice(bytes);
+    }
+    out
+}
+
+fn decode_invariant_control(bytes: &[u8]) -> Option<SegmentInvariants> {
+    if bytes.len() < 40 || &bytes[..8] != INVARIANT_CONTROL_MAGIC {
+        return None;
+    }
+    let read_len = |start: usize| -> Option<u64> {
+        Some(u64::from_le_bytes(
+            bytes.get(start..start + 8)?.try_into().ok()?,
+        ))
+    };
+    let header_len = usize::try_from(read_len(8)?).ok()?;
+    let footer_len = usize::try_from(read_len(16)?).ok()?;
+    let a0_len_raw = read_len(24)?;
+    let rabitq_len_raw = read_len(32)?;
+    let a0_len = (a0_len_raw != OPTIONAL_BYTES_NONE)
+        .then(|| usize::try_from(a0_len_raw).ok())
+        .flatten();
+    let rabitq_len = (rabitq_len_raw != OPTIONAL_BYTES_NONE)
+        .then(|| usize::try_from(rabitq_len_raw).ok())
+        .flatten();
+    if (a0_len_raw != OPTIONAL_BYTES_NONE && a0_len.is_none())
+        || (rabitq_len_raw != OPTIONAL_BYTES_NONE && rabitq_len.is_none())
+    {
+        return None;
+    }
+    let mut cursor = 40usize;
+    let take = |cursor: &mut usize, len: usize| -> Option<&[u8]> {
+        let end = cursor.checked_add(len)?;
+        let slice = bytes.get(*cursor..end)?;
+        *cursor = end;
+        Some(slice)
+    };
+    let header_bytes = take(&mut cursor, header_len)?.to_vec();
+    let footer_bytes = take(&mut cursor, footer_len)?.to_vec();
+    let a0_bytes = match a0_len {
+        Some(len) => Some(Arc::from(take(&mut cursor, len)?)),
+        None => None,
+    };
+    let rabitq_header_bytes = match rabitq_len {
+        Some(len) => Some(Arc::from(take(&mut cursor, len)?)),
+        None => None,
+    };
+    if cursor != bytes.len() {
+        return None;
+    }
+    Some(SegmentInvariants {
+        header_bytes,
+        region_bytes: None,
+        footer_bytes,
+        a0_bytes,
+        rabitq_header_bytes,
+    })
+}
+
 impl SegmentInvariantsCache {
     /// `byte_budget` caps the total cached bytes (Region A region_bytes dominate).
     pub fn new(byte_budget: usize) -> Self {
@@ -973,6 +1173,91 @@ impl SegmentInvariantsCache {
             bytes_used: std::sync::atomic::AtomicUsize::new(0),
             tick: std::sync::atomic::AtomicU64::new(0),
             byte_budget,
+            l2_store: None,
+            l2_hits: std::sync::atomic::AtomicU64::new(0),
+            l2_misses: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    pub fn with_l2(byte_budget: usize, store: Arc<PersistentByteStore>) -> Self {
+        let mut cache = Self::new(byte_budget);
+        cache.l2_store = Some(store);
+        cache
+    }
+
+    fn l2_control_key(path: &str) -> String {
+        format!("invariants/control/{path}")
+    }
+
+    fn l2_region_key(path: &str) -> String {
+        format!("invariants/region-a/{path}")
+    }
+
+    /// DRAM lookup followed by persistent-L2 promotion.
+    async fn get_or_promote(&self, path: &str) -> InvariantLookup {
+        if let Some(value) = self.get(path) {
+            return InvariantLookup::L1(value);
+        }
+        let Some(store) = &self.l2_store else {
+            return InvariantLookup::Miss;
+        };
+        let control_key = Self::l2_control_key(path);
+        let control = match store.get(&control_key).await {
+            Ok(Some(bytes)) => match decode_invariant_control(&bytes) {
+                Some(control) => control,
+                None => {
+                    store.remove(&control_key);
+                    self.l2_misses
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return InvariantLookup::Miss;
+                }
+            },
+            Ok(None) | Err(_) => {
+                self.l2_misses
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return InvariantLookup::Miss;
+            }
+        };
+        let region_bytes = store.get(&Self::l2_region_key(path)).await.ok().flatten();
+        let value = Arc::new(SegmentInvariants {
+            region_bytes,
+            ..control
+        });
+        self.put(path.to_string(), value.clone());
+        self.l2_hits
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        InvariantLookup::L2(value)
+    }
+
+    /// Write through to L2, then admit into DRAM. Disk-cache errors are
+    /// fail-open because object storage remains authoritative.
+    pub async fn put_with_l2(&self, path: String, inv: Arc<SegmentInvariants>) {
+        if let Some(store) = &self.l2_store {
+            let control = Arc::from(encode_invariant_control(&inv));
+            let _ = store
+                .put(Self::l2_control_key(&path), L2Class::Invariants, control)
+                .await;
+            if let Some(region) = &inv.region_bytes {
+                let _ = store
+                    .put(
+                        Self::l2_region_key(&path),
+                        L2Class::Invariants,
+                        region.clone(),
+                    )
+                    .await;
+            }
+        }
+        self.put(path, inv);
+    }
+
+    pub fn l2_stats(&self) -> L2CacheStats {
+        L2CacheStats {
+            hits: self.l2_hits.load(std::sync::atomic::Ordering::Relaxed),
+            misses: self.l2_misses.load(std::sync::atomic::Ordering::Relaxed),
+            resident_bytes: self
+                .l2_store
+                .as_ref()
+                .map_or(0, |l2| l2.resident_bytes_for(L2Class::Invariants)),
         }
     }
 
@@ -1141,11 +1426,65 @@ impl SegmentInvariantsCache {
         }
     }
 
-    /// Remove a path (call from flush/compaction when a segment is rewritten).
-    /// Removes both the control entry and the Region-A companion (S2b).
+    /// Remove a path from DRAM.
+    ///
+    /// Call [`Self::invalidate_all`] when the backing immutable segment has
+    /// been retired and persistent entries must be removed as well.
     pub fn invalidate(&self, path: &str) {
         self.invalidate_entry(path);
         self.invalidate_entry(&Self::region_entry_key(path));
+    }
+
+    /// Remove both DRAM and persistent entries for a retired segment.
+    ///
+    /// The persistent sweep shares the store's publication mutex, so an
+    /// invalidation racing a cache seed cannot leave a persistent-only entry.
+    pub async fn invalidate_all(&self, path: &str) {
+        self.invalidate(path);
+        if let Some(store) = &self.l2_store {
+            let control_key = Self::l2_control_key(path);
+            let region_key = Self::l2_region_key(path);
+            store
+                .remove_where(|key| key == control_key || key == region_key)
+                .await;
+        }
+    }
+
+    /// Remove every invariant entry below a retired collection directory.
+    ///
+    /// The trailing separator prevents collection `12` from matching `123`.
+    /// This is resource reclamation rather than row-level coherence: PAX
+    /// segments are immutable, but a deleted collection must not retain dead
+    /// DRAM/local-disk capacity until ordinary eviction.
+    pub async fn invalidate_prefix_all(&self, path_prefix: &str) -> usize {
+        let prefix = format!("{}/", path_prefix.trim_end_matches('/'));
+        let mut removed = 0;
+        for shard in &self.shards {
+            let Ok(mut entries) = shard.write() else {
+                continue;
+            };
+            let victims: Vec<String> = entries
+                .keys()
+                .filter(|path| path.starts_with(&prefix))
+                .cloned()
+                .collect();
+            for path in victims {
+                if let Some(entry) = entries.remove(&path) {
+                    self.sub_bytes(inv_bytes(&entry.inv));
+                    removed += 1;
+                }
+            }
+        }
+        if let Some(store) = &self.l2_store {
+            let control_prefix = format!("invariants/control/{prefix}");
+            let region_prefix = format!("invariants/region-a/{prefix}");
+            removed += store
+                .remove_where(|key| {
+                    key.starts_with(&control_prefix) || key.starts_with(&region_prefix)
+                })
+                .await;
+        }
+        removed
     }
 
     fn invalidate_entry(&self, key: &str) {
@@ -1154,6 +1493,36 @@ impl SegmentInvariantsCache {
         {
             self.sub_bytes(inv_bytes(&removed.inv));
         }
+    }
+}
+
+/// Install writer-retained PAX regions only after the caller has atomically
+/// published `path`. A failed cache write never invalidates the committed
+/// segment; the next query falls back to normal read-through.
+pub async fn install_pax_cache_seed(
+    path: &str,
+    seed: proximadb_storage_common::pax_block::PaxCacheSeed,
+    invariants: Option<&SegmentInvariantsCache>,
+    survivor: Option<&SurvivorRangeCache>,
+) {
+    if let Some(cache) = invariants {
+        cache
+            .put_with_l2(
+                path.to_string(),
+                Arc::new(SegmentInvariants {
+                    header_bytes: seed.header_bytes,
+                    region_bytes: Some(seed.rabitq_bytes),
+                    footer_bytes: seed.footer_bytes,
+                    a0_bytes: seed.a0_bytes,
+                    rabitq_header_bytes: Some(seed.rabitq_header_bytes),
+                }),
+            )
+            .await;
+    }
+    if let (Some(cache), Some(sq8)) = (survivor, seed.sq8_bytes)
+        && let Err(error) = cache.seed_parent_region(path, seed.sq8_off, sq8).await
+    {
+        tracing::warn!("post-publication SQ8 cache seed failed for {path}: {error}");
     }
 }
 
@@ -1209,16 +1578,18 @@ pub async fn prefetch_segment_invariants(
     } else {
         None
     };
-    cache.put(
-        path.to_string(),
-        Arc::new(SegmentInvariants {
-            header_bytes,
-            region_bytes: None,
-            footer_bytes,
-            a0_bytes,
-            rabitq_header_bytes: None,
-        }),
-    );
+    cache
+        .put_with_l2(
+            path.to_string(),
+            Arc::new(SegmentInvariants {
+                header_bytes,
+                region_bytes: None,
+                footer_bytes,
+                a0_bytes,
+                rabitq_header_bytes: None,
+            }),
+        )
+        .await;
     Ok(true)
 }
 
@@ -1428,9 +1799,10 @@ pub(crate) fn coarse_probe_settings() -> CoarseProbeSettings {
 
 /// Geometric nprobe: `ceil(sqrt(k_c) × multiplier)`, clamped to `[min, max]`
 /// then to `k_c`. Sub-linear in corpus (V^0.25): ~56× fewer ranks than full-scan
-/// at 1M, recall ~0.98 at multiplier 1.0. Bump `nprobe_multiplier` (TOML) for
-/// higher recall. The max-then-min ordering avoids the `clamp(min, k_c)` panic
-/// when `k_c < min` (no-panic mandate #4).
+/// at 1M. The default multiplier 2.0 is recall-ratcheted by the settled
+/// one-segment SIFT1M geometry (11/30 cells, recall@10 >= 0.98); operators may
+/// trade quality for fewer bytes via TOML. The max-then-min ordering avoids the
+/// `clamp(min, k_c)` panic when `k_c < min` (no-panic mandate #4).
 fn geometric_nprobe(k_c: usize, s: CoarseProbeSettings) -> usize {
     let raw = ((k_c as f32).sqrt() * s.nprobe_multiplier).ceil() as usize;
     let floored = raw.max(s.nprobe_min);
@@ -1496,23 +1868,29 @@ fn prefetched_slice(prefix: &[u8], offset: u64, len: u64) -> Option<&[u8]> {
     prefix.get(start..end)
 }
 
+const DEFAULT_PREFIX_PREFETCH_BYTES: u64 = 1024 * 1024;
+const MAX_PREFIX_PREFETCH_BYTES: u64 = 8 * 1024 * 1024;
+
 fn prefix_prefetch_bytes() -> Option<u64> {
-    std::env::var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES")
+    let configured = std::env::var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|bytes| *bytes > 0)
+        .unwrap_or(DEFAULT_PREFIX_PREFETCH_BYTES);
+    (configured > 0).then_some(configured.min(MAX_PREFIX_PREFETCH_BYTES))
 }
 
 fn split_probe_metadata_cache_enabled() -> bool {
-    matches!(
-        std::env::var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("1" | "true" | "on" | "yes")
-    )
+    // Metadata population is the shipped behavior: the coarse-probe path
+    // already fetched header/A0/RaBitQ params/footer, and failing to retain
+    // those immutable bytes makes every subsequent query repay four GETs.
+    // Preserve the pre-GA positive gate as an emergency opt-out for operators
+    // that explicitly set a false value; unset must remain ON.
+    std::env::var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE").map_or(true, |value| {
+        !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        )
+    })
 }
 
 /// TD-RDSTRAT-8 PR-B: compute survivors from ONLY the `nprobe` nearest coarse
@@ -1632,16 +2010,14 @@ async fn coarse_probe_survivors(
             }
         })
         .collect();
-    let max_gap_bytes = env_u64_or("PROXIMADB_PAX_VECTOR_COALESCE_GAP", 0);
-    let max_range_bytes = std::env::var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(0);
+    let defaults = default_probe_range_policy(path);
     let policy =
         crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
-            max_gap_bytes,
-            max_range_bytes,
+            max_gap_bytes: env_u64_or("PROXIMADB_PAX_VECTOR_COALESCE_GAP", defaults.max_gap_bytes),
+            max_range_bytes: env_u64_or(
+                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+                defaults.max_range_bytes,
+            ),
         };
     let fetches = plan_probe_cell_ranges(&selected, &policy);
     let mut fetched = Vec::with_capacity(fetches.len());
@@ -1655,12 +2031,26 @@ async fn coarse_probe_survivors(
         // survivor-cache seam — identical repeat queries probe identical
         // cells, and a direct read made the hot path pay these GETs every
         // time (the probe-armed default bypassed the warm tier entirely).
-        let bytes: Vec<u8> = if let Some(sc) = survivor_cache {
+        let cached_region_slice =
+            cached
+                .and_then(|inv| inv.region_bytes.as_ref())
+                .and_then(|region| {
+                    let start =
+                        usize::try_from(fetch.start.checked_sub(header.rabitq_off)?).ok()?;
+                    let len = usize::try_from(len).ok()?;
+                    region.get(start..start.checked_add(len)?)
+                });
+        let bytes: Vec<u8> = if let Some(bytes) = cached_region_slice {
+            bytes.to_vec()
+        } else if let Some(bytes) = prefetched_slice(prefix, fetch.start, len) {
+            bytes.to_vec()
+        } else if let Some(sc) = survivor_cache {
             sc.get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
                 let b = fs
                     .read_range(path, fetch.start, len)
                     .await
                     .map_err(std::io::Error::other)?;
+                crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
                 if trace_on {
                     record_get(CacheTier::ProbeIndex, len);
                 }
@@ -1674,6 +2064,7 @@ async fn coarse_probe_survivors(
                 .read_range(path, fetch.start, len)
                 .await
                 .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?;
+            crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
             if trace_on {
                 record_get(CacheTier::ProbeIndex, len);
             }
@@ -1783,18 +2174,27 @@ pub async fn rabitq_search_segment_coalesced(
 
     // PR2: check the per-segment invariants cache. On hit, skip the 3
     // read_range calls (header + region + footer) → 3 GETs → 0 (hot path).
-    let cached = cache.and_then(|c| c.get(path));
+    let invariant_lookup = match cache {
+        Some(cache) => cache.get_or_promote(path).await,
+        None => InvariantLookup::Miss,
+    };
+    let cached = invariant_lookup.value();
     // TD-METRICS-1: this lookup is the cache's only read boundary — count
     // hit/miss here (a hit means 3 GETs avoided) and sample resident bytes.
     if cache.is_some() {
-        if cached.is_some() {
-            crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.inc();
-        } else {
-            crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_MISSES_TOTAL.inc();
+        match invariant_lookup {
+            InvariantLookup::L1(_) => {
+                crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_HITS_TOTAL.inc();
+            }
+            InvariantLookup::L2(_) => {}
+            InvariantLookup::Miss => {
+                crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_MISSES_TOTAL.inc();
+            }
         }
         if let Some(c) = cache {
             crate::metrics::operational_metrics::SEGMENT_INVARIANTS_CACHE_BYTES
                 .set(c.bytes_used() as i64);
+            crate::metrics::operational_metrics::sync_local_disk_stats("invariants", c.l2_stats());
         }
     }
 
@@ -1894,6 +2294,7 @@ pub async fn rabitq_search_segment_coalesced(
                     .read_range(path, header.rabitq_off, header.rabitq_len)
                     .await
                     .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?;
+                crate::observability::io_trace::record_pax_region_bytes(bytes.len() as u64, 0);
                 // Trace the whole-region cost so the coarse probe's Region-A saving is
                 // observable (co-design: trace before you tune). Diagnostic-only.
                 if trace_on {
@@ -1901,10 +2302,6 @@ pub async fn rabitq_search_segment_coalesced(
                 }
                 Arc::from(bytes)
             };
-        // TD-RDSTRAT-8 PR-C1: record the whole-Region-A (RaBitQ) physical bytes
-        // fetched — the GET budget the armed probe exists to avoid. Region B
-        // (SQ8) is not read in this path. Cache hits still report Region-A length.
-        crate::observability::io_trace::record_pax_region_bytes(region_bytes.len() as u64, 0);
         let region = RaBitQRegion::from_bytes(&region_bytes)?;
         // ADR-062 PR2: adaptive survivor pool — scale M with the segment's rows.
         let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
@@ -1956,7 +2353,7 @@ pub async fn rabitq_search_segment_coalesced(
         || (cached_a0.is_none() && probe_a0.is_some())
         || (cached_rabitq_header.is_none() && probe_rabitq_header.is_some());
     if cache_changed && let Some(c) = cache {
-        c.put(
+        c.put_with_l2(
             path.to_string(),
             Arc::new(SegmentInvariants {
                 header_bytes,
@@ -1965,7 +2362,8 @@ pub async fn rabitq_search_segment_coalesced(
                 a0_bytes: probe_a0.or(cached_a0),
                 rabitq_header_bytes: probe_rabitq_header.or(cached_rabitq_header),
             }),
-        );
+        )
+        .await;
     }
 
     // 4. ADR-065 Region B: rerank survivors via the coalesced SQ8 region (pure,
@@ -1974,6 +2372,11 @@ pub async fn rabitq_search_segment_coalesced(
     //    Region-B-header GET — reconstruct the params + codes_base from the footer.
     let dim = footer.embed_dim as usize;
     let sq8_params = coalesced_sq8::params_from_min_scale(footer.sq8_min, footer.sq8_scale);
+    let query_norm_squared = if metric == RankMetric::Cosine {
+        query.iter().map(|value| value * value).sum()
+    } else {
+        0.0
+    };
     let codes_base = header.sq8_off + coalesced_sq8::codes_offset(footer.row_count as usize) as u64;
     // Coalesce policy IOP-aligned to the backend (ADR-065 cache-co-design): a
     // coalesced range must not exceed one chunk (4 MiB Azure / 8 MiB S3), so it
@@ -2000,9 +2403,11 @@ pub async fn rabitq_search_segment_coalesced(
         // cache it through the seam so hot repeats stop re-paying the
         // largest GET on the path (admission/floors decide residency).
         let region_arc: Arc<[u8]> = if let Some(sc) = survivor_cache {
-            sc.get_or_fetch(
+            sc.get_or_fetch_in_parent(
                 CacheKind::QuantizedCodes,
                 path,
+                header.sq8_off,
+                header.sq8_len,
                 header.sq8_off,
                 header.sq8_len,
                 || async {
@@ -2010,6 +2415,7 @@ pub async fn rabitq_search_segment_coalesced(
                         .read_range(path, header.sq8_off, header.sq8_len)
                         .await
                         .map_err(std::io::Error::other)?;
+                    crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
                     if trace_on {
                         record_get(CacheTier::SurvivorPayload, header.sq8_len);
                     }
@@ -2023,6 +2429,7 @@ pub async fn rabitq_search_segment_coalesced(
                 .read_range(path, header.sq8_off, header.sq8_len)
                 .await
                 .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?;
+            crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
             if trace_on {
                 record_get(CacheTier::SurvivorPayload, header.sq8_len);
             }
@@ -2030,8 +2437,11 @@ pub async fn rabitq_search_segment_coalesced(
         };
         let region = coalesced_sq8::Sq8Region::from_bytes(&region_arc)?;
         for &g in &survivors {
-            if let Some(v) = region.decode_row(g) {
-                scored.push((g, rerank_distance(metric, query, &v)));
+            if let Some(codes) = region.row_codes(g)
+                && let Some(score) =
+                    rerank_sq8_distance(metric, query, codes, &sq8_params, query_norm_squared)
+            {
+                scored.push((g, score));
             }
         }
     } else {
@@ -2045,13 +2455,16 @@ pub async fn rabitq_search_segment_coalesced(
             // so `fs.read_range` + `record_get` (the billed GET) fire only on a
             // miss — bytes-not-billed for free, via the existing backend seam.
             let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
-                sc.get_or_fetch(
+                sc.get_or_fetch_in_parent(
                     CacheKind::QuantizedCodes,
                     path,
                     start,
                     range_len,
+                    header.sq8_off,
+                    header.sq8_len,
                     || async move {
                         let b = fs.read_range(path, start, range_len).await?;
+                        crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
                         if trace_on {
                             record_get(CacheTier::SurvivorPayload, range_len);
                         }
@@ -2064,6 +2477,7 @@ pub async fn rabitq_search_segment_coalesced(
                 let b = fs.read_range(path, start, range_len).await.map_err(|e| {
                     anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}")
                 })?;
+                crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
                 if trace_on {
                     record_get(CacheTier::SurvivorPayload, range_len);
                 }
@@ -2074,8 +2488,15 @@ pub async fn rabitq_search_segment_coalesced(
                 if rel + dim > buf.len() {
                     continue;
                 }
-                let v = coalesced_sq8::decode_codes(&buf[rel..rel + dim], &sq8_params);
-                scored.push((g, rerank_distance(metric, query, &v)));
+                if let Some(score) = rerank_sq8_distance(
+                    metric,
+                    query,
+                    &buf[rel..rel + dim],
+                    &sq8_params,
+                    query_norm_squared,
+                ) {
+                    scored.push((g, score));
+                }
             }
         }
     }
@@ -2172,6 +2593,7 @@ pub async fn rabitq_search_segment_coalesced(
             oid: oid_of.get(g).cloned().unwrap_or_default(),
             distance: *dist,
             vector: None,
+            position: *g as u32,
         });
     }
 
@@ -2200,6 +2622,108 @@ mod tests {
             nprobe_min: 3,
             nprobe_max: 0,
         }
+    }
+
+    #[test]
+    fn default_probe_quality_and_backend_ranges_match_sift_acceptance() {
+        let defaults: CoarseProbeSettings =
+            crate::core::config::CoarseProbeConfig::default().into();
+        assert_eq!(
+            geometric_nprobe(30, defaults),
+            11,
+            "the one-segment SIFT1M geometry needs 11/30 cells for recall@10 >= 0.98"
+        );
+
+        let azure = default_probe_range_policy("azure://container/segment.pax");
+        assert_eq!(azure.max_gap_bytes, 1024 * 1024);
+        assert_eq!(azure.max_range_bytes, 4 * 1024 * 1024);
+
+        let local = default_probe_range_policy("file:///data/segment.pax");
+        assert_eq!(local.max_gap_bytes, 256 * 1024);
+        assert_eq!(local.max_range_bytes, 1024 * 1024);
+    }
+
+    #[test]
+    fn invariant_control_l2_codec_round_trips_optional_regions() {
+        let original = SegmentInvariants {
+            header_bytes: vec![1, 2, 3],
+            region_bytes: Some(Arc::from(&b"region-a"[..])),
+            footer_bytes: vec![4, 5],
+            a0_bytes: Some(Arc::from(&b"a0"[..])),
+            rabitq_header_bytes: Some(Arc::from(&b"params"[..])),
+        };
+        let decoded =
+            decode_invariant_control(&encode_invariant_control(&original)).expect("valid codec");
+        assert_eq!(decoded.header_bytes, original.header_bytes);
+        assert_eq!(decoded.footer_bytes, original.footer_bytes);
+        assert_eq!(decoded.a0_bytes.as_deref(), original.a0_bytes.as_deref());
+        assert_eq!(
+            decoded.rabitq_header_bytes.as_deref(),
+            original.rabitq_header_bytes.as_deref()
+        );
+        assert!(
+            decoded.region_bytes.is_none(),
+            "Region A has its own persistent entry"
+        );
+
+        let control_only = SegmentInvariants {
+            header_bytes: vec![9],
+            region_bytes: None,
+            footer_bytes: vec![8],
+            a0_bytes: None,
+            rabitq_header_bytes: None,
+        };
+        let decoded = decode_invariant_control(&encode_invariant_control(&control_only))
+            .expect("valid codec");
+        assert!(decoded.a0_bytes.is_none());
+        assert!(decoded.rabitq_header_bytes.is_none());
+        assert!(decode_invariant_control(b"truncated").is_none());
+    }
+
+    #[tokio::test]
+    async fn invariant_l2_survives_dram_and_store_restart() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let path = "file:///tenant-a/collection-a/segment-a.px";
+        let original = Arc::new(SegmentInvariants {
+            header_bytes: vec![1, 2, 3],
+            region_bytes: Some(Arc::from(&b"region-a"[..])),
+            footer_bytes: vec![4, 5],
+            a0_bytes: Some(Arc::from(&b"a0"[..])),
+            rabitq_header_bytes: Some(Arc::from(&b"params"[..])),
+        });
+        let store =
+            Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("open L2 store"));
+        let cache = SegmentInvariantsCache::with_l2(1 << 20, store);
+        cache.put_with_l2(path.to_string(), original.clone()).await;
+        drop(cache);
+
+        let reopened_store =
+            Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("reopen L2 store"));
+        let reopened = SegmentInvariantsCache::with_l2(1 << 20, reopened_store);
+        let lookup = reopened.get_or_promote(path).await;
+        let promoted = lookup.value().expect("persistent L2 hit");
+        assert!(matches!(lookup, InvariantLookup::L2(_)));
+        assert_eq!(promoted.header_bytes, original.header_bytes);
+        assert_eq!(promoted.footer_bytes, original.footer_bytes);
+        assert_eq!(
+            promoted.region_bytes.as_deref(),
+            original.region_bytes.as_deref()
+        );
+        assert_eq!(promoted.a0_bytes.as_deref(), original.a0_bytes.as_deref());
+        assert_eq!(
+            promoted.rabitq_header_bytes.as_deref(),
+            original.rabitq_header_bytes.as_deref()
+        );
+        assert!(
+            matches!(reopened.get_or_promote(path).await, InvariantLookup::L1(_)),
+            "the persistent value must be promoted into DRAM"
+        );
+        reopened.invalidate_all(path).await;
+        assert!(reopened.get(path).is_none(), "L1 entries were invalidated");
+        assert!(matches!(
+            reopened.get_or_promote(path).await,
+            InvariantLookup::Miss
+        ));
     }
 
     /// TD-COMPACT-9: a REAL (Some) coarse-probe config must WIN and must NOT be
@@ -2809,6 +3333,49 @@ mod tests {
             0.25,
             "cosine distance is already canonical"
         );
+    }
+
+    #[test]
+    fn fused_sq8_rerank_matches_decode_then_score_for_every_metric() {
+        let params = proximadb_codec::Sq8Params {
+            scale: 0.0625,
+            offset: -2.0,
+            vmin: -2.0,
+            vmax: 13.9375,
+        };
+        let codes = (0..128)
+            .map(|i| ((i * 47 + 11) % 256) as u8)
+            .collect::<Vec<_>>();
+        let query = (0..128)
+            .map(|i| ((i * 31 + 3) as f32 * 0.013).cos() * 3.0)
+            .collect::<Vec<_>>();
+        let decoded = proximadb_codec::functions::sq8::decode(&codes, &params);
+        let query_norm_squared = query.iter().map(|value| value * value).sum::<f32>();
+        for metric in [RankMetric::L2, RankMetric::Cosine, RankMetric::DotProduct] {
+            let expected = match metric {
+                RankMetric::L2 => query
+                    .iter()
+                    .zip(&decoded)
+                    .map(|(a, b)| (a - b) * (a - b))
+                    .sum::<f32>(),
+                RankMetric::Cosine => {
+                    let dot = query.iter().zip(&decoded).map(|(a, b)| a * b).sum::<f32>();
+                    let decoded_norm = decoded.iter().map(|value| value * value).sum::<f32>();
+                    1.0 - dot / ((query_norm_squared * decoded_norm).sqrt() + 1e-12)
+                }
+                RankMetric::DotProduct => {
+                    -query.iter().zip(&decoded).map(|(a, b)| a * b).sum::<f32>()
+                }
+            };
+            let actual = rerank_sq8_distance(metric, &query, &codes, &params, query_norm_squared)
+                .expect("matching SQ8/query dimensions");
+            let tolerance = expected.abs().max(1.0) * 1e-5;
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "{metric:?}: fused={actual} decoded={expected}"
+            );
+        }
+        assert!(rerank_sq8_distance(RankMetric::L2, &query[..127], &codes, &params, 0.0).is_none());
     }
 
     /// A coalesced-RaBitQ segment (opt-in) is detected as Pax, carries a non-zero
@@ -3612,6 +4179,9 @@ mod tests {
 
         unsafe {
             std::env::set_var("PROXIMADB_TRACE_GETS", "1");
+            // Establish the exact-read control for the prefix-prefetch proof
+            // below; production defaults to a bounded 1 MiB prefix.
+            std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", "0");
         }
 
         // Baseline: probe OFF → whole-region single-level scan over the v3 segment.
@@ -3672,6 +4242,26 @@ mod tests {
         assert_eq!(probe_snapshot.ivf_probed_rows, probed_rows);
         assert_eq!(probe_snapshot.ivf_fetch_rounds, fetch_rounds);
         assert_eq!(probe_snapshot.ivf_whole_region_fallback, 0);
+        let traced_region_a_bytes: u64 = probe_gets
+            .iter()
+            .filter(|(tier, _)| matches!(tier, CacheTier::ProbeIndex))
+            .map(|(_, bytes)| bytes)
+            .sum();
+        let traced_region_b_bytes: u64 = probe_gets
+            .iter()
+            .filter(|(tier, _)| matches!(tier, CacheTier::SurvivorPayload))
+            .map(|(_, bytes)| bytes)
+            .sum();
+        assert!(traced_region_a_bytes > 0, "probe must fetch Region A");
+        assert!(traced_region_b_bytes > 0, "rerank must fetch Region B");
+        assert_eq!(
+            probe_snapshot.ivf_region_a_bytes, traced_region_a_bytes,
+            "durable Region-A bytes must equal physical probe reads"
+        );
+        assert_eq!(
+            probe_snapshot.ivf_region_b_bytes, traced_region_b_bytes,
+            "durable Region-B bytes must equal physical rerank reads"
+        );
 
         // 2. Materially fewer bytes than the whole-region baseline.
         assert!(
@@ -3762,10 +4352,12 @@ mod tests {
             std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
         }
 
-        // PR-C2 proof: metadata warms independently even though the probe never
-        // admits the complete Region A into the invariant cache.
+        // PR-C2 proof: metadata warms by default even though the probe never
+        // admits the complete Region A into the invariant cache. Production
+        // does not set an opt-in gate, so this regression must exercise the
+        // unset environment exactly as the server does.
         unsafe {
-            std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "1");
+            std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
         }
         let invariants = SegmentInvariantsCache::new(8 * 1024 * 1024);
         let _ = drain_get_trace();
@@ -3839,6 +4431,14 @@ mod tests {
         assert_eq!(fallback_snapshot.ivf_cells_total, 0);
         assert_eq!(fallback_snapshot.ivf_cells_probed, 0);
         assert_eq!(fallback_snapshot.ivf_whole_region_fallback, 1);
+        assert!(
+            fallback_snapshot.ivf_region_a_bytes > 0,
+            "whole-region fallback must attribute its physical Region-A bytes"
+        );
+        assert!(
+            fallback_snapshot.ivf_region_b_bytes > 0,
+            "fallback rerank must attribute its physical Region-B bytes"
+        );
         unsafe {
             std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
             std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");

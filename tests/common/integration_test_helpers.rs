@@ -202,6 +202,44 @@ impl UnifiedTestEnvironment {
         Ok((vector_ops, collection_service))
     }
 
+    /// FA-2 (abac-policy): like [`vector_operations_service`] but wires a vector
+    /// ABAC enforcer into the service so `unified_search_native` enforces the
+    /// subject's accessibility predicate on the real search path. For
+    /// integration tests that prove enforcement fires end-to-end.
+    #[cfg(feature = "abac-policy")]
+    pub async fn vector_operations_service_with_abac(
+        &self,
+        enforcer: Arc<proximadb::security::rls::AbacEnforcer>,
+    ) -> Result<(Arc<VectorOperationsService>, Arc<CollectionService>)> {
+        let metadata_url = format!("file://{}", self.persistent_dir.join("metadata").display());
+        let sst_engine = Arc::new(SstEngine::new().await?);
+        let wal_manager = Arc::new(WriteAheadLogManager::new(WALConfig::default()).await?);
+        let axis_manager = Arc::new(AxisManager::new(AxisConfig::default()).await?);
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &metadata_url)
+            .await?;
+        let storage_config = StorageConfig {
+            metadata_url,
+            ..Default::default()
+        };
+        let collection_service = Arc::new(
+            CollectionService::new(storage_config)
+                .await?
+                .with_catalog_manager(catalog_manager),
+        );
+        let vector_ops = Arc::new(
+            VectorOperationsService::new(
+                sst_engine,
+                wal_manager,
+                axis_manager,
+                collection_service.clone() as Arc<dyn CollectionPort>,
+            )
+            .with_abac_enforcer(enforcer),
+        );
+        Ok((vector_ops, collection_service))
+    }
+
     /// Create a dense vector collection on the given `CollectionService`
     /// (cosine / SST), for use with the `vector_operations_service()` stack.
     pub async fn create_vector_collection(

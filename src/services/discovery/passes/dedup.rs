@@ -30,15 +30,15 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
     // Resolve the user-facing collection name to the canonical internal id the
     // write path keys WAL + storage under (the catalog/snapshot side uses the
     // name; the vector data side uses the resolved id).
-    let collection_id = vector_ops
-        .resolve_collection_id(ctx.collection_id.as_str())
-        .await;
-    let collection_id = collection_id.as_str();
+    let collection_object_id = vector_ops
+        .resolve_collection_object_id(ctx.collection_id.as_str())
+        .await?;
+    let collection_id = collection_object_id.to_string();
 
     // v2 canonical storage-inclusive read: WAL/memtable + flushed storage,
     // merged by oid (freshest wins). Records carry embeddings.
     let records = vector_ops
-        .list_all_records_with_tenant_context(collection_id, None)
+        .list_all_records_with_tenant_context(&collection_id, None)
         .await?;
     let input = records.len() as u64;
 
@@ -72,7 +72,7 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
     if !duplicate_ids.is_empty() {
         // v2 canonical delete (tombstones).
         vector_ops
-            .delete_records_with_tenant_context(collection_id, duplicate_ids, None)
+            .delete_records_with_tenant_context(&collection_id, duplicate_ids, None)
             .await?;
     }
 

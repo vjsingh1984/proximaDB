@@ -58,9 +58,19 @@ impl Sq8Params {
 /// be represented by SQ8 and are carried via the null bitmap at the stripe
 /// layer). An empty / all-non-finite input yields a degenerate `[0, 0]` range.
 pub fn fit_params(values: &[f32]) -> Sq8Params {
+    fit_params_iter(values.iter().copied())
+}
+
+/// Fit SQ8 parameters from a stream of values without first flattening a
+/// segmented column into a second full-size `Vec<f32>`.
+///
+/// This is the canonical fitting kernel for both contiguous and segmented
+/// inputs. Keeping the reduction here prevents storage writers from copying an
+/// entire vector corpus merely to discover its min/max bounds.
+pub fn fit_params_iter(values: impl IntoIterator<Item = f32>) -> Sq8Params {
     let mut vmin = f32::INFINITY;
     let mut vmax = f32::NEG_INFINITY;
-    for &v in values {
+    for v in values {
         if v.is_finite() {
             if v < vmin {
                 vmin = v;
@@ -124,6 +134,138 @@ pub fn decode_into(codes: &[u8], params: &Sq8Params, out: &mut Vec<f32>) {
     }
 }
 
+/// Squared L2 distance from SQ8 codes to an f32 query without materializing a
+/// decoded vector. Returns `None` for a dimension mismatch.
+///
+/// This is the Region-B rerank primitive: the former decode-then-score path
+/// allocated `Vec<f32>` per survivor and traversed each row twice. The fused
+/// kernel keeps the fixed-stride on-disk representation unchanged.
+#[inline]
+pub fn l2_squared(codes: &[u8], query: &[f32], params: &Sq8Params) -> Option<f32> {
+    if codes.len() != query.len() {
+        return None;
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // AArch64 guarantees Advanced SIMD. The target-feature boundary keeps
+        // the unsafe intrinsics contained behind the length check above.
+        return Some(unsafe { l2_squared_neon(codes, query, params) });
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("avx2") {
+            return Some(unsafe { l2_squared_avx2(codes, query, params) });
+        }
+    }
+    #[allow(unreachable_code)]
+    Some(l2_squared_scalar(codes, query, params))
+}
+
+#[inline]
+fn l2_squared_scalar(codes: &[u8], query: &[f32], params: &Sq8Params) -> f32 {
+    let mut sum = 0.0f32;
+    for (&code, &q) in codes.iter().zip(query) {
+        let delta = dequantize_one(code, params) - q;
+        sum += delta * delta;
+    }
+    sum
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn l2_squared_neon(codes: &[u8], query: &[f32], params: &Sq8Params) -> f32 {
+    use std::arch::aarch64::*;
+
+    let mut i = 0usize;
+    let mut acc = vdupq_n_f32(0.0);
+    let offset = vdupq_n_f32(params.offset);
+    while i + 8 <= codes.len() {
+        // SAFETY: the loop proves both 8 code bytes and 8 query floats remain.
+        let packed = unsafe { vld1_u8(codes.as_ptr().add(i)) };
+        let widened = vmovl_u8(packed);
+        let low = vcvtq_f32_u32(vmovl_u16(vget_low_u16(widened)));
+        let high = vcvtq_f32_u32(vmovl_u16(vget_high_u16(widened)));
+        let decoded_low = vmlaq_n_f32(offset, low, params.scale);
+        let decoded_high = vmlaq_n_f32(offset, high, params.scale);
+        // SAFETY: the loop bound above also proves these query loads.
+        let query_low = unsafe { vld1q_f32(query.as_ptr().add(i)) };
+        let query_high = unsafe { vld1q_f32(query.as_ptr().add(i + 4)) };
+        let delta_low = vsubq_f32(decoded_low, query_low);
+        let delta_high = vsubq_f32(decoded_high, query_high);
+        acc = vmlaq_f32(acc, delta_low, delta_low);
+        acc = vmlaq_f32(acc, delta_high, delta_high);
+        i += 8;
+    }
+    let mut sum = vaddvq_f32(acc);
+    for (&code, &q) in codes[i..].iter().zip(&query[i..]) {
+        let delta = dequantize_one(code, params) - q;
+        sum += delta * delta;
+    }
+    sum
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn l2_squared_avx2(codes: &[u8], query: &[f32], params: &Sq8Params) -> f32 {
+    use std::arch::x86_64::*;
+
+    let mut i = 0usize;
+    let mut acc = _mm256_setzero_ps();
+    let offset = _mm256_set1_ps(params.offset);
+    let scale = _mm256_set1_ps(params.scale);
+    while i + 8 <= codes.len() {
+        // SAFETY: the loop proves 8 code bytes and 8 query floats remain.
+        let packed = unsafe { _mm_loadl_epi64(codes.as_ptr().add(i).cast::<__m128i>()) };
+        let widened = _mm256_cvtepu8_epi32(packed);
+        let decoded = _mm256_add_ps(offset, _mm256_mul_ps(_mm256_cvtepi32_ps(widened), scale));
+        // SAFETY: the loop bound above proves this query load.
+        let query_values = unsafe { _mm256_loadu_ps(query.as_ptr().add(i)) };
+        let delta = _mm256_sub_ps(decoded, query_values);
+        acc = _mm256_add_ps(acc, _mm256_mul_ps(delta, delta));
+        i += 8;
+    }
+    let mut lanes = [0.0f32; 8];
+    // SAFETY: `lanes` has exactly eight writable f32 elements.
+    unsafe { _mm256_storeu_ps(lanes.as_mut_ptr(), acc) };
+    let mut sum = lanes.into_iter().sum::<f32>();
+    for (&code, &q) in codes[i..].iter().zip(&query[i..]) {
+        let delta = dequantize_one(code, params) - q;
+        sum += delta * delta;
+    }
+    sum
+}
+
+/// Reconstructed SQ8 dot product without allocating a decoded row.
+#[inline]
+pub fn dot_product(codes: &[u8], query: &[f32], params: &Sq8Params) -> Option<f32> {
+    if codes.len() != query.len() {
+        return None;
+    }
+    Some(
+        codes
+            .iter()
+            .zip(query)
+            .map(|(&code, &q)| dequantize_one(code, params) * q)
+            .sum(),
+    )
+}
+
+/// Reconstructed SQ8 `(dot(query, row), norm_squared(row))` in one pass.
+#[inline]
+pub fn dot_and_norm_squared(codes: &[u8], query: &[f32], params: &Sq8Params) -> Option<(f32, f32)> {
+    if codes.len() != query.len() {
+        return None;
+    }
+    let mut dot = 0.0f32;
+    let mut norm_squared = 0.0f32;
+    for (&code, &q) in codes.iter().zip(query) {
+        let value = dequantize_one(code, params);
+        dot += value * q;
+        norm_squared += value * value;
+    }
+    Some((dot, norm_squared))
+}
+
 /// Encode then immediately decode, returning the lossy reconstruction — used by
 /// callers that need the reconstructed values the reader will see (e.g. for
 /// recall estimation at write time). Errors only if `params` is non-finite.
@@ -185,6 +327,63 @@ mod tests {
         assert_eq!(params.vmin, 0.0);
         assert_eq!(params.vmax, 1.0);
         assert_eq!(quantize_one(f32::NAN, &params), 0);
+    }
+
+    #[test]
+    fn streamed_fit_is_identical_to_contiguous_fit() {
+        let rows = [vec![-3.0, f32::NAN, 0.25], vec![7.5, f32::INFINITY, -1.25]];
+        let contiguous = rows.iter().flatten().copied().collect::<Vec<_>>();
+        let expected = fit_params(&contiguous);
+        let actual = fit_params_iter(rows.iter().flatten().copied());
+        assert_eq!(actual.scale.to_bits(), expected.scale.to_bits());
+        assert_eq!(actual.offset.to_bits(), expected.offset.to_bits());
+        assert_eq!(actual.vmin.to_bits(), expected.vmin.to_bits());
+        assert_eq!(actual.vmax.to_bits(), expected.vmax.to_bits());
+    }
+
+    #[test]
+    fn fused_scores_match_decode_then_score() {
+        let params = Sq8Params {
+            scale: 0.03125,
+            offset: -3.5,
+            vmin: -3.5,
+            vmax: 4.46875,
+        };
+        for dim in [1usize, 7, 8, 15, 16, 31, 128, 129] {
+            let codes = (0..dim)
+                .map(|i| ((i * 73 + 19) % 256) as u8)
+                .collect::<Vec<_>>();
+            let query = (0..dim)
+                .map(|i| ((i * 29 + 7) as f32 * 0.017).sin() * 4.0)
+                .collect::<Vec<_>>();
+            let decoded = decode(&codes, &params);
+            let expected_l2 = decoded
+                .iter()
+                .zip(&query)
+                .map(|(value, query)| {
+                    let delta = value - query;
+                    delta * delta
+                })
+                .sum::<f32>();
+            let expected_dot = decoded
+                .iter()
+                .zip(&query)
+                .map(|(value, query)| value * query)
+                .sum::<f32>();
+            let expected_norm = decoded.iter().map(|value| value * value).sum::<f32>();
+            let actual_l2 = l2_squared(&codes, &query, &params).expect("matching dimensions");
+            let actual_dot = dot_product(&codes, &query, &params).expect("matching dimensions");
+            let (dot, norm) =
+                dot_and_norm_squared(&codes, &query, &params).expect("matching dimensions");
+            let tolerance = |expected: f32| expected.abs().max(1.0) * 1e-5;
+            assert!((actual_l2 - expected_l2).abs() <= tolerance(expected_l2));
+            assert!((actual_dot - expected_dot).abs() <= tolerance(expected_dot));
+            assert!((dot - expected_dot).abs() <= tolerance(expected_dot));
+            assert!((norm - expected_norm).abs() <= tolerance(expected_norm));
+        }
+        assert!(l2_squared(&[1, 2], &[1.0], &params).is_none());
+        assert!(dot_product(&[1, 2], &[1.0], &params).is_none());
+        assert!(dot_and_norm_squared(&[1, 2], &[1.0], &params).is_none());
     }
 
     #[test]

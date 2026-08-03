@@ -33,7 +33,7 @@ use sha2::{Digest, Sha256};
 /// attributes in different tenants) and **multi-valued** (roles are an ordinary
 /// `AttrValue::List` attribute, not a single assignment column — per TF-2 §3.1,
 /// "a role is just an attribute").
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AttributeBinding {
     /// The principal this binding is for.
     pub subject_id: SubjectId,
@@ -222,6 +222,11 @@ impl InMemoryAttributeAuthority {
     /// [`AuthorityError::NoBinding`].
     pub fn revoke(&mut self, subject: &SubjectId, tenant_stable_id: TenantStableId) {
         self.bindings.remove(&(tenant_stable_id, subject.0.clone()));
+    }
+
+    /// An iterator over all bindings — for serialization/durability.
+    pub fn bindings(&self) -> impl Iterator<Item = &AttributeBinding> {
+        self.bindings.values()
     }
 
     /// Simulate the authority being unreachable (tests for the fail-closed path).
@@ -455,5 +460,212 @@ mod tests {
             .digest;
         assert_eq!(d.to_hex().len(), 32);
         assert_eq!(d.as_bytes().len(), 16);
+    }
+}
+
+// ===========================================================================
+// FileSystemAttributeAuthority — durable backing (Phase 5)
+// ===========================================================================
+
+use std::path::{Path, PathBuf};
+use std::sync::RwLock;
+
+/// A [`AttributeAuthority`] backed by an atomic-rename JSON snapshot on the
+/// filesystem — modeled on `FileSystemCorpusVersionStore`
+/// (`crates/control/proximadb-catalog/src/corpus_version_fs_store.rs`).
+///
+/// **OSS mechanism** (ADR-060): this is the persistence *mechanism* — atomic
+/// rename, load-on-open, best-effort persist. The commercial crate supplies the
+/// IdP-backed production `AttributeAuthority`; this is the development/reference
+/// impl that survives a process restart.
+///
+/// Writes are **synchronous and atomic**: `upsert`/`revoke` immediately persist
+/// the full binding set via a temp-file + rename. This is the same trade-off
+/// `FileSystemCorpusVersionStore` makes — simple, correct, adequate for
+/// development; a production impl might use per-binding rows. The in-memory cache
+/// is behind a [`RwLock`] so an admin write through a shared `Arc` handle is
+/// visible to the live enforcer without a restart (hot-reload): writes take the
+/// write-lock and persist; reads take the read-lock.
+pub struct FileSystemAttributeAuthority {
+    inner: RwLock<InMemoryAttributeAuthority>,
+    path: PathBuf,
+}
+
+impl FileSystemAttributeAuthority {
+    /// Open (or create) the authority at `path`. If the file exists, bindings
+    /// are loaded — this is the **restart-recovery** path.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, AuthorityError> {
+        let path = path.as_ref().to_path_buf();
+        let mut inner = InMemoryAttributeAuthority::new();
+        if path.exists() {
+            let data = std::fs::read(&path).map_err(|e| AuthorityError::Unavailable {
+                detail: format!("read {}: {e}", path.display()),
+            })?;
+            let bindings: Vec<AttributeBinding> =
+                serde_json::from_slice(&data).map_err(|e| AuthorityError::Unavailable {
+                    detail: format!("deserialize {}: {e}", path.display()),
+                })?;
+            for b in bindings {
+                inner.upsert(b);
+            }
+        }
+        Ok(Self {
+            inner: RwLock::new(inner),
+            path,
+        })
+    }
+
+    /// Insert or replace a binding and persist immediately (atomic rename).
+    ///
+    /// Takes `&self` (not `&mut self`): the in-memory cache lives behind a
+    /// [`RwLock`], so a shared `Arc<FileSystemAttributeAuthority>` handle can
+    /// mutate the authority — the admin-provisioning path (TD-ABAC control-plane)
+    /// writes through the same instance the live enforcer reads, and the change
+    /// is visible without a restart.
+    pub fn upsert(&self, binding: AttributeBinding) {
+        {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.upsert(binding);
+        }
+        let _ = self.persist();
+    }
+
+    /// Remove a binding and persist immediately. `&self` for the same hot-reload
+    /// reason as [`upsert`](Self::upsert).
+    pub fn revoke(&self, subject: &SubjectId, tenant_stable_id: TenantStableId) {
+        {
+            let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+            guard.revoke(subject, tenant_stable_id);
+        }
+        let _ = self.persist();
+    }
+
+    /// A snapshot of every attribute binding — for inspection/audit (the GET
+    /// admin endpoints). Owned (not an iterator borrowing `&self`) because the
+    /// cache is behind a [`RwLock`]; mirrors
+    /// [`FileSystemPredicateObjectStore::objects`](crate::FileSystemPredicateObjectStore::objects).
+    pub fn bindings(&self) -> Vec<AttributeBinding> {
+        self.inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .bindings()
+            .cloned()
+            .collect()
+    }
+
+    /// Write the full binding set atomically (temp + rename). Re-reads the live
+    /// cache under the read-lock — so it always reflects the latest committed
+    /// state (no lost update under concurrent admin writes).
+    fn persist(&self) -> Result<(), AuthorityError> {
+        let bindings: Vec<AttributeBinding> = {
+            let guard = self.inner.read().unwrap_or_else(|p| p.into_inner());
+            guard.bindings().cloned().collect()
+        };
+        let json = serde_json::to_vec(&bindings).map_err(|e| AuthorityError::Unavailable {
+            detail: format!("serialize bindings: {e}"),
+        })?;
+        let tmp = self.path.with_extension("tmp");
+        std::fs::write(&tmp, &json).map_err(|e| AuthorityError::Unavailable {
+            detail: format!("write {}: {e}", tmp.display()),
+        })?;
+        std::fs::rename(&tmp, &self.path).map_err(|e| AuthorityError::Unavailable {
+            detail: format!("rename {} → {}: {e}", tmp.display(), self.path.display()),
+        })?;
+        Ok(())
+    }
+}
+
+impl AttributeAuthority for FileSystemAttributeAuthority {
+    fn resolve_effective_attributes(
+        &self,
+        subject: &SubjectId,
+        tenant_stable_id: TenantStableId,
+    ) -> Result<ResolvedSubject, AuthorityError> {
+        self.inner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .resolve_effective_attributes(subject, tenant_stable_id)
+    }
+}
+
+#[cfg(test)]
+mod fs_authority_tests {
+    use super::*;
+
+    #[test]
+    fn bindings_survive_a_restart() {
+        let dir = std::env::temp_dir().join(format!(
+            "proximadb-abac-fs-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("attrs.json");
+
+        // Write phase: create authority, add alice, drop it.
+        {
+            let auth = FileSystemAttributeAuthority::open(&path).unwrap();
+            auth.upsert(
+                AttributeBinding::new("alice", 7).with_attr("dept", AttrValue::Str("eng".into())),
+            );
+            // The binding is now persisted.
+            assert!(path.exists(), "persist wrote the file");
+        }
+        // `auth` is dropped — in-memory state is gone.
+
+        // Read phase: reopen from the same path — alice's binding must survive.
+        let auth = FileSystemAttributeAuthority::open(&path).unwrap();
+        let resolved = auth
+            .resolve_effective_attributes(&SubjectId("alice".into()), 7)
+            .expect("alice survived the restart");
+        assert_eq!(
+            resolved.attributes.load_bearing("dept"),
+            Some(&AttrValue::Str("eng".into())),
+            "the durable authority recovered alice's dept=eng binding"
+        );
+
+        // An unbound subject still denies.
+        assert!(
+            auth.resolve_effective_attributes(&SubjectId("bob".into()), 7)
+                .is_err()
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn revocation_persists_across_restart() {
+        let dir = std::env::temp_dir().join(format!(
+            "proximadb-abac-fs-revoke-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("attrs.json");
+
+        // Add alice, then revoke.
+        {
+            let auth = FileSystemAttributeAuthority::open(&path).unwrap();
+            auth.upsert(
+                AttributeBinding::new("alice", 7).with_attr("dept", AttrValue::Str("eng".into())),
+            );
+            auth.revoke(&SubjectId("alice".into()), 7);
+        }
+
+        // Reopen: alice must be gone.
+        let auth = FileSystemAttributeAuthority::open(&path).unwrap();
+        assert!(
+            auth.resolve_effective_attributes(&SubjectId("alice".into()), 7)
+                .is_err(),
+            "revoked binding must not survive restart"
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
     }
 }

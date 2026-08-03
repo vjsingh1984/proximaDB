@@ -22,14 +22,17 @@ use proximadb_data_model::ProximaType;
 use proximadb_records::ProximaRecord;
 
 use super::registry::ExternalCollectionRegistry;
-use super::source_reader::{
-    read_external_records, read_external_text, read_records_by_ids, snapshot_fingerprint,
-};
+#[cfg(feature = "axis")]
+use super::source_reader::read_external_records;
+use super::source_reader::{read_external_text, read_records_by_ids, snapshot_fingerprint};
 use super::types::{ExternalCollection, ExternalCollectionSpec, ExternalCollectionStatus};
 use crate::catalog::CatalogManager;
 use crate::core::search::hybrid::{BM25Result, FusionStrategy, HybridFusionEngine, VectorResult};
+#[cfg(feature = "axis")]
 use crate::index::AxisManager;
+#[cfg(feature = "axis")]
 use crate::index::axis::management::manager::{AxisHybridQuery, VectorQuery};
+#[cfg(feature = "axis")]
 use crate::index::axis::types::{Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification};
 use crate::storage::engines::core::formats::columnar::fulltext_index::{
     FullTextIndex, TokenizerConfig,
@@ -75,7 +78,10 @@ pub struct RefreshOutcome {
 pub struct ExternalCollectionService {
     registry: Arc<ExternalCollectionRegistry>,
     catalog_manager: Arc<CatalogManager>,
+    #[cfg(feature = "axis")]
     axis_manager: Arc<AxisManager>,
+    #[cfg(feature = "axis")]
+    axis_runtime_enabled: bool,
     /// F5 Slice 3: per-collection BM25 inverted index over the source text
     /// column (keyed by collection name). In-memory; built on `build`/`refresh`.
     fulltext_indexes: Arc<RwLock<HashMap<String, FullTextIndex>>>,
@@ -85,13 +91,34 @@ impl ExternalCollectionService {
     pub fn new(
         registry: Arc<ExternalCollectionRegistry>,
         catalog_manager: Arc<CatalogManager>,
-        axis_manager: Arc<AxisManager>,
+        #[cfg(feature = "axis")] axis_manager: Arc<AxisManager>,
     ) -> Self {
         Self {
             registry,
             catalog_manager,
+            #[cfg(feature = "axis")]
             axis_manager,
+            #[cfg(feature = "axis")]
+            axis_runtime_enabled: false,
             fulltext_indexes: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Apply the process-level AXIS policy resolved during server boot.
+    #[cfg(feature = "axis")]
+    pub fn with_axis_runtime_enabled(mut self, enabled: bool) -> Self {
+        self.axis_runtime_enabled = enabled;
+        self
+    }
+
+    #[cfg(feature = "axis")]
+    fn require_axis_runtime_enabled(&self) -> Result<()> {
+        if self.axis_runtime_enabled {
+            Ok(())
+        } else {
+            anyhow::bail!(
+                "external vector indexes require storage.optimization.enable_axis_indexes=true"
+            )
         }
     }
 
@@ -171,6 +198,8 @@ impl ExternalCollectionService {
     /// publish it (`Fresh`). Reads the source but copies nothing into ProximaDB
     /// storage. Returns the number of records indexed.
     pub async fn build(&self, id: &str) -> Result<usize> {
+        #[cfg(feature = "axis")]
+        self.require_axis_runtime_enabled()?;
         let mut ec = self
             .registry
             .get(id)
@@ -225,6 +254,8 @@ impl ExternalCollectionService {
     /// source is unchanged. This is the remediation for the advisory
     /// `RebuildRequired` state; a future background sweep can call it.
     pub async fn refresh(&self, id: &str) -> Result<RefreshOutcome> {
+        #[cfg(feature = "axis")]
+        self.require_axis_runtime_enabled()?;
         let mut ec = self
             .registry
             .get(id)
@@ -280,7 +311,9 @@ impl ExternalCollectionService {
 
     /// Read + build + register-strategy. Separated so `build` can centralize
     /// status/projection transitions around it.
+    #[cfg(feature = "axis")]
     async fn build_inner(&self, ec: &ExternalCollection) -> Result<usize> {
+        self.require_axis_runtime_enabled()?;
         let records = read_external_records(&ec.spec)?;
         let count = records.len();
         let built = self
@@ -301,6 +334,13 @@ impl ExternalCollectionService {
         // configured) so search can fuse lexical + vector results.
         self.build_fulltext_index(&ec.spec)?;
         Ok(count)
+    }
+
+    /// External collections index into AXIS, so building is unsupported in a
+    /// PAX-exact-scan (`axis` off) build.
+    #[cfg(not(feature = "axis"))]
+    async fn build_inner(&self, _ec: &ExternalCollection) -> Result<usize> {
+        anyhow::bail!("external collections require the `axis` feature (PAX-exact-scan build)")
     }
 
     /// Build (or rebuild) the per-collection BM25 index from the source text
@@ -344,6 +384,7 @@ impl ExternalCollectionService {
     }
 
     /// Register the IVF routing strategy so `AxisManager::query` routes this
+    #[cfg(feature = "axis")]
     /// collection to its (already-built) IVF index. The nlist/nprobe here are
     /// routing hints; the served index keeps the parameters it was built with.
     async fn register_ivf_strategy(
@@ -519,12 +560,14 @@ impl ExternalCollectionService {
 
     /// Run the IVF vector search and federate full records — the shared vector
     /// half of `search`/`hybrid_search`.
+    #[cfg(feature = "axis")]
     async fn vector_hits(
         &self,
         ec: &ExternalCollection,
         query: Vec<f32>,
         k: usize,
     ) -> Result<Vec<ExternalHit>> {
+        self.require_axis_runtime_enabled()?;
         let q = AxisHybridQuery {
             collection_id: ec.spec.name.clone(),
             vector_query: Some(VectorQuery::Dense {
@@ -560,6 +603,18 @@ impl ExternalCollectionService {
                 ExternalHit { id, score, record }
             })
             .collect())
+    }
+
+    /// External-collection vector search routes through `AxisManager::query`;
+    /// unsupported in a PAX-exact-scan (`axis` off) build.
+    #[cfg(not(feature = "axis"))]
+    async fn vector_hits(
+        &self,
+        _ec: &ExternalCollection,
+        _query: Vec<f32>,
+        _k: usize,
+    ) -> Result<Vec<ExternalHit>> {
+        anyhow::bail!("external collections require the `axis` feature (PAX-exact-scan build)")
     }
 
     /// Look up a registry record by id.
@@ -618,7 +673,7 @@ impl ExternalCollectionService {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod tests {
     use super::*;
     use std::sync::Arc;
@@ -762,7 +817,8 @@ mod tests {
             Arc::new(ExternalCollectionRegistry::new()),
             cat.clone(),
             axis_manager().await,
-        );
+        )
+        .with_axis_runtime_enabled(true);
 
         let spec =
             ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20);
@@ -796,6 +852,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_disabled_rejects_build_before_reading_the_source() {
+        let path = fixture_path();
+        write_parquet_fixture(&path, 20, 20);
+        let cat = catalog_manager_with_default().await;
+        let axis = axis_manager().await;
+        let svc = ExternalCollectionService::new(
+            Arc::new(ExternalCollectionRegistry::new()),
+            cat,
+            axis.clone(),
+        );
+        let spec = ExternalCollectionSpec::parquet(
+            "disabled_ext",
+            path.to_str().unwrap(),
+            "id",
+            "vector",
+            20,
+        );
+        let ec = svc.register(spec).await.unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        let error = svc.build(&ec.id).await.unwrap_err();
+        assert!(
+            error.to_string().contains("enable_axis_indexes=true"),
+            "runtime policy must fail before the missing source is read: {error:#}"
+        );
+        assert!(!axis.has_served_index("disabled_ext").await);
+    }
+
+    #[tokio::test]
     async fn build_in_place_makes_index_queryable_and_fresh() {
         let path = fixture_path();
         let expect = write_parquet_fixture(&path, 32, 32);
@@ -805,7 +890,8 @@ mod tests {
             Arc::new(ExternalCollectionRegistry::new()),
             cat.clone(),
             axis.clone(),
-        );
+        )
+        .with_axis_runtime_enabled(true);
 
         let spec =
             ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 32);
@@ -840,7 +926,8 @@ mod tests {
             Arc::new(ExternalCollectionRegistry::new()),
             cat,
             axis_manager().await,
-        );
+        )
+        .with_axis_runtime_enabled(true);
         let spec =
             ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20);
         let ec = svc.register(spec).await.unwrap();
@@ -857,7 +944,8 @@ mod tests {
             Arc::new(ExternalCollectionRegistry::new()),
             cat,
             axis_manager().await,
-        );
+        )
+        .with_axis_runtime_enabled(true);
         let spec =
             ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20);
         let ec = svc.register(spec).await.unwrap();
@@ -893,7 +981,8 @@ mod tests {
             Arc::new(ExternalCollectionRegistry::new()),
             cat,
             axis_manager().await,
-        );
+        )
+        .with_axis_runtime_enabled(true);
         let spec =
             ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 24);
         let ec = svc.register(spec).await.unwrap();
@@ -939,7 +1028,8 @@ mod tests {
             Arc::new(ExternalCollectionRegistry::new()),
             cat.clone(),
             axis_manager().await,
-        );
+        )
+        .with_axis_runtime_enabled(true);
         let spec =
             ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
                 .with_text_column("text");
@@ -952,7 +1042,8 @@ mod tests {
             Arc::new(ExternalCollectionRegistry::new()),
             catalog_manager_with_default().await,
             axis_manager().await,
-        );
+        )
+        .with_axis_runtime_enabled(true);
         let spec2 = ExternalCollectionSpec::parquet(
             "ext_plain",
             path.to_str().unwrap(),
@@ -977,7 +1068,8 @@ mod tests {
             Arc::new(ExternalCollectionRegistry::new()),
             cat,
             axis_manager().await,
-        );
+        )
+        .with_axis_runtime_enabled(true);
         let spec =
             ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
                 .with_text_column("text");
@@ -1025,7 +1117,8 @@ mod tests {
         let axis = axis_manager().await;
 
         // Build with the first service (BM25 populated in its in-memory map).
-        let svc1 = ExternalCollectionService::new(registry.clone(), cat.clone(), axis.clone());
+        let svc1 = ExternalCollectionService::new(registry.clone(), cat.clone(), axis.clone())
+            .with_axis_runtime_enabled(true);
         let spec =
             ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
                 .with_text_column("text");
@@ -1034,7 +1127,8 @@ mod tests {
 
         // Simulate a restart: a fresh service shares the durable registry + the
         // (still-resident) IVF index, but starts with an EMPTY BM25 map.
-        let svc2 = ExternalCollectionService::new(registry, cat, axis);
+        let svc2 =
+            ExternalCollectionService::new(registry, cat, axis).with_axis_runtime_enabled(true);
         assert!(
             !svc2.has_fulltext_index("ext_docs"),
             "fresh service starts without BM25"
@@ -1073,7 +1167,8 @@ mod tests {
             Arc::new(ExternalCollectionRegistry::new()),
             cat,
             axis_manager().await,
-        );
+        )
+        .with_axis_runtime_enabled(true);
         let spec =
             ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
                 .with_text_column("text");

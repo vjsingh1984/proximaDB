@@ -20,10 +20,12 @@
 //! for sophisticated vector search capabilities.
 
 use anyhow::{Result, anyhow};
+#[cfg(feature = "axis")]
 use std::sync::Arc;
 
 // Import AXIS indexing components
 use crate::compute::distance_computation::DistanceMetric;
+#[cfg(feature = "axis")]
 use crate::index::axis::{AxisVectorIndex, IndexAlgorithm as AxisIndexAlgorithm, IndexFactory};
 use crate::services::operations::vectors::VectorOperationsService;
 
@@ -75,7 +77,8 @@ pub enum SearchAlgorithm {
     },
 }
 
-/// Vector search engine using AXIS indexes
+/// Vector search engine using AXIS indexes (AXIS-gated; no external consumers).
+#[cfg(feature = "axis")]
 pub struct VectorSearchEngine {
     /// Selected algorithm
     algorithm: SearchAlgorithm,
@@ -87,6 +90,7 @@ pub struct VectorSearchEngine {
     distance_metric: DistanceMetric,
 }
 
+#[cfg(feature = "axis")]
 impl VectorSearchEngine {
     /// Create new search engine with specified algorithm
     pub fn new(

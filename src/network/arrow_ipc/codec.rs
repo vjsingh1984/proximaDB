@@ -23,6 +23,9 @@ use arrow_schema::{DataType, Field, Fields, Schema, TimeUnit as ArrowTimeUnit};
 use proximadb_data_model::{ProximaValue, TimeUnit};
 use proximadb_records::conversions::json_to_proxima;
 use proximadb_records::{EdgeShape, EmbeddingCell, ProximaRecord, ProximaTreeNode};
+use proximadb_runtime::rich_search::{
+    RichFilterCondition, RichFilterOperator, RichSearchRequest, RichSearchResult,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -112,6 +115,133 @@ pub struct FlightRequestMetadata {
 ///
 /// Reuses existing conversion functions from arrow_ipc_scanner.rs
 pub struct ArrowProtoCodec;
+
+/// Canonical v2 vector-search ticket for Arrow Flight `DoGet` (TD-FLIGHT-1).
+///
+/// The pre-TD-FLIGHT-1 ticket was a JSON-serialized v1 `VectorSearchRequest`
+/// proto, whose key shape (`queries`/`include_fields`) never matched the only
+/// client that built it (the Python SDK sent `query`/`include_vectors`) — so the
+/// query vector was silently dropped and Flight search returned garbage. This is
+/// the clean canonical v2 contract: a self-describing JSON object discriminated
+/// by `"type": "vector_search"`, carrying exactly what the canonical
+/// `RichSearchRequest` needs. `do_get` routes it ahead of the removed v1
+/// fallback, and `bulk_search` builds one per query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlightSearchTicket {
+    /// Discriminator — must be the literal `"vector_search"`.
+    #[serde(rename = "type")]
+    pub ticket_type: String,
+    /// Collection name or stable catalog id (resolved by the canonical service).
+    pub collection_id: String,
+    /// Query vector.
+    pub query_vector: Vec<f32>,
+    /// Top-k (defaults to 10 when absent on the wire).
+    #[serde(default = "default_top_k")]
+    pub top_k: u32,
+    /// Typed metadata filters (defaults to none).
+    #[serde(default)]
+    pub filters: Vec<FlightFilter>,
+    /// Whether to include result vectors in the response (defaults to false).
+    #[serde(default)]
+    pub include_vector: bool,
+}
+
+fn default_top_k() -> u32 {
+    10
+}
+
+/// A single typed filter on the v2 Flight ticket — mirrors
+/// `RichFilterCondition` but with JSON-deserializable values (the ticket is a
+/// serde JSON blob, not a typed struct on the client side).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlightFilter {
+    /// Field path / attribute name.
+    pub field: String,
+    /// Operator: eq, ne, gt, gte, lt, lte, between, in, not_in, contains,
+    /// starts_with, ends_with.
+    pub op: String,
+    #[serde(default)]
+    pub value: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_upper: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub value_list: Vec<serde_json::Value>,
+}
+
+impl FlightSearchTicket {
+    /// Parse the ticket only if it carries the v2 discriminator. Returns
+    /// `None` for any other ticket shape (file/graph tickets, or the removed
+    /// v1 VectorSearchRequest JSON) so `do_get` can fall through cleanly.
+    pub fn from_ticket(ticket: &Ticket) -> Option<Self> {
+        let parsed = serde_json::from_slice::<serde_json::Value>(&ticket.ticket).ok()?;
+        let is_v2 = parsed
+            .get("type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|t| t == "vector_search");
+        if !is_v2 {
+            return None;
+        }
+        serde_json::from_value(parsed).ok()
+    }
+
+    /// Translate to the canonical transport-neutral rich request consumed by
+    /// `RecordSearchPort::search_record`. Mirrors the gRPC/REST filter lowering.
+    pub fn to_rich_request(&self) -> Result<RichSearchRequest> {
+        let filters = self
+            .filters
+            .iter()
+            .map(flight_filter_to_rich)
+            .collect::<Result<Vec<_>>>()?;
+        Ok(RichSearchRequest {
+            collection_id: self.collection_id.clone(),
+            query_vector: self.query_vector.clone(),
+            top_k: self.top_k,
+            filters,
+        })
+    }
+}
+
+/// Lower one Flight ticket filter to a canonical `RichFilterCondition`.
+fn flight_filter_to_rich(filter: &FlightFilter) -> Result<RichFilterCondition> {
+    let operator = match filter.op.as_str() {
+        "eq" => RichFilterOperator::Eq,
+        "ne" => RichFilterOperator::Ne,
+        "gt" => RichFilterOperator::Gt,
+        "gte" => RichFilterOperator::Gte,
+        "lt" => RichFilterOperator::Lt,
+        "lte" => RichFilterOperator::Lte,
+        "between" => RichFilterOperator::Between,
+        "in" => RichFilterOperator::In,
+        "not_in" => RichFilterOperator::NotIn,
+        "contains" => RichFilterOperator::Contains,
+        "starts_with" => RichFilterOperator::StartsWith,
+        "ends_with" => RichFilterOperator::EndsWith,
+        other => anyhow::bail!("unsupported Flight filter operator: {other}"),
+    };
+    let value = json_value_to_proxima(&filter.value);
+    let value_upper = filter.value_upper.as_ref().map(json_value_to_proxima);
+    let value_list = filter
+        .value_list
+        .iter()
+        .map(json_value_to_proxima)
+        .collect();
+    Ok(RichFilterCondition {
+        field: filter.field.clone(),
+        operator,
+        value,
+        value_upper,
+        value_list,
+    })
+}
+
+/// JSON value → ProximaValue, treating JSON null as `ProximaValue::Null`.
+fn json_value_to_proxima(value: &serde_json::Value) -> ProximaValue {
+    if value.is_null() {
+        ProximaValue::Null
+    } else {
+        json_to_proxima(value)
+    }
+}
 
 impl ArrowProtoCodec {
     /// Create standard vector schema for ProximaDB
@@ -948,6 +1078,120 @@ impl ArrowProtoCodec {
         .context("Failed to create RecordBatch from search results")
     }
 
+    /// Encode canonical v2 search results (`RichSearchResult`) into a Flight
+    /// `RecordBatch` with full-fidelity props (TD-FLIGHT-1). Replaces the v1
+    /// `search_results_to_batch`, which collapsed each row's props to a single
+    /// key/value pair.
+    ///
+    /// Schema (the canonical v2 Flight search response contract):
+    /// - `id` Utf8 (non-null)
+    /// - `score` Float32 (nullable)
+    /// - `vector` nullable `FixedSizeList<Float32>` — null per row when the
+    ///   request set `include_vector=false`; the child buffer still reserves
+    ///   `dimension` slots per row (same constraint as `search_results_to_batch`)
+    /// - `properties` nullable Utf8 — the FULL `props` map serialized as one
+    ///   JSON object per row; round-trips losslessly via `metadata_props`' JSON
+    ///   branch (codec.rs `metadata_props`)
+    /// - `timestamp` Int64 (nullable), `version` UInt32 (nullable), `source`
+    ///   Utf8 (nullable)
+    ///
+    /// Empty results yield a zero-row batch of this schema (no panic).
+    pub fn rich_search_results_to_batch(
+        results: &[RichSearchResult],
+        include_vector: bool,
+    ) -> Result<RecordBatch> {
+        let dimension = if include_vector {
+            results.iter().map(|r| r.vector.len()).max().unwrap_or(0)
+        } else {
+            0
+        };
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("score", DataType::Float32, true),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, false)),
+                    dimension as i32,
+                ),
+                true,
+            ),
+            Field::new("properties", DataType::Utf8, true),
+            Field::new("timestamp", DataType::Int64, true),
+            Field::new("version", DataType::UInt32, true),
+            Field::new("source", DataType::Utf8, true),
+        ]));
+
+        let id_array = StringArray::from_iter_values(results.iter().map(|r| r.id.as_str()));
+        let score_array = Float32Array::from(
+            results
+                .iter()
+                .map(|r| Some(r.score as f32))
+                .collect::<Vec<_>>(),
+        );
+
+        // Vector column: per-row validity, reserving `dimension` slots per row
+        // even when the row carries no vector (keeps the child buffer length at
+        // len*dimension — see `search_results_to_batch` for the same constraint).
+        let mut vector_values = Vec::with_capacity(results.len() * dimension);
+        let mut vector_present = Vec::with_capacity(results.len());
+        for r in results {
+            if include_vector && dimension > 0 && r.vector.len() == dimension {
+                vector_values.extend_from_slice(&r.vector);
+                vector_present.push(true);
+            } else {
+                vector_values.extend(std::iter::repeat_n(0.0f32, dimension));
+                vector_present.push(false);
+            }
+        }
+        let flat_array = Arc::new(Float32Array::from(vector_values)) as ArrayRef;
+        let vector_field = Arc::new(Field::new("item", DataType::Float32, false));
+        let vector_nulls = vector_present
+            .iter()
+            .any(|present| !present)
+            .then(|| arrow_buffer::NullBuffer::from(vector_present));
+        let vector_array =
+            FixedSizeListArray::new(vector_field, dimension as i32, flat_array, vector_nulls);
+
+        let properties_array = StringArray::from(
+            results
+                .iter()
+                .map(|r| {
+                    if r.props.is_empty() {
+                        None
+                    } else {
+                        serde_json::to_string(&r.props).ok()
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+        let timestamp_array =
+            Int64Array::from(results.iter().map(|r| r.timestamp).collect::<Vec<_>>());
+        let version_array =
+            UInt32Array::from(results.iter().map(|r| r.version).collect::<Vec<_>>());
+        let source_array = StringArray::from(
+            results
+                .iter()
+                .map(|r| r.source.as_deref())
+                .collect::<Vec<_>>(),
+        );
+
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(id_array),
+                Arc::new(score_array),
+                Arc::new(vector_array),
+                Arc::new(properties_array),
+                Arc::new(timestamp_array),
+                Arc::new(version_array),
+                Arc::new(source_array),
+            ],
+        )
+        .context("Failed to create RecordBatch from v2 search results")
+    }
+
     /// Convert SqlValue to string
     fn sql_value_to_string(value: &SqlValue) -> String {
         use crate::proto::proximadb_v1::sql_value::Value;
@@ -1217,6 +1461,176 @@ mod tests {
         assert_eq!(schema.fields().len(), 5);
         assert_eq!(schema.field(0).name(), "id");
         assert_eq!(schema.field(1).name(), "vector");
+    }
+
+    // ---- TD-FLIGHT-1: canonical v2 ticket + encoder ----
+
+    fn mk_ticket(json: serde_json::Value) -> Ticket {
+        Ticket {
+            ticket: serde_json::to_vec(&json).expect("serialize ticket").into(),
+        }
+    }
+
+    fn mk_result(id: &str, score: f64, props: Vec<(&str, ProximaValue)>) -> RichSearchResult {
+        RichSearchResult {
+            id: id.to_string(),
+            score,
+            similarity: None,
+            vector: vec![],
+            props: props.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            version: None,
+            timestamp: None,
+            source: None,
+        }
+    }
+
+    #[test]
+    fn test_flight_search_ticket_discriminator() {
+        let v2 = mk_ticket(serde_json::json!({
+            "type": "vector_search",
+            "collection_id": "c1",
+            "query_vector": [0.1, 0.2],
+            "top_k": 5
+        }));
+        let parsed = FlightSearchTicket::from_ticket(&v2).expect("v2 ticket parses");
+        assert_eq!(parsed.collection_id, "c1");
+        assert_eq!(parsed.query_vector, vec![0.1_f32, 0.2]);
+        assert_eq!(parsed.top_k, 5);
+        assert!(!parsed.include_vector);
+        assert!(parsed.filters.is_empty());
+
+        // Non-v2 tickets return None rather than mis-parsing.
+        let file_ticket = mk_ticket(serde_json::json!({
+            "type": "arrow_file", "collection_id": "c1", "file_path": "/x"
+        }));
+        assert!(FlightSearchTicket::from_ticket(&file_ticket).is_none());
+
+        // Old v1 VectorSearchRequest shape (no "type") is rejected.
+        let v1 = mk_ticket(serde_json::json!({
+            "collection_id": "c1", "queries": [], "top_k": 3
+        }));
+        assert!(FlightSearchTicket::from_ticket(&v1).is_none());
+    }
+
+    #[test]
+    fn test_flight_search_ticket_to_rich_request() {
+        let ticket = FlightSearchTicket {
+            ticket_type: "vector_search".to_string(),
+            collection_id: "c1".to_string(),
+            query_vector: vec![1.0, 2.0, 3.0],
+            top_k: 7,
+            filters: vec![
+                FlightFilter {
+                    field: "year".into(),
+                    op: "gte".into(),
+                    value: serde_json::json!(2020),
+                    value_upper: None,
+                    value_list: vec![],
+                },
+                FlightFilter {
+                    field: "tag".into(),
+                    op: "in".into(),
+                    value: serde_json::json!(null),
+                    value_upper: None,
+                    value_list: vec![serde_json::json!("a"), serde_json::json!("b")],
+                },
+                FlightFilter {
+                    field: "price".into(),
+                    op: "between".into(),
+                    value: serde_json::json!(10),
+                    value_upper: Some(serde_json::json!(100)),
+                    value_list: vec![],
+                },
+            ],
+            include_vector: true,
+        };
+        let req = ticket.to_rich_request().expect("translate");
+        assert_eq!(req.collection_id, "c1");
+        assert_eq!(req.top_k, 7);
+        assert_eq!(req.filters.len(), 3);
+        assert_eq!(req.filters[0].operator, RichFilterOperator::Gte);
+        assert_eq!(req.filters[1].operator, RichFilterOperator::In);
+        assert_eq!(req.filters[1].value_list.len(), 2);
+        assert_eq!(req.filters[2].operator, RichFilterOperator::Between);
+        assert!(req.filters[2].value_upper.is_some());
+
+        // Unsupported operator is rejected, not silently coerced.
+        let bad = FlightFilter {
+            field: "x".into(),
+            op: "weird".into(),
+            value: serde_json::json!(1),
+            value_upper: None,
+            value_list: vec![],
+        };
+        let bad_ticket = FlightSearchTicket {
+            ticket_type: "vector_search".into(),
+            collection_id: "c".into(),
+            query_vector: vec![],
+            top_k: 1,
+            filters: vec![bad],
+            include_vector: false,
+        };
+        assert!(bad_ticket.to_rich_request().is_err());
+    }
+
+    #[test]
+    fn test_rich_search_results_to_batch_empty() {
+        let batch =
+            ArrowProtoCodec::rich_search_results_to_batch(&[], false).expect("empty encodes");
+        assert_eq!(batch.num_rows(), 0);
+        // The canonical v2 schema (7 typed columns), including the new
+        // full-fidelity `properties` column.
+        let field_names: Vec<String> = batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().to_string())
+            .collect();
+        assert_eq!(
+            field_names,
+            vec![
+                "id".to_string(),
+                "score".to_string(),
+                "vector".to_string(),
+                "properties".to_string(),
+                "timestamp".to_string(),
+                "version".to_string(),
+                "source".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_rich_search_results_to_batch_preserves_full_props() {
+        let props = vec![
+            ("category", ProximaValue::String("books".into())),
+            ("year", ProximaValue::Int64(2024)),
+        ];
+        let results = vec![mk_result("r1", 0.91, props)];
+        let batch = ArrowProtoCodec::rich_search_results_to_batch(&results, false).expect("encode");
+        assert_eq!(batch.num_rows(), 1);
+        let props_col = batch.column_by_name("properties").expect("properties col");
+        let sa = props_col
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("properties is StringArray");
+        // The full map round-trips as JSON — BOTH keys survive (the v1 encoder
+        // collapsed props to a single key/value, dropping the second).
+        let json: serde_json::Value = serde_json::from_str(sa.value(0)).expect("valid json");
+        assert!(json.get("category").is_some());
+        assert!(json.get("year").is_some());
+    }
+
+    #[test]
+    fn test_rich_search_results_to_batch_vector_nullable() {
+        let mut r1 = mk_result("r1", 1.0, vec![]);
+        r1.vector = vec![0.1, 0.2, 0.3];
+        let r2 = mk_result("r2", 0.5, vec![]);
+        let batch = ArrowProtoCodec::rich_search_results_to_batch(&[r1, r2], true).expect("encode");
+        let vcol = batch.column_by_name("vector").expect("vector col");
+        assert_eq!(vcol.null_count(), 1, "second row has no vector => null");
+        assert!(!vcol.is_null(0));
+        assert!(vcol.is_null(1));
     }
 
     /// Regression: a search response with NO vector payload (the common case

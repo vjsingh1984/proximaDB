@@ -747,12 +747,20 @@ impl RecordOpsService {
     // of the collection-id cache).
 
     /// Canonical rich-record search handler used by v2 REST/gRPC/internal callers.
+    ///
+    /// Threads the request subject + tenant stable id into the vector service so
+    /// ABAC enforces at the shared `unified_search_v1_inner` seam (fail-closed on
+    /// deny). Callers without a subject (gRPC/Flight/internal today) pass `None` ⇒
+    /// `System` passthrough (today's behavior). Enforcement is `abac-policy`-gated
+    /// inside the vector service; default builds are a pass-through.
     pub async fn handle_record_search_for_tenant(
         &self,
         request: RichSearchRequest,
-        tenant_id: Option<&str>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichSearchResponse> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let tenant_context = self
+            .collection_service
+            .load_tenant_context(identity.tenant_id)?;
         let request = RichSearchRequest {
             collection_id: match self
                 .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
@@ -767,17 +775,25 @@ impl RecordOpsService {
         };
 
         self.vector_operations_service
-            .search_records_with_tenant_context(request, tenant_context.as_ref())
+            .search_records_with_tenant_context(request, tenant_context.as_ref(), identity)
             .await
     }
 
     /// Canonical rich-record get handler used by v2 REST/gRPC/internal callers.
+    ///
+    /// Threads `identity.subject` + `identity.tenant_stable_id` so a
+    /// provisioned policy admit-checks the fetched record (fail-closed on
+    /// deny); a subject-less identity (gRPC/internal callers) is a
+    /// pass-through. Enforcement is `abac-policy`-gated inside the vector
+    /// service (TD-ABAC-7: one method, identity decides — no `_abac` twin).
     pub async fn handle_record_get_for_tenant(
         &self,
         request: RichRecordGetRequest,
-        tenant_id: Option<&str>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichRecordGetResponse> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let tenant_context = self
+            .collection_service
+            .load_tenant_context(identity.tenant_id)?;
         let request = RichRecordGetRequest {
             collection_id: match self
                 .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
@@ -792,7 +808,7 @@ impl RecordOpsService {
         };
 
         self.vector_operations_service
-            .get_record_with_tenant_context(request, tenant_context.as_ref())
+            .get_record_with_tenant_context(request, tenant_context.as_ref(), identity)
             .await
     }
 
@@ -921,6 +937,24 @@ impl proximadb_runtime::RecordOpsPort for RecordOpsService {
             tenant_id,
         )
         .await
+    }
+}
+
+// TD-FLIGHT-1: canonical v2 search read port. The Arrow Flight search surfaces
+// (do_get + do_exchange bulk_search) consume this instead of the deprecated v1
+// `ApiHandlersPort::handle_vector_search_v1_for_tenant`, so they inherit the
+// same typed-filter, WAL delta-merge, MVCC/tombstone, Strong-freshness, and
+// tenant-collection-access behavior REST v2 / gRPC v2 get. Pure delegation to
+// the single canonical search authority.
+#[async_trait::async_trait]
+impl proximadb_runtime::RecordSearchPort for RecordOpsService {
+    async fn search_record(
+        &self,
+        request: RichSearchRequest,
+        identity: proximadb_runtime::PortIdentity<'_>,
+    ) -> Result<RichSearchResponse> {
+        self.handle_record_search_for_tenant(request, identity)
+            .await
     }
 }
 

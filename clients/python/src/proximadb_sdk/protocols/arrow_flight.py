@@ -654,14 +654,27 @@ class ArrowFlightClient:
         """
         client = self._get_client()
 
-        # Create search request as Ticket
+        # Canonical v2 Flight search ticket (TD-FLIGHT-1): self-describing JSON
+        # discriminated by "type":"vector_search". The legacy v1 ticket keys
+        # ("query"/"filter"/"include_vectors") never matched the server's v1
+        # VectorSearchRequest shape, so the query vector was silently dropped;
+        # this ticket carries the fields the canonical RichSearchRequest needs.
+        filters = (
+            [
+                {"field": field, "op": "eq", "value": value}
+                for field, value in filter_metadata.items()
+            ]
+            if filter_metadata
+            else []
+        )
         ticket_data = json.dumps(
             {
+                "type": "vector_search",
                 "collection_id": collection_id,
-                "query": query_vector,
+                "query_vector": query_vector,
                 "top_k": top_k,
-                "filter": filter_metadata,
-                "include_vectors": include_vectors,
+                "filters": filters,
+                "include_vector": include_vectors,
             }
         ).encode()
 
@@ -670,20 +683,31 @@ class ArrowFlightClient:
         # Execute search
         reader = client.do_get(ticket, options=self._get_call_options())
 
-        # Read results
+        # Read results. The v2 response carries a `properties` column (the full
+        # props map serialized as one JSON object per row) rather than the
+        # legacy lossy single-key `metadata` struct.
         results = []
         for chunk in reader:
             batch = chunk.data
+            names = batch.schema.names
             for i in range(batch.num_rows):
+                props_raw = (
+                    batch.column("properties")[i].as_py()
+                    if "properties" in names
+                    else None
+                )
+                metadata = json.loads(props_raw) if props_raw else {}
                 result = FlightSearchResult(
                     id=batch.column("id")[i].as_py(),
-                    vector=batch.column("vector")[i].as_py() if include_vectors else [],
-                    score=(
-                        batch.column("score")[i].as_py()
-                        if "score" in batch.schema.names
-                        else 0.0
+                    vector=(
+                        batch.column("vector")[i].as_py()
+                        if include_vectors and "vector" in names
+                        else []
                     ),
-                    metadata={},
+                    score=(
+                        batch.column("score")[i].as_py() if "score" in names else 0.0
+                    ),
+                    metadata=metadata,
                 )
                 results.append(result)
 

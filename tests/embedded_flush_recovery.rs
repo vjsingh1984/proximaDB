@@ -1,6 +1,85 @@
 use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 
-// Verifies that a close/flush cycle writes data to the UUID-based storage path
+fn deterministic_unit_vector(index: usize, dimension: usize) -> Vec<f32> {
+    fn next_u64(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut value = *state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        value ^ (value >> 31)
+    }
+
+    let mut state = 0xC0FF_EE12_3456_7890_u64 ^ (index as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    let values: Vec<f64> = (0..dimension)
+        .map(|_| {
+            let bits = next_u64(&mut state);
+            (bits as f64 / u64::MAX as f64) * 2.0 - 1.0
+        })
+        .collect();
+    let norm = values
+        .iter()
+        .map(|value| value * value)
+        .sum::<f64>()
+        .sqrt()
+        .max(1e-12);
+    values
+        .into_iter()
+        .map(|value| (value / norm) as f32)
+        .collect()
+}
+
+fn catalog_collection(
+    db: &EmbeddedProximaDB,
+    name: &str,
+) -> proximadb::proto::proximadb_v1::Collection {
+    db.runtime()
+        .block_on(
+            db.shared_services()
+                .collection_service
+                .get_collection_with_tenant_context(name, None),
+        )
+        .expect("catalog lookup")
+        .expect("catalog collection")
+}
+
+fn collection_data_path(collection: &proximadb::proto::proximadb_v1::Collection) -> String {
+    use proximadb::storage::trait_components::path_resolver::{
+        collection_data_path_typed, typed_identity_from_storage_assignment,
+    };
+
+    let assignment = collection
+        .storage_assignment
+        .as_ref()
+        .expect("storage assignment");
+    collection_data_path_typed(
+        &assignment.base_location,
+        &collection.id,
+        typed_identity_from_storage_assignment(Some(assignment)),
+    )
+}
+
+fn persisted_segments(db: &EmbeddedProximaDB, path: &str) -> Vec<String> {
+    db.runtime().block_on(async {
+        let filesystem = db
+            .shared_services()
+            .filesystem_factory
+            .get_filesystem(path)
+            .expect("filesystem for collection data path");
+        filesystem
+            .list(path)
+            .await
+            .expect("list collection data path")
+            .into_iter()
+            .filter(|entry| {
+                !entry.metadata.is_directory
+                    && (entry.name.ends_with(".pax") || entry.name.ends_with(".sst"))
+            })
+            .map(|entry| entry.url)
+            .collect()
+    })
+}
+
+// Verifies that a close/flush cycle writes data to the catalog-addressed storage path
 // and that reopening the embedded database can search the flushed data without
 // needing WAL replay. Also exercises idempotent flush (second flush is a no-op).
 #[test]
@@ -16,6 +95,8 @@ fn embedded_flush_persists_and_recovers() {
 
     db.create_collection("test_collection", 4, Some("sst"))
         .expect("create collection");
+    let created_collection = catalog_collection(&db, "test_collection");
+    let created_data_path = collection_data_path(&created_collection);
 
     let ids = vec!["v0".to_string(), "v1".to_string()];
     let vectors = vec![vec![0.1_f32, 0.2, 0.3, 0.4], vec![0.1_f32, 0.2, 0.3, 0.5]];
@@ -26,12 +107,27 @@ fn embedded_flush_persists_and_recovers() {
     // First flush should write SST + update manifest; second flush should be a no-op
     db.flush().expect("flush");
     db.flush().expect("idempotent flush");
+    let segments = persisted_segments(&db, &created_data_path);
+    assert!(
+        !segments.is_empty(),
+        "flush must publish a segment at the catalog-addressed data path {created_data_path}"
+    );
     drop(db); // close database
 
     // Reopen and search; results should be served from flushed storage, not WAL
     let mut reopen_config = EmbeddedConfig::for_low_memory(data_path.to_string_lossy().to_string());
     reopen_config.enable_wal = true;
     let reopened = EmbeddedProximaDB::new(reopen_config).expect("reopen db");
+    let recovered_collection = catalog_collection(&reopened, "test_collection");
+    assert_eq!(
+        recovered_collection.id, created_collection.id,
+        "catalog object identity must remain stable across reopen"
+    );
+    assert_eq!(
+        collection_data_path(&recovered_collection),
+        created_data_path,
+        "catalog-addressed data path must remain stable across reopen"
+    );
 
     let results = reopened
         .search("test_collection", vectors[0].clone(), 2, None)
@@ -72,10 +168,7 @@ fn embedded_flush_persists_many_vectors() {
 
     for i in 0..num_vectors {
         ids.push(format!("vec_{}", i));
-        let vector: Vec<f32> = (0..dimension)
-            .map(|j| i as f32 * 0.01 + j as f32 * 0.001)
-            .collect();
-        vectors.push(vector);
+        vectors.push(deterministic_unit_vector(i, dimension));
     }
 
     db.insert("test_collection", ids.clone(), vectors.clone(), None)
@@ -183,11 +276,7 @@ fn sst_block_serialization_roundtrip() {
         for i in 0..batch_size {
             let global_id = batch_idx * batch_size + i;
             ids.push(format!("vec_{}", global_id));
-            // Create distinct vectors using the global ID
-            let vector: Vec<f32> = (0..64)
-                .map(|j| global_id as f32 * 0.01 + j as f32 * 0.001)
-                .collect();
-            vectors.push(vector);
+            vectors.push(deterministic_unit_vector(global_id, 64));
         }
 
         db.insert("roundtrip_test", ids, vectors, None)
@@ -204,7 +293,7 @@ fn sst_block_serialization_roundtrip() {
     eprintln!("✅ Flushed to disk");
 
     // Verify pre-reopen search works (search for first vector, should be in top-10)
-    let query_vec: Vec<f32> = (0..64).map(|j| j as f32 * 0.001).collect(); // vec_0's vector
+    let query_vec = deterministic_unit_vector(0, 64);
     let pre_results = db
         .search("roundtrip_test", query_vec.clone(), 10, None)
         .expect("pre-reopen search");
@@ -280,10 +369,7 @@ fn test_large_k_search_returns_correct_count() {
 
     for i in 0..num_vectors {
         ids.push(format!("vec_{}", i));
-        let vector: Vec<f32> = (0..64)
-            .map(|j| i as f32 * 0.01 + j as f32 * 0.001)
-            .collect();
-        vectors.push(vector);
+        vectors.push(deterministic_unit_vector(i, 64));
     }
 
     db.insert("test_large_k", ids.clone(), vectors.clone(), None)

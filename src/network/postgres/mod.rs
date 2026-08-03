@@ -396,6 +396,13 @@ impl PostgresServer {
             observability_service,
         )
         .with_session_manager(session_manager.clone());
+        // TD-ABAC-10 (ADR-087): the same catalog-backed stable-id resolver
+        // REST/gRPC/Arrow wire — stamps the session identity's ABAC policy key
+        // ONCE at the startup handshake. catalog_manager already reaches
+        // pgwire, so this is zero new plumbing.
+        let protocol = protocol.with_stable_id_resolver(Some(Arc::new(
+            crate::security::CatalogTenantStableIdResolver::new(catalog_manager.clone()),
+        )));
         let mut protocol = if let Some(direct_write_services) = direct_write_services {
             protocol.with_direct_catalog_manager(
                 catalog_manager,

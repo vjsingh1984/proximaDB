@@ -2057,7 +2057,16 @@ impl UnifiedStorageFormat for ViperEngine {
         });
 
         let params = crate::storage::traits::FlushParameters {
-            collection_id: Some(collection_id.to_string()),
+            collection_id: Some(
+                collection_id
+                    .parse::<u64>()
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "VIPER bulk ingest requires a numeric catalog object id, got {collection_id:?}: {error}"
+                        )
+                    })?
+                    .to_string(),
+            ),
             force: true,
             synchronous: true,
             hints: std::collections::HashMap::new(),

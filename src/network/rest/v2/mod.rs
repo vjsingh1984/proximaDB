@@ -89,7 +89,7 @@ use super::canonical::handlers::AppState;
 pub fn create_v2_router() -> Router<AppState> {
     use axum::routing::{delete, get, post, put};
 
-    Router::new()
+    let router = Router::new()
         // Collection operations with schema support
         .route("/collections", post(collections::create_collection_v2))
         .route("/collections", get(collections::list_collections_v2))
@@ -240,15 +240,19 @@ pub fn create_v2_router() -> Router<AppState> {
         .route(
             "/_diagnostics/collections/{collection_id}/statistics",
             get(collections::get_collection_statistics_v2),
-        )
-        // Adaptive HNSW retune. POST resolves DriftKind::EfSearchOnly
-        // in-place via AxisManager::apply_hnsw_ef_hot_swap; reports
-        // DriftKind::EfConstructionOrM cases as "rebuild required"
-        // (operator must run /recluster — separate slice).
-        .route(
-            "/_diagnostics/collections/{collection_id}/recall-tune",
-            axum::routing::post(collections::post_collection_recall_tune_v2),
-        )
+        );
+    // Adaptive HNSW retune. AXIS-only — the handler and this route are
+    // elided when the `axis` feature is off. POST resolves
+    // DriftKind::EfSearchOnly in-place via
+    // AxisManager::apply_hnsw_ef_hot_swap; reports
+    // DriftKind::EfConstructionOrM cases as "rebuild required"
+    // (operator must run /recluster — separate slice).
+    #[cfg(feature = "axis")]
+    let router = router.route(
+        "/_diagnostics/collections/{collection_id}/recall-tune",
+        axum::routing::post(collections::post_collection_recall_tune_v2),
+    );
+    router
         // Recall-aware HNSW rebuild. POST reads every record for the
         // collection, runs the advisor at the live N, and atomically
         // swaps in a new HNSW graph sized for the recall_target tag.

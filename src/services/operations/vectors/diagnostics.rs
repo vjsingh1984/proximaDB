@@ -24,14 +24,14 @@ use crate::storage::traits::UnifiedStorageFormat;
 pub(crate) struct VectorServiceDiagnostics {
     wal_manager: Arc<WriteAheadLogManager>,
     storage_engine: Arc<SstEngine>,
-    collection_cache: Arc<DashMap<String, Arc<Collection>>>,
+    collection_cache: Arc<DashMap<crate::core::stable_id::CollectionObjectId, Arc<Collection>>>,
 }
 
 impl VectorServiceDiagnostics {
     pub(crate) fn new(
         wal_manager: Arc<WriteAheadLogManager>,
         storage_engine: Arc<SstEngine>,
-        collection_cache: Arc<DashMap<String, Arc<Collection>>>,
+        collection_cache: Arc<DashMap<crate::core::stable_id::CollectionObjectId, Arc<Collection>>>,
     ) -> Self {
         Self {
             wal_manager,

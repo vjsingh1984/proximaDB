@@ -38,6 +38,11 @@ pub use service::{CollectionRLS, RLSConfig, RLSFilterResult};
 
 #[cfg(feature = "abac-policy")]
 mod abac_adapter;
+// FA-c Phase 2: the service-facing enforcement API, re-exported so the
+// read-serving services (DmlService, …) can name the enforcer without depending
+// on the private adapter module's internals.
+#[cfg(feature = "abac-policy")]
+pub use abac_adapter::{AbacEnforcer, AbacScanResult, post_filter_search_results};
 
 #[cfg(all(test, feature = "abac-policy"))]
 mod abac_enforcement_tests;
