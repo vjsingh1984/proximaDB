@@ -1,7 +1,7 @@
 //! Deterministic, bounded local-scratch primitives for canonical compaction.
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -23,6 +23,355 @@ const RUN_MAGIC: &[u8; 8] = b"PXSPLRUN";
 const RUN_FORMAT_VERSION: u16 = 1;
 const FRAME_HEADER_BYTES: u64 = 8;
 const MAX_FRAME_BYTES: u64 = 1 << 30;
+const OWNER_DIRECTORY_PREFIX: &str = "proximadb-compaction-owner-";
+const TASK_MANIFEST_VERSION: u16 = 1;
+
+#[derive(Debug, Serialize)]
+struct SpillOwnerManifest {
+    format_version: u16,
+    process_id: u32,
+    process_start_time_seconds: u64,
+    owner_id: String,
+}
+
+/// Process-lifetime scratch namespace. Every compaction manager in the same
+/// process resolves to the same directory. Liveness is an advisory filesystem
+/// lock, not a PID assumption, so PID namespaces and reuse cannot make one
+/// process delete another process's active work.
+#[derive(Debug)]
+pub(crate) struct SpillScratchOwner {
+    inner: std::sync::Arc<SpillScratchOwnerInner>,
+    reclaimed_owner_directories: usize,
+}
+
+#[derive(Debug)]
+struct SpillScratchOwnerInner {
+    path: PathBuf,
+    _lease: File,
+}
+
+impl SpillScratchOwner {
+    pub(crate) fn open(root: &Path) -> Result<Self> {
+        std::fs::create_dir_all(root)?;
+        let root = root.canonicalize()?;
+        let mut registry = match spill_owner_registry().lock() {
+            Ok(registry) => registry,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(owner) = registry.get(&root).and_then(std::sync::Weak::upgrade) {
+            return Ok(Self {
+                inner: owner,
+                reclaimed_owner_directories: 0,
+            });
+        }
+
+        let cleanup_lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(root.join(".owner-cleanup.lock"))?;
+        if !lock_file_exclusive(&cleanup_lock, true)? {
+            return Err(SstError::Compaction(
+                "blocking spill cleanup lock unexpectedly returned unlocked".to_string(),
+            ));
+        }
+        let reclaimed_owner_directories = cleanup_stale_owner_directories(&root)?;
+        let system = sysinfo::System::new_all();
+        let process_id = std::process::id();
+        let process_start_time_seconds = system
+            .process(sysinfo::Pid::from_u32(process_id))
+            .map(sysinfo::Process::start_time)
+            .ok_or_else(|| {
+                SstError::Compaction(
+                    "cannot resolve current process start time for spill ownership".to_string(),
+                )
+            })?;
+        let owner_id = uuid::Uuid::new_v4().simple().to_string();
+        let path = root.join(format!(
+            "{OWNER_DIRECTORY_PREFIX}{process_id}-{process_start_time_seconds}-{owner_id}"
+        ));
+        std::fs::create_dir(&path)?;
+        let initialize = || -> Result<File> {
+            let lease = OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .open(path.join(".lease"))?;
+            if !lock_file_exclusive(&lease, true)? {
+                return Err(SstError::Compaction(
+                    "blocking spill owner lease unexpectedly returned unlocked".to_string(),
+                ));
+            }
+            write_json_atomic(
+                &path.join("owner.json"),
+                &SpillOwnerManifest {
+                    format_version: TASK_MANIFEST_VERSION,
+                    process_id,
+                    process_start_time_seconds,
+                    owner_id,
+                },
+            )?;
+            Ok(lease)
+        };
+        let lease = match initialize() {
+            Ok(lease) => lease,
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&path);
+                return Err(error);
+            }
+        };
+        let inner = std::sync::Arc::new(SpillScratchOwnerInner {
+            path,
+            _lease: lease,
+        });
+        registry.insert(root, std::sync::Arc::downgrade(&inner));
+        Ok(Self {
+            inner,
+            reclaimed_owner_directories,
+        })
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.inner.path
+    }
+
+    pub(crate) fn reclaimed_owner_directories(&self) -> usize {
+        self.reclaimed_owner_directories
+    }
+}
+
+fn spill_owner_registry()
+-> &'static std::sync::Mutex<HashMap<PathBuf, std::sync::Weak<SpillScratchOwnerInner>>> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<PathBuf, std::sync::Weak<SpillScratchOwnerInner>>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn cleanup_stale_owner_directories(root: &Path) -> Result<usize> {
+    let mut reclaimed = 0usize;
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !name.starts_with(OWNER_DIRECTORY_PREFIX) {
+            continue;
+        }
+        let lease_path = entry.path().join(".lease");
+        let lease = match OpenOptions::new().read(true).write(true).open(&lease_path) {
+            Ok(lease) => Some(lease),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if let Some(lease) = &lease
+            && !lock_file_exclusive(lease, false)?
+        {
+            continue;
+        }
+        std::fs::remove_dir_all(entry.path())?;
+        reclaimed = reclaimed.saturating_add(1);
+    }
+    Ok(reclaimed)
+}
+
+#[cfg(unix)]
+fn lock_file_exclusive(file: &File, blocking: bool) -> Result<bool> {
+    use std::os::fd::AsRawFd;
+
+    let operation = if blocking {
+        libc::LOCK_EX
+    } else {
+        libc::LOCK_EX | libc::LOCK_NB
+    };
+    // SAFETY: `file` owns a valid descriptor for this call's duration. `flock`
+    // does not retain pointers or mutate Rust-managed memory.
+    let result = unsafe { libc::flock(file.as_raw_fd(), operation) };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    if !blocking && error.kind() == std::io::ErrorKind::WouldBlock {
+        Ok(false)
+    } else {
+        Err(error.into())
+    }
+}
+
+#[cfg(not(unix))]
+fn lock_file_exclusive(_file: &File, _blocking: bool) -> Result<bool> {
+    Err(SstError::Compaction(
+        "local-spill ownership requires advisory file locks on this platform".to_string(),
+    ))
+}
+
+#[derive(Debug, Serialize)]
+struct SpillTaskSource {
+    path: String,
+    size_bytes: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct SpillTaskManifest {
+    format_version: u16,
+    collection_object_id: u64,
+    source_level: u8,
+    sources: Vec<SpillTaskSource>,
+    declared_input_bytes: u64,
+    output_path: String,
+    reserved_memory_bytes: u64,
+    reserved_scratch_bytes: u64,
+    phase: String,
+}
+
+/// Deterministic task scratch namespace plus its auditable phase manifest.
+/// Drop reclaims the complete subtree; process-owner recovery handles crashes.
+#[derive(Debug)]
+pub(crate) struct SpillTaskScratch {
+    path: PathBuf,
+    manifest: SpillTaskManifest,
+}
+
+impl SpillTaskScratch {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn begin(
+        owner_root: &Path,
+        collection_object_id: u64,
+        source_level: u8,
+        input_paths: &[String],
+        declared_input_bytes: u64,
+        output_path: &str,
+        reserved_memory_bytes: u64,
+        reserved_scratch_bytes: u64,
+    ) -> Result<Self> {
+        let fingerprint =
+            spill_task_fingerprint(collection_object_id, source_level, input_paths, output_path);
+        let path = owner_root.join(format!(
+            "task-{collection_object_id}-{source_level}-{fingerprint:016x}"
+        ));
+        std::fs::create_dir(&path).map_err(|error| {
+            SstError::Compaction(format!(
+                "create deterministic spill task directory {}: {error}",
+                path.display()
+            ))
+        })?;
+        let task = Self {
+            path,
+            manifest: SpillTaskManifest {
+                format_version: TASK_MANIFEST_VERSION,
+                collection_object_id,
+                source_level,
+                sources: input_paths
+                    .iter()
+                    .cloned()
+                    .map(|path| SpillTaskSource {
+                        path,
+                        size_bytes: None,
+                    })
+                    .collect(),
+                declared_input_bytes,
+                output_path: output_path.to_string(),
+                reserved_memory_bytes,
+                reserved_scratch_bytes,
+                phase: "admitted".to_string(),
+            },
+        };
+        if let Err(error) = task.persist_manifest() {
+            let _ = std::fs::remove_dir_all(&task.path);
+            return Err(error);
+        }
+        Ok(task)
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn update_phase(&mut self, phase: &str, source_sizes: Option<&[u64]>) -> Result<()> {
+        if let Some(source_sizes) = source_sizes {
+            if source_sizes.len() != self.manifest.sources.len() {
+                return Err(SstError::Compaction(format!(
+                    "spill manifest has {} sources but {} observed sizes",
+                    self.manifest.sources.len(),
+                    source_sizes.len()
+                )));
+            }
+            for (source, size) in self.manifest.sources.iter_mut().zip(source_sizes) {
+                source.size_bytes = Some(*size);
+            }
+        }
+        self.manifest.phase = phase.to_string();
+        self.persist_manifest()
+    }
+
+    fn persist_manifest(&self) -> Result<()> {
+        write_json_atomic(&self.path.join("task.json"), &self.manifest)
+    }
+}
+
+impl Drop for SpillTaskScratch {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                path = %self.path.display(),
+                %error,
+                "Failed to reclaim compaction spill task directory"
+            );
+        }
+    }
+}
+
+fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
+    let temporary = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(value).map_err(|error| {
+        SstError::Compaction(format!(
+            "serialize spill manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&temporary, path)?;
+    Ok(())
+}
+
+fn spill_task_fingerprint(
+    collection_object_id: u64,
+    source_level: u8,
+    input_paths: &[String],
+    output_path: &str,
+) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET;
+    let mut update = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(PRIME);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(PRIME);
+    };
+    update(&collection_object_id.to_le_bytes());
+    update(&[source_level]);
+    for path in input_paths {
+        update(&(path.len() as u64).to_le_bytes());
+        update(path.as_bytes());
+    }
+    update(&(output_path.len() as u64).to_le_bytes());
+    update(output_path.as_bytes());
+    hash
+}
 
 /// A canonical record plus its stable position in the compaction input stream.
 ///
@@ -292,9 +641,10 @@ impl CompactionRangeSource for FilesystemFactory {
 
 /// Physical shape of the compaction input pass. `largest_range_bytes` is the
 /// concrete assertion that coalesced inputs were never whole-object decoded.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RangedInputStats {
     pub(crate) input_files: usize,
+    pub(crate) source_sizes: Vec<u64>,
     pub(crate) coalesced_files: usize,
     pub(crate) legacy_whole_file_fallbacks: usize,
     pub(crate) block_range_reads: u64,
@@ -343,6 +693,7 @@ pub(crate) async fn resolve_external_mvcc_from_segments(
     for (input_index, path) in input_paths.iter().enumerate() {
         let deleted_rows = deleted_positions.get(input_index);
         let size = source.size(path).await?;
+        stats.source_sizes.push(size);
         let prefix_len = size.min(72);
         let prefix = source.read_range(path, 0, prefix_len).await?;
         stats.observe_range(prefix_len);
@@ -1329,6 +1680,146 @@ mod tests {
             }],
             ..ProximaRecord::default()
         }
+    }
+
+    #[test]
+    fn startup_cleanup_reclaims_only_unlocked_spill_owners() {
+        let root = tempfile::tempdir().expect("scratch root");
+        let stale = root
+            .path()
+            .join(format!("{OWNER_DIRECTORY_PREFIX}111-10-stale"));
+        let live = root
+            .path()
+            .join(format!("{OWNER_DIRECTORY_PREFIX}222-20-live"));
+        let unrelated = root.path().join("operator-owned");
+        std::fs::create_dir_all(stale.join("task-stale")).expect("stale owner");
+        std::fs::create_dir_all(live.join("task-live")).expect("live owner");
+        std::fs::create_dir_all(&unrelated).expect("unrelated directory");
+        File::create(stale.join(".lease")).expect("stale lease");
+        let live_lease = OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(live.join(".lease"))
+            .expect("live lease");
+        assert!(
+            lock_file_exclusive(&live_lease, true).expect("lock live lease"),
+            "blocking lease acquisition must succeed"
+        );
+
+        let reclaimed = cleanup_stale_owner_directories(root.path()).expect("cleanup stale owners");
+
+        assert_eq!(reclaimed, 1);
+        assert!(!stale.exists(), "unlocked spill scratch must be reclaimed");
+        assert!(live.exists(), "a locked process owner must be preserved");
+        assert!(unrelated.exists(), "unknown operator data must be ignored");
+    }
+
+    #[test]
+    fn spill_owner_is_reused_for_the_same_process_and_root() {
+        let root = tempfile::tempdir().expect("scratch root");
+        let first = SpillScratchOwner::open(root.path()).expect("first owner");
+        let second = SpillScratchOwner::open(root.path()).expect("reused owner");
+
+        assert_eq!(first.path(), second.path());
+        assert_eq!(second.reclaimed_owner_directories(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancellation_drops_task_guard_and_reclaims_scratch() {
+        let root = tempfile::tempdir().expect("scratch root");
+        let scratch_root = root.path().to_path_buf();
+        let (path_tx, path_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            let task = SpillTaskScratch::begin(
+                &scratch_root,
+                42,
+                1,
+                &["az://bucket/a.pax".to_string()],
+                100,
+                "az://bucket/merged.pax",
+                128,
+                400,
+            )
+            .expect("begin cancellable task");
+            path_tx
+                .send(task.path().to_path_buf())
+                .expect("publish task path");
+            std::future::pending::<()>().await;
+        });
+        let task_path = path_rx.await.expect("receive task path");
+        assert!(task_path.exists());
+
+        handle.abort();
+        let join_error = handle.await.expect_err("task must be cancelled");
+
+        assert!(join_error.is_cancelled());
+        assert!(
+            !task_path.exists(),
+            "cancelling the future must synchronously drop and reclaim its task guard"
+        );
+    }
+
+    #[test]
+    fn deterministic_task_manifest_blocks_duplicates_and_reclaims_on_drop() {
+        let root = tempfile::tempdir().expect("scratch root");
+        let inputs = vec![
+            "az://bucket/a.pax".to_string(),
+            "az://bucket/b.pax".to_string(),
+        ];
+        let mut task = SpillTaskScratch::begin(
+            root.path(),
+            42,
+            1,
+            &inputs,
+            300,
+            "az://bucket/merged.pax",
+            128,
+            1_200,
+        )
+        .expect("begin task");
+        let task_path = task.path().to_path_buf();
+        assert!(
+            SpillTaskScratch::begin(
+                root.path(),
+                42,
+                1,
+                &inputs,
+                300,
+                "az://bucket/merged.pax",
+                128,
+                1_200,
+            )
+            .is_err(),
+            "the same immutable task cannot execute twice in one process"
+        );
+        task.update_phase("mvcc-resolved", Some(&[100, 200]))
+            .expect("update manifest");
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(task.path().join("task.json")).expect("read manifest"),
+        )
+        .expect("parse manifest");
+        assert_eq!(manifest["phase"], "mvcc-resolved");
+        assert_eq!(manifest["sources"][0]["size_bytes"], 100);
+        assert_eq!(manifest["sources"][1]["size_bytes"], 200);
+
+        drop(task);
+        assert!(
+            !task_path.exists(),
+            "task drop must reclaim its whole subtree"
+        );
+        let restarted = SpillTaskScratch::begin(
+            root.path(),
+            42,
+            1,
+            &inputs,
+            300,
+            "az://bucket/merged.pax",
+            128,
+            1_200,
+        )
+        .expect("a reclaimed task identity may be scheduled again");
+        drop(restarted);
     }
 
     struct InMemoryRangeSource {

@@ -340,6 +340,10 @@ impl FileSystem for UnifiedCachingFilesystem {
         Ok(())
     }
 
+    fn supports_bounded_local_file_write(&self) -> bool {
+        self.underlying_fs.supports_bounded_local_file_write()
+    }
+
     async fn write_local_file(
         &self,
         path: &str,

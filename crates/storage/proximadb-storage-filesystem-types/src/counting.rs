@@ -219,6 +219,9 @@ impl FileSystem for CountingFileSystem {
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
         self.inner.write(path, data, options).await
     }
+    fn supports_bounded_local_file_write(&self) -> bool {
+        self.inner.supports_bounded_local_file_write()
+    }
     async fn write_local_file(
         &self,
         path: &str,

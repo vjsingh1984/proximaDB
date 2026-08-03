@@ -311,6 +311,9 @@ pub struct Compaction {
     unified_reader: Arc<UnifiedSstableReader>,
     sst_compactor: Option<Arc<SstCompactor>>,
     filesystem_factory: Arc<FilesystemFactory>,
+    /// Process-owned local scratch namespace. Present only when spill is
+    /// enabled; every task receives a deterministic child with a manifest.
+    spill_scratch_owner: Option<crate::storage::engines::sst::compaction_spill::SpillScratchOwner>,
     /// New compaction orchestrator
     #[allow(dead_code)]
     compaction_orchestrator: Option<Arc<CompactionOrchestrator>>,
@@ -357,6 +360,10 @@ impl std::fmt::Debug for Compaction {
             .field("unified_reader", &"<unified_reader>")
             .field("sst_compactor", &self.sst_compactor.is_some())
             .field("filesystem_factory", &"<filesystem_factory>")
+            .field(
+                "spill_scratch_owner",
+                &self.spill_scratch_owner.as_ref().map(|owner| owner.path()),
+            )
             .finish()
     }
 }
@@ -433,7 +440,7 @@ impl Compaction {
         config: SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) -> Result<Self> {
-        if let Some(compaction_config) = config.compaction_config.as_ref()
+        let spill_scratch_owner = if let Some(compaction_config) = config.compaction_config.as_ref()
             && compaction_config.spill_enabled
         {
             let spill_directory = compaction_config
@@ -445,14 +452,23 @@ impl Compaction {
                         "compaction spill is enabled without a local spill_directory".to_string(),
                     )
                 })?;
-            tokio::fs::create_dir_all(spill_directory)
-                .await
-                .map_err(|error| {
-                    crate::core::StorageError::SstEngine(format!(
-                        "create compaction spill directory {spill_directory}: {error}"
-                    ))
-                })?;
-        }
+            let owner = crate::storage::engines::sst::compaction_spill::SpillScratchOwner::open(
+                Path::new(spill_directory),
+            )
+            .map_err(|error| {
+                crate::core::StorageError::SstEngine(format!(
+                    "initialize compaction spill ownership at {spill_directory}: {error}"
+                ))
+            })?;
+            info!(
+                path = %owner.path().display(),
+                reclaimed_owner_directories = owner.reclaimed_owner_directories(),
+                "Compaction local-spill scratch owner initialized"
+            );
+            Some(owner)
+        } else {
+            None
+        };
 
         // Create unified reader with filesystem factory
         let filesystem_factory = Arc::new(
@@ -533,6 +549,7 @@ impl Compaction {
             unified_reader,
             sst_compactor,
             filesystem_factory,
+            spill_scratch_owner,
             compaction_orchestrator: orchestrator,
             precision_resolver: Arc::new(OnceCell::new()),
             // TD-COMPACT-6 D1: disconnected empty set until
@@ -1417,7 +1434,7 @@ impl Compaction {
         plan: CompactionResourcePlan,
     ) -> Result<EnhancedSstCompactionStats> {
         use crate::storage::engines::sst::compaction_spill::{
-            ExternalClusterOutput, ExternalMvccOutput, cluster_external_mvcc,
+            ExternalClusterOutput, ExternalMvccOutput, SpillTaskScratch, cluster_external_mvcc,
             resolve_external_mvcc_from_segments,
         };
 
@@ -1436,20 +1453,11 @@ impl Compaction {
                 "local-spill compaction currently requires PAX-only inputs".to_string(),
             ));
         }
-        let compaction_config = self.config.compaction_config.as_ref().ok_or_else(|| {
+        let scratch_owner = self.spill_scratch_owner.as_ref().ok_or_else(|| {
             crate::core::StorageError::SstEngine(
-                "local-spill execution has no compaction configuration".to_string(),
+                "local-spill execution has no process-owned scratch namespace".to_string(),
             )
         })?;
-        let scratch_root = compaction_config
-            .spill_directory
-            .as_deref()
-            .map(Path::new)
-            .ok_or_else(|| {
-                crate::core::StorageError::SstEngine(
-                    "local-spill execution has no spill_directory".to_string(),
-                )
-            })?;
         let start_time = std::time::Instant::now();
         let run_buffer_bytes = (plan.memory_bytes / 4)
             .max(1024 * 1024)
@@ -1460,6 +1468,23 @@ impl Compaction {
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
+        let output_path = task.output_file.to_string_lossy().into_owned();
+        let mut task_scratch = SpillTaskScratch::begin(
+            scratch_owner.path(),
+            task.collection_object_id,
+            task.level,
+            &input_paths,
+            task.input_bytes,
+            &output_path,
+            plan.memory_bytes,
+            plan.scratch_bytes,
+        )
+        .map_err(|error| {
+            crate::core::StorageError::SstEngine(format!(
+                "initialize local-spill task scratch: {error}"
+            ))
+        })?;
+        let scratch_root = task_scratch.path().to_path_buf();
 
         #[cfg(feature = "cold-deletion-vectors")]
         let dv_store =
@@ -1486,7 +1511,7 @@ impl Compaction {
         let (winners, input_stats) = resolve_external_mvcc_from_segments(
             self.filesystem_factory.as_ref(),
             &input_paths,
-            scratch_root,
+            &scratch_root,
             run_buffer_bytes,
             merge_fan_in,
             Self::current_time_ns(),
@@ -1501,8 +1526,22 @@ impl Compaction {
                 "local-spill ranged MVCC pass failed: {error}"
             ))
         })?;
+        task_scratch
+            .update_phase("mvcc-resolved", Some(&input_stats.source_sizes))
+            .map_err(|error| {
+                crate::core::StorageError::SstEngine(format!(
+                    "update local-spill MVCC manifest: {error}"
+                ))
+            })?;
         let mvcc_stats = *winners.stats();
         if mvcc_stats.output_records == 0 {
+            task_scratch
+                .update_phase("empty-retirement", None)
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "update empty local-spill manifest: {error}"
+                    ))
+                })?;
             self.retire_task_inputs(task).await?;
             {
                 use crate::metrics::operational_metrics as metrics;
@@ -1531,10 +1570,17 @@ impl Compaction {
             && crate::storage::engines::sst::block_cluster::ivf_probe_enabled()
             && mvcc_stats.output_records >= 64;
         let ordering = if use_ivf {
+            task_scratch
+                .update_phase("ivf-ordering", None)
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "update local-spill IVF manifest: {error}"
+                    ))
+                })?;
             SpillOrdering::Ivf(
                 cluster_external_mvcc(
                     winners,
-                    scratch_root,
+                    &scratch_root,
                     run_buffer_bytes,
                     merge_fan_in,
                     plan.memory_bytes,
@@ -1548,7 +1594,13 @@ impl Compaction {
         } else {
             SpillOrdering::Mvcc(winners)
         };
-
+        task_scratch
+            .update_phase("pax-construction", None)
+            .map_err(|error| {
+                crate::core::StorageError::SstEngine(format!(
+                    "update local-spill PAX manifest: {error}"
+                ))
+            })?;
         let staging_config = atomic_coordinator_staging(task)?;
         let atomic_operation = if let Some(coordinator) = &self.atomic_coordinator {
             Some(
@@ -1586,7 +1638,7 @@ impl Compaction {
         let write_result: Result<u64> = async {
             let staged = crate::storage::engines::sst::staged_write::StagedSegmentWrite::begin_in(
                 &publication_target,
-                scratch_root,
+                &scratch_root,
             )
             .await
             .map_err(|error| {
@@ -1606,7 +1658,7 @@ impl Compaction {
             let mut writer =
                 crate::storage::engines::sst::segment_format::pax_spill_compaction_writer(
                     Path::new(staged.local_path()),
-                    scratch_root,
+                    &scratch_root,
                     &collection_id,
                     1,
                     proximadb_block_format::VectorQuant::Sq8,
@@ -1651,8 +1703,15 @@ impl Compaction {
                     "finish disk-backed PAX segment: {error}"
                 ))
             })?;
+            task_scratch
+                .update_phase("uploading", None)
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "update local-spill upload manifest: {error}"
+                    ))
+                })?;
             staged
-                .finalize(&self.filesystem_factory)
+                .finalize_bounded(&self.filesystem_factory)
                 .await
                 .map_err(|error| {
                     crate::core::StorageError::SstEngine(format!(
@@ -1693,6 +1752,9 @@ impl Compaction {
                 "publish local-spill PAX segment: {error}"
             )));
         }
+        if let Err(error) = task_scratch.update_phase("published", None) {
+            warn!(%error, "Local-spill publication committed but manifest update failed");
+        }
 
         self.retire_task_inputs(task).await.map_err(|error| {
             crate::core::StorageError::SstEngine(format!(
@@ -1700,6 +1762,9 @@ impl Compaction {
                 task.output_file.display()
             ))
         })?;
+        if let Err(error) = task_scratch.update_phase("retired", None) {
+            warn!(%error, "Local-spill retirement committed but manifest update failed");
+        }
 
         let elapsed = start_time.elapsed();
         let cluster_stats = match &ordering {

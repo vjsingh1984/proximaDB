@@ -87,11 +87,32 @@ impl StagedSegmentWrite {
     /// of the time in review round 1 of this fix). Sidecar-aware: an Arrow
     /// segment's `{path}.idx` (required by `ArrowBlockReader::open`) is
     /// uploaded alongside as `{remote}.idx` and its scratch removed too.
-    pub(crate) async fn finalize(mut self, factory: &Arc<FilesystemFactory>) -> Result<u64> {
-        if let Some(remote) = self.remote_url.take() {
+    pub(crate) async fn finalize(self, factory: &Arc<FilesystemFactory>) -> Result<u64> {
+        self.finalize_with_policy(factory, false).await
+    }
+
+    /// Finalize only when a remote backend guarantees bounded-memory upload.
+    /// The local direct-write path is already bounded and needs no backend
+    /// capability check.
+    pub(crate) async fn finalize_bounded(self, factory: &Arc<FilesystemFactory>) -> Result<u64> {
+        self.finalize_with_policy(factory, true).await
+    }
+
+    async fn finalize_with_policy(
+        mut self,
+        factory: &Arc<FilesystemFactory>,
+        require_bounded_remote: bool,
+    ) -> Result<u64> {
+        if let Some(remote) = self.remote_url.clone() {
             let fs = factory
                 .get_filesystem(&remote)
                 .map_err(|e| anyhow::anyhow!("staging filesystem for {remote}: {e}"))?;
+            if require_bounded_remote && !fs.supports_bounded_local_file_write() {
+                anyhow::bail!(
+                    "{} backend does not guarantee bounded local-file publication for {remote}",
+                    fs.filesystem_type()
+                );
+            }
             let bytes = fs
                 .write_local_file(&remote, std::path::Path::new(&self.local_path), None)
                 .await
@@ -109,6 +130,7 @@ impl StagedSegmentWrite {
                 .map_err(|e| anyhow::anyhow!("upload Arrow sidecar to {remote}.idx: {e}"))?;
                 let _ = tokio::fs::remove_file(&sidecar).await;
             }
+            self.remote_url.take();
             tracing::debug!(remote = %remote, bytes, "staged segment uploaded");
             Ok(bytes)
         } else {

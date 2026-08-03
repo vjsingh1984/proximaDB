@@ -210,6 +210,10 @@ impl FileSystem for AwsS3FileSystem {
         Ok(())
     }
 
+    fn supports_bounded_local_file_write(&self) -> bool {
+        true
+    }
+
     async fn write_local_file(
         &self,
         path: &str,

@@ -574,6 +574,16 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Write file contents
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()>;
 
+    /// Whether [`FileSystem::write_local_file`] has a bounded-memory
+    /// implementation rather than the compatibility whole-file fallback.
+    ///
+    /// Callers with an admitted memory ceiling (notably local-spill
+    /// compaction) must check this capability and fail closed. Decorators must
+    /// delegate only when they preserve the underlying bound.
+    fn supports_bounded_local_file_write(&self) -> bool {
+        false
+    }
+
     /// Publish an existing local file as one object and return its byte count.
     ///
     /// Object-store implementations override this with bounded multipart or

@@ -160,16 +160,30 @@ re-materialized solely to construct an `Arc`.
 === D6 — Publication is the only visibility boundary
 
 Each task owns a scratch directory named from its immutable task identity. A
-task manifest records its source paths, source sizes, output path, configuration
-fingerprint, and phase. Scratch files carry length framing and checksums; a
-truncated/corrupt run fails the task.
+task manifest records its source paths, source sizes, output path, admitted
+resources, and phase; the directory name carries a stable immutable-task
+fingerprint. Scratch files carry length framing and checksums; a truncated/
+corrupt run fails the task.
+
+One process-owned directory holds an exclusive advisory lock on a `.lease`
+file for its full lifetime. A root-scoped cleanup lock serializes owner creation
+and stale cleanup across server processes sharing one local or managed RWO
+disk. PID and process-start fields remain audit metadata only: they never decide
+liveness because PID namespaces can give multiple containers the same PID.
+Startup may reclaim only a ProximaDB-prefixed owner whose lease lock can be
+acquired non-blocking; unknown directories and locked owners are preserved.
+Platforms without this lock contract fail spill initialization closed.
 
 No intermediate is query-visible. The final local PAX is validated, uploaded
 once to the final transaction staging target, and published through the existing
 atomic coordinator. Input files, input deletion vectors, and their cache entries
 are retired only after publication. Failure or cancellation leaves the source
 segments authoritative. Startup removes abandoned task directories whose owners
-hold no live process lease; resume is not part of the first implementation.
+hold no live filesystem lease; resume is not part of the first implementation.
+Remote publication is admitted only when the selected filesystem implementation
+declares a bounded local-file upload path. Azure and S3 multipart publication
+qualify; the current whole-object compatibility, encryption, and GCS paths fail
+spill closed until they gain streaming implementations.
 
 == Consequences
 

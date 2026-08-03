@@ -822,6 +822,47 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
         compression_config: None,
         precision_hint: None,
     };
+    let assert_no_task_scratch = |root: &std::path::Path| -> anyhow::Result<()> {
+        for owner in std::fs::read_dir(root)? {
+            let owner = owner?;
+            if !owner.file_type()?.is_dir()
+                || !owner
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("proximadb-compaction-owner-")
+            {
+                continue;
+            }
+            for child in std::fs::read_dir(owner.path())? {
+                let child = child?;
+                assert!(
+                    !child.file_name().to_string_lossy().starts_with("task-"),
+                    "completed or failed spill task scratch must be reclaimed: {}",
+                    child.path().display()
+                );
+            }
+        }
+        Ok(())
+    };
+
+    let mut failed_upload = task.clone();
+    failed_upload.output_file = PathBuf::from("unsupported-spill://bucket/output.pax");
+    let failure = compaction
+        .perform_compaction_with_plan(&failed_upload, plan)
+        .await
+        .expect_err("unsupported publication backend must fail");
+    assert!(
+        failure
+            .to_string()
+            .contains("upload local-spill PAX segment"),
+        "unexpected upload failure: {failure}"
+    );
+    assert!(
+        input_a.exists() && input_b.exists(),
+        "publication failure must leave every source segment authoritative"
+    );
+    assert_no_task_scratch(&scratch)?;
+
     let stats = compaction.perform_compaction_with_plan(&task, plan).await?;
 
     assert_eq!(stats.files_merged, 2);
@@ -836,10 +877,7 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
             .iter()
             .all(|record| record.record_version == 2)
     );
-    assert!(
-        std::fs::read_dir(&scratch)?.next().is_none(),
-        "all external runs and disk-backed PAX components must be reclaimed"
-    );
+    assert_no_task_scratch(&scratch)?;
     Ok(())
 }
 
