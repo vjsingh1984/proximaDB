@@ -413,16 +413,14 @@ pub async fn execute_sql(
             .map(proximadb_records::conversions::sql_value_to_proxima)
             .collect()
     });
+    let port_identity = identity
+        .as_ref()
+        .map(|id| proximadb_runtime::PortIdentity::from(&id.0))
+        .unwrap_or_else(proximadb_runtime::PortIdentity::anonymous);
 
     match state
         .handlers
-        .execute_sql_v1(
-            query,
-            parameters,
-            request.collection,
-            identity.as_ref().map(|id| id.tenant.as_str()),
-            identity.as_ref().and_then(|id| id.subject.as_deref()),
-        )
+        .execute_sql_v1(query, parameters, request.collection, port_identity)
         .await
     {
         Ok(v1_resp) => {
@@ -801,6 +799,8 @@ mod tests {
                 // TD-ABAC-9: the foundation identity Extension reaches the port.
                 tenant_id: Some("tenant-a".to_string()),
                 subject: Some("alice".to_string()),
+                tenant_stable_id: Some(7),
+                auth_class: proximadb_tenant::AuthClass::Authenticated,
             }]
         );
     }

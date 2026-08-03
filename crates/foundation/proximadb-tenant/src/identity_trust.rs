@@ -245,6 +245,36 @@ pub enum AuthClass {
     Anonymous,
 }
 
+/// Canonical authorization-composition decision shared by every data read
+/// seam. The authentication class is deliberately carried into the decision
+/// for audit provenance, but never weakens enforcement: once an enforcer and a
+/// subject are present, the stable tenant policy key is mandatory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadEnforcementComposition {
+    Passthrough,
+    ResolvePolicy,
+    DenyMissingStableId,
+}
+
+/// Resolve the structural read-authorization state without depending on an
+/// enforcement engine. Keeping this in the identity foundation prevents
+/// vector, record, relational, and future modalities from inventing subtly
+/// different fail-open cells.
+pub const fn read_enforcement_composition(
+    enforcer_wired: bool,
+    subject_present: bool,
+    stable_id_present: bool,
+    _auth_class: AuthClass,
+) -> ReadEnforcementComposition {
+    if !enforcer_wired || !subject_present {
+        ReadEnforcementComposition::Passthrough
+    } else if !stable_id_present {
+        ReadEnforcementComposition::DenyMissingStableId
+    } else {
+        ReadEnforcementComposition::ResolvePolicy
+    }
+}
+
 impl std::fmt::Display for AuthClass {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -335,6 +365,40 @@ pub trait TenantStableIdResolver: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_read_enforcement_composition_truth_table() {
+        for enforcer_wired in [false, true] {
+            for subject_present in [false, true] {
+                for stable_id_present in [false, true] {
+                    for auth_class in [
+                        AuthClass::Authenticated,
+                        AuthClass::TrustAsserted,
+                        AuthClass::Anonymous,
+                    ] {
+                        let expected = if !enforcer_wired || !subject_present {
+                            ReadEnforcementComposition::Passthrough
+                        } else if !stable_id_present {
+                            ReadEnforcementComposition::DenyMissingStableId
+                        } else {
+                            ReadEnforcementComposition::ResolvePolicy
+                        };
+                        assert_eq!(
+                            read_enforcement_composition(
+                                enforcer_wired,
+                                subject_present,
+                                stable_id_present,
+                                auth_class,
+                            ),
+                            expected,
+                            "enforcer={enforcer_wired} subject={subject_present} \
+                             stable_id={stable_id_present} auth_class={auth_class}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     fn binding(tenant: &str, gateway: bool) -> AuthenticatedTenantBinding {
         AuthenticatedTenantBinding {

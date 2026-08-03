@@ -22,7 +22,7 @@ threads it to `execute_sql_v1`/the seam.
 Note: pgwire trust-auth subjects are spoofable by design — that is what
 `AuthClass::TrustAsserted` records; deployments gate via `HeaderTrustPolicy`.
 
-== Status: 10a + 10c DONE; 10b open
+== Status: 10a + 10b + 10c DONE; pipeline-coverage follow-on open
 
 **10a (done)** — `Session.identity: Option<ResolvedRequestIdentity>` built at
 the startup handshake by the pure, unit-tested `PostgresProtocol::startup_identity`
@@ -32,17 +32,16 @@ plumbing — `catalog_manager` already reached it), so the ABAC policy key is
 stamped once per connection; the relational SELECT path reads
 `session.identity.subject` instead of re-deriving it per query.
 
-**10b (open) — carry the whole identity, not just the subject.** The
-relational read path still takes a bare `Option<SubjectId>`, so
-`tenant_stable_id`/`auth_class` do not survive to the enforcement point:
-widen `relational_pipeline::try_run_select` (~:253) → `SnapshotCatalog`
-(~:1606, ctors ~:554/:737/:763) → `DmlTableReader` (~:1702) →
-`services/dml/mod.rs::scan_table_relational` (~:1441, ABAC filter ~:1466) to
-carry `PortIdentity`; update the off-pgwire caller
-`query/facade/adapter.rs` (~:803). This is the prerequisite for
-[[TD-ABAC-11]]'s fail-closed flip on the relational path. Note the SQL ports
-(`ApiHandlersPort::execute_sql_v1`, `QueryAdapterPort::execute_sql`) still
-take flat `tenant_id`/`subject` with no stable id.
+**10b (DONE) — carry the whole identity, not just the subject.**
+`relational_pipeline::try_run_select` → `SnapshotCatalog` → `DmlTableReader`
+→ `services/dml/mod.rs::scan_table_relational` now carries the canonical
+`PortIdentity` (using `OwnedPortIdentity` only where the reader must retain it).
+The off-pgwire adapter and both SQL ports were widened at the same time, so
+REST and gRPC no longer flatten the foundation identity to tenant+subject and
+drop `tenant_stable_id`/`auth_class`. `EXPLAIN ANALYZE` carries the identical
+identity. Governed reads bypass the subject-agnostic result cache and are
+ineligible for the in-memory/bare-Parquet shortcuts until those engines can
+consume the authorized predicate; they route through the DML seam instead.
 
 **10c (DONE) — the three pgwire read paths that bypassed ABAC** (found by the
 2026-08-02 live-path survey; each was a *distinct* bypass). All three are
@@ -73,12 +72,12 @@ closed; how each was closed is recorded below because the choices differ:
 single-table fallback is unreachable for governed subjects, then delete the
 fail-closed guard with it.
 
-**Test posture**: the shared composition rule's truth table is pinned in
-`tests/abac_rest_record_search_integration_test.rs` (admit / deny / no-subject
-passthrough / **the TD-ABAC-11 known-open absent-stable-id cell**), so a
-surface that stops calling the rule is a bypass by construction and the
-TD-ABAC-11 flip must consciously update a failing test. Surface-level pgwire
-e2e (a real psql session against a provisioned policy) is gated on the
-binding-provisioning fixture in [[TD-ABAC-11]].
+**Test posture**: the one shared composition truth table is pinned in the
+tenant foundation; vector/record and relational seams both consume it.
+Relational tests pin permit, unbound deny, missing-key deny, internal
+passthrough, legacy-schema deny, and fast-path ineligibility. The extracted
+REST handler test proves all four identity fields cross the SQL port. A live
+provisioned-policy surface matrix remains the release-evidence follow-on in
+[[TD-ABAC-11]].
 
 Depends on [[TD-ABAC-8]]. Ref ADR-087, TD-ABAC-3, TD-ABAC-5, [[TD-ABAC-11]].

@@ -1880,12 +1880,14 @@ impl PostgresProtocol {
         // to the pre-cache behavior.
         let namespace = self.session.read().await.current_schema();
         let olap_cache = super::relational_pipeline::olap_result_cache();
-        // TD-ABAC-3: build the ABAC subject from the (already trust-gated at the
-        // handshake) connection user. `anonymous`/empty ⇒ no subject ⇒ no
-        // enforcement; otherwise the asserted user becomes the SubjectId ABAC
-        // resolves the row filter against.
-        #[cfg(feature = "abac-policy")]
-        let subject = self.session_subject().await;
+        // TD-ABAC-10b: carry the one startup identity intact. The fallback is
+        // tenant-only for pre-startup/internal test sessions; it has no subject
+        // and therefore remains an explicit system passthrough.
+        let session_identity = self.session.read().await.identity.clone();
+        let identity = session_identity
+            .as_ref()
+            .map(proximadb_runtime::PortIdentity::from)
+            .unwrap_or_else(|| proximadb_runtime::PortIdentity::for_tenant(&read_tenant));
         super::relational_pipeline::try_run_select(
             query,
             self.dml_service.as_ref(),
@@ -1897,15 +1899,13 @@ impl PostgresProtocol {
             self.graph_service
                 .clone()
                 .map(|g| g as Arc<dyn proximadb_graph_query::service::GraphQueryReadService>),
-            Some(read_tenant.as_str()),
+            identity,
             controls,
             // pgwire keeps simple single-table SELECTs on its hardened legacy
             // path; only relational-engaging shapes go through this pipeline.
             true,
             Some(namespace.as_str()),
             olap_cache.as_deref(),
-            #[cfg(feature = "abac-policy")]
-            subject,
         )
         .await
     }
@@ -1967,18 +1967,19 @@ impl PostgresProtocol {
             // route-only disclosure when no DmlService is available.
             // TD-064: resolve EXPLAIN's schema/plan under the connection tenant.
             let explain_tenant = self.pgwire_resolve_read_tenant().await;
-            // TD-ABAC-10c: EXPLAIN (and especially EXPLAIN ANALYZE, which
-            // executes) must plan/run under the SAME subject execution uses.
-            #[cfg(feature = "abac-policy")]
-            let explain_subject = self.session_subject().await;
+            // TD-ABAC-10b: EXPLAIN ANALYZE executes, so carry the exact whole
+            // session identity used by normal SELECT execution.
+            let session_identity = self.session.read().await.identity.clone();
+            let explain_identity = session_identity
+                .as_ref()
+                .map(proximadb_runtime::PortIdentity::from)
+                .unwrap_or_else(|| proximadb_runtime::PortIdentity::for_tenant(&explain_tenant));
             let routing = match self.dml_service.clone() {
                 Some(dml) if is_analyze => {
                     crate::network::postgres::relational_pipeline::explain_analyze_select_with_catalog(
                         inner_query,
                         &dml,
-                        Some(explain_tenant.as_str()),
-                        #[cfg(feature = "abac-policy")]
-                        explain_subject,
+                        explain_identity,
                     )
                     .await
                 }
@@ -1986,9 +1987,7 @@ impl PostgresProtocol {
                     crate::network::postgres::relational_pipeline::explain_select_route_with_catalog(
                         inner_query,
                         &dml,
-                        Some(explain_tenant.as_str()),
-                        #[cfg(feature = "abac-policy")]
-                        explain_subject,
+                        explain_identity,
                     )
                     .await
                 }

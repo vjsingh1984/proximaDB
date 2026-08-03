@@ -2316,6 +2316,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // TD-ABAC-5: capture the authenticated subject before the request is moved;
         // threaded to ABAC enforcement at the relational read boundary.
         let user_id = grpc_auth::user_id(&request);
+        let tenant_stable_id = grpc_auth::tenant_stable_id(&request);
         let q = request.into_inner();
         let collection = if q.collection_id.is_empty() {
             None
@@ -2328,8 +2329,16 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 q.query,
                 None,
                 collection,
-                Some(tenant_id.as_str()),
-                user_id.as_deref(),
+                proximadb_runtime::PortIdentity {
+                    tenant_id: Some(tenant_id.as_str()),
+                    subject: user_id.as_deref(),
+                    tenant_stable_id,
+                    auth_class: if user_id.is_some() {
+                        proximadb_tenant::AuthClass::Authenticated
+                    } else {
+                        proximadb_tenant::AuthClass::Anonymous
+                    },
+                },
             )
             .await
             .map_err(|e| {

@@ -152,16 +152,8 @@ pub trait ApiHandlersPort: Send + Sync {
         query: String,
         parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
-        // TD-064: the authenticated tenant scopes relational SQL to the tenant's
-        // partition. `None` keeps the legacy unscoped behavior (callers that
-        // haven't been wired pass `None`); production gRPC/REST threads the real
-        // tenant from the request.
-        tenant_id: Option<&str>,
-        // TD-ABAC-5: the authenticated subject (principal id), threaded to ABAC
-        // enforcement at the relational read boundary. Opaque `&str` here because
-        // this port (runtime layer) cannot name `SubjectId` (catalog/control); the
-        // root-crate adapter converts it. `None` ⇒ anonymous/unwired ⇒ no
-        // enforcement (status quo). Enforcement is behind `abac-policy`.
-        subject: Option<&str>,
+        // ADR-087: one canonical caller identity. Tenant scopes the partition;
+        // subject + stable key + auth class reach the relational ABAC seam.
+        identity: crate::service_ports::PortIdentity<'_>,
     ) -> Result<ExecuteQueryResponse>;
 }

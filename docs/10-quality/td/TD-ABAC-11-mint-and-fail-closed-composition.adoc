@@ -42,10 +42,15 @@ dev/embedded deployment that wires an enforcer.
   `enforcer x subject x stable-id x auth-class` truth table pinned in a pure
   unit test. `AuthClass` is audit provenance and intentionally does not weaken
   the deny rule.
-* **OPEN — relational seam + cross-surface ratchet.** TD-ABAC-10 10b must carry
-  the stable id through `scan_table_relational`; only then can the relational
-  composition point flip and REST/gRPC/Flight/pgwire provisioned-policy e2e be
-  a truthful release gate.
+* **DONE — relational seam strictness and carrier.** TD-ABAC-10b carries the
+  complete `PortIdentity` through pgwire/off-pgwire planning to
+  `scan_table_relational`. The seam consumes the same foundation composition
+  rule as vector/records; missing stable key denies. Governed reads cannot use
+  the subject-agnostic result cache or enforcement-blind in-memory/Parquet
+  shortcuts and instead route through DML row-policy enforcement.
+* **OPEN — live cross-surface ratchet.** The REST SQL carrier test and DML
+  enforcement matrix are pinned, but the release gate still needs provisioned
+  policy exercised over live REST/gRPC/Flight/pgwire transports.
 
 Depends on [[TD-ABAC-8]] (carrier), mint. Ref ADR-087, ADR-0083,
 [[project_codesigned_vector_abac_pushdown_2026_07_30]] (PR3 note).
@@ -58,10 +63,10 @@ seam:
 * `records_read_context` (`services/operations/vectors/legacy.rs` ~:702) — the
   records/vector seam (the cell named above).
 * `services/dml/mod.rs::scan_table_relational` (~:1441, filter ~:1466) — the
-  relational read boundary pgwire/SQL reach. It keys ABAC off
-  `(subject, tenant_context.tenant_id)` and never sees a `tenant_stable_id`
-  today, so [[TD-ABAC-10]] 10b (carry the identity through the relational
-  path) is a hard prerequisite for flipping it.
+  relational read boundary pgwire/SQL reach. It now receives the same
+  `PortIdentity` carrier and resolves the shared composition rule before any
+  row access; storage `TenantContext` remains a partition projection, not a
+  second authorization carrier.
 
 The cross-surface e2e ratchet must therefore include pgwire's *relational*
 path in addition to REST/gRPC/Flight records — and must not be written until
