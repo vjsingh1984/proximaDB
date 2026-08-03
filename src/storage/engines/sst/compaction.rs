@@ -1469,6 +1469,10 @@ impl Compaction {
         })?;
         let start_time = std::time::Instant::now();
         let mut memtrace = CompactionMemTrace::new();
+        let cache_on_write = std::env::var("PROXIMADB_CACHE_ON_WRITE")
+            .ok()
+            .and_then(|value| crate::core::config::CacheOnWritePolicy::parse(&value))
+            .unwrap_or(self.config.cache_on_write);
         let run_buffer_bytes = (plan.memory_bytes / 4).clamp(1024 * 1024, 64 * 1024 * 1024);
         let merge_fan_in = 32usize;
         let input_paths = task
@@ -1651,7 +1655,10 @@ impl Compaction {
             task.output_file.to_string_lossy().into_owned()
         };
 
-        let write_result: Result<u64> = async {
+        let write_result: Result<(
+            u64,
+            crate::storage::engines::sst::staged_write::StagedSegmentWrite,
+        )> = async {
             let staged = crate::storage::engines::sst::staged_write::StagedSegmentWrite::begin_in(
                 &publication_target,
                 &scratch_root,
@@ -1726,19 +1733,20 @@ impl Compaction {
                         "update local-spill upload manifest: {error}"
                     ))
                 })?;
-            staged
-                .finalize_bounded(&self.filesystem_factory)
+            let bytes = staged
+                .upload_bounded_retaining_local(&self.filesystem_factory)
                 .await
                 .map_err(|error| {
                     crate::core::StorageError::SstEngine(format!(
                         "upload local-spill PAX segment: {error}"
                     ))
-                })
+                })?;
+            Ok((bytes, staged))
         }
         .await;
 
-        let bytes_written = match write_result {
-            Ok(bytes) => bytes,
+        let (bytes_written, staged) = match write_result {
+            Ok(output) => output,
             Err(error) => {
                 if let (Some(coordinator), Some(operation)) =
                     (&self.atomic_coordinator, &atomic_operation)
@@ -1775,6 +1783,48 @@ impl Compaction {
         if let Err(error) = task_scratch.update_phase("published", None) {
             warn!(%error, "Local-spill publication committed but manifest update failed");
         }
+
+        // D6 for the disk-backed writer: promote from the retained local PAX
+        // only after the final path is visible. Cloud scratch still exists at
+        // `staged.local_path()`; a local atomic rename moves that file to the
+        // task output, so select whichever path remains present.
+        if cache_on_write.includes_invariants()
+            && let Some((invariants, survivor)) =
+                crate::storage::engines::sst::core::get_warm_tier_caches()
+        {
+            let retained_path = Path::new(staged.local_path());
+            let final_local = output_path.strip_prefix("file://").unwrap_or(&output_path);
+            let cache_source = if retained_path.exists() {
+                retained_path
+            } else {
+                Path::new(final_local)
+            };
+            match
+                crate::storage::engines::sst::segment_format::install_pax_cache_seed_from_local_file(
+                    &output_path,
+                    cache_source,
+                    cache_on_write.includes_survivors(),
+                    Some(&invariants),
+                    Some(&survivor),
+                )
+                .await
+            {
+                Ok(seeded_to_disk) => info!(
+                    output = %output_path,
+                    source = %cache_source.display(),
+                    seeded_to_disk,
+                    include_survivors = cache_on_write.includes_survivors(),
+                    "post-publication local-spill cache promotion completed"
+                ),
+                Err(error) => warn!(
+                    output = %output_path,
+                    source = %cache_source.display(),
+                    %error,
+                    "post-publication local-spill cache promotion failed"
+                ),
+            }
+        }
+        drop(staged);
 
         self.retire_task_inputs(task).await.map_err(|error| {
             crate::core::StorageError::SstEngine(format!(

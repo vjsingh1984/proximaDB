@@ -255,6 +255,34 @@ impl SurvivorRangeCache {
         Ok(())
     }
 
+    /// Stream a complete immutable parent region from an already-written local
+    /// segment into persistent L2. Unlike [`Self::seed_parent_region`], this
+    /// does not create a segment-sized DRAM value; demanded subranges promote
+    /// lazily through [`Self::get_or_fetch_in_parent`].
+    pub async fn seed_parent_region_from_file(
+        &self,
+        path: &str,
+        off: u64,
+        len: u64,
+        local_path: &std::path::Path,
+    ) -> FsResult<bool> {
+        let Some(store) = &self.l2_store else {
+            return Ok(false);
+        };
+        store
+            .put_file_range(
+                Self::parent_key(path, off, len),
+                L2Class::Survivor,
+                local_path,
+                off,
+                len,
+            )
+            .await
+            .map_err(FilesystemError::Io)?;
+        self.sync_prometheus();
+        Ok(true)
+    }
+
     /// Read through the exact-range cache, then a write-time parent-region
     /// seed, and only then the authoritative loader.
     #[allow(clippy::too_many_arguments)]

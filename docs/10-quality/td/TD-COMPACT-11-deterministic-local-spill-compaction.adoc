@@ -79,6 +79,9 @@ The current code cannot be fixed by adding a temporary `Vec` serialization:
 * Upload only the final output through the atomic coordinator.
 * Fail spill closed when a remote backend/decorator cannot guarantee bounded
   local-file publication; Azure/S3 multipart are the initial qualified paths.
+* After publication, stream Region A/B from retained local staging into the
+  rebuildable persistent cache without an object GET or segment-sized DRAM
+  seed; degrade to bounded control-only admission when that tier is disabled.
 * Retire inputs/DVs and purge cache entries only after publication.
 * Cleanup scratch on every normal/error/cancellation path and at startup.
 * Use advisory filesystem leases rather than PID liveness, and serialize owner

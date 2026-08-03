@@ -161,10 +161,13 @@ bounded local components:
   one local final file.
 
 Only the completed final file is uploaded. Temporary runs and regions are never
-written to object storage. Cache-on-write for a spill output seeds bounded
-control metadata (header, A0, RaBitQ parameters, footer); large Region A/B data
-continues through the normal local-disk/read-through cache path instead of being
-re-materialized solely to construct an `Arc`.
+written to object storage. After publication, cache-on-write reads bounded
+control metadata (header, A0, RaBitQ parameters, footer) from the retained local
+PAX and streams immutable Region A and, for policy `all`, Region B directly
+into the persistent disk cache in 64 KiB chunks. It neither rereads the object
+nor constructs a segment-sized `Arc`. If the persistent tier is disabled,
+bounded control metadata is still admitted to DRAM and large regions retain
+the normal read-through behavior.
 
 === D6 — Publication is the only visibility boundary
 

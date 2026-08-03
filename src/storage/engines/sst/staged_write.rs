@@ -98,6 +98,51 @@ impl StagedSegmentWrite {
         self.finalize_with_policy(factory, true).await
     }
 
+    /// Upload through a bounded backend while retaining remote scratch until
+    /// this guard is dropped. Spill compaction uses the retained local PAX for
+    /// post-publication cache promotion, avoiding an object-store reread and a
+    /// segment-sized in-memory seed.
+    pub(crate) async fn upload_bounded_retaining_local(
+        &self,
+        factory: &Arc<FilesystemFactory>,
+    ) -> Result<u64> {
+        if let Some(remote) = &self.remote_url {
+            let fs = factory
+                .get_filesystem(remote)
+                .map_err(|e| anyhow::anyhow!("staging filesystem for {remote}: {e}"))?;
+            if !fs.supports_bounded_local_file_write() {
+                anyhow::bail!(
+                    "{} backend does not guarantee bounded local-file publication for {remote}",
+                    fs.filesystem_type()
+                );
+            }
+            let bytes = fs
+                .write_local_file(remote, std::path::Path::new(&self.local_path), None)
+                .await
+                .map_err(|e| anyhow::anyhow!("upload staged segment to {remote}: {e}"))?;
+            let sidecar = format!("{}.idx", self.local_path);
+            if tokio::fs::try_exists(&sidecar)
+                .await
+                .context("probe staged Arrow sidecar")?
+            {
+                fs.write_local_file(
+                    &format!("{remote}.idx"),
+                    std::path::Path::new(&sidecar),
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("upload Arrow sidecar to {remote}.idx: {e}"))?;
+            }
+            tracing::debug!(remote = %remote, bytes, "staged segment uploaded and retained locally");
+            Ok(bytes)
+        } else {
+            let meta = tokio::fs::metadata(&self.local_path)
+                .await
+                .context("stat locally written segment")?;
+            Ok(meta.len())
+        }
+    }
+
     async fn finalize_with_policy(
         mut self,
         factory: &Arc<FilesystemFactory>,
