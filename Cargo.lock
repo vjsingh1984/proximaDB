@@ -6743,6 +6743,7 @@ dependencies = [
  "proximadb-abac",
  "proximadb-admin-ui",
  "proximadb-api",
+ "proximadb-audit",
  "proximadb-automl",
  "proximadb-block-format",
  "proximadb-bloom",
@@ -6956,6 +6957,20 @@ dependencies = [
  "tower-http",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-audit"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dashmap",
+ "proximadb-security",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
