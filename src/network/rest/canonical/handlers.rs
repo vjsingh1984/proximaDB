@@ -978,10 +978,7 @@ pub async fn execute_sql(
             query_with_hint,
             sql_params_to_proxima_values(request.parameters.clone()),
             request.collection,
-            None,
-            // TD-ABAC-5: REST UnifiedUserContext extractor wiring is a follow-on;
-            // None ⇒ no ABAC enforcement on this surface yet.
-            None,
+            proximadb_runtime::PortIdentity::anonymous(),
         )
         .await
     {

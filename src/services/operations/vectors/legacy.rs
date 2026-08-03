@@ -606,75 +606,6 @@ fn abac_security_is_pushdown(
     abac_filter_is_conjunctive(security) && user_filter.is_none_or(abac_filter_is_conjunctive)
 }
 
-/// Pure ADR-087 composition decision. `auth_class` is deliberately an input
-/// even though it does not change authorization today: authenticated and
-/// trust-asserted subjects are equally deny-biased, while provenance remains
-/// available for audit. Keeping this pure pins the complete
-/// enforcer x subject x stable-id x auth-class truth table.
-#[cfg(feature = "abac-policy")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RecordsReadComposition {
-    Passthrough,
-    ResolvePolicy,
-    DenyMissingStableId,
-}
-
-#[cfg(feature = "abac-policy")]
-fn records_read_composition(
-    enforcer_wired: bool,
-    subject_present: bool,
-    stable_id_present: bool,
-    _auth_class: proximadb_tenant::AuthClass,
-) -> RecordsReadComposition {
-    if !enforcer_wired || !subject_present {
-        RecordsReadComposition::Passthrough
-    } else if !stable_id_present {
-        RecordsReadComposition::DenyMissingStableId
-    } else {
-        RecordsReadComposition::ResolvePolicy
-    }
-}
-
-#[cfg(all(test, feature = "abac-policy"))]
-mod records_read_composition_tests {
-    use super::{RecordsReadComposition, records_read_composition};
-    use proximadb_tenant::AuthClass;
-
-    #[test]
-    fn full_enforcer_subject_stable_id_auth_class_truth_table() {
-        for enforcer_wired in [false, true] {
-            for subject_present in [false, true] {
-                for stable_id_present in [false, true] {
-                    for auth_class in [
-                        AuthClass::Authenticated,
-                        AuthClass::TrustAsserted,
-                        AuthClass::Anonymous,
-                    ] {
-                        let expected = if !enforcer_wired || !subject_present {
-                            RecordsReadComposition::Passthrough
-                        } else if !stable_id_present {
-                            RecordsReadComposition::DenyMissingStableId
-                        } else {
-                            RecordsReadComposition::ResolvePolicy
-                        };
-                        assert_eq!(
-                            records_read_composition(
-                                enforcer_wired,
-                                subject_present,
-                                stable_id_present,
-                                auth_class,
-                            ),
-                            expected,
-                            "enforcer={enforcer_wired} subject={subject_present} \
-                             stable_id={stable_id_present} auth_class={auth_class}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
 impl VectorOperationsService {
     /// Create service with a shared context for cross-cutting concerns
     pub fn new_with_context(
@@ -785,13 +716,13 @@ impl VectorOperationsService {
         collection_id: &str,
     ) -> Option<proximadb_abac::ReadContext> {
         use proximadb_catalog::fc_metamodel::SubjectId;
-        match records_read_composition(
+        match proximadb_tenant::read_enforcement_composition(
             self.abac_enforcer.is_some(),
             subject.is_some(),
             tenant_stable_id.is_some(),
             auth_class,
         ) {
-            RecordsReadComposition::ResolvePolicy => {
+            proximadb_tenant::ReadEnforcementComposition::ResolvePolicy => {
                 let (Some(subject), Some(tenant_stable_id)) = (subject, tenant_stable_id) else {
                     tracing::error!(
                         target: "proximadb::tenant_audit",
@@ -815,7 +746,7 @@ impl VectorOperationsService {
                     )),
                 }
             }
-            RecordsReadComposition::DenyMissingStableId => {
+            proximadb_tenant::ReadEnforcementComposition::DenyMissingStableId => {
                 tracing::warn!(
                     target: "proximadb::tenant_audit",
                     subject = subject,
@@ -825,14 +756,16 @@ impl VectorOperationsService {
                 );
                 None
             }
-            RecordsReadComposition::Passthrough => Some(proximadb_abac::ReadContext::system(
-                proximadb_abac::SystemReadReason::Statistics,
-                if self.abac_enforcer.is_none() {
-                    "records_search (no abac enforcer)"
-                } else {
-                    "records_search (no client subject)"
-                },
-            )),
+            proximadb_tenant::ReadEnforcementComposition::Passthrough => {
+                Some(proximadb_abac::ReadContext::system(
+                    proximadb_abac::SystemReadReason::Statistics,
+                    if self.abac_enforcer.is_none() {
+                        "records_search (no abac enforcer)"
+                    } else {
+                        "records_search (no client subject)"
+                    },
+                ))
+            }
         }
     }
 

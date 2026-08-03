@@ -53,6 +53,7 @@ use proximadb_data_model::ProximaType;
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use proximadb_relational_types::ExprError;
+use proximadb_runtime::PortIdentity;
 use tracing::{debug, info, warn};
 
 use crate::catalog::CatalogManager;
@@ -1407,14 +1408,47 @@ impl DmlService {
     /// predicate. Fail-closed: a legacy table lacking stable object/namespace
     /// ids, or a tenant without a stable id, yields `Denied`.
     #[cfg(feature = "abac-policy")]
+    pub(crate) fn relational_abac_required(&self, identity: PortIdentity<'_>) -> bool {
+        !matches!(
+            proximadb_tenant::read_enforcement_composition(
+                self.abac_enforcer.is_some(),
+                identity.subject.is_some(),
+                identity.tenant_stable_id.is_some(),
+                identity.auth_class,
+            ),
+            proximadb_tenant::ReadEnforcementComposition::Passthrough
+        )
+    }
+
+    #[cfg(feature = "abac-policy")]
     fn abac_row_filter(
         &self,
-        subject: Option<&SubjectId>,
-        tenant_context: Option<&TenantContext>,
+        identity: PortIdentity<'_>,
         table_schema: &CatalogTableSchema,
     ) -> Option<crate::security::rls::AbacScanResult> {
+        match proximadb_tenant::read_enforcement_composition(
+            self.abac_enforcer.is_some(),
+            identity.subject.is_some(),
+            identity.tenant_stable_id.is_some(),
+            identity.auth_class,
+        ) {
+            proximadb_tenant::ReadEnforcementComposition::Passthrough => return None,
+            proximadb_tenant::ReadEnforcementComposition::DenyMissingStableId => {
+                tracing::warn!(
+                    target: "proximadb::tenant_audit",
+                    subject = identity.subject,
+                    auth_class = %identity.auth_class,
+                    table = table_schema.name,
+                    "ABAC denied a relational subject whose tenant has no stable policy key"
+                );
+                return Some(crate::security::rls::AbacScanResult::Denied(
+                    proximadb_abac::DenyReason::NoApplicablePolicy,
+                ));
+            }
+            proximadb_tenant::ReadEnforcementComposition::ResolvePolicy => {}
+        }
         let enforcer = self.abac_enforcer.as_ref()?;
-        let subject = subject?;
+        let subject = SubjectId(identity.subject?.to_string());
         // Enforcer + client subject are present ⇒ enforce. Fail-closed: a legacy
         // table lacking stable object/namespace ids, or an unknown tenant stable
         // id, denies rather than reading unfiltered.
@@ -1425,13 +1459,9 @@ impl DmlService {
                 proximadb_abac::DenyReason::NoApplicablePolicy,
             ));
         };
-        let Some(tenant) = tenant_context.and_then(|t| t.tenant_stable_id) else {
-            return Some(crate::security::rls::AbacScanResult::Denied(
-                proximadb_abac::DenyReason::NoApplicablePolicy,
-            ));
-        };
+        let tenant = identity.tenant_stable_id?;
         Some(enforcer.predicate_for(
-            subject,
+            &subject,
             tenant,
             Target {
                 namespace,
@@ -1460,8 +1490,31 @@ impl DmlService {
         >,
         limit: Option<usize>,
         tenant_context: Option<&TenantContext>,
-        #[cfg(feature = "abac-policy")] subject: Option<&SubjectId>,
+        identity: PortIdentity<'_>,
     ) -> Result<(CatalogTableSchema, Vec<Vec<ProximaValue>>)> {
+        if identity.subject.is_some() {
+            let identity_tenant = identity.tenant_id.ok_or_else(|| {
+                anyhow!("governed relational identity is missing its tenant string")
+            })?;
+            let storage_tenant = tenant_context.ok_or_else(|| {
+                anyhow!("governed relational identity is missing its storage tenant context")
+            })?;
+            if identity_tenant != storage_tenant.tenant_id {
+                return Err(anyhow!(
+                    "relational identity/storage tenant mismatch: identity '{}' != partition '{}'",
+                    identity_tenant,
+                    storage_tenant.tenant_id
+                ));
+            }
+            if let Some(storage_stable_id) = storage_tenant.tenant_stable_id
+                && identity.tenant_stable_id != Some(storage_stable_id)
+            {
+                return Err(anyhow!(
+                    "relational identity/storage stable-id mismatch for tenant '{}'",
+                    identity_tenant
+                ));
+            }
+        }
         let (table_schema, table_id_name) = self
             .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
             .await?;
@@ -1483,7 +1536,7 @@ impl DmlService {
         // (or fail-closed) subject sees zero rows.
         #[cfg(feature = "abac-policy")]
         let abac_pred: Option<Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>> =
-            match self.abac_row_filter(subject, tenant_context, &table_schema) {
+            match self.abac_row_filter(identity, &table_schema) {
                 None => None,
                 Some(crate::security::rls::AbacScanResult::Denied(_)) => {
                     return Ok((table_schema, Vec::new()));
@@ -1491,6 +1544,8 @@ impl DmlService {
                 Some(crate::security::rls::AbacScanResult::Restricted(p)) => Some(p),
                 Some(crate::security::rls::AbacScanResult::Unrestricted) => None,
             };
+        #[cfg(not(feature = "abac-policy"))]
+        let _ = identity;
 
         // Push the predicate INTO the store scan: project each record to a full
         // row and apply the caller's full-row predicate. The scan-predicate API is
@@ -1624,8 +1679,7 @@ impl DmlService {
                 None,
                 None,
                 tenant_context,
-                #[cfg(feature = "abac-policy")]
-                None,
+                PortIdentity::anonymous(),
             )
             .await?;
 

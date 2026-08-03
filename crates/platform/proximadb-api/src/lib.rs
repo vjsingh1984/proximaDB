@@ -120,6 +120,8 @@ pub(crate) mod test_support {
             collection: Option<String>,
             tenant_id: Option<String>,
             subject: Option<String>,
+            tenant_stable_id: Option<u64>,
+            auth_class: proximadb_tenant::AuthClass,
         },
         Hybrid,
     }
@@ -270,15 +272,16 @@ pub(crate) mod test_support {
             query: String,
             parameters: Option<Vec<ProximaValue>>,
             collection: Option<String>,
-            tenant_id: Option<&str>,
-            subject: Option<&str>,
+            identity: proximadb_runtime::PortIdentity<'_>,
         ) -> Result<ExecuteQueryResponse> {
             self.calls.lock().unwrap().push(ApiCall::Sql {
                 query,
                 parameter_count: parameters.as_ref().map(Vec::len),
                 collection,
-                tenant_id: tenant_id.map(ToOwned::to_owned),
-                subject: subject.map(ToOwned::to_owned),
+                tenant_id: identity.tenant_id.map(ToOwned::to_owned),
+                subject: identity.subject.map(ToOwned::to_owned),
+                tenant_stable_id: identity.tenant_stable_id,
+                auth_class: identity.auth_class,
             });
             Ok(self.sql_response.lock().unwrap().clone())
         }
@@ -396,8 +399,7 @@ pub(crate) mod test_support {
             &self,
             _query: String,
             _collection: Option<String>,
-            _tenant_id: Option<&str>,
-            _subject: Option<&str>,
+            _identity: PortIdentity<'_>,
         ) -> Result<JsonValue> {
             Ok(JsonValue::Array(Vec::new()))
         }
@@ -482,8 +484,7 @@ mod tests {
             "select * from docs".to_string(),
             None,
             Some("docs".to_string()),
-            None,
-            None,
+            proximadb_runtime::PortIdentity::anonymous(),
         )
         .await
         .unwrap();
@@ -525,6 +526,8 @@ mod tests {
                     collection: Some("docs".to_string()),
                     tenant_id: None,
                     subject: None,
+                    tenant_stable_id: None,
+                    auth_class: proximadb_tenant::AuthClass::Anonymous,
                 },
             ]
         );
@@ -643,7 +646,11 @@ mod tests {
             .unwrap();
         assert!(
             query
-                .execute_sql("select 1".to_string(), Some("docs".to_string()), None, None)
+                .execute_sql(
+                    "select 1".to_string(),
+                    Some("docs".to_string()),
+                    PortIdentity::anonymous(),
+                )
                 .await
                 .unwrap()
                 .is_array()

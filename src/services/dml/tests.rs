@@ -2874,8 +2874,7 @@ async fn scan_table_relational_pushes_projection_predicate_limit() {
             None,
             None,
             None,
-            #[cfg(feature = "abac-policy")]
-            None,
+            proximadb_runtime::PortIdentity::anonymous(),
         )
         .await
         .expect("scan all");
@@ -2894,8 +2893,7 @@ async fn scan_table_relational_pushes_projection_predicate_limit() {
             Some(&pred),
             None,
             None,
-            #[cfg(feature = "abac-policy")]
-            None,
+            proximadb_runtime::PortIdentity::anonymous(),
         )
         .await
         .expect("scan predicate");
@@ -2923,8 +2921,7 @@ async fn scan_table_relational_pushes_projection_predicate_limit() {
             Some(&failing_pred),
             None,
             None,
-            #[cfg(feature = "abac-policy")]
-            None,
+            proximadb_runtime::PortIdentity::anonymous(),
         )
         .await
         .expect_err("a predicate eval error must surface, not silently drop rows");
@@ -2942,8 +2939,7 @@ async fn scan_table_relational_pushes_projection_predicate_limit() {
             None,
             None,
             None,
-            #[cfg(feature = "abac-policy")]
-            None,
+            proximadb_runtime::PortIdentity::anonymous(),
         )
         .await
         .expect("scan projection");
@@ -2958,8 +2954,7 @@ async fn scan_table_relational_pushes_projection_predicate_limit() {
             None,
             Some(2),
             None,
-            #[cfg(feature = "abac-policy")]
-            None,
+            proximadb_runtime::PortIdentity::anonymous(),
         )
         .await
         .expect("scan limit");
@@ -3185,7 +3180,6 @@ async fn alter_table_materialize_via_ddl_flips_catalog_layout() {
 async fn materialize_is_tenant_isolated_by_request_tenant() {
     use crate::services::record_store::DirectWalTableRecordStore;
     use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
-    use crate::storage::tenant::context::TenantContext;
     use proximadb_iceberg_engine::IcebergObjectStoreBridge;
 
     let temp_dir = tempfile::tempdir().expect("tempdir");
@@ -3262,7 +3256,6 @@ async fn materialize_is_tenant_isolated_by_request_tenant() {
 async fn materialize_drpath_layout_uses_opaque_namespace_id() {
     use crate::services::record_store::DirectWalTableRecordStore;
     use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
-    use crate::storage::tenant::context::TenantContext;
     use proximadb_iceberg_engine::IcebergObjectStoreBridge;
 
     let temp_dir = tempfile::tempdir().expect("tempdir");
@@ -6063,12 +6056,11 @@ mod abac_relational_enforcement_tests {
     use super::*;
     use crate::core::search::{ComparisonOperator, FilterExpression};
     use crate::security::rls::{AbacEnforcer, AbacScanResult};
-    use crate::storage::tenant::context::TenantContext;
     use proximadb_abac::{
         AttributeAuthority, AttributeBinding, InMemoryAttributeAuthority, InMemoryPolicyEpochs,
         InMemoryPredicateObjectStore,
     };
-    use proximadb_catalog::fc_metamodel::{AttrValue, Effect, PolicyBinding, Scope, SubjectId};
+    use proximadb_catalog::fc_metamodel::{AttrValue, Effect, PolicyBinding, Scope};
     use serde_json::json;
     use std::sync::Arc;
 
@@ -6115,10 +6107,20 @@ mod abac_relational_enforcement_tests {
         s
     }
 
-    fn tenant_ctx() -> TenantContext {
-        let mut tc = TenantContext::for_tenant_id("t7");
-        tc.tenant_stable_id = Some(TENANT);
-        tc
+    fn identity(
+        subject: Option<&str>,
+        stable_id: Option<u64>,
+    ) -> proximadb_runtime::PortIdentity<'_> {
+        proximadb_runtime::PortIdentity {
+            tenant_id: Some("t7"),
+            subject,
+            tenant_stable_id: stable_id,
+            auth_class: if subject.is_some() {
+                proximadb_tenant::AuthClass::Authenticated
+            } else {
+                proximadb_tenant::AuthClass::Anonymous
+            },
+        }
     }
 
     fn dml_with_enforcer() -> DmlService {
@@ -6133,8 +6135,10 @@ mod abac_relational_enforcement_tests {
     #[test]
     fn permitted_subject_resolves_restricted() {
         let dml = dml_with_enforcer();
-        let alice = SubjectId("alice".into());
-        let res = dml.abac_row_filter(Some(&alice), Some(&tenant_ctx()), &schema_with_stable_ids());
+        let res = dml.abac_row_filter(
+            identity(Some("alice"), Some(TENANT)),
+            &schema_with_stable_ids(),
+        );
         assert!(
             matches!(res, Some(AbacScanResult::Restricted(_))),
             "alice (bound, permitted, dept=eng predicate) must resolve to Restricted"
@@ -6144,10 +6148,8 @@ mod abac_relational_enforcement_tests {
     #[test]
     fn unbound_subject_is_denied_fail_closed() {
         let dml = dml_with_enforcer();
-        let mallory = SubjectId("mallory".into());
         let res = dml.abac_row_filter(
-            Some(&mallory),
-            Some(&tenant_ctx()),
+            identity(Some("mallory"), Some(TENANT)),
             &schema_with_stable_ids(),
         );
         assert!(
@@ -6160,7 +6162,7 @@ mod abac_relational_enforcement_tests {
     fn internal_read_has_no_enforcement() {
         let dml = dml_with_enforcer();
         // No subject ⇒ an internal/system read ⇒ no ABAC enforcement applies.
-        let res = dml.abac_row_filter(None, Some(&tenant_ctx()), &schema_with_stable_ids());
+        let res = dml.abac_row_filter(identity(None, Some(TENANT)), &schema_with_stable_ids());
         assert!(
             res.is_none(),
             "an internal read (no subject) must not enforce"
@@ -6170,13 +6172,53 @@ mod abac_relational_enforcement_tests {
     #[test]
     fn legacy_table_without_stable_ids_denies_fail_closed() {
         let dml = dml_with_enforcer();
-        let alice = SubjectId("alice".into());
         // `update_test_schema()` has no stable object/namespace ids ⇒ cannot build
         // a Target ⇒ fail-closed (Denied), never an unfiltered read.
-        let res = dml.abac_row_filter(Some(&alice), Some(&tenant_ctx()), &update_test_schema());
+        let res = dml.abac_row_filter(identity(Some("alice"), Some(TENANT)), &update_test_schema());
         assert!(
             matches!(res, Some(AbacScanResult::Denied(_))),
             "a legacy table lacking stable ids must deny (fail-closed), not leak"
+        );
+    }
+
+    #[test]
+    fn subject_without_stable_tenant_id_denies_fail_closed() {
+        let dml = dml_with_enforcer();
+        let res = dml.abac_row_filter(identity(Some("alice"), None), &schema_with_stable_ids());
+        assert!(
+            matches!(res, Some(AbacScanResult::Denied(_))),
+            "a subject without the policy key must be denied"
+        );
+    }
+
+    #[test]
+    fn governed_identity_is_ineligible_for_subject_agnostic_fast_paths() {
+        let dml = dml_with_enforcer();
+        assert!(dml.relational_abac_required(identity(Some("alice"), Some(TENANT))));
+        assert!(dml.relational_abac_required(identity(Some("alice"), None)));
+        assert!(!dml.relational_abac_required(identity(None, Some(TENANT))));
+    }
+
+    #[tokio::test]
+    async fn governed_identity_cannot_scan_a_different_tenant_partition() {
+        let dml = dml_with_enforcer();
+        let mut other = crate::storage::tenant::context::TenantContext::for_tenant_id("other");
+        other.tenant_stable_id = Some(TENANT + 1);
+        let error = dml
+            .scan_table_relational(
+                "any-table",
+                None,
+                None,
+                None,
+                Some(&other),
+                identity(Some("alice"), Some(TENANT)),
+            )
+            .await
+            .expect_err("identity/partition mismatch must fail before catalog or storage access");
+        assert!(
+            error
+                .to_string()
+                .contains("identity/storage tenant mismatch")
         );
     }
 }
