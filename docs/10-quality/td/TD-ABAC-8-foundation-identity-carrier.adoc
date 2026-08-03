@@ -1,5 +1,5 @@
 = TD-ABAC-8: Complete ResolvedRequestIdentity (stable id, stamp-once) and make it the request carrier
-:status: Open
+:status: Resolved
 :dim: D5
 :pillar: SEC
 

@@ -29,3 +29,21 @@ dev/embedded deployment that wires an enforcer.
 
 Depends on [[TD-ABAC-8]] (carrier), mint. Ref ADR-087, ADR-0083,
 [[project_codesigned_vector_abac_pushdown_2026_07_30]] (PR3 note).
+
+== Scope addendum (2026-08-02 pgwire survey)
+
+The fail-closed flip must cover BOTH composition points, not just the vector
+seam:
+
+* `records_read_context` (`services/operations/vectors/legacy.rs` ~:702) — the
+  records/vector seam (the cell named above).
+* `services/dml/mod.rs::scan_table_relational` (~:1441, filter ~:1466) — the
+  relational read boundary pgwire/SQL reach. It keys ABAC off
+  `(subject, tenant_context.tenant_id)` and never sees a `tenant_stable_id`
+  today, so [[TD-ABAC-10]] 10b (carry the identity through the relational
+  path) is a hard prerequisite for flipping it.
+
+The cross-surface e2e ratchet must therefore include pgwire's *relational*
+path in addition to REST/gRPC/Flight records — and must not be written until
+[[TD-ABAC-10]] 10c closes the three pgwire bypasses, or it will ratchet in a
+false green (a passing "deny" case on a path that never enforced).
