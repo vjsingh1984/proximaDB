@@ -20,9 +20,10 @@ Next action (strict ordering — totality before strictness):
 2. **Flip the rule** in the same release train: enforcer wired ∧ subject
    present ∧ stable id absent ⇒ DENY. Unit-test the full truth table
    (enforcer × subject × stable id × auth_class) in isolation.
-3. **Cross-surface e2e ratchet**: provisioned policy exercised over
-   REST/gRPC/Flight/pgwire × admit/deny-fail-closed/passthrough (needs the
-   provisioning e2e fixture from step 1).
+3. **Cross-surface e2e ratchet**: provisioned policy exercised over active
+   pgwire/gRPC SQL plus REST/gRPC/Flight record surfaces ×
+   admit/deny-fail-closed/passthrough (needs the provisioning e2e fixture from
+   step 1). Plain SQL-over-REST is retired and is not a test row.
 
 Do NOT flip before the mint lands — it would fail-close every unminted
 dev/embedded deployment that wires an enforcer.
@@ -55,9 +56,20 @@ dev/embedded deployment that wires an enforcer.
   defects the component matrix could not see: pgwire now receives the exact
   process-shared enforcer, and the default WAL-backed `SystemCatalog` now mints
   durable object + typed namespace/collection identity like `NativeCatalog`.
+* **DONE — live authenticated gRPC SQL ratchet.** The same transport test uses
+  credential-bound API keys for Alice and Bob and crosses the real
+  `ProximaRecordService.ExecuteQuery` server. It proves fail-closed before
+  provision, hot table permit, authenticated-principal isolation, and hot
+  revoke on an existing client. This is load-bearing authentication evidence,
+  not pgwire's deliberately trust-asserted user name.
+* **NOT APPLICABLE — REST SQL.** The supported-surface contract hard-removed
+  `/api/v1/sql/execute`; `/api/v2/query` is UQL/Federated/AQL and explicitly is
+  not SQL-over-REST. Reintroducing a retired route solely for an evidence row
+  would create a second, unsupported SQL surface.
 * **OPEN — remaining live surface rows.** Add provisioned-policy admit/deny/
-  passthrough ratchets for REST SQL, gRPC SQL/records, and Flight. Their carrier
-  and seam component tests are pinned; they are not mislabeled as live evidence.
+  passthrough ratchets for canonical REST records/search, gRPC records/search,
+  and Flight. Their carrier and seam component tests are pinned; they are not
+  mislabeled as live evidence.
 
 Depends on [[TD-ABAC-8]] (carrier), mint. Ref ADR-087, ADR-0083,
 [[project_codesigned_vector_abac_pushdown_2026_07_30]] (PR3 note).
@@ -75,7 +87,8 @@ seam:
   row access; storage `TenantContext` remains a partition projection, not a
   second authorization carrier.
 
-The cross-surface e2e ratchet includes pgwire's *relational* path in addition
-to REST/gRPC/Flight records. The pgwire row is now pinned after
-[[TD-ABAC-10]] 10c; the remaining rows stay open until they exercise live
-provisioned policy rather than only handler/seam components.
+The cross-surface e2e ratchet includes pgwire's and authenticated gRPC's
+*relational* paths in addition to REST/gRPC/Flight records. Both SQL rows are
+now pinned after [[TD-ABAC-10]] 10c; the remaining record/Flight rows stay open
+until they exercise live provisioned policy rather than only handler/seam
+components.
