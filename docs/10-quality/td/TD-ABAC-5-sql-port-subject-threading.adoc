@@ -11,7 +11,7 @@
 |===
 | Status | **Delivered.** The authenticated subject is threaded through the SQL port traits (`execute_sql_v1` / `execute_sql`) and activated on the gRPC surface — the first *unconditional, real-auth* ABAC enforcement (no trust-auth caveat). A live credential-authenticated transport ratchet now proves permit, principal isolation, and hot revoke.
 | Scope | Activation-completion across network surfaces. pgwire was activated in TD-ABAC-3 (advisory under trust auth); this activates gRPC with a genuinely-authenticated subject.
-| Out of scope | `/api/v2/query` UQL/Federated identity semantics (a separate non-relational-SQL surface that does not reach `try_run_select`). Durable policy-epoch source, column masking, graph trio, P2. Plain SQL-over-REST was hard-removed and is not a follow-on.
+| Out of scope | `/api/v2/query` UQL/Federated identity semantics (a separate non-relational-SQL surface that does not reach `try_run_select`). Durable policy-epoch source, column masking, graph trio, P2. Subsequent work added canonical `POST /api/v2/sql` over this same typed port; the removed v1 route remains retired.
 |===
 
 NOTE: Code references are `file::symbol`. `develop` moves; trust the symbol, re-locate the line.

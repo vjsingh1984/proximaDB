@@ -120,9 +120,9 @@ carried unchanged to every consumer; everything else is a projection.**
 * TD-ABAC-11 — mint + strictness: default-tenant mint, binding-provisioning
   e2e fixture, flip the composition rule to fail-closed on the absent stable
   id, and live pgwire + credential-authenticated gRPC relational ratchets using
-  the authenticated REST policy-control plane. SQL-over-REST is retired and is
-  not an evidence row; canonical REST/gRPC record and Flight live data-plane
-  rows remain the release-evidence tail.
+  the authenticated REST policy-control plane, plus canonical `POST /api/v2/sql`
+  as a thin adapter over the same typed SQL authority. Canonical REST/gRPC
+  record and Flight live data-plane rows remain the release-evidence tail.
 
 == References
 

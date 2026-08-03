@@ -23,7 +23,8 @@ Next action (strict ordering — totality before strictness):
 3. **Cross-surface e2e ratchet**: provisioned policy exercised over active
    pgwire/gRPC SQL plus REST/gRPC/Flight record surfaces ×
    admit/deny-fail-closed/passthrough (needs the provisioning e2e fixture from
-   step 1). Plain SQL-over-REST is retired and is not a test row.
+   step 1), including canonical REST `POST /api/v2/sql` over the shared typed
+   SQL execution port.
 
 Do NOT flip before the mint lands — it would fail-close every unminted
 dev/embedded deployment that wires an enforcer.
@@ -62,10 +63,13 @@ dev/embedded deployment that wires an enforcer.
   provision, hot table permit, authenticated-principal isolation, and hot
   revoke on an existing client. This is load-bearing authentication evidence,
   not pgwire's deliberately trust-asserted user name.
-* **NOT APPLICABLE — REST SQL.** The supported-surface contract hard-removed
-  `/api/v1/sql/execute`; `/api/v2/query` is UQL/Federated/AQL and explicitly is
-  not SQL-over-REST. Reintroducing a retired route solely for an evidence row
-  would create a second, unsupported SQL surface.
+* **DONE — canonical REST SQL + live ratchet.** `POST /api/v2/sql` is a thin,
+  single-statement HTTP adapter over the same SQL authority; it does not reuse
+  `/api/v2/query` or create a parser/planner fork. The application port carries
+  ordered `ProximaValue` rows, JSON conversion occurs once at the REST edge,
+  and legacy `SqlValue` exists only in `execute_sql_v1`. The live ratchet proves
+  authenticated deny-before-provision, hot permit, principal isolation, and
+  hot revoke.
 * **OPEN — remaining live surface rows.** Add provisioned-policy admit/deny/
   passthrough ratchets for canonical REST records/search, gRPC records/search,
   and Flight. Their carrier and seam component tests are pinned; they are not
@@ -87,8 +91,8 @@ seam:
   row access; storage `TenantContext` remains a partition projection, not a
   second authorization carrier.
 
-The cross-surface e2e ratchet includes pgwire's and authenticated gRPC's
-*relational* paths in addition to REST/gRPC/Flight records. Both SQL rows are
-now pinned after [[TD-ABAC-10]] 10c; the remaining record/Flight rows stay open
+The cross-surface e2e ratchet includes pgwire's, authenticated gRPC's, and
+canonical REST SQL's *relational* paths in addition to REST/gRPC/Flight records.
+All three SQL rows are now pinned after [[TD-ABAC-10]] 10c; the remaining record/Flight rows stay open
 until they exercise live provisioned policy rather than only handler/seam
 components.

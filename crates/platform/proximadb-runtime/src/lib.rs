@@ -57,7 +57,8 @@ pub use rich_search::{
 };
 pub use security_port::{PortAuthCredential, PortUserContext, SecurityPort};
 pub use service_ports::{
-    CollectionPort, OwnedPortIdentity, PortIdentity, QueryAdapterPort, VectorOpsPort,
+    CollectionPort, OwnedPortIdentity, PortIdentity, QueryAdapterPort, SqlExecutionResult,
+    VectorOpsPort,
 };
 pub use streaming_port::StreamingPort;
 pub use unified_query_port::UnifiedQueryPort;

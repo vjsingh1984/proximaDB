@@ -100,6 +100,16 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 | SQL clients and tools — psql, psycopg2/asyncpg, JDBC, BI/ORM ecosystem.
 | Beta — autocommit SQL subset; multi-tenant identity/ABAC closure is still tracked by TD-ABAC-10/11
 
+| *REST `POST /api/v2/sql`*
+| One authenticated *SQL* statement: tenant-scoped relational SELECT/DDL/DML
+  plus the existing vector/graph SQL extensions.
+| HTTP/JSON clients that need SQL without a PostgreSQL or gRPC driver. This is
+  a thin transport adapter over the same typed SQL port and relational
+  planner/executor as gRPC; execution cells remain `ProximaValue` until JSON
+  serialization. Request parameters are not yet supported, so clients must not
+  send or interpolate parameter payloads through this endpoint.
+| Beta (single statement; API-key/JWT identity + ABAC live-ratchet covered)
+
 | *gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery`*
 | *SQL with vector/graph extensions* (e.g. `VECTOR_SEARCH`) *and tenant-scoped
   relational SQL* — SELECT reads + DDL (`CREATE`/`ALTER`/`DROP`) + DML
@@ -143,11 +153,13 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 ====
 * pgwire is *SQL-only* and cannot serve UQL/AQL/Cypher; those non-SQL languages require the
   unified query port (`/api/v2/query`) or the graph service — they are not replaceable by pgwire.
-* SQL is served by *two surfaces* (TD-121/TD-135). *pgwire* serves the PostgreSQL ecosystem
+* SQL is served by *three adapters over one execution authority* (TD-121/TD-135).
+  *pgwire* serves the PostgreSQL ecosystem
   (psql/JDBC/BI/ORM, Postgres-native auth) in autocommit mode. `BEGIN`, `COMMIT`, `ROLLBACK`,
   savepoints, and other transaction-control statements return SQLSTATE `0A000`; a simple-query
   batch containing transaction control is rejected before any statement in the batch executes.
-  The gRPC
+  REST `POST /api/v2/sql` serves authenticated HTTP/JSON clients and deliberately supports
+  one statement without parameter binding in its initial beta contract. The gRPC
   `ProximaRecordService.ExecuteQuery` RPC is *token/SSO-authenticated* (bearer/JWT in metadata,
   which pgwire's password/MD5 auth cannot carry) and serves vector/graph-extension SQL (e.g.
   `VECTOR_SEARCH`) plus *tenant-scoped relational SQL — SELECT reads AND DDL/DML writes*: SELECTs
