@@ -1050,6 +1050,17 @@ impl DmlService {
         self
     }
 
+    /// Attach the process-shared ABAC enforcer after construction.
+    ///
+    /// The pgwire protocol builds its per-connection DML façade only after the
+    /// socket is accepted, so it cannot use the consuming builder without
+    /// rebuilding other already-attached dependencies. The composition root
+    /// calls this exactly once while its `Arc<DmlService>` is still unique.
+    #[cfg(feature = "abac-policy")]
+    pub fn set_abac_enforcer(&mut self, enforcer: Arc<crate::security::rls::AbacEnforcer>) {
+        self.abac_enforcer = Some(enforcer);
+    }
+
     /// TD-ABAC-10c: whether row-level enforcement is armed on this service.
     ///
     /// Read-paths that CANNOT enforce (they lack the row-filter wiring
