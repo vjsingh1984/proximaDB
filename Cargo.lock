@@ -7076,11 +7076,13 @@ name = "proximadb-cdc"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "proximadb-config",
  "rand 0.8.6",
  "regex",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "uuid",
