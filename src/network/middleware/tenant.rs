@@ -202,6 +202,39 @@ impl From<&MiddlewareTenantContext> for crate::storage::tenant::context::Storage
     }
 }
 
+/// ADR-087: how this REST context's identity was established, mapped onto the
+/// foundation [`proximadb_tenant::AuthClass`]. A present `subject` is always
+/// credential-derived on REST (`authenticated_subject` reads the verified
+/// `UnifiedUserContext`, #1338) ⇒ `Authenticated`; otherwise the tenant source
+/// decides: bare header assertion ⇒ `TrustAsserted`; credential-bound,
+/// default-tenant, or system sources with no subject ⇒ `Anonymous`.
+fn auth_class_of(ctx: &MiddlewareTenantContext) -> proximadb_tenant::AuthClass {
+    use proximadb_tenant::AuthClass;
+    if ctx.subject.is_some() {
+        AuthClass::Authenticated
+    } else {
+        match ctx.source {
+            TenantIdSource::Header => AuthClass::TrustAsserted,
+            _ => AuthClass::Anonymous,
+        }
+    }
+}
+
+/// ADR-087 (TD-ABAC-8): the middleware→foundation bridge. The REST tenant
+/// middleware inserts this as a request Extension so ANY crate (notably
+/// `proximadb-api` handlers, which cannot name root-crate types) can consume
+/// the one caller identity and project it (`PortIdentity::from(&identity)`).
+impl From<&MiddlewareTenantContext> for proximadb_tenant::ResolvedRequestIdentity {
+    fn from(ctx: &MiddlewareTenantContext) -> Self {
+        Self {
+            tenant: ctx.tenant_id.clone(),
+            subject: ctx.subject.clone(),
+            auth_class: auth_class_of(ctx),
+            tenant_stable_id: ctx.tenant_stable_id,
+        }
+    }
+}
+
 /// TD-ABAC-7: the one bridge from the middleware identity to the port-seam
 /// caller identity ([`proximadb_runtime::PortIdentity`]). REST handlers build
 /// it with `PortIdentity::from(&tenant)` instead of hand-threading the
@@ -212,6 +245,7 @@ impl<'a> From<&'a MiddlewareTenantContext> for proximadb_runtime::PortIdentity<'
             tenant_id: Some(&ctx.tenant_id),
             subject: ctx.subject.as_deref(),
             tenant_stable_id: ctx.tenant_stable_id,
+            auth_class: auth_class_of(ctx),
         }
     }
 }
@@ -647,6 +681,11 @@ pub async fn tenant_middleware(
                 .insert(proximadb_api::rest::TenantContext {
                     tenant_id: context.tenant_id.clone(),
                 });
+            // ADR-087 (TD-ABAC-8): the ONE foundation identity, visible to every
+            // crate. api-crate handlers consume this; the tenant-only api
+            // TenantContext above is its retirement candidate.
+            req.extensions_mut()
+                .insert(proximadb_tenant::ResolvedRequestIdentity::from(&context));
             req.extensions_mut().insert(context);
 
             next.run(req).await
@@ -666,6 +705,10 @@ pub async fn tenant_middleware(
                     .insert(proximadb_api::rest::TenantContext {
                         tenant_id: default_ctx.tenant_id.clone(),
                     });
+                req.extensions_mut()
+                    .insert(proximadb_tenant::ResolvedRequestIdentity::from(
+                        &default_ctx,
+                    ));
                 req.extensions_mut().insert(default_ctx);
                 next.run(req).await
             }

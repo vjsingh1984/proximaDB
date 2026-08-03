@@ -44,8 +44,8 @@ pub use traits::RetryConfig;
 pub use traits::{CdcSink, MessageFormat, SinkConfig, SinkError, SinkResult, SinkStats};
 pub use webhook::{HttpMethod, WebhookConfig, WebhookSink};
 
-use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::ChangeEvent;
+use crate::error::{CdcError, CdcResult};
+use crate::event::ChangeEvent;
 
 /// Sink factory for creating sinks from configuration
 pub struct SinkFactory;
@@ -309,7 +309,7 @@ mod tests {
     }
 
     fn create_test_event() -> ChangeEvent {
-        use crate::cdc::event::{Operation, SourceInfo};
+        use crate::event::{Operation, SourceInfo};
         ChangeEvent::new(
             SourceInfo::postgres("testdb", "public", "test_server"),
             Operation::Insert,

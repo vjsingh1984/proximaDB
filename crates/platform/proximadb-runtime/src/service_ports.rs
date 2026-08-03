@@ -109,6 +109,10 @@ pub struct PortIdentity<'a> {
     pub tenant_id: Option<&'a str>,
     pub subject: Option<&'a str>,
     pub tenant_stable_id: Option<u64>,
+    /// How the identity was established (ADR-087) — audit-only at the seam:
+    /// enforcement stays deny-biased for any present subject regardless of
+    /// class; provenance-conditional policy is a future knob.
+    pub auth_class: proximadb_tenant::AuthClass,
 }
 
 impl<'a> PortIdentity<'a> {
@@ -118,6 +122,7 @@ impl<'a> PortIdentity<'a> {
             tenant_id: None,
             subject: None,
             tenant_stable_id: None,
+            auth_class: proximadb_tenant::AuthClass::Anonymous,
         }
     }
 
@@ -127,6 +132,19 @@ impl<'a> PortIdentity<'a> {
             tenant_id: Some(tenant_id),
             subject: None,
             tenant_stable_id: None,
+            auth_class: proximadb_tenant::AuthClass::Anonymous,
+        }
+    }
+}
+
+/// ADR-087: the borrowed port-seam projection of the one foundation identity.
+impl<'a> From<&'a proximadb_tenant::ResolvedRequestIdentity> for PortIdentity<'a> {
+    fn from(identity: &'a proximadb_tenant::ResolvedRequestIdentity) -> Self {
+        Self {
+            tenant_id: Some(identity.tenant.as_str()),
+            subject: identity.subject.as_deref(),
+            tenant_stable_id: identity.tenant_stable_id,
+            auth_class: identity.auth_class,
         }
     }
 }

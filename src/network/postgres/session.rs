@@ -50,6 +50,7 @@ impl SessionManager {
             state: SessionState::Startup,
             transaction_state: TransactionState::Idle,
             parameters: HashMap::new(),
+            identity: None,
             created_at: std::time::Instant::now(),
             last_activity: std::time::Instant::now(),
         };
@@ -153,6 +154,13 @@ pub struct Session {
     pub transaction_state: TransactionState,
     /// Session parameters
     pub parameters: HashMap<String, String>,
+    /// TD-ABAC-10 (ADR-087): the ONE caller identity for this connection,
+    /// constructed at startup after the tenant/subject trust gates pass —
+    /// tenant = the resolved startup tenant, subject = the accepted `user`
+    /// assertion (`AuthClass::TrustAsserted`; pgwire is trust-auth),
+    /// `tenant_stable_id` stamped once by the wired resolver. `None` until
+    /// the startup handshake completes.
+    pub identity: Option<proximadb_tenant::ResolvedRequestIdentity>,
     /// Creation time
     pub created_at: std::time::Instant,
     /// Last activity time
@@ -292,6 +300,7 @@ mod tests {
             state: SessionState::Ready,
             transaction_state: TransactionState::Idle,
             parameters: HashMap::new(),
+            identity: None,
             created_at: std::time::Instant::now(),
             last_activity: std::time::Instant::now(),
         };
@@ -322,6 +331,7 @@ mod tests {
             state: SessionState::Ready,
             transaction_state: TransactionState::Idle,
             parameters: HashMap::new(),
+            identity: None,
             created_at: std::time::Instant::now(),
             last_activity: std::time::Instant::now(),
         }

@@ -12,7 +12,12 @@
 //! Layering: integration-tier (`crates/integrations/*`); may depend only on
 //! foundation/horizontal/contracts.
 
+pub mod config;
 pub mod error;
 pub mod event;
 pub mod metrics;
+pub mod offset;
+pub mod outbound;
+pub mod sinks;
+pub mod source;
 pub mod transform;

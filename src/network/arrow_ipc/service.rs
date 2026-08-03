@@ -97,16 +97,40 @@ fn control_flight_data(metadata: Vec<u8>) -> FlightData {
 #[derive(Debug, Clone)]
 struct AuthenticatedFlightContext {
     tenant_id: String,
-    /// The authenticated principal's user id (TD-ABAC-6). Surfaced from the
-    /// resolved identity so the vector/ANN read path can thread it as the ABAC
-    /// subject (#1309) — previously dropped here. `None` on the trust-asserted
-    /// path (no credential) or when no subject was resolved.
-    ///
-    /// Unconsumed until #1309 wires the vector-path ABAC subject; allowed dead
-    /// here deliberately (the surfacing IS this PR's deliverable).
-    #[allow(dead_code)]
+    /// The authenticated principal's user id (TD-ABAC-6), threaded as the ABAC
+    /// subject on the v2 search path. `None` on the trust-asserted path (no
+    /// credential) or when no subject was resolved.
     user_id: Option<String>,
+    /// ADR-087: the tenant's stable u64 (ABAC policy key), stamped ONCE by the
+    /// identity orchestrator — never re-resolved per handler.
+    tenant_stable_id: Option<u64>,
+    /// ADR-087: trust provenance of this identity (audit-only at the seam).
+    auth_class: proximadb_tenant::AuthClass,
     capability: Option<DataPlaneCapability>,
+}
+
+impl AuthenticatedFlightContext {
+    /// The owned foundation identity for spawned/streaming paths (bulk_search).
+    fn owned_identity(&self) -> proximadb_tenant::ResolvedRequestIdentity {
+        proximadb_tenant::ResolvedRequestIdentity {
+            tenant: self.tenant_id.clone(),
+            subject: self.user_id.clone(),
+            auth_class: self.auth_class,
+            tenant_stable_id: self.tenant_stable_id,
+        }
+    }
+}
+
+/// ADR-087: the borrowed port-seam projection of the Flight identity.
+impl<'a> From<&'a AuthenticatedFlightContext> for proximadb_runtime::PortIdentity<'a> {
+    fn from(ctx: &'a AuthenticatedFlightContext) -> Self {
+        Self {
+            tenant_id: Some(ctx.tenant_id.as_str()),
+            subject: ctx.user_id.as_deref(),
+            tenant_stable_id: ctx.tenant_stable_id,
+            auth_class: ctx.auth_class,
+        }
+    }
 }
 
 /// DoGet ticket for the batched columnar graph export path. JSON-encoded in the
@@ -654,6 +678,7 @@ impl ProximaFlightService {
             None,
             self.tenant_header_trust,
             &self.tenant_deployment_mode,
+            self.stable_id_resolver.as_deref(),
         )
         .await
         .map_err(|err| Self::identity_error_to_flight_status(err, self.tenant_header_trust))?;
@@ -663,6 +688,8 @@ impl ProximaFlightService {
             // #1309: surface the authenticated principal so the vector/ANN read
             // path can thread it as the ABAC subject (previously dropped here).
             user_id: resolved.identity.subject,
+            tenant_stable_id: resolved.identity.tenant_stable_id,
+            auth_class: resolved.identity.auth_class,
             capability: resolved
                 .user_context
                 .as_ref()
@@ -1197,7 +1224,7 @@ impl ProximaFlightService {
     async fn handle_v2_search(
         &self,
         ticket: FlightSearchTicket,
-        tenant_id: &str,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<Vec<arrow_array::RecordBatch>> {
         let include_vector = ticket.include_vector;
         let request = ticket.to_rich_request()?;
@@ -1208,29 +1235,15 @@ impl ProximaFlightService {
             "Arrow Flight canonical v2 vector search"
         );
 
-        // TD-TENANT-1: resolve the tenant's stable u64 (catalog-backed) so the
-        // io_trace record is attributable per-tenant, mirroring REST v2. `None`
-        // when no resolver is wired or the tenant is unminted (fail-open for
-        // attribution, never for access).
-        let tenant_stable_id = self
-            .stable_id_resolver
-            .as_ref()
-            .and_then(|r| r.stable_id_of(tenant_id));
-
+        // ADR-087: the stable id arrives on the identity, stamped ONCE by the
+        // identity orchestrator — no per-handler re-resolution.
         let response = crate::observability::io_trace::instrument_with_stable_tenant(
-            Some(tenant_id.to_string()),
-            tenant_stable_id,
+            identity.tenant_id.map(str::to_string),
+            identity.tenant_stable_id,
             "arrow_flight.v2.records.search",
             crate::observability::predicate_diagnostics::scope(async {
                 self.record_search_port
-                    .search_record(
-                        request,
-                        proximadb_runtime::PortIdentity {
-                            tenant_id: Some(tenant_id),
-                            subject: None,
-                            tenant_stable_id,
-                        },
-                    )
+                    .search_record(request, identity)
                     .await
             }),
         )
@@ -1556,7 +1569,10 @@ impl FlightService for ProximaFlightService {
             )?;
 
             let batches = self
-                .handle_v2_search(search_ticket, &auth_context.tenant_id)
+                .handle_v2_search(
+                    search_ticket,
+                    proximadb_runtime::PortIdentity::from(&auth_context),
+                )
                 .await
                 .map_err(|e| TonicStatus::internal(format!("Search failed: {}", e)))?;
 
@@ -2707,7 +2723,7 @@ impl FlightService for ProximaFlightService {
                 )?;
                 self.handle_bulk_search_exchange(
                     collection_id,
-                    auth_context.tenant_id,
+                    auth_context.owned_identity(),
                     first_msg,
                     stream,
                 )
@@ -3153,7 +3169,7 @@ impl ProximaFlightService {
     async fn handle_bulk_search_exchange(
         &self,
         collection_id: String,
-        tenant_id: String,
+        identity: proximadb_tenant::ResolvedRequestIdentity,
         first_msg: FlightData,
         mut stream: TonicStreaming<FlightData>,
     ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
@@ -3235,7 +3251,10 @@ impl ProximaFlightService {
                     include_vector,
                 };
 
-                let search_batches = match self.handle_v2_search(ticket, &tenant_id).await {
+                let search_batches = match self
+                    .handle_v2_search(ticket, proximadb_runtime::PortIdentity::from(&identity))
+                    .await
+                {
                     Ok(batches) => batches,
                     Err(e) => {
                         let meta = serde_json::to_vec(&serde_json::json!({

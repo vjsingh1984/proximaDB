@@ -23,7 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cdc::error::{CdcError, CdcResult};
+use crate::error::{CdcError, CdcResult};
 
 fn unix_timestamp_millis() -> u64 {
     SystemTime::now()

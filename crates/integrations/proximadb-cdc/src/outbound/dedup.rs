@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cdc::event::ChangeEvent;
+use crate::event::ChangeEvent;
 
 /// Deduplication strategy
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
@@ -278,7 +278,7 @@ fn simple_hash(input: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdc::event::{Operation, SourceInfo};
+    use crate::event::{Operation, SourceInfo};
 
     fn create_test_event(id: u64) -> ChangeEvent {
         let mut event = ChangeEvent::new(

@@ -118,6 +118,8 @@ pub(crate) mod test_support {
             query: String,
             parameter_count: Option<usize>,
             collection: Option<String>,
+            tenant_id: Option<String>,
+            subject: Option<String>,
         },
         Hybrid,
     }
@@ -268,13 +270,15 @@ pub(crate) mod test_support {
             query: String,
             parameters: Option<Vec<ProximaValue>>,
             collection: Option<String>,
-            _tenant_id: Option<&str>,
-            _subject: Option<&str>,
+            tenant_id: Option<&str>,
+            subject: Option<&str>,
         ) -> Result<ExecuteQueryResponse> {
             self.calls.lock().unwrap().push(ApiCall::Sql {
                 query,
                 parameter_count: parameters.as_ref().map(Vec::len),
                 collection,
+                tenant_id: tenant_id.map(ToOwned::to_owned),
+                subject: subject.map(ToOwned::to_owned),
             });
             Ok(self.sql_response.lock().unwrap().clone())
         }
@@ -519,6 +523,8 @@ mod tests {
                     query: "select * from docs".to_string(),
                     parameter_count: None,
                     collection: Some("docs".to_string()),
+                    tenant_id: None,
+                    subject: None,
                 },
             ]
         );
