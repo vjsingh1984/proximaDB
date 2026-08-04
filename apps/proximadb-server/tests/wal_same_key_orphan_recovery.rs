@@ -14,13 +14,12 @@
 //!
 //! Uses a local `file://` store (the live ADLS/S3/GCS proof is TD-OBJSTORE-2;
 //! the recovery LIST-authority + same-key resolution code path is identical).
-//! The `ServerProcess` subprocess harness is duplicated here (Rust integration
-//! tests are separate crates; the original is private in
-//! `object_store_restart_recovery.rs`).
+//! The scenario-specific `ServerProcess` harness stays local because Rust
+//! integration tests are separate crates; loopback-port reservation is shared
+//! through `tests/support`.
 //!
 //! Run: `cargo nextest run --test wal_same_key_orphan_recovery -- --ignored`
 
-use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -28,10 +27,7 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde_json::{Value, json};
 
-fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind port 0");
-    listener.local_addr().expect("local addr").port()
-}
+mod support;
 
 /// Local-`file://` config (no cloud creds): the WAL + SST persist on the same
 /// volume across restarts, so the stranded orphan WAL batches survive the crash.
@@ -96,7 +92,8 @@ struct ServerProcess {
 
 impl ServerProcess {
     async fn start(root: &str, data_dir: &Path, config_path: &Path) -> anyhow::Result<Self> {
-        let ports = [free_port(), free_port(), free_port(), free_port()];
+        let port_reservation = support::reserve_loopback_ports::<4>()?;
+        let ports = port_reservation.ports();
         write_config(config_path, data_dir, root, ports);
         let mut command = Command::new(env!("CARGO_BIN_EXE_proximadb-server"));
         command
@@ -105,6 +102,7 @@ impl ServerProcess {
             .env("RUST_LOG", "warn")
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
+        drop(port_reservation);
         let child = command.spawn()?;
         let server = Self {
             child,

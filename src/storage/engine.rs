@@ -876,7 +876,9 @@ impl StorageEngine {
         // `None` branch is byte-identical to the legacy `StoragePath::collection_*_path`.
         use crate::storage::trait_components::path_resolver::{
             collection_data_path_typed, collection_index_path_typed, collection_wal_path_typed,
+            typed_path_identity,
         };
+        let typed_identity = typed_path_identity(typed_identity);
         let data_url = collection_data_path_typed(&base_location, &collection_id, typed_identity);
         let write_buffer_url =
             collection_wal_path_typed(&base_location, &collection_id, typed_identity);

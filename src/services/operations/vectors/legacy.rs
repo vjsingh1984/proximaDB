@@ -1300,6 +1300,8 @@ impl VectorOperationsService {
             crate::storage::trait_components::path_resolver::typed_identity_from_storage_assignment(
                 Some(assignment),
             );
+        let typed_identity =
+            crate::storage::trait_components::path_resolver::typed_path_identity(typed_identity);
         let storage_url =
             crate::storage::trait_components::path_resolver::collection_data_path_typed(
                 &assignment.base_location,

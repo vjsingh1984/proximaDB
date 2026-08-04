@@ -267,8 +267,12 @@ impl SstEngine {
                 let collection_id = params.collection_id.as_deref().ok_or_else(|| {
                     SstError::InvalidArgument("Collection ID is required".to_string())
                 })?;
-                let identity = crate::storage::trait_components::path_resolver::
-                    typed_identity_from_storage_assignment(Some(assignment));
+                let identity =
+                    crate::storage::trait_components::path_resolver::typed_path_identity(
+                     crate::storage::trait_components::path_resolver::typed_identity_from_storage_assignment(
+                         Some(assignment),
+                     ),
+                 );
                 let storage_url =
                     crate::storage::trait_components::path_resolver::collection_data_path_typed(
                         &assignment.base_location,
@@ -1633,10 +1637,10 @@ mod tests {
     }
 
     #[test]
-    fn flush_storage_path_matches_typed_search_path() {
+    fn flush_storage_path_matches_search_layout_policy() {
         use crate::proto::proximadb_v1::{Collection, StorageAssignment};
         use crate::storage::trait_components::path_resolver::{
-            collection_data_path_typed, typed_identity_from_storage_assignment,
+            collection_data_path_typed, typed_identity_from_storage_assignment, typed_path_identity,
         };
 
         let assignment = StorageAssignment {
@@ -1659,18 +1663,11 @@ mod tests {
         let expected = collection_data_path_typed(
             &assignment.base_location,
             "13",
-            typed_identity_from_storage_assignment(Some(&assignment)),
+            typed_path_identity(typed_identity_from_storage_assignment(Some(&assignment))),
         );
         assert_eq!(
             SstEngine::get_collection_storage_url_from_params(&params).unwrap(),
             expected
-        );
-        assert_ne!(
-            expected,
-            proximadb_storage_common::storage_path::StoragePath::collection_data_path(
-                &assignment.base_location,
-                "13"
-            )
         );
     }
 

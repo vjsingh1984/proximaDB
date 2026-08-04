@@ -86,6 +86,10 @@ async fn contract_local_file_multipart_publish(base: &str) {
 
     let factory = factory().await;
     let fs = factory.get_filesystem(&key).expect("backend for key");
+    assert!(
+        fs.supports_bounded_local_file_write(),
+        "{base} must advertise bounded local-file publication before spill admission"
+    );
     let written = fs
         .write_local_file(&key, &local_path, None)
         .await
@@ -126,6 +130,16 @@ async fn s3_prefix_list_and_exists_contract() {
     contract_prefix_semantics("s3://proximadb-test").await;
 }
 
+#[tokio::test]
+#[ignore = "needs MinIO — set AWS_ENDPOINT to the emulator"]
+async fn s3_local_file_multipart_publish_contract() {
+    if std::env::var("AWS_ENDPOINT").is_err() {
+        eprintln!("skip: set AWS_ENDPOINT (MinIO) to run");
+        return;
+    }
+    contract_local_file_multipart_publish("s3://proximadb-test").await;
+}
+
 // GCS is best-effort (documented fake-gcs/object_store incompatibilities; never a
 // gate — TD-OBJSTORE-5 nightly tier). The backend needs `PROXIMADB_GCS_ENDPOINT`
 // + `PROXIMADB_GCS_ANONYMOUS=1` to register against fake-gcs; if it does not
@@ -143,6 +157,25 @@ async fn gcs_prefix_list_and_exists_contract_best_effort() {
         return;
     }
     contract_prefix_semantics("gs://proximadb-test").await;
+}
+
+#[tokio::test]
+#[ignore = "needs fake-gcs — set PROXIMADB_GCS_ENDPOINT + PROXIMADB_GCS_ANONYMOUS=1"]
+async fn gcs_local_file_resumable_publish_contract_best_effort() {
+    if std::env::var("PROXIMADB_GCS_ENDPOINT").is_err() {
+        eprintln!("skip: set PROXIMADB_GCS_ENDPOINT (fake-gcs) to run");
+        return;
+    }
+    let factory = factory().await;
+    let Ok(fs) = factory.get_filesystem("gs://proximadb-test/probe") else {
+        eprintln!("::warning:: GCS backend did not register (best-effort tier) — skipping");
+        return;
+    };
+    assert!(
+        fs.supports_bounded_local_file_write(),
+        "GCS spill publication must advertise only its bounded resumable path"
+    );
+    contract_local_file_multipart_publish("gs://proximadb-test").await;
 }
 
 /// GCS pagination contract: with the page size pinned to 2, five objects must

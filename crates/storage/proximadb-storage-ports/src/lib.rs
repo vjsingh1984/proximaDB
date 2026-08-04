@@ -31,7 +31,8 @@ pub use scan_strategy::{ScanCostEstimate, ScanIterator, ScanStatistics, ScanStra
 pub mod path_resolver;
 pub use path_resolver::{
     CollectionPathResolver, StorageAssignment, collection_data_path_typed,
-    typed_identity_from_storage_assignment,
+    typed_identity_from_storage_assignment, typed_path_identity, typed_path_identity_when,
+    typed_paths_enabled,
 };
 
 /// Read access to collection metadata that storage needs at flush/compaction

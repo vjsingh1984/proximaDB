@@ -140,6 +140,8 @@ impl NovaSearchOperations {
             crate::storage::trait_components::path_resolver::typed_identity_from_storage_assignment(
                 ctx.collection.storage_assignment.as_ref(),
             );
+        let typed_identity =
+            crate::storage::trait_components::path_resolver::typed_path_identity(typed_identity);
         let data_path = crate::storage::trait_components::path_resolver::collection_data_path_typed(
             base_location,
             collection_id,
