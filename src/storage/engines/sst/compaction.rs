@@ -1481,6 +1481,26 @@ impl Compaction {
             .map(|path| path.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         let output_path = task.output_file.to_string_lossy().into_owned();
+        let direct_remote_publication =
+            crate::storage::engines::sst::staged_write::StagedSegmentWrite::is_remote_target(
+                &output_path,
+            );
+        if direct_remote_publication {
+            let output_filesystem = self
+                .filesystem_factory
+                .get_filesystem(&output_path)
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "resolve local-spill publication backend: {error}"
+                    ))
+                })?;
+            if !output_filesystem.supports_bounded_local_file_write() {
+                return Err(crate::core::StorageError::SstEngine(format!(
+                    "{} backend does not guarantee bounded local-file publication for {output_path}",
+                    output_filesystem.filesystem_type()
+                )));
+            }
+        }
         let mut task_scratch = SpillTaskScratch::begin(
             scratch_owner.path(),
             task.collection_object_id,
@@ -1621,22 +1641,35 @@ impl Compaction {
                     "update local-spill PAX manifest: {error}"
                 ))
             })?;
+        // The spill writer already owns a complete local PAX. Object-store
+        // multipart uploads keep parts invisible until their final block-list
+        // commit, so uploading that file once to its unique final key is the
+        // atomic publication boundary. A remote `__compact` upload followed by
+        // COPY adds another full-object operation; the Azure fallback also
+        // materializes the entire multi-GiB object in process. Local files keep
+        // the coordinator's staging + atomic rename path.
         let staging_config = atomic_coordinator_staging(task)?;
         let atomic_operation = if let Some(coordinator) = &self.atomic_coordinator {
             Some(
-                coordinator
-                    .begin_atomic_operation(&staging_config)
-                    .await
-                    .map_err(|error| {
-                        crate::core::StorageError::SstEngine(format!(
-                            "begin local-spill atomic publication: {error}"
-                        ))
-                    })?,
+                if direct_remote_publication {
+                    coordinator
+                        .begin_zero_copy_managed_operation(&staging_config)
+                        .await
+                } else {
+                    coordinator.begin_atomic_operation(&staging_config).await
+                }
+                .map_err(|error| {
+                    crate::core::StorageError::SstEngine(format!(
+                        "begin local-spill atomic publication: {error}"
+                    ))
+                })?,
             )
         } else {
             None
         };
-        let publication_target = if let Some(operation) = &atomic_operation {
+        let publication_target = if direct_remote_publication {
+            output_path.clone()
+        } else if let Some(operation) = &atomic_operation {
             let filename = task
                 .output_file
                 .file_name()
@@ -1652,7 +1685,7 @@ impl Compaction {
                 filename
             )
         } else {
-            task.output_file.to_string_lossy().into_owned()
+            output_path.clone()
         };
 
         let write_result: Result<(

@@ -859,7 +859,7 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
     assert!(
         failure
             .to_string()
-            .contains("upload local-spill PAX segment"),
+            .contains("local-spill publication backend"),
         "unexpected upload failure: {failure}"
     );
     assert!(

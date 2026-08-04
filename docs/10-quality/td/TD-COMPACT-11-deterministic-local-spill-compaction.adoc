@@ -77,9 +77,16 @@ The current code cannot be fixed by adding a temporary `Vec` serialization:
 
 === S5 — Publication, invalidation, and recovery
 
-* Upload only the final output through the atomic coordinator.
+* Upload the completed local output once to its unique final object key. Treat
+  multipart completion as the remote visibility boundary; do not first upload
+  an object-store `__compact` key and then GET/COPY/re-PUT it. Keep local
+  staging plus atomic rename for `file://`.
 * Fail spill closed when a remote backend/decorator cannot guarantee bounded
-  local-file publication; Azure/S3 multipart are the initial qualified paths.
+  local-file publication; Azure block upload, S3 multipart, and GCS resumable
+  upload are qualified paths. Check this capability before compaction work.
+* For `file://`/bare local paths, write a hidden sibling and atomically rename
+  on the same filesystem; never use the configurable spill mount as the rename
+  source.
 * After publication, stream Region A/B from retained local staging into the
   rebuildable persistent cache without an object GET or segment-sized DRAM
   seed; degrade to bounded control-only admission when that tier is disabled.
@@ -105,6 +112,15 @@ the settled two-segment corpus measured recall 0.985/0.987/0.983 and
 4.98/1.17/48.69 GET/query after-write/disk-warm/object-cold. Whole-process RSS
 and the injected-failure/determinism matrix remain open; this evidence does not
 close the TD.
+
+The subsequent 10M qualification reached one fully constructed
+2,757,638,547-byte, 10,000,000-row PAX but exposed a publication defect before
+source retirement: the Azure `move_file` compatibility path reread the whole
+remote staging object and attempted a second PUT. The source segments remained
+authoritative, proving the retirement ordering, but the run is not accepted as
+10M query evidence. S5 now uses the already-admitted local spill file as the
+only upload source and publishes it directly by bounded multipart commit; the
+10M recall/GET/latency matrix must be rerun on that path.
 
 == Exit criteria
 
