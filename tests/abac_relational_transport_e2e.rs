@@ -14,15 +14,16 @@
 //! authenticated REST /api/v2/sql ----> shared typed SQL port
 //! authenticated REST record reads ---> shared record ABAC seam
 //! authenticated gRPC record reads ---> shared record ABAC seam
+//! authenticated Flight `DoGet` ------> shared record ABAC seam
 //!                                      ^
 //! authenticated REST policy control -> shared live ABAC stores
 //! ```
 //!
 //! The test proves deny-before-provision, hot permit without reconnect/restart,
-//! isolation of an unbound subject, and hot revoke over both trust-auth pgwire
-//! and credential-authenticated gRPC. It also discovers the table's stable
-//! object id through `xcatalog.tables`; policy tooling must never guess an
-//! allocator result or scrape catalog persistence.
+//! isolation of an unbound subject, and hot revoke over trust-auth pgwire and
+//! the credential-authenticated REST, gRPC, and Flight transports. It also
+//! discovers the table's stable object id through `xcatalog.tables`; policy
+//! tooling must never guess an allocator result or scrape catalog persistence.
 
 #![cfg(feature = "abac-policy")]
 
@@ -30,6 +31,12 @@ use std::collections::HashMap;
 use std::net::TcpListener;
 use std::time::Duration;
 
+use arrow_array::{Array, RecordBatch, StringArray};
+use arrow_flight::Ticket;
+use arrow_flight::decode::FlightRecordBatchStream;
+use arrow_flight::error::FlightError;
+use arrow_flight::flight_service_client::FlightServiceClient;
+use futures::TryStreamExt;
 use proximadb::core::Config;
 use proximadb::database::ProximaDB;
 use proximadb::proto::proximadb_v2::proxima_record_service_client::ProximaRecordServiceClient;
@@ -134,6 +141,7 @@ fn transport_security_config() -> SecurityConfig {
 struct LiveServer {
     rest_port: u16,
     grpc_port: u16,
+    flight_port: u16,
     pg_port: u16,
     db: Option<ProximaDB>,
     _tmp: TempDir,
@@ -143,6 +151,7 @@ impl LiveServer {
     async fn start() -> anyhow::Result<Self> {
         let rest_port = free_port();
         let grpc_port = free_port();
+        let flight_port = free_port();
         let pg_port = free_port();
         let tmp = TempDir::new()?;
         let mut config = Config::default();
@@ -152,6 +161,7 @@ impl LiveServer {
         config.api.unified_mode = false;
         config.api.rest_port = rest_port;
         config.api.grpc_port = grpc_port;
+        config.api.arrow_flight_port = flight_port;
         config.api.pg_port = Some(pg_port);
         config.storage.storage_locations = vec![proximadb::core::config::StorageLocation {
             url: format!("file://{}", tmp.path().display()),
@@ -183,6 +193,7 @@ impl LiveServer {
         Ok(Self {
             rest_port,
             grpc_port,
+            flight_port,
             pg_port,
             db: Some(db),
             _tmp: tmp,
@@ -202,6 +213,10 @@ impl LiveServer {
 
     fn grpc_url(&self) -> String {
         format!("http://127.0.0.1:{}", self.grpc_port)
+    }
+
+    fn flight_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.flight_port)
     }
 }
 
@@ -493,6 +508,57 @@ async fn grpc_record_found(
         .unwrap_or_else(|error| panic!("gRPC record get: {error}"))
         .into_inner()
         .found
+}
+
+async fn connect_flight(server: &LiveServer) -> FlightServiceClient<tonic::transport::Channel> {
+    let channel = tonic::transport::Endpoint::from_shared(server.flight_url())
+        .expect("Flight endpoint")
+        .connect()
+        .await
+        .expect("Flight channel");
+    FlightServiceClient::new(channel)
+}
+
+async fn flight_record_search_ids(
+    client: &mut FlightServiceClient<tonic::transport::Channel>,
+    api_key: &str,
+    collection: &str,
+) -> Vec<String> {
+    let ticket = Ticket {
+        ticket: serde_json::to_vec(&json!({
+            "type": "vector_search",
+            "collection_id": collection,
+            "query_vector": [1.0, 0.0, 0.0, 0.0],
+            "top_k": 10,
+            "include_vector": false
+        }))
+        .expect("serialize Flight search ticket")
+        .into(),
+    };
+    let response = client
+        .do_get(authenticated_grpc_request(ticket, api_key))
+        .await
+        .unwrap_or_else(|error| panic!("Flight record search: {error}"))
+        .into_inner();
+    let stream = FlightRecordBatchStream::new_from_flight_data(
+        response.map_err(|status| FlightError::Tonic(Box::new(status))),
+    );
+    let batches: Vec<RecordBatch> = stream
+        .try_collect()
+        .await
+        .unwrap_or_else(|error| panic!("decode Flight record search: {error}"));
+
+    let mut ids = Vec::new();
+    for batch in batches {
+        let id_column = batch
+            .column_by_name("id")
+            .expect("Flight search id column")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("Flight search id column must be Utf8");
+        ids.extend((0..id_column.len()).map(|index| id_column.value(index).to_string()));
+    }
+    ids
 }
 
 struct LiveRecordFixture {
@@ -1147,5 +1213,62 @@ async fn grpc_records_follow_live_row_policy_provision_and_revoke_inner() {
     assert!(
         !grpc_record_found(&mut alice, ALICE_KEY, &fixture.collection, fixture.eng_id,).await,
         "gRPC point-get must observe the hot revoke"
+    );
+}
+
+/// Arrow Flight's canonical `type: vector_search` ticket must authenticate the
+/// API key and project that principal into the same record-read authority as
+/// REST and gRPC. Reusing each connected Flight client across policy mutations
+/// proves authorization is evaluated per operation rather than cached at
+/// connection establishment.
+#[test]
+fn flight_records_follow_live_row_policy_provision_and_revoke() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    runtime.block_on(flight_records_follow_live_row_policy_provision_and_revoke_inner());
+}
+
+async fn flight_records_follow_live_row_policy_provision_and_revoke_inner() {
+    let server = LiveServer::start().await.expect("start live server");
+    let http = HttpClient::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("HTTP client");
+    let fixture = create_live_record_fixture(&http, &server, "abac_flight_records").await;
+    let mut alice = connect_flight(&server).await;
+    let mut bob = connect_flight(&server).await;
+
+    assert!(
+        flight_record_search_ids(&mut alice, ALICE_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "an unprovisioned Flight record principal must fail closed"
+    );
+
+    let policy_path = provision_live_record_policy(&http, &server, 6_000_000_000).await;
+
+    assert_eq!(
+        flight_record_search_ids(&mut alice, ALICE_KEY, &fixture.collection).await,
+        vec![fixture.eng_id.to_string()],
+        "Flight search must apply the stored row predicate"
+    );
+    assert!(
+        flight_record_search_ids(&mut bob, BOB_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "an unbound authenticated Flight principal must remain denied"
+    );
+
+    revoke_live_policy(&http, &server, &policy_path).await;
+    assert!(
+        flight_record_search_ids(&mut alice, ALICE_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "the existing Flight client must observe the hot revoke"
     );
 }
