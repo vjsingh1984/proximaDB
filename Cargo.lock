@@ -6758,6 +6758,7 @@ dependencies = [
  "proximadb-compression-types",
  "proximadb-concurrent",
  "proximadb-config",
+ "proximadb-cross-modal-fusion",
  "proximadb-data-model",
  "proximadb-distance-kernel",
  "proximadb-distance-types",
@@ -7219,6 +7220,10 @@ dependencies = [
  "tracing",
  "uuid",
 ]
+
+[[package]]
+name = "proximadb-cross-modal-fusion"
+version = "0.2.0"
 
 [[package]]
 name = "proximadb-data-model"

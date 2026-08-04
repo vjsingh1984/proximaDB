@@ -30,7 +30,7 @@ status = "partial"
 notes = "One calibrated fuse-by-oid seam for all modalities (CROSS_MODAL_FUSION_SEAM_2026_06_22). Neutral Fuser core + PIT calibration (TD-136) and GraphExpander + REST v2 fusion-search (TD-137) In Progress; document/relational/edge expanders, cost-routed fusion, alias resolution (TD-138..143) and the EntityService typed-facade delegation (TD-146) open."
 controlling_td = ["TD-136", "TD-137", "TD-138", "TD-143", "TD-146"]
 evidence = [
-  "src/core/search/cross_modal_fusion.rs:1",
+  "crates/horizontal/proximadb-cross-modal-fusion/src/cross_modal_fusion.rs:1",
   "docs/12-design/CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc:1",
   "docs/12-design/SEARCH_SURFACE_CONTRACT_2026_06_24.adoc:1",
 ]

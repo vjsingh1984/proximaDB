@@ -11,7 +11,7 @@ pub use proximadb_search_types::{
     json_comparison, json_value_serde, results, sql_value_filter,
 };
 
-pub mod cross_modal_fusion;
+pub use proximadb_cross_modal_fusion::cross_modal_fusion;
 pub mod engine_benchmarks;
 pub mod filter_contract; // Filter contracts for hybrid search (Issue #38, SB-08)
 pub mod filter_pushdown_engine;
