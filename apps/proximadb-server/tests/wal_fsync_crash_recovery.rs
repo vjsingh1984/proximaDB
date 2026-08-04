@@ -28,16 +28,15 @@
 //!    MAY or MAY NOT have fsync'd before the kill — we do not assert it
 //!    either way, keeping the test deterministic.
 //!
-//! This test reuses the `ServerProcess` subprocess harness pattern (free_port,
-//! write_config, start/wait_ready/crash) established by
-//! `object_store_restart_recovery.rs`; the helpers are duplicated here because
-//! Rust integration tests are separate crates and that module is private.
+//! This test reuses the `ServerProcess` subprocess harness pattern established
+//! by `object_store_restart_recovery.rs`. Loopback-port reservation is shared
+//! through `tests/support`; the scenario-specific config and lifecycle helpers
+//! stay local because Rust integration tests are separate crates.
 //!
 //! Run via:
 //!   cargo nextest run --test wal_fsync_crash_recovery -- --ignored
 //!   cargo test --test wal_fsync_crash_recovery -- --ignored --nocapture
 
-use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -45,10 +44,7 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde_json::{Value, json};
 
-fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind port 0");
-    listener.local_addr().expect("local addr").port()
-}
+mod support;
 
 /// Write a `file://`-backed server config with `sync_mode = "PerBatch"` — the
 /// ADR-069 D5 contract under test. The SAME `root` (storage URL) + `data_dir`
@@ -116,15 +112,18 @@ struct ServerProcess {
 
 impl ServerProcess {
     async fn start(root: &str, data_dir: &Path, config_path: &Path) -> anyhow::Result<Self> {
-        let ports = [free_port(), free_port(), free_port(), free_port()];
+        let port_reservation = support::reserve_loopback_ports::<4>()?;
+        let ports = port_reservation.ports();
         write_config(config_path, data_dir, root, ports);
-        let child = Command::new(env!("CARGO_BIN_EXE_proximadb-server"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_proximadb-server"));
+        command
             .arg("--config")
             .arg(config_path)
             .env("RUST_LOG", "info")
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()?;
+            .stderr(Stdio::inherit());
+        drop(port_reservation);
+        let child = command.spawn()?;
         let server = Self {
             child,
             base_url: format!("http://127.0.0.1:{}", ports[0]),
