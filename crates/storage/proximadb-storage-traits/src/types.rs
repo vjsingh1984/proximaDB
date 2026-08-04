@@ -14,18 +14,6 @@ use proximadb_proto::proximadb_v1::Collection;
 // field types stay identical for back-compat.
 use proximadb_kernel::CompactBatchId as BatchId;
 
-/// Deterministic 64-bit hash of a string, used to derive a stable
-/// `CollectionObjectId` handle from legacy UUID/name collection ids
-/// (ADR-0083 rev2 D2). Uses the fixed-seed `DefaultHasher`, so the derived
-/// handle is stable across processes and restarts (and never collides for any
-/// realistic collection count).
-fn stable_collection_handle(id: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    id.hash(&mut h);
-    h.finish()
-}
-
 /// Flexible flush parameters that work for all storage engines.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlushParameters {
@@ -80,23 +68,22 @@ impl FlushParameters {
             .ok_or_else(|| anyhow!("No collection_id provided in flush parameters"))
     }
 
-    /// Resolve a stable native handle for admission / scheduling / WAL / cache
-    /// keying (ADR-0083 rev2 D2).
+    /// Resolve the native, globally unique catalog object identity used for
+    /// admission, scheduling, WAL, and cache keying.
     ///
-    /// This is a **derived** `u64` handle, NOT the collection's identity — the
-    /// composite `CollectionIdentity` on `StorageAssignment` is the authoritative
-    /// identity. Numeric catalog ids parse directly; legacy UUID/name ids hash to
-    /// a deterministic u64. Because the handle is derived (never independently
-    /// stored), it cannot drift from the identity the way a second stored u64 can
-    /// — which is exactly the #1325 regression this closes (the embedded flush
-    /// plan parsed `Collection.id` as `u64` while it held a UUID).
+    /// Aliases and UUID-shaped legacy identifiers must be resolved by the
+    /// catalog before they reach this storage boundary. Hashing one here would
+    /// create a second, collision-prone identity domain that cannot be joined
+    /// reliably with catalog, MVCC, deletion-vector, or compaction state.
     pub fn get_collection_object_id(
         &self,
     ) -> Result<proximadb_kernel::stable_id::CollectionObjectId> {
         let collection_id = self.get_collection_id()?;
-        Ok(collection_id
-            .parse()
-            .unwrap_or_else(|_| stable_collection_handle(&collection_id)))
+        collection_id.parse().map_err(|error| {
+            anyhow!(
+                "flush collection_id must be a decimal catalog object id, got {collection_id:?}: {error}"
+            )
+        })
     }
 
     /// Resolve the composite `CollectionIdentity` from the cached config's
