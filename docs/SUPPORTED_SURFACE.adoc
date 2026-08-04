@@ -100,6 +100,16 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 | SQL clients and tools — psql, psycopg2/asyncpg, JDBC, BI/ORM ecosystem.
 | Beta — autocommit SQL subset; multi-tenant identity/ABAC closure is still tracked by TD-ABAC-10/11
 
+| *REST `POST /api/v2/sql`*
+| One authenticated *SQL* statement: tenant-scoped relational SELECT/DDL/DML
+  plus the existing vector/graph SQL extensions.
+| HTTP/JSON clients that need SQL without a PostgreSQL or gRPC driver. This is
+  a thin transport adapter over the same typed SQL port and relational
+  planner/executor as gRPC; execution cells remain `ProximaValue` until JSON
+  serialization. Request parameters are not yet supported, so clients must not
+  send or interpolate parameter payloads through this endpoint.
+| Beta (single statement; API-key/JWT identity + ABAC live-ratchet covered)
+
 | *gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery`*
 | *SQL with vector/graph extensions* (e.g. `VECTOR_SEARCH`) *and tenant-scoped
   relational SQL* — SELECT reads + DDL (`CREATE`/`ALTER`/`DROP`) + DML
@@ -143,11 +153,13 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 ====
 * pgwire is *SQL-only* and cannot serve UQL/AQL/Cypher; those non-SQL languages require the
   unified query port (`/api/v2/query`) or the graph service — they are not replaceable by pgwire.
-* SQL is served by *two surfaces* (TD-121/TD-135). *pgwire* serves the PostgreSQL ecosystem
+* SQL is served by *three adapters over one execution authority* (TD-121/TD-135).
+  *pgwire* serves the PostgreSQL ecosystem
   (psql/JDBC/BI/ORM, Postgres-native auth) in autocommit mode. `BEGIN`, `COMMIT`, `ROLLBACK`,
   savepoints, and other transaction-control statements return SQLSTATE `0A000`; a simple-query
   batch containing transaction control is rejected before any statement in the batch executes.
-  The gRPC
+  REST `POST /api/v2/sql` serves authenticated HTTP/JSON clients and deliberately supports
+  one statement without parameter binding in its initial beta contract. The gRPC
   `ProximaRecordService.ExecuteQuery` RPC is *token/SSO-authenticated* (bearer/JWT in metadata,
   which pgwire's password/MD5 auth cannot carry) and serves vector/graph-extension SQL (e.g.
   `VECTOR_SEARCH`) plus *tenant-scoped relational SQL — SELECT reads AND DDL/DML writes*: SELECTs
@@ -237,7 +249,7 @@ for evidence/provenance, and event/history records for temporal state. The v1
 
 | Vector CRUD and search
 | Supported
-| Canonical REST `/api/v2` record batch/search/get/scan flows and gRPC `proximadb.v2.ProximaRecordService` record operations. REST `/api/v1` and gRPC v1 vector-shaped flows are deprecated compatibility adapters for existing clients only (see Canonical API Surface above); they lower into canonical v2 handlers and will be retired. Record metadata filters are enforced on typed `/search` (`filters:[{field,op,value}]`) and `/records/scan` (`filter`) across the supported ops (`eq,neq,gt,gte,lt,lte,in,contains,between,starts_with,ends_with`), including tenant/account scoping; array-valued props support `in`/`contains` membership.
+| Canonical REST `/api/v2` record batch/search/get/scan flows, gRPC `proximadb.v2.ProximaRecordService` record operations, and Arrow Flight canonical `type: "vector_search"` `DoGet`. REST `/api/v1` and gRPC v1 vector-shaped flows are deprecated compatibility adapters for existing clients only (see Canonical API Surface above); they lower into canonical v2 handlers and will be retired. Record metadata filters are enforced on typed `/search` (`filters:[{field,op,value}]`) and `/records/scan` (`filter`) across the supported ops (`eq,neq,gt,gte,lt,lte,in,contains,between,starts_with,ends_with`), including tenant/account scoping; array-valued props support `in`/`contains` membership. Canonical REST search/point-get, authenticated gRPC v2 unary search/streaming search/point-get, and authenticated Flight record search have live provisioned-ABAC evidence for deny-before-provision, row-predicate filtering, principal isolation, and hot revoke.
 | Keep hybrid retrieval and distributed search claims separate from the supported vector surface. New clients must not target v1 `VectorRecord`/`SqlValue` payloads.
 
 | Federated SQL over function-backed sources

@@ -98,6 +98,84 @@ pub fn json_to_proxima(value: &serde_json::Value) -> ProximaValue {
     }
 }
 
+/// Convert a canonical [`ProximaValue`] to its natural JSON representation.
+///
+/// This is a wire-edge projection for JSON transports. Internal execution
+/// must retain `ProximaValue`; callers should invoke this only while building
+/// an HTTP/document payload. Non-finite floats become JSON `null`, binary
+/// values become byte arrays, and vectors retain their numeric structure.
+pub fn proxima_to_json(value: &ProximaValue) -> serde_json::Value {
+    use serde_json::{Map, Number, Value};
+
+    fn float(value: f64) -> Value {
+        Number::from_f64(value).map_or(Value::Null, Value::Number)
+    }
+
+    match value {
+        ProximaValue::Null => Value::Null,
+        ProximaValue::Boolean(value) => Value::Bool(*value),
+        ProximaValue::Int8(value) => Value::Number((*value as i64).into()),
+        ProximaValue::Int16(value) => Value::Number((*value as i64).into()),
+        ProximaValue::Int32(value) => Value::Number((*value as i64).into()),
+        ProximaValue::Int64(value) => Value::Number((*value).into()),
+        ProximaValue::UInt8(value) => Value::Number((*value as u64).into()),
+        ProximaValue::UInt16(value) => Value::Number((*value as u64).into()),
+        ProximaValue::UInt32(value) => Value::Number((*value as u64).into()),
+        ProximaValue::UInt64(value) => Value::Number((*value).into()),
+        ProximaValue::Float16(value) | ProximaValue::Float32(value) => float(*value as f64),
+        ProximaValue::Float64(value) => float(*value),
+        ProximaValue::Decimal(value)
+        | ProximaValue::String(value)
+        | ProximaValue::Symbol(value) => Value::String(value.clone()),
+        ProximaValue::Binary(value) | ProximaValue::BinaryVector(value) => Value::Array(
+            value
+                .iter()
+                .map(|byte| Value::Number((*byte as u64).into()))
+                .collect(),
+        ),
+        ProximaValue::Date(value) => Value::Number((*value as i64).into()),
+        ProximaValue::Time(value, _)
+        | ProximaValue::Timestamp(value, _)
+        | ProximaValue::TimestampTz(value, _) => Value::Number((*value).into()),
+        ProximaValue::Uuid(value) | ProximaValue::ULID(value) => Value::String(
+            value
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+        ),
+        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.clone(),
+        ProximaValue::Array(values) => Value::Array(values.iter().map(proxima_to_json).collect()),
+        ProximaValue::Map(values) | ProximaValue::Struct(values) => Value::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), proxima_to_json(value)))
+                .collect::<Map<_, _>>(),
+        ),
+        ProximaValue::DenseVector(values) => {
+            Value::Array(values.iter().map(|value| float(*value as f64)).collect())
+        }
+        ProximaValue::SparseVector { indices, values } => Value::Object(
+            [
+                (
+                    "indices".to_string(),
+                    Value::Array(
+                        indices
+                            .iter()
+                            .map(|value| Value::Number((*value as u64).into()))
+                            .collect(),
+                    ),
+                ),
+                (
+                    "values".to_string(),
+                    Value::Array(values.iter().map(|value| float(*value as f64)).collect()),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    }
+}
+
 /// Convert a canonical `ProximaValue` into the legacy v1 `SqlValue`.
 ///
 /// This exists only as a storage-service adapter while the vector operations
@@ -520,6 +598,33 @@ mod tests {
         PropertyValue {
             value: Some(property_value::Value::IntValue(i)),
         }
+    }
+
+    #[test]
+    fn proxima_to_json_is_a_natural_wire_edge_projection() {
+        let value = ProximaValue::Map(HashMap::from([
+            ("count".to_string(), ProximaValue::Int64(7)),
+            (
+                "items".to_string(),
+                ProximaValue::Array(vec![ProximaValue::Boolean(true), ProximaValue::Null]),
+            ),
+        ]));
+        assert_eq!(
+            proxima_to_json(&value),
+            serde_json::json!({"count": 7, "items": [true, null]})
+        );
+    }
+
+    #[test]
+    fn proxima_to_json_preserves_unsigned_and_vector_values() {
+        assert_eq!(
+            proxima_to_json(&ProximaValue::UInt64(u64::MAX)),
+            serde_json::json!(u64::MAX)
+        );
+        assert_eq!(
+            proxima_to_json(&ProximaValue::DenseVector(vec![0.25, 0.5])),
+            serde_json::json!([0.25, 0.5])
+        );
     }
 
     // --- SqlValue → ProximaValue ---

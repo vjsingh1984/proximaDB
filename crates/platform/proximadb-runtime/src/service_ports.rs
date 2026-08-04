@@ -263,6 +263,25 @@ pub trait VectorOpsPort: Send + Sync {
 
 // ── Query facade ──────────────────────────────────────────────────────────────
 
+/// Protocol-neutral result of executing one SQL statement.
+///
+/// SQL values remain canonical [`proximadb_data_model::ProximaValue`] instances
+/// until a transport adapter serializes them. The v1 [`SqlValue`] type is a
+/// compatibility wire type and must not leak into this result.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SqlExecutionResult {
+    /// Ordered column names; every row uses the same ordinal layout.
+    pub columns: Vec<String>,
+    /// Canonical logical type labels aligned with `columns`.
+    pub column_types: Vec<String>,
+    /// Ordered, typed result cells.
+    pub rows: Vec<Vec<proximadb_data_model::ProximaValue>>,
+    /// Present for DDL/DML and absent for row-producing statements.
+    pub rows_affected: Option<u64>,
+    pub rows_scanned: u64,
+    pub execution_time_ms: u64,
+}
+
 /// Port for unified query routing (SQL, hybrid, vector-via-facade).
 ///
 /// Implemented by root-crate `QueryFacadeAdapter` when the `unified-facade-routing`
@@ -277,9 +296,8 @@ pub trait QueryAdapterPort: Send + Sync {
 
     /// Execute a SQL statement through the unified facade.
     ///
-    /// Returns rows as protocol-neutral JSON so the protocol layer can convert
-    /// to v1 `ExecuteQueryResponse`, v2 `ProximaValue` rows, or any wire format
-    /// without the port accumulating v1 surface debt.
+    /// Returns canonical typed rows. JSON and legacy v1 `SqlValue` conversion
+    /// belong exclusively to their respective transport adapters.
     ///
     /// `identity` is the canonical ADR-087 carrier. Its string tenant scopes
     /// storage/catalog resolution while subject + stable key drive ABAC at the
@@ -289,5 +307,5 @@ pub trait QueryAdapterPort: Send + Sync {
         query: String,
         collection: Option<String>,
         identity: PortIdentity<'_>,
-    ) -> Result<JsonValue>;
+    ) -> Result<SqlExecutionResult>;
 }
