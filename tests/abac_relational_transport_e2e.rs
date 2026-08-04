@@ -13,15 +13,17 @@
 //! authenticated gRPC ExecuteQuery -> relational DML scan
 //! authenticated REST /api/v2/sql ----> shared typed SQL port
 //! authenticated REST record reads ---> shared record ABAC seam
+//! authenticated gRPC record reads ---> shared record ABAC seam
+//! authenticated Flight `DoGet` ------> shared record ABAC seam
 //!                                      ^
 //! authenticated REST policy control -> shared live ABAC stores
 //! ```
 //!
 //! The test proves deny-before-provision, hot permit without reconnect/restart,
-//! isolation of an unbound subject, and hot revoke over both trust-auth pgwire
-//! and credential-authenticated gRPC. It also discovers the table's stable
-//! object id through `xcatalog.tables`; policy tooling must never guess an
-//! allocator result or scrape catalog persistence.
+//! isolation of an unbound subject, and hot revoke over trust-auth pgwire and
+//! the credential-authenticated REST, gRPC, and Flight transports. It also
+//! discovers the table's stable object id through `xcatalog.tables`; policy
+//! tooling must never guess an allocator result or scrape catalog persistence.
 
 #![cfg(feature = "abac-policy")]
 
@@ -29,10 +31,18 @@ use std::collections::HashMap;
 use std::net::TcpListener;
 use std::time::Duration;
 
+use arrow_array::{Array, RecordBatch, StringArray};
+use arrow_flight::Ticket;
+use arrow_flight::decode::FlightRecordBatchStream;
+use arrow_flight::error::FlightError;
+use arrow_flight::flight_service_client::FlightServiceClient;
+use futures::TryStreamExt;
 use proximadb::core::Config;
 use proximadb::database::ProximaDB;
 use proximadb::proto::proximadb_v2::proxima_record_service_client::ProximaRecordServiceClient;
-use proximadb::proto::proximadb_v2::{V2QueryRequest, V2QueryResponse};
+use proximadb::proto::proximadb_v2::{
+    GetRecordRequest, TypedSearchRequest, V2QueryRequest, V2QueryResponse,
+};
 use proximadb::security::SecurityMode;
 use proximadb::security::auth_service::{
     ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, MtlsConfig, SSOConfig,
@@ -131,6 +141,7 @@ fn transport_security_config() -> SecurityConfig {
 struct LiveServer {
     rest_port: u16,
     grpc_port: u16,
+    flight_port: u16,
     pg_port: u16,
     db: Option<ProximaDB>,
     _tmp: TempDir,
@@ -140,6 +151,7 @@ impl LiveServer {
     async fn start() -> anyhow::Result<Self> {
         let rest_port = free_port();
         let grpc_port = free_port();
+        let flight_port = free_port();
         let pg_port = free_port();
         let tmp = TempDir::new()?;
         let mut config = Config::default();
@@ -149,6 +161,7 @@ impl LiveServer {
         config.api.unified_mode = false;
         config.api.rest_port = rest_port;
         config.api.grpc_port = grpc_port;
+        config.api.arrow_flight_port = flight_port;
         config.api.pg_port = Some(pg_port);
         config.storage.storage_locations = vec![proximadb::core::config::StorageLocation {
             url: format!("file://{}", tmp.path().display()),
@@ -180,6 +193,7 @@ impl LiveServer {
         Ok(Self {
             rest_port,
             grpc_port,
+            flight_port,
             pg_port,
             db: Some(db),
             _tmp: tmp,
@@ -199,6 +213,10 @@ impl LiveServer {
 
     fn grpc_url(&self) -> String {
         format!("http://127.0.0.1:{}", self.grpc_port)
+    }
+
+    fn flight_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.flight_port)
     }
 }
 
@@ -299,13 +317,8 @@ async fn connect_grpc(server: &LiveServer) -> GrpcClient {
     }
 }
 
-async fn grpc_query(client: &mut GrpcClient, api_key: &str, sql: &str) -> V2QueryResponse {
-    let mut request = tonic::Request::new(V2QueryRequest {
-        query: sql.to_string(),
-        collection_id: String::new(),
-        limit: None,
-        offset: None,
-    });
+fn authenticated_grpc_request<T>(body: T, api_key: &str) -> tonic::Request<T> {
+    let mut request = tonic::Request::new(body);
     request.metadata_mut().insert(
         "authorization",
         format!("Api-Key {api_key}")
@@ -315,6 +328,19 @@ async fn grpc_query(client: &mut GrpcClient, api_key: &str, sql: &str) -> V2Quer
     request
         .metadata_mut()
         .insert("x-tenant-id", TENANT.parse().expect("tenant metadata"));
+    request
+}
+
+async fn grpc_query(client: &mut GrpcClient, api_key: &str, sql: &str) -> V2QueryResponse {
+    let request = authenticated_grpc_request(
+        V2QueryRequest {
+            query: sql.to_string(),
+            collection_id: String::new(),
+            limit: None,
+            offset: None,
+        },
+        api_key,
+    );
     client
         .execute_query(request)
         .await
@@ -405,6 +431,270 @@ async fn rest_record_get_status(
         .await
         .unwrap_or_else(|error| panic!("REST record get: {error}"))
         .status()
+}
+
+async fn grpc_record_search_ids(
+    client: &mut GrpcClient,
+    api_key: &str,
+    collection: &str,
+) -> Vec<String> {
+    let request = authenticated_grpc_request(
+        TypedSearchRequest {
+            collection_id: collection.to_string(),
+            query_vector: vec![1.0, 0.0, 0.0, 0.0],
+            top_k: 10,
+            ..Default::default()
+        },
+        api_key,
+    );
+    client
+        .search(request)
+        .await
+        .unwrap_or_else(|error| panic!("gRPC record search: {error}"))
+        .into_inner()
+        .results
+        .into_iter()
+        .map(|result| result.id)
+        .collect()
+}
+
+async fn grpc_record_stream_ids(
+    client: &mut GrpcClient,
+    api_key: &str,
+    collection: &str,
+) -> Vec<String> {
+    let request = authenticated_grpc_request(
+        TypedSearchRequest {
+            collection_id: collection.to_string(),
+            query_vector: vec![1.0, 0.0, 0.0, 0.0],
+            top_k: 10,
+            ..Default::default()
+        },
+        api_key,
+    );
+    let mut stream = client
+        .search_stream(request)
+        .await
+        .unwrap_or_else(|error| panic!("gRPC record search stream: {error}"))
+        .into_inner();
+    let mut ids = Vec::new();
+    while let Some(result) = stream
+        .message()
+        .await
+        .unwrap_or_else(|error| panic!("gRPC record search stream item: {error}"))
+    {
+        ids.push(result.id);
+    }
+    ids
+}
+
+async fn grpc_record_found(
+    client: &mut GrpcClient,
+    api_key: &str,
+    collection: &str,
+    record_id: &str,
+) -> bool {
+    let request = authenticated_grpc_request(
+        GetRecordRequest {
+            collection_id: collection.to_string(),
+            id: record_id.to_string(),
+            include_vector: false,
+        },
+        api_key,
+    );
+    client
+        .get_record(request)
+        .await
+        .unwrap_or_else(|error| panic!("gRPC record get: {error}"))
+        .into_inner()
+        .found
+}
+
+async fn connect_flight(server: &LiveServer) -> FlightServiceClient<tonic::transport::Channel> {
+    let channel = tonic::transport::Endpoint::from_shared(server.flight_url())
+        .expect("Flight endpoint")
+        .connect()
+        .await
+        .expect("Flight channel");
+    FlightServiceClient::new(channel)
+}
+
+async fn flight_record_search_ids(
+    client: &mut FlightServiceClient<tonic::transport::Channel>,
+    api_key: &str,
+    collection: &str,
+) -> Vec<String> {
+    let ticket = Ticket {
+        ticket: serde_json::to_vec(&json!({
+            "type": "vector_search",
+            "collection_id": collection,
+            "query_vector": [1.0, 0.0, 0.0, 0.0],
+            "top_k": 10,
+            "include_vector": false
+        }))
+        .expect("serialize Flight search ticket")
+        .into(),
+    };
+    let response = client
+        .do_get(authenticated_grpc_request(ticket, api_key))
+        .await
+        .unwrap_or_else(|error| panic!("Flight record search: {error}"))
+        .into_inner();
+    let stream = FlightRecordBatchStream::new_from_flight_data(
+        response.map_err(|status| FlightError::Tonic(Box::new(status))),
+    );
+    let batches: Vec<RecordBatch> = stream
+        .try_collect()
+        .await
+        .unwrap_or_else(|error| panic!("decode Flight record search: {error}"));
+
+    let mut ids = Vec::new();
+    for batch in batches {
+        let id_column = batch
+            .column_by_name("id")
+            .expect("Flight search id column")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("Flight search id column must be Utf8");
+        ids.extend((0..id_column.len()).map(|index| id_column.value(index).to_string()));
+    }
+    ids
+}
+
+struct LiveRecordFixture {
+    collection: String,
+    eng_id: &'static str,
+    hr_id: &'static str,
+}
+
+async fn create_live_record_fixture(
+    client: &HttpClient,
+    server: &LiveServer,
+    name_prefix: &str,
+) -> LiveRecordFixture {
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let fixture = LiveRecordFixture {
+        collection: format!("{name_prefix}_{suffix}"),
+        eng_id: "record-eng",
+        hr_id: "record-hr",
+    };
+    let operator_auth = format!("Api-Key {OPERATOR_KEY}");
+    let response = client
+        .post(server.admin_url("/api/v2/collections"))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "name": fixture.collection,
+            "dimension": 4,
+            "engine": "sst",
+            "enable_proxima_record": true
+        }))
+        .send()
+        .await
+        .expect("create record collection");
+    assert_admin_success(response, "create record collection").await;
+
+    let response = client
+        .post(server.admin_url(&format!(
+            "/api/v2/collections/{}/records/batch",
+            fixture.collection
+        )))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "records": [
+                {
+                    "id": fixture.eng_id,
+                    "vector": [1.0, 0.0, 0.0, 0.0],
+                    "props": {"dept": "eng"}
+                },
+                {
+                    "id": fixture.hr_id,
+                    "vector": [0.99, 0.01, 0.0, 0.0],
+                    "props": {"dept": "hr"}
+                }
+            ],
+            "validate_schema": false
+        }))
+        .send()
+        .await
+        .expect("insert record fixtures");
+    let inserted = assert_admin_success(response, "insert record fixtures").await;
+    assert_eq!(inserted["inserted_count"], 2);
+    fixture
+}
+
+async fn provision_live_record_policy(
+    client: &HttpClient,
+    server: &LiveServer,
+    predicate_object_id: u64,
+) -> String {
+    let operator_auth = format!("Api-Key {OPERATOR_KEY}");
+    let response = client
+        .post(server.admin_url("/api/v2/abac/attribute-bindings"))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "subject_id": "alice",
+            "tenant": TENANT,
+            "attrs": {"dept": {"Str": "eng"}}
+        }))
+        .send()
+        .await
+        .expect("provision alice attributes");
+    let binding = assert_admin_success(response, "provision alice attributes").await;
+
+    let response = client
+        .put(server.admin_url(&format!(
+            "/api/v2/abac/predicate-objects/{predicate_object_id}"
+        )))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "Comparison": {
+                "field": "dept",
+                "operator": "Equals",
+                "value": "eng"
+            }
+        }))
+        .send()
+        .await
+        .expect("provision row predicate");
+    assert_admin_success(response, "provision row predicate").await;
+
+    let policy_path = format!(
+        "/api/v2/abac/policy-bindings/{TENANT}/{}",
+        predicate_object_id + 1
+    );
+    let response = client
+        .put(server.admin_url(&policy_path))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "scope": {"Namespace": 0},
+            "effect": "Permit",
+            "predicate_ref": predicate_object_id
+        }))
+        .send()
+        .await
+        .expect("provision record permit");
+    let policy = assert_admin_success(response, "provision record permit").await;
+    assert_eq!(
+        policy["tenant_stable_id"].as_u64(),
+        binding["tenant_stable_id"].as_u64()
+    );
+    policy_path
+}
+
+async fn revoke_live_policy(client: &HttpClient, server: &LiveServer, policy_path: &str) {
+    let response = client
+        .delete(server.admin_url(policy_path))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Api-Key {OPERATOR_KEY}"),
+        )
+        .send()
+        .await
+        .expect("revoke record permit");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
 /// The root crate's debug-build server future exceeds Tokio's 2 MiB default
@@ -772,149 +1062,213 @@ async fn rest_records_follow_live_row_policy_provision_and_revoke_inner() {
         .no_proxy()
         .build()
         .expect("HTTP client");
-    let operator_auth = format!("Api-Key {OPERATOR_KEY}");
-    let suffix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let collection = format!("abac_rest_records_{suffix}");
-    let eng_id = "record-eng";
-    let hr_id = "record-hr";
-
-    let response = http
-        .post(server.admin_url("/api/v2/collections"))
-        .header(reqwest::header::AUTHORIZATION, &operator_auth)
-        .json(&json!({
-            "name": collection,
-            "dimension": 4,
-            "engine": "sst",
-            "enable_proxima_record": true
-        }))
-        .send()
-        .await
-        .expect("create record collection");
-    assert_admin_success(response, "create record collection").await;
-
-    let response = http
-        .post(server.admin_url(&format!("/api/v2/collections/{collection}/records/batch")))
-        .header(reqwest::header::AUTHORIZATION, &operator_auth)
-        .json(&json!({
-            "records": [
-                {
-                    "id": eng_id,
-                    "vector": [1.0, 0.0, 0.0, 0.0],
-                    "props": {"dept": "eng"}
-                },
-                {
-                    "id": hr_id,
-                    "vector": [0.99, 0.01, 0.0, 0.0],
-                    "props": {"dept": "hr"}
-                }
-            ],
-            "validate_schema": false
-        }))
-        .send()
-        .await
-        .expect("insert record fixtures");
-    let inserted = assert_admin_success(response, "insert record fixtures").await;
-    assert_eq!(inserted["inserted_count"], 2);
+    let fixture = create_live_record_fixture(&http, &server, "abac_rest_records").await;
 
     assert!(
-        rest_record_search_ids(&http, &server, ALICE_KEY, &collection)
+        rest_record_search_ids(&http, &server, ALICE_KEY, &fixture.collection)
             .await
             .is_empty(),
         "an unprovisioned REST record principal must fail closed"
     );
     assert_eq!(
-        rest_record_get_status(&http, &server, ALICE_KEY, &collection, eng_id).await,
+        rest_record_get_status(
+            &http,
+            &server,
+            ALICE_KEY,
+            &fixture.collection,
+            fixture.eng_id,
+        )
+        .await,
         StatusCode::NOT_FOUND,
         "unprovisioned point-get must hide the record"
     );
 
-    let response = http
-        .post(server.admin_url("/api/v2/abac/attribute-bindings"))
-        .header(reqwest::header::AUTHORIZATION, &operator_auth)
-        .json(&json!({
-            "subject_id": "alice",
-            "tenant": TENANT,
-            "attrs": {"dept": {"Str": "eng"}}
-        }))
-        .send()
-        .await
-        .expect("provision alice attributes");
-    let binding = assert_admin_success(response, "provision alice attributes").await;
+    let policy_path = provision_live_record_policy(&http, &server, 4_000_000_000).await;
 
-    let predicate_object_id = 4_000_000_000_u64;
-    let response = http
-        .put(server.admin_url(&format!(
-            "/api/v2/abac/predicate-objects/{predicate_object_id}"
-        )))
-        .header(reqwest::header::AUTHORIZATION, &operator_auth)
-        .json(&json!({
-            "Comparison": {
-                "field": "dept",
-                "operator": "Equals",
-                "value": "eng"
-            }
-        }))
-        .send()
-        .await
-        .expect("provision row predicate");
-    assert_admin_success(response, "provision row predicate").await;
-
-    let policy_object_id = predicate_object_id + 1;
-    let policy_path = format!("/api/v2/abac/policy-bindings/{TENANT}/{policy_object_id}");
-    let response = http
-        .put(server.admin_url(&policy_path))
-        .header(reqwest::header::AUTHORIZATION, &operator_auth)
-        .json(&json!({
-            "scope": {"Namespace": 0},
-            "effect": "Permit",
-            "predicate_ref": predicate_object_id
-        }))
-        .send()
-        .await
-        .expect("provision record permit");
-    let policy = assert_admin_success(response, "provision record permit").await;
+    let alice_ids = rest_record_search_ids(&http, &server, ALICE_KEY, &fixture.collection).await;
+    assert_eq!(alice_ids, vec![fixture.eng_id.to_string()]);
     assert_eq!(
-        policy["tenant_stable_id"].as_u64(),
-        binding["tenant_stable_id"].as_u64()
-    );
-
-    let alice_ids = rest_record_search_ids(&http, &server, ALICE_KEY, &collection).await;
-    assert_eq!(alice_ids, vec![eng_id.to_string()]);
-    assert_eq!(
-        rest_record_get_status(&http, &server, ALICE_KEY, &collection, eng_id).await,
+        rest_record_get_status(
+            &http,
+            &server,
+            ALICE_KEY,
+            &fixture.collection,
+            fixture.eng_id,
+        )
+        .await,
         StatusCode::OK
     );
     assert_eq!(
-        rest_record_get_status(&http, &server, ALICE_KEY, &collection, hr_id).await,
+        rest_record_get_status(
+            &http,
+            &server,
+            ALICE_KEY,
+            &fixture.collection,
+            fixture.hr_id,
+        )
+        .await,
         StatusCode::NOT_FOUND,
         "point-get must post-filter a row that violates the stored predicate"
     );
     assert!(
-        rest_record_search_ids(&http, &server, BOB_KEY, &collection)
+        rest_record_search_ids(&http, &server, BOB_KEY, &fixture.collection)
             .await
             .is_empty(),
         "an unbound authenticated principal must remain denied"
     );
 
-    let response = http
-        .delete(server.admin_url(&policy_path))
-        .header(reqwest::header::AUTHORIZATION, &operator_auth)
-        .send()
-        .await
-        .expect("revoke record permit");
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    revoke_live_policy(&http, &server, &policy_path).await;
     assert!(
-        rest_record_search_ids(&http, &server, ALICE_KEY, &collection)
+        rest_record_search_ids(&http, &server, ALICE_KEY, &fixture.collection)
             .await
             .is_empty(),
         "record search must observe the hot revoke"
     );
     assert_eq!(
-        rest_record_get_status(&http, &server, ALICE_KEY, &collection, eng_id).await,
+        rest_record_get_status(
+            &http,
+            &server,
+            ALICE_KEY,
+            &fixture.collection,
+            fixture.eng_id,
+        )
+        .await,
         StatusCode::NOT_FOUND,
         "point-get must observe the hot revoke"
+    );
+}
+
+/// Authenticated gRPC v2 search and point-get must project the credential-bound
+/// subject into the same record read-context composition used by REST.
+#[test]
+fn grpc_records_follow_live_row_policy_provision_and_revoke() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    runtime.block_on(grpc_records_follow_live_row_policy_provision_and_revoke_inner());
+}
+
+async fn grpc_records_follow_live_row_policy_provision_and_revoke_inner() {
+    let server = LiveServer::start().await.expect("start live server");
+    let http = HttpClient::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("HTTP client");
+    let fixture = create_live_record_fixture(&http, &server, "abac_grpc_records").await;
+    let mut alice = connect_grpc(&server).await;
+    let mut bob = connect_grpc(&server).await;
+
+    assert!(
+        grpc_record_search_ids(&mut alice, ALICE_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "an unprovisioned gRPC record principal must fail closed"
+    );
+    assert!(
+        grpc_record_stream_ids(&mut alice, ALICE_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "the unprovisioned streaming search path must also fail closed"
+    );
+    assert!(
+        !grpc_record_found(&mut alice, ALICE_KEY, &fixture.collection, fixture.eng_id,).await,
+        "unprovisioned gRPC point-get must hide the record"
+    );
+
+    let policy_path = provision_live_record_policy(&http, &server, 5_000_000_000).await;
+
+    let alice_ids = grpc_record_search_ids(&mut alice, ALICE_KEY, &fixture.collection).await;
+    assert_eq!(alice_ids, vec![fixture.eng_id.to_string()]);
+    let alice_stream_ids = grpc_record_stream_ids(&mut alice, ALICE_KEY, &fixture.collection).await;
+    assert_eq!(alice_stream_ids, vec![fixture.eng_id.to_string()]);
+    assert!(grpc_record_found(&mut alice, ALICE_KEY, &fixture.collection, fixture.eng_id,).await);
+    assert!(
+        !grpc_record_found(&mut alice, ALICE_KEY, &fixture.collection, fixture.hr_id,).await,
+        "gRPC point-get must hide a row that violates the stored predicate"
+    );
+    assert!(
+        grpc_record_search_ids(&mut bob, BOB_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "an unbound authenticated gRPC principal must remain denied"
+    );
+
+    revoke_live_policy(&http, &server, &policy_path).await;
+    assert!(
+        grpc_record_search_ids(&mut alice, ALICE_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "gRPC record search must observe the hot revoke"
+    );
+    assert!(
+        grpc_record_stream_ids(&mut alice, ALICE_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "gRPC streaming search must observe the hot revoke"
+    );
+    assert!(
+        !grpc_record_found(&mut alice, ALICE_KEY, &fixture.collection, fixture.eng_id,).await,
+        "gRPC point-get must observe the hot revoke"
+    );
+}
+
+/// Arrow Flight's canonical `type: vector_search` ticket must authenticate the
+/// API key and project that principal into the same record-read authority as
+/// REST and gRPC. Reusing each connected Flight client across policy mutations
+/// proves authorization is evaluated per operation rather than cached at
+/// connection establishment.
+#[test]
+fn flight_records_follow_live_row_policy_provision_and_revoke() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    runtime.block_on(flight_records_follow_live_row_policy_provision_and_revoke_inner());
+}
+
+async fn flight_records_follow_live_row_policy_provision_and_revoke_inner() {
+    let server = LiveServer::start().await.expect("start live server");
+    let http = HttpClient::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("HTTP client");
+    let fixture = create_live_record_fixture(&http, &server, "abac_flight_records").await;
+    let mut alice = connect_flight(&server).await;
+    let mut bob = connect_flight(&server).await;
+
+    assert!(
+        flight_record_search_ids(&mut alice, ALICE_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "an unprovisioned Flight record principal must fail closed"
+    );
+
+    let policy_path = provision_live_record_policy(&http, &server, 6_000_000_000).await;
+
+    assert_eq!(
+        flight_record_search_ids(&mut alice, ALICE_KEY, &fixture.collection).await,
+        vec![fixture.eng_id.to_string()],
+        "Flight search must apply the stored row predicate"
+    );
+    assert!(
+        flight_record_search_ids(&mut bob, BOB_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "an unbound authenticated Flight principal must remain denied"
+    );
+
+    revoke_live_policy(&http, &server, &policy_path).await;
+    assert!(
+        flight_record_search_ids(&mut alice, ALICE_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "the existing Flight client must observe the hot revoke"
     );
 }

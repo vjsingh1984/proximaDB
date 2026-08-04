@@ -1,10 +1,11 @@
 = ADR-087: Caller-identity propagation — one foundation identity, resolved once, fail-closed composition
-:status: Proposed
+:status: Accepted (2026-08-03; implementation and live surface evidence reconciled)
 :date: 2026-08-02
 
 == Status
 
-Proposed (design review of the residual ABAC gaps after #1379/#1381/#1390/#1391).
+Accepted and implemented. The identity carrier, total stable-id mint,
+fail-closed composition rule, and live SQL/record transport matrix are pinned.
 
 == Context
 
@@ -122,8 +123,9 @@ carried unchanged to every consumer; everything else is a projection.**
   id, and live pgwire + credential-authenticated gRPC relational ratchets using
   the authenticated REST policy-control plane, plus canonical `POST /api/v2/sql`
   as a thin adapter over the same typed SQL authority. Canonical REST record
-  search/point-get now have live row-policy evidence; gRPC record and Flight
-  live data-plane rows remain the release-evidence tail.
+  search/point-get, authenticated gRPC v2 unary/streaming search + point-get,
+  and authenticated Arrow Flight canonical record search now have live
+  row-policy evidence.
 
 == References
 
