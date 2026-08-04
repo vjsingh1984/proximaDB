@@ -41,7 +41,6 @@ use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::{FlushParameters, FlushResult};
 use crate::storage::transaction_coordinator::{StagingConfig, TransactionStageType};
 use proximadb_records::ProximaRecord;
-use proximadb_storage_common::storage_path::StoragePath;
 
 pub use coordinator::FlushCoordinator;
 pub use operations::FlushOperations;
@@ -265,13 +264,17 @@ impl SstEngine {
             if let Some(ref assignment) = collection.storage_assignment {
                 info!("   - Base location: {}", assignment.base_location);
                 info!("   - Collection ID: {:?}", params.collection_id);
-                let storage_url = StoragePath::collection_data_path(
-                    &assignment.base_location,
-                    params
-                        .collection_id
-                        .as_ref()
-                        .unwrap_or(&"unknown".to_string()),
-                );
+                let collection_id = params.collection_id.as_deref().ok_or_else(|| {
+                    SstError::InvalidArgument("Collection ID is required".to_string())
+                })?;
+                let identity = crate::storage::trait_components::path_resolver::
+                    typed_identity_from_storage_assignment(Some(assignment));
+                let storage_url =
+                    crate::storage::trait_components::path_resolver::collection_data_path_typed(
+                        &assignment.base_location,
+                        collection_id,
+                        identity,
+                    );
                 debug!(
                     "🔍 SST FLUSH: Using storage URL from params: {}",
                     storage_url
@@ -1629,6 +1632,75 @@ mod tests {
         }
     }
 
+    #[test]
+    fn flush_storage_path_matches_typed_search_path() {
+        use crate::proto::proximadb_v1::{Collection, StorageAssignment};
+        use crate::storage::trait_components::path_resolver::{
+            collection_data_path_typed, typed_identity_from_storage_assignment,
+        };
+
+        let assignment = StorageAssignment {
+            base_location: "file:///base".to_string(),
+            typed_account_id: Some(7),
+            typed_namespace_id: Some(11),
+            typed_collection_id: Some(13),
+            ..Default::default()
+        };
+        let params = FlushParameters {
+            collection_id: Some("13".to_string()),
+            collection_config: Some(Collection {
+                id: "13".to_string(),
+                storage_assignment: Some(assignment.clone()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let expected = collection_data_path_typed(
+            &assignment.base_location,
+            "13",
+            typed_identity_from_storage_assignment(Some(&assignment)),
+        );
+        assert_eq!(
+            SstEngine::get_collection_storage_url_from_params(&params).unwrap(),
+            expected
+        );
+        assert_ne!(
+            expected,
+            proximadb_storage_common::storage_path::StoragePath::collection_data_path(
+                &assignment.base_location,
+                "13"
+            )
+        );
+    }
+
+    #[test]
+    fn flush_storage_path_preserves_legacy_collection_layout() {
+        use crate::proto::proximadb_v1::{Collection, StorageAssignment};
+
+        let assignment = StorageAssignment {
+            base_location: "file:///base".to_string(),
+            ..Default::default()
+        };
+        let params = FlushParameters {
+            collection_id: Some("legacy-id".to_string()),
+            collection_config: Some(Collection {
+                id: "legacy-id".to_string(),
+                storage_assignment: Some(assignment.clone()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            SstEngine::get_collection_storage_url_from_params(&params).unwrap(),
+            proximadb_storage_common::storage_path::StoragePath::collection_data_path(
+                &assignment.base_location,
+                "legacy-id"
+            )
+        );
+    }
+
     #[tokio::test]
     async fn adr081_l0_stop_rejects_before_sort_and_ignores_stable_levels() {
         use crate::proto::proximadb_v1::{
@@ -1643,7 +1715,7 @@ mod tests {
         let engine = create_test_engine_with_config(config).await;
         let temp_dir = tempfile::TempDir::new().unwrap();
         let collection_id = "adr081_preflight";
-        let data_dir = StoragePath::collection_data_path(
+        let data_dir = proximadb_storage_common::storage_path::StoragePath::collection_data_path(
             temp_dir.path().to_string_lossy().as_ref(),
             collection_id,
         );
