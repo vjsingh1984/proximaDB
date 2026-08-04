@@ -51,6 +51,7 @@ distance = "cosine"
 vector_index = "hnsw(vector_cosine_ops)"
 metadata_index = "btree((properties ->> 'partition'))"
 hnsw_ef_search = 40
+hnsw_iterative_scan = "strict_order"
 
 [[system]]
 id = "qdrant"

@@ -54,7 +54,10 @@ queries behind metadata filters, records filtered Recall@10 and latency, and cap
 signals. The resulting local baseline is explicitly `publication_eligible: false`.
 
 The pgvector baseline uses the identical generated record/query stream, JSONB-backed typed
-properties, a B-tree expression index on the JSONB partition field, and an HNSW cosine index:
+properties, a B-tree expression index on the JSONB partition field, and an HNSW cosine index.
+It sets `hnsw.ef_search = 40` and `hnsw.iterative_scan = strict_order`; the latter is required
+because pgvector applies filters after the approximate index scan and otherwise may return fewer
+than `k` matching rows:
 
 [source,bash]
 ----

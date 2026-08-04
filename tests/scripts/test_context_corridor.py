@@ -157,6 +157,12 @@ class ContextCorridorTest(unittest.TestCase):
             CONTEXT.PgvectorAdapter("ignored", 'bad";drop table x')
         self.assertEqual(CONTEXT.vector_literal([1.0, -0.25]), "[1,-0.25]")
 
+    def test_pgvector_environment_discloses_filtered_ann_settings(self) -> None:
+        adapter = CONTEXT.PgvectorAdapter("ignored", "context_corridor")
+        environment = adapter.environment()
+        self.assertEqual(environment["hnsw_ef_search"], 40)
+        self.assertEqual(environment["hnsw_iterative_scan"], "strict_order")
+
     def test_failure_text_does_not_persist_a_dsn_or_keyword_password(self) -> None:
         dsn = "postgresql://alice:secret@db.example/test"
         error = RuntimeError(f"could not use {dsn}; password=second-secret")

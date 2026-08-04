@@ -366,6 +366,12 @@ class PgvectorAdapter:
         with self.connection.cursor() as cursor:
             cursor.execute(f"ANALYZE {self.quoted_table}")
             cursor.execute("SET hnsw.ef_search = 40")
+            # pgvector applies WHERE predicates after an approximate HNSW scan.
+            # Iterative scanning lets the access method continue until it has
+            # enough predicate-matching rows instead of silently under-returning
+            # filtered top-k results. strict_order preserves exact distance order
+            # for a like-for-like accuracy comparison.
+            cursor.execute("SET hnsw.iterative_scan = strict_order")
         self.connection.commit()
 
     def search(
@@ -417,6 +423,7 @@ class PgvectorAdapter:
             "pgvector_version": self.extension_version,
             "index": "hnsw(vector_cosine_ops)",
             "hnsw_ef_search": 40,
+            "hnsw_iterative_scan": "strict_order",
             "filter_index": "btree((properties ->> 'partition'))",
             "distance": "cosine",
         }
