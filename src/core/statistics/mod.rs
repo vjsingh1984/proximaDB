@@ -26,7 +26,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub mod registry;
-pub mod sketches;
+// `sketches` now lives in `proximadb-kernel` (TD-DECOMP-18); re-exported.
+pub use proximadb_kernel::sketches;
 mod summary;
 
 pub use registry::{StatisticsRegistry, global as statistics_registry};
