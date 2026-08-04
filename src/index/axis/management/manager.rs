@@ -4665,33 +4665,10 @@ impl AxisManager {
         Ok(Some(detection))
     }
 
-    /// Ensure a collection has HMGI partitioning before dense vector indexing.
-    ///
-    /// **Behaviour change (HMGI auto-enable reconciliation 2026-05-28)**:
-    /// previously this method unconditionally turned HMGI on for any
-    /// collection that received a dense vector. That made HMGI the
-    /// effective default for ALL collections, including single-modality
-    /// workloads (the vast majority) where HMGI gives no benefit but
-    /// adds partition-routing overhead and (until commit b3985b59c)
-    /// exposed callers to the distance/similarity sort-direction bug.
-    /// It also bypassed the carefully-engineered detection logic in
-    /// `src/index/axis/hmgi/detection.rs`, which had a `should_enable_hmgi`
-    /// rule (>= 2 distinct modalities, see arXiv:2510.10123).
-    ///
-    /// The method is now a no-op for collections that haven't already
-    /// opted in. Enablement happens via:
-    /// * `enable_hmgi(...)` — explicit operator action (control plane).
-    /// * `maybe_auto_enable_hmgi(...)` — sample-based detection. Today
-    ///   this is called from explicit eval paths; a future background
-    ///   task can call it periodically without paying the per-insert
-    ///   `hmgi_detection_samples` cost (which clones every record's
-    ///   metadata — O(N) per call).
-    ///
-    /// Already-enabled HMGI collections are unaffected — the early
-    /// return preserves their behaviour. Collections without HMGI
-    /// drop through to `insert_into_hnsw`, which honors the
-    /// configured metric and avoids HMGI's per-partition routing
-    /// overhead.
+    /// Ensure a collection has the canonical HMGI partition wrapper before dense
+    /// vector indexing. A single-modality collection has one HNSW partition;
+    /// additional modality tags add partitions without changing the graph
+    /// implementation.
     async fn ensure_hmgi_collection_enabled(&self, collection_id: &str) -> Result<()> {
         if self.is_hmgi_enabled(collection_id).await {
             return Ok(());
@@ -4707,6 +4684,64 @@ impl AxisManager {
         // commit b3985b59c, so enabling on insert is safe again.
         let oid = self.hmgi_oid_for_collection(collection_id).await;
         self.enable_hmgi(collection_id, None, oid).await
+    }
+
+    /// Resolve the HNSW graph contract shared by HMGI migration and steady-state
+    /// inserts. `HmgiRegistry::get_or_create_partition` preserves the first config
+    /// used for a partition, so every creation path must use this authority; a
+    /// default-config migration would otherwise permanently shadow the collection's
+    /// metric and tuned `m`/`ef` values.
+    async fn hmgi_hnsw_config(
+        &self,
+        collection_id: &str,
+        algorithm: Option<&IndexAlgorithm>,
+        modality_tag: &str,
+    ) -> crate::index::axis::indexes::hnsw_index::AxisHnswConfig {
+        use crate::compute::distance_computation::DistanceMetric;
+
+        let distance_metric = self
+            .get_collection_distance_metric(collection_id)
+            .await
+            .unwrap_or(DistanceMetric::Cosine);
+        Self::hmgi_hnsw_config_for_metric(distance_metric, algorithm, modality_tag)
+    }
+
+    fn hmgi_hnsw_config_for_metric(
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        algorithm: Option<&IndexAlgorithm>,
+        modality_tag: &str,
+    ) -> crate::index::axis::indexes::hnsw_index::AxisHnswConfig {
+        use crate::index::axis::indexes::hnsw_index::AxisHnswConfig;
+
+        let defaults = AxisHnswConfig::default();
+        let (m, ef_construction, ef) = match algorithm {
+            Some(IndexAlgorithm::HNSW {
+                m,
+                ef_construction,
+                ef_search,
+                ..
+            }) => (*m as usize, *ef_construction as usize, *ef_search as usize),
+            Some(IndexAlgorithm::HMGI { per_modality, .. }) => per_modality
+                .iter()
+                .find(|partition| partition.modality_tag == modality_tag)
+                .map(|partition| {
+                    (
+                        partition.m as usize,
+                        partition.ef_construction as usize,
+                        partition.ef_search as usize,
+                    )
+                })
+                .unwrap_or((defaults.m, defaults.ef_construction, defaults.ef)),
+            _ => (defaults.m, defaults.ef_construction, defaults.ef),
+        };
+
+        AxisHnswConfig {
+            distance_metric,
+            m,
+            ef_construction,
+            ef,
+            ..defaults
+        }
     }
 
     fn is_hmgi_routable_query(&self, query: &AxisHybridQuery) -> bool {
@@ -4789,6 +4824,10 @@ impl AxisManager {
             .collect();
         let modality_tag = extractor.extract_modality(&metadata);
 
+        let config = self
+            .hmgi_hnsw_config(collection_id, algorithm, &modality_tag)
+            .await;
+
         // Create partition key
         let partition_key = HmgiPartitionKey::new(oid, 1, modality_tag, None);
 
@@ -4803,50 +4842,12 @@ impl AxisManager {
             vec_values.len()
         };
 
-        // Get or create partition with collection-aware config.
-        //
-        // **Metric plumbing (reconciled 2026-05-28 with HMGI recall
-        // investigation)**: previously this used
-        // `AxisHnswConfig::default()` and never consulted the
-        // collection's configured metric. That default carries
-        // `distance_metric: Cosine`, so cosine collections worked by
-        // coincidence but Euclidean / DotProduct / Manhattan
-        // collections silently fell back to Cosine inside the HMGI
-        // partition — different metric than the engine's exact path
-        // → unbounded recall divergence. Resolving via
-        // `get_collection_distance_metric` here makes the HMGI
-        // partition mirror the collection's contract.
-        let resolved_metric = self.get_collection_distance_metric(collection_id).await;
-        let distance_metric =
-            resolved_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
-        // **End-to-end ef_search wiring**: extract HNSW knobs from
-        // the strategy spec when present, otherwise use the partition
-        // default. Same plumbing as `insert_into_hnsw` — see that
-        // function for the rationale.
-        let defaults = crate::index::axis::indexes::hnsw_index::AxisHnswConfig::default();
-        let (config_m, config_ef_construction, config_ef_search) = match algorithm {
-            Some(IndexAlgorithm::HNSW {
-                m,
-                ef_construction,
-                ef_search,
-                ..
-            }) => (*m as usize, *ef_construction as usize, *ef_search as usize),
-            _ => (defaults.m, defaults.ef_construction, defaults.ef),
-        };
-        let config = crate::index::axis::indexes::hnsw_index::AxisHnswConfig {
-            distance_metric,
-            m: config_m,
-            ef_construction: config_ef_construction,
-            ef: config_ef_search,
-            ..defaults
-        };
         tracing::info!(
             target: "axis_diag",
             site = "insert_hmgi",
             collection_id = collection_id,
             partition = ?partition_key,
-            resolved_metric = ?resolved_metric,
-            using_metric = ?distance_metric,
+            using_metric = ?config.distance_metric,
             m = config.m,
             ef_construction = config.ef_construction,
             ef_search = config.ef,
@@ -5033,21 +5034,40 @@ impl AxisManager {
             collection_id
         );
 
+        // Auto-enable happens after the first record enters `collection_vectors`.
+        // Resolve the active dense strategy before migration so that first record
+        // cannot create a default-config partition that shadows the declared graph
+        // contract for every subsequent insert.
+        let strategy = self.get_collection_strategy(collection_id).await.ok();
+        let dense_algorithm = strategy.as_ref().and_then(|strategy| {
+            strategy
+                .indexes
+                .iter()
+                .find(|spec| matches!(spec.data_type, Data::DenseVector { .. }))
+                .map(|spec| &spec.algorithm)
+        });
+        let distance_metric = self
+            .get_collection_distance_metric(collection_id)
+            .await
+            .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+
         let mut migrated = 0;
         for record in vectors {
             // Extract modality
             let metadata = self.record_filter_metadata(&record);
             let modality_tag = extractor.extract_modality(&metadata);
+            let config =
+                Self::hmgi_hnsw_config_for_metric(distance_metric, dense_algorithm, &modality_tag);
 
             // Create partition key
             let partition_key = HmgiPartitionKey::new(oid, 1, modality_tag, None);
 
-            // Get or create partition with default config
+            // Get or create the partition with the same collection-aware graph
+            // contract used by steady-state inserts.
             let record_vector = self.record_dense_vector(&record);
             let dimension = record_vector.map_or(128, <[f32]>::len);
-            let config = crate::index::axis::indexes::hnsw_index::AxisHnswConfig::default();
             let _index = registry
-                .get_or_create_partition(partition_key.clone(), config, dimension)
+                .get_or_create_partition(partition_key.clone(), config.clone(), dimension)
                 .await?;
             registry
                 .register_collection_partition(collection_id, partition_key)
