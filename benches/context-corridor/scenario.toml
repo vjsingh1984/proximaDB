@@ -42,8 +42,15 @@ comparison_surface = "REST v2 typed record + filtered vector search"
 [[system]]
 id = "pgvector"
 role = "baseline"
-adapter_status = "planned"
+adapter_status = "runnable"
 comparison_surface = "PostgreSQL table + JSONB filter + vector index"
+
+[system.adapter]
+runner_system = "pgvector"
+distance = "cosine"
+vector_index = "hnsw(vector_cosine_ops)"
+metadata_index = "btree((properties ->> 'partition'))"
+hnsw_ef_search = 40
 
 [[system]]
 id = "qdrant"

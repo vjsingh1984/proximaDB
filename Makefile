@@ -127,6 +127,7 @@ mvp-smoke-test:
 context-benchmark-check:
 	@echo "📐 Validating the context-corridor benchmark contract..."
 	python3 scripts/validate_context_benchmark.py
+	python3 -m unittest discover -s tests/scripts -p 'test_context_corridor.py'
 
 deterministic-commit-contract-check:
 	@echo "🧷 Validating deterministic commit contract..."

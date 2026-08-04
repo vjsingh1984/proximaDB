@@ -29,7 +29,13 @@ Every report must include recall, filtered recall, ingest rate, p50/p95/p99, pea
 GET/PUT counts, bytes moved, cache hit ratio, and estimated cost per million queries. A performance
 claim that omits accuracy or physical-cost signals is not a ProximaDB co-design result.
 
-== Runnable slice
+== Runnable slices
+
+The runner streams deterministic batches instead of retaining the corpus in Python memory, so the
+declared one-million-record publication floor is executable with bounded client memory. Every run
+retains a deterministic dataset hash, exact configuration, failed-run artifact, and all thirteen
+metric keys; unavailable physical-cost metrics remain explicit `null` values and therefore block
+publication rather than being estimated.
 
 The ProximaDB adapter is available now:
 
@@ -47,11 +53,37 @@ This creates a deterministic SST collection, inserts typed records in batches, e
 queries behind metadata filters, records filtered Recall@10 and latency, and captures route-health
 signals. The resulting local baseline is explicitly `publication_eligible: false`.
 
+The pgvector baseline uses the identical generated record/query stream, JSONB-backed typed
+properties, a B-tree expression index on the JSONB partition field, and an HNSW cosine index:
+
+[source,bash]
+----
+docker run --rm -d --name context-pgvector \
+  -e POSTGRES_PASSWORD=postgres \
+  -p 5432:5432 pgvector/pgvector:pg17
+
+python3 -m venv /tmp/proximadb-context-bench
+/tmp/proximadb-context-bench/bin/pip install 'psycopg[binary]'
+/tmp/proximadb-context-bench/bin/python scripts/bench/context_corridor.py \
+  --system pgvector \
+  --pg-dsn postgresql://postgres:postgres@127.0.0.1:5432/postgres \
+  --records 1000 \
+  --dimension 32 \
+  --queries 200 \
+  --output artifacts/context-corridor/pgvector-local.json
+----
+
+The DSN is consumed only by the adapter and is never written to the result. The default cleanup
+drops the per-run table; pass `--keep-data` only for local diagnosis. Both adapters issue an
+unfiltered and metadata-filtered query for each deterministic target record. The current accuracy
+metric is explicitly scoped as target-record presence in the top ten, not full-neighbour
+ground-truth recall.
+
 == Publication gate
 
 No cross-system winner, price/performance, or TAM-facing benchmark claim may be published until:
 
-* all six adapters are runnable;
+* all six adapters are runnable (ProximaDB and pgvector are currently complete);
 * each system runs at least five trials over at least one million records;
 * local, S3, Azure, and GCS configurations are represented where supported;
 * raw results, failed runs, commit/version, configuration, hardware, and dataset hash are retained;
