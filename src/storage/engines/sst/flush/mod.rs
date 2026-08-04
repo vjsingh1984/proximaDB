@@ -267,8 +267,12 @@ impl SstEngine {
                 let collection_id = params.collection_id.as_deref().ok_or_else(|| {
                     SstError::InvalidArgument("Collection ID is required".to_string())
                 })?;
-                let identity = crate::storage::trait_components::path_resolver::
-                    typed_identity_from_storage_assignment(Some(assignment));
+                let identity =
+                    crate::storage::trait_components::path_resolver::typed_path_identity(
+                     crate::storage::trait_components::path_resolver::typed_identity_from_storage_assignment(
+                         Some(assignment),
+                     ),
+                 );
                 let storage_url =
                     crate::storage::trait_components::path_resolver::collection_data_path_typed(
                         &assignment.base_location,

@@ -44,7 +44,7 @@ fn catalog_collection(
 
 fn collection_data_path(collection: &proximadb::proto::proximadb_v1::Collection) -> String {
     use proximadb::storage::trait_components::path_resolver::{
-        collection_data_path_typed, typed_identity_from_storage_assignment,
+        collection_data_path_typed, typed_identity_from_storage_assignment, typed_path_identity,
     };
 
     let assignment = collection
@@ -54,7 +54,7 @@ fn collection_data_path(collection: &proximadb::proto::proximadb_v1::Collection)
     collection_data_path_typed(
         &assignment.base_location,
         &collection.id,
-        typed_identity_from_storage_assignment(Some(assignment)),
+        typed_path_identity(typed_identity_from_storage_assignment(Some(assignment))),
     )
 }
 

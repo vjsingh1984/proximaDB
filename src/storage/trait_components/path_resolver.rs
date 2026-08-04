@@ -64,7 +64,8 @@ use std::sync::Arc;
 // nothing outside the root calls them yet (no benefit to the move).
 pub use proximadb_storage_ports::{
     CollectionPathResolver, StorageAssignment, collection_data_path_typed,
-    typed_identity_from_storage_assignment,
+    typed_identity_from_storage_assignment, typed_path_identity, typed_path_identity_when,
+    typed_paths_enabled,
 };
 
 // ============================================================================
@@ -547,19 +548,6 @@ impl DrTenantSystemPath {
     pub fn cache_subprefix(&self) -> String {
         format!("{}_cache/", self.tenant_root())
     }
-}
-
-/// ADR-031 Phase 4b: whether the typed object-store path
-/// (`accounts/{base62}/{base62}/{base62}/`, no tenant slot) is enabled. Read
-/// **once per process** (cached in a `OnceLock`, mirroring the `oid_paths`
-/// pattern) to avoid env races across the multi-threaded runtime. Default OFF
-/// → legacy string-resolved `data/…` / `accounts/{str}/…` paths (mixed-read-safe).
-pub fn typed_paths_enabled() -> bool {
-    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| match std::env::var("PROXIMADB_TYPED_PATHS") {
-        Ok(v) => v == "1" || v.eq_ignore_ascii_case("true"),
-        Err(_) => false,
-    })
 }
 
 /// ADR-031 Phase 4c: typed collection **WAL** directory path.
@@ -1919,6 +1907,18 @@ mod tests {
         );
         // And it has the legacy shape {base}/{cid}/data (no trailing slash).
         assert_eq!(typed_none, "/data/store/my_collection/data");
+    }
+
+    #[test]
+    fn persisted_identity_does_not_bypass_typed_path_gate() {
+        let identity = Some(CollectionIdentity {
+            account_id: 7,
+            namespace_id: 5,
+            collection_id: 9,
+        });
+
+        assert_eq!(typed_path_identity_when(identity, false), None);
+        assert_eq!(typed_path_identity_when(identity, true), identity);
     }
 
     #[test]
