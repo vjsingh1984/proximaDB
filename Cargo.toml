@@ -67,6 +67,7 @@ members = [
     "crates/horizontal/proximadb-resilience",
     "crates/horizontal/proximadb-automl",
     "crates/horizontal/proximadb-audit",
+    "crates/horizontal/proximadb-cross-modal-fusion",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-serialization",
     "crates/horizontal/proximadb-security",
@@ -270,6 +271,7 @@ proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-resilience = { path = "crates/horizontal/proximadb-resilience" }
 proximadb-automl = { path = "crates/horizontal/proximadb-automl" }
 proximadb-audit = { path = "crates/horizontal/proximadb-audit" }
+proximadb-cross-modal-fusion = { path = "crates/horizontal/proximadb-cross-modal-fusion" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
@@ -388,6 +390,7 @@ proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-resilience = { workspace = true }
 proximadb-automl = { workspace = true }
 proximadb-audit = { workspace = true }
+proximadb-cross-modal-fusion = { workspace = true }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
