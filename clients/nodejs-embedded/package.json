@@ -61,5 +61,9 @@
     "typescript": "^5.3.0",
     "vitest": "^4.1.7",
     "yaml": "^2.9.0"
+  },
+  "overrides": {
+    "js-yaml": "^4.3.0",
+    "brace-expansion": "^2.1.4"
   }
 }
