@@ -94,10 +94,12 @@ async fn test_hmgi_end_to_end_workflow() {
     // Check collection partitions
     registry
         .register_collection_partition("test_collection", text_key.clone())
-        .await;
+        .await
+        .unwrap();
     registry
         .register_collection_partition("test_collection", image_key.clone())
-        .await;
+        .await
+        .unwrap();
     let partitions = registry
         .get_partitions_for_collection("test_collection")
         .await;
@@ -601,6 +603,25 @@ async fn test_axismanager_drop_collection_removes_hmgi_partitions() {
     );
 }
 
+/// Re-enabling is idempotent for the established collection identity and must
+/// reject OID mutation before it can create a second partition namespace.
+#[tokio::test]
+async fn test_axismanager_hmgi_enable_preserves_oid_identity() {
+    use proximadb::index::axis::types::AxisConfig;
+
+    let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+    manager.enable_hmgi("stable_oid", None, 41).await.unwrap();
+    manager.enable_hmgi("stable_oid", None, 41).await.unwrap();
+
+    let error = manager
+        .enable_hmgi("stable_oid", None, 42)
+        .await
+        .err()
+        .expect("changing the partition identity must require explicit disablement");
+    assert!(error.to_string().contains("already bound to OID 41"));
+    assert!(manager.is_hmgi_enabled("stable_oid").await);
+}
+
 /// Test AxisManager routes HMGI-safe vector queries to modality partitions.
 #[tokio::test]
 async fn test_axismanager_hmgi_query_routes_to_modality_partition() {
@@ -683,10 +704,12 @@ async fn test_hmgi_query_routing() {
     // Register collection
     registry
         .register_collection_partition("test_collection", text_key.clone())
-        .await;
+        .await
+        .unwrap();
     registry
         .register_collection_partition("test_collection", image_key.clone())
-        .await;
+        .await
+        .unwrap();
 
     // Route query with modality filter
     let query = HybridQuery {
