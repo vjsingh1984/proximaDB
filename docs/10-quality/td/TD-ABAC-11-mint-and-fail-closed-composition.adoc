@@ -70,10 +70,15 @@ dev/embedded deployment that wires an enforcer.
   and legacy `SqlValue` exists only in `execute_sql_v1`. The live ratchet proves
   authenticated deny-before-provision, hot permit, principal isolation, and
   hot revoke.
+* **DONE — canonical REST record/search live ratchet.** The real `/api/v2`
+  collection-create, record-batch, vector-search, and point-get routes now have
+  provisioned-policy evidence. A stored `dept=eng` predicate admits only the
+  matching row, point-get post-filtering hides the non-matching row, an unbound
+  API-key principal remains denied, and policy revoke is hot-visible without a
+  server restart.
 * **OPEN — remaining live surface rows.** Add provisioned-policy admit/deny/
-  passthrough ratchets for canonical REST records/search, gRPC records/search,
-  and Flight. Their carrier and seam component tests are pinned; they are not
-  mislabeled as live evidence.
+  passthrough ratchets for gRPC records/search and Flight. Their carrier and
+  seam component tests are pinned; they are not mislabeled as live evidence.
 
 Depends on [[TD-ABAC-8]] (carrier), mint. Ref ADR-087, ADR-0083,
 [[project_codesigned_vector_abac_pushdown_2026_07_30]] (PR3 note).
@@ -93,6 +98,6 @@ seam:
 
 The cross-surface e2e ratchet includes pgwire's, authenticated gRPC's, and
 canonical REST SQL's *relational* paths in addition to REST/gRPC/Flight records.
-All three SQL rows are now pinned after [[TD-ABAC-10]] 10c; the remaining record/Flight rows stay open
-until they exercise live provisioned policy rather than only handler/seam
-components.
+All three SQL rows and canonical REST record search/point-get are now pinned
+after [[TD-ABAC-10]] 10c; the gRPC record and Flight rows stay open until they
+exercise live provisioned policy rather than only handler/seam components.
