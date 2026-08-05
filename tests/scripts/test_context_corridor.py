@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.util
 import json
@@ -605,22 +606,169 @@ class ContextCorridorTest(unittest.TestCase):
         self.assertEqual(environment["hnsw_num_candidates"], 40)
         self.assertEqual(environment["query_endpoint"], "/_search (knn)")
 
+    def _surrealdb_adapter(self, password: str = ""):
+        return CONTEXT.SurrealDBAdapter(
+            "http://surreal.example",
+            "root",
+            password,
+            "benchmark",
+            "context_corridor",
+            12.0,
+            "context_bench_1",
+            "3.2.0",
+        )
+
+    def test_surrealdb_table_name_is_path_safe(self) -> None:
+        with self.assertRaises(ValueError):
+            CONTEXT.SurrealDBAdapter(
+                "http://surreal.example",
+                "root",
+                "",
+                "benchmark",
+                "context_corridor",
+                30.0,
+                "Bad-Table",
+                "3.2.0",
+            )
+
+    def test_surrealdb_prepare_and_insert_contract(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args, **kwargs):
+            calls.append((args, kwargs))
+            return [{"status": "OK", "result": None}], 0.5
+
+        adapter = self._surrealdb_adapter("secret-pass")
+        record = {
+            "id": "rec-7",
+            "vector": [0.25, -0.5],
+            "props": {"partition": "p7", "ordinal": 7},
+        }
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            adapter.prepare(2)
+            adapter.insert_batch([record])
+
+        define_surql = calls[0][1]["raw_body"].decode()
+        self.assertIn(
+            "HNSW DIMENSION 2 DIST COSINE M 16 EFC 100", define_surql
+        )
+        self.assertIn("DEFINE INDEX partition_idx", define_surql)
+        headers = calls[0][0][5]
+        self.assertEqual(
+            base64.b64decode(headers["Authorization"].split()[1]).decode(),
+            "root:secret-pass",
+        )
+        self.assertEqual(headers["Surreal-NS"], "benchmark")
+        self.assertEqual(headers["Surreal-DB"], "context_corridor")
+        insert_surql = calls[1][1]["raw_body"].decode()
+        self.assertIn("INSERT INTO context_bench_1", insert_surql)
+        self.assertIn("record_id: 'rec-7'", insert_surql)
+        self.assertIn("partition: 'p7'", insert_surql)
+        self.assertIn("embedding: [0.25, -0.5]", insert_surql)
+        self.assertIn("ordinal: 7", insert_surql)
+        self.assertEqual(adapter.expected_docs, 1)
+
+    def test_surrealdb_statement_error_is_surfaced(self) -> None:
+        adapter = self._surrealdb_adapter()
+        with patch.object(
+            CONTEXT, "request", return_value=([{"status": "ERR", "result": "boom"}], 0.5)
+        ):
+            with self.assertRaises(RuntimeError):
+                adapter.insert_batch(
+                    [
+                        {
+                            "id": "rec-1",
+                            "vector": [0.1],
+                            "props": {"partition": "p1", "ordinal": 1},
+                        }
+                    ]
+                )
+
+    def test_surrealdb_filtered_knn_contract_and_result_mapping(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args, **kwargs):
+            calls.append((args, kwargs))
+            return [{"status": "OK", "result": [{"record_id": "rec-7"}]}], 1.25
+
+        adapter = self._surrealdb_adapter()
+        record = {
+            "id": "rec-7",
+            "vector": [0.25, -0.5],
+            "props": {"partition": "p7", "ordinal": 7},
+        }
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            found, latency = adapter.search(record, filtered=True)
+
+        self.assertEqual(found, ["rec-7"])
+        self.assertEqual(latency, 1.25)
+        surql = calls[0][1]["raw_body"].decode()
+        self.assertIn("SELECT record_id FROM context_bench_1", surql)
+        self.assertIn("embedding <|10,40|> [0.25, -0.5]", surql)
+        self.assertIn("AND partition = 'p7'", surql)
+
+    def test_surrealdb_unfiltered_search_has_no_partition_filter(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args, **kwargs):
+            calls.append((args, kwargs))
+            return [{"status": "OK", "result": [{"record_id": "rec-7"}]}], 1.0
+
+        adapter = self._surrealdb_adapter()
+        record = {
+            "id": "rec-7",
+            "vector": [0.25, -0.5],
+            "props": {"partition": "p7", "ordinal": 7},
+        }
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            adapter.search(record, filtered=False)
+
+        surql = calls[0][1]["raw_body"].decode()
+        self.assertIn("embedding <|10,40|>", surql)
+        self.assertNotIn("partition", surql)
+
+    def test_surrealdb_ingest_waits_for_full_count(self) -> None:
+        adapter = self._surrealdb_adapter()
+        adapter.expected_docs = 2
+        responses = [
+            ([{"status": "OK", "result": [{"count": 1}]}], 0.5),  # mismatch
+            ([{"status": "OK", "result": [{"count": 2}]}], 0.5),  # match
+        ]
+        with (
+            patch.object(CONTEXT, "request", side_effect=responses) as mocked,
+            patch.object(CONTEXT.time, "sleep") as mocked_sleep,
+        ):
+            adapter.finish_ingest()
+
+        self.assertEqual(mocked.call_count, 2)
+        mocked_sleep.assert_called_once_with(0.25)
+        self.assertGreaterEqual(adapter.readiness_wait_seconds, 0.0)
+
+    def test_surrealdb_environment_does_not_disclose_password(self) -> None:
+        adapter = self._surrealdb_adapter("secret-pass")
+        environment = adapter.environment()
+        self.assertNotIn("secret-pass", json.dumps(environment))
+        self.assertEqual(environment["hnsw_ef_search"], 40)
+        self.assertEqual(environment["server_version"], "3.2.0")
+
     def test_failure_text_does_not_persist_a_dsn_or_keyword_password(self) -> None:
         dsn = "postgresql://alice:secret@db.example/test"
         api_key = "qdrant-private-key"
         milvus_token = "milvus-private-token"
         es_api_key = "elasticsearch-private-key"
+        surreal_pass = "surrealdb-private-pass"
         error = RuntimeError(
             f"could not use {dsn}; password=second-secret; api-key={api_key}; "
-            f"token={milvus_token}; es={es_api_key}"
+            f"token={milvus_token}; es={es_api_key}; surreal={surreal_pass}"
         )
         sanitized = CONTEXT.sanitized_error(
-            error, dsn, api_key, milvus_token, es_api_key
+            error, dsn, api_key, milvus_token, es_api_key, surreal_pass
         )
         self.assertNotIn("secret", sanitized)
         self.assertNotIn(api_key, sanitized)
         self.assertNotIn(milvus_token, sanitized)
         self.assertNotIn(es_api_key, sanitized)
+        self.assertNotIn(surreal_pass, sanitized)
         self.assertIn("<redacted>", sanitized)
 
 

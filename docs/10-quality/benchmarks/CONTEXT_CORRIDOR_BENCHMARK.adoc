@@ -176,11 +176,45 @@ server version is read live from the cluster root, and index doc/store/segment s
 server signals. As with the other competitors, unsupported object-store economics remain explicit
 `null` publication blockers.
 
+The SurrealDB baseline is the direct multi-model comparison: a `SCHEMAFULL` table with typed
+`record_id`, `partition`, `ordinal`, and `embedding` fields, an HNSW index
+(`DEFINE INDEX … HNSW DIMENSION d DIST COSINE M 16 EFC 100`), and a scalar index on `partition` so the
+filter is indexed. Ingest uses a single bulk `INSERT INTO … [ … ]`; search uses the `<|K, EF|>` KNN
+operator (`<|10, 40|>`) combined with an `AND partition = …` predicate for the filtered case. All
+SurrealQL runs over the HTTP `/sql` endpoint with Basic auth and the `Surreal-NS` / `Surreal-DB`
+headers. Because SurrealDB maintains the HNSW index synchronously on write, the readiness fence is a
+full document-count check rather than a settle interval. This example pins the current stable
+SurrealDB v3.2.0 release with an in-memory datastore for the disposable benchmark deployment:
+
+[source,bash]
+----
+docker run --rm -d --name context-surrealdb \
+  -p 8000:8000 \
+  surrealdb/surrealdb:v3.2.0 \
+  start --user root --pass root --bind 0.0.0.0:8000 memory
+
+python3 scripts/bench/context_corridor.py \
+  --system surrealdb \
+  --surrealdb-url http://127.0.0.1:8000 \
+  --surrealdb-user root --surrealdb-pass root \
+  --surrealdb-server-version 3.2.0 \
+  --records 1000 \
+  --dimension 32 \
+  --queries 200 \
+  --output artifacts/context-corridor/surrealdb-local.json
+----
+
+The root password is used only to build the Basic-auth header and is redacted from failed-run
+artifacts and console errors. SurrealDB's HTTP surface does not expose the server version, so
+`--surrealdb-server-version` is an operator declaration that must be checked against the retained
+container digest before publication. Table info and the final document count are captured as server
+signals; unsupported object-store economics remain explicit `null` publication blockers.
+
 == Publication gate
 
 No cross-system winner, price/performance, or TAM-facing benchmark claim may be published until:
 
-* all six adapters are runnable (ProximaDB, pgvector, Qdrant, Milvus, and Elasticsearch are currently complete);
+* all six adapters are runnable (ProximaDB, pgvector, Qdrant, Milvus, Elasticsearch, and SurrealDB are all complete);
 * each system runs at least five trials over at least one million records;
 * local, S3, Azure, and GCS configurations are represented where supported;
 * raw results, failed runs, commit/version, configuration, hardware, and dataset hash are retained;

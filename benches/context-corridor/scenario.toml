@@ -104,8 +104,17 @@ query_endpoint = "/_search (knn)"
 [[system]]
 id = "surrealdb"
 role = "direct-category"
-adapter_status = "planned"
+adapter_status = "runnable"
 comparison_surface = "multi-model record + vector index"
+
+[system.adapter]
+runner_system = "surrealdb"
+distance = "cosine"
+vector_index = "hnsw(M=16,EFC=100)"
+metadata_index = "index(partition)"
+hnsw_ef_search = 40
+readiness_fence = "synchronous index + full document count"
+query_endpoint = "/sql (<|K,EF|> KNN)"
 
 [publication]
 require_raw_results = true

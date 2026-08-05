@@ -46,10 +46,10 @@ def main() -> int:
     runnable = {
         item.get("id") for item in data.get("system", []) if item.get("adapter_status") == "runnable"
     }
-    if runnable != {"elasticsearch", "milvus", "pgvector", "proximadb", "qdrant"}:
+    if runnable != REQUIRED_SYSTEMS:
         errors.append(
-            "the implemented ProximaDB, pgvector, Qdrant, Milvus, and "
-            "Elasticsearch adapters must be marked runnable"
+            "all six adapters (ProximaDB, pgvector, Qdrant, Milvus, "
+            "Elasticsearch, SurrealDB) must be marked runnable"
         )
     qdrant = next(
         (item for item in data.get("system", []) if item.get("id") == "qdrant"),
@@ -109,6 +109,24 @@ def main() -> int:
             "Elasticsearch adapter contract must disclose the pinned "
             "dense_vector ANN, keyword filter, visibility, and readiness settings"
         )
+    surrealdb = next(
+        (item for item in data.get("system", []) if item.get("id") == "surrealdb"),
+        {},
+    )
+    expected_surrealdb_adapter = {
+        "runner_system": "surrealdb",
+        "distance": "cosine",
+        "vector_index": "hnsw(M=16,EFC=100)",
+        "metadata_index": "index(partition)",
+        "hnsw_ef_search": 40,
+        "readiness_fence": "synchronous index + full document count",
+        "query_endpoint": "/sql (<|K,EF|> KNN)",
+    }
+    if surrealdb.get("adapter", {}) != expected_surrealdb_adapter:
+        errors.append(
+            "SurrealDB adapter contract must disclose the pinned HNSW ANN, "
+            "scalar filter index, and readiness settings"
+        )
     protocol = data.get("protocol", {})
     metrics = set(protocol.get("required_metrics", []))
     missing_metrics = REQUIRED_METRICS - metrics
@@ -142,8 +160,8 @@ def main() -> int:
         return 1
     print(
         "Context benchmark contract OK: 6 systems, 13 metrics, 4 backends, "
-        "five-trial/1M publication floor; ProximaDB, pgvector, Qdrant, "
-        "Milvus, and Elasticsearch adapters are runnable."
+        "five-trial/1M publication floor; all six adapters (ProximaDB, "
+        "pgvector, Qdrant, Milvus, Elasticsearch, SurrealDB) are runnable."
     )
     return 0
 
