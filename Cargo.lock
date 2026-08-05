@@ -7962,6 +7962,7 @@ version = "0.2.0"
 name = "proximadb-query-fusion"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "proximadb-data-model",
  "serde",
  "serde_json",
