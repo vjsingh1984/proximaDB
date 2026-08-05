@@ -6,7 +6,9 @@
 use proximadb_proto::proximadb_v1::{Collection, CollectionConfig};
 pub use proximadb_quantization_types::QuantizationType;
 use proximadb_search_types::block_prune::BlockPruneMode;
-use proximadb_storage_ports::{collection_data_path_typed, typed_identity_from_storage_assignment};
+use proximadb_storage_ports::{
+    collection_data_path_typed, typed_identity_from_storage_assignment, typed_path_identity,
+};
 use proximadb_tenant::{RbacTenantContext as TenantContext, UnifiedUserContext};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -525,7 +527,7 @@ impl StorageQueryContext {
         self.storage_url().map(|base| {
             let identity =
                 typed_identity_from_storage_assignment(self.collection.storage_assignment.as_ref());
-            collection_data_path_typed(base, self.collection_id(), identity)
+            collection_data_path_typed(base, self.collection_id(), typed_path_identity(identity))
         })
     }
 }

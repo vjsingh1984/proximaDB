@@ -223,6 +223,7 @@
 // bloom_filter now in core module for unified implementation
 use crate::core::bloom as bloom_filter;
 pub mod compaction;
+pub(crate) mod compaction_spill;
 pub mod decompression_cache;
 pub mod error;
 pub mod extraction;

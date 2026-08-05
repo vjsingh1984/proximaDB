@@ -22,7 +22,7 @@ threads it to `execute_sql_v1`/the seam.
 Note: pgwire trust-auth subjects are spoofable by design — that is what
 `AuthClass::TrustAsserted` records; deployments gate via `HeaderTrustPolicy`.
 
-== Status: 10a DONE; 10b/10c open
+== Status: 10a + 10b + 10c DONE; pipeline-coverage follow-on open
 
 **10a (done)** — `Session.identity: Option<ResolvedRequestIdentity>` built at
 the startup handshake by the pure, unit-tested `PostgresProtocol::startup_identity`
@@ -32,31 +32,54 @@ plumbing — `catalog_manager` already reached it), so the ABAC policy key is
 stamped once per connection; the relational SELECT path reads
 `session.identity.subject` instead of re-deriving it per query.
 
-**10b (open) — carry the whole identity, not just the subject.** The
-relational read path still takes a bare `Option<SubjectId>`, so
-`tenant_stable_id`/`auth_class` do not survive to the enforcement point:
-widen `relational_pipeline::try_run_select` (~:253) → `SnapshotCatalog`
-(~:1606, ctors ~:554/:737/:763) → `DmlTableReader` (~:1702) →
-`services/dml/mod.rs::scan_table_relational` (~:1441, ABAC filter ~:1466) to
-carry `PortIdentity`; update the off-pgwire caller
-`query/facade/adapter.rs` (~:803). This is the prerequisite for
-[[TD-ABAC-11]]'s fail-closed flip on the relational path. Note the SQL ports
-(`ApiHandlersPort::execute_sql_v1`, `QueryAdapterPort::execute_sql`) still
-take flat `tenant_id`/`subject` with no stable id.
+**10b (DONE) — carry the whole identity, not just the subject.**
+`relational_pipeline::try_run_select` → `SnapshotCatalog` → `DmlTableReader`
+→ `services/dml/mod.rs::scan_table_relational` now carries the canonical
+`PortIdentity` (using `OwnedPortIdentity` only where the reader must retain it).
+The off-pgwire adapter and both SQL ports were widened at the same time, so
+REST and gRPC no longer flatten the foundation identity to tenant+subject and
+drop `tenant_stable_id`/`auth_class`. `EXPLAIN ANALYZE` carries the identical
+identity. Governed reads bypass the subject-agnostic result cache and are
+ineligible for the in-memory/bare-Parquet shortcuts until those engines can
+consume the authorized predicate; they route through the DML seam instead.
 
-**10c (open) — three pgwire read paths bypass ABAC** (found by the 2026-08-02
-live-path survey; each is a *distinct* bypass, not covered by 10a/10b):
+**10c (DONE) — the three pgwire read paths that bypassed ABAC** (found by the
+2026-08-02 live-path survey; each was a *distinct* bypass). All three are
+closed; how each was closed is recorded below because the choices differ:
 
-1. **pgvector search** — `protocol.rs` `execute_vector_search` (~:2221) calls
-   `unified_search_native` (~:2286) with a hardcoded
-   `ReadContext::system(Statistics, "pgwire [CLIENT-PLACEHOLDER]")` (~:2293):
-   ALL pgwire vector search is unenforced. Fix: pass the session identity, or
-   route through the enforced `unified_search_v1` seam.
-2. **Legacy single-table SELECT** — `execute_relational_query` (~:2896) →
-   `select_table_records_with_projection[_where]` (~:2926/:2945): tenant-scoped
-   only, no subject parameter at all.
-3. **EXPLAIN/ANALYZE** — `relational_pipeline.rs::build_snapshot` (~:2337)
-   hardcodes `subject: None` (~:2361), so an EXPLAIN can describe a plan over
-   rows the subject cannot read.
+1. **pgvector search** (was: hardcoded `ReadContext::system(Statistics,
+   "pgwire [CLIENT-PLACEHOLDER]")`, so ALL pgwire vector search was unenforced)
+   — now resolves the CLIENT context from the session identity through the ONE
+   composition rule `VectorOperationsService::records_read_context`, and emits
+   an EMPTY result set (fail-closed) when that rule denies.
+2. **Legacy single-table SELECT** (was: no subject parameter at all) — now
+   **fails closed**: under an armed enforcer + a governed subject the fallback
+   refuses with an actionable error instead of serving unenforced rows.
+   *Deliberately NOT enforced in place*: that path has its own scan machinery
+   with no row-filter wiring, so enforcing there would mean a SECOND
+   implementation of the one rule — the drift seam ADR-087 exists to remove.
+   The real fix is coverage: these shapes should be lowered by the enforcing
+   relational pipeline (the ANSI-SQL-over-pgwire direction anyway). Tracked as
+   the follow-on below.
+3. **EXPLAIN/ANALYZE** (was: `subject: None` hardcoded in `build_snapshot`) —
+   the subject is threaded through
+   `explain_select_route_with_catalog` / `explain_analyze_select_with_catalog`
+   → `route_and_plan_select` → `prepare_select_plan` → `build_snapshot`.
+   Severity note: EXPLAIN ANALYZE *executes* the query, so this was returning
+   actual rows the subject could not read — not merely plan estimates.
+
+**10c follow-on (open)**: grow relational-pipeline coverage so the legacy
+single-table fallback is unreachable for governed subjects, then delete the
+fail-closed guard with it.
+
+**Test posture**: the one shared composition truth table is pinned in the
+tenant foundation; vector/record and relational seams both consume it.
+Relational tests pin permit, unbound deny, missing-key deny, internal
+passthrough, legacy-schema deny, and fast-path ineligibility. The extracted
+REST handler test proves all four identity fields cross the SQL port.
+`abac_relational_transport_e2e` now boots the real server and proves live
+pgwire deny-before-provision -> authenticated REST provision -> hot permit ->
+unbound-subject deny -> hot revoke, without reconnect or restart. The remaining
+non-relational transport rows are tracked in [[TD-ABAC-11]].
 
 Depends on [[TD-ABAC-8]]. Ref ADR-087, TD-ABAC-3, TD-ABAC-5, [[TD-ABAC-11]].

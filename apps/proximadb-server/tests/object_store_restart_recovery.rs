@@ -11,7 +11,6 @@
 //! by default because it requires cloud credentials and
 //! `PROXIMADB_OBJECT_STORE_URL=s3://...` or `adls://...`.
 
-use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -19,10 +18,7 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde_json::{Value, json};
 
-fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind port 0");
-    listener.local_addr().expect("local addr").port()
-}
+mod support;
 
 fn write_config(path: &Path, data_dir: &Path, root: &str, ports: [u16; 4]) {
     let [rest, grpc, flight, pg] = ports;
@@ -97,7 +93,8 @@ impl ServerProcess {
         config_path: &Path,
         extra_env: &[(&str, &str)],
     ) -> anyhow::Result<Self> {
-        let ports = [free_port(), free_port(), free_port(), free_port()];
+        let port_reservation = support::reserve_loopback_ports::<4>()?;
+        let ports = port_reservation.ports();
         write_config(config_path, data_dir, root, ports);
         let mut command = Command::new(env!("CARGO_BIN_EXE_proximadb-server"));
         command
@@ -109,6 +106,7 @@ impl ServerProcess {
         for (key, value) in extra_env {
             command.env(key, value);
         }
+        drop(port_reservation);
         let child = command.spawn()?;
         let server = Self {
             child,

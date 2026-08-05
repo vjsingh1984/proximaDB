@@ -77,7 +77,7 @@ pub(crate) mod test_support {
     };
     use proximadb_runtime::{
         ApiHandlersPort, CollectionPort, CollectionSchemaMetadata, CollectionSchemaUpdate,
-        PortIdentity, QueryAdapterPort, UnifiedHandlers, VectorOpsPort,
+        PortIdentity, QueryAdapterPort, SqlExecutionResult, UnifiedHandlers, VectorOpsPort,
     };
     use serde_json::Value as JsonValue;
 
@@ -120,6 +120,8 @@ pub(crate) mod test_support {
             collection: Option<String>,
             tenant_id: Option<String>,
             subject: Option<String>,
+            tenant_stable_id: Option<u64>,
+            auth_class: proximadb_tenant::AuthClass,
         },
         Hybrid,
     }
@@ -270,17 +272,58 @@ pub(crate) mod test_support {
             query: String,
             parameters: Option<Vec<ProximaValue>>,
             collection: Option<String>,
-            tenant_id: Option<&str>,
-            subject: Option<&str>,
+            identity: proximadb_runtime::PortIdentity<'_>,
         ) -> Result<ExecuteQueryResponse> {
             self.calls.lock().unwrap().push(ApiCall::Sql {
                 query,
                 parameter_count: parameters.as_ref().map(Vec::len),
                 collection,
-                tenant_id: tenant_id.map(ToOwned::to_owned),
-                subject: subject.map(ToOwned::to_owned),
+                tenant_id: identity.tenant_id.map(ToOwned::to_owned),
+                subject: identity.subject.map(ToOwned::to_owned),
+                tenant_stable_id: identity.tenant_stable_id,
+                auth_class: identity.auth_class,
             });
             Ok(self.sql_response.lock().unwrap().clone())
+        }
+
+        async fn execute_sql(
+            &self,
+            query: String,
+            parameters: Option<Vec<ProximaValue>>,
+            collection: Option<String>,
+            identity: proximadb_runtime::PortIdentity<'_>,
+        ) -> Result<SqlExecutionResult> {
+            self.calls.lock().unwrap().push(ApiCall::Sql {
+                query,
+                parameter_count: parameters.as_ref().map(Vec::len),
+                collection,
+                tenant_id: identity.tenant_id.map(ToOwned::to_owned),
+                subject: identity.subject.map(ToOwned::to_owned),
+                tenant_stable_id: identity.tenant_stable_id,
+                auth_class: identity.auth_class,
+            });
+            let response = self.sql_response.lock().unwrap().clone();
+            Ok(SqlExecutionResult {
+                columns: response.columns,
+                column_types: response.column_types,
+                rows: response
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        row.fields
+                            .iter()
+                            .map(|field| {
+                                field.value.as_ref().map_or(ProximaValue::Null, |value| {
+                                    proximadb_records::conversions::sql_value_to_proxima(value)
+                                })
+                            })
+                            .collect()
+                    })
+                    .collect(),
+                rows_scanned: response.rows_scanned,
+                execution_time_ms: response.execution_time_ms,
+                ..Default::default()
+            })
         }
     }
 
@@ -396,10 +439,9 @@ pub(crate) mod test_support {
             &self,
             _query: String,
             _collection: Option<String>,
-            _tenant_id: Option<&str>,
-            _subject: Option<&str>,
-        ) -> Result<JsonValue> {
-            Ok(JsonValue::Array(Vec::new()))
+            _identity: PortIdentity<'_>,
+        ) -> Result<SqlExecutionResult> {
+            Ok(SqlExecutionResult::default())
         }
     }
 
@@ -482,8 +524,7 @@ mod tests {
             "select * from docs".to_string(),
             None,
             Some("docs".to_string()),
-            None,
-            None,
+            proximadb_runtime::PortIdentity::anonymous(),
         )
         .await
         .unwrap();
@@ -525,6 +566,8 @@ mod tests {
                     collection: Some("docs".to_string()),
                     tenant_id: None,
                     subject: None,
+                    tenant_stable_id: None,
+                    auth_class: proximadb_tenant::AuthClass::Anonymous,
                 },
             ]
         );
@@ -643,10 +686,15 @@ mod tests {
             .unwrap();
         assert!(
             query
-                .execute_sql("select 1".to_string(), Some("docs".to_string()), None, None)
+                .execute_sql(
+                    "select 1".to_string(),
+                    Some("docs".to_string()),
+                    PortIdentity::anonymous(),
+                )
                 .await
                 .unwrap()
-                .is_array()
+                .rows
+                .is_empty()
         );
     }
 }

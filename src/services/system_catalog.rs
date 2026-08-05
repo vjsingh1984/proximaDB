@@ -102,6 +102,9 @@ pub struct SystemCatalog {
     /// provisioning splits data-plane catalogs out per account.
     role: proximadb_catalog::CatalogRole,
     state: Arc<SystemCatalogState>,
+    /// Next durable account/tenant stable id. Recovered from the WAL/snapshot
+    /// state at boot; u64 lets us detect u32 exhaustion instead of wrapping.
+    account_floor: AtomicU64,
     appender: Arc<dyn TableWalAppender>,
     /// Serializes the durable-append → in-RAM-apply pair so concurrent DDL can
     /// never interleave such that a lower-LSN mutation applies after a higher
@@ -146,10 +149,12 @@ impl SystemCatalog {
         state: SystemCatalogState,
         appender: Arc<dyn TableWalAppender>,
     ) -> Self {
+        let account_floor = state.max_account_id().map_or(1, |id| u64::from(id) + 1);
         Self {
             name: name.into(),
             role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
+            account_floor: AtomicU64::new(account_floor),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: None,
@@ -284,10 +289,12 @@ impl SystemCatalog {
             .filter(|n| *n > 0)
             .unwrap_or(DEFAULT_SNAPSHOT_THRESHOLD);
 
+        let account_floor = state.max_account_id().map_or(1, |id| u64::from(id) + 1);
         Ok(Self {
             name: name.into(),
             role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
+            account_floor: AtomicU64::new(account_floor),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: Some(SnapshotConfig {
@@ -317,6 +324,13 @@ impl SystemCatalog {
             ));
         }
         let _guard = self.write_lock.lock().await;
+        self.commit_batch_locked(deltas).await
+    }
+
+    /// Commit with [`Self::write_lock`] already held. Account-id minting needs
+    /// to check-and-insert under the same lock so two first requests for one
+    /// tenant cannot receive different ids.
+    async fn commit_batch_locked(&self, deltas: Vec<CatalogDelta>) -> Result<()> {
         let ops = deltas
             .iter()
             .map(|d| d.to_operation())
@@ -341,6 +355,26 @@ impl SystemCatalog {
                 self.commits_since_snapshot.store(0, Ordering::SeqCst);
             }
         }
+        Ok(())
+    }
+
+    /// Retry a failed object-store publication before a control-plane caller
+    /// treats an already-visible account id as durable. `commit_batch_locked`
+    /// applies the WAL entry before publishing the required snapshot; if that
+    /// publication fails, `commits_since_snapshot` intentionally stays nonzero
+    /// and the next mint-or-return call repairs it here.
+    async fn publish_pending_snapshot_locked(&self) -> Result<()> {
+        let Some(cfg) = &self.snapshot else {
+            return Ok(());
+        };
+        if self.read_only.load(Ordering::SeqCst)
+            || !cfg.store.requires_snapshot_on_commit()
+            || self.commits_since_snapshot.load(Ordering::SeqCst) == 0
+        {
+            return Ok(());
+        }
+        self.checkpoint_locked(cfg).await?;
+        self.commits_since_snapshot.store(0, Ordering::SeqCst);
         Ok(())
     }
 
@@ -485,6 +519,14 @@ impl SystemCatalog {
                     cfg.store.describe()
                 )
             })?;
+        // The snapshot may contain account ids minted by another pod after
+        // this instance booted. Keep the local allocator strictly above every
+        // adopted id even when the reload is same-generation (and therefore
+        // does not force this instance read-only).
+        if let Some(max) = self.state.max_account_id() {
+            self.account_floor
+                .fetch_max(u64::from(max) + 1, Ordering::SeqCst);
+        }
         self.loaded_version.store(read.version, Ordering::SeqCst);
         self.loaded_generation
             .store(read.generation, Ordering::SeqCst);
@@ -677,6 +719,76 @@ impl Catalog for SystemCatalog {
         self.state
             .get_namespace(namespace)
             .ok_or_else(|| anyhow!("Namespace '{}' not found", namespace.join(".")))
+    }
+
+    /// Mint-or-return the durable tenant/account stable id through the same
+    /// canonical WAL as every other SystemCatalog mutation. This is the normal
+    /// server path (SystemCatalog is the default backend), so inheriting the
+    /// trait's `None` implementation would leave ABAC silently unkeyed.
+    async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
+        let account = account.trim();
+        if account.is_empty() {
+            return Ok(None);
+        }
+        if let Some(id) = self.state.account_id_u32(account) {
+            if self
+                .snapshot
+                .as_ref()
+                .is_some_and(|cfg| cfg.store.requires_snapshot_on_commit())
+                && self.commits_since_snapshot.load(Ordering::SeqCst) > 0
+                && !self.read_only.load(Ordering::SeqCst)
+            {
+                let _guard = self.write_lock.lock().await;
+                self.publish_pending_snapshot_locked().await?;
+                // A fencing reload can replace the state while repairing the
+                // publication, so never return the pre-lock value blindly.
+                return Ok(self.state.account_id_u32(account));
+            }
+            return Ok(Some(id));
+        }
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "tenant '{account}' has no stable id and system catalog '{}' is read-only; \
+                 mint it on the owning pod",
+                self.name
+            ));
+        }
+
+        // Check + allocate + durable append are one writer critical section.
+        // Without the second check, concurrent first requests could return two
+        // different policy keys for the same tenant.
+        let _guard = self.write_lock.lock().await;
+        if let Some(id) = self.state.account_id_u32(account) {
+            self.publish_pending_snapshot_locked().await?;
+            if self.read_only.load(Ordering::SeqCst) {
+                return Ok(self.state.account_id_u32(account));
+            }
+            return Ok(Some(id));
+        }
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "tenant '{account}' has no stable id and system catalog '{}' became read-only; \
+                 mint it on the owning pod",
+                self.name
+            ));
+        }
+        let next = self.account_floor.fetch_add(1, Ordering::SeqCst);
+        let stable_id = u32::try_from(next)
+            .map_err(|_| anyhow!("tenant stable-id space exhausted at {next}"))?;
+        self.commit_batch_locked(vec![CatalogDelta::UpsertAccount {
+            account: account.to_string(),
+            stable_id,
+        }])
+        .await?;
+        Ok(Some(stable_id))
+    }
+
+    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
+        let account = account.trim();
+        if account.is_empty() {
+            return None;
+        }
+        self.state.account_id_u32(account)
     }
 
     async fn update_namespace_properties(
@@ -957,6 +1069,45 @@ mod tests {
             .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
             .with_column(CatalogColumn::new(2, "body", ProximaType::String))
             .with_primary_key(vec!["id".to_string()])
+    }
+
+    #[tokio::test]
+    async fn tenant_stable_ids_are_durable_and_allocator_floor_recovers() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+
+        let cat = SystemCatalog::open("default", &wal).await?;
+        let default_id = cat
+            .account_id_u32(proximadb_tenant::DEFAULT_TENANT)
+            .await?
+            .expect("default tenant must mint");
+        assert_eq!(default_id, 1);
+        drop(cat);
+
+        let reopened = SystemCatalog::open("default", &wal).await?;
+        assert_eq!(
+            reopened.account_id_u32_lookup(proximadb_tenant::DEFAULT_TENANT),
+            Some(default_id),
+            "WAL replay must restore the policy key"
+        );
+        assert_eq!(
+            reopened.account_id_u32("acme").await?,
+            Some(2),
+            "a new tenant must mint above the replayed floor"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_first_mint_returns_one_id_for_one_tenant() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cat = Arc::new(catalog(dir.path()).await);
+        let (left, right) = tokio::join!(cat.account_id_u32("acme"), cat.account_id_u32("acme"));
+        let left = left?;
+        let right = right?;
+        assert_eq!(left, right);
+        assert_eq!(cat.account_id_u32_lookup("acme"), left);
+        Ok(())
     }
 
     #[tokio::test]
@@ -1504,6 +1655,7 @@ mod tests {
         owner
             .create_namespace(&nslevels(&["s"]), HashMap::new())
             .await?;
+        assert_eq!(owner.account_id_u32("tenant-one").await?, Some(1));
         owner.create_table(&tid("t1"), vec_schema("t1")).await?;
         owner.checkpoint().await?;
 
@@ -1525,6 +1677,7 @@ mod tests {
         // Owner commits more DDL and republishes. The follower is stale until it
         // polls; a no-publish probe is cheap and a no-op.
         owner.create_table(&tid("t2"), vec_schema("t2")).await?;
+        assert_eq!(owner.account_id_u32("tenant-two").await?, Some(2));
         owner.checkpoint().await?;
 
         // Sinval: the follower observes the newer pointer version and reloads.
@@ -1536,6 +1689,12 @@ mod tests {
             other => panic!("expected a reload, got {other:?}"),
         }
         assert!(follower.table_exists(&tid("t2")).await?);
+        assert_eq!(follower.account_id_u32_lookup("tenant-two"), Some(2));
+        assert_eq!(
+            follower.account_floor.load(Ordering::SeqCst),
+            3,
+            "snapshot reload must advance the local account allocator floor"
+        );
         // Polling again with nothing new is a no-op.
         assert_eq!(follower.reload_if_stale().await?, ReloadOutcome::UpToDate);
         Ok(())

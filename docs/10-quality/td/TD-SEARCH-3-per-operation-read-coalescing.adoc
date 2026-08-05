@@ -333,6 +333,25 @@ link:../../_internal/status/BIGANN_NPROBE_GEOMETRY_100K_3M3_2026_07_31.adoc[the
 dated evidence artifact] for the full curves, hashes, shape distribution, and
 the single-segment 10M memory limitation.
 
+== Partial 10M natural-knee evidence (2026-08-04)
+
+A later spill-enabled run produced one 10M PAX v3 segment with natural
+`k_c=305`. Five provenance-identical interruption-safe checkpoints contain 7
+of 20 unique planned `(nprobe, top_k)` points. The measured top-10 physical-GET,
+byte, p50, and p95 knees all select `nprobe=30`: recall 0.9744, 66.119 GET/query,
+163.04 MB/query, and 558.37 ms local-Azurite p50. The best sampled recall is
+0.9782 at nprobe 64, so the 0.98 target is explicitly unattained in the partial
+curve. Top-20 has only one point and no defensible knee.
+
+This changes the interpretation, not the quality ratchet. The economy knee is
+an observed cost/recall bend; the quality floor is the first point attaining an
+explicit target. They must not share one field, and neither is a production
+default without its own policy. The prior four-scale quality fit remains useful
+as a validation schedule but did not predict a passing 10M point. See
+link:../../_internal/status/BIGANN_NPROBE_GEOMETRY_100K_10M_2026_08_04.adoc[the
+five-scale partial evidence artifact] for source hashes, coverage, fits, charts,
+and remaining measurement gates.
+
 == Remaining inefficiencies
 
 * The filesystem trait's generic `read_ranges()` is bounded-concurrent but

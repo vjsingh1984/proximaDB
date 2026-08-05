@@ -3,7 +3,7 @@
 = TD-V1SUNSET-1: v1 REST/gRPC sunset cutover — execution plan
 :toc: macro
 :icons: font
-:last-updated: 2026-07-09
+:last-updated: 2026-08-05
 
 [cols="1,3", options="header"]
 |===
@@ -24,16 +24,29 @@ the live-vs-deprecated boundary, or the one prerequisite that is easy to miss (t
 deprecation-header utility imported by *live* handlers). This TD captures that
 execution detail so the cutover is mechanical once the sunset window closes.
 
-== Current state (verified 2026-07-09)
+== Current state (re-verified 2026-08-05)
 
 === Kill-switches
 
 * **REST v1** — `src/network/middleware/v1_sunset.rs`. `rest_v1_compat_enabled()`
-  reads `PROXIMADB_REST_V1_COMPAT`; `parse_compat_flag` at line 65 maps
-  `None => true` (**default ON**). The middleware (`v1_sunset_middleware`, line 72)
+  reads `PROXIMADB_REST_V1_COMPAT`; `parse_compat_flag` maps
+  `None => false` (**default OFF**). The middleware (`v1_sunset_middleware`)
   returns `410 Gone` + RFC 8594 headers for any `/api/v1/` path when compat is off.
   Mounted at `src/network/rest/server.rs:494-498` (multi-port) and `:820-824`
-  (unified). **Flip = change line 65 `None => true,` → `None => false,`.**
+  (unified).
++
+[NOTE]
+====
+**The flip is DONE — this bullet used to say the opposite.** Until 2026-08-05
+this section read `None => true` (**default ON**) and instructed
+"*Flip = change line 65 `None => true,` → `None => false,`*". That instruction
+was already stale when written down here: `9c9b04669` (#814,
+"flip REST v1 sunset default OFF — /api/v1 now returns 410") had landed the
+change, and the Status field above recorded it, but this body section was never
+updated to match. Anyone reading "Current state" alone would have concluded the
+cutover was still pending. `/api/v1/*` has returned `410 Gone` by default since
+#814; opting back in requires explicitly setting `PROXIMADB_REST_V1_COMPAT`.
+====
 
 * **gRPC v1** — `enable_grpc_v1_compat` / `PROXIMADB_GRPC_V1_COMPAT`,
   **default OFF** (`src/core/config/bootstrap_config.rs:454-458`,

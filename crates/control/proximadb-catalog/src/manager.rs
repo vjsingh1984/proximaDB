@@ -615,6 +615,10 @@ impl CatalogManager {
     /// deny (safe; the next request retries). Also `None` when no default
     /// catalog is configured or the account is unminted.
     pub fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
+        let account = account.trim();
+        if account.is_empty() {
+            return None;
+        }
         let name = self
             .default_catalog
             .try_read()
@@ -622,6 +626,27 @@ impl CatalogManager {
             .and_then(|n| n.as_ref().cloned())?;
         let catalogs = self.catalogs.try_read().ok()?;
         catalogs.get(&name)?.account_id_u32_lookup(account)
+    }
+
+    /// Mint-or-return a tenant's stable policy key in the default catalog.
+    ///
+    /// This is deliberately async and control-plane-only: request hot paths use
+    /// [`Self::account_id_u32_lookup`], while bootstrap and ABAC provisioning
+    /// call this method before publishing state keyed by the id. NativeCatalog
+    /// persists its account registry sidecar; SystemCatalog commits the mapping
+    /// to its canonical WAL/snapshot. Other catalog kinds return `None` and the
+    /// caller must fail closed.
+    pub async fn ensure_tenant_stable_id(&self, tenant: &str) -> Result<Option<u64>> {
+        let tenant = tenant.trim();
+        if tenant.is_empty() {
+            return Ok(None);
+        }
+        Ok(self
+            .default_catalog()
+            .await?
+            .account_id_u32(tenant)
+            .await?
+            .map(u64::from))
     }
 
     /// Set the default catalog

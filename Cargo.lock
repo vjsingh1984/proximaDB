@@ -6743,6 +6743,9 @@ dependencies = [
  "proximadb-abac",
  "proximadb-admin-ui",
  "proximadb-api",
+ "proximadb-audit",
+ "proximadb-auth-sso",
+ "proximadb-automl",
  "proximadb-block-format",
  "proximadb-bloom",
  "proximadb-cache",
@@ -6756,6 +6759,7 @@ dependencies = [
  "proximadb-compression-types",
  "proximadb-concurrent",
  "proximadb-config",
+ "proximadb-cross-modal-fusion",
  "proximadb-data-model",
  "proximadb-distance-kernel",
  "proximadb-distance-types",
@@ -6788,6 +6792,7 @@ dependencies = [
  "proximadb-mongodb-parser",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
+ "proximadb-network-middleware",
  "proximadb-object-store",
  "proximadb-observability",
  "proximadb-observability-engine",
@@ -6819,6 +6824,7 @@ dependencies = [
  "proximadb-relational-planner",
  "proximadb-relational-reader",
  "proximadb-relational-types",
+ "proximadb-resilience",
  "proximadb-runtime",
  "proximadb-runtime-common",
  "proximadb-sdk",
@@ -6840,6 +6846,7 @@ dependencies = [
  "proximadb-tenant",
  "proximadb-tls",
  "proximadb-uql",
+ "proximadb-utility-scorer",
  "proximadb-vector",
  "proximadb-vector-query",
  "rand 0.8.6",
@@ -6954,6 +6961,47 @@ dependencies = [
  "tower-http",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-audit"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dashmap",
+ "proximadb-security",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-auth-sso"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dashmap",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "proximadb-automl"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -7075,7 +7123,10 @@ dependencies = [
 name = "proximadb-cdc"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "async-trait",
+ "base64 0.22.1",
+ "futures",
  "proximadb-config",
  "rand 0.8.6",
  "regex",
@@ -7084,6 +7135,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-postgres",
  "tracing",
  "uuid",
 ]
@@ -7185,6 +7237,10 @@ dependencies = [
  "tracing",
  "uuid",
 ]
+
+[[package]]
+name = "proximadb-cross-modal-fusion"
+version = "0.2.0"
 
 [[package]]
 name = "proximadb-data-model"
@@ -7654,6 +7710,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-network-middleware"
+version = "0.2.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml 0.8.23",
+ "tower-http",
+ "tracing",
+]
+
+[[package]]
 name = "proximadb-object-store"
 version = "0.2.0"
 dependencies = [
@@ -7892,6 +7962,8 @@ name = "proximadb-query-fusion"
 version = "0.2.0"
 dependencies = [
  "proximadb-data-model",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -8160,6 +8232,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-resilience"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "rand 0.8.6",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "proximadb-runtime"
 version = "0.2.0"
 dependencies = [
@@ -8325,6 +8410,7 @@ dependencies = [
  "proximadb-block-format",
  "proximadb-cache",
  "proximadb-catalog",
+ "proximadb-codec",
  "proximadb-compression-types",
  "proximadb-data-model",
  "proximadb-filter-expression",
@@ -8550,6 +8636,10 @@ dependencies = [
  "regex",
  "tracing",
 ]
+
+[[package]]
+name = "proximadb-utility-scorer"
+version = "0.2.0"
 
 [[package]]
 name = "proximadb-vector"
@@ -9566,9 +9656,9 @@ dependencies = [
 
 [[package]]
 name = "sandhi-core"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcd8167e137bcbdbf7c96f56a9e7cba4dcb16b6eeba53dc96efb0666d5f6e9bd"
+checksum = "fd53a6bbdfc8c7f8d82cb7d65ce4a18deedb1e90d5d016eae6360a09ab9096ad"
 dependencies = [
  "schemars",
  "serde",

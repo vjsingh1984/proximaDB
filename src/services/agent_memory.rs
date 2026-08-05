@@ -565,6 +565,7 @@ impl MemoryStore for VectorMemoryStore {
                 None,
                 None,
                 None,
+                proximadb_tenant::AuthClass::Anonymous,
             )
             .await
             .map_err(|e| anyhow!("memory retrieve failed: {e}"))?;

@@ -25,15 +25,18 @@ use proximadb_data_model::{ProximaType, ProximaValue, TimeUnit};
 use proximadb_proto::v1::{
     Collection, CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse,
     ExecuteQueryResponse, FilterableColumnSpec, FilterableDataType, HybridSearchRequest,
-    HybridSearchResponse, RecordSchemaConfig, SqlRow, SqlRowField, SqlValue, TextStorageConfig,
-    VectorBatchRequest, VectorOperationResponse, VectorSearchRequest, sql_value,
+    HybridSearchResponse, RecordSchemaConfig, SqlRow, SqlRowField, TextStorageConfig,
+    VectorBatchRequest, VectorOperationResponse, VectorSearchRequest,
 };
+use proximadb_records::conversions::proxima_to_sql_value;
 
 use crate::port::{
     ApiHandlersPort, CollectionSchemaColumn, CollectionSchemaEnforcement, CollectionSchemaMetadata,
     CollectionSchemaUpdate, CollectionTextStorage,
 };
-use crate::service_ports::{CollectionPort, PortIdentity, QueryAdapterPort, VectorOpsPort};
+use crate::service_ports::{
+    CollectionPort, PortIdentity, QueryAdapterPort, SqlExecutionResult, VectorOpsPort,
+};
 
 /// Global request counter for generating unique request IDs.
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -621,111 +624,67 @@ impl ApiHandlersPort for UnifiedHandlers {
         adapter.execute_hybrid(request).await
     }
 
-    async fn execute_sql_v1(
+    async fn execute_sql(
         &self,
         query: String,
         _parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
-    ) -> Result<ExecuteQueryResponse> {
+        identity: crate::service_ports::PortIdentity<'_>,
+    ) -> Result<SqlExecutionResult> {
         let adapter = self
             .query_adapter
             .as_ref()
             .ok_or_else(|| anyhow!("SQL execution requires QueryAdapterPort (not wired)"))?;
 
         let start = Instant::now();
-        let json_result = adapter
-            .execute_sql(query, collection, tenant_id, subject)
+        let mut result = adapter.execute_sql(query, collection, identity).await?;
+        result.execution_time_ms = start.elapsed().as_millis() as u64;
+        if result.rows_scanned == 0 {
+            result.rows_scanned = result.rows_affected.unwrap_or(result.rows.len() as u64);
+        }
+        Ok(result)
+    }
+
+    async fn execute_sql_v1(
+        &self,
+        query: String,
+        parameters: Option<Vec<ProximaValue>>,
+        collection: Option<String>,
+        identity: crate::service_ports::PortIdentity<'_>,
+    ) -> Result<ExecuteQueryResponse> {
+        let result = self
+            .execute_sql(query, parameters, collection, identity)
             .await?;
-
-        let records = json_result
-            .get("records")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .or_else(|| json_result.as_array().cloned())
-            .unwrap_or_default();
-
-        let columns: Vec<String> = json_result
-            .get("columns")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let column_types: Vec<String> = json_result
-            .get("column_types")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let rows: Vec<SqlRow> = records
+        let rows_returned = result.rows_affected.unwrap_or(result.rows.len() as u64);
+        let rows = result
+            .rows
             .iter()
-            .map(|record| {
-                let fields: Vec<SqlRowField> = match record.as_object() {
-                    Some(obj) => obj
-                        .iter()
-                        .map(|(k, v)| SqlRowField {
-                            key: k.clone(),
-                            value: Some(json_to_sql_value(v)),
-                        })
-                        .collect(),
-                    None => vec![SqlRowField {
-                        key: "value".to_string(),
-                        value: Some(json_to_sql_value(record)),
-                    }],
-                };
-                SqlRow {
-                    fields,
-                    similarity: None,
-                }
+            .map(|row| SqlRow {
+                fields: row
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| SqlRowField {
+                        key: result
+                            .columns
+                            .get(index)
+                            .cloned()
+                            .unwrap_or_else(|| format!("column_{index}")),
+                        value: Some(proxima_to_sql_value(value)),
+                    })
+                    .collect(),
+                similarity: None,
             })
             .collect();
 
-        // TD-135: a write's affected count is carried in `rows_affected`; reads
-        // carry no such key and report the record count, unchanged.
-        let rows_returned = json_result
-            .get("rows_affected")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(rows.len() as u64);
-        let rows_scanned = json_result
-            .get("total_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(rows_returned);
-
         Ok(ExecuteQueryResponse {
             rows,
-            rows_scanned,
+            rows_scanned: result.rows_scanned,
             rows_returned,
-            execution_time_ms: start.elapsed().as_millis() as u64,
-            columns,
-            column_types,
+            execution_time_ms: result.execution_time_ms,
+            columns: result.columns,
+            column_types: result.column_types,
         })
     }
-}
-
-fn json_to_sql_value(v: &serde_json::Value) -> SqlValue {
-    let inner = match v {
-        serde_json::Value::String(s) => sql_value::Value::StringValue(s.clone()),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                sql_value::Value::Int64Value(i)
-            } else {
-                sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0))
-            }
-        }
-        serde_json::Value::Bool(b) => sql_value::Value::BoolValue(*b),
-        serde_json::Value::Null => sql_value::Value::NullValue(0),
-        other => sql_value::Value::StringValue(other.to_string()),
-    };
-    SqlValue { value: Some(inner) }
 }
 
 #[cfg(test)]
@@ -733,7 +692,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    use proximadb_proto::v1::{Collection, CollectionConfig, VectorRecord};
+    use proximadb_proto::v1::{Collection, CollectionConfig, VectorRecord, sql_value};
     use serde_json::json;
 
     #[derive(Default)]
@@ -898,20 +857,27 @@ mod tests {
             &self,
             _query: String,
             _collection: Option<String>,
-            _tenant_id: Option<&str>,
-            _subject: Option<&str>,
-        ) -> Result<serde_json::Value> {
-            Ok(json!({
-                "columns": ["id", "score", "flag", "none", "obj"],
-                "total_count": 9,
-                "records": [{
-                    "id": "r1",
-                    "score": 1.5,
-                    "flag": true,
-                    "none": null,
-                    "obj": {"nested": 1}
-                }]
-            }))
+            _identity: crate::service_ports::PortIdentity<'_>,
+        ) -> Result<SqlExecutionResult> {
+            Ok(SqlExecutionResult {
+                columns: vec!["id", "score", "flag", "none", "obj"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                column_types: vec!["TEXT", "FLOAT", "BOOLEAN", "NULL", "JSON"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                rows: vec![vec![
+                    ProximaValue::String("r1".to_string()),
+                    ProximaValue::Float64(1.5),
+                    ProximaValue::Boolean(true),
+                    ProximaValue::Null,
+                    proximadb_records::conversions::json_to_proxima(&json!({"nested": 1})),
+                ]],
+                rows_scanned: 9,
+                ..Default::default()
+            })
         }
     }
 
@@ -1084,8 +1050,7 @@ mod tests {
                 "select * from docs".to_string(),
                 None,
                 Some("docs".to_string()),
-                None,
-                None,
+                crate::service_ports::PortIdentity::anonymous(),
             )
             .await
             .unwrap();
@@ -1119,7 +1084,7 @@ mod tests {
         ));
         assert!(matches!(
             fields.iter().find(|field| field.key == "obj").and_then(|field| field.value.as_ref()).and_then(|value| value.value.as_ref()),
-            Some(sql_value::Value::StringValue(value)) if value.contains("nested")
+            Some(sql_value::Value::ObjectValue(value)) if value.fields.contains_key("nested")
         ));
     }
 
@@ -1142,7 +1107,12 @@ mod tests {
         );
         assert!(
             handlers
-                .execute_sql_v1("select 1".to_string(), None, None, None, None)
+                .execute_sql_v1(
+                    "select 1".to_string(),
+                    None,
+                    None,
+                    crate::service_ports::PortIdentity::anonymous(),
+                )
                 .await
                 .unwrap_err()
                 .to_string()
@@ -1171,10 +1141,24 @@ mod tests {
                 &self,
                 _query: String,
                 _collection: Option<String>,
-                _tenant_id: Option<&str>,
-                _subject: Option<&str>,
-            ) -> Result<serde_json::Value> {
-                Ok(json!(["text", 7, false, null, {"shape": "object"}]))
+                _identity: crate::service_ports::PortIdentity<'_>,
+            ) -> Result<SqlExecutionResult> {
+                Ok(SqlExecutionResult {
+                    columns: vec!["value".to_string()],
+                    column_types: vec!["JSON".to_string()],
+                    rows: [
+                        json!("text"),
+                        json!(7),
+                        json!(false),
+                        json!(null),
+                        json!({"shape": "object"}),
+                    ]
+                    .iter()
+                    .map(|value| vec![proximadb_records::conversions::json_to_proxima(value)])
+                    .collect(),
+                    rows_scanned: 5,
+                    ..Default::default()
+                })
             }
         }
 
@@ -1184,11 +1168,22 @@ mod tests {
             Some(Arc::new(ArrayQueryAdapter)),
         );
         let sql = handlers
-            .execute_sql_v1("select values".to_string(), None, None, None, None)
+            .execute_sql_v1(
+                "select values".to_string(),
+                None,
+                None,
+                crate::service_ports::PortIdentity::anonymous(),
+            )
             .await
             .unwrap();
         assert_eq!(sql.rows_returned, 5);
-        assert!(sql.rows[..4].iter().all(|row| row.fields[0].key == "value"));
-        assert_eq!(sql.rows[4].fields[0].key, "shape");
+        assert!(sql.rows.iter().all(|row| row.fields[0].key == "value"));
+        assert!(matches!(
+            sql.rows[4].fields[0]
+                .value
+                .as_ref()
+                .and_then(|value| value.value.as_ref()),
+            Some(sql_value::Value::ObjectValue(value)) if value.fields.contains_key("shape")
+        ));
     }
 }

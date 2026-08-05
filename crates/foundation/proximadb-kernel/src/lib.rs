@@ -17,6 +17,7 @@ pub mod metadata_error;
 pub mod request_limits;
 pub mod score_types;
 pub mod service_error;
+pub mod sketches;
 pub mod stable_id;
 pub mod stream_error;
 pub mod uuid;

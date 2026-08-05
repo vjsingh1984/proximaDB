@@ -19,6 +19,8 @@ use google_cloud_storage::http::objects::download::Range;
 use google_cloud_storage::http::objects::get::GetObjectRequest;
 use google_cloud_storage::http::objects::list::ListObjectsRequest;
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
+use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
+use tokio::io::AsyncReadExt;
 
 use super::{
     DirEntry, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsFileMetadata, FsResult,
@@ -48,6 +50,8 @@ impl std::fmt::Debug for GcsFileSystem {
 }
 
 impl GcsFileSystem {
+    const RESUMABLE_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
+
     pub async fn new(cfg: GcsConfig) -> FsResult<Self> {
         let mut config = if cfg.anonymous {
             ClientConfig::default().anonymous()
@@ -85,6 +89,21 @@ impl GcsFileSystem {
 
     fn net(ctx: &str, e: impl std::fmt::Display) -> FilesystemError {
         FilesystemError::Network(format!("{ctx}: {e}"))
+    }
+
+    fn next_resumable_chunk(offset: u64, total: u64) -> Option<(usize, bool)> {
+        let remaining = total.checked_sub(offset)?;
+        if remaining == 0 {
+            return None;
+        }
+        let bytes = remaining.min(Self::RESUMABLE_CHUNK_BYTES);
+        Some((bytes as usize, bytes == remaining))
+    }
+
+    fn parse_resumable_range(value: &str) -> Option<u64> {
+        value
+            .strip_prefix("bytes=0-")
+            .and_then(|end| end.parse::<u64>().ok())
     }
 
     async fn list_paginated(
@@ -210,6 +229,100 @@ impl FileSystem for GcsFileSystem {
             .await
             .map_err(|e| Self::net("GCS upload_object", e))?;
         Ok(())
+    }
+
+    fn supports_bounded_local_file_write(&self) -> bool {
+        true
+    }
+
+    async fn write_local_file(
+        &self,
+        path: &str,
+        local_path: &std::path::Path,
+        _options: Option<FileOptions>,
+    ) -> FsResult<u64> {
+        let (bucket, object) = Self::parse(path)?;
+        let mut file = tokio::fs::File::open(local_path).await?;
+        let bytes = file.metadata().await?.len();
+        let mut media = Media::new(object);
+        media.content_length = Some(bytes);
+        let upload_type = UploadType::Simple(media);
+        let session = self
+            .client
+            .prepare_resumable_upload(
+                &UploadObjectRequest {
+                    bucket,
+                    ..Default::default()
+                },
+                &upload_type,
+            )
+            .await
+            .map_err(|error| Self::net("GCS resumable begin", error))?;
+
+        if bytes == 0 {
+            session
+                .upload_single_chunk(Vec::<u8>::new(), 0)
+                .await
+                .map_err(|error| Self::net("GCS resumable empty upload", error))?;
+            return Ok(0);
+        }
+
+        // The 0.15 SDK's `UploadStatus::ResumeIncomplete` drops GCS's `Range`
+        // response header. The JSON API explicitly requires clients to advance
+        // from the acknowledged range rather than assume a whole request was
+        // persisted. Use the authenticated session URL directly and fail
+        // closed on a partial acknowledgement; compaction can retry from its
+        // authoritative inputs without risking a corrupt final object.
+        let upload_http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|error| Self::net("GCS resumable HTTP client", error))?;
+        let mut buffer = vec![0u8; Self::RESUMABLE_CHUNK_BYTES as usize];
+        let mut offset = 0u64;
+        while let Some((chunk_bytes, final_chunk)) = Self::next_resumable_chunk(offset, bytes) {
+            file.read_exact(&mut buffer[..chunk_bytes]).await?;
+            let end = offset + chunk_bytes as u64 - 1;
+            let response = match upload_http
+                .put(session.url())
+                .header(CONTENT_RANGE, format!("bytes {offset}-{end}/{bytes}"))
+                .header(CONTENT_LENGTH, chunk_bytes)
+                .body(buffer[..chunk_bytes].to_vec())
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    let _ = session.cancel().await;
+                    return Err(Self::net("GCS resumable chunk", error));
+                }
+            };
+            let accepted = if final_chunk {
+                response.status().is_success()
+            } else {
+                response.status().as_u16() == 308
+                    && response
+                        .headers()
+                        .get(RANGE)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(Self::parse_resumable_range)
+                        == Some(end)
+            };
+            if !accepted {
+                let status = response.status();
+                let acknowledged = response
+                    .headers()
+                    .get(RANGE)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("missing");
+                let _ = session.cancel().await;
+                return Err(FilesystemError::Network(format!(
+                    "GCS resumable chunk {offset}-{end}/{bytes} was not fully acknowledged: \
+                     status={status}, range={acknowledged}"
+                )));
+            }
+            offset = end + 1;
+        }
+        Ok(bytes)
     }
 
     async fn write_if_absent(
@@ -355,6 +468,40 @@ mod tests {
         assert!(GcsFileSystem::parse("gs://bucket-only").is_err());
         assert!(GcsFileSystem::parse("gs://b/").is_err());
         assert!(GcsFileSystem::parse("gs:///obj").is_err());
+    }
+
+    #[test]
+    fn resumable_chunk_plan_is_bounded_contiguous_and_finalized_once() {
+        let total = 2 * GcsFileSystem::RESUMABLE_CHUNK_BYTES + 19;
+        let first = GcsFileSystem::next_resumable_chunk(0, total).unwrap();
+        let second = GcsFileSystem::next_resumable_chunk(first.0 as u64, total).unwrap();
+        let third =
+            GcsFileSystem::next_resumable_chunk(first.0 as u64 + second.0 as u64, total).unwrap();
+
+        assert_eq!(
+            first,
+            (GcsFileSystem::RESUMABLE_CHUNK_BYTES as usize, false)
+        );
+        assert_eq!(
+            second,
+            (GcsFileSystem::RESUMABLE_CHUNK_BYTES as usize, false)
+        );
+        assert_eq!(third, (19, true));
+        assert_eq!(GcsFileSystem::next_resumable_chunk(total, total), None);
+    }
+
+    #[test]
+    fn resumable_range_parser_requires_a_contiguous_zero_based_ack() {
+        assert_eq!(
+            GcsFileSystem::parse_resumable_range("bytes=0-8388607"),
+            Some(8_388_607)
+        );
+        assert_eq!(
+            GcsFileSystem::parse_resumable_range("bytes=1-8388607"),
+            None
+        );
+        assert_eq!(GcsFileSystem::parse_resumable_range("8388607"), None);
+        assert_eq!(GcsFileSystem::parse_resumable_range("bytes=0-nope"), None);
     }
 
     #[tokio::test]

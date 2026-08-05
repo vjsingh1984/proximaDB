@@ -59,10 +59,7 @@ use crate::query::cache::invalidation_coordinator::CacheInvalidationCoordinator;
 use crate::query::cache::query_result_cache::{QueryKey, QueryResultCache, StructuralKey};
 use crate::services::dml::DmlService;
 use crate::storage::tenant::context::TenantContext;
-// TD-ABAC-3: the authenticated/Asserted subject threaded into the relational
-// read funnel so ABAC enforces on real client SELECTs (behind `abac-policy`).
-#[cfg(feature = "abac-policy")]
-use proximadb_catalog::fc_metamodel::SubjectId;
+use proximadb_runtime::{OwnedPortIdentity, PortIdentity};
 
 use super::types::PgType;
 
@@ -258,7 +255,7 @@ pub async fn try_run_select(
     #[cfg_attr(not(feature = "datafusion-integration"), allow(unused_variables))] graph_ops: Option<
         Arc<dyn proximadb_graph_query::service::GraphQueryReadService>,
     >,
-    tenant: Option<&str>,
+    identity: PortIdentity<'_>,
     controls: ExecutionControls,
     // pgwire passes `true`: only joins/GROUP BY/aggregates/set-ops engage the
     // real-data relational engine, leaving simple SELECTs on pgwire's hardened
@@ -276,16 +273,25 @@ pub async fn try_run_select(
     // execution; a miss falls through normally and the result is stamped on the
     // real-data success paths.
     result_cache: Option<&QueryResultCache<ExecutionPipelineResult>>,
-    // TD-ABAC-3: the connection subject, threaded into every SnapshotCatalog so
-    // `scan_table_relational` enforces ABAC. `None` ⇒ anonymous/internal ⇒ no
-    // enforcement. Behind `abac-policy` (default-OFF).
-    #[cfg(feature = "abac-policy")] subject: Option<SubjectId>,
 ) -> Option<Result<ExecutionPipelineResult, String>> {
+    let identity = identity.into_owned();
+    let tenant = identity.tenant_id.as_deref();
+    // Governed identities must reach DML's canonical row-policy seam. The
+    // process-local demo engine, subject-agnostic result cache, and bare-Parquet
+    // engines cannot currently apply that predicate and are therefore
+    // ineligible rather than silently widening access.
+    #[cfg(feature = "abac-policy")]
+    let relational_abac_required =
+        dml.is_some_and(|service| service.relational_abac_required(identity.as_borrowed()));
+    #[cfg(not(feature = "abac-policy"))]
+    let relational_abac_required = false;
     // TD-064: the connection's tenant scopes every snapshot read to the tenant's
     // record partition (carried into the SnapshotCatalog → DmlTableReader).
-    let tenant_ctx: Option<TenantContext> = tenant
-        .filter(|t| !t.is_empty())
-        .map(TenantContext::for_tenant_id);
+    let tenant_ctx: Option<TenantContext> = tenant.filter(|t| !t.is_empty()).map(|tenant| {
+        let mut context = TenantContext::for_tenant_id(tenant);
+        context.tenant_stable_id = identity.tenant_stable_id;
+        context
+    });
     // ADR-018 Phase 2: Allow opting out with explicit "0" value
     if std::env::var("PROXIMADB_PGWIRE_RELATIONAL_PIPELINE")
         .ok()
@@ -304,7 +310,9 @@ pub async fn try_run_select(
     // WAL LSN, so any write since → guaranteed miss → read-after-write correct.
     // `cache_ctx` carries the (key, lsn) pair so the real-data success paths
     // below can stamp the result without recomputing it.
-    let cache_ctx: Option<(StructuralKey, u64)> = if let Some(cache) = result_cache {
+    let cache_ctx: Option<(StructuralKey, u64)> = if relational_abac_required {
+        None
+    } else if let Some(cache) = result_cache {
         let current_lsn = current_canonical_lsn().await;
         let skey = StructuralKey::new(
             tenant.unwrap_or(""),
@@ -337,7 +345,8 @@ pub async fn try_run_select(
     //    engine's own catalog; a catalog miss falls through to the real-data
     //    path below.
     let engine = GLOBAL_ENGINE.clone();
-    if let Ok(logical) = lower_sql(sql, &EngineCatalog(engine.clone())) {
+    if !relational_abac_required && let Ok(logical) = lower_sql(sql, &EngineCatalog(engine.clone()))
+    {
         let factory = EngineReaderFactory::new(engine);
         let resolver = StaticCapabilities {
             caps: ReaderCapabilities::full(),
@@ -421,8 +430,9 @@ pub async fn try_run_select(
     // DECISION and the physical DISPATCH come from ONE place. Mixed Parquet+native
     // queries report `false` (cross-engine join is a later phase) → Volcano.
     #[cfg(feature = "datafusion-integration")]
-    let parquet_backed =
-        !tables.is_empty() && tables.keys().all(|k| parquet_loc_by_key.contains_key(k));
+    let parquet_backed = !relational_abac_required
+        && !tables.is_empty()
+        && tables.keys().all(|k| parquet_loc_by_key.contains_key(k));
     #[cfg(not(feature = "datafusion-integration"))]
     let parquet_backed = false;
 
@@ -511,7 +521,8 @@ pub async fn try_run_select(
     // other `decision.backend` (never produced for a parquet-OLAP shape) falls
     // through to the Volcano path below — exactly as before.
     #[cfg(feature = "datafusion-integration")]
-    if parquet_backed
+    if !relational_abac_required
+        && parquet_backed
         && matches!(
             decision.backend,
             crate::query::table_write_plan::ComputeBackend::DataFusionLocal
@@ -555,8 +566,7 @@ pub async fn try_run_select(
                     dml: dml.clone(),
                     tables: tables.clone(),
                     tenant: tenant_ctx.clone(),
-                    #[cfg(feature = "abac-policy")]
-                    subject: subject.clone(),
+                    identity: identity.clone(),
                 };
                 // Setup (planning/route) time is attributed here; the native engine
                 // records its own `native-vectorized` compute sample inside the run.
@@ -738,8 +748,7 @@ pub async fn try_run_select(
                 dml: dml.clone(),
                 tables: tables.clone(),
                 tenant: tenant_ctx.clone(),
-                #[cfg(feature = "abac-policy")]
-                subject: subject.clone(),
+                identity: identity.clone(),
             };
             shadow_probe_native_parquet(
                 sql,
@@ -764,8 +773,7 @@ pub async fn try_run_select(
         dml: dml.clone(),
         tables,
         tenant: tenant_ctx,
-        #[cfg(feature = "abac-policy")]
-        subject,
+        identity,
     };
     // Lower + plan via the shared planning path (so EXPLAIN discloses exactly this
     // plan). `None` → lowering declined → fall through to legacy. From the planned
@@ -1609,12 +1617,10 @@ struct SnapshotCatalog {
     /// TD-064: connection tenant scope threaded into every snapshot reader so
     /// relational scans/point-lookups read the tenant's record partition.
     tenant: Option<TenantContext>,
-    /// TD-ABAC-3: the connection's subject (Asserted under `Open` trust, or
-    /// rejected at the handshake under strict). Threaded into every snapshot
-    /// reader so `scan_table_relational` can enforce ABAC on real client SELECTs.
-    /// `None` ⇒ no subject (anonymous/internal) ⇒ no enforcement (status quo).
-    #[cfg(feature = "abac-policy")]
-    subject: Option<SubjectId>,
+    /// ADR-087 canonical caller identity. Owned because readers outlive the
+    /// protocol stack frame; projected back to PortIdentity only at the DML
+    /// enforcement boundary.
+    identity: OwnedPortIdentity,
 }
 
 impl CatalogLookup for SnapshotCatalog {
@@ -1638,8 +1644,7 @@ impl ReaderFactory for SnapshotCatalog {
             full_schema: prepared.schema.clone(),
             pk_columns: prepared.pk_columns.clone(),
             tenant: self.tenant.clone(),
-            #[cfg(feature = "abac-policy")]
-            subject: self.subject.clone(),
+            identity: self.identity.clone(),
             open_state: None,
         }))
     }
@@ -1708,9 +1713,8 @@ struct DmlTableReader {
     pk_columns: Vec<usize>,
     /// TD-064: connection tenant scope for this reader's record partition.
     tenant: Option<TenantContext>,
-    /// TD-ABAC-3: connection subject for ABAC enforcement on this reader's scans.
-    #[cfg(feature = "abac-policy")]
-    subject: Option<SubjectId>,
+    /// ADR-087 whole caller identity retained to the enforcement seam.
+    identity: OwnedPortIdentity,
     open_state: Option<ReaderOpenState>,
 }
 
@@ -1806,13 +1810,7 @@ impl RelationalReader for DmlTableReader {
                 row_pred_ref,
                 limit,
                 self.tenant.as_ref(),
-                // TD-ABAC-3: the connection subject, threaded from the pgwire
-                // auth layer (Asserted `user`, gated by `HeaderTrustPolicy` at the
-                // handshake). When present, `scan_table_relational` AND-combines
-                // the ABAC row filter with the user WHERE (#1324); `None`
-                // (anonymous/internal) ⇒ no enforcement.
-                #[cfg(feature = "abac-policy")]
-                self.subject.as_ref(),
+                self.identity.as_borrowed(),
             )
             .await
             .map_err(|e| ReaderError::Storage(e.to_string()))?;
@@ -2320,9 +2318,9 @@ async fn prepare_select_plan(
     sql: &str,
     query: &SqlQuery,
     dml: &Arc<DmlService>,
-    tenant: Option<&str>,
+    identity: PortIdentity<'_>,
 ) -> Option<(SnapshotCatalog, PhysicalPlan)> {
-    let snapshot = build_snapshot(query, dml, tenant).await?;
+    let snapshot = build_snapshot(query, dml, identity).await?;
     match plan_over_snapshot(sql, &snapshot)? {
         Ok(physical) => Some((snapshot, physical)),
         Err(_) => None,
@@ -2337,8 +2335,9 @@ async fn prepare_select_plan(
 async fn build_snapshot(
     query: &SqlQuery,
     dml: &Arc<DmlService>,
-    tenant: Option<&str>,
+    identity: PortIdentity<'_>,
 ) -> Option<SnapshotCatalog> {
+    let tenant = identity.tenant_id;
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
     let mut tables: HashMap<String, PreparedTable> = HashMap::new();
@@ -2355,13 +2354,14 @@ async fn build_snapshot(
     Some(SnapshotCatalog {
         dml: dml.clone(),
         tables,
-        tenant: tenant
-            .filter(|t| !t.is_empty())
-            .map(TenantContext::for_tenant_id),
-        // EXPLAIN/ANALYZE path — no client subject threaded here (follow-on);
-        // `None` ⇒ no ABAC enforcement on this path.
-        #[cfg(feature = "abac-policy")]
-        subject: None,
+        tenant: tenant.filter(|t| !t.is_empty()).map(|tenant| {
+            let mut context = TenantContext::for_tenant_id(tenant);
+            context.tenant_stable_id = identity.tenant_stable_id;
+            context
+        }),
+        // EXPLAIN ANALYZE executes the query, so it retains the exact same full
+        // identity and composition semantics as normal execution.
+        identity: identity.into_owned(),
     })
 }
 
@@ -2381,9 +2381,9 @@ pub fn explain_select_route(sql: &str) -> Result<SelectRouteExplanation, String>
 pub async fn explain_select_route_with_catalog(
     sql: &str,
     dml: &Arc<DmlService>,
-    tenant: Option<&str>,
+    identity: PortIdentity<'_>,
 ) -> Result<SelectRouteExplanation, String> {
-    route_and_plan_select(sql, dml, false, tenant).await
+    route_and_plan_select(sql, dml, false, identity).await
 }
 
 /// Catalog-aware `EXPLAIN ANALYZE SELECT`: like [`explain_select_route_with_catalog`]
@@ -2393,9 +2393,9 @@ pub async fn explain_select_route_with_catalog(
 pub async fn explain_analyze_select_with_catalog(
     sql: &str,
     dml: &Arc<DmlService>,
-    tenant: Option<&str>,
+    identity: PortIdentity<'_>,
 ) -> Result<SelectRouteExplanation, String> {
-    route_and_plan_select(sql, dml, true, tenant).await
+    route_and_plan_select(sql, dml, true, identity).await
 }
 
 /// Shared core for catalog-aware `EXPLAIN [ANALYZE] SELECT`. Routes the query, then for
@@ -2407,8 +2407,9 @@ async fn route_and_plan_select(
     sql: &str,
     dml: &Arc<DmlService>,
     analyze: bool,
-    tenant: Option<&str>,
+    identity: PortIdentity<'_>,
 ) -> Result<SelectRouteExplanation, String> {
+    let tenant = identity.tenant_id;
     let statements =
         Parser::parse_sql(&GenericDialect {}, sql).map_err(|e| format!("parse: {e}"))?;
     let [Statement::Query(query)] = statements.as_slice() else {
@@ -2521,7 +2522,7 @@ async fn route_and_plan_select(
             crate::query::table_write_plan::ComputeBackend::Native
         )
     {
-        match prepare_select_plan(sql, query, dml, tenant).await {
+        match prepare_select_plan(sql, query, dml, identity).await {
             Some((snapshot, physical)) => {
                 let base_lines = explain_physical(&physical);
                 if analyze {
@@ -2565,7 +2566,7 @@ async fn route_and_plan_select(
                 // reason (ADR-064 / TD-TRACE-1) — the same decline the legacy path
                 // otherwise re-guesses from SQL text. A re-lower here is cheap and
                 // EXPLAIN is a cold, diagnostic path (never the hot query path).
-                if let Some(snapshot) = build_snapshot(query, dml, tenant).await
+                if let Some(snapshot) = build_snapshot(query, dml, identity).await
                     && let Err(e) = lower_sql(sql, &snapshot)
                 {
                     explanation.lowering.declines.push(e.decline());

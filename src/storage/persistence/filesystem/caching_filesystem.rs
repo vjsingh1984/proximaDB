@@ -340,6 +340,25 @@ impl FileSystem for UnifiedCachingFilesystem {
         Ok(())
     }
 
+    fn supports_bounded_local_file_write(&self) -> bool {
+        self.underlying_fs.supports_bounded_local_file_write()
+    }
+
+    async fn write_local_file(
+        &self,
+        path: &str,
+        local_path: &std::path::Path,
+        options: Option<FileOptions>,
+    ) -> FsResult<u64> {
+        let cache_key = self.cache_key(path);
+        self.record_access(path, AccessOperation::Write).await;
+        self.metadata_cache.invalidate(&cache_key).await;
+        self.disk_cache.invalidate(path).await;
+        self.underlying_fs
+            .write_local_file(path, local_path, options)
+            .await
+    }
+
     async fn write_if_absent(
         &self,
         path: &str,

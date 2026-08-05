@@ -1112,7 +1112,9 @@ impl CollectionService {
                 &enriched_config.name,
                 &uuid,
                 tenant_id,
-                typed_identity,
+                crate::storage::trait_components::path_resolver::typed_path_identity(
+                    typed_identity,
+                ),
             )
             .await
             .context("Failed to create storage directories")?;

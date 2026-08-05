@@ -114,7 +114,8 @@ pub mod metadata_types;
 
 /// Resilience patterns for enterprise-grade reliability
 /// Includes: Circuit Breaker, Retry with Exponential Backoff
-pub mod resilience;
+// `resilience` now lives in `proximadb-resilience` (TD-DECOMP-14); re-exported.
+pub use proximadb_resilience;
 
 /// Rich type system for ProximaRecord
 /// Includes: ColumnDataType, TypedValue, validators, TEXT storage strategies

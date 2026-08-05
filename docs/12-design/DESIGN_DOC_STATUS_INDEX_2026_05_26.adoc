@@ -439,8 +439,6 @@ for the whole-system course corrections; treat them as required reading (see `RE
 | NON_AXIS_INDEX_MIGRATION_AUDIT_2026_05_27.adoc | Active-Memo | Audit | Orphan non-AXIS index deletion (TD-064 ~4600 LOC removed).
 | TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc | Active | Design | TD-066 residual (Option A LSN correlation).
 | TD104_HANDLER_CONVERGENCE_PLAN_2026_06_03.adoc | Active | Plan | TD-104 handler convergence.
-| TD106_DOCUMENT_CANONICAL_MIGRATION_HANDOFF_2026_06_03.adoc | Active | Handoff | TD-106 document canonical migration.
-| CONVERGENCE_SESSION_HANDOFF_2026_06_03.adoc | Active-Memo | Handoff | Convergence-audit session handoff.
 | UNIFIED_RESOURCE_LEASE_LOCKING_REVIEW_2026_06_24.adoc | Active | Review | Approved correction plan for unified `ResourceKey`/DML-lock (see header delta).
 | adr/ADR-023-f2-cold-load-ordering.adoc | Accepted | ADR | Cold-load ordering (TD-087). *Post-dated the 2026-05-26 ADR count.*
 | adr/ADR-024-single-canonical-data-type-and-schema.adoc | Accepted | ADR | Single canonical data type + schema (TD-111). *Post-dated the count.*

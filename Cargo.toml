@@ -1,9 +1,9 @@
 [package]
 name = "proximadb"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 autobenches = false
-authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
+authors = ["Vijaykumar Singh <vijay@anvaiops.com>"]
 description = "ProximaDB - Cloud-native vector database engineered for AI-first applications"
 license = "Apache-2.0"
 repository = "https://github.com/anvai-labs/proximaDB"
@@ -64,6 +64,13 @@ members = [
     "crates/binding/proximadb-embedded",
     "crates/binding/proximadb-catalog-introspection",
     "crates/horizontal/proximadb-recall-bench",
+    "crates/horizontal/proximadb-resilience",
+    "crates/horizontal/proximadb-automl",
+    "crates/horizontal/proximadb-audit",
+    "crates/horizontal/proximadb-cross-modal-fusion",
+    "crates/horizontal/proximadb-utility-scorer",
+    "crates/horizontal/proximadb-auth-sso",
+    "crates/platform/proximadb-network-middleware",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-serialization",
     "crates/horizontal/proximadb-security",
@@ -139,7 +146,7 @@ version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
-authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
+authors = ["Vijaykumar Singh <vijay@anvaiops.com>"]
 repository = "https://github.com/anvai-labs/proximaDB"
 homepage = "https://github.com/anvai-labs/proximaDB"
 
@@ -264,6 +271,13 @@ proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
+proximadb-resilience = { path = "crates/horizontal/proximadb-resilience" }
+proximadb-automl = { path = "crates/horizontal/proximadb-automl" }
+proximadb-audit = { path = "crates/horizontal/proximadb-audit" }
+proximadb-cross-modal-fusion = { path = "crates/horizontal/proximadb-cross-modal-fusion" }
+proximadb-utility-scorer = { path = "crates/horizontal/proximadb-utility-scorer" }
+proximadb-auth-sso = { path = "crates/horizontal/proximadb-auth-sso" }
+proximadb-network-middleware = { path = "crates/platform/proximadb-network-middleware" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
@@ -379,6 +393,13 @@ proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common"
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
+proximadb-resilience = { workspace = true }
+proximadb-automl = { workspace = true }
+proximadb-audit = { workspace = true }
+proximadb-cross-modal-fusion = { workspace = true }
+proximadb-utility-scorer = { workspace = true }
+proximadb-auth-sso = { workspace = true }
+proximadb-network-middleware = { workspace = true }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }

@@ -3,21 +3,21 @@
 = TD-V1SUNSET-3: SqlValue (v1) → ProximaValue (v2) — predicate/metadata value migration
 :toc: macro
 :icons: font
-:last-updated: 2026-07-14
+:last-updated: 2026-08-05
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
 
-| Status | **Bridge DONE (step 1 complete); Slice 1 (raptor swap) is the first code step.** The
-`SqlValue ↔ ProximaValue` bridge already exists in `proximadb-records::conversions`
+| Status | **Bridge DONE; Slice 1 (raptor swap) DONE; the residue is SEQUENCED BEHIND TD-V1SUNSET-2 — see Reconciliation 2026-08-05.** The
+`SqlValue ↔ ProximaValue` bridge exists in `proximadb-records::conversions`
 (`sql_value_to_proxima` / `proxima_to_sql_value` / `json_to_proxima`) — the original "no bridge
-exists" claim verified the wrong crate (`data-model`); it lives in `records`. So this TD's step 1
-is done; the first *code* step is Slice 1 (raptor crates swap `MetadataValue`).
-**Slice 1 blocker:** `ProximaValue` has no `Ord`/`PartialOrd`, so raptor-engine's
-`compare_sql_values` (SqlValue predicate matching at `raptor-engine/src/lib.rs:59`) needs a
-`compare_proxima_values` equivalent — a design decision (mirror `compare_sql_values` ordering for
-the metadata types: String/numbers/Bool/Int64; exotic variants are Equal) before the swap.
+exists" claim verified the wrong crate (`data-model`); it lives in `records`.
+Slice 1 has since **landed**: `raptor-common/src/lib.rs:500` is
+`pub use proximadb_data_model::ProximaValue as MetadataValue;`, and the stated blocker is
+**resolved** — `compare_proxima_values` is implemented in raptor-engine with unit tests. The
+remaining raptor-engine `SqlValue` references are **deliberate**, not backlog: they carry
+`VectorRecord.metadata`, so they retire with TD-V1SUNSET-2, not here.
 | Severity | Medium — `SqlValue` is a v1 proto *wire/in-memory* type used for predicate pushdown and
 metadata stats (not a durable format), so this is an in-memory type swap (lower risk than the
 VectorRecord durable migration in link:TD-V1SUNSET-2-vectorrecord-to-proximatecord-first-slice.adoc[TD-V1SUNSET-2]).
@@ -67,12 +67,76 @@ Json | Jsonb | Array<Vec<ProximaValue>> | Map | Struct | DenseVector(Vec<f32>) |
 
 == Surface (measured)
 
+NOTE: The figures below are the **2026-07-14 original**; see
+<<reconciliation-2026-08-05>> for the re-measured current surface. The bullet
+claiming no bridge exists was already corrected in the Status field above.
+
 * **raptor crates** (the first slice): ~79 `SqlValue`/`sql_value::Value` refs — `raptor-common`
   (`Predicate.value`, `PredicateOp`, the column-stats `min_value`/`max_value`/`default_value`) +
   `raptor-engine` (predicate evaluation match arms).
 * **Codebase-wide** (the later slice): ~77 files reference `proximadb_v1::SqlValue`/`sql_value`.
 * **No `SqlValue ↔ ProximaValue` bridge exists** today (verified — `proximadb-data-model` has
   neither direction). This TD adds it.
+
+[[reconciliation-2026-08-05]]
+== Reconciliation (2026-08-05) — Slice 1 has landed; the residue is not backlog
+
+A fresh `origin/develop` audit (the "don't trust this blindly" step this TD's
+sibling link:TD-V1SUNSET-1-rest-grpc-sunset-cutover.adoc[TD-V1SUNSET-1] also
+needed) found the plan above describes work that is **already done**, and a
+blocker that is **already resolved**.
+
+* **Slice 1 (raptor `MetadataValue` swap) — COMPLETE.**
+  `crates/storage/proximadb-raptor-common/src/lib.rs:500` reads
+  `pub use proximadb_data_model::ProximaValue as MetadataValue;`, carrying the
+  ADR-024 / TD-V1SUNSET-3 rationale in-line. Predicate pushdown and the column
+  stats (`min_value`/`max_value`/`default_value`) are therefore already on
+  `ProximaValue`. `raptor-common` has **zero** functional `SqlValue` references
+  left — the single remaining hit is a doc comment pointing at the bridge.
+
+* **The stated Slice 1 blocker — RESOLVED.** The Status field warned that
+  `ProximaValue` has no `Ord`/`PartialOrd` so a `compare_proxima_values` was
+  needed "before the swap". It exists: `compare_proxima_values` is implemented in
+  `proximadb-raptor-engine` and unit-tested in that crate's `tests.rs`
+  (numbers, `Int64`, strings). Do **not** re-derive it. (`ProximaValue` still
+  derives only `PartialEq`, so the explicit comparator remains the right shape.)
+
+* **The `compare_sql_values` pointer now resolves to its own replacement.** The
+  Status field cited `raptor-engine/src/lib.rs:59` as the SqlValue comparator to
+  migrate; that slot now holds `compare_proxima_values` (`lib.rs:65`) — the swap
+  already happened in place. No `compare_sql_values` remains in raptor-engine at
+  all; the surviving one is unrelated and lives at
+  `src/query/federated/mod.rs:697` (federated predicate matching), outside this
+  TD's raptor scope.
+
+* **Re-measured surface (2026-08-05):**
++
+[cols="3,1,1", options="header"]
+|===
+| Surface | 2026-07-14 | 2026-08-05
+| `raptor-common` functional `SqlValue` refs | (part of ~79) | **0**
+| `raptor-engine` `SqlValue`/`sql_value::Value` refs | (part of ~79) | **~43** (`writer.rs` 32, `lib.rs` 12)
+| Files workspace-wide on `proximadb_v1::SqlValue`/`sql_value` | ~77 | **74**
+|===
+
+* **The raptor-engine residue is DELIBERATE and belongs to TD-V1SUNSET-2.**
+  It is not un-migrated backlog. The code says so at
+  `raptor-engine/src/lib.rs:1069-1070`: "`VectorRecord.metadata` is the v1 proto
+  `SqlValue` (this record is a `VectorRecord`); it stays `SqlValue` here."
+  Those references carry `VectorRecord` metadata, so they can only retire when
+  `VectorRecord` does — i.e. with
+  link:TD-V1SUNSET-2-vectorrecord-to-proximatecord-first-slice.adoc[TD-V1SUNSET-2],
+  which is a *durable-format* migration (mixed-read-safe, default-OFF,
+  round-trip + recall gated per CLAUDE.md mandate #8). **This TD is therefore
+  sequenced behind TD-V1SUNSET-2, not independently actionable** — contrary to
+  the "phased, bridge-first" plan below, which assumed the raptor swap could
+  complete on its own.
+
+* **What genuinely remains for this TD** is the codebase-wide tail (74 files),
+  concentrated in `src/storage/engines/sst` (14 incl. tests),
+  `src/observability/ingestion/adapters` (5), `src/query/{execution,aql/sources}`
+  (6), and `src/network/rest/canonical` (3). Each needs the same
+  VectorRecord-coupling check before it can be called migratable.
 
 == Approach — phased, bridge-first
 

@@ -1,12 +1,11 @@
 //! Comprehensive audit system for enterprise multi-tenant platform
 
-pub mod correlation;
-/// Cross-tenant audit guardrail — emits structured events for any
+// Moved to proximadb-audit (TD-DECOMP-16)
+pub use proximadb_audit::correlation::AuditData;
+pub use proximadb_audit::{correlation, cross_tenant_guard, types};
 /// operation that attempts to span tenants (LLD §6.3 risk mitigation).
-pub mod cross_tenant_guard;
 pub mod logger;
 pub mod storage;
-pub mod types;
 
 pub use correlation::{
     AuditCorrelationEngine,
@@ -20,7 +19,6 @@ pub use logger::{AuditConfig, AuditLogger, AuditStorageBackend};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 // Deferred: Implement these types properly
 
@@ -105,34 +103,6 @@ impl AuditAnalyticsEngine {
     }
 }
 
-impl correlation::AuditCorrelationEngine {
-    /// Collect and aggregate all audit events for a tenant within the given reporting period
-    pub async fn collect_comprehensive_audit_data(
-        &self,
-        _tenant_id: &str,
-        _reporting_period: &AuditReportingPeriod,
-    ) -> Result<AuditData> {
-        // Collect sample audit events for demonstration
-        let sample_event = correlation::AuditEvent {
-            event_id: "EVT001".to_string(),
-            event_type: "authentication".to_string(),
-            timestamp: Utc::now(),
-            provider: "system".to_string(),
-            user_context: Some("system_user".to_string()),
-            resource: "database".to_string(),
-            action: "login".to_string(),
-            outcome: "success".to_string(),
-            metadata: HashMap::new(),
-        };
-
-        Ok(AuditData {
-            events: vec![sample_event],
-            anomalies: Vec::new(),
-            compliance_status: HashMap::new(),
-        })
-    }
-}
-
 impl EnterpriseAuditCoordinator {
     /// Create enterprise audit coordinator
     pub async fn new() -> Result<Self> {
@@ -154,7 +124,7 @@ impl EnterpriseAuditCoordinator {
         // Collect comprehensive audit data
         let audit_data = self
             .correlation_engine
-            .collect_comprehensive_audit_data(tenant_id, &reporting_period)
+            .collect_comprehensive_audit_data(tenant_id)
             .await?;
 
         // Generate compliance reports
@@ -269,17 +239,6 @@ pub struct AuditAnalytics {
     pub risk_score: f64,
     /// Human-readable summary of the analytics findings
     pub summary: String,
-}
-
-/// Container for raw audit data collected for a reporting period
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditData {
-    /// Raw audit events collected during the period
-    pub events: Vec<correlation::AuditEvent>,
-    /// Anomalies detected within the event set
-    pub anomalies: Vec<correlation::AuditAnomaly>,
-    /// Per-framework compliance status snapshot (framework name -> status string)
-    pub compliance_status: HashMap<String, String>,
 }
 
 #[cfg(test)]

@@ -147,21 +147,24 @@ pub trait ApiHandlersPort: Send + Sync {
 
     // ── SQL ───────────────────────────────────────────────────────────────────
 
+    /// Execute SQL while retaining canonical `ProximaValue` cells across the
+    /// application boundary. New transports must use this method.
+    async fn execute_sql(
+        &self,
+        query: String,
+        parameters: Option<Vec<ProximaValue>>,
+        collection: Option<String>,
+        identity: crate::service_ports::PortIdentity<'_>,
+    ) -> Result<crate::service_ports::SqlExecutionResult>;
+
+    /// Legacy v1 protobuf compatibility adapter.
     async fn execute_sql_v1(
         &self,
         query: String,
         parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
-        // TD-064: the authenticated tenant scopes relational SQL to the tenant's
-        // partition. `None` keeps the legacy unscoped behavior (callers that
-        // haven't been wired pass `None`); production gRPC/REST threads the real
-        // tenant from the request.
-        tenant_id: Option<&str>,
-        // TD-ABAC-5: the authenticated subject (principal id), threaded to ABAC
-        // enforcement at the relational read boundary. Opaque `&str` here because
-        // this port (runtime layer) cannot name `SubjectId` (catalog/control); the
-        // root-crate adapter converts it. `None` ⇒ anonymous/unwired ⇒ no
-        // enforcement (status quo). Enforcement is behind `abac-policy`.
-        subject: Option<&str>,
+        // ADR-087: one canonical caller identity. Tenant scopes the partition;
+        // subject + stable key + auth class reach the relational ABAC seam.
+        identity: crate::service_ports::PortIdentity<'_>,
     ) -> Result<ExecuteQueryResponse>;
 }

@@ -1,0 +1,75 @@
+# Dependabot configuration.
+#
+# WHY THIS FILE EXISTS: without it, Dependabot opens every PR against the
+# repository's DEFAULT branch (`main`). The promotion-source guard in
+# `.github/workflows/qa-gate.yml` fails any PR into `main` whose head is not
+# `qa` (the flow is develop -> qa -> main), so every Dependabot PR was born
+# structurally unmergeable and accumulated open indefinitely (#1188, #1262,
+# #1385). `target-branch: develop` puts the bumps at the correct entry point
+# of the promotion flow, where they run the LIGHT feat->develop tier and can
+# actually merge.
+#
+# Grouping keeps CI cost bounded: GitHub Actions runners are a shared, finite
+# resource and every PR/push triggers a full run, so per-ecosystem groups
+# amortize one run across all of that ecosystem's bumps rather than paying a
+# runner cycle per dependency (CLAUDE.md mandate #7).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: gomod
+    directories:
+      - "/"
+      - "/clients/go"
+      - "/clients/go/codegen"
+      - "/clients/go-embedded"
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directories:
+      - "/"
+      - "/ui"
+      - "/clients/nodejs-embedded"
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directories:
+      - "/clients/python"
+      - "/demo"
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      pip-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions-all:
+        patterns: ["*"]

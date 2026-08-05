@@ -2,8 +2,8 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: 2026-06-17
-// status-as-of: 2026-06-17
+:last-updated: 2026-08-03
+// status-as-of: 2026-08-03
 // The status-as-of tag above is checked by scripts/check_status_as_of.py (wired into
 // `make work-commit-check`): re-verify the support tiers against HEAD, then bump it.
 
@@ -49,9 +49,27 @@ marking themselves historical, aspirational, or implementation-only:
 The Technical Debt Register tracks _implementation state_, which can run ahead of support
 level; this contract wins on any disagreement about what is customer-facing.
 
+== MVP Trust Corridor
+
+The broad matrix below describes the whole product. The smaller customer acquisition promise is
+**Object-storage-native context serving for SQL, JSON, and vectors**, delivered initially through
+single-tenant, single-node SST and canonical REST v2 record operations. Its machine-readable contract is
+link:./00-product/MVP_TRUST_CORRIDOR.toml[MVP_TRUST_CORRIDOR.toml].
+
+The corridor is intentionally stricter than this matrix: create, typed batch write, get, filtered
+scan, filtered vector search, delete, and route-health form one hard-failing roundtrip. pgwire,
+hybrid retrieval, multimodel projections, alternate engines, and distributed execution do not
+enter the MVP promise until their listed security, recovery, conformance, and evidence gates close.
+The quickstart uses local storage. S3, Azure, and GCS are co-design/evidence targets and remain Beta
+for the MVP until the same correctness, crash/restart, bounded-memory, and economic suite passes on
+each backend.
+Metadata filters in the smoke are query correctness boundaries, not authorization evidence.
+Multi-tenant ABAC remains Beta until stable tenant IDs are total, missing IDs fail closed, and the
+cross-surface REST/gRPC/Flight/pgwire admit/deny matrix passes.
+
 == Canonical API Surface
 
-REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of 2026-06-17.
+REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of 2026-08-03.
 
 [IMPORTANT]
 ====
@@ -80,7 +98,17 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 | *pgwire* (PostgreSQL wire)
 | ANSI *SQL* (DataFusion execution)
 | SQL clients and tools — psql, psycopg2/asyncpg, JDBC, BI/ORM ecosystem.
-| Supported
+| Beta — autocommit SQL subset; multi-tenant identity/ABAC closure is still tracked by TD-ABAC-10/11
+
+| *REST `POST /api/v2/sql`*
+| One authenticated *SQL* statement: tenant-scoped relational SELECT/DDL/DML
+  plus the existing vector/graph SQL extensions.
+| HTTP/JSON clients that need SQL without a PostgreSQL or gRPC driver. This is
+  a thin transport adapter over the same typed SQL port and relational
+  planner/executor as gRPC; execution cells remain `ProximaValue` until JSON
+  serialization. Request parameters are not yet supported, so clients must not
+  send or interpolate parameter payloads through this endpoint.
+| Beta (single statement; API-key/JWT identity + ABAC live-ratchet covered)
 
 | *gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery`*
 | *SQL with vector/graph extensions* (e.g. `VECTOR_SEARCH`) *and tenant-scoped
@@ -92,25 +120,25 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
   DDL/DML route through the same tenant-scoped `DdlService`/`DmlService` seams —
   all scoped to the `x-tenant-id` tenant (TD-064). This RPC is single-statement;
   pgwire is also autocommit-only and rejects transaction control with SQLSTATE `0A000`.
-| Supported (vector/graph SQL + tenant-scoped relational SELECT/DDL/DML)
+| Beta — programmatic SQL exists, but broader relational and cross-modal parity is not in the MVP corridor
 
 | *REST/gRPC `/api/v2/query`* (unified query port)
 | *UQL* (unified multi-modal), *Federated* SQL extensions, *AQL*
 | ProximaDB-native cross-modal queries (vector + graph + relational) that SQL cannot express.
-| UQL/Federated Supported; AQL Planned
+| UQL/Federated Beta; AQL Planned
 
 | *gRPC `proximadb.v2.ProximaGraphService`*
 | Node/edge/query/traversal/shortest-path/stats + analytic
   (GetConnectedComponents, HasCycle), batch (BatchCreateNodes/Edges),
   unique-constraint DDL, and server-streaming (StreamTraverse) RPCs (TD-124).
 | Programmatic graph access from the SDK.
-| Supported
+| Beta
 
 | *Graph `ExecuteQuery`* (Cypher)
 | Declarative graph query — supported openCypher subset (single-node patterns
   and linear traversal chains with equality property constraints) on v2 (TD-124).
 | Now on v2 `ProximaGraphService`. GREMLIN reserved/unbacked.
-| Supported (subset)
+| Beta (subset)
 
 | *Graph `ExecuteHybridQuery` / `CreateGraphWithEngine` / `GetPulsarStats`*
 | Cross-modality hybrid query; engine-typed graph create; PULSAR stats
@@ -125,11 +153,13 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 ====
 * pgwire is *SQL-only* and cannot serve UQL/AQL/Cypher; those non-SQL languages require the
   unified query port (`/api/v2/query`) or the graph service — they are not replaceable by pgwire.
-* SQL is served by *two surfaces* (TD-121/TD-135). *pgwire* serves the PostgreSQL ecosystem
+* SQL is served by *three adapters over one execution authority* (TD-121/TD-135).
+  *pgwire* serves the PostgreSQL ecosystem
   (psql/JDBC/BI/ORM, Postgres-native auth) in autocommit mode. `BEGIN`, `COMMIT`, `ROLLBACK`,
   savepoints, and other transaction-control statements return SQLSTATE `0A000`; a simple-query
   batch containing transaction control is rejected before any statement in the batch executes.
-  The gRPC
+  REST `POST /api/v2/sql` serves authenticated HTTP/JSON clients and deliberately supports
+  one statement without parameter binding in its initial beta contract. The gRPC
   `ProximaRecordService.ExecuteQuery` RPC is *token/SSO-authenticated* (bearer/JWT in metadata,
   which pgwire's password/MD5 auth cannot carry) and serves vector/graph-extension SQL (e.g.
   `VECTOR_SEARCH`) plus *tenant-scoped relational SQL — SELECT reads AND DDL/DML writes*: SELECTs
@@ -219,7 +249,7 @@ for evidence/provenance, and event/history records for temporal state. The v1
 
 | Vector CRUD and search
 | Supported
-| Canonical REST `/api/v2` record batch/search/get/scan flows and gRPC `proximadb.v2.ProximaRecordService` record operations. REST `/api/v1` and gRPC v1 vector-shaped flows are deprecated compatibility adapters for existing clients only (see Canonical API Surface above); they lower into canonical v2 handlers and will be retired. Record metadata filters are enforced on typed `/search` (`filters:[{field,op,value}]`) and `/records/scan` (`filter`) across the supported ops (`eq,neq,gt,gte,lt,lte,in,contains,between,starts_with,ends_with`), including tenant/account scoping; array-valued props support `in`/`contains` membership.
+| Canonical REST `/api/v2` record batch/search/get/scan flows, gRPC `proximadb.v2.ProximaRecordService` record operations, and Arrow Flight canonical `type: "vector_search"` `DoGet`. REST `/api/v1` and gRPC v1 vector-shaped flows are deprecated compatibility adapters for existing clients only (see Canonical API Surface above); they lower into canonical v2 handlers and will be retired. Record metadata filters are enforced on typed `/search` (`filters:[{field,op,value}]`) and `/records/scan` (`filter`) across the supported ops (`eq,neq,gt,gte,lt,lte,in,contains,between,starts_with,ends_with`), including tenant/account scoping; array-valued props support `in`/`contains` membership. Canonical REST search/point-get, authenticated gRPC v2 unary search/streaming search/point-get, and authenticated Flight record search have live provisioned-ABAC evidence for deny-before-provision, row-predicate filtering, principal isolation, and hot revoke.
 | Keep hybrid retrieval and distributed search claims separate from the supported vector surface. New clients must not target v1 `VectorRecord`/`SqlValue` payloads.
 
 | Federated SQL over function-backed sources
@@ -441,8 +471,9 @@ must not list them under "supported", "production", or "ready":
 
 ProximaDB should currently be positioned as a developer-first context database:
 
-* One system for vectors, operational documents, graph context, and telemetry on the single-node developer path.
-* Best fit for integrated semantic + graph + telemetry workflows.
+* MVP wedge: object-storage-native context serving for typed JSON properties and vector retrieval.
+* One canonical REST v2 record path with SST as the safe single-node default.
+* Best fit today for metadata-aware semantic retrieval without a separate vector/payload join.
 * Not yet a like-for-like replacement for best-in-class distributed vector, graph, document, or observability platforms.
 
 == Near-Term Exit Criteria

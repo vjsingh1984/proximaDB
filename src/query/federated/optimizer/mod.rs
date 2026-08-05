@@ -25,9 +25,10 @@ mod vector_query_parsing;
 
 pub mod cached_plan_builder;
 pub mod filter_strategy;
-pub mod gls;
+// Moved to proximadb-query-fusion (TD-DECOMP-17)
+pub use proximadb_query_fusion::gls;
 pub mod plan_builder;
-pub mod plan_calibration;
+pub use proximadb_query_fusion::plan_calibration;
 pub mod plan_inference_gate;
 pub mod plan_quality;
 pub mod plan_v2_inference;

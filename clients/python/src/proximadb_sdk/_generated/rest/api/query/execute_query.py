@@ -77,9 +77,10 @@ def sync_detailed(
 
      The canonical unified query surface: UQL (unified multi-modal), federated SQL
     extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-    pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
-    pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
-    only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
+    UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
+    this endpoint remains their canonical home. Authenticated programmatic SQL
+    is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
+    replacement for this UQL/federated surface.
 
     Args:
         x_tenant_id (Union[Unset, str]):
@@ -115,9 +116,10 @@ def sync(
 
      The canonical unified query surface: UQL (unified multi-modal), federated SQL
     extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-    pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
-    pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
-    only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
+    UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
+    this endpoint remains their canonical home. Authenticated programmatic SQL
+    is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
+    replacement for this UQL/federated surface.
 
     Args:
         x_tenant_id (Union[Unset, str]):
@@ -148,9 +150,10 @@ async def asyncio_detailed(
 
      The canonical unified query surface: UQL (unified multi-modal), federated SQL
     extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-    pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
-    pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
-    only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
+    UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
+    this endpoint remains their canonical home. Authenticated programmatic SQL
+    is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
+    replacement for this UQL/federated surface.
 
     Args:
         x_tenant_id (Union[Unset, str]):
@@ -184,9 +187,10 @@ async def asyncio(
 
      The canonical unified query surface: UQL (unified multi-modal), federated SQL
     extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-    pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
-    pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
-    only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
+    UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
+    this endpoint remains their canonical home. Authenticated programmatic SQL
+    is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
+    replacement for this UQL/federated surface.
 
     Args:
         x_tenant_id (Union[Unset, str]):

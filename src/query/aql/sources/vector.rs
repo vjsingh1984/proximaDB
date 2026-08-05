@@ -126,6 +126,7 @@ impl AqlSource for VectorAqlSource {
                 None, // No specific search config
                 None,
                 None,
+                proximadb_tenant::AuthClass::Anonymous,
             )
             .await
             .map_err(|e| {

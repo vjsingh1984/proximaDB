@@ -1,8 +1,8 @@
 //! OpenAPI-facing v2 query endpoints for AQL/UQL.
 //!
 //! These handlers are protocol facades only. They validate the REST contract and
-//! lower textual AQL/UQL into the shared `UnifiedQueryPort`, keeping SQL
-//! pgwire-primary and avoiding a separate query execution path.
+//! lower textual AQL/UQL into the shared `UnifiedQueryPort`. Plain SQL uses the
+//! distinct `/api/v2/sql` transport adapter so language contracts do not blur.
 
 use axum::{Json, extract::State};
 use proximadb_data_model::ProximaValue;
@@ -66,9 +66,10 @@ fn json_to_proxima_values(params: Option<Vec<serde_json::Value>>) -> Option<Vec<
 ///
 /// The canonical unified query surface: UQL (unified multi-modal), federated SQL
 /// extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-/// pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
-/// pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
-/// only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
+/// UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
+/// this endpoint remains their canonical home. Authenticated programmatic SQL
+/// is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
+/// replacement for this UQL/federated surface.
 #[utoipa::path(
     post,
     path = "/api/v2/query",

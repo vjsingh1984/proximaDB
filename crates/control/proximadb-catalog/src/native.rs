@@ -46,7 +46,7 @@ use dashmap::DashMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
@@ -54,7 +54,7 @@ use async_trait::async_trait;
 use proximadb_storage_filesystem_types::{FileOptions, FileSystem, FilesystemError};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::cache::CatalogCache;
@@ -147,7 +147,11 @@ pub struct NativeCatalog {
     /// Phase 4b makes it durable (for path stability); in 4a it only keys
     /// in-memory minting.
     account_registry: DashMap<String, u32>,
-    account_floor: AtomicU32,
+    /// Serializes mint + sidecar persistence. Without this, concurrent mints
+    /// can publish whole-map snapshots out of order and lose the later tenant.
+    account_registry_write_lock: Mutex<()>,
+    /// u64 lets the allocator report u32 exhaustion instead of wrapping.
+    account_floor: AtomicU64,
     /// ADR-031 Phase 4a: transient namespace-key → u16 map, so every collection
     /// in the same namespace gets the SAME `stable_namespace_id` (per-account,
     /// compact). Keyed by the namespace levels joined (`a.b`). Rebuilt from
@@ -262,25 +266,43 @@ impl NativeCatalog {
     /// registry-derived value, numeric in-memory). Returns `None` for an
     /// empty/absent account string (legacy/anonymous namespaces get no typed
     /// identity — mixed-read-safe).
-    async fn account_u32(&self, account_str: &str) -> Option<u32> {
+    async fn ensure_account_u32(&self, account_str: &str) -> Result<Option<u32>> {
+        let account_str = account_str.trim();
         if account_str.is_empty() {
-            return None;
+            return Ok(None);
         }
+
+        // Existing values are checked under the same lock as first mint. A
+        // concurrent waiter must not observe success until the first caller's
+        // durable sidecar write has completed.
+        let _guard = self.account_registry_write_lock.lock().await;
         if let Some(entry) = self.account_registry.get(account_str) {
-            return Some(*entry.value());
+            return Ok(Some(*entry.value()));
         }
-        let next = self
-            .account_floor
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.account_registry.insert(account_str.to_string(), next);
-        // ADR-031 Phase 4b: persist the new account-string→u32 mapping so the
-        // typed object-store path is stable across restarts (best-effort,
-        // mirrors `object_name_index`). The lookup path above is read-only → no
-        // save; only the mint branch writes.
-        if let Err(e) = self.save_account_registry().await {
-            warn!("account-registry persist failed (continuing in-memory): {e}");
+        let next = self.account_floor.fetch_add(1, Ordering::SeqCst);
+        let stable_id = u32::try_from(next)
+            .map_err(|_| anyhow!("tenant stable-id space exhausted at {next}"))?;
+        self.account_registry
+            .insert(account_str.to_string(), stable_id);
+
+        // Persist before reporting success. Roll the in-memory entry back on a
+        // write failure so a later retry cannot mistake an uncommitted id for a
+        // durable policy key. The consumed numeric id may remain skipped.
+        if let Err(error) = self.save_account_registry().await {
+            self.account_registry.remove(account_str);
+            return Err(error);
         }
-        Some(next)
+        Ok(Some(stable_id))
+    }
+
+    async fn account_u32(&self, account_str: &str) -> Option<u32> {
+        match self.ensure_account_u32(account_str).await {
+            Ok(account) => account,
+            Err(error) => {
+                warn!("account-registry persist failed; stable identity not minted: {error}");
+                None
+            }
+        }
     }
 
     /// ADR-031 Phase 4a: mint the per-scope typed identity (`stable_namespace_id`
@@ -424,7 +446,8 @@ impl NativeCatalog {
             oid_paths: std::sync::atomic::AtomicBool::new(Self::object_id_paths_enabled()),
             stable_ids: crate::id_allocator::CatalogIdService::new(),
             account_registry: DashMap::new(),
-            account_floor: AtomicU32::new(1),
+            account_registry_write_lock: Mutex::new(()),
+            account_floor: AtomicU64::new(1),
             namespace_registry: DashMap::new(),
             namespace_floor: AtomicU32::new(1),
         };
@@ -648,7 +671,7 @@ impl NativeCatalog {
         // Raise the floor above the max persisted u32 so the next mint is new.
         if let Some(max) = file.entries.iter().map(|(_, u)| *u).max() {
             self.account_floor
-                .fetch_max(max + 1, std::sync::atomic::Ordering::Relaxed);
+                .fetch_max(u64::from(max) + 1, Ordering::SeqCst);
         }
         debug!("Loaded {} account-registry entries", file.entries.len());
         Ok(())
@@ -1394,12 +1417,13 @@ impl Catalog for NativeCatalog {
     async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
         // Thin public wrapper over the private registry lookup-or-mint. The
         // root path-resolver calls this to compose a `CollectionIdentity`.
-        Ok(self.account_u32(account).await)
+        self.ensure_account_u32(account).await
     }
 
     fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
         // TD-TENANT-1 item 3: sync read-only lookup (no mint, no persist) for the
         // request-hot TenantStableIdResolver. None when unminted/empty.
+        let account = account.trim();
         if account.is_empty() {
             return None;
         }
@@ -2080,6 +2104,14 @@ mod tests {
         // And namespace siblings share the namespace id (covered above) because
         // they share the account u32.
         assert_eq!(a.stable_namespace_id, Some(1));
+    }
+
+    #[tokio::test]
+    async fn concurrent_first_account_mint_returns_one_id() {
+        let (cat, _d) = catalog_in_tempdir().await;
+        let (left, right) = tokio::join!(cat.account_u32("acct"), cat.account_u32("acct"));
+        assert_eq!(left, right, "one account string must never receive two ids");
+        assert_eq!(cat.account_id_u32_lookup("acct"), left);
     }
 
     #[tokio::test]

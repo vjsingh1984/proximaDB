@@ -936,6 +936,10 @@ impl MultiServer {
                 if let Some(direct_write_services) = direct_write_services {
                     server = server.with_direct_write_services(direct_write_services);
                 }
+                #[cfg(feature = "abac-policy")]
+                {
+                    server = server.with_abac_enforcer(services.abac_enforcer.clone());
+                }
                 server =
                     server.with_rank_pipeline(rank_services, rank_profile_store, function_store);
                 server = server.with_primary_pod_gate(primary_pod_registry, self_pod_id);
@@ -1308,6 +1312,10 @@ impl MultiServer {
                 );
                 if let Some(direct_write_services) = direct_write_services {
                     server = server.with_direct_write_services(direct_write_services);
+                }
+                #[cfg(feature = "abac-policy")]
+                {
+                    server = server.with_abac_enforcer(services.abac_enforcer.clone());
                 }
                 server = server.with_rank_pipeline(
                     services.rank_services.clone(),

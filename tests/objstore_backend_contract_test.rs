@@ -68,14 +68,56 @@ async fn contract_prefix_semantics(base: &str) {
     let _ = fs.delete(&key).await;
 }
 
+/// Publish enough bytes to require multiple multipart chunks, then prove the
+/// object visible through the production backend is byte-for-byte identical.
+async fn contract_local_file_multipart_publish(base: &str) {
+    const BYTES: usize = 17 * 1024 * 1024 + 19;
+
+    let run = uuid::Uuid::new_v4().simple().to_string();
+    let key = format!("{base}/contract/{run}/multi-part.pax");
+    let scratch = tempfile::tempdir().expect("scratch directory");
+    let local_path = scratch.path().join("segment.pax");
+    let payload = (0..BYTES)
+        .map(|index| ((index * 31 + 7) % 251) as u8)
+        .collect::<Vec<_>>();
+    tokio::fs::write(&local_path, &payload)
+        .await
+        .expect("write local source");
+
+    let factory = factory().await;
+    let fs = factory.get_filesystem(&key).expect("backend for key");
+    assert!(
+        fs.supports_bounded_local_file_write(),
+        "{base} must advertise bounded local-file publication before spill admission"
+    );
+    let written = fs
+        .write_local_file(&key, &local_path, None)
+        .await
+        .expect("multipart publish local file");
+    assert_eq!(written, BYTES as u64);
+    assert_eq!(fs.read(&key).await.expect("read published object"), payload);
+
+    let _ = fs.delete(&key).await;
+}
+
 #[tokio::test]
-#[ignore = "needs Azurite — set AZURE_STORAGE_USE_EMULATOR=true with Azurite running"]
+#[ignore = "needs Azurite — set PROXIMADB_AZURE_EMULATOR=1 with Azurite running"]
 async fn azure_prefix_list_and_exists_contract() {
-    if std::env::var("AZURE_STORAGE_USE_EMULATOR").is_err() {
-        eprintln!("skip: set AZURE_STORAGE_USE_EMULATOR=true with Azurite running");
+    if std::env::var("PROXIMADB_AZURE_EMULATOR").is_err() {
+        eprintln!("skip: set PROXIMADB_AZURE_EMULATOR=1 with Azurite running");
         return;
     }
     contract_prefix_semantics("az://proximadb-test").await;
+}
+
+#[tokio::test]
+#[ignore = "needs Azurite — set PROXIMADB_AZURE_EMULATOR=1 with Azurite running"]
+async fn azure_local_file_multipart_publish_contract() {
+    if std::env::var("PROXIMADB_AZURE_EMULATOR").is_err() {
+        eprintln!("skip: set PROXIMADB_AZURE_EMULATOR=1 with Azurite running");
+        return;
+    }
+    contract_local_file_multipart_publish("az://proximadb-test").await;
 }
 
 #[tokio::test]
@@ -86,6 +128,16 @@ async fn s3_prefix_list_and_exists_contract() {
         return;
     }
     contract_prefix_semantics("s3://proximadb-test").await;
+}
+
+#[tokio::test]
+#[ignore = "needs MinIO — set AWS_ENDPOINT to the emulator"]
+async fn s3_local_file_multipart_publish_contract() {
+    if std::env::var("AWS_ENDPOINT").is_err() {
+        eprintln!("skip: set AWS_ENDPOINT (MinIO) to run");
+        return;
+    }
+    contract_local_file_multipart_publish("s3://proximadb-test").await;
 }
 
 // GCS is best-effort (documented fake-gcs/object_store incompatibilities; never a
@@ -105,6 +157,25 @@ async fn gcs_prefix_list_and_exists_contract_best_effort() {
         return;
     }
     contract_prefix_semantics("gs://proximadb-test").await;
+}
+
+#[tokio::test]
+#[ignore = "needs fake-gcs — set PROXIMADB_GCS_ENDPOINT + PROXIMADB_GCS_ANONYMOUS=1"]
+async fn gcs_local_file_resumable_publish_contract_best_effort() {
+    if std::env::var("PROXIMADB_GCS_ENDPOINT").is_err() {
+        eprintln!("skip: set PROXIMADB_GCS_ENDPOINT (fake-gcs) to run");
+        return;
+    }
+    let factory = factory().await;
+    let Ok(fs) = factory.get_filesystem("gs://proximadb-test/probe") else {
+        eprintln!("::warning:: GCS backend did not register (best-effort tier) — skipping");
+        return;
+    };
+    assert!(
+        fs.supports_bounded_local_file_write(),
+        "GCS spill publication must advertise only its bounded resumable path"
+    );
+    contract_local_file_multipart_publish("gs://proximadb-test").await;
 }
 
 /// GCS pagination contract: with the page size pinned to 2, five objects must
@@ -203,10 +274,10 @@ async fn contract_write_if_absent_semantics(base: &str, strict: bool) {
 }
 
 #[tokio::test]
-#[ignore = "needs Azurite — set AZURE_STORAGE_USE_EMULATOR=true with Azurite running"]
+#[ignore = "needs Azurite — set PROXIMADB_AZURE_EMULATOR=1 with Azurite running"]
 async fn azure_write_if_absent_contract() {
-    if std::env::var("AZURE_STORAGE_USE_EMULATOR").is_err() {
-        eprintln!("skip: set AZURE_STORAGE_USE_EMULATOR=true with Azurite running");
+    if std::env::var("PROXIMADB_AZURE_EMULATOR").is_err() {
+        eprintln!("skip: set PROXIMADB_AZURE_EMULATOR=1 with Azurite running");
         return;
     }
     contract_write_if_absent_semantics("az://proximadb-test", true).await;

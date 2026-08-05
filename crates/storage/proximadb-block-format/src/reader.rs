@@ -19,7 +19,7 @@ use std::borrow::Cow;
 
 use anyhow::{Result, bail};
 use crc32fast::Hasher as Crc32;
-use proximadb_codec::{ProximaScheme, functions};
+use proximadb_codec::{ProximaScheme, TypeId, functions};
 
 use crate::{
     header::{BlockHeader, HEADER_SIZE, fnv1a_hash},
@@ -410,6 +410,44 @@ impl<'a> PaxBlockReader<'a> {
                 .map(|v| if v == i64::MIN { None } else { Some(v) })
                 .collect(),
         )
+    }
+
+    /// Decode a non-null, fixed-width `u64` stripe.
+    ///
+    /// An absent column returns `Ok(None)` for mixed-read compatibility. A
+    /// present but malformed column fails closed: MVCC authority must never be
+    /// silently downgraded to a legacy version because bytes are corrupt.
+    pub fn decode_u64_stripe(&self, column_id: i32) -> Result<Option<Vec<u64>>> {
+        let Some(meta) = self.columns.iter().find(|m| m.column_id == column_id) else {
+            return Ok(None);
+        };
+        let raw = self
+            .read_stripe_raw(column_id)
+            .ok_or_else(|| anyhow::anyhow!("PAX u64 column {column_id} has no stripe payload"))?;
+        if meta.data_type_id != TypeId::U64.to_u8()
+            || scheme_from_encoding_id(meta.encoding_id) != Some(ProximaScheme::Raw)
+        {
+            bail!(
+                "PAX u64 column {column_id} has type {} and encoding {}",
+                meta.data_type_id,
+                meta.encoding_id
+            );
+        }
+        let payload = decode_scalar_payload(meta, raw)?;
+        let expected = (self.row_count() as usize)
+            .checked_mul(std::mem::size_of::<u64>())
+            .ok_or_else(|| anyhow::anyhow!("PAX u64 column {column_id} size overflow"))?;
+        if payload.len() != expected {
+            bail!(
+                "PAX u64 column {column_id} has {} payload bytes, expected {expected}",
+                payload.len()
+            );
+        }
+        let mut values = Vec::with_capacity(self.row_count() as usize);
+        for chunk in payload.chunks_exact(std::mem::size_of::<u64>()) {
+            values.push(u64::from_le_bytes(chunk.try_into()?));
+        }
+        Ok(Some(values))
     }
 
     /// Decode all string values from a variable-length string column stripe.

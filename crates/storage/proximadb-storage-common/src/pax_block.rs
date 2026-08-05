@@ -35,7 +35,7 @@
 //! `BlockStats`. These map directly to Iceberg `DataFile` entries in the
 //! `iceberg_rest_service.rs` manifest generator.
 
-use std::io::Write;
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -66,6 +66,7 @@ use crate::segment_layout::{
     SourceFidelity, SourceRole, StatsKind, StripeEncodingDescriptor, TierRole, VectorTransform,
     compression_flags, is_coalesced_segment,
 };
+use crate::spill_regions::DiskVectorSpool;
 
 /// File extension for PAX segment files.
 pub const PAX_SEGMENT_EXT: &str = ".pax";
@@ -539,6 +540,118 @@ struct TwoLevelState {
     cell_end_blocks: Vec<u32>,
 }
 
+/// Local backing for a bounded coalesced-segment build. Scratch is never
+/// authoritative and is reclaimed with the writer on every exit path.
+struct LocalSpillBacking {
+    task_directory: tempfile::TempDir,
+    blocks_path: PathBuf,
+    blocks: BufWriter<std::fs::File>,
+    blocks_len: u64,
+    oid_entries_path: PathBuf,
+    oid_entries: BufWriter<std::fs::File>,
+    oid_count: u32,
+    vectors: Option<DiskVectorSpool>,
+}
+
+impl LocalSpillBacking {
+    fn new(scratch_root: &Path) -> Result<Self> {
+        let task_directory = tempfile::Builder::new()
+            .prefix("proximadb-pax-writer-")
+            .tempdir_in(scratch_root)?;
+        let blocks_path = task_directory.path().join("region-d.blocks");
+        let oid_entries_path = task_directory.path().join("oid-entries.bin");
+        let blocks = BufWriter::new(
+            std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&blocks_path)?,
+        );
+        let oid_entries = BufWriter::new(
+            std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&oid_entries_path)?,
+        );
+        let vectors = DiskVectorSpool::new(task_directory.path())?;
+        Ok(Self {
+            task_directory,
+            blocks_path,
+            blocks,
+            blocks_len: 0,
+            oid_entries_path,
+            oid_entries,
+            oid_count: 0,
+            vectors: Some(vectors),
+        })
+    }
+
+    fn push_oid(&mut self, oid: &str) -> Result<()> {
+        if self.oid_count == u32::MAX {
+            bail!("PAX OID resolver row count exceeds u32");
+        }
+        let length =
+            u32::try_from(oid.len()).map_err(|_| anyhow::anyhow!("PAX OID length exceeds u32"))?;
+        self.oid_entries.write_all(&length.to_le_bytes())?;
+        self.oid_entries.write_all(oid.as_bytes())?;
+        self.oid_count = self.oid_count.saturating_add(1);
+        Ok(())
+    }
+
+    fn write_block(&mut self, bytes: &[u8]) -> Result<u64> {
+        let offset = self.blocks_len;
+        self.blocks.write_all(bytes)?;
+        self.blocks_len = self
+            .blocks_len
+            .checked_add(bytes.len() as u64)
+            .ok_or_else(|| anyhow::anyhow!("PAX Region D length exceeds u64"))?;
+        Ok(offset)
+    }
+
+    fn flush_inputs(&mut self) -> Result<()> {
+        self.blocks.flush()?;
+        self.blocks.get_ref().sync_data()?;
+        self.oid_entries.flush()?;
+        self.oid_entries.get_ref().sync_data()?;
+        Ok(())
+    }
+
+    fn finish_oid_resolver(&mut self, enabled: bool) -> Result<Option<(PathBuf, u64)>> {
+        if !enabled || self.oid_count == 0 {
+            return Ok(None);
+        }
+        self.oid_entries.flush()?;
+        let output = self.task_directory.path().join("oid-resolver.orp");
+        let mut writer = BufWriter::new(
+            std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&output)?,
+        );
+        let mut checksum = crc32fast::Hasher::new();
+        let magic = b"ORP1";
+        writer.write_all(magic)?;
+        checksum.update(magic);
+        let count = self.oid_count.to_le_bytes();
+        writer.write_all(&count)?;
+        checksum.update(&count);
+        let mut reader = BufReader::new(std::fs::File::open(&self.oid_entries_path)?);
+        let mut buffer = vec![0u8; 1024 * 1024];
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            writer.write_all(&buffer[..read])?;
+            checksum.update(&buffer[..read]);
+        }
+        writer.write_all(&checksum.finalize().to_le_bytes())?;
+        writer.flush()?;
+        writer.get_ref().sync_data()?;
+        let length = writer.get_ref().metadata()?.len();
+        Ok(Some((output, length)))
+    }
+}
+
 /// Cluster-ordered embedding-0 vectors retained for the coalesced A/B regions.
 ///
 /// One contiguous allocation replaces `Vec<Option<Vec<f32>>>`, which created
@@ -682,6 +795,9 @@ pub struct PaxSegmentWriter {
     lossless_clustered: bool,
     /// Exact scalar all-null elision and post-codec LZ4. Default OFF.
     lossless_scalar: bool,
+    /// Additive canonical MVCC `record_version` stripe. Default OFF; the local
+    /// spill path enables it because spill itself is an opt-in write format.
+    record_version_stripe: bool,
     /// P-Shred (ADR-055): `(prop_key, user_col_id)` to shred into typed user-columns —
     /// re-applied to every block writer so all blocks in the segment shred uniformly.
     shred_spec: Vec<(String, i32)>,
@@ -690,6 +806,9 @@ pub struct PaxSegmentWriter {
     index: SegmentIndex,
     block_stats: Vec<BlockStats>,
     file_buf: Vec<u8>,
+    /// Optional bounded local backing for Regions A/B/D and the OID resolver.
+    /// `None` preserves the canonical in-memory writer byte-for-byte.
+    local_spill: Option<LocalSpillBacking>,
     row_count: u64,
 
     /// TD-RDSTRAT-5 S1: when true, accumulate each block's centroid (mean of its
@@ -778,6 +897,7 @@ impl PaxSegmentWriter {
             embedding_count,
         );
 
+        let record_version_stripe = writer.writes_record_version();
         Self {
             path: path.as_ref().to_path_buf(),
             mode,
@@ -791,11 +911,13 @@ impl PaxSegmentWriter {
             rerank_quant: VectorQuant::Sq8,
             lossless_clustered: false,
             lossless_scalar: false,
+            record_version_stripe,
             shred_spec: Vec::new(),
             current_writer: writer,
             index: SegmentIndex { blocks: Vec::new() },
             block_stats: Vec::new(),
             file_buf: Vec::new(),
+            local_spill: None,
             row_count: 0,
             compute_centroids: false,
             cur_centroid_sum: Vec::new(),
@@ -847,6 +969,11 @@ impl PaxSegmentWriter {
         if !self.compute_oid_resolver {
             return Ok(None);
         }
+        if self.local_spill.is_some() {
+            return Err(crate::bitmap::BitmapError::SerializationError(
+                "disk-backed OID resolver is finalized only with the segment".to_string(),
+            ));
+        }
         let bytes =
             crate::oid_position_resolver::OidPositionResolver::from_stream_order(self.oids.clone())
                 .serialize()?;
@@ -895,6 +1022,14 @@ impl PaxSegmentWriter {
         self
     }
 
+    /// Enable the additive canonical MVCC `record_version` stripe in every
+    /// block emitted by this segment.
+    pub fn with_record_version(mut self, enabled: bool) -> Self {
+        self.record_version_stripe = enabled;
+        self.current_writer = self.fresh_block_writer();
+        self
+    }
+
     /// Mark the next appended record as the start of a producer-defined cluster.
     pub fn start_cluster_run(&mut self) {
         self.current_writer.start_cluster_run();
@@ -929,6 +1064,17 @@ impl PaxSegmentWriter {
         self.rabitq_vectors =
             std::mem::take(&mut self.rabitq_vectors).with_expected_rows(expected_rows);
         self
+    }
+
+    /// Build coalesced regions and data blocks through bounded local scratch.
+    /// The caller must still opt into coalesced RaBitQ and feed final row order.
+    /// Construction fails before the first record when scratch cannot be opened.
+    pub fn with_local_spill(mut self, scratch_root: &Path) -> Result<Self> {
+        if self.row_count != 0 || !self.current_writer.is_empty() {
+            bail!("local spill must be configured before adding PAX records");
+        }
+        self.local_spill = Some(LocalSpillBacking::new(scratch_root)?);
+        Ok(self)
     }
 
     /// TD-RDSTRAT-8: emit the **persisted-IVF-probe (v3)** layout. The caller has
@@ -988,6 +1134,7 @@ impl PaxSegmentWriter {
         .with_rerank_quant(self.rerank_quant)
         .with_clustered_sq8_lossless(self.lossless_clustered)
         .with_lossless_scalar(self.lossless_scalar)
+        .with_record_version(self.record_version_stripe)
         .with_hoist_vector_tier(self.coalesced_rabitq)
         .with_shred_spec(self.shred_spec.clone())
     }
@@ -1054,7 +1201,11 @@ impl PaxSegmentWriter {
         // order (verified: call-order == on-disk position; §9.2). Default off;
         // mirrors the centroid opt-in above.
         if self.compute_oid_resolver {
-            self.oids.push(record.oid.clone());
+            if let Some(spill) = self.local_spill.as_mut() {
+                spill.push_oid(&record.oid)?;
+            } else {
+                self.oids.push(record.oid.clone());
+            }
         }
         // ADR-062: buffer the embedding-0 f32 vector (in cluster/add order) for
         // the segment-level RaBitQ region. The caller has already reordered
@@ -1066,7 +1217,18 @@ impl PaxSegmentWriter {
             // canonical-precision coercion) → garbage SQ8 params → 0.35% recall.
             let t = trace_on.then(Instant::now);
             let values = record.embeddings.first().map(|cell| cell.as_fp32_cow());
-            rabitq_bytes = self.rabitq_vectors.push(values.as_deref())?;
+            if let Some(spill) = self.local_spill.as_mut() {
+                let vectors = spill
+                    .vectors
+                    .as_mut()
+                    .ok_or_else(|| anyhow::anyhow!("PAX spill vector spool already finalized"))?;
+                vectors.push(values.as_deref())?;
+                rabitq_bytes = values.as_deref().map_or(0, |vector| {
+                    vector.len().saturating_mul(std::mem::size_of::<f32>())
+                });
+            } else {
+                rabitq_bytes = self.rabitq_vectors.push(values.as_deref())?;
+            }
             if let Some(t) = t {
                 d_rabitq = t.elapsed();
             }
@@ -1217,7 +1379,10 @@ impl PaxSegmentWriter {
 
         let block_bytes = self.current_writer.flush()?;
         let block_size = block_bytes.len() as u32;
-        let offset = self.file_buf.len() as u64;
+        let offset = match self.local_spill.as_mut() {
+            Some(spill) => spill.write_block(&block_bytes)?,
+            None => self.file_buf.len() as u64,
+        };
 
         let reader = PaxBlockReader::open(&block_bytes)?;
         self.block_transformed_sq8_columns.push(
@@ -1247,7 +1412,9 @@ impl PaxSegmentWriter {
             size: block_size,
             zone,
         });
-        self.file_buf.extend_from_slice(&block_bytes);
+        if self.local_spill.is_none() {
+            self.file_buf.extend_from_slice(&block_bytes);
+        }
         self.block_stats.push(stats);
         // Finalise this block's centroid (1:1 with the index entry just pushed).
         self.finalize_block_centroid();
@@ -1256,7 +1423,11 @@ impl PaxSegmentWriter {
         // rerank + shred-spec strategy — see `fresh_block_writer`).
         self.current_writer = self.fresh_block_writer();
         if let Some(t) = t_flush {
-            let file_len = self.file_buf.len();
+            let file_len = self
+                .local_spill
+                .as_ref()
+                .map_or(self.file_buf.len() as u64, |spill| spill.blocks_len)
+                .min(usize::MAX as u64) as usize;
             if let Some(tr) = self.write_trace.as_deref_mut() {
                 tr.block_cut_compress += t.elapsed();
                 tr.blocks_cut += 1;
@@ -1294,10 +1465,22 @@ impl PaxSegmentWriter {
         // Coalesced-RaBitQ requires embedding-0 f32 vectors to build the region.
         // If there are none (a non-vector or malformed batch), fall through to the
         // legacy layout rather than failing the flush — mixed-read-safe.
-        let coalesced_dim = self.rabitq_vectors.dim() as u32;
+        let coalesced_dim = self.local_spill.as_ref().map_or_else(
+            || self.rabitq_vectors.dim() as u32,
+            |spill| {
+                spill
+                    .vectors
+                    .as_ref()
+                    .map_or(0, |vectors| vectors.dim() as u32)
+            },
+        );
 
-        let result = if self.coalesced_rabitq && coalesced_dim > 0 {
+        let result = if self.coalesced_rabitq && coalesced_dim > 0 && self.local_spill.is_some() {
+            self.finish_coalesced_spill(coalesced_dim, capture_sq8)
+        } else if self.coalesced_rabitq && coalesced_dim > 0 {
             self.finish_coalesced(coalesced_dim, capture_sq8)
+        } else if self.local_spill.is_some() {
+            bail!("local-spill PAX writer requires a non-empty coalesced vector column")
         } else {
             self.finish_legacy().map(|meta| PaxSegmentWrite {
                 meta,
@@ -1314,7 +1497,11 @@ impl PaxSegmentWriter {
     /// S1 `[PAX write]` phase timers emitted by the flush/compaction entry.
     fn emit_write_trace(&mut self) {
         let row_count = self.row_count;
-        let file_len = self.file_buf.len();
+        let file_len = self
+            .local_spill
+            .as_ref()
+            .map_or(self.file_buf.len() as u64, |spill| spill.blocks_len)
+            .min(usize::MAX as u64) as usize;
         let Some(tr) = self.write_trace.as_deref_mut() else {
             return;
         };
@@ -1337,6 +1524,235 @@ impl PaxSegmentWriter {
         );
         tracing::info!("{line}");
         eprintln!("{line}");
+    }
+
+    /// Bounded counterpart of `finish_coalesced`: vector reductions, Region-A/B
+    /// encodes, Region-D blocks, and the OID resolver are all local files. The
+    /// final PAX bytes and footer semantics remain identical.
+    fn finish_coalesced_spill(
+        &mut self,
+        dim: u32,
+        _capture_sq8: Option<bool>,
+    ) -> Result<PaxSegmentWrite> {
+        let mut spill = self
+            .local_spill
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("PAX local spill backing is missing"))?;
+        spill.flush_inputs()?;
+        if self.compute_oid_resolver && spill.oid_count as u64 != self.row_count {
+            bail!(
+                "PAX spill OID resolver rows {} != segment rows {}",
+                spill.oid_count,
+                self.row_count
+            );
+        }
+        let vectors = spill
+            .vectors
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("PAX spill vector spool is missing"))?;
+        let seed = RABITQ_SEED_BASE ^ (col_id::EMBED_BASE as u64);
+        let regions = vectors.finish(seed)?;
+        if regions.row_count as u64 != self.row_count || regions.dim != dim {
+            bail!(
+                "PAX spill vector rows/dim ({}/{}) != segment ({}/{dim})",
+                regions.row_count,
+                regions.dim,
+                self.row_count
+            );
+        }
+        let resolver = spill.finish_oid_resolver(self.compute_oid_resolver)?;
+
+        let two_level = self.two_level.take();
+        let (layout_version, header_len, a0_len) = match &two_level {
+            Some(tl) => {
+                tl.model.validate()?;
+                if tl.model.dim != dim {
+                    bail!(
+                        "two-level model dim {} != segment embedding dim {dim}",
+                        tl.model.dim
+                    );
+                }
+                if tl.next_boundary != tl.boundaries.len()
+                    || tl.cell_end_blocks.len() != tl.boundaries.len()
+                {
+                    bail!(
+                        "two-level cell boundaries not all reached ({}/{} — plan rows {} vs fed rows {})",
+                        tl.next_boundary,
+                        tl.boundaries.len(),
+                        tl.model.rows_covered(),
+                        self.row_count
+                    );
+                }
+                let length = CoarseDirectory::serialized_len(
+                    tl.model.k_c(),
+                    dim as usize,
+                    tl.model.n_comp as usize,
+                ) as u64;
+                (
+                    SEG_LAYOUT_VERSION_TWO_LEVEL,
+                    SEG_HEADER_PREFIX_V3_LEN as u64,
+                    length,
+                )
+            }
+            None => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
+        };
+        let a0_off = if two_level.is_some() { header_len } else { 0 };
+        let rabitq_off = header_len + a0_len;
+        let rabitq_len = regions.rabitq_len;
+        let sq8_off = rabitq_off + rabitq_len;
+        let sq8_len = regions.sq8_len;
+        let resolver_len = resolver.as_ref().map_or(0, |(_, length)| *length);
+        let opr_off = sq8_off + sq8_len;
+        let opr_len = resolver_len;
+        let data_offset = opr_off + opr_len;
+
+        let a0_bytes = match two_level {
+            Some(tl) => {
+                let n_rows = self.row_count as usize;
+                let stride_a = (8 + (dim as usize).div_ceil(8)) as u64;
+                let codes_base_a =
+                    rabitq_off + rabitq_region_header_len(dim) as u64 + n_rows.div_ceil(8) as u64;
+                let codes_base_b = sq8_off + sq8_codes_offset(n_rows) as u64;
+                let mut cells = Vec::with_capacity(tl.model.k_c());
+                let mut row = 0u64;
+                for (index, &rows) in tl.model.cell_rows.iter().enumerate() {
+                    let d_block_begin = if index == 0 {
+                        0
+                    } else {
+                        tl.cell_end_blocks[index - 1]
+                    };
+                    cells.push(CoarseCellEntry {
+                        row_begin: row,
+                        row_end: row + rows,
+                        a_off: codes_base_a + row * stride_a,
+                        a_len: rows * stride_a,
+                        b_off: codes_base_b + row * dim as u64,
+                        b_len: rows * dim as u64,
+                        c_off: 0,
+                        c_len: 0,
+                        d_block_begin,
+                        d_block_end: tl.cell_end_blocks[index],
+                    });
+                    row += rows;
+                }
+                if row > self.row_count {
+                    bail!(
+                        "two-level cell rows {row} exceed segment rows {}",
+                        self.row_count
+                    );
+                }
+                let bytes = CoarseDirectory {
+                    model: tl.model,
+                    cells,
+                }
+                .to_bytes()?;
+                if bytes.len() as u64 != a0_len {
+                    bail!(
+                        "coarse directory serialized {} bytes != planned {a0_len}",
+                        bytes.len()
+                    );
+                }
+                Some(bytes)
+            }
+            None => None,
+        };
+
+        let blocks = self
+            .index
+            .blocks
+            .iter()
+            .map(|block| FooterBlockEntry {
+                offset: data_offset + block.offset,
+                size: block.size,
+                row_count: block.zone.as_ref().map_or(0, |zone| zone.row_count),
+                stats_kind: StatsKind::None,
+            })
+            .collect::<Vec<_>>();
+        let (encoding_map, block_tier_assignments) = self.footer_encoding_map()?;
+        let footer = SegmentFooterIndex {
+            row_count: self.row_count,
+            rabitq_off,
+            rabitq_len,
+            sq8_off,
+            sq8_len,
+            sq8_min: regions.sq8_params.offset,
+            sq8_scale: regions.sq8_params.scale,
+            embed_dim: dim,
+            embed_count: self.embedding_count as u32,
+            embed_quant_tag: 1,
+            has_f32_tier: self.f32_tier,
+            blocks,
+            encoding_map,
+            block_tier_assignments,
+            a0_off,
+            a0_len,
+            opr_off,
+            opr_len,
+        };
+        let footer_body = footer.to_bytes()?;
+        let footer_off = data_offset + spill.blocks_len;
+        let footer_len = footer_body.len() as u64;
+        let header = SegmentHeaderPrefix {
+            layout_version,
+            rabitq_off,
+            rabitq_len,
+            sq8_off,
+            sq8_len,
+            footer_off,
+            footer_len,
+            a0_off,
+            a0_len,
+        };
+        let header_bytes = header.to_bytes();
+        let mut tail = Vec::with_capacity(16);
+        tail.extend_from_slice(&footer_len.to_le_bytes());
+        tail.extend_from_slice(SEGMENT_MAGIC);
+
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut output = BufWriter::new(std::fs::File::create(&self.path)?);
+        let mut total = 0u64;
+        total = write_counted(&mut output, &header_bytes, total)?;
+        if let Some(a0) = a0_bytes.as_deref() {
+            total = write_counted(&mut output, a0, total)?;
+        }
+        total = copy_counted(&mut output, regions.rabitq_path(), total)?;
+        total = copy_counted(&mut output, regions.sq8_path(), total)?;
+        if let Some((path, _)) = &resolver {
+            total = copy_counted(&mut output, path, total)?;
+        }
+        total = copy_counted(&mut output, &spill.blocks_path, total)?;
+        total = write_counted(&mut output, &footer_body, total)?;
+        total = write_counted(&mut output, &tail, total)?;
+        output.flush()?;
+        output.get_ref().sync_data()?;
+
+        let planned_total = footer_off
+            .checked_add(footer_len)
+            .and_then(|bytes| bytes.checked_add(tail.len() as u64))
+            .ok_or_else(|| anyhow::anyhow!("PAX spill output length exceeds u64"))?;
+        if total != planned_total {
+            bail!("PAX spill assembled {total} bytes but layout planned {planned_total}");
+        }
+        let meta = SegmentMeta {
+            path: self.path.clone(),
+            size_bytes: total,
+            block_count: self.index.blocks.len() as u32,
+            row_count: self.row_count,
+            block_stats: std::mem::take(&mut self.block_stats),
+            block_centroids: std::mem::take(&mut self.block_centroids),
+            block_radii: std::mem::take(&mut self.block_radii),
+            rabitq_off,
+            rabitq_len,
+            sq8_off,
+            sq8_len,
+        };
+        Ok(PaxSegmentWrite {
+            meta,
+            // Never re-materialize multi-gigabyte A/B merely for cache-on-write.
+            cache_seed: None,
+        })
     }
 
     /// Legacy `[blocks][SegmentIndex][SEGMENT_MAGIC]` layout (readability-preserving
@@ -1862,6 +2278,21 @@ impl PaxSegmentWriter {
     }
 }
 
+fn write_counted(output: &mut BufWriter<std::fs::File>, bytes: &[u8], total: u64) -> Result<u64> {
+    output.write_all(bytes)?;
+    total
+        .checked_add(bytes.len() as u64)
+        .ok_or_else(|| anyhow::anyhow!("PAX spill output length exceeds u64"))
+}
+
+fn copy_counted(output: &mut BufWriter<std::fs::File>, path: &Path, total: u64) -> Result<u64> {
+    let mut input = BufReader::new(std::fs::File::open(path)?);
+    let copied = std::io::copy(&mut input, output)?;
+    total
+        .checked_add(copied)
+        .ok_or_else(|| anyhow::anyhow!("PAX spill output length exceeds u64"))
+}
+
 fn take_descriptor_id(next_id: &mut u16) -> Result<u16> {
     if *next_id == EXTERNAL_CANONICAL_SOURCE_ID {
         bail!("footer encoding descriptor id space exhausted");
@@ -2236,6 +2667,77 @@ mod tests {
             updated_at_ns: ts,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn local_spill_writer_is_byte_identical_and_reclaims_scratch() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        const DIM: usize = 8;
+        let output = tempfile::tempdir()?;
+        let scratch = tempfile::tempdir()?;
+        let memory_path = output.path().join("memory.pax");
+        let spill_path = output.path().join("spill.pax");
+        let model = CoarseModel {
+            dim: DIM as u32,
+            n_comp: 1,
+            pca_mean: vec![0.0; DIM],
+            pca_components: vec![0.1; DIM],
+            centroids: vec![-1.0, 1.0],
+            radii: vec![1.0, 1.0],
+            cell_rows: vec![8, 8],
+            seed: 7,
+            trained_on: 16,
+        };
+        let writer = |path: &Path| {
+            PaxSegmentWriter::new(
+                path,
+                BlockMode::Pax,
+                BlockCompression::Lz4,
+                "collection",
+                0,
+                1,
+                Some(512),
+            )
+            .with_quant(VectorQuant::RaBitQ)
+            .with_rerank_quant(VectorQuant::Sq8)
+            .with_coalesced_rabitq(true)
+            .with_oid_resolver(true)
+            .with_two_level(model.clone())
+        };
+        let mut memory = writer(&memory_path);
+        let mut spilled = writer(&spill_path).with_local_spill(scratch.path())?;
+        for row in 0..16usize {
+            let mut record = make_record(&format!("oid-{row:03}"), "tenant", row as i64);
+            record.embeddings.push(EmbeddingCell {
+                model_id: "model_0".to_string(),
+                modality: "dense".to_string(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(
+                    (0..DIM)
+                        .map(|dimension| (row * 13 + dimension * 5) as f32 * 0.01)
+                        .collect(),
+                ),
+                ..EmbeddingCell::default()
+            });
+            memory.add_record(&record)?;
+            spilled.add_record(&record)?;
+        }
+        memory.finish()?;
+        let spill_write = spilled.finish_with_cache_seed(true)?;
+
+        assert!(spill_write.cache_seed.is_none());
+        assert_eq!(std::fs::read(&spill_path)?, std::fs::read(&memory_path)?);
+        let segment = std::fs::read(&spill_path)?;
+        let footer = SegmentFooterIndex::locate_in_segment(&segment)?
+            .ok_or_else(|| anyhow::anyhow!("spill output footer missing"))?;
+        let resolver = crate::oid_position_resolver::OidPositionResolver::deserialize(
+            &segment[footer.opr_off as usize..(footer.opr_off + footer.opr_len) as usize],
+        )?;
+        assert_eq!(resolver.position_of("oid-000"), Some(0));
+        assert_eq!(resolver.position_of("oid-015"), Some(15));
+        assert_eq!(std::fs::read_dir(scratch.path())?.count(), 0);
+        Ok(())
     }
 
     #[test]

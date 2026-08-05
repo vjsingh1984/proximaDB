@@ -273,6 +273,7 @@ impl AqlSource for MemoryAqlSource {
                 None,
                 None,
                 None,
+                proximadb_tenant::AuthClass::Anonymous,
             )
             .await
             .map_err(|e| ProximaDBError::Query(QueryError::VectorSearch(e.to_string())))?;

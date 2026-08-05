@@ -115,6 +115,29 @@ pub struct PortIdentity<'a> {
     pub auth_class: proximadb_tenant::AuthClass,
 }
 
+/// Owned form of [`PortIdentity`] for planners/readers that must retain the
+/// identity after the protocol call frame. Convert back with
+/// [`Self::as_borrowed`] at the enforcement seam; fields remain one canonical
+/// carrier rather than parallel tenant/subject parameters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OwnedPortIdentity {
+    pub tenant_id: Option<String>,
+    pub subject: Option<String>,
+    pub tenant_stable_id: Option<u64>,
+    pub auth_class: proximadb_tenant::AuthClass,
+}
+
+impl OwnedPortIdentity {
+    pub fn as_borrowed(&self) -> PortIdentity<'_> {
+        PortIdentity {
+            tenant_id: self.tenant_id.as_deref(),
+            subject: self.subject.as_deref(),
+            tenant_stable_id: self.tenant_stable_id,
+            auth_class: self.auth_class,
+        }
+    }
+}
+
 impl<'a> PortIdentity<'a> {
     /// No identity at all — internal/system callers; enforcement passthrough.
     pub const fn anonymous() -> Self {
@@ -133,6 +156,15 @@ impl<'a> PortIdentity<'a> {
             subject: None,
             tenant_stable_id: None,
             auth_class: proximadb_tenant::AuthClass::Anonymous,
+        }
+    }
+
+    pub fn into_owned(self) -> OwnedPortIdentity {
+        OwnedPortIdentity {
+            tenant_id: self.tenant_id.map(str::to_string),
+            subject: self.subject.map(str::to_string),
+            tenant_stable_id: self.tenant_stable_id,
+            auth_class: self.auth_class,
         }
     }
 }
@@ -231,6 +263,25 @@ pub trait VectorOpsPort: Send + Sync {
 
 // ── Query facade ──────────────────────────────────────────────────────────────
 
+/// Protocol-neutral result of executing one SQL statement.
+///
+/// SQL values remain canonical [`proximadb_data_model::ProximaValue`] instances
+/// until a transport adapter serializes them. The v1 [`SqlValue`] type is a
+/// compatibility wire type and must not leak into this result.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SqlExecutionResult {
+    /// Ordered column names; every row uses the same ordinal layout.
+    pub columns: Vec<String>,
+    /// Canonical logical type labels aligned with `columns`.
+    pub column_types: Vec<String>,
+    /// Ordered, typed result cells.
+    pub rows: Vec<Vec<proximadb_data_model::ProximaValue>>,
+    /// Present for DDL/DML and absent for row-producing statements.
+    pub rows_affected: Option<u64>,
+    pub rows_scanned: u64,
+    pub execution_time_ms: u64,
+}
+
 /// Port for unified query routing (SQL, hybrid, vector-via-facade).
 ///
 /// Implemented by root-crate `QueryFacadeAdapter` when the `unified-facade-routing`
@@ -245,22 +296,16 @@ pub trait QueryAdapterPort: Send + Sync {
 
     /// Execute a SQL statement through the unified facade.
     ///
-    /// Returns rows as protocol-neutral JSON so the protocol layer can convert
-    /// to v1 `ExecuteQueryResponse`, v2 `ProximaValue` rows, or any wire format
-    /// without the port accumulating v1 surface debt.
+    /// Returns canonical typed rows. JSON and legacy v1 `SqlValue` conversion
+    /// belong exclusively to their respective transport adapters.
     ///
-    /// `tenant_id` scopes relational SQL to the tenant's partition (TD-064); the
-    /// adapter routes relational SELECT through the tenant-scoped relational
-    /// pipeline (`try_run_select`, TD-121) before falling back to the facade.
-    ///
-    /// `subject` (TD-ABAC-5) is the authenticated principal id, threaded to ABAC
-    /// enforcement. Opaque `&str` here (runtime layer can't name `SubjectId`);
-    /// the root-crate adapter converts it. `None` ⇒ no enforcement.
+    /// `identity` is the canonical ADR-087 carrier. Its string tenant scopes
+    /// storage/catalog resolution while subject + stable key drive ABAC at the
+    /// relational read seam; callers must not flatten or re-derive these fields.
     async fn execute_sql(
         &self,
         query: String,
         collection: Option<String>,
-        tenant_id: Option<&str>,
-        subject: Option<&str>,
-    ) -> Result<JsonValue>;
+        identity: PortIdentity<'_>,
+    ) -> Result<SqlExecutionResult>;
 }

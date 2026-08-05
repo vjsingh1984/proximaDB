@@ -182,22 +182,27 @@ async fn td_compact6_worker_clears_training_in_flight_after_completion() {
 #[test]
 fn bounded_training_chain_keeps_threshold_one_until_l0_is_drained() {
     assert_eq!(
-        training_follow_up_threshold(0, &PathBuf::from("L1_output.pax")),
+        training_follow_up_threshold(false, 0, &PathBuf::from("L1_output.pax")),
         Some(1)
     );
     assert_eq!(
-        training_follow_up_threshold(1, &PathBuf::from("L2_output.pax")),
+        training_follow_up_threshold(false, 1, &PathBuf::from("L2_output.pax")),
         None
     );
     assert_eq!(
-        training_follow_up_threshold(0, &PathBuf::from("L1_output.arrow")),
+        training_follow_up_threshold(false, 0, &PathBuf::from("L1_output.arrow")),
         None
+    );
+    assert_eq!(
+        training_follow_up_threshold(true, 1, &PathBuf::from("L2_output.pax")),
+        Some(1),
+        "a higher-level task in the training chain must rescan a late L0"
     );
 
     assert!(retain_training_guard_for_follow_up(true, Some(0)));
     assert!(
-        !retain_training_guard_for_follow_up(true, Some(1)),
-        "a higher-level follow-up means the untrained L0 tail is drained"
+        retain_training_guard_for_follow_up(true, Some(1)),
+        "a higher-level follow-up must retain the guard until its terminal rescan"
     );
     assert!(
         !retain_training_guard_for_follow_up(true, None),
@@ -688,6 +693,196 @@ async fn canonical_compaction_round_trips_real_pax_inputs() -> anyhow::Result<()
         .collect();
     oids.sort_unstable();
     assert_eq!(oids, vec!["a", "b", "c", "d"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -> anyhow::Result<()>
+{
+    use crate::storage::common::compaction_memory::{
+        CompactionExecutionMode, CompactionResourceUsage, plan_compaction_resources,
+    };
+    use crate::storage::engines::sst::segment_format::{
+        read_segment_records, write_pax_segment_compacted,
+    };
+    use proximadb_block_format::VectorQuant;
+    use proximadb_hardware::MemorySnapshot;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
+    use tempfile::tempdir;
+
+    const MIB: u64 = 1024 * 1024;
+    struct RecordVersionGate(Option<std::ffi::OsString>);
+    impl RecordVersionGate {
+        fn enable() -> Self {
+            let previous = std::env::var_os("PROXIMADB_PAX_RECORD_VERSION");
+            // SAFETY: CI runs each test in an isolated nextest process. This
+            // test is the only code in that process touching this unique gate.
+            unsafe { std::env::set_var("PROXIMADB_PAX_RECORD_VERSION", "1") };
+            Self(previous)
+        }
+    }
+    impl Drop for RecordVersionGate {
+        fn drop(&mut self) {
+            // SAFETY: paired restoration in the same isolated test process.
+            unsafe {
+                match self.0.take() {
+                    Some(previous) => std::env::set_var("PROXIMADB_PAX_RECORD_VERSION", previous),
+                    None => std::env::remove_var("PROXIMADB_PAX_RECORD_VERSION"),
+                }
+            }
+        }
+    }
+    let root = tempdir()?;
+    let scratch = root.path().join("spill");
+    let input_a = root.path().join("segment_L0_a.pax");
+    let input_b = root.path().join("segment_L0_b.pax");
+    let output = root.path().join("segment_L1_compacted.pax");
+    let records = |version: u64, value_offset: f32| {
+        (0..128usize)
+            .map(|row| ProximaRecord {
+                oid: format!("oid-{row:04}"),
+                record_version: version,
+                tenant_id: "tenant-42".to_string(),
+                created_at_ns: version as i64,
+                updated_at_ns: version as i64,
+                embeddings: vec![EmbeddingCell::new_fp32(
+                    "sift",
+                    "dense_vector",
+                    8,
+                    (0..8)
+                        .map(|dimension| row as f32 + dimension as f32 * 0.01 + value_offset)
+                        .collect(),
+                )],
+                ..ProximaRecord::default()
+            })
+            .collect::<Vec<_>>()
+    };
+    {
+        let _record_version_gate = RecordVersionGate::enable();
+        write_pax_segment_compacted(
+            &input_a,
+            &records(1, 0.0),
+            "7",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(1_024),
+        )?;
+        write_pax_segment_compacted(
+            &input_b,
+            &records(2, 100.0),
+            "7",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(1_024),
+        )?;
+    }
+    let input_bytes = std::fs::metadata(&input_a)?.len() + std::fs::metadata(&input_b)?.len();
+
+    let mut config = SstConfig::default();
+    let policy = config
+        .compaction_config
+        .get_or_insert_with(crate::core::config::CompactionConfig::default);
+    policy.memory_amplification_factor = 12.0;
+    policy.memory_budget_fraction = 1.0;
+    policy.available_memory_fraction = 1.0;
+    policy.max_memory_mb = 64;
+    policy.spill_enabled = true;
+    policy.spill_directory = Some(scratch.to_string_lossy().into_owned());
+    policy.spill_working_memory_mb = 32;
+    policy.spill_scratch_amplification_factor = 4.0;
+    policy.spill_available_disk_fraction = 1.0;
+
+    let planning_input_bytes = input_bytes.max(10 * MIB);
+    let plan = plan_compaction_resources(
+        planning_input_bytes,
+        policy,
+        MemorySnapshot {
+            total_bytes: 64 * MIB,
+            available_bytes: 64 * MIB,
+        },
+        1_024 * MIB,
+        CompactionResourceUsage::default(),
+    )
+    .ok_or_else(|| anyhow::anyhow!("forced spill plan was not admitted"))?;
+    assert_eq!(plan.mode, CompactionExecutionMode::LocalSpill);
+
+    let compaction = Compaction::new(config).await?;
+    let task = CompactionTask {
+        collection_object_id: 7,
+        collection_identity: crate::core::stable_id::CollectionIdentity {
+            account_id: 1,
+            namespace_id: 2,
+            collection_id: 7,
+        },
+        level: 0,
+        input_files: vec![input_a.clone(), input_b.clone()],
+        input_bytes,
+        output_file: output.clone(),
+        priority: CompactionPriority::High,
+        block_size_kb: Some(1),
+        compression_config: None,
+        precision_hint: None,
+    };
+    let assert_no_task_scratch = |root: &std::path::Path| -> anyhow::Result<()> {
+        for owner in std::fs::read_dir(root)? {
+            let owner = owner?;
+            if !owner.file_type()?.is_dir()
+                || !owner
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("proximadb-compaction-owner-")
+            {
+                continue;
+            }
+            for child in std::fs::read_dir(owner.path())? {
+                let child = child?;
+                assert!(
+                    !child.file_name().to_string_lossy().starts_with("task-"),
+                    "completed or failed spill task scratch must be reclaimed: {}",
+                    child.path().display()
+                );
+            }
+        }
+        Ok(())
+    };
+
+    let mut failed_upload = task.clone();
+    failed_upload.output_file = PathBuf::from("unsupported-spill://bucket/output.pax");
+    let failure = compaction
+        .perform_compaction_with_plan(&failed_upload, plan)
+        .await
+        .expect_err("unsupported publication backend must fail");
+    assert!(
+        failure
+            .to_string()
+            .contains("local-spill publication backend"),
+        "unexpected upload failure: {failure}"
+    );
+    assert!(
+        input_a.exists() && input_b.exists(),
+        "publication failure must leave every source segment authoritative"
+    );
+    assert_no_task_scratch(&scratch)?;
+
+    let stats = compaction.perform_compaction_with_plan(&task, plan).await?;
+
+    assert_eq!(stats.files_merged, 2);
+    assert!(stats.bytes_written > 0);
+    assert!(output.exists());
+    assert!(!input_a.exists());
+    assert!(!input_b.exists());
+    let output_records = read_segment_records(&std::fs::read(&output)?, &[], &[], None)?;
+    assert_eq!(output_records.len(), 128);
+    assert!(
+        output_records
+            .iter()
+            .all(|record| record.record_version == 2)
+    );
+    assert_no_task_scratch(&scratch)?;
     Ok(())
 }
 

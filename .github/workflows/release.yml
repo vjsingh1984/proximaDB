@@ -16,7 +16,7 @@
 #   │  1. PREPARE          Extract version, validate Cargo.toml              │
 #   ├─────────────────────────────────────────────────────────────────────────┤
 #   │  2. BUILD (parallel)                                                   │
-#   │     ├── build-binaries    6 platform targets (Linux/macOS/Windows)     │
+#   │     ├── build-binaries    2 platform targets (Linux/Windows)           │
 #   │     ├── (build-wheels disabled - pure Python package)              │
 #   │     ├── build-embedded    5 embedded wheel variants                    │
 #   │     └── build-sdist       Source distributions                         │
@@ -36,12 +36,8 @@
 #   └─────────────────────────────────────────────────────────────────────────┘
 #
 # EXPECTED ARTIFACTS:
-#   Binaries (6 targets):
+#   Binaries (2 targets for the v0.2 MVP trust corridor):
 #     - proximadb-{version}-x86_64-unknown-linux-gnu.tar.gz
-#     - proximadb-{version}-x86_64-unknown-linux-musl.tar.gz
-#     - proximadb-{version}-aarch64-unknown-linux-gnu.tar.gz
-#     - proximadb-{version}-x86_64-apple-darwin.tar.gz
-#     - proximadb-{version}-aarch64-apple-darwin.tar.gz
 #     - proximadb-{version}-x86_64-pc-windows-msvc.zip
 #
 #   Python Wheels are NOT built here. The pure-Python SDK (`proximadb`) and the
@@ -831,11 +827,10 @@ jobs:
           | Platform | Architecture | Archive |
           |----------|--------------|---------|
           | Linux | x86_64 (glibc) | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz` |
-          | Linux | x86_64 (musl/static) | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-musl.tar.gz` |
-          | Linux | aarch64 | `proximadb-${{ needs.prepare.outputs.version }}-aarch64-unknown-linux-gnu.tar.gz` |
-          | macOS | x86_64 | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-apple-darwin.tar.gz` |
-          | macOS | Apple Silicon | `proximadb-${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.tar.gz` |
           | Windows | x86_64 | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc.zip` |
+
+          Linux musl, Linux aarch64, and macOS archives are not built by this
+          workflow and are therefore not advertised in this release.
 
           #### Python Installation
 
@@ -847,10 +842,12 @@ jobs:
           pip install proximadb-embedded
           ```
 
-          #### Cargo Installation
+          #### Build From Source
 
           ```bash
-          cargo install proximadb
+          git clone https://github.com/anvai-labs/proximaDB
+          cd proximaDB
+          cargo build --release --bin proximadb-server
           ```
 
           #### Platform Packages (RPM/DEB/MSI)

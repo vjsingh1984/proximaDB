@@ -414,6 +414,16 @@ impl CatalogIntrospectionService {
                     .cloned()
                     .unwrap_or_default(),
                 schema.schema_version.to_string(),
+                // Stable catalog identity is an operator-facing contract: ABAC
+                // policy scopes, CDC, and object-id-keyed storage all consume
+                // this value. Keep it in the extended xcatalog view (never the
+                // SQL-standard information_schema.tables shape) so control-plane
+                // clients can provision policy without guessing an allocator
+                // result or reaching into catalog persistence.
+                schema
+                    .object_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
             ]);
         }
 
@@ -429,6 +439,7 @@ impl CatalogIntrospectionService {
                 "table_format".to_string(),
                 "xcatalog_namespace".to_string(),
                 "schema_version".to_string(),
+                "object_id".to_string(),
             ],
             column_types: vec![
                 "text".to_string(),
@@ -440,6 +451,7 @@ impl CatalogIntrospectionService {
                 "text".to_string(),
                 "text".to_string(),
                 "int4".to_string(),
+                "int8".to_string(),
             ],
             rows,
         })
@@ -1721,6 +1733,11 @@ mod tests {
         assert_eq!(tables.rows[0][4], "SST");
         assert_eq!(tables.rows[0][5], "hybrid");
         assert_eq!(tables.rows[0][7], "agentic.langgraph");
+        assert_eq!(tables.columns[9], "object_id");
+        assert!(
+            tables.rows[0][9].parse::<u64>().is_ok_and(|id| id > 0),
+            "xcatalog.tables must expose the stable object id needed by policy provisioning"
+        );
 
         let columns = introspection
             .execute_select("SELECT * FROM xcatalog.columns WHERE table_name = 'agent_store'")

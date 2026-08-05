@@ -194,6 +194,86 @@ impl PersistentByteStore {
         Ok(())
     }
 
+    /// Atomically persist one byte range from an existing local file without
+    /// materializing the value in memory.
+    ///
+    /// This is the write-time promotion seam for disk-backed segment writers:
+    /// the segment is already present in local staging, so copying its immutable
+    /// Region A/B bytes directly into L2 avoids both an object-store GET and a
+    /// segment-sized `Arc<[u8]>`. The cache entry uses the same checksummed file
+    /// format as [`Self::put`].
+    pub async fn put_file_range(
+        &self,
+        key: impl Into<String>,
+        class: L2Class,
+        source: impl AsRef<Path>,
+        offset: u64,
+        len: u64,
+    ) -> std::io::Result<()> {
+        let key = key.into();
+        if key.len() > MAX_KEY_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "persistent cache key exceeds 16 MiB",
+            ));
+        }
+        let _guard = self.inner.mutation.lock().await;
+        if let Some(existing) = self.inner.entries.get(&key) {
+            existing.touch.store(self.next_tick(), Ordering::Relaxed);
+            return Ok(());
+        }
+        let final_path = self.entry_path(&key);
+        let temp_path = final_path.with_extension(format!(
+            "tmp-{}-{}",
+            std::process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let source = source.as_ref().to_path_buf();
+        let key_for_write = key.clone();
+        let final_for_write = final_path.clone();
+        let temp_for_write = temp_path.clone();
+        let write_meta = tokio::task::spawn_blocking(move || {
+            write_entry_file_range(
+                &temp_for_write,
+                &final_for_write,
+                &key_for_write,
+                class,
+                &source,
+                offset,
+                len,
+            )
+        })
+        .await
+        .map_err(join_error)??;
+
+        if let Some(meta) = write_meta {
+            let file_len = meta.file_len;
+            if let Some(old) = self.inner.entries.insert(key, Arc::new(meta)) {
+                self.inner
+                    .resident_bytes
+                    .fetch_sub(old.file_len, Ordering::Relaxed);
+                self.inner.class_resident_bytes[old.class as usize]
+                    .fetch_sub(old.file_len, Ordering::Relaxed);
+            }
+            self.inner
+                .resident_bytes
+                .fetch_add(file_len, Ordering::Relaxed);
+            self.inner.class_resident_bytes[class as usize].fetch_add(file_len, Ordering::Relaxed);
+        } else if !self.inner.entries.contains_key(&key)
+            && let Ok((stored_key, meta)) = read_entry_metadata(&final_path)
+            && stored_key == key
+        {
+            self.inner
+                .resident_bytes
+                .fetch_add(meta.file_len, Ordering::Relaxed);
+            self.inner.class_resident_bytes[meta.class as usize]
+                .fetch_add(meta.file_len, Ordering::Relaxed);
+            self.inner.entries.insert(key, Arc::new(meta));
+        }
+        self.evict_blocking();
+        Ok(())
+    }
+
     /// Read and checksum-verify a complete value.
     pub async fn get(&self, key: &str) -> std::io::Result<Option<Arc<[u8]>>> {
         let Some(meta) = self.inner.entries.get(key).map(|entry| entry.clone()) else {
@@ -438,6 +518,127 @@ fn write_entry_file(
         let crc_table_len = u64::from(chunk_count) * 4;
         let value_offset = HEADER_LEN + key.len() as u64 + crc_table_len;
         let file_len = value_offset + value_len;
+        Ok(Some(EntryMeta {
+            path: final_path.to_path_buf(),
+            value_offset,
+            value_len,
+            file_len,
+            value_crc,
+            chunk_crcs: Arc::from(chunk_crcs),
+            class,
+            touch: AtomicU64::new(1),
+        }))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temp_path);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_entry_file_range(
+    temp_path: &Path,
+    final_path: &Path,
+    key: &str,
+    class: L2Class,
+    source_path: &Path,
+    source_offset: u64,
+    value_len: u64,
+) -> std::io::Result<Option<EntryMeta>> {
+    if final_path.exists() {
+        return Ok(None);
+    }
+    let source_end = source_offset.checked_add(value_len).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "persistent cache source range overflows u64",
+        )
+    })?;
+    let mut source = std::fs::File::open(source_path)?;
+    if source.metadata()?.len() < source_end {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "persistent cache source range exceeds local file",
+        ));
+    }
+    source.seek(SeekFrom::Start(source_offset))?;
+
+    let chunk_count_u64 = if value_len == 0 {
+        0
+    } else {
+        value_len.div_ceil(CHECKSUM_CHUNK_BYTES)
+    };
+    let chunk_count = u32::try_from(chunk_count_u64).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "persistent cache chunk count exceeds u32",
+        )
+    })?;
+    let key_len = u32::try_from(key.len()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "persistent cache key length exceeds u32",
+        )
+    })?;
+    let crc_table_len = u64::from(chunk_count) * 4;
+    let value_offset = HEADER_LEN
+        .checked_add(key.len() as u64)
+        .and_then(|offset| offset.checked_add(crc_table_len))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "persistent cache entry offset overflows u64",
+            )
+        })?;
+    let file_len = value_offset.checked_add(value_len).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "persistent cache entry length overflows u64",
+        )
+    })?;
+    let mut output = std::fs::OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(temp_path)?;
+    let result = (|| {
+        output.write_all(MAGIC)?;
+        output.write_all(&[class as u8])?;
+        output.write_all(&key_len.to_le_bytes())?;
+        output.write_all(&value_len.to_le_bytes())?;
+        output.write_all(&0u32.to_le_bytes())?;
+        output.write_all(&chunk_count.to_le_bytes())?;
+        output.write_all(key.as_bytes())?;
+        output.seek(SeekFrom::Start(value_offset))?;
+
+        let mut value_checksum = Crc32::new();
+        let mut chunk_crcs = Vec::with_capacity(chunk_count as usize);
+        let mut remaining = value_len;
+        let mut buffer = vec![0u8; CHECKSUM_CHUNK_BYTES as usize];
+        while remaining > 0 {
+            let take = usize::try_from(remaining.min(CHECKSUM_CHUNK_BYTES)).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "persistent cache chunk length exceeds usize",
+                )
+            })?;
+            source.read_exact(&mut buffer[..take])?;
+            value_checksum.update(&buffer[..take]);
+            let mut chunk_checksum = Crc32::new();
+            chunk_checksum.update(&buffer[..take]);
+            chunk_crcs.push(chunk_checksum.finalize());
+            output.write_all(&buffer[..take])?;
+            remaining -= take as u64;
+        }
+        let value_crc = value_checksum.finalize();
+        output.seek(SeekFrom::Start(21))?;
+        output.write_all(&value_crc.to_le_bytes())?;
+        output.seek(SeekFrom::Start(HEADER_LEN + key.len() as u64))?;
+        for crc in &chunk_crcs {
+            output.write_all(&crc.to_le_bytes())?;
+        }
+        output.sync_all()?;
+        std::fs::rename(temp_path, final_path)?;
         Ok(Some(EntryMeta {
             path: final_path.to_path_buf(),
             value_offset,
@@ -763,6 +964,61 @@ mod tests {
                 .as_deref(),
             Some(&[1, 2, 3, 4][..])
         );
+    }
+
+    #[tokio::test]
+    async fn local_file_range_is_streamed_into_reopenable_entry() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let source_path = dir.path().join("segment.pax");
+        let value_len = CHECKSUM_CHUNK_BYTES * 2 + 17;
+        let mut source = vec![0xA5; 31 + value_len as usize + 29];
+        for (index, byte) in source[31..31 + value_len as usize].iter_mut().enumerate() {
+            *byte = (index % 251) as u8;
+        }
+        std::fs::write(&source_path, &source).expect("write source");
+
+        let cache_path = dir.path().join("cache");
+        let store = PersistentByteStore::open(&cache_path, 1 << 20).expect("open");
+        store
+            .put_file_range(
+                "segment/region-b",
+                L2Class::Survivor,
+                &source_path,
+                31,
+                value_len,
+            )
+            .await
+            .expect("stream file range");
+        drop(store);
+
+        let reopened = PersistentByteStore::open(&cache_path, 1 << 20).expect("reopen");
+        let offset = CHECKSUM_CHUNK_BYTES - 9;
+        let len = CHECKSUM_CHUNK_BYTES + 13;
+        let actual = reopened
+            .get_range("segment/region-b", offset, len)
+            .await
+            .expect("range read")
+            .expect("cached range");
+        let expected_start = 31 + offset as usize;
+        assert_eq!(
+            actual.as_ref(),
+            &source[expected_start..expected_start + len as usize]
+        );
+    }
+
+    #[tokio::test]
+    async fn out_of_bounds_local_file_range_does_not_publish_entry() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let source_path = dir.path().join("short.pax");
+        std::fs::write(&source_path, b"short").expect("write source");
+        let store = PersistentByteStore::open(dir.path().join("cache"), 1 << 20).expect("open");
+
+        let error = store
+            .put_file_range("segment/region-a", L2Class::Invariants, &source_path, 3, 8)
+            .await
+            .expect_err("range must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(store.entry_count(), 0);
     }
 
     #[tokio::test]

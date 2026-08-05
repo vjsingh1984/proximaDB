@@ -660,6 +660,7 @@ impl EntityStore for ProximaEntityStore {
                         Some(search_config),
                         None,
                         None,
+                        proximadb_tenant::AuthClass::Anonymous,
                     )
                     .await?;
 

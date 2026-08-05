@@ -23,10 +23,10 @@
 //! * **Resolve-at-write, never a raw u64.** The path carries a tenant *string*;
 //!   the handler resolves it server-side via
 //!   [`CatalogTenantStableIdResolver`](crate::security::CatalogTenantStableIdResolver).
-//!   An unminted tenant is rejected with **422** (provisioning never mints a u32
-//!   — it stays a pure policy op). This is the consistency guarantee: the request
-//!   path and this admin both derive the u64 from the ONE `account_registry`, so
-//!   they cannot drift.
+//!   Provisioning mints-or-resolves the tenant through the catalog before the
+//!   policy write. This is the consistency guarantee: the request path and this
+//!   admin both derive the u64 from the ONE durable catalog registry, so they
+//!   cannot drift and a tenant does not need a dummy table before policy setup.
 //! * **Fail-closed by construction.** ABAC is deny-by-default; provisioning only
 //!   *adds* permits. An unprovisioned tenant stays denied; a dangling
 //!   `predicate_ref` resolves to the unsatisfiable deny (safe), so it is accepted.
@@ -148,6 +148,28 @@ pub enum ProvisionError {
         /// The tenant string the operator supplied.
         tenant: String,
     },
+    /// The authoritative catalog could not durably mint the mapping. Maps to
+    /// 503; no policy state is written with an unstable key.
+    TenantMintFailed { tenant: String, message: String },
+}
+
+/// Ensure the tenant has a durable stable id before a policy mutation. The
+/// subsequent sync resolve in the provisioning core intentionally re-reads the
+/// same authority, catching any wiring mismatch before the store write.
+async fn ensure_tenant(
+    resolver: &CatalogTenantStableIdResolver,
+    tenant: &str,
+) -> Result<u64, ProvisionError> {
+    resolver
+        .ensure_stable_id(tenant)
+        .await
+        .map_err(|error| ProvisionError::TenantMintFailed {
+            tenant: tenant.to_string(),
+            message: error.to_string(),
+        })?
+        .ok_or_else(|| ProvisionError::TenantUnresolved {
+            tenant: tenant.to_string(),
+        })
 }
 
 /// Resolve a tenant string to its stable u64 via `resolver`, or fail closed.
@@ -169,10 +191,20 @@ fn map_provision_err(e: ProvisionError) -> (StatusCode, Json<OperatorErrorRespon
             Json(OperatorErrorResponse {
                 error: "tenant_unresolved",
                 message: format!(
-                    "tenant '{tenant}' has no stable id; create a table under the tenant first \
-                     so the catalog mints its account id"
+                    "tenant '{tenant}' has no stable id and the configured catalog did not mint \
+                     one; use the native or system catalog authority"
                 ),
                 code: 422,
+            }),
+        ),
+        ProvisionError::TenantMintFailed { tenant, message } => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(OperatorErrorResponse {
+                error: "tenant_mint_failed",
+                message: format!(
+                    "tenant '{tenant}' stable id could not be durably minted: {message}"
+                ),
+                code: 503,
             }),
         ),
     }
@@ -362,6 +394,9 @@ pub async fn put_policy_binding(
     let user_id = authorize_operator(user_context.as_ref().map(|e| &e.0))?;
     let store = require_binding_store(&state)?;
     let resolver = CatalogTenantStableIdResolver::new(state.catalog_manager.clone());
+    ensure_tenant(&resolver, &tenant)
+        .await
+        .map_err(map_provision_err)?;
     let binding = provision_policy_binding(store, &resolver, &tenant, object_id, body)
         .map_err(map_provision_err)?;
     tracing::info!(
@@ -410,6 +445,9 @@ pub async fn post_attribute_binding(
     let user_id = authorize_operator(user_context.as_ref().map(|e| &e.0))?;
     let authority = require_authority(&state)?;
     let resolver = CatalogTenantStableIdResolver::new(state.catalog_manager.clone());
+    ensure_tenant(&resolver, &body.tenant)
+        .await
+        .map_err(map_provision_err)?;
     let binding = provision_attribute_binding(
         authority,
         &resolver,
@@ -685,6 +723,42 @@ mod tests {
                 tenant: "ghost".into()
             }
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn provisioning_mints_tenant_without_a_dummy_table() {
+        let dir = unique_dir("catalog-mint");
+        let manager = Arc::new(crate::catalog::CatalogManager::new());
+        manager
+            .create_native_catalog("default", &format!("file://{}", dir.display()))
+            .await
+            .expect("native catalog");
+        let resolver = CatalogTenantStableIdResolver::new(manager.clone());
+
+        let minted = ensure_tenant(&resolver, "new-tenant")
+            .await
+            .expect("policy provisioning must mint the tenant");
+        assert_eq!(resolver.stable_id_of("new-tenant"), Some(minted));
+
+        let store = Arc::new(
+            FileSystemPolicyBindingStore::open(dir.join("policy.json")).expect("policy store"),
+        );
+        let binding = provision_policy_binding(
+            &store,
+            &resolver,
+            "new-tenant",
+            9,
+            PutPolicyBindingRequest {
+                scope: Scope::Table(200),
+                effect: Effect::Permit,
+                predicate_ref: None,
+                field_mask: None,
+            },
+        )
+        .expect("resolved-at-write binding");
+        assert_eq!(binding.tenant_stable_id, minted);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

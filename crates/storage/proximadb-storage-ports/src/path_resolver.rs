@@ -161,6 +161,37 @@ pub fn typed_identity_from_storage_assignment(
     })
 }
 
+/// Select the catalog identity for a physical typed-path lookup.
+///
+/// ADR-0083 makes the numeric identity authoritative and therefore persists it
+/// regardless of path layout. ADR-031 keeps the physical base62 layout behind
+/// `PROXIMADB_TYPED_PATHS` until its mixed-read migration is complete. Keeping
+/// those decisions separate is essential: an identity being present must not
+/// silently opt a collection into a different object-store prefix.
+pub fn typed_path_identity(identity: Option<CollectionIdentity>) -> Option<CollectionIdentity> {
+    typed_path_identity_when(identity, typed_paths_enabled())
+}
+
+/// Pure policy seam for deterministic tests and config-driven callers.
+pub fn typed_path_identity_when(
+    identity: Option<CollectionIdentity>,
+    enabled: bool,
+) -> Option<CollectionIdentity> {
+    enabled.then_some(identity).flatten()
+}
+
+/// Whether the base62 account/namespace/collection path layout is enabled.
+///
+/// Read once per process so every engine path observes one layout decision and
+/// cannot split reads from writes if the process environment changes later.
+pub fn typed_paths_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| match std::env::var("PROXIMADB_TYPED_PATHS") {
+        Ok(value) => value == "1" || value.eq_ignore_ascii_case("true"),
+        Err(_) => false,
+    })
+}
+
 /// ADR-031 Phase 4c: typed collection **data** directory path.
 ///
 /// * `Some(identity)` → `{base}/accounts/{acct}/{ns}/{coll}/data`

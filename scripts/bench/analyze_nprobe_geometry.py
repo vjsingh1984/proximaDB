@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Fit and visualize the PAX nprobe/recall scale relationship.
+"""Analyze and visualize measured PAX nprobe/recall/cost geometry.
 
-The input is the auditable JSON emitted by ``nprobe_sweep.py``.  Two knees are
-reported because they answer different questions:
+The input is auditable JSON emitted by :mod:`nprobe_sweep`. The analyzer keeps
+two decisions separate:
 
-* ``curve_bend`` is the unconstrained diminishing-return elbow (Kneedle on
-  log-nprobe versus recall).
-* ``quality_floor`` is the smallest measured nprobe satisfying the requested
-  recall ratchet.  This is the deployable cost/quality recommendation.
+* ``economy_profile`` is the unconstrained diminishing-return knee on a
+  measured recall/cost Pareto frontier. Physical GET/query is the primary
+  objective for Azure/Azurite evidence because Azure bills hot-tier reads per
+  operation.
+* ``quality_profile`` is the least measured nprobe satisfying an explicit
+  recall target. It reports ``unattained`` instead of redefining that target.
 
-The power law is fit only to measured quality floors.  It is descriptive
-evidence, not permission to extrapolate beyond the measured cell-count range.
+Power laws are descriptive fits over the independently measured knees/floors.
+They are not permission to extrapolate outside the measured cell-count range.
 """
 
 from __future__ import annotations
@@ -31,51 +33,101 @@ def sorted_points(points: list[dict]) -> list[dict]:
     return ordered
 
 
-def quality_floor(points: list[dict], target_recall: float) -> dict:
-    """Return the least-work measured point satisfying the recall contract."""
+def metric_value(point: dict, key: str) -> float:
+    """Read a numeric point metric, including dotted nested keys."""
+    value: object = point
+    for component in key.split("."):
+        if not isinstance(value, dict) or component not in value:
+            raise RuntimeError(f"point is missing cost metric {key!r}")
+        value = value[component]
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(f"point cost metric {key!r} is not numeric") from error
+    if not math.isfinite(numeric):
+        raise RuntimeError(f"point cost metric {key!r} is not finite")
+    return numeric
+
+
+def quality_profile(points: list[dict], target_recall: float) -> dict:
+    """Report whether, and where, the measured curve attains the SLA."""
+    ordered = sorted_points(points)
     candidates = [
-        point
-        for point in sorted_points(points)
-        if float(point["recall_at_k"]) >= target_recall
+        point for point in ordered if float(point["recall_at_k"]) >= target_recall
     ]
     if not candidates:
-        raise RuntimeError(
-            f"no measured nprobe reaches recall target {target_recall:.6f}"
+        maximum = max(
+            ordered,
+            key=lambda point: (float(point["recall_at_k"]), int(point["nprobe"])),
         )
+        return {
+            "status": "unattained",
+            "target_recall": target_recall,
+            "point": None,
+            "max_measured_recall": float(maximum["recall_at_k"]),
+            "max_measured_nprobe": int(maximum["nprobe"]),
+        }
     # nprobe is the stable work coordinate. GETs can be non-monotone because
     # adjacent ranges coalesce and are therefore a secondary tie-break only.
-    return min(
+    point = min(
         candidates,
-        key=lambda point: (
-            int(point["nprobe"]),
-            float(point["gets_per_query"]),
+        key=lambda candidate: (
+            int(candidate["nprobe"]),
+            float(candidate["gets_per_query"]),
         ),
     )
+    return {
+        "status": "attained",
+        "target_recall": target_recall,
+        "point": point,
+        "max_measured_recall": max(
+            float(candidate["recall_at_k"]) for candidate in ordered
+        ),
+        "max_measured_nprobe": max(int(candidate["nprobe"]) for candidate in ordered),
+    }
 
 
-def curve_bend(points: list[dict]) -> dict:
-    """Return the Kneedle elbow for a monotone recall curve.
+def pareto_frontier(points: list[dict], cost_key: str) -> list[dict]:
+    """Return points not dominated by a cheaper point with equal recall."""
+    ordered = sorted(
+        sorted_points(points),
+        key=lambda point: (
+            metric_value(point, cost_key),
+            -float(point["recall_at_k"]),
+            int(point["nprobe"]),
+        ),
+    )
+    if any(metric_value(point, cost_key) <= 0.0 for point in ordered):
+        raise RuntimeError(f"curve bend requires positive {cost_key}")
+    frontier = []
+    best_recall = -math.inf
+    for point in ordered:
+        recall = float(point["recall_at_k"])
+        if recall > best_recall:
+            frontier.append(point)
+            best_recall = recall
+    return frontier
 
-    X is log(nprobe), because probe sweeps are geometric.  Y is the monotone
-    envelope of recall, preventing sampling noise from inventing a false bend.
-    The selected interior point maximizes normalized ``y - x``.
+
+def curve_bend(points: list[dict], cost_key: str) -> dict:
+    """Return the Kneedle elbow for a measured recall/cost Pareto frontier.
+
+    X is log(cost), because probe sweeps and their physical costs are geometric.
+    Dominated samples are removed before the selected interior point maximizes
+    normalized ``y - x``.
     """
-    ordered = sorted_points(points)
+    ordered = pareto_frontier(points, cost_key)
     if len(ordered) < 3:
         raise RuntimeError("curve bend requires at least three points")
-    monotone_recall = []
-    high = -math.inf
-    for point in ordered:
-        high = max(high, float(point["recall_at_k"]))
-        monotone_recall.append(high)
-    x_values = [math.log(float(point["nprobe"])) for point in ordered]
+    recalls = [float(point["recall_at_k"]) for point in ordered]
+    x_values = [math.log(metric_value(point, cost_key)) for point in ordered]
     x_span = x_values[-1] - x_values[0]
-    y_span = monotone_recall[-1] - monotone_recall[0]
+    y_span = recalls[-1] - recalls[0]
     if x_span <= 0.0 or y_span <= 0.0:
-        raise RuntimeError("curve bend requires increasing probe and recall ranges")
+        raise RuntimeError("curve bend requires increasing cost and recall ranges")
     distances = [
         (
-            (monotone_recall[index] - monotone_recall[0]) / y_span
+            (recalls[index] - recalls[0]) / y_span
             - (x_values[index] - x_values[0]) / x_span,
             index,
         )
@@ -83,6 +135,27 @@ def curve_bend(points: list[dict]) -> dict:
     ]
     _, best_index = max(distances, key=lambda candidate: (candidate[0], candidate[1]))
     return ordered[best_index]
+
+
+def natural_knee_profile(points: list[dict], cost_key: str) -> dict:
+    """Return a structured knee so sparse curves remain valid evidence."""
+    frontier = pareto_frontier(points, cost_key)
+    try:
+        point = curve_bend(points, cost_key)
+    except RuntimeError as error:
+        return {
+            "status": "unavailable",
+            "cost_metric": cost_key,
+            "point": None,
+            "frontier_point_count": len(frontier),
+            "reason": str(error),
+        }
+    return {
+        "status": "measured",
+        "cost_metric": cost_key,
+        "point": point,
+        "frontier_point_count": len(frontier),
+    }
 
 
 def _ordinary_log_fit(samples: list[dict]) -> tuple[float, float]:
@@ -156,28 +229,97 @@ def load_matrix(path: Path) -> dict:
         raise RuntimeError(f"{path}: fit requires exactly one settled PAX segment")
     if geometry.get("row_count") != result.get("dataset", {}).get("corpus_rows"):
         raise RuntimeError(f"{path}: settled rows differ from corpus rows")
-    if result.get("status") != "pass":
-        raise RuntimeError(f"{path}: matrix did not pass its evidence gates")
+    status = result.get("status")
+    if status == "running":
+        raise RuntimeError(f"{path}: matrix checkpoint is still running")
+    if status not in {"pass", "fail", "incomplete"}:
+        raise RuntimeError(f"{path}: unexpected matrix status {status!r}")
+    measurement_failures = result.get("measurement_failures")
+    if measurement_failures is None:
+        # Read-only evidence compatibility for checkpoints emitted before
+        # quality outcomes were separated from measurement failures.
+        measurement_failures = result.get("failures", [])
+    if measurement_failures:
+        raise RuntimeError(f"{path}: matrix has measurement failures")
+    checkpoint = result.get("checkpoint", {})
+    matrix = result.get("matrix", {})
+    points = matrix.get("points", [])
+    configured_point_count = len(matrix.get("nprobes", [])) * len(
+        matrix.get("top_k_values", [])
+    )
+    if status == "incomplete":
+        if checkpoint.get("state") != "incomplete":
+            raise RuntimeError(f"{path}: inconsistent incomplete checkpoint")
+        if checkpoint.get("completed_points") != len(points) or not points:
+            raise RuntimeError(f"{path}: incomplete checkpoint point count differs")
+        if checkpoint.get("expected_points") != configured_point_count:
+            raise RuntimeError(f"{path}: incomplete checkpoint plan differs")
+    if status in {"pass", "fail"}:
+        if checkpoint:
+            if checkpoint.get("state") != status:
+                raise RuntimeError(f"{path}: terminal checkpoint state differs")
+            if checkpoint.get("completed_points") != len(points):
+                raise RuntimeError(f"{path}: terminal checkpoint point count differs")
+            if checkpoint.get("expected_points") != len(points):
+                raise RuntimeError(
+                    f"{path}: terminal matrix is missing measured points"
+                )
+        elif status == "pass":
+            # Read-only evidence compatibility for complete matrices emitted
+            # before atomic checkpoints were added to this benchmark harness.
+            if configured_point_count != len(points):
+                raise RuntimeError(
+                    f"{path}: terminal matrix is missing measured points"
+                )
+    if status == "fail":
+        if "measurement_failures" not in result:
+            raise RuntimeError(f"{path}: legacy failed matrix cannot attribute failure")
+        quality_outcomes = result.get("quality_outcomes", [])
+        if result.get("matrix", {}).get("quality_policy") != "require" or not any(
+            outcome.get("status") == "unattained" for outcome in quality_outcomes
+        ):
+            raise RuntimeError(f"{path}: failed matrix has no attributable failure")
     return result
 
 
-def summarize_matrix(result: dict, target_recall: float, source: Path) -> dict:
+KNEE_COST_METRICS = (
+    "nprobe",
+    "gets_per_query",
+    "bytes_per_query",
+    "latency_ms.p50",
+    "latency_ms.p95",
+)
+
+
+def summarize_matrix(
+    result: dict,
+    target_recall: float,
+    sources: list[dict],
+    measurement_coverage: dict,
+) -> dict:
     points = result["matrix"]["points"]
     top_k_values = sorted({int(point["top_k"]) for point in points})
     curves = {}
     for top_k in top_k_values:
         curve = [point for point in points if int(point["top_k"]) == top_k]
+        natural_knees = {
+            metric: natural_knee_profile(curve, metric) for metric in KNEE_COST_METRICS
+        }
         curves[str(top_k)] = {
-            "curve_bend": curve_bend(curve),
-            "quality_floor": quality_floor(curve, target_recall),
+            "natural_knees": natural_knees,
+            "economy_profile": {
+                "objective": "gets_per_query",
+                **natural_knees["gets_per_query"],
+            },
+            "quality_profile": quality_profile(curve, target_recall),
         }
     segment = result["settled_geometry"]["segments"][0]
     corpus_rows = int(result["dataset"]["corpus_rows"])
     dimension = int(result["dataset"]["dimension"])
     coarse_cells = int(segment["coarse_cells"])
     return {
-        "source": str(source.resolve()),
-        "source_sha256": _sha256(source),
+        "sources": sources,
+        "measurement_coverage": measurement_coverage,
         "corpus_rows": corpus_rows,
         "dimension": dimension,
         "coarse_cells": coarse_cells,
@@ -191,7 +333,10 @@ def summarize_matrix(result: dict, target_recall: float, source: Path) -> dict:
         "empty_cell_fraction": segment.get("empty_cell_fraction"),
         "radius_summary": segment.get("radius_summary"),
         "curves": curves,
-        "points": points,
+        "points": sorted(
+            points,
+            key=lambda point: (int(point["top_k"]), int(point["nprobe"])),
+        ),
     }
 
 
@@ -205,31 +350,85 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def build_analysis(matrices: list[Path], target_recall: float) -> dict:
-    scales = [
-        summarize_matrix(load_matrix(path), target_recall, path) for path in matrices
-    ]
-    scales.sort(key=lambda scale: scale["corpus_rows"])
-    if len({scale["corpus_rows"] for scale in scales}) != len(scales):
-        raise RuntimeError("duplicate corpus scale in input matrices")
-    top_k_values = sorted(
-        set.intersection(
-            *[{int(value) for value in scale["curves"]} for scale in scales]
+def _segment_provenance(segment: dict) -> dict:
+    return {
+        key: segment.get(key)
+        for key in (
+            "path",
+            "blob_etag",
+            "bytes",
+            "layout_version",
+            "coarse_cells",
+            "coarse_seed",
         )
-    )
-    fits = {}
-    for top_k in top_k_values:
-        samples = [
-            {
-                "corpus_rows": scale["corpus_rows"],
-                "coarse_cells": scale["coarse_cells"],
-                "nprobe": scale["curves"][str(top_k)]["quality_floor"]["nprobe"],
-            }
-            for scale in scales
-        ]
-        fit = fit_power_law(samples)
-        fit["samples"] = samples
-        fit["comparison"] = [
+    }
+
+
+def matrix_provenance(result: dict) -> dict:
+    """Return immutable identity; intentionally exclude snapshot timestamps."""
+    dataset = result.get("dataset", {})
+    filesystem = result.get("filesystem_profile", {})
+    geometry = result.get("settled_geometry", {})
+    return {
+        "git_revision": result.get("git_revision"),
+        "collection_id": result.get("collection_id"),
+        "binary": {
+            "sha256": result.get("binary", {}).get("sha256"),
+            "source_revision": result.get("binary", {}).get("source_revision"),
+        },
+        "bed_config_sha256": result.get("bed_config", {}).get("sha256"),
+        "dataset": {
+            key: dataset.get(key)
+            for key in (
+                "base",
+                "base_format",
+                "corpus_rows",
+                "dimension",
+                "queries_path",
+                "query_format",
+                "groundtruth",
+                "groundtruth_format",
+                "groundtruth_scope_rows",
+                "groundtruth_width",
+                "query_range",
+            )
+        },
+        "filesystem": {
+            "storage_url": filesystem.get("storage_url"),
+            "azurite": filesystem.get("azurite"),
+            "persistent_local_tier": filesystem.get("persistent_local_tier"),
+        },
+        "compute_profile": result.get("compute_profile"),
+        "settled_geometry": {
+            "segment_count": geometry.get("segment_count"),
+            "row_count": geometry.get("row_count"),
+            "segments": [
+                _segment_provenance(segment) for segment in geometry.get("segments", [])
+            ],
+        },
+    }
+
+
+def _fit_series(samples: list[dict]) -> dict:
+    ordered = sorted(samples, key=lambda sample: int(sample["corpus_rows"]))
+    if len(ordered) < 3:
+        return {
+            "status": "insufficient_samples",
+            "sample_count": len(ordered),
+            "samples": ordered,
+        }
+    fit = fit_power_law(ordered)
+    return {
+        "status": "fit",
+        "evidence_status": (
+            "complete"
+            if all(sample["measurement_coverage"] == "complete" for sample in ordered)
+            else "provisional_partial_input"
+        ),
+        **fit,
+        "sample_count": len(ordered),
+        "samples": ordered,
+        "comparison": [
             {
                 **sample,
                 "fitted_nprobe": fit["coefficient"]
@@ -238,11 +437,114 @@ def build_analysis(matrices: list[Path], target_recall: float) -> dict:
                     2.0 * math.sqrt(sample["coarse_cells"])
                 ),
             }
-            for sample in samples
-        ]
-        fits[str(top_k)] = fit
+            for sample in ordered
+        ],
+    }
+
+
+def build_analysis(matrices: list[Path], target_recall: float) -> dict:
+    if not matrices:
+        raise RuntimeError("analysis requires at least one matrix")
+    grouped: dict[int, list[tuple[Path, dict]]] = {}
+    for path in matrices:
+        result = load_matrix(path)
+        corpus_rows = int(result["dataset"]["corpus_rows"])
+        grouped.setdefault(corpus_rows, []).append((path, result))
+
+    scales = []
+    for corpus_rows, entries in grouped.items():
+        expected_provenance = matrix_provenance(entries[0][1])
+        if any(
+            matrix_provenance(result) != expected_provenance
+            for _, result in entries[1:]
+        ):
+            raise RuntimeError(
+                f"corpus scale {corpus_rows}: checkpoint provenance differs"
+            )
+        merged_points = []
+        identities: set[tuple[int, int]] = set()
+        expected_identities: set[tuple[int, int]] = set()
+        sources = []
+        statuses = []
+        for path, result in entries:
+            statuses.append(str(result["status"]))
+            sources.append(
+                {
+                    "path": str(path.resolve()),
+                    "sha256": _sha256(path),
+                    "status": result["status"],
+                    "checkpoint": result.get("checkpoint"),
+                }
+            )
+            expected_identities.update(
+                (int(nprobe), int(top_k))
+                for nprobe in result["matrix"].get("nprobes", [])
+                for top_k in result["matrix"].get("top_k_values", [])
+            )
+            for point in result["matrix"]["points"]:
+                identity = (int(point["nprobe"]), int(point["top_k"]))
+                if identity in identities:
+                    raise RuntimeError(
+                        f"corpus scale {corpus_rows}: duplicate measured point "
+                        f"nprobe={identity[0]} top_k={identity[1]}"
+                    )
+                identities.add(identity)
+                merged_points.append(point)
+        merged = dict(entries[0][1])
+        merged["matrix"] = dict(merged["matrix"])
+        merged["matrix"]["points"] = merged_points
+        coverage_status = (
+            "complete"
+            if all(status in {"pass", "fail"} for status in statuses)
+            else "partial"
+        )
+        expected_point_count = len(expected_identities)
+        if expected_point_count == 0:
+            raise RuntimeError(f"corpus scale {corpus_rows}: empty measurement plan")
+        coverage = {
+            "status": coverage_status,
+            "source_count": len(entries),
+            "source_statuses": statuses,
+            "measured_point_count": len(merged_points),
+            "expected_point_count": expected_point_count,
+            "completion_fraction": len(merged_points) / expected_point_count,
+        }
+        scales.append(summarize_matrix(merged, target_recall, sources, coverage))
+
+    scales.sort(key=lambda scale: scale["corpus_rows"])
+    top_k_values = sorted({int(value) for scale in scales for value in scale["curves"]})
+    fits = {"natural_knee": {}, "quality_floor": {}}
+    for top_k in top_k_values:
+        natural_samples = []
+        quality_samples = []
+        for scale in scales:
+            curve = scale["curves"].get(str(top_k))
+            if curve is None:
+                continue
+            economy = curve["economy_profile"]
+            if economy["status"] == "measured":
+                natural_samples.append(
+                    {
+                        "corpus_rows": scale["corpus_rows"],
+                        "coarse_cells": scale["coarse_cells"],
+                        "nprobe": int(economy["point"]["nprobe"]),
+                        "measurement_coverage": scale["measurement_coverage"]["status"],
+                    }
+                )
+            quality = curve["quality_profile"]
+            if quality["status"] == "attained":
+                quality_samples.append(
+                    {
+                        "corpus_rows": scale["corpus_rows"],
+                        "coarse_cells": scale["coarse_cells"],
+                        "nprobe": int(quality["point"]["nprobe"]),
+                        "measurement_coverage": scale["measurement_coverage"]["status"],
+                    }
+                )
+        fits["natural_knee"][str(top_k)] = _fit_series(natural_samples)
+        fits["quality_floor"][str(top_k)] = _fit_series(quality_samples)
     return {
-        "protocol": "pax_five_point_nprobe_geometry_analysis",
+        "protocol": "pax_nprobe_geometry_analysis_v2",
         "target_recall": target_recall,
         "scale_count": len(scales),
         "scales": scales,
@@ -253,12 +555,13 @@ def build_analysis(matrices: list[Path], target_recall: float) -> dict:
                 "therefore the fitted deployment form is coefficient * "
                 "(corpus_rows * dimension / 4MiB) ^ exponent"
             ),
-            "recommendation_rule": (
-                "minimum measured nprobe whose recall meets the target"
+            "economy_rule": (
+                "maximum normalized Kneedle distance on log(GET/query) versus "
+                "recall after removing cost-dominated points"
             ),
-            "curve_bend_rule": (
-                "maximum Kneedle distance on log(nprobe) versus the monotone "
-                "recall envelope"
+            "quality_rule": (
+                "minimum measured nprobe whose recall meets the explicit target; "
+                "report unattained rather than lowering the target"
             ),
             "extrapolation": (
                 "descriptive only within measured_cell_range; clamp to "
@@ -316,14 +619,17 @@ def write_svg(analysis: dict, destination: Path) -> None:
         "<style>",
         "text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#18212b}",
         ".grid{stroke:#d9e1e8;stroke-width:1}.axis{stroke:#536272;stroke-width:1.5}",
-        ".knee{stroke:#111827;stroke-width:2.5;fill:none}",
+        ".natural-knee{stroke:#111827;stroke-width:2.5;fill:none}",
+        ".quality-floor{stroke:#111827;stroke-width:2.5;fill:none;"
+        "stroke-dasharray:5 4}",
         "</style>",
         '<rect width="100%" height="100%" fill="#fbfdff"/>',
         '<text x="95" y="34" font-size="22" font-weight="700">'
         "PAX nprobe scale geometry — release/Azurite evidence</text>",
         f'<text x="95" y="56" font-size="13">Bubble area scales with nprobe; '
-        f"color scales with physical GET/query; ring = minimum nprobe at recall ≥ "
-        f"{analysis['target_recall']:.3f}; x jitter only separates bubbles.</text>",
+        f"color scales with physical GET/query; solid ring = GET knee; dashed "
+        f"ring = first recall ≥ {analysis['target_recall']:.3f} when attained; "
+        "x jitter only separates bubbles.</text>",
     ]
     for tick in range(6):
         recall = y_min + (1.0 - y_min) * tick / 5
@@ -384,13 +690,23 @@ def write_svg(analysis: dict, destination: Path) -> None:
                 f"{dash}><title>{tooltip}</title></circle>"
             )
         for top_k_text, curve in scale["curves"].items():
-            knee = curve["quality_floor"]
-            cx = x_position(scale["corpus_rows"], int(knee["nprobe"]), int(top_k_text))
-            cy = y_position(float(knee["recall_at_k"]))
-            radius = 6.0 + 13.0 * math.sqrt(int(knee["nprobe"]) / max_probe)
-            svg.append(
-                f'<circle class="knee" cx="{cx:.2f}" cy="{cy:.2f}" r="{radius:.2f}"/>'
+            marker_profiles = (
+                ("natural-knee", curve["economy_profile"]),
+                ("quality-floor", curve["quality_profile"]),
             )
+            for marker_class, profile in marker_profiles:
+                knee = profile.get("point")
+                if knee is None:
+                    continue
+                cx = x_position(
+                    scale["corpus_rows"], int(knee["nprobe"]), int(top_k_text)
+                )
+                cy = y_position(float(knee["recall_at_k"]))
+                radius = 6.0 + 13.0 * math.sqrt(int(knee["nprobe"]) / max_probe)
+                svg.append(
+                    f'<circle class="{marker_class}" cx="{cx:.2f}" '
+                    f'cy="{cy:.2f}" r="{radius:.2f}"/>'
+                )
     svg.extend(
         [
             f'<line class="axis" x1="{left}" y1="{top}" x2="{left}" '
@@ -494,7 +810,7 @@ def write_dual_axis_svg(analysis: dict, destination: Path) -> None:
     svg.append(
         f'<line x1="{left}" y1="{target_y:.2f}" x2="{width - right}" '
         f'y2="{target_y:.2f}" stroke="#111827" stroke-dasharray="9 5">'
-        f'<title>recall target {analysis["target_recall"]:.3f}</title></line>'
+        f"<title>recall target {analysis['target_recall']:.3f}</title></line>"
     )
     if max_gets >= 10.0:
         budget_y = gets_y(10.0)
@@ -512,13 +828,13 @@ def write_dual_axis_svg(analysis: dict, destination: Path) -> None:
                 key=lambda point: int(point["nprobe"]),
             )
             recall_path = " ".join(
-                f'{x_position(int(point["nprobe"]) / coarse_cells):.2f},'
-                f'{recall_y(float(point["recall_at_k"])):.2f}'
+                f"{x_position(int(point['nprobe']) / coarse_cells):.2f},"
+                f"{recall_y(float(point['recall_at_k'])):.2f}"
                 for point in points
             )
             gets_path = " ".join(
-                f'{x_position(int(point["nprobe"]) / coarse_cells):.2f},'
-                f'{gets_y(float(point["gets_per_query"])):.2f}'
+                f"{x_position(int(point['nprobe']) / coarse_cells):.2f},"
+                f"{gets_y(float(point['gets_per_query'])):.2f}"
                 for point in points
             )
             opacity = 1.0 if top_k == 10 else 0.55
@@ -563,8 +879,8 @@ def write_dual_axis_svg(analysis: dict, destination: Path) -> None:
                 f'x2="{legend_x + 30}" y2="{legend_y}" stroke="{color}" '
                 'stroke-width="3"/>',
                 f'<text x="{legend_x + 39}" y="{legend_y + 4}" font-size="12">'
-                f'{scale_label(int(scale["corpus_rows"]))} '
-                f'(k_c={coarse_cells})</text>',
+                f"{scale_label(int(scale['corpus_rows']))} "
+                f"(k_c={coarse_cells})</text>",
             ]
         )
     svg.extend(
@@ -577,7 +893,7 @@ def write_dual_axis_svg(analysis: dict, destination: Path) -> None:
             f'x2="{width - right}" y2="{height - bottom}"/>',
             f'<text x="{left + plot_width / 2:.2f}" y="{height - 28}" '
             'text-anchor="middle" font-size="14">Normalized probe fraction '
-            '(nprobe / k_c)</text>',
+            "(nprobe / k_c)</text>",
             f'<text x="24" y="{top + plot_height / 2:.2f}" text-anchor="middle" '
             f'font-size="14" transform="rotate(-90 24 {top + plot_height / 2:.2f})">'
             "Recall</text>",
@@ -606,9 +922,7 @@ def write_pareto_svg(analysis: dict, destination: Path) -> None:
     recall_max = 1.005
 
     def x_position(recall: float) -> float:
-        return left + plot_width * (recall - x_min) / max(
-            recall_max - x_min, 1e-12
-        )
+        return left + plot_width * (recall - x_min) / max(recall_max - x_min, 1e-12)
 
     def y_position(gets: float) -> float:
         return top + plot_height * (1.0 - gets / max(max_gets, 1e-12))
@@ -619,14 +933,18 @@ def write_pareto_svg(analysis: dict, destination: Path) -> None:
         "<style>",
         "text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#18212b}",
         ".grid{stroke:#d9e1e8;stroke-width:1}.axis{stroke:#536272;stroke-width:1.5}",
-        ".knee{stroke:#111827;stroke-width:2.5;fill:none}",
+        ".natural-knee{stroke:#111827;stroke-width:2.5;fill:none}",
+        ".quality-floor{stroke:#111827;stroke-width:2.5;fill:none;"
+        "stroke-dasharray:5 4}",
         "</style>",
         '<rect width="100%" height="100%" fill="#fbfdff"/>',
         f'<text x="{left}" y="34" font-size="22" font-weight="700">'
         "Recall → GET/query Pareto frontier</text>",
         f'<text x="{left}" y="57" font-size="13">'
-        "Bubble area scales with actual rows probed / corpus rows; ring = first point at "
-        f'recall ≥ {analysis["target_recall"]:.3f}; circle = top-10; square = top-20.</text>',
+        "Bubble area scales with actual rows probed / corpus rows; solid ring = GET "
+        "knee; dashed ring = first point at "
+        f"recall ≥ {analysis['target_recall']:.3f} when attained; circle = top-10; "
+        "square = top-20.</text>",
     ]
     for tick in range(6):
         fraction = tick / 5
@@ -667,8 +985,8 @@ def write_pareto_svg(analysis: dict, destination: Path) -> None:
                 key=lambda point: int(point["nprobe"]),
             )
             path = " ".join(
-                f'{x_position(float(point["recall_at_k"])):.2f},'
-                f'{y_position(float(point["gets_per_query"])):.2f}'
+                f"{x_position(float(point['recall_at_k'])):.2f},"
+                f"{y_position(float(point['gets_per_query'])):.2f}"
                 for point in points
             )
             opacity = 1.0 if top_k == 10 else 0.55
@@ -703,19 +1021,27 @@ def write_pareto_svg(analysis: dict, destination: Path) -> None:
                         f'fill="{color}" fill-opacity=".38" stroke="{color}">'
                         f"<title>{tooltip}</title></rect>"
                     )
-            knee = curve_summary["quality_floor"]
-            knee_x = x_position(float(knee["recall_at_k"]))
-            knee_y = y_position(float(knee["gets_per_query"]))
-            svg.append(
-                f'<circle class="knee" cx="{knee_x:.2f}" cy="{knee_y:.2f}" r="17"/>'
+            marker_profiles = (
+                ("natural-knee", curve_summary["economy_profile"]),
+                ("quality-floor", curve_summary["quality_profile"]),
             )
+            for marker_class, profile in marker_profiles:
+                knee = profile.get("point")
+                if knee is None:
+                    continue
+                knee_x = x_position(float(knee["recall_at_k"]))
+                knee_y = y_position(float(knee["gets_per_query"]))
+                svg.append(
+                    f'<circle class="{marker_class}" cx="{knee_x:.2f}" '
+                    f'cy="{knee_y:.2f}" r="17"/>'
+                )
         legend_x = left + scale_index * 185
         legend_y = 82
         svg.extend(
             [
                 f'<circle cx="{legend_x}" cy="{legend_y}" r="5" fill="{color}"/>',
                 f'<text x="{legend_x + 12}" y="{legend_y + 4}" font-size="12">'
-                f'{scale_label(corpus_rows)} (k_c={scale["coarse_cells"]})</text>',
+                f"{scale_label(corpus_rows)} (k_c={scale['coarse_cells']})</text>",
             ]
         )
     svg.extend(

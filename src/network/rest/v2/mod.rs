@@ -28,6 +28,7 @@
 //! - `DELETE /api/v2/collections/{collection}/records/{id}` - Delete a ProximaRecord
 //! - `POST /api/v2/collections/{collection}/search` - Search with typed filters
 //! - `POST /api/v2/query` - Execute AQL/UQL through the shared query facade
+//! - `POST /api/v2/sql` - Execute one SQL statement through the shared SQL authority
 //!
 //! ## Key Features
 //!
@@ -51,6 +52,7 @@ pub mod graphs;
 pub mod query;
 pub mod records;
 pub mod schema;
+pub mod sql;
 pub mod timeseries;
 
 pub use collections::*;
@@ -86,6 +88,7 @@ use super::canonical::handlers::AppState;
 /// ### Query
 /// - `POST /query` - Execute AQL/UQL through UnifiedQueryPort
 /// - `POST /query/explain` - Explain AQL/UQL through UnifiedQueryPort
+/// - `POST /sql` - Execute one authenticated SQL statement through ApiHandlersPort
 pub fn create_v2_router() -> Router<AppState> {
     use axum::routing::{delete, get, post, put};
 
@@ -154,6 +157,9 @@ pub fn create_v2_router() -> Router<AppState> {
         // Query facade operations
         .route("/query", post(query::execute_query))
         .route("/query/explain", post(query::explain_query))
+        // Canonical HTTP/JSON SQL adapter. This owns transport validation and
+        // result shaping only; execution is the same shared authority as gRPC.
+        .route("/sql", post(sql::execute_sql))
         // Time-series surface (TD-TS-1) — native TST engine over the SDK contract.
         .route(
             "/timeseries/collections",

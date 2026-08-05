@@ -311,14 +311,17 @@ impl UnifiedStorageFormat for SstEngine {
         ids: &[String],
         identity: Option<crate::core::stable_id::CollectionIdentity>,
     ) -> Result<Vec<proximadb_records::ProximaRecord>> {
-        use crate::storage::trait_components::path_resolver::collection_data_path_typed;
+        use crate::storage::trait_components::path_resolver::{
+            collection_data_path_typed, typed_path_identity,
+        };
         use std::collections::HashSet;
 
         if ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        let data_path = collection_data_path_typed(base_path, collection_id, identity);
+        let data_path =
+            collection_data_path_typed(base_path, collection_id, typed_path_identity(identity));
         let all_records = self
             .read_all_records(collection_id, Some(&data_path))
             .await?;
