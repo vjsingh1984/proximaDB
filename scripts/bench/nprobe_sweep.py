@@ -173,7 +173,8 @@ def checkpoint_identity(result: dict) -> dict:
         "matrix_config": {
             "nprobes": matrix["nprobes"],
             "top_k_values": matrix["top_k_values"],
-            "min_recall": matrix["min_recall"],
+            "target_recall": matrix["target_recall"],
+            "quality_policy": matrix["quality_policy"],
         },
     }
 
@@ -226,6 +227,50 @@ def write_checkpoint(
     temporary.replace(output)
 
 
+def evaluate_quality(
+    points: list[dict],
+    top_k_values: list[int],
+    target_recall: float,
+) -> list[dict]:
+    """Report target attainment independently of measurement validity."""
+    outcomes = []
+    for top_k in top_k_values:
+        recalls = [
+            float(point["recall_at_k"])
+            for point in points
+            if int(point["top_k"]) == top_k
+        ]
+        maximum = max(recalls) if recalls else None
+        outcomes.append(
+            {
+                "top_k": top_k,
+                "target_recall": target_recall,
+                "status": (
+                    "attained"
+                    if maximum is not None and maximum >= target_recall
+                    else "unattained"
+                ),
+                "max_measured_recall": maximum,
+            }
+        )
+    return outcomes
+
+
+def final_status(
+    measurement_failures: list[str],
+    quality_outcomes: list[dict],
+    quality_policy: str,
+) -> str:
+    """Keep measurement failures fatal; make SLA gating an explicit policy."""
+    if measurement_failures:
+        return "fail"
+    if quality_policy == "require" and any(
+        outcome["status"] != "attained" for outcome in quality_outcomes
+    ):
+        return "fail"
+    return "pass"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
@@ -263,7 +308,16 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=5690)
     parser.add_argument("--max-segments", type=int, default=1)
     parser.add_argument("--required-layout-version", type=int, default=3)
-    parser.add_argument("--min-recall", type=float, default=0.98)
+    parser.add_argument("--target-recall", type=float, default=0.98)
+    parser.add_argument(
+        "--quality-policy",
+        choices=("require", "report"),
+        default="require",
+        help=(
+            "require fails when the target is unattained; report preserves the "
+            "valid measurement and records target attainment separately"
+        ),
+    )
     parser.add_argument("--azurite", action="store_true")
     parser.add_argument(
         "--resume",
@@ -294,8 +348,8 @@ def main() -> int:
         raise RuntimeError("ground-truth scope must equal the measured corpus rows")
     if args.queries <= 0 or args.query_start < 0:
         raise RuntimeError("query count must be positive and start non-negative")
-    if not 0.0 < args.min_recall <= 1.0:
-        raise RuntimeError("--min-recall must be in (0, 1]")
+    if not 0.0 < args.target_recall <= 1.0:
+        raise RuntimeError("--target-recall must be in (0, 1]")
     if not args.collection_id.isdecimal():
         raise RuntimeError("--collection-id must be a decimal catalog object id")
 
@@ -408,10 +462,12 @@ def main() -> int:
         "matrix": {
             "nprobes": nprobes,
             "top_k_values": top_k_values,
-            "min_recall": args.min_recall,
+            "target_recall": args.target_recall,
+            "quality_policy": args.quality_policy,
             "points": [],
         },
-        "failures": [],
+        "measurement_failures": [],
+        "quality_outcomes": [],
     }
 
     if args.resume:
@@ -478,34 +534,40 @@ def main() -> int:
             point["expected_cells_probed_per_query"] = expected_cells
             actual_cells = point["ivf"]["cells_probed_per_query"]
             if abs(actual_cells - expected_cells) > 0.01:
-                result["failures"].append(
+                result["measurement_failures"].append(
                     f"{label}: measured cells/query {actual_cells:.3f} "
                     f"!= expected {expected_cells}"
                 )
             if attribution_failure := ACCEPTANCE.ivf_byte_attribution_failure(
                 label, point
             ):
-                result["failures"].append(attribution_failure)
+                result["measurement_failures"].append(attribution_failure)
             result["matrix"]["points"].append(point)
             completed.add((nprobe, top_k))
             write_checkpoint(output, result, "running")
 
-    for top_k in top_k_values:
-        recalls = [
-            point["recall_at_k"]
-            for point in result["matrix"]["points"]
-            if point["top_k"] == top_k
-        ]
-        if not recalls or max(recalls) < args.min_recall:
-            result["failures"].append(
-                f"top_k={top_k}: no nprobe reaches recall {args.min_recall:.4f}"
-            )
-    final_status = "pass" if not result["failures"] else "fail"
-    write_checkpoint(output, result, final_status)
+    result["quality_outcomes"] = evaluate_quality(
+        result["matrix"]["points"], top_k_values, args.target_recall
+    )
+    status = final_status(
+        result["measurement_failures"],
+        result["quality_outcomes"],
+        args.quality_policy,
+    )
+    write_checkpoint(output, result, status)
     print(f"matrix result: {output}", flush=True)
-    if result["failures"]:
-        for failure in result["failures"]:
+    if result["measurement_failures"]:
+        for failure in result["measurement_failures"]:
             print(f"FAIL: {failure}", flush=True)
+    if args.quality_policy == "require":
+        for outcome in result["quality_outcomes"]:
+            if outcome["status"] != "attained":
+                print(
+                    f"FAIL: top_k={outcome['top_k']}: no nprobe reaches recall "
+                    f"{args.target_recall:.4f}",
+                    flush=True,
+                )
+    if status == "fail":
         return 1
     return 0
 

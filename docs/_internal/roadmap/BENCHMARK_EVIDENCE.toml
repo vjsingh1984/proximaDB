@@ -774,6 +774,23 @@ version = "3.3M develop-derived PR #1345 @ 06c9e5678fa7de6a782563bdeb2625e74ba6b
 notes = "3.3M matrix: 20 points, 1000 queries/point, status pass, no failures, SHA-256 5d32b83cf4987956d1bfb71ae93a77e67d76682c6b7b9464f167cea0066e8cc6. Exact binary SHA-256 d6b660cf425f4251f841d882d64420a137060668d6cdde150be215849598e431. Azurite is operation-count and relative-latency evidence, not Azure WAN latency. Cluster radii are persisted shape metadata but do not participate in current centroid-distance probe selection. The four-scale fit is cross-revision calibration evidence; rerun all scales on one binary before a canonical five-point publication."
 
 [[claims]]
+id = "bigann_nprobe_natural_knee_100k_10m_partial"
+claim = "Natural economy knees and recall quality floors are distinct decisions. Across complete 100K/330K/1M/3.3M matrices, the top-10 physical-GET knees are nprobe 2/3/4/7, while the recall>=0.98 floors are 3/5/7/11. Five provenance-identical partial 10M checkpoints provide 7 of 20 unique planned points: top-10 GET/byte/p50/p95 knees agree at nprobe=30 (recall 0.9744, 66.119 GET/query, 163.04 MB/query, 558.37 ms local-Azurite p50); the best measured recall is 0.9782 at nprobe=64, so 0.98 is explicitly unattained rather than lowered. The top-20 10M curve has one point and no defensible knee."
+metric = "natural Kneedle nprobe by physical cost + explicit recall-target attainment + checkpoint coverage/provenance"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/BIGANN_NPROBE_GEOMETRY_100K_10M_2026_08_04.adoc",
+  "docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc",
+]
+bench_source = "scripts/bench/nprobe_sweep.py"
+bench_command = "Run release/Azurite PAX v3 query-only matrices, using --quality-policy=report for discovery; analyze_nprobe_geometry.py merges the four complete lower scales plus five provenance-identical incomplete 10M checkpoints"
+artifact = "docs/_internal/status/BIGANN_NPROBE_GEOMETRY_100K_10M_2026_08_04.adoc"
+hardware = "Local macOS arm64 Apple Silicon, 64 GiB RAM, serialized release-server runs, Azurite localhost HTTP backend"
+date = "2026-08-04"
+version = "10M source/binary revision 955990254988bbf68acbfd616d8b1d7e12aa27c1; lower four matrices retain the revisions recorded by bigann_nprobe_geometry_100k_3m3"
+notes = "The 10M result is deliberately partial and the five-point natural-knee fit is labeled provisional_partial_input (log R2 0.8828, LOOCV MAPE 47.6%). The complete four-scale quality fits are unchanged. Input checkpoint SHA-256 values and generated SVG hashes are recorded in the artifact. Azurite supports physical-operation and relative-latency conclusions, not Azure WAN latency."
+
+[[claims]]
 id = "compaction_memory_amplification_3m3"
 claim = "After canonical-record and in-place-MVCC copy removal, a release-profile 3.3M-vector PAX compaction over the production Azure backend/Azurite path still consumes 9.85x incremental RSS per input-segment byte; input bytes are therefore a usable conservative admission currency, with 12x initial headroom"
 metric = "incremental_peak_rss_bytes / input_segment_bytes + compaction wall time + settled segment count + recall@10"
