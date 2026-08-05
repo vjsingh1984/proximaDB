@@ -132,20 +132,23 @@ metadata) are what stress ANN recall and filtered pre/post-filter behaviour.
   a dataset whose distance an adapter does not yet support. Live-validated
   end-to-end on Qdrant: SIFT fixture (L2, no filter) recall@10 = 1.0 vs exact-L2
   ground truth; synthetic path byte-identical (cosine/partition, recall 1.0).
-* **Slice 2b-ii-B — Wikipedia + the remaining five adapters.** Build the concrete
-  providers on the Slice-2a seam and 2b-i IO, and drive the rest of the fleet:
-  ** **Wikipedia passage embeddings WITH metadata** (DECIDED: e.g. Cohere
-     `wikipedia-22-12`) as the primary *filtered-corridor* driver — each vector
-     carries a real categorical field (`lang`, article `category`/`title`) so the
-     filter is correlated with content, which is what actually stresses
-     pre/post-filter behaviour. This is the differentiating measurement.
-  ** **Precompute filtered ground truth once**, offline, cached keyed by
-     `(corpus_hash, query_hash, k, filter_field)` — the pure-Python
-     `GroundTruthAccumulator` is `O(N*Q*dim)`, fine for validation, not for 1M.
-  ** **Make pgvector / Milvus / Elasticsearch / SurrealDB / ProximaDB
-     descriptor-driven** (distance + filter_field from the `DatasetDescriptor`,
-     as Qdrant now is) so SIFT (L2) and Wikipedia (cosine, `lang`) flow through
-     the whole fleet unchanged. Live-validate each against its container.
+* **Slice 2b-ii-B — Wikipedia filtered-corridor driver (DONE).**
+  `WikipediaDatasetProvider` reads local `.fvecs` base vectors + a parallel
+  metadata `.jsonl` (per-vector `lang`/`category`) + a `queries.jsonl` cache
+  (each query: vector, filter value, precomputed unfiltered AND within-filter
+  ground truth) → descriptor `distance=cosine`, `filter_field="lang"`. Ground
+  truth is precomputed offline (the cache file); the `dataset_hash` is the base
+  `.fvecs` checksum. `build_provider` wires `wikipedia`. Live-validated
+  end-to-end on the (already descriptor-driven) Qdrant with a cosine + `lang`
+  fixture: recall@10 = 1.0 AND filtered_recall@10 = 1.0 vs exact cosine ground
+  truth — the differentiating *filtered* measurement, and proof the seam needed
+  zero further adapter change for a content-correlated filter.
+* **Slice 2b-ii-C — the remaining five adapters, descriptor-driven.** Make
+  pgvector / Milvus / Elasticsearch / SurrealDB / ProximaDB take distance +
+  filter_field from the `DatasetDescriptor` (as Qdrant now does) so SIFT (L2) and
+  Wikipedia (cosine, `lang`) flow through the whole fleet, not just Qdrant.
+  Live-validate each against its container. (A distance guard already blocks a
+  mismatched run until each adapter is converted.)
 * **Slice 3 — Inline-mode filtered runs.** Expose an
   `--proximadb-filter-mode {auto,inline,prefilter}` knob on `ProximaAdapter` that
   sets the AXIS `ann_filtering_mode` (+ selectivity) on the REST `search` request

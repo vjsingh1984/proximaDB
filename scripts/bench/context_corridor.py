@@ -443,6 +443,100 @@ class SiftDatasetProvider:
         return self._queries
 
 
+class WikipediaDatasetProvider:
+    """Wikipedia passage-embedding provider: the filtered-corridor driver.
+
+    Reads local `.fvecs` base vectors, a parallel `.jsonl` metadata file (one JSON
+    object per base vector carrying the categorical filter field), and a
+    `queries.jsonl` cache (each query: vector, filter value, and precomputed
+    unfiltered + filtered ground-truth ids). Distance is cosine; the filter is a
+    real content-correlated field (`lang`/`category`) — the differentiating
+    filtered-corridor measurement (TD-CTXCORR-1 Slice 2b-ii-B).
+    """
+
+    system_distance = "cosine"
+
+    def __init__(
+        self,
+        *,
+        base_path: Path | str,
+        meta_path: Path | str,
+        queries_path: Path | str,
+        top_k: int,
+        filter_field: str = "lang",
+    ) -> None:
+        self._base_path = Path(base_path)
+        self._meta_path = Path(meta_path)
+        self._queries_path = Path(queries_path)
+        self._top_k = top_k
+        self._filter_field = filter_field
+        self._descriptor: DatasetDescriptor | None = None
+        self._queries: list[QueryGroundTruth] | None = None
+
+    def _build(self) -> None:
+        queries: list[QueryGroundTruth] = []
+        with open(self._queries_path, encoding="utf-8") as handle:
+            for index, line in enumerate(handle):
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                queries.append(
+                    QueryGroundTruth(
+                        query={
+                            "id": f"query-{index}",
+                            "vector": record["vector"],
+                            "props": {
+                                self._filter_field: record["filter_value"],
+                                "ordinal": -1,
+                            },
+                        },
+                        unfiltered_truth=frozenset(record["unfiltered_truth"]),
+                        filtered_truth=frozenset(record["filtered_truth"]),
+                    )
+                )
+        self._queries = queries
+        first = next(corpus_io.read_fvecs(self._base_path), None)
+        dimension = len(first) if first is not None else 0
+        record_count = (
+            self._base_path.stat().st_size // (4 + 4 * dimension)
+            if dimension
+            else 0
+        )
+        self._descriptor = DatasetDescriptor(
+            name="wikipedia",
+            dimension=dimension,
+            distance=self.system_distance,
+            record_count=record_count,
+            dataset_hash=corpus_io.sha256_file(self._base_path),
+            filter_field=self._filter_field,
+            query_count=len(queries),
+        )
+
+    def descriptor(self) -> DatasetDescriptor:
+        if self._descriptor is None:
+            self._build()
+        assert self._descriptor is not None
+        return self._descriptor
+
+    def corpus(self) -> Iterator[dict[str, Any]]:
+        with open(self._meta_path, encoding="utf-8") as meta_handle:
+            for index, (vector, meta_line) in enumerate(
+                zip(corpus_io.read_fvecs(self._base_path), meta_handle)
+            ):
+                metadata = json.loads(meta_line)
+                yield {
+                    "id": f"wiki-{index}",
+                    "vector": vector,
+                    "props": {**metadata, "ordinal": index},
+                }
+
+    def queries(self) -> list[QueryGroundTruth]:
+        if self._queries is None:
+            self._build()
+        assert self._queries is not None
+        return self._queries
+
+
 class Adapter(Protocol):
     system_id: str
 
@@ -1762,13 +1856,15 @@ def build_provider(args: argparse.Namespace) -> DatasetProvider:
             groundtruth_path=args.sift_groundtruth,
             top_k=TOP_K,
         )
-    # Wikipedia (filtered driver: local passage embeddings + lang/category
-    # metadata, cosine, precomputed filtered ground truth) is TD-CTXCORR-1 Slice
-    # 2b-ii-B.
-    raise NotImplementedError(
-        f"dataset {args.dataset!r} is not wired yet: the Wikipedia filtered-corridor "
-        "driver is TD-CTXCORR-1 Slice 2b-ii-B"
-    )
+    if args.dataset == "wikipedia":
+        return WikipediaDatasetProvider(
+            base_path=args.wiki_base,
+            meta_path=args.wiki_meta,
+            queries_path=args.wiki_queries,
+            top_k=TOP_K,
+            filter_field=args.wiki_filter_field,
+        )
+    raise ValueError(f"unknown dataset {args.dataset!r}")
 
 
 def main() -> int:
@@ -1839,6 +1935,14 @@ def main() -> int:
     parser.add_argument("--sift-base", type=Path, help="SIFT base .fvecs (local, gitignored)")
     parser.add_argument("--sift-query", type=Path, help="SIFT query .fvecs")
     parser.add_argument("--sift-groundtruth", type=Path, help="SIFT ground-truth .ivecs")
+    parser.add_argument("--wiki-base", type=Path, help="Wikipedia base .fvecs (local, gitignored)")
+    parser.add_argument("--wiki-meta", type=Path, help="Wikipedia per-vector metadata .jsonl")
+    parser.add_argument(
+        "--wiki-queries",
+        type=Path,
+        help="Wikipedia queries .jsonl (vector + filter_value + precomputed truth)",
+    )
+    parser.add_argument("--wiki-filter-field", default="lang", help="Wikipedia filter field")
     parser.add_argument("--records", type=int, default=1000)
     parser.add_argument("--dimension", type=int, default=32)
     parser.add_argument("--queries", type=int, default=200)

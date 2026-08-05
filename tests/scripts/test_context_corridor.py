@@ -125,18 +125,73 @@ class ContextCorridorTest(unittest.TestCase):
         self.assertEqual(adapter.max_batch, 3)
         self.assertGreater(ingest_seconds, 0)
 
-    def test_build_provider_rejects_unfetched_datasets(self) -> None:
+    def test_build_provider_rejects_unknown_dataset(self) -> None:
+        args = argparse.Namespace(dataset="mystery")
+        with self.assertRaises(ValueError):
+            CONTEXT.build_provider(args)
+
+    def test_wikipedia_provider_reads_local_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "base.fvecs"
+            meta = Path(directory) / "meta.jsonl"
+            queries = Path(directory) / "queries.jsonl"
+            self._write_vecs(
+                base, [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [-1.0, 0.0]], "f"
+            )
+            meta.write_text(
+                "\n".join(
+                    json.dumps({"lang": lang})
+                    for lang in ("en", "de", "en", "de")
+                )
+                + "\n"
+            )
+            queries.write_text(
+                json.dumps(
+                    {
+                        "vector": [0.9, 0.1],
+                        "filter_value": "en",
+                        "unfiltered_truth": ["wiki-0", "wiki-2"],
+                        "filtered_truth": ["wiki-0", "wiki-2"],
+                    }
+                )
+                + "\n"
+            )
+            provider = CONTEXT.WikipediaDatasetProvider(
+                base_path=base,
+                meta_path=meta,
+                queries_path=queries,
+                top_k=2,
+                filter_field="lang",
+            )
+            descriptor = provider.descriptor()
+            self.assertEqual(descriptor.name, "wikipedia")
+            self.assertEqual(descriptor.distance, "cosine")
+            self.assertEqual(descriptor.filter_field, "lang")
+            self.assertEqual(descriptor.dimension, 2)
+            self.assertEqual(descriptor.record_count, 4)
+            corpus = list(provider.corpus())
+            self.assertEqual(corpus[0]["id"], "wiki-0")
+            self.assertEqual(corpus[0]["props"]["lang"], "en")
+            self.assertEqual(corpus[0]["props"]["ordinal"], 0)
+            (ground_truth,) = provider.queries()
+            self.assertEqual(ground_truth.query["props"]["lang"], "en")
+            self.assertEqual(
+                ground_truth.unfiltered_truth, frozenset({"wiki-0", "wiki-2"})
+            )
+            self.assertEqual(
+                ground_truth.filtered_truth, frozenset({"wiki-0", "wiki-2"})
+            )
+
+    def test_build_provider_constructs_wikipedia(self) -> None:
         args = argparse.Namespace(
             dataset="wikipedia",
-            records=10,
-            dimension=4,
-            queries=1,
-            warmup=0,
-            seed=7,
+            wiki_base="/data/base.fvecs",
+            wiki_meta="/data/meta.jsonl",
+            wiki_queries="/data/queries.jsonl",
+            wiki_filter_field="lang",
         )
-        with self.assertRaises(NotImplementedError) as caught:
-            CONTEXT.build_provider(args)
-        self.assertIn("TD-CTXCORR-1", str(caught.exception))
+        provider = CONTEXT.build_provider(args)
+        self.assertIsInstance(provider, CONTEXT.WikipediaDatasetProvider)
 
     def _write_vecs(self, path: Path, vectors: list[list[float]], fmt: str) -> None:
         with open(path, "wb") as handle:
