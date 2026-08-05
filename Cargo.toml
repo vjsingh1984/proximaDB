@@ -133,6 +133,7 @@ members = [
     "crates/query/proximadb-query-capability",
     "crates/query/proximadb-query-clauses",
     "crates/query/proximadb-query-fusion",
+    "crates/query/proximadb-rl-reward",
     "crates/query/proximadb-query-filter",
     "crates/query/proximadb-uql",
     "crates/query/proximadb-vector-query",
@@ -448,6 +449,7 @@ proximadb-pipeline-operator = { path = "crates/foundation/proximadb-pipeline-ope
 proximadb-query-capability = { path = "crates/query/proximadb-query-capability" }
 proximadb-query-clauses = { path = "crates/query/proximadb-query-clauses" }
 proximadb-query-fusion = { path = "crates/query/proximadb-query-fusion" }
+proximadb-rl-reward = { path = "crates/query/proximadb-rl-reward" }
 proximadb-query-filter = { path = "crates/query/proximadb-query-filter" }
 proximadb-uql = { path = "crates/query/proximadb-uql" }
 proximadb-vector-query = { path = "crates/query/proximadb-vector-query" }

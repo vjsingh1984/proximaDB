@@ -6663,7 +6663,7 @@ dependencies = [
 
 [[package]]
 name = "proximadb"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -6825,6 +6825,7 @@ dependencies = [
  "proximadb-relational-reader",
  "proximadb-relational-types",
  "proximadb-resilience",
+ "proximadb-rl-reward",
  "proximadb-runtime",
  "proximadb-runtime-common",
  "proximadb-sdk",
@@ -8245,6 +8246,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-rl-reward"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "proximadb-runtime"
 version = "0.2.0"
 dependencies = [
@@ -8292,7 +8301,7 @@ dependencies = [
 
 [[package]]
 name = "proximadb-sdk"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "httpmock",
