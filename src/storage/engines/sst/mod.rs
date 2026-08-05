@@ -335,7 +335,6 @@ pub use text_column_support::{
 
 // Main SST Storage implementation (contents from original lsm/mod.rs)
 use crate::core::SstConfig;
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
 // SearchResult is now proto type, not in core::search
 use crate::core::search::json_value_serde;
@@ -483,165 +482,14 @@ mod sst_filename_tests {
 }
 
 // Remove dummy filesystem factory - SST will use fallback methods
-
-// SST now works directly with VectorRecord - no intermediate conversion needed!
-// This eliminates double serialization and improves performance
-
-/// SST-specific metadata that accompanies VectorRecord in storage
-///
-/// ## Purpose:
-///
-/// SstMetadata tracks SST-specific state without polluting the VectorRecord.
-/// This separation allows the proto definition to remain clean while SST
-/// maintains its LSM-tree specific tracking.
-///
-/// ## Tombstone Handling:
-///
-/// When is_tombstone=true, the record represents a deletion. During compaction,
-/// tombstones cascade down levels until they reach the bottom level where
-/// they can be safely removed (no older versions exist).
-///
-/// ## Sequence Numbers:
-///
-/// Used for MVCC (Multi-Version Concurrency Control). Higher sequence numbers
-/// represent newer versions. During reads, we return the latest version that's
-/// visible to the transaction.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SstMetadata {
-    /// True if this is a deletion marker - tombstones cascade through LSM levels
-    /// until they reach the bottom where they're garbage collected
-    pub is_tombstone: bool,
-
-    /// SST sequence for ordering - higher numbers are newer versions,
-    /// used for MVCC resolution during reads
-    pub sequence_number: u64,
-
-    /// SSTable level this record belongs to - L0 is memtable flush,
-    /// L1+ are compaction outputs with exponentially larger sizes
-    pub level: u8,
-}
-
-/// Combined storage format for SST files
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SstEntry {
-    pub record: VectorRecord,  // Direct storage of proto VectorRecord
-    pub sst_meta: SstMetadata, // SST-specific metadata
-}
-
-impl SstEntry {
-    /// Create SstEntry from VectorRecord (no conversion needed!)
-    pub fn from_vector_record(record: VectorRecord, sequence_number: u64, level: u8) -> Self {
-        Self {
-            record,
-            sst_meta: SstMetadata {
-                is_tombstone: false,
-                sequence_number,
-                level,
-            },
-        }
-    }
-
-    /// Create tombstone entry for deletion
-    pub fn tombstone(id: String, sequence_number: u64, level: u8) -> Self {
-        Self {
-            record: VectorRecord {
-                id,
-                vector: vec![], // Empty vector for tombstone
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(chrono::Utc::now().timestamp()),
-                updated_at: None,
-                expires_at: Some(0), // Expired immediately
-                version: None,
-                source: None, // No source for tombstone
-            },
-            sst_meta: SstMetadata {
-                is_tombstone: true,
-                sequence_number,
-                level,
-            },
-        }
-    }
-
-    /// Convert to OptimizedSearchRecord directly for search results
-    pub fn to_optimized_search_result(&self, score: f32) -> OptimizedSearchRecord {
-        let mut search_record = OptimizedSearchRecord::new(self.record.id.clone(), score)
-            .with_similarity(score)
-            .add_vector(self.record.vector.clone())
-            .with_metadata(self.record.metadata.clone());
-
-        if let Some(version) = self.record.version {
-            search_record =
-                search_record.with_version_info(version, self.record.timestamp.unwrap_or(0));
-        }
-
-        if let Some(source) = &self.record.source {
-            search_record = search_record.with_source(crate::proto::proximadb_v1::SourceContent {
-                data: Some(
-                    crate::proto::proximadb_v1::source_content::Data::TextContent(source.clone()),
-                ),
-            });
-        }
-
-        search_record
-    }
-
-    /// Serialize SstEntry directly - no conversion needed!
-    pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
-        // Use protobuf for VectorRecord + bincode for SST metadata
-        // This gives us zero-copy deserialization for search
-        use prost::Message;
-
-        // Serialize VectorRecord using protobuf
-        let mut proto_buf = Vec::new();
-        self.record.encode(&mut proto_buf)?;
-
-        // Serialize SST metadata using bincode
-        let meta_data = bincode::serialize(&self.sst_meta)?;
-
-        // Combine with length prefixes (both as u32 for consistency)
-        let mut buffer = Vec::with_capacity(8 + proto_buf.len() + meta_data.len());
-        buffer.extend_from_slice(&(proto_buf.len() as u32).to_le_bytes());
-        buffer.extend_from_slice(&proto_buf);
-        buffer.extend_from_slice(&(meta_data.len() as u32).to_le_bytes());
-        buffer.extend_from_slice(&meta_data);
-
-        Ok(buffer)
-    }
-
-    /// Deserialize SstEntry directly from stored bytes
-    pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
-        use prost::Message;
-
-        if data.len() < 8 {
-            return Err(anyhow::anyhow!("Invalid SstEntry data: too short"));
-        }
-
-        // Read proto length
-        let proto_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        if data.len() < 4 + proto_len + 4 {
-            return Err(anyhow::anyhow!("Invalid SstEntry data: truncated"));
-        }
-
-        // Deserialize VectorRecord
-        let proto_data = &data[4..4 + proto_len];
-        let record = VectorRecord::decode(proto_data)?;
-
-        // Read metadata length
-        let meta_offset = 4 + proto_len;
-        let meta_len = u32::from_le_bytes([
-            data[meta_offset],
-            data[meta_offset + 1],
-            data[meta_offset + 2],
-            data[meta_offset + 3],
-        ]) as usize;
-
-        // Deserialize SST metadata
-        let meta_data = &data[meta_offset + 4..meta_offset + 4 + meta_len];
-        let sst_meta = bincode::deserialize(meta_data)?;
-
-        Ok(Self { record, sst_meta })
-    }
-}
+// SST works directly with the canonical record type — no intermediate wrapper.
+//
+// RETIRED (TD-V1SUNSET-2 surface reduction): `SstEntry` + its companion
+// `SstMetadata` held a prost-serialized v1 `VectorRecord` and were the legacy
+// SST1 row format. They had NO production callers — the live legacy read path is
+// `compaction.rs`, which decodes `VectorRecord` from stored blocks directly and
+// never went through `SstEntry`. Removing them deletes one of the two durable v1
+// surfaces without touching the one that is still live.
 
 /// Magic constant for SST files (4 bytes)
 pub const SST_MAGIC: [u8; 4] = *b"SST1";
