@@ -10,7 +10,7 @@
     "check_v1_proto_usage.py"
   ],
   "file_count": 488,
-  "generated_at": "2026-08-05T01:39:21Z",
+  "generated_at": "2026-08-05T03:38:09Z",
   "mode": "report",
   "patterns": [
     "proximadb_v1",
@@ -21,7 +21,7 @@
     "clients": 41,
     "crates": 294,
     "src": 2058,
-    "tests": 377
+    "tests": 378
   },
   "roots": [
     "src",
@@ -30,5 +30,5 @@
     "tests"
   ],
   "schema_version": 1,
-  "total": 2770
+  "total": 2771
 }
