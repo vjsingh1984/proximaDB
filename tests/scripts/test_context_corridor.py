@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import random
+import struct
 import sys
 import tempfile
 import unittest
@@ -126,7 +127,7 @@ class ContextCorridorTest(unittest.TestCase):
 
     def test_build_provider_rejects_unfetched_datasets(self) -> None:
         args = argparse.Namespace(
-            dataset="sift1m",
+            dataset="wikipedia",
             records=10,
             dimension=4,
             queries=1,
@@ -136,6 +137,117 @@ class ContextCorridorTest(unittest.TestCase):
         with self.assertRaises(NotImplementedError) as caught:
             CONTEXT.build_provider(args)
         self.assertIn("TD-CTXCORR-1", str(caught.exception))
+
+    def _write_vecs(self, path: Path, vectors: list[list[float]], fmt: str) -> None:
+        with open(path, "wb") as handle:
+            for vector in vectors:
+                handle.write(struct.pack("<i", len(vector)))
+                handle.write(struct.pack(f"<{len(vector)}{fmt}", *vector))
+
+    def test_sift_provider_reads_fvecs_ivecs_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "base.fvecs"
+            query = Path(directory) / "query.fvecs"
+            gt = Path(directory) / "gt.ivecs"
+            self._write_vecs(
+                base, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], "f"
+            )
+            self._write_vecs(query, [[0.9, 0.1]], "f")
+            # Nearest base vectors to the query, by index: 1 then 3.
+            self._write_vecs(gt, [[1, 3]], "i")
+            provider = CONTEXT.SiftDatasetProvider(
+                base_path=base, query_path=query, groundtruth_path=gt, top_k=2
+            )
+            descriptor = provider.descriptor()
+            self.assertEqual(descriptor.name, "sift1m")
+            self.assertEqual(descriptor.distance, "l2")
+            self.assertEqual(descriptor.dimension, 2)
+            self.assertEqual(descriptor.record_count, 4)
+            self.assertIsNone(descriptor.filter_field)
+            corpus = list(provider.corpus())
+            self.assertEqual([r["id"] for r in corpus], ["sift-0", "sift-1", "sift-2", "sift-3"])
+            (ground_truth,) = provider.queries()
+            self.assertEqual(ground_truth.unfiltered_truth, frozenset({"sift-1", "sift-3"}))
+            self.assertEqual(ground_truth.filtered_truth, frozenset())
+
+    def test_run_queries_is_filter_optional(self) -> None:
+        class UnfilteredStub:
+            system_id = "stub"
+
+            def __init__(self) -> None:
+                self.filtered_calls = 0
+
+            def search(self, record, *, filtered):
+                if filtered:
+                    self.filtered_calls += 1
+                    return ["z"], 9.0
+                return ["a", "b"], 1.0
+
+        adapter = UnfilteredStub()
+        queries = [
+            CONTEXT.QueryGroundTruth(
+                query={"id": "query-0", "vector": [0.0], "props": {}},
+                unfiltered_truth=frozenset({"a", "b"}),
+                filtered_truth=frozenset(),
+            )
+        ]
+        accuracy, latencies = CONTEXT.run_queries(
+            adapter, queries, warmup_count=0, supports_filter=False
+        )
+        self.assertEqual(accuracy["recall_at_10"], 1.0)
+        self.assertIsNone(accuracy["filtered_recall_at_10"])
+        self.assertEqual(adapter.filtered_calls, 0)  # never runs a filtered search
+        self.assertEqual(latencies, [1.0])  # unfiltered latency stands in
+
+    def test_qdrant_adapter_is_descriptor_driven(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args, **kwargs):
+            calls.append((args, kwargs))
+            return {"result": {}}, 0.5
+
+        # L2 + no filter field: Euclid distance, and NO payload index is created.
+        adapter = CONTEXT.QdrantAdapter(
+            "http://qdrant.example",
+            "",
+            12.0,
+            "context_bench_1",
+            distance="l2",
+            filter_field=None,
+        )
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            adapter.prepare(2)
+        # calls[0] is the GET "/" version probe; calls[1] is the collection create.
+        create = calls[1][0][3]
+        self.assertEqual(create["vectors"]["distance"], "Euclid")
+        self.assertFalse(any("/index" in c[0][2] for c in calls))
+        self.assertEqual(adapter.environment()["distance"], "l2")
+        self.assertIn("cosine", CONTEXT.QdrantAdapter.supported_distances)
+        self.assertIn("l2", CONTEXT.QdrantAdapter.supported_distances)
+
+    def test_qdrant_adapter_defaults_preserve_cosine_partition(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args, **kwargs):
+            calls.append((args, kwargs))
+            return {"result": {}}, 0.5
+
+        adapter = CONTEXT.QdrantAdapter("http://qdrant.example", "", 12.0, "c1")
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            adapter.prepare(2)
+        self.assertEqual(calls[1][0][3]["vectors"]["distance"], "Cosine")
+        self.assertTrue(any("/index" in c[0][2] for c in calls))  # partition index created
+        self.assertEqual(adapter.environment()["filter_index"], "keyword(partition)")
+
+    def test_build_provider_constructs_sift(self) -> None:
+        args = argparse.Namespace(
+            dataset="sift1m",
+            sift_base="/data/base.fvecs",
+            sift_query="/data/query.fvecs",
+            sift_groundtruth="/data/gt.ivecs",
+        )
+        provider = CONTEXT.build_provider(args)
+        self.assertIsInstance(provider, CONTEXT.SiftDatasetProvider)
 
     def test_queries_measure_recall_against_ground_truth(self) -> None:
         class StubAdapter:
