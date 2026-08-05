@@ -46,8 +46,8 @@ def main() -> int:
     runnable = {
         item.get("id") for item in data.get("system", []) if item.get("adapter_status") == "runnable"
     }
-    if runnable != {"proximadb"}:
-        errors.append("only the implemented ProximaDB adapter may be marked runnable")
+    if runnable != {"pgvector", "proximadb"}:
+        errors.append("the implemented ProximaDB and pgvector adapters must be marked runnable")
     protocol = data.get("protocol", {})
     metrics = set(protocol.get("required_metrics", []))
     missing_metrics = REQUIRED_METRICS - metrics
@@ -81,7 +81,7 @@ def main() -> int:
         return 1
     print(
         "Context benchmark contract OK: 6 systems, 13 metrics, 4 backends, "
-        "five-trial/1M publication floor; only ProximaDB adapter is runnable."
+        "five-trial/1M publication floor; ProximaDB and pgvector adapters are runnable."
     )
     return 0
 
