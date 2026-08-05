@@ -101,6 +101,15 @@ class ClientConfig(BaseModel):
     port_mode: PortMode = Field(
         default=PortMode.UNIFIED, description="Server port mode (unified or multi)"
     )
+    uds_path: str | None = Field(
+        default=None,
+        description=(
+            "Path to a Unix-domain socket to connect through instead of TCP. "
+            "Set this to talk to an embedded server started with "
+            "transport='uds' (the embedded default since #264), whose rest_url "
+            "is the host-header sentinel 'http://localhost' and carries no port."
+        ),
+    )
 
     # Timeouts
     timeout: float = Field(

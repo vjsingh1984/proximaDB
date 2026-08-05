@@ -332,6 +332,20 @@ class ProximaDBClient:
             keepalive_expiry=self.config.connection.keepalive_timeout,
         )
 
+        uds_path = getattr(self.config, "uds_path", None)
+        if uds_path:
+            # Portless embedded mode: the server binds a Unix-domain socket and
+            # no TCP port at all, so `config.url` is only a host header and the
+            # connection has to be made through a UDS transport. TLS and HTTP/2
+            # are deliberately not forwarded — neither applies to a local socket,
+            # and httpx ignores those Client kwargs once `transport` is given.
+            return httpx.Client(
+                base_url=self.config.url,
+                headers=self.config.get_base_headers(),
+                timeout=timeout,
+                transport=httpx.HTTPTransport(uds=uds_path, limits=limits),
+            )
+
         return httpx.Client(
             base_url=self.config.url,
             headers=self.config.get_base_headers(),
