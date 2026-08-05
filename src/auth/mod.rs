@@ -12,7 +12,7 @@
 
 pub mod federated_delegation_complete;
 pub mod rbac;
-pub mod sso;
+pub use proximadb_auth_sso::sso;
 
 pub use federated_delegation_complete::{
     AuthenticationResult, CompleteDelegationResult, CompleteFederatedIdentityDelegation,
@@ -80,7 +80,7 @@ impl EnterpriseAuthManager {
                         tenant_id,
                         &collection_id,
                         operation_type,
-                        &enterprise_user.clone().into(),
+                        &crate::auth::enterprise_to_storage_user_context(enterprise_user.clone()),
                     )
                     .await?
             } // Additional operation types to be added
@@ -183,15 +183,21 @@ fn enterprise_user_to_unified_user_context(
     }
 }
 
-// Conversion from EnterpriseUserContext to storage::tenant::UserContext
-impl From<EnterpriseUserContext> for crate::storage::tenant::UserContext {
-    fn from(enterprise_user: EnterpriseUserContext) -> Self {
-        Self {
-            user_id: enterprise_user.user_id,
-            tenant_id: enterprise_user.tenant_id,
-            roles: enterprise_user.roles,
-            permissions: enterprise_user.permissions.into_iter().collect(),
-        }
+// Conversion from EnterpriseUserContext to storage::tenant::UserContext.
+//
+// This is a free function rather than a `From` impl because the two types now
+// live in different crates (`EnterpriseUserContext` in `proximadb-auth-sso`,
+// `UserContext` in `proximadb-storage-tenant`), so a trait impl in the root
+// crate would violate the orphan rule (neither type is local to root). A free
+// function is orphan-rule-clean and preserves the identical conversion.
+pub fn enterprise_to_storage_user_context(
+    enterprise_user: EnterpriseUserContext,
+) -> crate::storage::tenant::UserContext {
+    crate::storage::tenant::UserContext {
+        user_id: enterprise_user.user_id,
+        tenant_id: enterprise_user.tenant_id,
+        roles: enterprise_user.roles,
+        permissions: enterprise_user.permissions.into_iter().collect(),
     }
 }
 
@@ -202,7 +208,8 @@ mod tests {
     #[test]
     fn test_user_context_conversion() {
         let enterprise_user = EnterpriseUserContext::system_admin();
-        let storage_user: crate::storage::tenant::UserContext = enterprise_user.into();
+        let storage_user: crate::storage::tenant::UserContext =
+            enterprise_to_storage_user_context(enterprise_user);
 
         assert_eq!(storage_user.user_id, "system");
         assert_eq!(storage_user.tenant_id, "system");
@@ -324,7 +331,8 @@ mod tests {
             },
         };
 
-        let storage_user: crate::storage::tenant::UserContext = enterprise_user.into();
+        let storage_user: crate::storage::tenant::UserContext =
+            enterprise_to_storage_user_context(enterprise_user);
 
         assert_eq!(storage_user.user_id, "test_user");
         assert_eq!(storage_user.tenant_id, "tenant_123");
@@ -358,7 +366,8 @@ mod tests {
             },
         };
 
-        let storage_user: crate::storage::tenant::UserContext = enterprise_user.into();
+        let storage_user: crate::storage::tenant::UserContext =
+            enterprise_to_storage_user_context(enterprise_user);
 
         assert_eq!(storage_user.user_id, "minimal_user");
         assert!(storage_user.roles.is_empty());

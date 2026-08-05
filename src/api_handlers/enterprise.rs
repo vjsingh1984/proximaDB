@@ -83,7 +83,10 @@ impl EnterpriseAPIHandler {
         let rbac_manager =
             crate::storage::tenant::EnhancedRBACManager::new(self.tenant_manager.clone());
         let standard_roles = rbac_manager
-            .create_standard_roles(&tenant_id, &enterprise_user.clone().into())
+            .create_standard_roles(
+                &tenant_id,
+                &crate::auth::enterprise_to_storage_user_context(enterprise_user.clone()),
+            )
             .await?;
 
         info!(
@@ -131,7 +134,7 @@ impl EnterpriseAPIHandler {
                 &tenant_id,
                 &domain_name,
                 business_context.clone(),
-                &enterprise_user.clone().into(),
+                &crate::auth::enterprise_to_storage_user_context(enterprise_user.clone()),
             )
             .await?;
 
@@ -192,7 +195,7 @@ impl EnterpriseAPIHandler {
             .link_collection(
                 &collection_id,
                 bridge_config,
-                &enterprise_user.clone().into(),
+                &crate::auth::enterprise_to_storage_user_context(enterprise_user.clone()),
             )
             .await?;
 
@@ -225,7 +228,8 @@ impl EnterpriseAPIHandler {
         enterprise_user: &EnterpriseUserContext,
     ) -> Result<Vec<crate::storage::tenant::DomainContext>> {
         let mut domains = Vec::new();
-        let user_context: crate::storage::tenant::UserContext = enterprise_user.clone().into();
+        let user_context: crate::storage::tenant::UserContext =
+            crate::auth::enterprise_to_storage_user_context(enterprise_user.clone());
 
         match industry {
             crate::storage::tenant::Industry::Financial => {
