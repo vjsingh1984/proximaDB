@@ -10,6 +10,7 @@ record scale does not require materializing the corpus in Python memory.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
@@ -150,6 +151,12 @@ def sanitized_error(error: Exception, *secrets: str) -> str:
 
 def vector_literal(vector: list[float]) -> str:
     return "[" + ",".join(format(value, ".9g") for value in vector) + "]"
+
+
+def surql_str(value: str) -> str:
+    # Single-quote a SurrealQL string literal, escaping backslashes and quotes.
+    escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"
 
 
 def make_record(index: int, dimension: int, rng: random.Random) -> dict[str, Any]:
@@ -1092,6 +1099,161 @@ class ElasticsearchAdapter:
             )
 
 
+class SurrealDBAdapter:
+    system_id = "surrealdb"
+
+    def __init__(
+        self,
+        base_url: str,
+        user: str,
+        password: str,
+        namespace: str,
+        database: str,
+        timeout: float,
+        table: str,
+        declared_server_version: str,
+    ) -> None:
+        if not re.fullmatch(r"[a-z0-9_]+", table):
+            raise ValueError("generated SurrealDB table name is not safe")
+        self.base_url = base_url
+        self.timeout = timeout
+        self.table = table
+        self.namespace = namespace
+        self.database = database
+        self.version = declared_server_version
+        token = base64.b64encode(f"{user}:{password}".encode()).decode()
+        self.headers = {
+            "Authorization": f"Basic {token}",
+            "Surreal-NS": namespace,
+            "Surreal-DB": database,
+            "Accept": "application/json",
+        }
+        self.expected_docs = 0
+        self.readiness_wait_seconds = 0.0
+
+    def _query(self, surql: str) -> tuple[list[Any], float]:
+        payload, latency = request(
+            self.base_url,
+            "POST",
+            "/sql",
+            None,
+            self.timeout,
+            self.headers,
+            raw_body=surql.encode(),
+            content_type="text/plain",
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError(
+                f"SurrealDB returned an unexpected response: {payload!r}"
+            )
+        for item in payload:
+            if isinstance(item, dict) and item.get("status") != "OK":
+                raise RuntimeError(
+                    f"SurrealDB statement failed: {item.get('result')}"
+                )
+        return payload, latency
+
+    def prepare(self, dimension: int) -> None:
+        # SCHEMAFULL keeps the comparison on typed multi-model records; the
+        # HNSW index and a scalar index on partition make filtered ANN an
+        # indexed operation rather than a table scan.
+        self._query(
+            f"DEFINE TABLE {self.table} SCHEMAFULL; "
+            f"DEFINE FIELD record_id ON {self.table} TYPE string; "
+            f"DEFINE FIELD partition ON {self.table} TYPE string; "
+            f"DEFINE FIELD ordinal ON {self.table} TYPE int; "
+            f"DEFINE FIELD embedding ON {self.table} TYPE array<float>; "
+            f"DEFINE INDEX partition_idx ON {self.table} FIELDS partition; "
+            f"DEFINE INDEX embedding_idx ON {self.table} FIELDS embedding "
+            f"HNSW DIMENSION {dimension} DIST COSINE M 16 EFC 100;"
+        )
+
+    def insert_batch(self, records: list[dict[str, Any]]) -> None:
+        rows = ", ".join(
+            "{"
+            f"record_id: {surql_str(record['id'])}, "
+            f"embedding: {json.dumps(record['vector'])}, "
+            f"partition: {surql_str(record['props']['partition'])}, "
+            f"ordinal: {int(record['props']['ordinal'])}"
+            "}"
+            for record in records
+        )
+        self._query(f"INSERT INTO {self.table} [{rows}];")
+        self.expected_docs += len(records)
+
+    def finish_ingest(self) -> None:
+        # SurrealDB maintains the HNSW index synchronously on write, so once the
+        # INSERT statements return OK the index already reflects them. Confirm
+        # every record is visible as the explicit readiness fence.
+        started = time.monotonic()
+        deadline = started + self.timeout
+        while True:
+            payload, _ = self._query(
+                f"SELECT count() FROM {self.table} GROUP ALL;"
+            )
+            rows = payload[0].get("result") if payload else None
+            count = (
+                rows[0].get("count")
+                if isinstance(rows, list) and rows and isinstance(rows[0], dict)
+                else 0
+            )
+            if count == self.expected_docs:
+                self.readiness_wait_seconds = time.monotonic() - started
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"SurrealDB did not expose {self.expected_docs} records "
+                    f"within {self.timeout:g}s"
+                )
+            time.sleep(min(0.25, remaining))
+
+    def search(
+        self, record: dict[str, Any], *, filtered: bool
+    ) -> tuple[list[str], float]:
+        where = f"embedding <|{TOP_K},40|> {json.dumps(record['vector'])}"
+        if filtered:
+            where += f" AND partition = {surql_str(record['props']['partition'])}"
+        payload, latency = self._query(
+            f"SELECT record_id FROM {self.table} WHERE {where};"
+        )
+        rows = payload[0].get("result") if payload else None
+        found: list[str] = []
+        for row in rows if isinstance(rows, list) else []:
+            record_id = row.get("record_id") if isinstance(row, dict) else None
+            if isinstance(record_id, str):
+                found.append(record_id)
+        return found[:TOP_K], latency
+
+    def signals(self) -> dict[str, Any]:
+        info, _ = self._query(f"INFO FOR TABLE {self.table};")
+        count, _ = self._query(f"SELECT count() FROM {self.table} GROUP ALL;")
+        return {
+            "table_info": info[0].get("result") if info else None,
+            "count": count[0].get("result") if count else None,
+        }
+
+    def environment(self) -> dict[str, Any]:
+        return {
+            "base_url": self.base_url,
+            "server_version": self.version,
+            "server_version_source": "operator-declared (HTTP does not expose it)",
+            "namespace": self.namespace,
+            "database": self.database,
+            "distance": "cosine",
+            "index": "hnsw(M=16,EFC=100)",
+            "hnsw_ef_search": 40,
+            "filter_index": "index(partition)",
+            "query_endpoint": "/sql (<|K,EF|> KNN)",
+            "readiness_fence": "synchronous index + full document count",
+            "readiness_wait_seconds": round(self.readiness_wait_seconds, 6),
+        }
+
+    def close(self, *, keep_data: bool) -> None:
+        if not keep_data:
+            self._query(f"REMOVE TABLE IF EXISTS {self.table};")
+
+
 def ingest_stream(
     adapter: Adapter,
     *,
@@ -1267,11 +1429,22 @@ def make_adapter(args: argparse.Namespace, run_name: str) -> Adapter:
             run_name,
             args.milvus_server_version,
         )
-    return ElasticsearchAdapter(
-        args.elasticsearch_url,
-        args.elasticsearch_api_key,
+    if args.system == "elasticsearch":
+        return ElasticsearchAdapter(
+            args.elasticsearch_url,
+            args.elasticsearch_api_key,
+            args.timeout,
+            run_name,
+        )
+    return SurrealDBAdapter(
+        args.surrealdb_url,
+        args.surrealdb_user,
+        args.surrealdb_pass,
+        args.surrealdb_namespace,
+        args.surrealdb_database,
         args.timeout,
         run_name,
+        args.surrealdb_server_version,
     )
 
 
@@ -1279,7 +1452,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--system",
-        choices=("proximadb", "pgvector", "qdrant", "milvus", "elasticsearch"),
+        choices=(
+            "proximadb",
+            "pgvector",
+            "qdrant",
+            "milvus",
+            "elasticsearch",
+            "surrealdb",
+        ),
         default="proximadb",
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:5678")
@@ -1312,6 +1492,20 @@ def main() -> int:
         "--elasticsearch-api-key",
         default="",
         help="optional Elasticsearch API key; never written to the report",
+    )
+    parser.add_argument("--surrealdb-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--surrealdb-user", default="root")
+    parser.add_argument(
+        "--surrealdb-pass",
+        default="root",
+        help="SurrealDB root password; never written to the report",
+    )
+    parser.add_argument("--surrealdb-namespace", default="benchmark")
+    parser.add_argument("--surrealdb-database", default="context_corridor")
+    parser.add_argument(
+        "--surrealdb-server-version",
+        default="unknown",
+        help="deployed SurrealDB version recorded in the report",
     )
     parser.add_argument("--records", type=int, default=1000)
     parser.add_argument("--dimension", type=int, default=32)
@@ -1380,6 +1574,7 @@ def main() -> int:
             args.qdrant_api_key,
             args.milvus_token,
             args.elasticsearch_api_key,
+            args.surrealdb_pass,
         )
         failure = {
             "schema_version": 1,
@@ -1404,6 +1599,7 @@ def main() -> int:
                 args.qdrant_api_key,
                 args.milvus_token,
                 args.elasticsearch_api_key,
+                args.surrealdb_pass,
             )
             print(
                 f"context corridor cleanup warning: {safe_cleanup_error}",
