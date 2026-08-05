@@ -2,6 +2,42 @@
 
 All notable changes to ProximaDB will be documented in this file.
 
+## [0.3.0] - 2026-08-05
+
+Major feature release (802 commits since 0.2.2). Headlines: a Postgres-wire query surface for
+vector search, DuckDB-backed OLAP routing, relational ABAC enforcement, and delete-vector-aware
+SST compaction across the storage engine.
+
+### SQL / pgwire
+- `vector_search` UDTF and the `<->` distance operator resolve over the Postgres wire protocol,
+  returning `id + score + payload`, unified behind a single `unified_search_native` v2 kernel
+  (TD-XMODAL-4).
+
+### OLAP & analytics
+- DuckDB-Local production routing for join/aggregate Parquet OLAP (ADR-059, default-OFF).
+- Per-column HLL NDV populated at materialize for cost-based planning (TD-OLAP-2).
+
+### Storage engine (SST / PAX / WAL / delete-vectors)
+- Delete-vector-aware compaction: drops DV-deleted rows and retires input `.dv` files; merge-on-read
+  on the RaBitQ cascade path (TD-DELVEC-1).
+- Continued always-PAX flush/compaction and WAL hardening.
+
+### Search & routing
+- `CompiledGlobalFilter` unifies the AXIS filtered-ANN predicate path (F7).
+
+### Security & multi-tenancy (ABAC)
+- Live relational policy enforcement with canonical identity carried through relational reads.
+
+### Observability
+- Persistent-L2 cache probes plumbed into the io-trace envelope + warehouse; real operational
+  counters and score-scale contract tests (TD-METRICS / TD-IOTRACE).
+
+### Dependencies
+- Bump `sandhi-core` to 0.1.6 (usage metering; one-way ProximaDB → Sandhi, ADR-060).
+
+_See the git history (`v0.2.2..v0.3.0`) for the full 802-commit detail across the sst, storage,
+abac, decomp, olap, search, catalog, observability, wal, tenant, and pgwire areas._
+
 ## [0.2.2] - 2026-07-04
 
 ### Storage
