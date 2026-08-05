@@ -6792,6 +6792,7 @@ dependencies = [
  "proximadb-mongodb-parser",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
+ "proximadb-network-middleware",
  "proximadb-object-store",
  "proximadb-observability",
  "proximadb-observability-engine",
@@ -7706,6 +7707,20 @@ dependencies = [
  "proximadb-query-filter",
  "proximadb-query-fusion",
  "proximadb-vector-query",
+]
+
+[[package]]
+name = "proximadb-network-middleware"
+version = "0.2.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml 0.8.23",
+ "tower-http",
+ "tracing",
 ]
 
 [[package]]
