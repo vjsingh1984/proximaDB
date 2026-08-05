@@ -112,9 +112,16 @@ metadata) are what stress ANN recall and filtered pre/post-filter behaviour.
   `wikipedia` reject clearly until 2b. The correct boundary: real datasets plug in
   without touching the ingest/measurement machinery, and the dataset (not each
   adapter) owns distance + filter field.
-* **Slice 2b — real local corpora + scale-safe ground truth.** Drive ALL six
-  adapters from one locally-held, checksummed corpus through the Slice-2a seam
-  (`synthetic` stays as the deterministic CI/smoke path):
+* **Slice 2b-i — dataset-IO foundation (DONE).** `scripts/bench/corpus_io.py`:
+  SIFT-family `.fvecs`/`.ivecs` streaming readers, `sha256_file`/`verify_checksum`,
+  and an idempotent injectable-downloader `fetch_corpus` (downloads to a `.part`
+  sidecar, promotes only on checksum match). `scripts/bench/fetch_corpus.py` is
+  the operator CLI. `benches/context-corridor/data/.gitignore` keeps the corpus
+  dir but ignores the (large) vectors — never committed; the checksum is the
+  report `dataset_hash`. All TDD'd on byte fixtures (no download in tests).
+* **Slice 2b-ii — real corpora + descriptor-driven adapters.** Build the concrete
+  providers on the Slice-2a seam and 2b-i IO, and drive ALL six adapters from one
+  locally-held, checksummed corpus (`synthetic` stays as the CI/smoke path):
   ** **Wikipedia passage embeddings WITH metadata** (DECIDED: e.g. Cohere
      `wikipedia-22-12`) as the primary *filtered-corridor* driver — each vector
      carries a real categorical field (`lang`, article `category`/`title`) so the
@@ -124,15 +131,13 @@ metadata) are what stress ANN recall and filtered pre/post-filter behaviour.
      queries, canonical precomputed 100-NN ground truth, L2 distance) — credibility
      and comparability with published ANN results. It has no metadata, so it
      cannot exercise the filtered corridor — it is a reference, not the driver.
-  ** Vectors kept **local + gitignored** (1M x 768 f32 ~ 3 GB) via a
-     `fetch_corpus.py` that downloads and verifies a SHA256; that checksum is the
-     report `dataset_hash` (satisfies `require_dataset_hash`). Never commit the
-     vectors.
   ** **Precompute filtered ground truth once**, offline, cached keyed by
      `(corpus_hash, query_hash, k, filter_field)` — the pure-Python
      `GroundTruthAccumulator` is `O(N*Q*dim)`, fine for validation, not for 1M.
-  ** **Distance per dataset** (SIFT = L2, text embeddings = cosine) — a small
-     adapter/index knob; the adapters currently hardcode cosine.
+  ** **Wire each adapter's distance + filter_field FROM the `DatasetDescriptor`**
+     (the 2a seam exposes both) instead of the hardcoded cosine/`partition`, so
+     SIFT (L2, no metadata → filter optional) and Wikipedia (cosine, `lang`) flow
+     through unchanged. Live-validate against the containers.
 * **Slice 3 — Inline-mode filtered runs.** Expose an
   `--proximadb-filter-mode {auto,inline,prefilter}` knob on `ProximaAdapter` that
   sets the AXIS `ann_filtering_mode` (+ selectivity) on the REST `search` request
