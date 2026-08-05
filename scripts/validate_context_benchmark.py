@@ -46,8 +46,30 @@ def main() -> int:
     runnable = {
         item.get("id") for item in data.get("system", []) if item.get("adapter_status") == "runnable"
     }
-    if runnable != {"pgvector", "proximadb"}:
-        errors.append("the implemented ProximaDB and pgvector adapters must be marked runnable")
+    if runnable != {"pgvector", "proximadb", "qdrant"}:
+        errors.append(
+            "the implemented ProximaDB, pgvector, and Qdrant adapters must be marked runnable"
+        )
+    qdrant = next(
+        (item for item in data.get("system", []) if item.get("id") == "qdrant"),
+        {},
+    )
+    qdrant_adapter = qdrant.get("adapter", {})
+    expected_qdrant_adapter = {
+        "runner_system": "qdrant",
+        "distance": "cosine",
+        "vector_index": "hnsw(m=16,ef_construct=100)",
+        "metadata_index": "keyword(partition)",
+        "hnsw_ef_search": 40,
+        "write_visibility": "wait=true per batch",
+        "readiness_fence": "green status and empty update queue",
+        "query_endpoint": "/points/query",
+    }
+    if qdrant_adapter != expected_qdrant_adapter:
+        errors.append(
+            "Qdrant adapter contract must disclose the pinned filter, ANN, "
+            "visibility, and readiness settings"
+        )
     protocol = data.get("protocol", {})
     metrics = set(protocol.get("required_metrics", []))
     missing_metrics = REQUIRED_METRICS - metrics
@@ -81,7 +103,8 @@ def main() -> int:
         return 1
     print(
         "Context benchmark contract OK: 6 systems, 13 metrics, 4 backends, "
-        "five-trial/1M publication floor; ProximaDB and pgvector adapters are runnable."
+        "five-trial/1M publication floor; ProximaDB, pgvector, and Qdrant "
+        "adapters are runnable."
     )
     return 0
 
