@@ -119,25 +119,33 @@ metadata) are what stress ANN recall and filtered pre/post-filter behaviour.
   the operator CLI. `benches/context-corridor/data/.gitignore` keeps the corpus
   dir but ignores the (large) vectors — never committed; the checksum is the
   report `dataset_hash`. All TDD'd on byte fixtures (no download in tests).
-* **Slice 2b-ii — real corpora + descriptor-driven adapters.** Build the concrete
-  providers on the Slice-2a seam and 2b-i IO, and drive ALL six adapters from one
-  locally-held, checksummed corpus (`synthetic` stays as the CI/smoke path):
+* **Slice 2b-ii-A — SIFT vertical (DONE).** `SiftDatasetProvider` reads local
+  `.fvecs`/`.ivecs` (via 2b-i `corpus_io`) → descriptor `distance=l2`,
+  `filter_field=None`, with unfiltered ground truth from the precomputed
+  neighbours. The harness is now **filter-optional**: `descriptor.filter_field`
+  may be None → `run_queries` runs unfiltered-only and reports
+  `filtered_recall_at_10` as unavailable (None). The **Qdrant** adapter is
+  descriptor-driven (distance cosine→Cosine / l2→Euclid; filter field from the
+  descriptor; no payload index when there is no filter field) with
+  backward-compatible cosine/`partition` defaults, and declares
+  `supported_distances`. `build_provider` wires `sift1m`; a distance guard rejects
+  a dataset whose distance an adapter does not yet support. Live-validated
+  end-to-end on Qdrant: SIFT fixture (L2, no filter) recall@10 = 1.0 vs exact-L2
+  ground truth; synthetic path byte-identical (cosine/partition, recall 1.0).
+* **Slice 2b-ii-B — Wikipedia + the remaining five adapters.** Build the concrete
+  providers on the Slice-2a seam and 2b-i IO, and drive the rest of the fleet:
   ** **Wikipedia passage embeddings WITH metadata** (DECIDED: e.g. Cohere
      `wikipedia-22-12`) as the primary *filtered-corridor* driver — each vector
      carries a real categorical field (`lang`, article `category`/`title`) so the
      filter is correlated with content, which is what actually stresses
      pre/post-filter behaviour. This is the differentiating measurement.
-  ** **SIFT1M** as the standard *unfiltered* recall reference (1M x 128, 10k
-     queries, canonical precomputed 100-NN ground truth, L2 distance) — credibility
-     and comparability with published ANN results. It has no metadata, so it
-     cannot exercise the filtered corridor — it is a reference, not the driver.
   ** **Precompute filtered ground truth once**, offline, cached keyed by
      `(corpus_hash, query_hash, k, filter_field)` — the pure-Python
      `GroundTruthAccumulator` is `O(N*Q*dim)`, fine for validation, not for 1M.
-  ** **Wire each adapter's distance + filter_field FROM the `DatasetDescriptor`**
-     (the 2a seam exposes both) instead of the hardcoded cosine/`partition`, so
-     SIFT (L2, no metadata → filter optional) and Wikipedia (cosine, `lang`) flow
-     through unchanged. Live-validate against the containers.
+  ** **Make pgvector / Milvus / Elasticsearch / SurrealDB / ProximaDB
+     descriptor-driven** (distance + filter_field from the `DatasetDescriptor`,
+     as Qdrant now is) so SIFT (L2) and Wikipedia (cosine, `lang`) flow through
+     the whole fleet unchanged. Live-validate each against its container.
 * **Slice 3 — Inline-mode filtered runs.** Expose an
   `--proximadb-filter-mode {auto,inline,prefilter}` knob on `ProximaAdapter` that
   sets the AXIS `ann_filtering_mode` (+ selectivity) on the REST `search` request
