@@ -22,7 +22,9 @@ def _uds_transport(client: httpx.Client):
 
 def test_uds_path_produces_a_unix_socket_transport(tmp_path):
     socket = tmp_path / "proximadb.rest.sock"
-    client = RestClient(config=ClientConfig(url="http://localhost", uds_path=str(socket)))
+    client = RestClient(
+        config=ClientConfig(url="http://localhost", uds_path=str(socket))
+    )
 
     http_client = client._create_http_client()
     try:
@@ -47,7 +49,9 @@ def test_without_uds_path_the_tcp_client_is_unchanged():
 def test_unified_client_forwards_uds_path_to_config(tmp_path):
     socket = tmp_path / "proximadb.rest.sock"
 
-    client = ProximaDBClient(url="http://localhost", protocol="rest", uds_path=str(socket))
+    client = ProximaDBClient(
+        url="http://localhost", protocol="rest", uds_path=str(socket)
+    )
 
     assert client.config.uds_path == str(socket)
 
