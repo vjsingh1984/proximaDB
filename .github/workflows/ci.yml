@@ -209,6 +209,16 @@ jobs:
               # integration job, which the storage-only filter would otherwise miss.
               - 'src/storage/persistence/write_ahead_log/**'
               - 'src/storage/memtable/**'
+              # TD-RECALL-2 / #1406: same lesson, one layer up. Identity/OID minting
+              # in src/services (system_catalog.rs) feeds OID resolution on the
+              # cross-segment search path, so it can regress ANN recall WITHOUT
+              # touching src/query or src/storage. #1406 changed only
+              # src/services/{system_catalog,system_catalog_state}.rs + src/network,
+              # matched no recall filter, and its PR SKIPPED this job — the cross-tier
+              # recall collapse (mean 1.000 → 0.000) surfaced only later on develop and
+              # cost a bisect + revert (#1425). Recall is a cross-cutting OUTCOME, so
+              # this filter tracks what can break it, not who owns the code.
+              - 'src/services/**'
             storage_changes:
               - 'src/storage/**'
               - 'tests/*storage*'
