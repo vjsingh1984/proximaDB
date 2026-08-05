@@ -463,18 +463,164 @@ class ContextCorridorTest(unittest.TestCase):
         self.assertEqual(environment["hnsw_ef_search"], 40)
         self.assertEqual(environment["server_version"], "3.0.0")
 
+    def test_elasticsearch_index_name_is_path_safe(self) -> None:
+        with self.assertRaises(ValueError):
+            CONTEXT.ElasticsearchAdapter(
+                "http://es.example", "", 30.0, "Bad-Index"
+            )
+
+    def test_elasticsearch_prepare_and_bulk_insert_contract(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args, **kwargs):
+            calls.append((args, kwargs))
+            if args[1:4] == ("GET", "/", None):
+                return {"version": {"number": "9.5.0"}}, 0.5
+            if args[2].endswith("/_bulk"):
+                return {"errors": False, "items": []}, 0.5
+            return {"acknowledged": True}, 0.5
+
+        adapter = CONTEXT.ElasticsearchAdapter(
+            "http://es.example", "private-key", 12.0, "context_bench_1"
+        )
+        record = {
+            "id": "rec-7",
+            "vector": [0.25, -0.5],
+            "props": {"partition": "p7", "ordinal": 7},
+        }
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            adapter.prepare(2)
+            adapter.insert_batch([record])
+
+        self.assertEqual(adapter.version, "9.5.0")
+        put_args, _ = calls[1]
+        self.assertEqual(put_args[1:3], ("PUT", "/context_bench_1"))
+        embedding = put_args[3]["mappings"]["properties"]["embedding"]
+        self.assertEqual(embedding["type"], "dense_vector")
+        self.assertEqual(embedding["dims"], 2)
+        self.assertEqual(embedding["similarity"], "cosine")
+        self.assertEqual(
+            embedding["index_options"],
+            {"type": "hnsw", "m": 16, "ef_construction": 100},
+        )
+        self.assertEqual(
+            put_args[3]["mappings"]["properties"]["partition"]["type"],
+            "keyword",
+        )
+        bulk_args, bulk_kwargs = calls[2]
+        self.assertEqual(bulk_args[2], "/context_bench_1/_bulk")
+        self.assertEqual(bulk_kwargs["content_type"], "application/x-ndjson")
+        lines = bulk_kwargs["raw_body"].decode().splitlines()
+        self.assertEqual(json.loads(lines[0]), {"index": {"_id": "rec-7"}})
+        self.assertEqual(
+            json.loads(lines[1]),
+            {
+                "record_id": "rec-7",
+                "embedding": [0.25, -0.5],
+                "partition": "p7",
+                "ordinal": 7,
+            },
+        )
+        self.assertEqual(adapter.expected_docs, 1)
+        self.assertEqual(bulk_args[5], {"Authorization": "ApiKey private-key"})
+
+    def test_elasticsearch_bulk_errors_are_surfaced(self) -> None:
+        adapter = CONTEXT.ElasticsearchAdapter(
+            "http://es.example", "", 12.0, "context_bench_1"
+        )
+        error_response = {
+            "errors": True,
+            "items": [{"index": {"error": {"reason": "mapper_parsing"}}}],
+        }
+        record = {
+            "id": "rec-7",
+            "vector": [0.25, -0.5],
+            "props": {"partition": "p7", "ordinal": 7},
+        }
+        with patch.object(CONTEXT, "request", return_value=(error_response, 0.5)):
+            with self.assertRaises(RuntimeError):
+                adapter.insert_batch([record])
+
+    def test_elasticsearch_filtered_knn_contract_and_result_mapping(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args, **kwargs):
+            calls.append((args, kwargs))
+            return (
+                {"hits": {"hits": [{"_id": "rec-7", "fields": {"record_id": ["rec-7"]}}]}},
+                1.25,
+            )
+
+        adapter = CONTEXT.ElasticsearchAdapter(
+            "http://es.example", "", 12.0, "context_bench_1"
+        )
+        record = {
+            "id": "rec-7",
+            "vector": [0.25, -0.5],
+            "props": {"partition": "p7", "ordinal": 7},
+        }
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            found, latency = adapter.search(record, filtered=True)
+
+        self.assertEqual(found, ["rec-7"])
+        self.assertEqual(latency, 1.25)
+        args, _ = calls[0]
+        self.assertEqual(args[2], "/context_bench_1/_search")
+        knn = args[3]["knn"]
+        self.assertEqual(knn["field"], "embedding")
+        self.assertEqual(knn["k"], 10)
+        self.assertEqual(knn["num_candidates"], 40)
+        self.assertEqual(knn["filter"], {"term": {"partition": "p7"}})
+        self.assertFalse(args[3]["_source"])
+
+    def test_elasticsearch_ingest_waits_for_green_and_matching_count(self) -> None:
+        adapter = CONTEXT.ElasticsearchAdapter(
+            "http://es.example", "", 12.0, "context_bench_1"
+        )
+        adapter.expected_docs = 1
+        responses = [
+            ({}, 0.5),  # refresh
+            ({"status": "yellow"}, 0.5),  # health (not green)
+            ({"count": 0}, 0.5),  # count (mismatch)
+            ({}, 0.5),  # refresh
+            ({"status": "green"}, 0.5),  # health
+            ({"count": 1}, 0.5),  # count (match)
+        ]
+        with (
+            patch.object(CONTEXT, "request", side_effect=responses) as mocked,
+            patch.object(CONTEXT.time, "sleep") as mocked_sleep,
+        ):
+            adapter.finish_ingest()
+
+        self.assertEqual(mocked.call_count, 6)
+        mocked_sleep.assert_called_once_with(0.25)
+        self.assertGreaterEqual(adapter.readiness_wait_seconds, 0.0)
+
+    def test_elasticsearch_environment_does_not_disclose_api_key(self) -> None:
+        adapter = CONTEXT.ElasticsearchAdapter(
+            "http://es.example", "private-key", 12.0, "context_bench_1"
+        )
+        environment = adapter.environment()
+        self.assertNotIn("private-key", json.dumps(environment))
+        self.assertEqual(environment["hnsw_num_candidates"], 40)
+        self.assertEqual(environment["query_endpoint"], "/_search (knn)")
+
     def test_failure_text_does_not_persist_a_dsn_or_keyword_password(self) -> None:
         dsn = "postgresql://alice:secret@db.example/test"
         api_key = "qdrant-private-key"
         milvus_token = "milvus-private-token"
+        es_api_key = "elasticsearch-private-key"
         error = RuntimeError(
             f"could not use {dsn}; password=second-secret; api-key={api_key}; "
-            f"token={milvus_token}"
+            f"token={milvus_token}; es={es_api_key}"
         )
-        sanitized = CONTEXT.sanitized_error(error, dsn, api_key, milvus_token)
+        sanitized = CONTEXT.sanitized_error(
+            error, dsn, api_key, milvus_token, es_api_key
+        )
         self.assertNotIn("secret", sanitized)
         self.assertNotIn(api_key, sanitized)
         self.assertNotIn(milvus_token, sanitized)
+        self.assertNotIn(es_api_key, sanitized)
         self.assertIn("<redacted>", sanitized)
 
 

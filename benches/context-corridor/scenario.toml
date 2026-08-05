@@ -88,8 +88,18 @@ query_endpoint = "/v2/vectordb/entities/search"
 [[system]]
 id = "elasticsearch"
 role = "competitor"
-adapter_status = "planned"
+adapter_status = "runnable"
 comparison_surface = "document fields + kNN/hybrid search"
+
+[system.adapter]
+runner_system = "elasticsearch"
+distance = "cosine"
+vector_index = "dense_vector hnsw(m=16,ef_construction=100)"
+metadata_index = "keyword(partition)"
+hnsw_num_candidates = 40
+write_visibility = "forced _refresh per ingest"
+readiness_fence = "green status and matching document count"
+query_endpoint = "/_search (knn)"
 
 [[system]]
 id = "surrealdb"

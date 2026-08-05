@@ -56,12 +56,20 @@ def request(
     body: dict | None,
     timeout: float,
     extra_headers: dict[str, str] | None = None,
+    *,
+    raw_body: bytes | None = None,
+    content_type: str | None = None,
 ) -> tuple[Any, float]:
     headers = {"Accept": "application/json"}
     if extra_headers:
         headers.update(extra_headers)
     payload = None
-    if body is not None:
+    if raw_body is not None:
+        # Pre-encoded payloads (e.g. Elasticsearch bulk NDJSON) carry their own
+        # content type and must not be re-serialized as JSON.
+        headers["Content-Type"] = content_type or "application/octet-stream"
+        payload = raw_body
+    elif body is not None:
         headers["Content-Type"] = "application/json"
         payload = json.dumps(body, separators=(",", ":")).encode()
     req = urllib.request.Request(
@@ -867,6 +875,223 @@ class MilvusAdapter:
             )
 
 
+class ElasticsearchAdapter:
+    system_id = "elasticsearch"
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        timeout: float,
+        index: str,
+    ) -> None:
+        # Elasticsearch index names must be lowercase and cannot contain most
+        # punctuation; the generated run name already satisfies this.
+        if not re.fullmatch(r"[a-z0-9_-]+", index):
+            raise ValueError("generated Elasticsearch index name is not safe")
+        self.base_url = base_url
+        self.timeout = timeout
+        self.index = index
+        self.headers = {"Authorization": f"ApiKey {api_key}"} if api_key else {}
+        self.version = "unknown"
+        self.expected_docs = 0
+        self.readiness_wait_seconds = 0.0
+
+    def _request(
+        self, method: str, path: str, body: dict | None
+    ) -> tuple[Any, float]:
+        return request(
+            self.base_url,
+            method,
+            path,
+            body,
+            self.timeout,
+            self.headers,
+        )
+
+    def prepare(self, dimension: int) -> None:
+        service, _ = self._request("GET", "/", None)
+        version = service.get("version") if isinstance(service, dict) else None
+        if isinstance(version, dict) and isinstance(version.get("number"), str):
+            self.version = version["number"]
+        self._request(
+            "PUT",
+            f"/{self.index}",
+            {
+                "settings": {
+                    "number_of_shards": 1,
+                    "number_of_replicas": 0,
+                    "refresh_interval": "1s",
+                },
+                "mappings": {
+                    "properties": {
+                        "record_id": {"type": "keyword"},
+                        "partition": {"type": "keyword"},
+                        "ordinal": {"type": "long"},
+                        "embedding": {
+                            "type": "dense_vector",
+                            "dims": dimension,
+                            "index": True,
+                            "similarity": "cosine",
+                            "index_options": {
+                                "type": "hnsw",
+                                "m": 16,
+                                "ef_construction": 100,
+                            },
+                        },
+                    }
+                },
+            },
+        )
+
+    def insert_batch(self, records: list[dict[str, Any]]) -> None:
+        lines: list[str] = []
+        for record in records:
+            lines.append(
+                json.dumps(
+                    {"index": {"_id": record["id"]}}, separators=(",", ":")
+                )
+            )
+            lines.append(
+                json.dumps(
+                    {
+                        "record_id": record["id"],
+                        "embedding": record["vector"],
+                        "partition": record["props"]["partition"],
+                        "ordinal": record["props"]["ordinal"],
+                    },
+                    separators=(",", ":"),
+                )
+            )
+        payload = ("\n".join(lines) + "\n").encode()
+        response, _ = request(
+            self.base_url,
+            "POST",
+            f"/{self.index}/_bulk",
+            None,
+            self.timeout,
+            self.headers,
+            raw_body=payload,
+            content_type="application/x-ndjson",
+        )
+        if isinstance(response, dict) and response.get("errors"):
+            items = response.get("items")
+            first = items[0] if isinstance(items, list) and items else {}
+            action = first.get("index", {}) if isinstance(first, dict) else {}
+            raise RuntimeError(
+                "Elasticsearch bulk insert reported errors: "
+                f"{action.get('error', 'unknown')}"
+            )
+        self.expected_docs += len(records)
+
+    def finish_ingest(self) -> None:
+        # A forced _refresh is the explicit write-visibility fence. dense_vector
+        # HNSW graphs are built as part of segment construction, so a green
+        # shard plus a document count matching what was acknowledged means
+        # queries never race ingest.
+        started = time.monotonic()
+        deadline = started + self.timeout
+        while True:
+            self._request("POST", f"/{self.index}/_refresh", None)
+            health, _ = self._request(
+                "GET",
+                f"/_cluster/health/{self.index}"
+                "?wait_for_status=green&timeout=1s",
+                None,
+            )
+            status = health.get("status") if isinstance(health, dict) else None
+            count_payload, _ = self._request(
+                "GET", f"/{self.index}/_count", None
+            )
+            count = (
+                count_payload.get("count")
+                if isinstance(count_payload, dict)
+                else None
+            )
+            if status == "green" and count == self.expected_docs:
+                self.readiness_wait_seconds = time.monotonic() - started
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "Elasticsearch index did not reach green status with "
+                    f"{self.expected_docs} visible documents within "
+                    f"{self.timeout:g}s"
+                )
+            time.sleep(min(0.25, remaining))
+
+    def search(
+        self, record: dict[str, Any], *, filtered: bool
+    ) -> tuple[list[str], float]:
+        knn: dict[str, Any] = {
+            "field": "embedding",
+            "query_vector": record["vector"],
+            "k": TOP_K,
+            "num_candidates": 40,
+        }
+        if filtered:
+            knn["filter"] = {
+                "term": {"partition": record["props"]["partition"]}
+            }
+        body = {
+            "knn": knn,
+            "size": TOP_K,
+            "_source": False,
+            "fields": ["record_id"],
+        }
+        payload, latency = self._request(
+            "POST", f"/{self.index}/_search", body
+        )
+        outer = payload.get("hits") if isinstance(payload, dict) else None
+        hits = outer.get("hits") if isinstance(outer, dict) else None
+        found: list[str] = []
+        for hit in hits if isinstance(hits, list) else []:
+            if not isinstance(hit, dict):
+                continue
+            record_id = None
+            fields = hit.get("fields")
+            if isinstance(fields, dict):
+                values = fields.get("record_id")
+                if (
+                    isinstance(values, list)
+                    and values
+                    and isinstance(values[0], str)
+                ):
+                    record_id = values[0]
+            if record_id is None and isinstance(hit.get("_id"), str):
+                record_id = hit["_id"]
+            if isinstance(record_id, str):
+                found.append(record_id)
+        return found[:TOP_K], latency
+
+    def signals(self) -> dict[str, Any]:
+        stats, _ = self._request(
+            "GET", f"/{self.index}/_stats/docs,store,segments", None
+        )
+        count, _ = self._request("GET", f"/{self.index}/_count", None)
+        return {"index_stats": stats, "count": count}
+
+    def environment(self) -> dict[str, Any]:
+        return {
+            "base_url": self.base_url,
+            "server_version": self.version,
+            "distance": "cosine",
+            "index": "dense_vector hnsw(m=16,ef_construction=100)",
+            "hnsw_num_candidates": 40,
+            "filter_index": "keyword(partition)",
+            "query_endpoint": "/_search (knn)",
+            "write_visibility": "forced _refresh per ingest",
+            "readiness_fence": "green status and matching document count",
+            "readiness_wait_seconds": round(self.readiness_wait_seconds, 6),
+        }
+
+    def close(self, *, keep_data: bool) -> None:
+        if not keep_data:
+            self._request(
+                "DELETE", f"/{self.index}?ignore_unavailable=true", None
+            )
+
+
 def ingest_stream(
     adapter: Adapter,
     *,
@@ -1034,12 +1259,19 @@ def make_adapter(args: argparse.Namespace, run_name: str) -> Adapter:
             args.timeout,
             run_name,
         )
-    return MilvusAdapter(
-        args.milvus_url,
-        args.milvus_token,
+    if args.system == "milvus":
+        return MilvusAdapter(
+            args.milvus_url,
+            args.milvus_token,
+            args.timeout,
+            run_name,
+            args.milvus_server_version,
+        )
+    return ElasticsearchAdapter(
+        args.elasticsearch_url,
+        args.elasticsearch_api_key,
         args.timeout,
         run_name,
-        args.milvus_server_version,
     )
 
 
@@ -1047,7 +1279,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--system",
-        choices=("proximadb", "pgvector", "qdrant", "milvus"),
+        choices=("proximadb", "pgvector", "qdrant", "milvus", "elasticsearch"),
         default="proximadb",
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:5678")
@@ -1072,6 +1304,14 @@ def main() -> int:
         "--milvus-server-version",
         default="unknown",
         help="deployed Milvus version recorded in the report",
+    )
+    parser.add_argument(
+        "--elasticsearch-url", default="http://127.0.0.1:9200"
+    )
+    parser.add_argument(
+        "--elasticsearch-api-key",
+        default="",
+        help="optional Elasticsearch API key; never written to the report",
     )
     parser.add_argument("--records", type=int, default=1000)
     parser.add_argument("--dimension", type=int, default=32)
@@ -1135,7 +1375,11 @@ def main() -> int:
         return 0
     except Exception as exc:  # Failed runs are evidence and must be retained.
         safe_error = sanitized_error(
-            exc, args.pg_dsn, args.qdrant_api_key, args.milvus_token
+            exc,
+            args.pg_dsn,
+            args.qdrant_api_key,
+            args.milvus_token,
+            args.elasticsearch_api_key,
         )
         failure = {
             "schema_version": 1,
@@ -1159,6 +1403,7 @@ def main() -> int:
                 args.pg_dsn,
                 args.qdrant_api_key,
                 args.milvus_token,
+                args.elasticsearch_api_key,
             )
             print(
                 f"context corridor cleanup warning: {safe_cleanup_error}",
