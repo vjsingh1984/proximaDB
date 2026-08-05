@@ -3,7 +3,7 @@
 = TD-V1SUNSET-2: VectorRecord → ProximaRecord — scoped first migration slice (ADR-024 Tier-3 kick-off)
 :toc: macro
 :icons: font
-:last-updated: 2026-07-09
+:last-updated: 2026-08-05
 
 [cols="1,3", options="header"]
 |===
@@ -19,7 +19,7 @@ tested (CLAUDE.md mandate #8). Recovery for S1 is a revert of an internal-only c
 | Component | Data model / storage: `VectorRecord` callers across `src/storage/engines/**`, `src/core/**`,
 `src/index/**`, `src/services/**`; the v1↔v2 bridge
 (`crates/foundation/proximadb-records/src/conversions.rs`); the legacy SST1 row format
-(`src/storage/engines/sst/mod.rs` `SstEntry`).
+(`src/storage/engines/sst/mod.rs` — `SstEntry`, retired 2026-08-05).
 | Tracked-by | link:../../12-design/adr/ADR-024-single-canonical-data-type-and-schema.adoc[ADR-024] (the
 canonical-type decision); link:../../12-design/V1_RETIREMENT_ROADMAP_2026_07_08.adoc[V1_RETIREMENT_ROADMAP]
 Tier 3; the v1-proto ratchet (`scripts/check_v1_proto_usage.py`).
@@ -76,11 +76,12 @@ The decisive finding — it reshapes the risk of the whole effort:
 `writer.rs:305 write_pax_segment<I: Iterator<Item = ProximaRecord>>`; `flush/mod.rs` is entirely
 `ProximaRecord`. New writes never serialize `VectorRecord`.
 
-| **Legacy SST1 row format** (`SstEntry`, `.sst`) | Carries **prost-serialized `VectorRecord`**.
-`mod.rs:481 pub struct SstEntry { record: VectorRecord, … }`; `serialize()` prost-encodes it
-(`mod.rs:551 self.record.encode`); `deserialize()` decodes it (`mod.rs:582`); compaction re-reads legacy
-segments (`compaction.rs:1804`) and compacts them forward into PAX. This is the **only durable
-`VectorRecord` write/read surface.**
+| **Legacy SST1 row format** (`SstEntry`, `.sst`) | ⚠️ **SUPERSEDED 2026-08-05 — `SstEntry` is RETIRED;
+see <<reconciliation-2026-08-05>>.** Historical description: carried **prost-serialized `VectorRecord`**
+(`mod.rs:481 pub struct SstEntry { record: VectorRecord, … }`, `serialize()`/`deserialize()` at
+`mod.rs:551`/`:582`). The audit found **zero production callers**, so it was deleted. The durable
+`VectorRecord` **read** surface still exists, but it is `compaction.rs` decoding `VectorRecord`
+directly from stored blocks — it never went through `SstEntry`.
 
 | **Conversion bridge** | **Bidirectional and complete**, in
 `crates/foundation/proximadb-records/src/conversions.rs`: `From<&VectorRecord>`/`From<VectorRecord>` for
@@ -91,7 +92,9 @@ segments (`compaction.rs:1804`) and compacts them forward into PAX. This is the 
 v2 wire is already `VectorRecord`-free.
 
 | **Network exposure** | Per link:TD-V1SUNSET-1-rest-grpc-sunset-cutover.adoc[TD-V1SUNSET-1]: gRPC v1
-services deleted; REST v1 gate (`PROXIMADB_REST_V1_COMPAT`) **default ON** on `develop`. The
+services deleted; REST v1 gate (`PROXIMADB_REST_V1_COMPAT`) **default OFF** on `develop` — corrected
+2026-08-05; this line previously read "default ON", but `parse_compat_flag` maps `None => false` since
+`9c9b04669` (#814), so `/api/v1/*` already returns `410 Gone`. The
 **deprecated** v1 surface is the *api-crate* `crates/platform/proximadb-api/src/{rest,grpc}/v1/`
 (TD-V1SUNSET-1 owns its deletion); the root-crate `src/network/rest/v1/` is **live** `/api/v2` code.
 v2/blended surfaces use the v1 `SearchVectorRecord` wrapper, not bare `VectorRecord`.
@@ -109,11 +112,11 @@ that must keep decoding `VectorRecord` until no legacy `.sst` segments remain.
 |===
 | Bucket | What | ~Refs | Gating / risk
 
-| **A. Legacy durable** | `SstEntry` SST1 row encode/decode
-(`sst/mod.rs:481/551/582`, caller `:924`) + compaction re-read (`compaction.rs:1804`). On-disk bytes
-*are* prost `VectorRecord`.
-| 3 prod sites | **Mixed-read-safe READ path.** No new write format. Retires as compaction ages legacy
-`.sst` → PAX. Liveness of the `:924` serialize caller post M1-3 9b is open (OQ-1).
+| **A. Legacy durable** | ~~`SstEntry` SST1 row encode/decode~~ **(retired 2026-08-05 — was dead, OQ-1
+resolved)**. What remains: compaction re-read, now at ~`compaction.rs:2995`, which prost-decodes
+`VectorRecord` straight from stored block bytes. On-disk bytes *are* prost `VectorRecord`.
+| 1 prod site | **Mixed-read-safe READ path.** No new write format. Retires as compaction ages legacy
+`.sst` → PAX. Mandate #8 still applies to this remaining site.
 
 | **B. In-memory plumbing** | Engines/analytics using `VectorRecord` purely as a transient working type:
 `viper/pipeline.rs` (51), `sst/compaction.rs` (46), `axis/hmgi/detection.rs` (27), `nova/*`, `helix/*`,
@@ -193,11 +196,88 @@ compaction). Migrating the durable read seam first would touch the highest-risk 
 . **Sunset:** after TD-V1SUNSET-1's REST/gRPC hard-delete, retire the v1 proto `VectorRecord` message
   (with TD-121/TD-123), once no legacy `.sst` segment and no live v1 caller remains.
 
+[[reconciliation-2026-08-05]]
+== Reconciliation (2026-08-05) — audit vs `develop`, and the `SstEntry` retirement
+
+Audited every decisive claim against `origin/develop` before acting. Unlike its
+siblings TD-V1SUNSET-1 and -3, **this TD held up**: its central risk finding — that
+a durable `VectorRecord` surface still exists, so this is a genuine ADR-024 /
+mandate-#8 storage-format migration and not an in-memory type swap — is still
+correct. Only locations and one network claim had drifted.
+
+.Verified
+[cols="3,1,3", options="header"]
+|===
+| Claim (2026-07-09) | Verdict | Detail (2026-08-05)
+
+| WAL is `ProximaRecord`-native, **zero** `VectorRecord`
+| ✅ holds
+| The only `VectorRecord*` hits in the WAL are a `FlushDataSource::VectorRecords`
+  variant whose payload is `Vec<ProximaRecord>` — a stale *name*, not the v1 type.
+
+| PAX durable format is `ProximaRecord`-native
+| ✅ holds
+| Zero `VectorRecord` refs in `proximadb-block-format`.
+
+| Conversion bridge bidirectional + complete
+| ✅ holds
+| Both `From` directions plus `proxima_record_to_vector` in `records::conversions`.
+
+| `SstEntry` (`mod.rs:481`) is the **only** durable `VectorRecord` surface
+| ⚠️ half-stale
+| Struct had drifted to `:526` and was **dead** (no production caller). But the
+  claim's *substance* survives elsewhere: `compaction.rs` still prost-decodes
+  `VectorRecord` from stored block bytes on a live path.
+
+| Compaction re-reads legacy at `compaction.rs:1804`
+| ⚠️ line drift
+| Now ~`:2995`, still live. This is the surviving durable read surface.
+
+| REST v1 gate `PROXIMADB_REST_V1_COMPAT` **default ON**
+| ❌ stale
+| `None => false` (default **OFF**) since `9c9b04669` (#814); `/api/v1/*` 410s.
+  Same stale claim TD-V1SUNSET-1 carried until it was corrected.
+
+| Surface ~900 `src` refs / 150 files
+| ⚠️ re-measured
+| `src` 779/142 · `tests` 270/56 · `crates` 103/21 (grew — decomposition moved
+  code into crates) · `clients` 512/109.
+|===
+
+.What this PR changed
+`SstEntry` + its companion `SstMetadata` are **deleted** (159 lines), resolving
+OQ-1 and executing the "retire if dead" half of S-durable early, because it is
+pure subtraction with no format risk:
+
+* No `SstEntry::` call site in `src/`, `crates/`, or `apps/`; no re-export.
+* `SstMetadata` (the local `{is_tombstone, sequence_number, level}` one — distinct
+  from `proximablocks::sst_metadata::SstMetadata` and from `SstMetadataStats`) was
+  referenced only by `SstEntry`, so the two retire as one unit.
+* Its only exercise was tests. Of the four test files touching it, **exactly one
+  was compiled** — `tests/integration/sst_optimization_test.rs`, reachable via
+  `[[test]] name = "integration"` → `tests/rust/mod.rs` → `#[path]` →
+  `tests/integration/mod.rs:122`. Its `create_test_sst_record` fixture was rewritten
+  to yield a `VectorRecord` (the surrounding tests exercise bytemuck vector
+  serialization and ZSTD block compression, which are unaffected), and the three
+  `SstEntry`-format-only tests were dropped.
+* The other three were **never compiled** — `tests/integration/storage/compaction_config_test.rs`
+  is explicitly commented out in its `mod.rs` as "outdated storage APIs", and
+  `tests/rust/storage/` has no `mod.rs` at all, so both `test_expired_record_*.rs`
+  were orphaned. Deleted as dead weight.
+
+CAUTION for the remaining slices: "no production callers" did **not** mean "no
+durable surface". The durable read path survived `SstEntry`'s death because it
+lives in `compaction.rs`. S-durable is still a mixed-read-safe change, and
+mandate #8 still applies to it.
+
 == Open questions (resolve at slice execution — probe, don't assume)
 
-* **OQ-1:** Is `SstEntry::serialize` (`sst/mod.rs:924`) reachable from the **default flush path**, or
-  legacy/compaction-only post M1-3 9b (which deleted the streaming-writer tree)? Resolve with a
-  throwaway delete-and-see probe (`cargo check --workspace`); never merge the probe.
+* **OQ-1 — ✅ RESOLVED 2026-08-05: dead, and retired.** `SstEntry::serialize` was reachable from
+  *nothing*: the whole `SstEntry` type had zero production callers (definition + impl in
+  `sst/mod.rs` only; no re-export; no `SstEntry::` call site anywhere in `src/`, `crates/`, or
+  `apps/`). Its companion `SstMetadata` was used solely by it. Both were deleted — this executed the
+  "retire `SstEntry::serialize` if dead" branch of S-durable ahead of the rest of that slice, since
+  it is pure subtraction. See <<reconciliation-2026-08-05>>.
 * **OQ-2:** Confirm `core/pca` is the lowest-coupling leaf (vs. another candidate) via the same probe.
 * **OQ-3:** Does any live READ path surface **raw** `VectorRecord` to the compute layer
   (SQL/pgwire/DataFusion), or is it always bridged to `ProximaRecord` before compute? If always bridged,

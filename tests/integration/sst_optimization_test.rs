@@ -6,8 +6,6 @@ use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord};
 use proximadb::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, ProximaDataBlock,
 };
-use proximadb::storage::engines::sst::{SstEntry, SstMetadata};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
 use tracing::debug;
@@ -30,8 +28,10 @@ fn create_test_vector(dimension: usize, sparsity: f32) -> Vec<f32> {
     vector
 }
 
-/// Create test SstEntry with specific vector characteristics
-fn create_test_sst_record(id: String, vector: Vec<f32>) -> SstEntry {
+/// Create a test VectorRecord with specific vector characteristics.
+/// (Was `-> SstEntry`; the SstEntry wrapper was retired with the dead legacy
+/// SST1 row format — these tests exercise vector/block serialization, not it.)
+fn create_test_sst_record(id: String, vector: Vec<f32>) -> VectorRecord {
     let mut metadata = HashMap::new();
     metadata.insert(
         "category".to_string(),
@@ -48,7 +48,7 @@ fn create_test_sst_record(id: String, vector: Vec<f32>) -> SstEntry {
         },
     );
 
-    let record = VectorRecord {
+    VectorRecord {
         id,
         vector,
         metadata,
@@ -57,15 +57,6 @@ fn create_test_sst_record(id: String, vector: Vec<f32>) -> SstEntry {
         expires_at: None,
         version: Some(1),
         source: None,
-    };
-
-    SstEntry {
-        record,
-        sst_meta: SstMetadata {
-            is_tombstone: false,
-            sequence_number: 1,
-            level: 0,
-        },
     }
 }
 
@@ -159,63 +150,6 @@ fn test_vector_compression_effectiveness() {
 }
 
 #[test]
-fn test_sst_record_optimized_serialization() {
-    // Test different vector characteristics
-    let test_cases = vec![
-        ("small_dense", create_test_vector(128, 0.1)),
-        ("medium_sparse", create_test_vector(512, 0.8)),
-        ("large_dense", create_test_vector(1024, 0.2)),
-        ("very_large_sparse", create_test_vector(2048, 0.95)),
-    ];
-
-    for (test_name, vector) in test_cases {
-        let record = create_test_sst_record(format!("test_{}", test_name), vector);
-
-        // Test SstEntry's custom serialization (uses protobuf + bincode internally)
-        let serialized = record.serialize().unwrap();
-        let deserialized = SstEntry::deserialize(&serialized).unwrap();
-
-        // Verify all fields match
-        assert_eq!(record.record.id, deserialized.record.id);
-        assert_eq!(record.record.vector.len(), deserialized.record.vector.len());
-        assert_eq!(
-            record.record.metadata.len(),
-            deserialized.record.metadata.len()
-        );
-        assert_eq!(record.record.timestamp, deserialized.record.timestamp);
-        assert_eq!(record.record.version, deserialized.record.version);
-        assert_eq!(
-            record.sst_meta.sequence_number,
-            deserialized.sst_meta.sequence_number
-        );
-
-        // Verify vector values match exactly
-        for (i, (&original, &recovered)) in record
-            .record
-            .vector
-            .iter()
-            .zip(deserialized.record.vector.iter())
-            .enumerate()
-        {
-            assert!(
-                (original - recovered).abs() < f32::EPSILON,
-                "Vector value mismatch at index {} for test {}: {} != {}",
-                i,
-                test_name,
-                original,
-                recovered
-            );
-        }
-
-        debug!(
-            "✅ SstEntry optimized serialization passed: {} ({} bytes)",
-            test_name,
-            serialized.len()
-        );
-    }
-}
-
-#[test]
 fn test_data_block_zstd_compression() {
     // Create ProximaProximaDataBlock with multiple records - all must have same dimension
     // Changed to use consistent dimension (128) for all vectors
@@ -227,10 +161,10 @@ fn test_data_block_zstd_compression() {
         create_test_sst_record("medium_128".to_string(), create_test_vector(128, 0.5)),
     ];
 
-    // Extract VectorRecords from SstEntries, then convert to canonical ProximaRecord
+    // Convert to the canonical ProximaRecord that ProximaDataBlock consumes.
     let records: Vec<proximadb_records::ProximaRecord> = sst_entries
         .into_iter()
-        .map(|entry| proximadb::proto::defaults::vector_record_to_proxima_record(entry.record))
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
         .collect();
 
     // Test with compression enabled
@@ -320,7 +254,6 @@ fn test_compression_performance_benchmark() {
                 format!("record_{}", i),
                 create_test_vector(1024, if i % 2 == 0 { 0.9 } else { 0.1 }), // Mix sparse and dense
             )
-            .record // Extract the VectorRecord from SstEntry
         })
         .collect();
 
@@ -438,34 +371,6 @@ fn test_adaptive_vector_optimization() {
 }
 
 #[test]
-fn test_backward_compatibility() {
-    // Test that SstEntry serialization format is stable across versions
-    let record = create_test_sst_record(
-        "compatibility_test".to_string(),
-        create_test_vector(256, 0.3),
-    );
-
-    // Serialize using SstEntry's custom format (protobuf + bincode)
-    let serialized = record.serialize().unwrap();
-
-    // Should be able to deserialize
-    let deserialized = SstEntry::deserialize(&serialized).unwrap();
-
-    // Verify all fields match
-    assert_eq!(record.record.id, deserialized.record.id);
-    assert_eq!(record.record.vector, deserialized.record.vector);
-    assert_eq!(record.record.timestamp, deserialized.record.timestamp);
-    assert_eq!(record.record.version, deserialized.record.version);
-    assert_eq!(
-        record.sst_meta.sequence_number,
-        deserialized.sst_meta.sequence_number
-    );
-    assert_eq!(record.sst_meta.level, deserialized.sst_meta.level);
-
-    debug!("✅ Backward compatibility test passed - serialization format stable");
-}
-
-#[test]
 fn test_memory_efficiency() {
     // Test that bytemuck serialization doesn't cause memory allocation overhead
     let large_vector = create_test_vector(10000, 0.5); // 40KB vector
@@ -489,28 +394,4 @@ fn test_memory_efficiency() {
     }
 
     debug!("✅ Memory efficiency test completed - no leaks detected");
-}
-
-#[test]
-fn test_error_handling() {
-    let config = VectorSerializationConfig::default();
-
-    // Test corrupted data
-    let corrupted_data = vec![0xFF; 100];
-    let result = config.deserialize_vector(&corrupted_data);
-    assert!(result.is_err(), "Should fail on corrupted data");
-
-    // Test empty data
-    let empty_data = vec![];
-    let result = SstEntry::deserialize(&empty_data);
-    assert!(result.is_err(), "Should fail on empty data");
-
-    // Test truncated data
-    let record = create_test_sst_record("test".to_string(), create_test_vector(128, 0.1));
-    let serialized = record.serialize().unwrap();
-    let truncated = &serialized[..serialized.len() / 2];
-    let result = SstEntry::deserialize(truncated);
-    assert!(result.is_err(), "Should fail on truncated data");
-
-    debug!("✅ Error handling tests passed");
 }
