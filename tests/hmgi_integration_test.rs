@@ -386,6 +386,105 @@ async fn test_axismanager_hmgi_auto_enable_on_dense_insert() {
     assert!(partitions.iter().any(|p| p.modality_tag == "image"));
 }
 
+/// The first dense insert is copied into `collection_vectors` before HMGI is
+/// auto-enabled, so enablement immediately migrates that record. Migration and
+/// the following insert must resolve the same collection metric and per-modality
+/// HNSW contract; whichever path creates a partition first owns its config.
+#[tokio::test]
+async fn test_axismanager_hmgi_first_insert_preserves_partition_configs() {
+    use dashmap::DashMap;
+    use proximadb::compute::distance_computation::DistanceMetric as InternalDistanceMetric;
+    use proximadb::index::axis::types::{
+        Data, HmgiPartitionAlgo, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification,
+    };
+    use proximadb::proto::proximadb_v1::{
+        Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric,
+    };
+
+    let collection_id = "configured_hmgi";
+    let mut manager = AxisManager::new(Default::default()).await.unwrap();
+    let collection_cache = Arc::new(DashMap::new());
+    collection_cache.insert(
+        collection_id.to_string(),
+        Arc::new(Collection {
+            id: collection_id.to_string(),
+            config: Some(CollectionConfig {
+                distance_metric: Some(ProtoDistanceMetric::DotProduct as i32),
+                dimension: 3,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+    );
+    manager.set_shared_collection_cache(collection_cache);
+    manager
+        .update_collection_strategy(
+            collection_id,
+            IndexSelectionStrategy {
+                indexes: vec![IndexSpecification::new(
+                    Data::DenseVector { dimension: 3 },
+                    IndexAlgorithm::HMGI {
+                        per_modality: vec![
+                            HmgiPartitionAlgo {
+                                modality_tag: "text".to_string(),
+                                m: 24,
+                                ef_construction: 240,
+                                ef_search: 120,
+                            },
+                            HmgiPartitionAlgo {
+                                modality_tag: "image".to_string(),
+                                m: 40,
+                                ef_construction: 400,
+                                ef_search: 220,
+                            },
+                        ],
+                        max_partitions_per_query: 2,
+                    },
+                )],
+                routing_rules: vec![],
+            },
+        )
+        .await
+        .unwrap();
+
+    manager
+        .insert(
+            collection_id,
+            &vector_record("text_vec", vec![1.0, 0.0, 0.0], "text"),
+        )
+        .await
+        .unwrap();
+    manager
+        .insert(
+            collection_id,
+            &vector_record("image_vec", vec![0.0, 1.0, 0.0], "image"),
+        )
+        .await
+        .unwrap();
+
+    let registry = manager.hmgi_registry().unwrap();
+    let partitions = registry.get_partitions_for_collection(collection_id).await;
+    assert_eq!(partitions.len(), 2);
+
+    for partition in partitions {
+        let index = registry.get_partition(&partition).await.unwrap();
+        assert_eq!(index.distance_metric(), InternalDistanceMetric::DotProduct);
+        match partition.modality_tag.as_str() {
+            "text" => {
+                assert_eq!(index.get_config_m(), 24);
+                assert_eq!(index.get_config_ef_construction(), 240);
+                assert_eq!(index.get_config_ef(), 120);
+            }
+            "image" => {
+                assert_eq!(index.get_config_m(), 40);
+                assert_eq!(index.get_config_ef_construction(), 400);
+                assert_eq!(index.get_config_ef(), 220);
+            }
+            other => panic!("unexpected HMGI partition: {other}"),
+        }
+    }
+}
+
 /// Test canonical HMGI handles a single-modality collection without monolithic HNSW/IVF.
 #[tokio::test]
 async fn test_axismanager_hmgi_single_modality_query_without_manual_enable() {
