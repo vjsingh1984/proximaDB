@@ -6844,6 +6844,7 @@ dependencies = [
  "proximadb-tenant",
  "proximadb-tls",
  "proximadb-uql",
+ "proximadb-utility-scorer",
  "proximadb-vector",
  "proximadb-vector-query",
  "rand 0.8.6",
@@ -8605,6 +8606,10 @@ dependencies = [
  "regex",
  "tracing",
 ]
+
+[[package]]
+name = "proximadb-utility-scorer"
+version = "0.2.0"
 
 [[package]]
 name = "proximadb-vector"
