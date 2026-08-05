@@ -203,7 +203,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--queries-path", type=Path, required=True)
-    parser.add_argument("--superset-groundtruth", type=Path, required=True)
+    parser.add_argument("--superset-groundtruth", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--prefix-rows", type=int, required=True)
     parser.add_argument("--queries", type=int, default=10_000)
@@ -220,20 +220,31 @@ def main() -> int:
     )
     if dimension != query_dimension:
         raise RuntimeError("base/query dimensions differ")
-    superset_ids = read_bigann_groundtruth_ids(args.superset_groundtruth)
-    if not 0 < args.queries <= min(query_rows, superset_ids.shape[0]):
+    if args.superset_groundtruth is None:
+        # Recovery mode: no superset available, so every query is computed
+        # exactly against the prefix. Slower, but brute force IS ground truth —
+        # the superset path is only an optimisation over this.
+        available_queries = query_rows
+    else:
+        superset_ids = read_bigann_groundtruth_ids(args.superset_groundtruth)
+        available_queries = min(query_rows, superset_ids.shape[0])
+    if not 0 < args.queries <= available_queries:
         raise RuntimeError(
             f"requested {args.queries} queries but only "
-            f"{min(query_rows, superset_ids.shape[0])} are available"
+            f"{available_queries} are available"
         )
     if not 0 < args.prefix_rows <= base_rows:
         raise RuntimeError(f"requested prefix {args.prefix_rows} of {base_rows} rows")
 
-    neighbors, uncovered = derive_prefix_neighbors(
-        superset_ids[: args.queries],
-        args.prefix_rows,
-        args.top_k,
-    )
+    if args.superset_groundtruth is None:
+        uncovered = list(range(args.queries))
+        neighbors = np.full((args.queries, args.top_k), -1, dtype="<i4")
+    else:
+        neighbors, uncovered = derive_prefix_neighbors(
+            superset_ids[: args.queries],
+            args.prefix_rows,
+            args.top_k,
+        )
     if uncovered:
         neighbors[uncovered] = exact_neighbors_for_queries(
             base,
@@ -263,8 +274,17 @@ def main() -> int:
         "queries_sha256": sha256(args.queries_path),
         "query_rows": args.queries,
         "query_declared_rows": query_declared_rows,
-        "superset_groundtruth": str(args.superset_groundtruth.resolve()),
-        "superset_groundtruth_sha256": sha256(args.superset_groundtruth),
+        "mode": ("exact_full" if args.superset_groundtruth is None else "superset_derived"),
+        "superset_groundtruth": (
+            None
+            if args.superset_groundtruth is None
+            else str(args.superset_groundtruth.resolve())
+        ),
+        "superset_groundtruth_sha256": (
+            None
+            if args.superset_groundtruth is None
+            else sha256(args.superset_groundtruth)
+        ),
         "prefix_rows": args.prefix_rows,
         "dimension": dimension,
         "distance_compute_dtype": np.dtype(exact_l2_compute_dtype(dimension)).name,
