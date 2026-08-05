@@ -59,15 +59,16 @@ class FakeAdapter:
 
 
 class ContextCorridorTest(unittest.TestCase):
-    def test_streamed_dataset_is_bounded_and_hash_compatible(self) -> None:
+    def test_streamed_dataset_builds_hash_and_ground_truth(self) -> None:
         adapter = FakeAdapter()
+        queries = [CONTEXT.make_query(i, 4, random.Random(100 + i)) for i in range(2)]
         manifest, ingest_seconds = CONTEXT.ingest_stream(
             adapter,
             record_count=11,
             dimension=4,
             batch_size=3,
             seed=7,
-            query_indexes=[0, 7, 7, 10],
+            queries=queries,
         )
 
         rng = random.Random(7)
@@ -77,31 +78,87 @@ class ContextCorridorTest(unittest.TestCase):
         ).hexdigest()
 
         self.assertEqual(manifest.sha256, expected_hash)
-        self.assertEqual(
-            [record["id"] for record in manifest.query_records],
-            ["rec-0", "rec-7", "rec-7", "rec-10"],
-        )
+        self.assertEqual(len(manifest.queries), 2)
+        # Ground-truth ids are real corpus ids, and the filtered truth stays
+        # within the query's own partition.
+        corpus_by_id = {record["id"]: record for record in records}
+        for ground_truth in manifest.queries:
+            self.assertTrue(
+                ground_truth.unfiltered_truth.issubset(corpus_by_id.keys())
+            )
+            partition = ground_truth.query["props"]["partition"]
+            for record_id in ground_truth.filtered_truth:
+                self.assertEqual(
+                    corpus_by_id[record_id]["props"]["partition"], partition
+                )
         self.assertEqual(adapter.prepared_dimension, 4)
         self.assertEqual(adapter.inserted, 11)
         self.assertEqual(adapter.max_batch, 3)
         self.assertGreater(ingest_seconds, 0)
 
-    def test_queries_measure_filtered_and_unfiltered_target_recall(self) -> None:
-        adapter = FakeAdapter()
-        records = [
-            {
-                "id": f"rec-{index}",
-                "vector": [float(index)],
-                "props": {"partition": "p0"},
-            }
-            for index in range(4)
-        ]
-        accuracy, latencies = CONTEXT.run_queries(adapter, records, warmup_count=1)
+    def test_queries_measure_recall_against_ground_truth(self) -> None:
+        class StubAdapter:
+            system_id = "stub"
 
-        self.assertEqual(accuracy["recall_at_10"], 1.0)
+            def search(self, record, *, filtered):
+                # Unfiltered returns 2 of the 4 true neighbours (0.5 recall);
+                # filtered returns exactly the true filtered set (1.0 recall).
+                if filtered:
+                    return ["a", "b"], 2.0
+                return ["a", "b", "x", "y"], 1.0
+
+        queries = [
+            CONTEXT.QueryGroundTruth(
+                query={
+                    "id": "query-0",
+                    "vector": [0.0],
+                    "props": {"partition": "p0"},
+                },
+                unfiltered_truth=frozenset({"a", "b", "c", "d"}),
+                filtered_truth=frozenset({"a", "b"}),
+            )
+        ]
+        accuracy, latencies = CONTEXT.run_queries(
+            StubAdapter(), queries, warmup_count=0
+        )
+
+        self.assertEqual(accuracy["recall_at_10"], 0.5)
         self.assertEqual(accuracy["filtered_recall_at_10"], 1.0)
-        self.assertEqual(latencies, [2.0, 2.0, 2.0])
-        self.assertEqual(adapter.search_calls, 8)
+        self.assertEqual(latencies, [2.0])
+
+    def test_ground_truth_accumulator_computes_exact_topk(self) -> None:
+        queries = [{"id": "q", "vector": [1.0, 0.0], "props": {"partition": "p0"}}]
+        accumulator = CONTEXT.GroundTruthAccumulator(queries, top_k=2)
+        records = [
+            {"id": "a", "vector": [1.0, 0.0], "props": {"partition": "p0"}},
+            {"id": "b", "vector": [0.9, 0.1], "props": {"partition": "p1"}},
+            {"id": "c", "vector": [0.5, 0.5], "props": {"partition": "p0"}},
+            {"id": "d", "vector": [-1.0, 0.0], "props": {"partition": "p0"}},
+        ]
+        for record in records:
+            accumulator.observe(record)
+        (unfiltered, filtered), = accumulator.finalize()
+
+        # Top-2 by cosine overall = a (1.0), b (0.994); within p0 = a, c.
+        self.assertEqual(unfiltered, frozenset({"a", "b"}))
+        self.assertEqual(filtered, frozenset({"a", "c"}))
+
+    def test_recall_at_k_measures_intersection(self) -> None:
+        truth = frozenset({"a", "b", "c", "d"})
+        self.assertEqual(CONTEXT.recall_at_k(["a", "b", "c", "d"], truth), 1.0)
+        self.assertEqual(CONTEXT.recall_at_k(["a", "b"], truth), 0.5)
+        self.assertEqual(CONTEXT.recall_at_k(["x", "y"], truth), 0.0)
+        # Empty truth (e.g. an empty partition) is vacuously satisfied.
+        self.assertEqual(CONTEXT.recall_at_k([], frozenset()), 1.0)
+
+    def test_make_query_structure_and_partition_cycle(self) -> None:
+        query = CONTEXT.make_query(3, 4, random.Random(7))
+        self.assertEqual(query["id"], "query-3")
+        self.assertEqual(query["props"]["partition"], "p3")
+        self.assertEqual(len(query["vector"]), 4)
+        self.assertEqual(
+            CONTEXT.make_query(8, 4, random.Random(7))["props"]["partition"], "p0"
+        )
 
     def test_report_has_the_complete_metric_contract(self) -> None:
         adapter = FakeAdapter()

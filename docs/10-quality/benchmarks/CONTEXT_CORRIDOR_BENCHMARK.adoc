@@ -77,10 +77,18 @@ python3 -m venv /tmp/proximadb-context-bench
 ----
 
 The DSN is consumed only by the adapter and is never written to the result. The default cleanup
-drops the per-run table; pass `--keep-data` only for local diagnosis. Both adapters issue an
-unfiltered and metadata-filtered query for each deterministic target record. The current accuracy
-metric is explicitly scoped as target-record presence in the top ten, not full-neighbour
-ground-truth recall.
+drops the per-run table; pass `--keep-data` only for local diagnosis.
+
+**Recall methodology (ground truth).** Accuracy is measured against exact cosine-kNN ground truth,
+not a self-match. Queries are **held-out** (drawn from a separate deterministic RNG stream, never
+inserted). During the single ingest pass the harness computes each query's true top-k over the full
+corpus — unfiltered and within the query's partition — in bounded per-query heaps (memory
+`O(queries x top_k)`, so the corpus is never materialized). `recall_at_10` /
+`filtered_recall_at_10` report the mean over measured queries of
+`|returned_topk intersect truth_topk| / |truth_topk|`, so an engine that misses true neighbours
+scores below 1.0. NOTE: uniform-random synthetic vectors are near-equidistant in high dimensions and
+are recovered exactly by HNSW until very large N, so this synthetic path does not separate systems
+on recall — real/clustered embeddings at scale do (see TD-CTXCORR-1, Slice 2: Wikipedia + SIFT1M).
 
 The Qdrant baseline uses point payload for the canonical record ID and typed filter fields, a
 keyword payload index created before ingest, and the universal Query Points API with cosine HNSW
@@ -109,8 +117,8 @@ For Qdrant Cloud or an authenticated deployment, pass `--qdrant-api-key`; the ke
 the `api-key` header and is redacted from failed-run artifacts and console errors. The adapter
 retains Qdrant's per-query hardware usage counters and final collection telemetry as server
 signals, while unsupported object-store economics remain explicit `null` publication blockers.
-Every runnable adapter issues an unfiltered and metadata-filtered query for each deterministic
-target record.
+Every runnable adapter issues an unfiltered and a metadata-filtered query for each held-out query
+vector, scored against exact-kNN ground truth (see Recall methodology above).
 
 The Milvus baseline uses an explicit schema rather than dynamic fields: a VARCHAR primary key,
 FLOAT_VECTOR embedding, VARCHAR partition, and INT64 ordinal. It builds HNSW

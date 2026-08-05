@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import heapq
 import json
 import math
 import platform
@@ -167,10 +168,88 @@ def make_record(index: int, dimension: int, rng: random.Random) -> dict[str, Any
     }
 
 
+def make_query(index: int, dimension: int, rng: random.Random) -> dict[str, Any]:
+    # A HELD-OUT query: same distribution as the corpus but drawn from a
+    # separate RNG stream (see main()), so it is not an inserted record. Recall
+    # is measured against the true nearest neighbours, not a self-match.
+    return {
+        "id": f"query-{index}",
+        "vector": [rng.uniform(-1.0, 1.0) for _ in range(dimension)],
+        "props": {"partition": f"p{index % 8}", "ordinal": -1},
+    }
+
+
+def _cosine(vector: list[float], norm: float, other: list[float]) -> float:
+    other_norm = math.sqrt(sum(value * value for value in other)) or 1.0
+    dot = sum(a * b for a, b in zip(vector, other))
+    return dot / (norm * other_norm)
+
+
+class GroundTruthAccumulator:
+    """Exact cosine-kNN ground truth, accumulated in a single streaming pass.
+
+    Memory is O(queries * top_k) — bounded per-query min-heaps — so the corpus
+    never needs to be materialized, preserving the streaming/scale property of
+    the harness. Compute is O(records * queries * dim); at publication scale this
+    should be vectorized or precomputed (see TD-CTXCORR-1).
+    """
+
+    def __init__(self, queries: list[dict[str, Any]], top_k: int) -> None:
+        self._queries = queries
+        self._top_k = top_k
+        self._norms = [
+            math.sqrt(sum(v * v for v in q["vector"])) or 1.0 for q in queries
+        ]
+        self._unfiltered: list[list[tuple[float, str]]] = [[] for _ in queries]
+        self._filtered: list[list[tuple[float, str]]] = [[] for _ in queries]
+
+    def observe(self, record: dict[str, Any]) -> None:
+        record_id = record["id"]
+        record_vector = record["vector"]
+        record_partition = record["props"]["partition"]
+        for index, query in enumerate(self._queries):
+            similarity = _cosine(query["vector"], self._norms[index], record_vector)
+            self._push(self._unfiltered[index], similarity, record_id)
+            if record_partition == query["props"]["partition"]:
+                self._push(self._filtered[index], similarity, record_id)
+
+    def _push(self, heap: list[tuple[float, str]], similarity: float, rid: str) -> None:
+        if len(heap) < self._top_k:
+            heapq.heappush(heap, (similarity, rid))
+        elif similarity > heap[0][0]:
+            heapq.heapreplace(heap, (similarity, rid))
+
+    def finalize(self) -> list[tuple[frozenset[str], frozenset[str]]]:
+        return [
+            (
+                frozenset(rid for _, rid in self._unfiltered[index]),
+                frozenset(rid for _, rid in self._filtered[index]),
+            )
+            for index in range(len(self._queries))
+        ]
+
+
+def recall_at_k(returned: list[str], truth: frozenset[str]) -> float:
+    # Fraction of the true top-k neighbours that the engine actually returned.
+    # An empty truth set (e.g. an empty partition) is vacuously satisfied.
+    if not truth:
+        return 1.0
+    unique = set(returned)
+    hits = sum(1 for record_id in truth if record_id in unique)
+    return hits / len(truth)
+
+
+@dataclass(frozen=True)
+class QueryGroundTruth:
+    query: dict[str, Any]
+    unfiltered_truth: frozenset[str]
+    filtered_truth: frozenset[str]
+
+
 @dataclass(frozen=True)
 class DatasetManifest:
     sha256: str
-    query_records: list[dict[str, Any]]
+    queries: list[QueryGroundTruth]
 
 
 class Adapter(Protocol):
@@ -1261,10 +1340,9 @@ def ingest_stream(
     dimension: int,
     batch_size: int,
     seed: int,
-    query_indexes: list[int],
+    queries: list[dict[str, Any]],
 ) -> tuple[DatasetManifest, float]:
-    selected = set(query_indexes)
-    query_records: dict[int, dict[str, Any]] = {}
+    accumulator = GroundTruthAccumulator(queries, TOP_K)
     hasher = hashlib.sha256()
     hasher.update(b"[")
     rng = random.Random(seed)
@@ -1278,8 +1356,9 @@ def ingest_stream(
         hasher.update(
             json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
         )
-        if index in selected:
-            query_records[index] = record
+        # Exact-kNN ground truth is accumulated in this same streaming pass, so
+        # the corpus is never materialized in memory.
+        accumulator.observe(record)
         batch.append(record)
         if len(batch) == batch_size:
             adapter.insert_batch(batch)
@@ -1289,13 +1368,18 @@ def ingest_stream(
     adapter.finish_ingest()
     ingest_seconds = time.perf_counter() - started
     hasher.update(b"]")
-    missing = selected - query_records.keys()
-    if missing:
-        raise RuntimeError(f"query records were not generated: {sorted(missing)[:10]}")
+    truths = accumulator.finalize()
     return (
         DatasetManifest(
             sha256=hasher.hexdigest(),
-            query_records=[query_records[index] for index in query_indexes],
+            queries=[
+                QueryGroundTruth(
+                    query=query,
+                    unfiltered_truth=unfiltered,
+                    filtered_truth=filtered,
+                )
+                for query, (unfiltered, filtered) in zip(queries, truths)
+            ],
         ),
         ingest_seconds,
     )
@@ -1303,29 +1387,35 @@ def ingest_stream(
 
 def run_queries(
     adapter: Adapter,
-    records: list[dict[str, Any]],
+    queries: list[QueryGroundTruth],
     *,
     warmup_count: int,
 ) -> tuple[dict[str, float], list[float]]:
-    unfiltered_hits = 0
-    filtered_hits = 0
+    unfiltered_recall = 0.0
+    filtered_recall = 0.0
     measured = 0
     filtered_latencies: list[float] = []
-    for ordinal, record in enumerate(records):
-        unfiltered_ids, _ = adapter.search(record, filtered=False)
-        filtered_ids, filtered_latency = adapter.search(record, filtered=True)
+    for ordinal, ground_truth in enumerate(queries):
+        unfiltered_ids, _ = adapter.search(ground_truth.query, filtered=False)
+        filtered_ids, filtered_latency = adapter.search(
+            ground_truth.query, filtered=True
+        )
         if ordinal < warmup_count:
             continue
         measured += 1
         filtered_latencies.append(filtered_latency)
-        unfiltered_hits += int(record["id"] in unfiltered_ids[:TOP_K])
-        filtered_hits += int(record["id"] in filtered_ids[:TOP_K])
+        unfiltered_recall += recall_at_k(
+            unfiltered_ids[:TOP_K], ground_truth.unfiltered_truth
+        )
+        filtered_recall += recall_at_k(
+            filtered_ids[:TOP_K], ground_truth.filtered_truth
+        )
     if measured == 0:
         raise RuntimeError("benchmark produced no measured queries")
     return (
         {
-            "recall_at_10": round(unfiltered_hits / measured, 6),
-            "filtered_recall_at_10": round(filtered_hits / measured, 6),
+            "recall_at_10": round(unfiltered_recall / measured, 6),
+            "filtered_recall_at_10": round(filtered_recall / measured, 6),
         },
         filtered_latencies,
     )
@@ -1385,11 +1475,19 @@ def build_report(
         },
         "metrics": metrics,
         "metric_scope": {
-            "recall_at_10": "inserted query-record target present in top 10",
-            "filtered_recall_at_10": "inserted query-record target present in filtered top 10",
+            "recall_at_10": "mean recall@10 vs exact cosine-kNN ground truth over held-out queries",
+            "filtered_recall_at_10": "mean recall@10 vs exact cosine-kNN ground truth within the query partition",
             "latency_percentiles": "filtered search client-observed latency",
             "peak_rss_bytes": "benchmark runner peak RSS; not server RSS",
             "unavailable": [key for key, value in metrics.items() if value is None],
+        },
+        "recall_methodology": {
+            "queries": "held-out (not inserted), same distribution as the corpus",
+            "ground_truth": "exact cosine kNN over the full corpus, computed streaming",
+            "metric": (
+                "mean over measured queries of "
+                "|returned_topk intersect truth_topk| / |truth_topk|"
+            ),
         },
         "query_count": query_count,
         "warmup_count": warmup_count,
@@ -1532,8 +1630,13 @@ def main() -> int:
 
     root = Path(__file__).resolve().parents[2]
     run_rng = random.Random(args.seed ^ 0xC0DEC0DE)
-    query_indexes = [
-        run_rng.randrange(args.records) for _ in range(args.warmup + args.queries)
+    # Held-out queries: a distinct RNG stream from the corpus (seeded by args.seed
+    # in ingest_stream) so queries are never inserted records — recall is measured
+    # against the true nearest neighbours, not a self-match.
+    query_rng = random.Random(args.seed ^ 0x0DDBA11)
+    queries = [
+        make_query(index, args.dimension, query_rng)
+        for index in range(args.warmup + args.queries)
     ]
     run_name = f"context_bench_{int(time.time())}_{run_rng.randrange(100000):05d}"
     adapter = make_adapter(args, run_name)
@@ -1544,11 +1647,11 @@ def main() -> int:
             dimension=args.dimension,
             batch_size=args.batch_size,
             seed=args.seed,
-            query_indexes=query_indexes,
+            queries=queries,
         )
         accuracy, latencies = run_queries(
             adapter,
-            manifest.query_records,
+            manifest.queries,
             warmup_count=args.warmup,
         )
         report = build_report(
