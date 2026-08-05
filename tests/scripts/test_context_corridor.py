@@ -310,15 +310,171 @@ class ContextCorridorTest(unittest.TestCase):
         self.assertNotIn("private-key", json.dumps(adapter.environment()))
         self.assertEqual(adapter.environment()["hnsw_ef_search"], 40)
 
+    def test_milvus_collection_name_is_path_safe(self) -> None:
+        with self.assertRaises(ValueError):
+            CONTEXT.MilvusAdapter(
+                "http://milvus.example",
+                "private-token",
+                30.0,
+                "bad-collection",
+                "3.0.0",
+            )
+
+    def test_milvus_prepare_and_insert_contract(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args):
+            calls.append(args)
+            if args[2] == "/v2/vectordb/entities/insert":
+                return {"code": 0, "data": {"insertCount": 1}}, 0.5
+            return {"code": 0, "data": {}}, 0.5
+
+        adapter = CONTEXT.MilvusAdapter(
+            "http://milvus.example",
+            "private-token",
+            12.0,
+            "context_corridor",
+            "3.0.0",
+        )
+        record = {
+            "id": "rec-7",
+            "vector": [0.25, -0.5],
+            "props": {"partition": "p7", "ordinal": 7},
+        }
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            adapter.prepare(2)
+            adapter.insert_batch([record])
+
+        self.assertEqual(calls[0][2], "/v2/vectordb/collections/create")
+        create = calls[0][3]
+        self.assertEqual(create["consistencyLevel"], "Strong")
+        self.assertFalse(create["schema"]["enableDynamicField"])
+        self.assertEqual(
+            create["indexParams"],
+            [
+                {
+                    "fieldName": "embedding",
+                    "indexName": "embedding_hnsw_idx",
+                    "metricType": "COSINE",
+                    "params": {
+                        "index_type": "HNSW",
+                        "M": 16,
+                        "efConstruction": 100,
+                    },
+                },
+                {
+                    "fieldName": "partition",
+                    "indexName": "partition_bitmap_idx",
+                    "params": {"index_type": "BITMAP"},
+                },
+            ],
+        )
+        self.assertEqual(
+            calls[1][3]["data"],
+            [
+                {
+                    "id": "rec-7",
+                    "embedding": [0.25, -0.5],
+                    "partition": "p7",
+                    "ordinal": 7,
+                }
+            ],
+        )
+        self.assertEqual(calls[0][5]["Authorization"], "Bearer private-token")
+
+    def test_milvus_filtered_search_contract_and_result_mapping(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args):
+            calls.append(args)
+            return {"code": 0, "data": [{"id": "rec-7", "distance": 1.0}]}, 1.25
+
+        adapter = CONTEXT.MilvusAdapter(
+            "http://milvus.example",
+            "private-token",
+            12.0,
+            "context_corridor",
+            "3.0.0",
+        )
+        record = {
+            "id": "rec-7",
+            "vector": [0.25, -0.5],
+            "props": {"partition": "p7", "ordinal": 7},
+        }
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            found, latency = adapter.search(record, filtered=True)
+
+        self.assertEqual(found, ["rec-7"])
+        self.assertEqual(latency, 1.25)
+        self.assertEqual(calls[0][2], "/v2/vectordb/entities/search")
+        search = calls[0][3]
+        self.assertEqual(search["filter"], 'partition == "p7"')
+        self.assertEqual(
+            search["searchParams"],
+            {"metricType": "COSINE", "params": {"ef": 40}},
+        )
+
+    def test_milvus_ingest_waits_for_load_and_both_indexes(self) -> None:
+        adapter = CONTEXT.MilvusAdapter(
+            "http://milvus.example",
+            "private-token",
+            12.0,
+            "context_corridor",
+            "3.0.0",
+        )
+        finished_index = {
+            "data": [
+                {
+                    "indexState": "Finished",
+                    "pendingRows": 0,
+                }
+            ]
+        }
+        responses = [
+            ({"data": {}}, 0.5),
+            (
+                {
+                    "data": {
+                        "loadState": "LoadStateLoaded",
+                        "loadProgress": 100,
+                    }
+                },
+                0.5,
+            ),
+            (finished_index, 0.5),
+            (finished_index, 0.5),
+        ]
+        with patch.object(adapter, "_request", side_effect=responses) as mocked:
+            adapter.finish_ingest()
+
+        self.assertEqual(mocked.call_count, 4)
+        self.assertGreaterEqual(adapter.readiness_wait_seconds, 0.0)
+
+    def test_milvus_environment_does_not_disclose_token(self) -> None:
+        adapter = CONTEXT.MilvusAdapter(
+            "http://milvus.example",
+            "private-token",
+            12.0,
+            "context_corridor",
+            "3.0.0",
+        )
+        environment = adapter.environment()
+        self.assertNotIn("private-token", json.dumps(environment))
+        self.assertEqual(environment["hnsw_ef_search"], 40)
+        self.assertEqual(environment["server_version"], "3.0.0")
+
     def test_failure_text_does_not_persist_a_dsn_or_keyword_password(self) -> None:
         dsn = "postgresql://alice:secret@db.example/test"
         api_key = "qdrant-private-key"
+        milvus_token = "milvus-private-token"
         error = RuntimeError(
-            f"could not use {dsn}; password=second-secret; api-key={api_key}"
+            f"could not use {dsn}; password=second-secret; api-key={api_key}; "
+            f"token={milvus_token}"
         )
-        sanitized = CONTEXT.sanitized_error(error, dsn, api_key)
+        sanitized = CONTEXT.sanitized_error(error, dsn, api_key, milvus_token)
         self.assertNotIn("secret", sanitized)
         self.assertNotIn(api_key, sanitized)
+        self.assertNotIn(milvus_token, sanitized)
         self.assertIn("<redacted>", sanitized)
 
 

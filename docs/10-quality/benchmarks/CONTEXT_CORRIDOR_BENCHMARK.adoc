@@ -112,11 +112,42 @@ signals, while unsupported object-store economics remain explicit `null` publica
 All three runnable adapters issue an unfiltered and metadata-filtered query for each deterministic
 target record.
 
+The Milvus baseline uses an explicit schema rather than dynamic fields: a VARCHAR primary key,
+FLOAT_VECTOR embedding, VARCHAR partition, and INT64 ordinal. It builds HNSW
+(`M = 16`, `efConstruction = 100`) plus a BITMAP index suited to the eight-value partition field,
+uses strong collection consistency, and searches with `ef = 40`. After ingest, the runner flushes
+streaming data and waits for 100% collection load plus `Finished` state with zero pending rows on
+both indexes. Use the release-provided standalone manifest and retain its exact image digest with
+published evidence; this example pins the current stable Milvus v3.0.0 release:
+
+[source,bash]
+----
+curl -fsSL \
+  https://github.com/milvus-io/milvus/releases/download/v3.0.0/milvus-standalone-docker-compose.yml \
+  -o /tmp/milvus-standalone-v3.0.0.yml
+docker compose -f /tmp/milvus-standalone-v3.0.0.yml up -d
+
+python3 scripts/bench/context_corridor.py \
+  --system milvus \
+  --milvus-url http://127.0.0.1:19530 \
+  --milvus-token root:Milvus \
+  --milvus-server-version 3.0.0 \
+  --records 1000 \
+  --dimension 32 \
+  --queries 200 \
+  --output artifacts/context-corridor/milvus-local.json
+----
+
+The token is used only as a bearer credential and is redacted from failed-run artifacts and console
+errors. Milvus v2 REST does not expose the server version, so `--milvus-server-version` is an
+operator declaration that must be checked against the retained container digest before publication.
+Collection, load-state, HNSW, and scalar-index descriptions are captured as server signals.
+
 == Publication gate
 
 No cross-system winner, price/performance, or TAM-facing benchmark claim may be published until:
 
-* all six adapters are runnable (ProximaDB, pgvector, and Qdrant are currently complete);
+* all six adapters are runnable (ProximaDB, pgvector, Qdrant, and Milvus are currently complete);
 * each system runs at least five trials over at least one million records;
 * local, S3, Azure, and GCS configurations are represented where supported;
 * raw results, failed runs, commit/version, configuration, hardware, and dataset hash are retained;
