@@ -104,9 +104,17 @@ metadata) are what stress ANN recall and filtered pre/post-filter behaviour.
 * **Slice 1 — ground-truth recall (this PR, DONE).** Held-out queries + streaming
   exact-kNN; unfiltered and filtered recall vs truth; honest `metric_scope` and a
   `recall_methodology` block in the report. Unit-tested (TDD).
-* **Slice 2 — real local corpora + scale-safe ground truth.** Drive ALL six
-  adapters from one locally-held, checksummed corpus via a pluggable dataset
-  provider (`synthetic` stays as the deterministic CI/smoke path):
+* **Slice 2a — the `DatasetProvider` seam (DONE).** A provider owns its corpus,
+  held-out queries, and ground truth as one unit, exposing a `DatasetDescriptor`
+  (name, dimension, `distance`, `filter_field`, record count, checksum);
+  `ingest_stream` depends only on `corpus()`, `run_queries` only on `queries()`.
+  `SyntheticDatasetProvider` is the behaviour-preserving default; `sift1m` /
+  `wikipedia` reject clearly until 2b. The correct boundary: real datasets plug in
+  without touching the ingest/measurement machinery, and the dataset (not each
+  adapter) owns distance + filter field.
+* **Slice 2b — real local corpora + scale-safe ground truth.** Drive ALL six
+  adapters from one locally-held, checksummed corpus through the Slice-2a seam
+  (`synthetic` stays as the deterministic CI/smoke path):
   ** **Wikipedia passage embeddings WITH metadata** (DECIDED: e.g. Cohere
      `wikipedia-22-12`) as the primary *filtered-corridor* driver — each vector
      carries a real categorical field (`lang`, article `category`/`title`) so the

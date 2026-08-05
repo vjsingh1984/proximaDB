@@ -29,6 +29,21 @@ Every report must include recall, filtered recall, ingest rate, p50/p95/p99, pea
 GET/PUT counts, bytes moved, cache hit ratio, and estimated cost per million queries. A performance
 claim that omits accuracy or physical-cost signals is not a ProximaDB co-design result.
 
+== Datasets (the `DatasetProvider` seam)
+
+The dataset is injected through a `DatasetProvider` seam: a provider owns its corpus, its held-out
+queries, and their ground truth as one cohesive unit, and exposes a `DatasetDescriptor` (name,
+dimension, `distance`, `filter_field`, record count, checksum). `ingest_stream` depends only on
+`provider.corpus()`; `run_queries` depends only on `provider.queries()` (ground truth travels with
+the query). This is the correct integration boundary: real datasets plug in without touching the
+ingest/measurement machinery, and the *dataset* — not each adapter — owns distance and filter field.
+
+`--dataset synthetic` (default) is the deterministic CI/smoke path. `--dataset sift1m` (canonical
+unfiltered recall reference, L2, precomputed 100-NN ground truth) and `--dataset wikipedia`
+(filtered-corridor driver: real passage embeddings + `lang`/`category` metadata, cosine) load local,
+checksummed, memory-mapped vectors + precomputed ground truth and drive the adapters' distance and
+filter field from the descriptor — TD-CTXCORR-1 Slice 2b.
+
 == Runnable slices
 
 The runner streams deterministic batches instead of retaining the corpus in Python memory, so the
