@@ -321,9 +321,9 @@ pub async fn rate_limit_middleware(
     }
 }
 
-/// Extract client IP from request. `pub(crate)` so the metrics middleware can
+/// Extract client IP from request. `pub` so the (root) metrics middleware can
 /// classify the same client (one IP-extraction seam shared across the edge).
-pub(crate) fn get_client_ip(request: &Request) -> IpAddr {
+pub fn get_client_ip(request: &Request) -> IpAddr {
     // Try to get IP from X-Forwarded-For header first (for proxies)
     if let Some(forwarded_for) = request.headers().get("X-Forwarded-For")
         && let Ok(forwarded_str) = forwarded_for.to_str()
