@@ -23,6 +23,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -247,9 +248,108 @@ class QueryGroundTruth:
 
 
 @dataclass(frozen=True)
-class DatasetManifest:
-    sha256: str
-    queries: list[QueryGroundTruth]
+class DatasetDescriptor:
+    name: str
+    dimension: int
+    distance: str  # "cosine" | "l2" — the contract that drives adapter config
+    record_count: int
+    dataset_hash: str
+    filter_field: str  # the metadata field the filtered corridor filters on
+    query_count: int
+
+
+class DatasetProvider(Protocol):
+    """The seam between a dataset and the ingest/measurement machinery.
+
+    A provider owns its corpus, its held-out queries, and their ground truth as
+    one cohesive unit. `ingest_stream` depends only on `corpus()`; `run_queries`
+    depends only on `queries()`. Synthetic computes ground truth; real datasets
+    (SIFT1M, Wikipedia — TD-CTXCORR-1 Slice 2b) load precomputed ground truth and
+    memory-map local, checksummed vectors behind this same interface.
+    """
+
+    def descriptor(self) -> DatasetDescriptor: ...
+
+    def corpus(self) -> Iterator[dict[str, Any]]: ...
+
+    def queries(self) -> list[QueryGroundTruth]: ...
+
+
+class SyntheticDatasetProvider:
+    system_distance = "cosine"
+
+    def __init__(
+        self,
+        *,
+        record_count: int,
+        dimension: int,
+        seed: int,
+        query_count: int,
+        top_k: int,
+    ) -> None:
+        self._record_count = record_count
+        self._dimension = dimension
+        self._seed = seed
+        self._query_count = query_count
+        self._top_k = top_k
+        self._descriptor: DatasetDescriptor | None = None
+        self._queries: list[QueryGroundTruth] | None = None
+
+    def _build(self) -> None:
+        # One corpus pass computes both the dataset hash and the exact-kNN ground
+        # truth for the held-out queries. Held-out queries use a separate RNG
+        # stream (see make_query) so they are never inserted records.
+        query_rng = random.Random(self._seed ^ 0x0DDBA11)
+        raw_queries = [
+            make_query(index, self._dimension, query_rng)
+            for index in range(self._query_count)
+        ]
+        accumulator = GroundTruthAccumulator(raw_queries, self._top_k)
+        hasher = hashlib.sha256()
+        hasher.update(b"[")
+        rng = random.Random(self._seed)
+        for index in range(self._record_count):
+            record = make_record(index, self._dimension, rng)
+            if index:
+                hasher.update(b",")
+            hasher.update(
+                json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+            )
+            accumulator.observe(record)
+        hasher.update(b"]")
+        truths = accumulator.finalize()
+        self._queries = [
+            QueryGroundTruth(
+                query=query, unfiltered_truth=unfiltered, filtered_truth=filtered
+            )
+            for query, (unfiltered, filtered) in zip(raw_queries, truths)
+        ]
+        self._descriptor = DatasetDescriptor(
+            name="synthetic",
+            dimension=self._dimension,
+            distance=self.system_distance,
+            record_count=self._record_count,
+            dataset_hash=hasher.hexdigest(),
+            filter_field="partition",
+            query_count=self._query_count,
+        )
+
+    def descriptor(self) -> DatasetDescriptor:
+        if self._descriptor is None:
+            self._build()
+        assert self._descriptor is not None
+        return self._descriptor
+
+    def corpus(self) -> Iterator[dict[str, Any]]:
+        rng = random.Random(self._seed)
+        for index in range(self._record_count):
+            yield make_record(index, self._dimension, rng)
+
+    def queries(self) -> list[QueryGroundTruth]:
+        if self._queries is None:
+            self._build()
+        assert self._queries is not None
+        return self._queries
 
 
 class Adapter(Protocol):
@@ -1335,30 +1435,17 @@ class SurrealDBAdapter:
 
 def ingest_stream(
     adapter: Adapter,
+    provider: DatasetProvider,
     *,
-    record_count: int,
-    dimension: int,
     batch_size: int,
-    seed: int,
-    queries: list[dict[str, Any]],
-) -> tuple[DatasetManifest, float]:
-    accumulator = GroundTruthAccumulator(queries, TOP_K)
-    hasher = hashlib.sha256()
-    hasher.update(b"[")
-    rng = random.Random(seed)
-    adapter.prepare(dimension)
+) -> float:
+    # Pure ingest: stream the provider's corpus into the adapter. Ground truth
+    # and the dataset hash belong to the provider (see the DatasetProvider seam),
+    # so this function has no knowledge of how the dataset was produced.
+    adapter.prepare(provider.descriptor().dimension)
     started = time.perf_counter()
     batch: list[dict[str, Any]] = []
-    for index in range(record_count):
-        record = make_record(index, dimension, rng)
-        if index:
-            hasher.update(b",")
-        hasher.update(
-            json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
-        )
-        # Exact-kNN ground truth is accumulated in this same streaming pass, so
-        # the corpus is never materialized in memory.
-        accumulator.observe(record)
+    for record in provider.corpus():
         batch.append(record)
         if len(batch) == batch_size:
             adapter.insert_batch(batch)
@@ -1366,23 +1453,7 @@ def ingest_stream(
     if batch:
         adapter.insert_batch(batch)
     adapter.finish_ingest()
-    ingest_seconds = time.perf_counter() - started
-    hasher.update(b"]")
-    truths = accumulator.finalize()
-    return (
-        DatasetManifest(
-            sha256=hasher.hexdigest(),
-            queries=[
-                QueryGroundTruth(
-                    query=query,
-                    unfiltered_truth=unfiltered,
-                    filtered_truth=filtered,
-                )
-                for query, (unfiltered, filtered) in zip(queries, truths)
-            ],
-        ),
-        ingest_seconds,
-    )
+    return time.perf_counter() - started
 
 
 def run_queries(
@@ -1436,11 +1507,8 @@ def build_report(
     adapter: Adapter,
     *,
     root: Path,
-    manifest: DatasetManifest,
-    record_count: int,
-    dimension: int,
+    descriptor: DatasetDescriptor,
     seed: int,
-    query_count: int,
     warmup_count: int,
     ingest_seconds: float,
     accuracy: dict[str, float],
@@ -1448,7 +1516,9 @@ def build_report(
 ) -> dict[str, Any]:
     metrics: dict[str, Any] = {
         **accuracy,
-        "ingest_records_per_second": round(record_count / ingest_seconds, 3),
+        "ingest_records_per_second": round(
+            descriptor.record_count / ingest_seconds, 3
+        ),
         "latency_p50_ms": round(percentile(latencies, 50), 3),
         "latency_p95_ms": round(percentile(latencies, 95), 3),
         "latency_p99_ms": round(percentile(latencies, 99), 3),
@@ -1463,10 +1533,13 @@ def build_report(
         "status": "measured-local-baseline",
         "commit_sha": git_sha(root),
         "dataset": {
-            "records": record_count,
-            "dimension": dimension,
+            "name": descriptor.name,
+            "records": descriptor.record_count,
+            "dimension": descriptor.dimension,
+            "distance": descriptor.distance,
+            "filter_field": descriptor.filter_field,
             "seed": seed,
-            "sha256": manifest.sha256,
+            "sha256": descriptor.dataset_hash,
         },
         "environment": {
             "platform": platform.platform(),
@@ -1489,7 +1562,7 @@ def build_report(
                 "|returned_topk intersect truth_topk| / |truth_topk|"
             ),
         },
-        "query_count": query_count,
+        "query_count": descriptor.query_count,
         "warmup_count": warmup_count,
         "server_signals": adapter.signals(),
         "publication_eligible": False,
@@ -1543,6 +1616,26 @@ def make_adapter(args: argparse.Namespace, run_name: str) -> Adapter:
         args.timeout,
         run_name,
         args.surrealdb_server_version,
+    )
+
+
+def build_provider(args: argparse.Namespace) -> DatasetProvider:
+    if args.dataset == "synthetic":
+        return SyntheticDatasetProvider(
+            record_count=args.records,
+            dimension=args.dimension,
+            seed=args.seed,
+            query_count=args.warmup + args.queries,
+            top_k=TOP_K,
+        )
+    # SIFT1M (unfiltered reference) and Wikipedia (filtered driver) load local,
+    # checksummed, memory-mapped vectors + precomputed ground truth, and drive the
+    # adapters' distance/filter-field from the descriptor. That IO and the
+    # adapter re-parameterization are TD-CTXCORR-1 Slice 2b.
+    raise NotImplementedError(
+        f"dataset {args.dataset!r} is not wired yet: it needs the fetch + "
+        "precomputed ground-truth loaders and descriptor-driven adapter config "
+        "(TD-CTXCORR-1 Slice 2b)"
     )
 
 
@@ -1605,6 +1698,12 @@ def main() -> int:
         default="unknown",
         help="deployed SurrealDB version recorded in the report",
     )
+    parser.add_argument(
+        "--dataset",
+        choices=("synthetic", "sift1m", "wikipedia"),
+        default="synthetic",
+        help="synthetic (deterministic CI/smoke); sift1m/wikipedia = TD-CTXCORR-1 Slice 2b",
+    )
     parser.add_argument("--records", type=int, default=1000)
     parser.add_argument("--dimension", type=int, default=32)
     parser.add_argument("--queries", type=int, default=200)
@@ -1630,38 +1729,26 @@ def main() -> int:
 
     root = Path(__file__).resolve().parents[2]
     run_rng = random.Random(args.seed ^ 0xC0DEC0DE)
-    # Held-out queries: a distinct RNG stream from the corpus (seeded by args.seed
-    # in ingest_stream) so queries are never inserted records — recall is measured
-    # against the true nearest neighbours, not a self-match.
-    query_rng = random.Random(args.seed ^ 0x0DDBA11)
-    queries = [
-        make_query(index, args.dimension, query_rng)
-        for index in range(args.warmup + args.queries)
-    ]
+    provider = build_provider(args)
+    descriptor = provider.descriptor()
     run_name = f"context_bench_{int(time.time())}_{run_rng.randrange(100000):05d}"
     adapter = make_adapter(args, run_name)
     try:
-        manifest, ingest_seconds = ingest_stream(
+        ingest_seconds = ingest_stream(
             adapter,
-            record_count=args.records,
-            dimension=args.dimension,
+            provider,
             batch_size=args.batch_size,
-            seed=args.seed,
-            queries=queries,
         )
         accuracy, latencies = run_queries(
             adapter,
-            manifest.queries,
+            provider.queries(),
             warmup_count=args.warmup,
         )
         report = build_report(
             adapter,
             root=root,
-            manifest=manifest,
-            record_count=args.records,
-            dimension=args.dimension,
+            descriptor=descriptor,
             seed=args.seed,
-            query_count=args.queries,
             warmup_count=args.warmup,
             ingest_seconds=ingest_seconds,
             accuracy=accuracy,

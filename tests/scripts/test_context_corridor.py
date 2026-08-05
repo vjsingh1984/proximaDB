@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import base64
 import hashlib
 import importlib.util
@@ -59,42 +60,82 @@ class FakeAdapter:
 
 
 class ContextCorridorTest(unittest.TestCase):
-    def test_streamed_dataset_builds_hash_and_ground_truth(self) -> None:
-        adapter = FakeAdapter()
-        queries = [CONTEXT.make_query(i, 4, random.Random(100 + i)) for i in range(2)]
-        manifest, ingest_seconds = CONTEXT.ingest_stream(
-            adapter,
-            record_count=11,
-            dimension=4,
-            batch_size=3,
-            seed=7,
-            queries=queries,
+    def test_synthetic_provider_descriptor_is_deterministic(self) -> None:
+        provider = CONTEXT.SyntheticDatasetProvider(
+            record_count=11, dimension=4, seed=7, query_count=2, top_k=10
         )
+        descriptor = provider.descriptor()
+        self.assertEqual(descriptor.name, "synthetic")
+        self.assertEqual(descriptor.dimension, 4)
+        self.assertEqual(descriptor.distance, "cosine")
+        self.assertEqual(descriptor.record_count, 11)
+        self.assertEqual(descriptor.filter_field, "partition")
+        self.assertEqual(descriptor.query_count, 2)
 
         rng = random.Random(7)
         records = [CONTEXT.make_record(index, 4, rng) for index in range(11)]
         expected_hash = hashlib.sha256(
             json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
+        # The descriptor hash matches an independent stream of the same corpus
+        # (compatible with the pre-seam hash) and is stable across instances.
+        self.assertEqual(descriptor.dataset_hash, expected_hash)
+        twin = CONTEXT.SyntheticDatasetProvider(
+            record_count=11, dimension=4, seed=7, query_count=2, top_k=10
+        )
+        self.assertEqual(twin.descriptor().dataset_hash, expected_hash)
 
-        self.assertEqual(manifest.sha256, expected_hash)
-        self.assertEqual(len(manifest.queries), 2)
-        # Ground-truth ids are real corpus ids, and the filtered truth stays
-        # within the query's own partition.
-        corpus_by_id = {record["id"]: record for record in records}
-        for ground_truth in manifest.queries:
-            self.assertTrue(
-                ground_truth.unfiltered_truth.issubset(corpus_by_id.keys())
-            )
+    def test_synthetic_provider_corpus_is_streamed_and_deterministic(self) -> None:
+        provider = CONTEXT.SyntheticDatasetProvider(
+            record_count=5, dimension=3, seed=7, query_count=1, top_k=10
+        )
+        first = list(provider.corpus())
+        second = list(provider.corpus())
+        rng = random.Random(7)
+        expected = [CONTEXT.make_record(index, 3, rng) for index in range(5)]
+        self.assertEqual(first, expected)
+        self.assertEqual(first, second)
+
+    def test_synthetic_provider_queries_carry_ground_truth(self) -> None:
+        provider = CONTEXT.SyntheticDatasetProvider(
+            record_count=32, dimension=4, seed=7, query_count=3, top_k=5
+        )
+        corpus_by_id = {record["id"]: record for record in provider.corpus()}
+        queries = provider.queries()
+        self.assertEqual(len(queries), 3)
+        for ground_truth in queries:
+            self.assertTrue(ground_truth.unfiltered_truth)
+            self.assertTrue(ground_truth.unfiltered_truth.issubset(corpus_by_id))
             partition = ground_truth.query["props"]["partition"]
             for record_id in ground_truth.filtered_truth:
                 self.assertEqual(
                     corpus_by_id[record_id]["props"]["partition"], partition
                 )
+
+    def test_ingest_stream_drives_adapter_from_provider(self) -> None:
+        adapter = FakeAdapter()
+        provider = CONTEXT.SyntheticDatasetProvider(
+            record_count=11, dimension=4, seed=7, query_count=2, top_k=10
+        )
+        ingest_seconds = CONTEXT.ingest_stream(adapter, provider, batch_size=3)
+
         self.assertEqual(adapter.prepared_dimension, 4)
         self.assertEqual(adapter.inserted, 11)
         self.assertEqual(adapter.max_batch, 3)
         self.assertGreater(ingest_seconds, 0)
+
+    def test_build_provider_rejects_unfetched_datasets(self) -> None:
+        args = argparse.Namespace(
+            dataset="sift1m",
+            records=10,
+            dimension=4,
+            queries=1,
+            warmup=0,
+            seed=7,
+        )
+        with self.assertRaises(NotImplementedError) as caught:
+            CONTEXT.build_provider(args)
+        self.assertIn("TD-CTXCORR-1", str(caught.exception))
 
     def test_queries_measure_recall_against_ground_truth(self) -> None:
         class StubAdapter:
@@ -162,14 +203,20 @@ class ContextCorridorTest(unittest.TestCase):
 
     def test_report_has_the_complete_metric_contract(self) -> None:
         adapter = FakeAdapter()
+        descriptor = CONTEXT.DatasetDescriptor(
+            name="synthetic",
+            dimension=8,
+            distance="cosine",
+            record_count=100,
+            dataset_hash="abc",
+            filter_field="partition",
+            query_count=3,
+        )
         report = CONTEXT.build_report(
             adapter,
             root=ROOT,
-            manifest=CONTEXT.DatasetManifest("abc", []),
-            record_count=100,
-            dimension=8,
+            descriptor=descriptor,
             seed=9,
-            query_count=3,
             warmup_count=1,
             ingest_seconds=2.0,
             accuracy={"recall_at_10": 1.0, "filtered_recall_at_10": 1.0},
@@ -178,6 +225,9 @@ class ContextCorridorTest(unittest.TestCase):
 
         self.assertEqual(set(report["metrics"]), set(CONTEXT.REQUIRED_METRICS))
         self.assertEqual(report["metrics"]["ingest_records_per_second"], 50.0)
+        self.assertEqual(report["dataset"]["sha256"], "abc")
+        self.assertEqual(report["dataset"]["distance"], "cosine")
+        self.assertEqual(report["dataset"]["name"], "synthetic")
         self.assertFalse(report["publication_eligible"])
         self.assertIn("object_gets", report["metric_scope"]["unavailable"])
 
