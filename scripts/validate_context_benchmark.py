@@ -46,10 +46,10 @@ def main() -> int:
     runnable = {
         item.get("id") for item in data.get("system", []) if item.get("adapter_status") == "runnable"
     }
-    if runnable != {"milvus", "pgvector", "proximadb", "qdrant"}:
+    if runnable != {"elasticsearch", "milvus", "pgvector", "proximadb", "qdrant"}:
         errors.append(
-            "the implemented ProximaDB, pgvector, Qdrant, and Milvus adapters "
-            "must be marked runnable"
+            "the implemented ProximaDB, pgvector, Qdrant, Milvus, and "
+            "Elasticsearch adapters must be marked runnable"
         )
     qdrant = next(
         (item for item in data.get("system", []) if item.get("id") == "qdrant"),
@@ -90,6 +90,25 @@ def main() -> int:
             "Milvus adapter contract must disclose the pinned scalar/vector "
             "indexes, consistency, and readiness settings"
         )
+    elasticsearch = next(
+        (item for item in data.get("system", []) if item.get("id") == "elasticsearch"),
+        {},
+    )
+    expected_elasticsearch_adapter = {
+        "runner_system": "elasticsearch",
+        "distance": "cosine",
+        "vector_index": "dense_vector hnsw(m=16,ef_construction=100)",
+        "metadata_index": "keyword(partition)",
+        "hnsw_num_candidates": 40,
+        "write_visibility": "forced _refresh per ingest",
+        "readiness_fence": "green status and matching document count",
+        "query_endpoint": "/_search (knn)",
+    }
+    if elasticsearch.get("adapter", {}) != expected_elasticsearch_adapter:
+        errors.append(
+            "Elasticsearch adapter contract must disclose the pinned "
+            "dense_vector ANN, keyword filter, visibility, and readiness settings"
+        )
     protocol = data.get("protocol", {})
     metrics = set(protocol.get("required_metrics", []))
     missing_metrics = REQUIRED_METRICS - metrics
@@ -123,8 +142,8 @@ def main() -> int:
         return 1
     print(
         "Context benchmark contract OK: 6 systems, 13 metrics, 4 backends, "
-        "five-trial/1M publication floor; ProximaDB, pgvector, Qdrant, and "
-        "Milvus adapters are runnable."
+        "five-trial/1M publication floor; ProximaDB, pgvector, Qdrant, "
+        "Milvus, and Elasticsearch adapters are runnable."
     )
     return 0
 

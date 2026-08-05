@@ -109,7 +109,7 @@ For Qdrant Cloud or an authenticated deployment, pass `--qdrant-api-key`; the ke
 the `api-key` header and is redacted from failed-run artifacts and console errors. The adapter
 retains Qdrant's per-query hardware usage counters and final collection telemetry as server
 signals, while unsupported object-store economics remain explicit `null` publication blockers.
-All three runnable adapters issue an unfiltered and metadata-filtered query for each deterministic
+Every runnable adapter issues an unfiltered and metadata-filtered query for each deterministic
 target record.
 
 The Milvus baseline uses an explicit schema rather than dynamic fields: a VARCHAR primary key,
@@ -143,11 +143,44 @@ errors. Milvus v2 REST does not expose the server version, so `--milvus-server-v
 operator declaration that must be checked against the retained container digest before publication.
 Collection, load-state, HNSW, and scalar-index descriptions are captured as server signals.
 
+The Elasticsearch baseline maps an explicit document schema: a `keyword` `record_id`, a `keyword`
+`partition` (so the filter is an indexed term rather than a scan), an `long` ordinal, and a
+`dense_vector` embedding indexed with cosine HNSW (`m = 16`, `ef_construction = 100`). Ingest uses
+the native `_bulk` NDJSON API; search uses the kNN query with `num_candidates = 40` (the ANN breadth
+knob) and a `term` filter. After ingest the runner forces a `_refresh` and waits for `green` shard
+status with a document count matching what `_bulk` acknowledged, so queries never race ingest. This
+example pins the current stable Elasticsearch v9.5.0 release and disables security for the disposable
+single-node benchmark deployment (retain the exact image digest with published evidence):
+
+[source,bash]
+----
+docker run --rm -d --name context-elasticsearch \
+  -p 9200:9200 \
+  -e discovery.type=single-node \
+  -e xpack.security.enabled=false \
+  -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
+  docker.elastic.co/elasticsearch/elasticsearch:9.5.0
+
+python3 scripts/bench/context_corridor.py \
+  --system elasticsearch \
+  --elasticsearch-url http://127.0.0.1:9200 \
+  --records 1000 \
+  --dimension 32 \
+  --queries 200 \
+  --output artifacts/context-corridor/elasticsearch-local.json
+----
+
+For a secured or Elastic Cloud deployment, pass `--elasticsearch-api-key`; the key is sent only in
+the `Authorization: ApiKey` header and is redacted from failed-run artifacts and console errors. The
+server version is read live from the cluster root, and index doc/store/segment stats are captured as
+server signals. As with the other competitors, unsupported object-store economics remain explicit
+`null` publication blockers.
+
 == Publication gate
 
 No cross-system winner, price/performance, or TAM-facing benchmark claim may be published until:
 
-* all six adapters are runnable (ProximaDB, pgvector, Qdrant, and Milvus are currently complete);
+* all six adapters are runnable (ProximaDB, pgvector, Qdrant, Milvus, and Elasticsearch are currently complete);
 * each system runs at least five trials over at least one million records;
 * local, S3, Azure, and GCS configurations are represented where supported;
 * raw results, failed runs, commit/version, configuration, hardware, and dataset hash are retained;
