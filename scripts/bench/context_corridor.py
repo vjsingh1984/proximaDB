@@ -634,6 +634,239 @@ class QdrantAdapter:
             self._request("DELETE", f"/collections/{self.collection}", None)
 
 
+class MilvusAdapter:
+    system_id = "milvus"
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        timeout: float,
+        collection: str,
+        declared_server_version: str,
+    ) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9_]+", collection):
+            raise ValueError("generated Milvus collection name is not safe")
+        self.base_url = base_url
+        self.timeout = timeout
+        self.collection = collection
+        self.declared_server_version = declared_server_version
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            "Request-Timeout": str(max(1, math.ceil(timeout))),
+        }
+        self.readiness_wait_seconds = 0.0
+
+    def _request(self, path: str, body: dict) -> tuple[dict[str, Any], float]:
+        payload, latency = request(
+            self.base_url,
+            "POST",
+            path,
+            body,
+            self.timeout,
+            self.headers,
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Milvus {path} returned a non-object response")
+        if payload.get("code") != 0:
+            raise RuntimeError(
+                f"Milvus {path} failed with code {payload.get('code')}: "
+                f"{payload.get('message', 'unknown error')}"
+            )
+        return payload, latency
+
+    def prepare(self, dimension: int) -> None:
+        self._request(
+            "/v2/vectordb/collections/create",
+            {
+                "collectionName": self.collection,
+                "schema": {
+                    "autoID": False,
+                    "enableDynamicField": False,
+                    "fields": [
+                        {
+                            "fieldName": "id",
+                            "dataType": "VarChar",
+                            "isPrimary": True,
+                            "elementTypeParams": {"max_length": 64},
+                        },
+                        {
+                            "fieldName": "embedding",
+                            "dataType": "FloatVector",
+                            "elementTypeParams": {"dim": dimension},
+                        },
+                        {
+                            "fieldName": "partition",
+                            "dataType": "VarChar",
+                            "elementTypeParams": {"max_length": 16},
+                        },
+                        {"fieldName": "ordinal", "dataType": "Int64"},
+                    ],
+                },
+                "indexParams": [
+                    {
+                        "fieldName": "embedding",
+                        "indexName": "embedding_hnsw_idx",
+                        "metricType": "COSINE",
+                        "params": {
+                            "index_type": "HNSW",
+                            "M": 16,
+                            "efConstruction": 100,
+                        },
+                    },
+                    {
+                        "fieldName": "partition",
+                        "indexName": "partition_bitmap_idx",
+                        "params": {"index_type": "BITMAP"},
+                    },
+                ],
+                "consistencyLevel": "Strong",
+            },
+        )
+
+    def insert_batch(self, records: list[dict[str, Any]]) -> None:
+        entities = [
+            {
+                "id": record["id"],
+                "embedding": record["vector"],
+                "partition": record["props"]["partition"],
+                "ordinal": record["props"]["ordinal"],
+            }
+            for record in records
+        ]
+        payload, _ = self._request(
+            "/v2/vectordb/entities/insert",
+            {"collectionName": self.collection, "data": entities},
+        )
+        data = payload.get("data")
+        inserted = data.get("insertCount") if isinstance(data, dict) else None
+        if inserted != len(records):
+            raise RuntimeError(
+                f"Milvus acknowledged {inserted!r} of {len(records)} inserted records"
+            )
+
+    def _index_ready(self, name: str) -> bool:
+        payload, _ = self._request(
+            "/v2/vectordb/indexes/describe",
+            {"collectionName": self.collection, "indexName": name},
+        )
+        indexes = payload.get("data")
+        if not isinstance(indexes, list) or len(indexes) != 1:
+            return False
+        index = indexes[0]
+        if not isinstance(index, dict):
+            return False
+        if index.get("indexState") == "Failed":
+            raise RuntimeError(
+                f"Milvus index {name} failed: {index.get('failReason', 'unknown')}"
+            )
+        return index.get("indexState") == "Finished" and index.get("pendingRows", 0) == 0
+
+    def finish_ingest(self) -> None:
+        self._request(
+            "/v2/vectordb/collections/flush",
+            {"collectionName": self.collection},
+        )
+        started = time.monotonic()
+        deadline = started + self.timeout
+        while True:
+            load, _ = self._request(
+                "/v2/vectordb/collections/get_load_state",
+                {"collectionName": self.collection},
+            )
+            load_data = load.get("data")
+            loaded = (
+                isinstance(load_data, dict)
+                and load_data.get("loadState") == "LoadStateLoaded"
+                and load_data.get("loadProgress") == 100
+            )
+            vector_ready = self._index_ready("embedding_hnsw_idx")
+            scalar_ready = self._index_ready("partition_bitmap_idx")
+            if loaded and vector_ready and scalar_ready:
+                self.readiness_wait_seconds = time.monotonic() - started
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "Milvus collection and indexes did not become fully loaded "
+                    f"within {self.timeout:g}s"
+                )
+            time.sleep(min(0.25, remaining))
+
+    def search(
+        self, record: dict[str, Any], *, filtered: bool
+    ) -> tuple[list[str], float]:
+        body: dict[str, Any] = {
+            "collectionName": self.collection,
+            "data": [record["vector"]],
+            "annsField": "embedding",
+            "limit": TOP_K,
+            "outputFields": ["id"],
+            "searchParams": {
+                "metricType": "COSINE",
+                "params": {"ef": 40},
+            },
+        }
+        if filtered:
+            partition = json.dumps(record["props"]["partition"])
+            body["filter"] = f"partition == {partition}"
+        payload, latency = self._request(
+            "/v2/vectordb/entities/search",
+            body,
+        )
+        values = payload.get("data")
+        found = [
+            value["id"]
+            for value in (values if isinstance(values, list) else [])
+            if isinstance(value, dict) and isinstance(value.get("id"), str)
+        ]
+        return found[:TOP_K], latency
+
+    def signals(self) -> dict[str, Any]:
+        common = {"collectionName": self.collection}
+        collection, _ = self._request(
+            "/v2/vectordb/collections/describe", common
+        )
+        load, _ = self._request(
+            "/v2/vectordb/collections/get_load_state", common
+        )
+        vector_index, _ = self._request(
+            "/v2/vectordb/indexes/describe",
+            {**common, "indexName": "embedding_hnsw_idx"},
+        )
+        scalar_index, _ = self._request(
+            "/v2/vectordb/indexes/describe",
+            {**common, "indexName": "partition_bitmap_idx"},
+        )
+        return {
+            "collection": collection,
+            "load_state": load,
+            "vector_index": vector_index,
+            "scalar_index": scalar_index,
+        }
+
+    def environment(self) -> dict[str, Any]:
+        return {
+            "base_url": self.base_url,
+            "server_version": self.declared_server_version,
+            "server_version_source": "operator-declared (v2 REST does not expose it)",
+            "consistency_level": "Strong",
+            "distance": "cosine",
+            "index": "hnsw(M=16,efConstruction=100)",
+            "hnsw_ef_search": 40,
+            "filter_index": "bitmap(partition)",
+            "readiness_fence": "flush + loaded + vector/scalar indexes finished",
+            "readiness_wait_seconds": round(self.readiness_wait_seconds, 6),
+        }
+
+    def close(self, *, keep_data: bool) -> None:
+        if not keep_data:
+            self._request(
+                "/v2/vectordb/collections/drop",
+                {"collectionName": self.collection},
+            )
+
+
 def ingest_stream(
     adapter: Adapter,
     *,
@@ -794,11 +1027,19 @@ def make_adapter(args: argparse.Namespace, run_name: str) -> Adapter:
         return ProximaAdapter(args.base_url, args.timeout, run_name)
     if args.system == "pgvector":
         return PgvectorAdapter(args.pg_dsn, run_name)
-    return QdrantAdapter(
-        args.qdrant_url,
-        args.qdrant_api_key,
+    if args.system == "qdrant":
+        return QdrantAdapter(
+            args.qdrant_url,
+            args.qdrant_api_key,
+            args.timeout,
+            run_name,
+        )
+    return MilvusAdapter(
+        args.milvus_url,
+        args.milvus_token,
         args.timeout,
         run_name,
+        args.milvus_server_version,
     )
 
 
@@ -806,7 +1047,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--system",
-        choices=("proximadb", "pgvector", "qdrant"),
+        choices=("proximadb", "pgvector", "qdrant", "milvus"),
         default="proximadb",
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:5678")
@@ -820,6 +1061,17 @@ def main() -> int:
         "--qdrant-api-key",
         default="",
         help="optional Qdrant API key; never written to the report",
+    )
+    parser.add_argument("--milvus-url", default="http://127.0.0.1:19530")
+    parser.add_argument(
+        "--milvus-token",
+        default="root:Milvus",
+        help="Milvus bearer token; never written to the report",
+    )
+    parser.add_argument(
+        "--milvus-server-version",
+        default="unknown",
+        help="deployed Milvus version recorded in the report",
     )
     parser.add_argument("--records", type=int, default=1000)
     parser.add_argument("--dimension", type=int, default=32)
@@ -882,7 +1134,9 @@ def main() -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
     except Exception as exc:  # Failed runs are evidence and must be retained.
-        safe_error = sanitized_error(exc, args.pg_dsn, args.qdrant_api_key)
+        safe_error = sanitized_error(
+            exc, args.pg_dsn, args.qdrant_api_key, args.milvus_token
+        )
         failure = {
             "schema_version": 1,
             "scenario_id": SCENARIO_ID,
@@ -901,7 +1155,10 @@ def main() -> int:
             adapter.close(keep_data=args.keep_data)
         except Exception as cleanup_error:
             safe_cleanup_error = sanitized_error(
-                cleanup_error, args.pg_dsn, args.qdrant_api_key
+                cleanup_error,
+                args.pg_dsn,
+                args.qdrant_api_key,
+                args.milvus_token,
             )
             print(
                 f"context corridor cleanup warning: {safe_cleanup_error}",

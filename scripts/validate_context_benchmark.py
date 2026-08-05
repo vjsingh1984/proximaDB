@@ -46,9 +46,10 @@ def main() -> int:
     runnable = {
         item.get("id") for item in data.get("system", []) if item.get("adapter_status") == "runnable"
     }
-    if runnable != {"pgvector", "proximadb", "qdrant"}:
+    if runnable != {"milvus", "pgvector", "proximadb", "qdrant"}:
         errors.append(
-            "the implemented ProximaDB, pgvector, and Qdrant adapters must be marked runnable"
+            "the implemented ProximaDB, pgvector, Qdrant, and Milvus adapters "
+            "must be marked runnable"
         )
     qdrant = next(
         (item for item in data.get("system", []) if item.get("id") == "qdrant"),
@@ -69,6 +70,25 @@ def main() -> int:
         errors.append(
             "Qdrant adapter contract must disclose the pinned filter, ANN, "
             "visibility, and readiness settings"
+        )
+    milvus = next(
+        (item for item in data.get("system", []) if item.get("id") == "milvus"),
+        {},
+    )
+    expected_milvus_adapter = {
+        "runner_system": "milvus",
+        "distance": "cosine",
+        "vector_index": "hnsw(M=16,efConstruction=100)",
+        "metadata_index": "bitmap(partition)",
+        "hnsw_ef_search": 40,
+        "consistency_level": "Strong",
+        "readiness_fence": "flush + loaded + vector/scalar indexes finished",
+        "query_endpoint": "/v2/vectordb/entities/search",
+    }
+    if milvus.get("adapter", {}) != expected_milvus_adapter:
+        errors.append(
+            "Milvus adapter contract must disclose the pinned scalar/vector "
+            "indexes, consistency, and readiness settings"
         )
     protocol = data.get("protocol", {})
     metrics = set(protocol.get("required_metrics", []))
@@ -103,8 +123,8 @@ def main() -> int:
         return 1
     print(
         "Context benchmark contract OK: 6 systems, 13 metrics, 4 backends, "
-        "five-trial/1M publication floor; ProximaDB, pgvector, and Qdrant "
-        "adapters are runnable."
+        "five-trial/1M publication floor; ProximaDB, pgvector, Qdrant, and "
+        "Milvus adapters are runnable."
     )
     return 0
 

@@ -72,8 +72,18 @@ query_endpoint = "/points/query"
 [[system]]
 id = "milvus"
 role = "competitor"
-adapter_status = "planned"
+adapter_status = "runnable"
 comparison_surface = "collection scalar fields + filtered ANN"
+
+[system.adapter]
+runner_system = "milvus"
+distance = "cosine"
+vector_index = "hnsw(M=16,efConstruction=100)"
+metadata_index = "bitmap(partition)"
+hnsw_ef_search = 40
+consistency_level = "Strong"
+readiness_fence = "flush + loaded + vector/scalar indexes finished"
+query_endpoint = "/v2/vectordb/entities/search"
 
 [[system]]
 id = "elasticsearch"
