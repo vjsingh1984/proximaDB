@@ -60,40 +60,83 @@ impl HmgiRegistry {
         }
     }
 
-    /// Get or create a partition for the given key
+    /// Get or create an unowned partition for the given key.
+    ///
+    /// Collection-facing code should use
+    /// [`get_or_create_collection_partition`](Self::get_or_create_collection_partition)
+    /// so graph creation and lifecycle ownership are committed together. This
+    /// lower-level operation exists for partition migration and focused tests that
+    /// address a partition directly.
     pub async fn get_or_create_partition(
         &self,
         key: HmgiPartitionKey,
         config: AxisHnswConfig,
         dimension: usize,
     ) -> Result<Arc<AxisHnswIndex>> {
-        // Check if partition exists
-        {
-            let partitions = self.partitions.read().await;
-            if let Some(index) = partitions.get(&key) {
-                return Ok(index.clone());
-            }
+        if let Some(index) = self.partitions.read().await.get(&key).cloned() {
+            return Ok(index);
         }
 
-        // Create new partition
+        let mut partitions = self.partitions.write().await;
+        if let Some(index) = partitions.get(&key) {
+            return Ok(index.clone());
+        }
+
         let index = Arc::new(AxisHnswIndex::new_with_collection(
             Some(key.to_string()),
             config,
             dimension,
         )?);
+        partitions.insert(key, index.clone());
+        Ok(index)
+    }
+
+    /// Atomically get or create a partition and bind it to its collection owner.
+    ///
+    /// The ownership map is the authority used by query routing and collection
+    /// teardown. Keeping creation and registration under the same lock order
+    /// prevents a concurrent drop from interleaving between those operations and
+    /// leaving a live but unreachable HNSW graph behind.
+    pub async fn get_or_create_collection_partition(
+        &self,
+        collection_id: &str,
+        key: HmgiPartitionKey,
+        config: AxisHnswConfig,
+        dimension: usize,
+    ) -> Result<Arc<AxisHnswIndex>> {
+        // The steady-state insert path should not serialize all collections on the
+        // ownership write lock once its modality partition is established.
+        {
+            let collection_partitions = self.collection_partitions.read().await;
+            if collection_partitions
+                .get(collection_id)
+                .is_some_and(|keys| keys.contains(&key))
+                && let Some(index) = self.partitions.read().await.get(&key).cloned()
+            {
+                return Ok(index);
+            }
+        }
+
+        let mut collection_partitions = self.collection_partitions.write().await;
+        Self::ensure_owner_available(&collection_partitions, collection_id, &key)?;
 
         let mut partitions = self.partitions.write().await;
-        partitions.insert(key.clone(), index.clone());
+        let index = if let Some(index) = partitions.get(&key) {
+            index.clone()
+        } else {
+            let index = Arc::new(AxisHnswIndex::new_with_collection(
+                Some(key.to_string()),
+                config,
+                dimension,
+            )?);
+            partitions.insert(key.clone(), index.clone());
+            index
+        };
 
-        // Update reverse map
-        // For now, use a simple collection identifier from the key
-        let collection_id = format!("oid_{}_var_{}", key.oid, key.variation_id);
-        let mut collection_partitions = self.collection_partitions.write().await;
         collection_partitions
-            .entry(collection_id)
+            .entry(collection_id.to_string())
             .or_default()
             .insert(key);
-
         Ok(index)
     }
 
@@ -115,13 +158,22 @@ impl HmgiRegistry {
             .unwrap_or_default()
     }
 
-    /// Register an existing partition key under an explicit collection ID.
-    pub async fn register_collection_partition(&self, collection_id: &str, key: HmgiPartitionKey) {
+    /// Register an existing unowned partition under an explicit collection ID.
+    pub async fn register_collection_partition(
+        &self,
+        collection_id: &str,
+        key: HmgiPartitionKey,
+    ) -> Result<()> {
         let mut collection_partitions = self.collection_partitions.write().await;
+        Self::ensure_owner_available(&collection_partitions, collection_id, &key)?;
+        if !self.partitions.read().await.contains_key(&key) {
+            anyhow::bail!("cannot register missing HMGI partition '{key}'");
+        }
         collection_partitions
             .entry(collection_id.to_string())
             .or_default()
             .insert(key);
+        Ok(())
     }
 
     /// Drop all partitions for a collection
@@ -138,6 +190,28 @@ impl HmgiRegistry {
         } else {
             Ok(0)
         }
+    }
+
+    fn ensure_owner_available(
+        collection_partitions: &HashMap<String, HashSet<HmgiPartitionKey>>,
+        collection_id: &str,
+        key: &HmgiPartitionKey,
+    ) -> Result<()> {
+        if collection_partitions
+            .get(collection_id)
+            .is_some_and(|keys| keys.contains(key))
+        {
+            return Ok(());
+        }
+        if let Some((owner, _)) = collection_partitions
+            .iter()
+            .find(|(owner, keys)| owner.as_str() != collection_id && keys.contains(key))
+        {
+            anyhow::bail!(
+                "HMGI partition '{key}' is already owned by collection '{owner}', not '{collection_id}'"
+            );
+        }
+        Ok(())
     }
 
     /// Get total number of partitions
@@ -226,16 +300,84 @@ mod tests {
         let key = HmgiPartitionKey::new(123, 1, "text".to_string(), Some(456));
 
         registry
-            .get_or_create_partition(key, AxisHnswConfig::default(), 128)
+            .get_or_create_collection_partition("collection_a", key, AxisHnswConfig::default(), 128)
             .await
             .unwrap();
 
-        let collection_id = format!("oid_{}_var_{}", 123, 1);
         let dropped = registry
-            .drop_collection_partitions(&collection_id)
+            .drop_collection_partitions("collection_a")
             .await
             .unwrap();
         assert_eq!(dropped, 1);
         assert_eq!(registry.len().await, 0);
+    }
+
+    #[tokio::test]
+    async fn collection_partition_has_one_explicit_owner() {
+        let registry = HmgiRegistry::new();
+        let key = HmgiPartitionKey::new(123, 1, "text".to_string(), None);
+
+        registry
+            .get_or_create_collection_partition(
+                "collection_a",
+                key.clone(),
+                AxisHnswConfig::default(),
+                128,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            registry.get_partitions_for_collection("collection_a").await,
+            vec![key.clone()]
+        );
+        assert!(
+            registry
+                .get_partitions_for_collection("oid_123_var_1")
+                .await
+                .is_empty(),
+            "partition creation must not synthesize a second lifecycle owner"
+        );
+
+        let error = registry
+            .get_or_create_collection_partition("collection_b", key, AxisHnswConfig::default(), 128)
+            .await
+            .err()
+            .expect("a partition key must not acquire a second owner");
+        assert!(error.to_string().contains("already owned"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_collection_creation_returns_the_registered_graph() {
+        let registry = Arc::new(HmgiRegistry::new());
+        let key = HmgiPartitionKey::new(123, 1, "text".to_string(), None);
+        let left_registry = registry.clone();
+        let left_key = key.clone();
+        let right_registry = registry.clone();
+        let right_key = key.clone();
+
+        let (left, right) = tokio::join!(
+            left_registry.get_or_create_collection_partition(
+                "collection_a",
+                left_key,
+                AxisHnswConfig::default(),
+                128,
+            ),
+            right_registry.get_or_create_collection_partition(
+                "collection_a",
+                right_key,
+                AxisHnswConfig::default(),
+                128,
+            )
+        );
+        let left = left.unwrap();
+        let right = right.unwrap();
+
+        assert!(Arc::ptr_eq(&left, &right));
+        assert!(Arc::ptr_eq(
+            &left,
+            &registry.get_partition(&key).await.unwrap()
+        ));
+        assert_eq!(registry.len().await, 1);
     }
 }

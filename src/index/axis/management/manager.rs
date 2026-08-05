@@ -4562,8 +4562,8 @@ impl AxisManager {
     /// ## Process
     ///
     /// 1. Initialize HMGI components if not already done
-    /// 2. Register collection as HMGI-enabled
-    /// 3. Migrate existing vectors to modality partitions
+    /// 2. Migrate existing vectors to owned modality partitions
+    /// 3. Publish the collection as HMGI-enabled
     ///
     /// ## Example
     ///
@@ -4576,22 +4576,50 @@ impl AxisManager {
         modality_field: Option<String>,
         oid: u64,
     ) -> Result<()> {
+        if self.is_hmgi_enabled(collection_id).await {
+            let existing_oid = self
+                .hmgi_collection_oids
+                .read()
+                .await
+                .get(collection_id)
+                .copied()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "HMGI lifecycle state for collection '{collection_id}' has no OID"
+                    )
+                })?;
+            if existing_oid == oid {
+                return Ok(());
+            }
+            anyhow::bail!(
+                "HMGI collection '{collection_id}' is already bound to OID {existing_oid}; \
+                 disable it before binding OID {oid}"
+            );
+        }
+
         // Store the field for logging before moving
         let field_display = modality_field.clone();
 
         // Initialize HMGI components if not already done
         self.ensure_hmgi_initialized(modality_field).await?;
 
-        // Register collection as HMGI-enabled
-        {
-            let mut enabled = self.hmgi_enabled_collections.write().await;
-            enabled.insert(collection_id.to_string());
+        // Build and register every existing modality partition before publishing
+        // enablement. If migration fails, remove any partial graph state so callers
+        // never observe an enabled collection with an incomplete registry.
+        if let Err(error) = self.migrate_collection_to_hmgi(collection_id, oid).await {
+            if let Some(registry) = &self.hmgi_registry {
+                registry.drop_collection_partitions(collection_id).await?;
+            }
+            return Err(error);
         }
 
-        // Store OID for partition key generation
         {
             let mut oids = self.hmgi_collection_oids.write().await;
             oids.insert(collection_id.to_string(), oid);
+        }
+        {
+            let mut enabled = self.hmgi_enabled_collections.write().await;
+            enabled.insert(collection_id.to_string());
         }
 
         tracing::info!(
@@ -4599,9 +4627,6 @@ impl AxisManager {
             collection_id,
             field_display
         );
-
-        // Migrate existing vectors to HMGI partitions
-        self.migrate_collection_to_hmgi(collection_id).await?;
 
         Ok(())
     }
@@ -4855,11 +4880,13 @@ impl AxisManager {
             "HMGI partition HNSW config (metric + HNSW knobs)"
         );
         let index = registry
-            .get_or_create_partition(partition_key.clone(), config, dimension)
+            .get_or_create_collection_partition(
+                collection_id,
+                partition_key.clone(),
+                config,
+                dimension,
+            )
             .await?;
-        registry
-            .register_collection_partition(collection_id, partition_key.clone())
-            .await;
 
         use crate::index::axis::index_factory::AxisVectorIndex;
         if !record.oid.is_empty() && !vec_values.is_empty() {
@@ -5000,7 +5027,7 @@ impl AxisManager {
     }
 
     /// Migrate existing collection vectors to HMGI partitions
-    async fn migrate_collection_to_hmgi(&self, collection_id: &str) -> Result<()> {
+    async fn migrate_collection_to_hmgi(&self, collection_id: &str, oid: u64) -> Result<()> {
         let extractor = self
             .hmgi_extractor
             .as_ref()
@@ -5010,14 +5037,6 @@ impl AxisManager {
             .hmgi_registry
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("HMGI registry not initialized"))?;
-
-        // Get OID for this collection
-        let oid = {
-            let oids = self.hmgi_collection_oids.read().await;
-            *oids
-                .get(collection_id)
-                .ok_or_else(|| anyhow::anyhow!("No OID found for collection '{}'", collection_id))?
-        };
 
         // Get existing vectors
         let vectors = {
@@ -5066,12 +5085,9 @@ impl AxisManager {
             // contract used by steady-state inserts.
             let record_vector = self.record_dense_vector(&record);
             let dimension = record_vector.map_or(128, <[f32]>::len);
-            let _index = registry
-                .get_or_create_partition(partition_key.clone(), config.clone(), dimension)
+            let index = registry
+                .get_or_create_collection_partition(collection_id, partition_key, config, dimension)
                 .await?;
-            registry
-                .register_collection_partition(collection_id, partition_key)
-                .await;
             use crate::index::axis::index_factory::AxisVectorIndex;
             if let Some(record_vector) = record_vector
                 && !record.oid.is_empty()
@@ -5082,7 +5098,7 @@ impl AxisManager {
                         &record,
                         &crate::index::axis::filterable_metadata::FilterableFieldsConfig::default(),
                     );
-                _index
+                index
                     .add_with_metadata(
                         record.oid.clone(),
                         record_vector.to_vec(),
@@ -6737,5 +6753,60 @@ mod clear_collection_vectors_tests {
             1,
             "post-flush insert must repopulate the projection"
         );
+    }
+}
+
+#[cfg(test)]
+mod hmgi_lifecycle_tests {
+    use super::*;
+    use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+    #[tokio::test]
+    async fn failed_enable_does_not_publish_or_leave_owned_partitions() {
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+        let collection_id = "invalid_hmgi";
+        let invalid_vector = vec![0.0; 100_001];
+        let record = ProximaRecord {
+            oid: "oversized_embedding".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: invalid_vector.len() as u32,
+                values: EmbeddingValues::Fp32(invalid_vector),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        manager
+            .collection_vectors
+            .write()
+            .await
+            .entry(collection_id.to_string())
+            .or_default()
+            .insert(record.oid.clone(), record);
+
+        let error = manager
+            .enable_hmgi(collection_id, None, 42)
+            .await
+            .err()
+            .expect("oversized partition migration must fail");
+
+        assert!(error.to_string().contains("dimension"));
+        assert!(!manager.is_hmgi_enabled(collection_id).await);
+        assert!(
+            !manager
+                .hmgi_collection_oids
+                .read()
+                .await
+                .contains_key(collection_id)
+        );
+        let registry = manager.hmgi_registry().unwrap();
+        assert!(
+            registry
+                .get_partitions_for_collection(collection_id)
+                .await
+                .is_empty()
+        );
+        assert!(registry.is_empty().await);
     }
 }
