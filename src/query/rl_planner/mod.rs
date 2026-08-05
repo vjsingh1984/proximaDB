@@ -71,7 +71,7 @@ pub mod integration;
 pub mod logging;
 pub mod paths;
 pub mod rank_choice;
-pub mod reward;
+pub use proximadb_rl_reward::reward;
 pub mod state;
 
 // Re-export main types
