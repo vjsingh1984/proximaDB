@@ -6663,7 +6663,7 @@ dependencies = [
 
 [[package]]
 name = "proximadb"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -7961,6 +7961,7 @@ version = "0.2.0"
 name = "proximadb-query-fusion"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "proximadb-data-model",
  "serde",
  "serde_json",
@@ -8292,7 +8293,7 @@ dependencies = [
 
 [[package]]
 name = "proximadb-sdk"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "httpmock",

@@ -17,3 +17,4 @@ path = "src/lib.rs"
 proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 serde.workspace = true
 serde_json.workspace = true
+anyhow.workspace = true
