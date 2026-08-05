@@ -12,6 +12,12 @@ description = "Embedded mode for ProximaDB — in-process database with language
 [lib]
 name = "proximadb_embedded"
 path = "src/lib.rs"
+# `cdylib` is what maturin packages as the Python extension module
+# (`proximadb_embedded._proximadb_embedded`); the PyO3 entry point lives in
+# `src/python.rs` behind the `python` feature. `rlib` must stay: this crate is a
+# normal Rust dependency of `proximadb-spark-jni` and a dev-dependency of the
+# root crate's integration tests. Dropping either breaks one of those consumers.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Depends on the root proximadb library (one-directional: embedded -> root, no cycle).
