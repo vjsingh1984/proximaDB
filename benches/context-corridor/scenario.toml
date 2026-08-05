@@ -56,8 +56,18 @@ hnsw_iterative_scan = "strict_order"
 [[system]]
 id = "qdrant"
 role = "competitor"
-adapter_status = "planned"
+adapter_status = "runnable"
 comparison_surface = "point payload + filtered vector search"
+
+[system.adapter]
+runner_system = "qdrant"
+distance = "cosine"
+vector_index = "hnsw(m=16,ef_construct=100)"
+metadata_index = "keyword(partition)"
+hnsw_ef_search = 40
+write_visibility = "wait=true per batch"
+readiness_fence = "green status and empty update queue"
+query_endpoint = "/points/query"
 
 [[system]]
 id = "milvus"

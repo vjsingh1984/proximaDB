@@ -50,9 +50,16 @@ REQUIRED_METRICS = (
 
 
 def request(
-    base: str, method: str, path: str, body: dict | None, timeout: float
+    base: str,
+    method: str,
+    path: str,
+    body: dict | None,
+    timeout: float,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[Any, float]:
     headers = {"Accept": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     payload = None
     if body is not None:
         headers["Content-Type"] = "application/json"
@@ -121,9 +128,16 @@ def peak_rss_bytes() -> int | None:
     return int(peak if sys.platform == "darwin" else peak * 1024)
 
 
-def sanitized_error(error: Exception, dsn: str) -> str:
-    message = str(error).replace(dsn, "<redacted-dsn>")
-    return re.sub(r"(?i)(password\s*=\s*)\S+", r"\1<redacted>", message)
+def sanitized_error(error: Exception, *secrets: str) -> str:
+    message = str(error)
+    for secret in secrets:
+        if secret:
+            message = message.replace(secret, "<redacted>")
+    return re.sub(
+        r"(?i)((?:password|api[-_ ]?key|token)\s*=\s*)\S+",
+        r"\1<redacted>",
+        message,
+    )
 
 
 def vector_literal(vector: list[float]) -> str:
@@ -440,6 +454,186 @@ class PgvectorAdapter:
             self.connection.close()
 
 
+class QdrantAdapter:
+    system_id = "qdrant"
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        timeout: float,
+        collection: str,
+    ) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", collection):
+            raise ValueError("generated Qdrant collection name is not safe")
+        self.base_url = base_url
+        self.timeout = timeout
+        self.collection = collection
+        self.headers = {"api-key": api_key} if api_key else {}
+        self.version = "unknown"
+        self.query_usage: dict[str, float] = {}
+        self.readiness_wait_seconds = 0.0
+
+    def _request(
+        self, method: str, path: str, body: dict | None
+    ) -> tuple[Any, float]:
+        return request(
+            self.base_url,
+            method,
+            path,
+            body,
+            self.timeout,
+            self.headers,
+        )
+
+    def prepare(self, dimension: int) -> None:
+        service, _ = self._request("GET", "/", None)
+        if isinstance(service, dict) and isinstance(service.get("version"), str):
+            self.version = service["version"]
+        self._request(
+            "PUT",
+            f"/collections/{self.collection}",
+            {
+                "vectors": {"size": dimension, "distance": "Cosine"},
+                "hnsw_config": {"m": 16, "ef_construct": 100},
+            },
+        )
+        # Qdrant recommends creating payload indexes before ingest so filtered
+        # queries never measure an unindexed payload scan.
+        self._request(
+            "PUT",
+            f"/collections/{self.collection}/index?wait=true",
+            {"field_name": "partition", "field_schema": "keyword"},
+        )
+
+    def insert_batch(self, records: list[dict[str, Any]]) -> None:
+        points = [
+            {
+                # Qdrant point IDs are unsigned integers or UUIDs. Retain the
+                # canonical cross-system ID in payload for result comparison.
+                "id": record["props"]["ordinal"],
+                "vector": record["vector"],
+                "payload": {"record_id": record["id"], **record["props"]},
+            }
+            for record in records
+        ]
+        self._request(
+            "PUT",
+            f"/collections/{self.collection}/points?wait=true",
+            {"points": points},
+        )
+
+    def finish_ingest(self) -> None:
+        # wait=true makes each batch visible, but HNSW segment construction is
+        # asynchronous once the optimizer threshold is crossed. Do not begin
+        # latency measurement while that background work is still active.
+        started = time.monotonic()
+        deadline = started + self.timeout
+        while True:
+            payload, _ = self._request(
+                "GET", f"/collections/{self.collection}", None
+            )
+            result = payload.get("result") if isinstance(payload, dict) else None
+            status = result.get("status") if isinstance(result, dict) else None
+            queue = result.get("update_queue") if isinstance(result, dict) else None
+            queue_length = queue.get("length", 0) if isinstance(queue, dict) else 0
+            if status == "green" and queue_length == 0:
+                self.readiness_wait_seconds = time.monotonic() - started
+                return
+            if status == "red":
+                optimizer = (
+                    result.get("optimizer_status")
+                    if isinstance(result, dict)
+                    else "unknown"
+                )
+                raise RuntimeError(f"Qdrant collection optimizer failed: {optimizer}")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "Qdrant collection did not reach green status with an empty "
+                    f"update queue within {self.timeout:g}s"
+                )
+            time.sleep(min(0.25, remaining))
+
+    def _accumulate_usage(self, payload: dict[str, Any]) -> None:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return
+        hardware = usage.get("hardware", usage)
+        if not isinstance(hardware, dict):
+            return
+        for name, value in hardware.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                self.query_usage[name] = self.query_usage.get(name, 0.0) + value
+
+    def search(
+        self, record: dict[str, Any], *, filtered: bool
+    ) -> tuple[list[str], float]:
+        body: dict[str, Any] = {
+            "query": record["vector"],
+            "limit": TOP_K,
+            "with_payload": ["record_id"],
+            "params": {"hnsw_ef": 40, "exact": False},
+        }
+        if filtered:
+            body["filter"] = {
+                "must": [
+                    {
+                        "key": "partition",
+                        "match": {"value": record["props"]["partition"]},
+                    }
+                ]
+            }
+        payload, latency = self._request(
+            "POST",
+            f"/collections/{self.collection}/points/query",
+            body,
+        )
+        if not isinstance(payload, dict):
+            return [], latency
+        self._accumulate_usage(payload)
+        result = payload.get("result")
+        points = result.get("points") if isinstance(result, dict) else None
+        found: list[str] = []
+        for point in points if isinstance(points, list) else []:
+            point_payload = point.get("payload") if isinstance(point, dict) else None
+            record_id = (
+                point_payload.get("record_id")
+                if isinstance(point_payload, dict)
+                else None
+            )
+            if isinstance(record_id, str):
+                found.append(record_id)
+        return found[:TOP_K], latency
+
+    def signals(self) -> dict[str, Any]:
+        collection_info, _ = self._request(
+            "GET", f"/collections/{self.collection}", None
+        )
+        return {
+            "collection_info": collection_info,
+            "query_usage_totals": self.query_usage,
+        }
+
+    def environment(self) -> dict[str, Any]:
+        return {
+            "base_url": self.base_url,
+            "server_version": self.version,
+            "distance": "cosine",
+            "index": "hnsw(m=16,ef_construct=100)",
+            "hnsw_ef_search": 40,
+            "filter_index": "keyword(partition)",
+            "query_endpoint": "/points/query",
+            "write_visibility": "wait=true per batch",
+            "readiness_fence": "green status and empty update queue",
+            "readiness_wait_seconds": round(self.readiness_wait_seconds, 6),
+        }
+
+    def close(self, *, keep_data: bool) -> None:
+        if not keep_data:
+            self._request("DELETE", f"/collections/{self.collection}", None)
+
+
 def ingest_stream(
     adapter: Adapter,
     *,
@@ -598,19 +792,34 @@ def write_report(path: Path, report: dict[str, Any]) -> None:
 def make_adapter(args: argparse.Namespace, run_name: str) -> Adapter:
     if args.system == "proximadb":
         return ProximaAdapter(args.base_url, args.timeout, run_name)
-    return PgvectorAdapter(args.pg_dsn, run_name)
+    if args.system == "pgvector":
+        return PgvectorAdapter(args.pg_dsn, run_name)
+    return QdrantAdapter(
+        args.qdrant_url,
+        args.qdrant_api_key,
+        args.timeout,
+        run_name,
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--system", choices=("proximadb", "pgvector"), default="proximadb"
+        "--system",
+        choices=("proximadb", "pgvector", "qdrant"),
+        default="proximadb",
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:5678")
     parser.add_argument(
         "--pg-dsn",
         default="postgresql://postgres:postgres@127.0.0.1:5432/postgres",
         help="pgvector PostgreSQL DSN; never written to the report",
+    )
+    parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
+    parser.add_argument(
+        "--qdrant-api-key",
+        default="",
+        help="optional Qdrant API key; never written to the report",
     )
     parser.add_argument("--records", type=int, default=1000)
     parser.add_argument("--dimension", type=int, default=32)
@@ -622,8 +831,16 @@ def main() -> int:
     parser.add_argument("--keep-data", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if min(args.records, args.dimension, args.queries, args.batch_size) <= 0:
-        parser.error("records, dimension, queries, and batch-size must be positive")
+    if min(
+        args.records,
+        args.dimension,
+        args.queries,
+        args.batch_size,
+        args.timeout,
+    ) <= 0:
+        parser.error(
+            "records, dimension, queries, batch-size, and timeout must be positive"
+        )
     if args.warmup < 0:
         parser.error("warmup must be non-negative")
 
@@ -665,6 +882,7 @@ def main() -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
     except Exception as exc:  # Failed runs are evidence and must be retained.
+        safe_error = sanitized_error(exc, args.pg_dsn, args.qdrant_api_key)
         failure = {
             "schema_version": 1,
             "scenario_id": SCENARIO_ID,
@@ -672,17 +890,23 @@ def main() -> int:
             "status": "failed",
             "commit_sha": git_sha(root),
             "error_type": type(exc).__name__,
-            "error": sanitized_error(exc, args.pg_dsn),
+            "error": safe_error,
             "publication_eligible": False,
         }
         write_report(args.output, failure)
-        print(f"context corridor FAILED: {exc}", file=sys.stderr)
+        print(f"context corridor FAILED: {safe_error}", file=sys.stderr)
         return 1
     finally:
         try:
             adapter.close(keep_data=args.keep_data)
         except Exception as cleanup_error:
-            print(f"context corridor cleanup warning: {cleanup_error}", file=sys.stderr)
+            safe_cleanup_error = sanitized_error(
+                cleanup_error, args.pg_dsn, args.qdrant_api_key
+            )
+            print(
+                f"context corridor cleanup warning: {safe_cleanup_error}",
+                file=sys.stderr,
+            )
 
 
 if __name__ == "__main__":

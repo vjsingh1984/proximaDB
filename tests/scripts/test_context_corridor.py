@@ -163,12 +163,163 @@ class ContextCorridorTest(unittest.TestCase):
         self.assertEqual(environment["hnsw_ef_search"], 40)
         self.assertEqual(environment["hnsw_iterative_scan"], "strict_order")
 
+    def test_qdrant_collection_name_is_path_safe(self) -> None:
+        with self.assertRaises(ValueError):
+            CONTEXT.QdrantAdapter(
+                "http://qdrant.example", "", 30.0, "bad/collection"
+            )
+
+    def test_qdrant_prepare_and_insert_contract(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args):
+            calls.append(args)
+            if args[1:4] == ("GET", "/", None):
+                return {"version": "1.18.2"}, 0.5
+            return {"status": "ok"}, 0.5
+
+        adapter = CONTEXT.QdrantAdapter(
+            "http://qdrant.example", "private-key", 12.0, "context_corridor"
+        )
+        record = {
+            "id": "rec-7",
+            "vector": [0.25, -0.5],
+            "props": {"partition": "p7", "ordinal": 7},
+        }
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            adapter.prepare(2)
+            adapter.insert_batch([record])
+
+        self.assertEqual(adapter.version, "1.18.2")
+        self.assertEqual(
+            calls[1][1:4],
+            (
+                "PUT",
+                "/collections/context_corridor",
+                {
+                    "vectors": {"size": 2, "distance": "Cosine"},
+                    "hnsw_config": {"m": 16, "ef_construct": 100},
+                },
+            ),
+        )
+        self.assertEqual(
+            calls[2][1:4],
+            (
+                "PUT",
+                "/collections/context_corridor/index?wait=true",
+                {"field_name": "partition", "field_schema": "keyword"},
+            ),
+        )
+        self.assertEqual(calls[3][2], "/collections/context_corridor/points?wait=true")
+        self.assertEqual(
+            calls[3][3]["points"],
+            [
+                {
+                    "id": 7,
+                    "vector": [0.25, -0.5],
+                    "payload": {
+                        "record_id": "rec-7",
+                        "partition": "p7",
+                        "ordinal": 7,
+                    },
+                }
+            ],
+        )
+        self.assertEqual(calls[0][5], {"api-key": "private-key"})
+
+    def test_qdrant_filtered_query_contract_and_usage_signals(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_request(*args):
+            calls.append(args)
+            return (
+                {
+                    "usage": {
+                        "hardware": {"cpu": 2, "payload_index_io_read": 1}
+                    },
+                    "result": {
+                        "points": [
+                            {"id": 7, "payload": {"record_id": "rec-7"}}
+                        ]
+                    },
+                },
+                1.25,
+            )
+
+        adapter = CONTEXT.QdrantAdapter(
+            "http://qdrant.example", "", 12.0, "context_corridor"
+        )
+        record = {
+            "id": "rec-7",
+            "vector": [0.25, -0.5],
+            "props": {"partition": "p7", "ordinal": 7},
+        }
+        with patch.object(CONTEXT, "request", side_effect=fake_request):
+            found, latency = adapter.search(record, filtered=True)
+
+        self.assertEqual(found, ["rec-7"])
+        self.assertEqual(latency, 1.25)
+        self.assertEqual(calls[0][2], "/collections/context_corridor/points/query")
+        query = calls[0][3]
+        self.assertEqual(query["params"], {"hnsw_ef": 40, "exact": False})
+        self.assertEqual(query["with_payload"], ["record_id"])
+        self.assertEqual(
+            query["filter"],
+            {"must": [{"key": "partition", "match": {"value": "p7"}}]},
+        )
+        self.assertEqual(
+            adapter.query_usage, {"cpu": 2.0, "payload_index_io_read": 1.0}
+        )
+
+    def test_qdrant_ingest_waits_for_optimizer_readiness(self) -> None:
+        responses = [
+            {
+                "result": {
+                    "status": "yellow",
+                    "update_queue": {"length": 3},
+                }
+            },
+            {
+                "result": {
+                    "status": "green",
+                    "update_queue": {"length": 0},
+                }
+            },
+        ]
+        adapter = CONTEXT.QdrantAdapter(
+            "http://qdrant.example", "", 12.0, "context_corridor"
+        )
+        with (
+            patch.object(
+                CONTEXT,
+                "request",
+                side_effect=[(payload, 0.5) for payload in responses],
+            ) as mocked_request,
+            patch.object(CONTEXT.time, "sleep") as mocked_sleep,
+        ):
+            adapter.finish_ingest()
+
+        self.assertEqual(mocked_request.call_count, 2)
+        mocked_sleep.assert_called_once_with(0.25)
+        self.assertGreaterEqual(adapter.readiness_wait_seconds, 0.0)
+
+    def test_qdrant_environment_does_not_disclose_api_key(self) -> None:
+        adapter = CONTEXT.QdrantAdapter(
+            "http://qdrant.example", "private-key", 12.0, "context_corridor"
+        )
+        self.assertNotIn("private-key", json.dumps(adapter.environment()))
+        self.assertEqual(adapter.environment()["hnsw_ef_search"], 40)
+
     def test_failure_text_does_not_persist_a_dsn_or_keyword_password(self) -> None:
         dsn = "postgresql://alice:secret@db.example/test"
-        error = RuntimeError(f"could not use {dsn}; password=second-secret")
-        sanitized = CONTEXT.sanitized_error(error, dsn)
+        api_key = "qdrant-private-key"
+        error = RuntimeError(
+            f"could not use {dsn}; password=second-secret; api-key={api_key}"
+        )
+        sanitized = CONTEXT.sanitized_error(error, dsn, api_key)
         self.assertNotIn("secret", sanitized)
-        self.assertIn("<redacted-dsn>", sanitized)
+        self.assertNotIn(api_key, sanitized)
+        self.assertIn("<redacted>", sanitized)
 
 
 if __name__ == "__main__":

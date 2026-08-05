@@ -82,11 +82,41 @@ unfiltered and metadata-filtered query for each deterministic target record. The
 metric is explicitly scoped as target-record presence in the top ten, not full-neighbour
 ground-truth recall.
 
+The Qdrant baseline uses point payload for the canonical record ID and typed filter fields, a
+keyword payload index created before ingest, and the universal Query Points API with cosine HNSW
+(`hnsw_ef = 40`). Every upsert uses `wait=true`, making write visibility explicit instead of adding
+an arbitrary settle interval. Before measuring queries, the runner also waits for collection status
+`green` and an empty update queue so publication-scale HNSW construction cannot overlap latency.
+Qdrant may intentionally use a full scan below its configured optimizer/query-planner thresholds;
+the captured collection telemetry discloses the actual indexed-vector count. Pin the server image
+recorded with published evidence; this example uses Qdrant v1.18.2:
+
+[source,bash]
+----
+docker run --rm -d --name context-qdrant \
+  -p 6333:6333 qdrant/qdrant:v1.18.2
+
+python3 scripts/bench/context_corridor.py \
+  --system qdrant \
+  --qdrant-url http://127.0.0.1:6333 \
+  --records 1000 \
+  --dimension 32 \
+  --queries 200 \
+  --output artifacts/context-corridor/qdrant-local.json
+----
+
+For Qdrant Cloud or an authenticated deployment, pass `--qdrant-api-key`; the key is sent only in
+the `api-key` header and is redacted from failed-run artifacts and console errors. The adapter
+retains Qdrant's per-query hardware usage counters and final collection telemetry as server
+signals, while unsupported object-store economics remain explicit `null` publication blockers.
+All three runnable adapters issue an unfiltered and metadata-filtered query for each deterministic
+target record.
+
 == Publication gate
 
 No cross-system winner, price/performance, or TAM-facing benchmark claim may be published until:
 
-* all six adapters are runnable (ProximaDB and pgvector are currently complete);
+* all six adapters are runnable (ProximaDB, pgvector, and Qdrant are currently complete);
 * each system runs at least five trials over at least one million records;
 * local, S3, Azure, and GCS configurations are represented where supported;
 * raw results, failed runs, commit/version, configuration, hardware, and dataset hash are retained;
