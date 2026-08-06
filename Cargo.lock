@@ -7081,6 +7081,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-catapult"
+version = "0.2.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "proximadb-cdc"
 version = "0.2.0"
 dependencies = [
