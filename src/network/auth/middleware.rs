@@ -317,18 +317,12 @@ fn extract_auth_header(request: &Request) -> Result<String, (StatusCode, Json<Au
 fn map_header_to_auth_data(
     auth_header: &str,
 ) -> Result<AuthenticationData, (StatusCode, Json<AuthErrorResponse>)> {
-    if let Some(token) = auth_header.strip_prefix("Bearer ") {
-        return Ok(AuthenticationData::JWTToken(token.to_string()));
-    }
-    if let Some(key) = auth_header.strip_prefix("API-Key ") {
-        return Ok(AuthenticationData::ApiKey(key.to_string()));
-    }
-    if let Some(key) = auth_header.strip_prefix("Api-Key ") {
-        return Ok(AuthenticationData::ApiKey(key.to_string()));
-    }
-
-    // Treat raw value as API key
-    Ok(AuthenticationData::ApiKey(auth_header.to_string()))
+    // TD-ABAC-6: the shared credential parser. This was a verbatim copy of gRPC's
+    // `auth_data_from_headers` and Arrow's `auth_data_from_metadata` (same Bearer
+    // / API-Key / raw logic); all three now share one parser.
+    Ok(crate::security::request_identity::parse_authorization(
+        auth_header,
+    ))
 }
 
 fn validate_rest_data_plane_capability(
@@ -1128,6 +1122,7 @@ mod tests {
             },
             encryption: crate::security::EncryptionConfig::default(),
             key_store: crate::security::KeyStoreConfig::default(),
+            tenant: Default::default(),
         }
     }
 
@@ -1176,6 +1171,7 @@ mod tests {
             },
             encryption: crate::security::EncryptionConfig::default(),
             key_store: crate::security::KeyStoreConfig::default(),
+            tenant: Default::default(),
         }
     }
 

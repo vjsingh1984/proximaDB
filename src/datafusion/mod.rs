@@ -53,6 +53,10 @@ pub mod scan_executor;
 pub mod schema_inference;
 pub mod table_provider;
 
+// TD-OLAP-3: resolved PhysicalExpr → split-pruning predicate translation
+// (consumes DataFusion 54's join runtime filters at stream-open).
+pub(crate) mod physical_filter_translate;
+
 // New split-based table provider and execution plan modules
 pub mod proxima_scan_exec;
 pub mod proxima_table_provider;
@@ -69,6 +73,10 @@ pub mod logical_lowering;
 // Track B (§8 moat): cross-modal source bridge — vector-search results as a
 // DataFusion-joinable table so one SQL plan joins vector similarity with relational data.
 pub mod cross_modal;
+
+// TD-DOC-PUSHDOWN-1 (ADR-055 P-Pushdown): correct, storage-inclusive `documents(collection)` PAX
+// pushdown provider — flushed PAX-pruned scan + unflushed WAL delta + dead-filter/tombstone merge.
+pub mod document_pax_provider;
 
 // F2: registry -> DataFusion scalar-UDF adapter. Binds engine-neutral ProximaFunctionRegistry
 // kernels into DataFusion as ScalarUDFs (native builtins stay the fast path).
@@ -129,6 +137,8 @@ pub use engine_adapters::{
     HelixTableProvider,
     ObjectStoreParquetSplitReader,
     ObjectStoreParquetTable,
+    // PAX-native OLAP scan (TD-OLAP-1 slice 1, default-off; bridges PaxBlockReader → Arrow)
+    PaxSplitReader,
     SstSplitReader,
     // SST engine adapter
     SstTableProvider,
@@ -151,7 +161,7 @@ use datafusion::prelude::*;
 /// - Custom vector distance functions (cosine, euclidean, dot_product)
 /// - Optimizer rules for predicate pushdown
 pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
-    build_session_context(None)
+    build_session_context(None, None, None)
 }
 
 /// Like [`create_session_context`] but also registers the live `vector_search` table function
@@ -161,11 +171,31 @@ pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
 pub fn create_session_context_with_vector_ops(
     vector_ops: std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>,
 ) -> datafusion::error::Result<SessionContext> {
-    build_session_context(Some(vector_ops))
+    build_session_context(Some(vector_ops), None, None)
 }
 
+/// Like [`create_session_context_with_vector_ops`] but also registers the live `graph_traverse`
+/// table function (F6), backed by a graph read service — so a cross-modal
+/// `... JOIN graph_traverse('g','start','edge',k) g ON d.id = g.node_id` is expressible over the
+/// DataFusion path. Either port may be `None`; the pgwire OLAP route supplies both.
+pub fn create_session_context_with_ports(
+    vector_ops: Option<std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>>,
+    graph_ops: Option<std::sync::Arc<dyn proximadb_graph_query::service::GraphQueryReadService>>,
+    tenant: Option<String>,
+) -> datafusion::error::Result<SessionContext> {
+    build_session_context(vector_ops, graph_ops, tenant)
+}
+
+/// `tenant` is the resolved pgwire connection tenant (`pgwire_resolve_read_tenant`). It is
+/// applied structurally to ALL three cross-modal UDTFs so a read hits the same tenant scope the
+/// write path wrote (otherwise the read is unscoped and returns 0 rows for tenant data,
+/// TD-XMODAL-6): `vector_search` (as the search `tenant_id`), `timeseries_range` (selects the
+/// tenant's per-tenant engine), and `graph_traverse` (composes the same `{tenant}/{graph_id}`
+/// scope `TenantGraphOps` uses on the graph write path).
 fn build_session_context(
     vector_ops: Option<std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>>,
+    graph_ops: Option<std::sync::Arc<dyn proximadb_graph_query::service::GraphQueryReadService>>,
+    tenant: Option<String>,
 ) -> datafusion::error::Result<SessionContext> {
     let config = SessionConfig::new()
         .with_batch_size(8192)
@@ -202,7 +232,10 @@ fn build_session_context(
     if let Some(ops) = vector_ops {
         ctx.register_udtf(
             "vector_search",
-            std::sync::Arc::new(cross_modal::VectorSearchTableFunction::new(ops)),
+            std::sync::Arc::new(cross_modal::VectorSearchTableFunction::with_tenant(
+                ops,
+                tenant.clone(),
+            )),
         );
     }
 
@@ -214,7 +247,39 @@ fn build_session_context(
     if let Some(ts) = crate::services::timeseries_service::timeseries_service() {
         ctx.register_udtf(
             "timeseries_range",
-            std::sync::Arc::new(cross_modal::TimeseriesRangeTableFunction::from_service(ts)),
+            std::sync::Arc::new(
+                cross_modal::TimeseriesRangeTableFunction::from_service_with_tenant(
+                    ts,
+                    tenant.clone(),
+                ),
+            ),
+        );
+    }
+
+    // F6: the cross-modal moat, graph slice — `graph_traverse(graph_id, start_id, edge_type,
+    // max_depth)` as a joinable `(node_id, depth)` table, backed by the live graph read service
+    // (registered only when one is supplied). Completes the four-way relational ⋈ vector ⋈
+    // timeseries ⋈ graph cross-modal join over one DataFusion plan.
+    if let Some(graph) = graph_ops {
+        ctx.register_udtf(
+            "graph_traverse",
+            std::sync::Arc::new(cross_modal::GraphTraverseTableFunction::with_tenant(
+                graph,
+                tenant.clone(),
+            )),
+        );
+    }
+
+    // F7: the cross-modal moat, document slice — `documents(collection)` as a joinable `(id, props)`
+    // table over the converged document store (ADR-055 P-DFSource), backed by the process document
+    // service (registered only when it is initialised). Lets documents ⋈ vector ⋈ timeseries ⋈
+    // graph ⋈ relational execute in one data-local DataFusion plan instead of client-side glue.
+    if let Some(doc) = crate::services::document_service::document_service() {
+        ctx.register_udtf(
+            "documents",
+            std::sync::Arc::new(
+                cross_modal::DocumentsTableFunction::from_service_with_tenant(doc, tenant.clone()),
+            ),
         );
     }
 

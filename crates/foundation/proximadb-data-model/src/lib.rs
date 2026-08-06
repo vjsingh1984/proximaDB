@@ -22,8 +22,46 @@
 use arrow_schema::{
     DataType as ArrowDataType, Field, IntervalUnit as ArrowIntervalUnit, TimeUnit as ArrowTimeUnit,
 };
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+// Strongly-typed metadata value/container (moved from the root crate's
+// `core::metadata_types` during the root-crate decomposition — see
+// `src/core/metadata_types.rs` re-export shim). Foundation-tier home for the
+// `MetadataValue` / `TypedMetadata` types shared by metadata predicate pushdown
+// and column stats across storage, query, and network layers.
+pub mod metadata_types;
+
+/// Typed, order-preserving composite key encoding (F0 · ADR-072 D9) — the
+/// `Identity` codec that replaces the collision-prone `encode_primary_key_tuple`.
+pub mod key_codec;
+
+// ---------------------------------------------------------------------------
+// Stats Trust (ADR-058 D5 / §9.A)
+// ---------------------------------------------------------------------------
+
+/// Trust level for a parquet table's FOOTER STATISTICS (row_count /
+/// null_count / min-max). Footer-stats elision — answering `COUNT`/`MIN`/`MAX`
+/// from the parquet footer instead of scanning — is only sound when ProximaDB
+/// wrote the footer; an external/federated writer's footer may carry stale or
+/// absent stats, so eliding from it can return a WRONG aggregate.
+///
+/// Lives in the foundation data-model crate so both the network layer
+/// (`relational_pipeline`, which derives it from catalog authority) and the
+/// DataFusion adapter (which consumes it to gate `statistics_from_splits`) can
+/// share it without an ADR-039 layering violation (the adapter is below the
+/// network layer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatsTrust {
+    /// ProximaDB generated the parquet (materialized `ProjectionPublication`,
+    /// `ExportedPublication`, or a WAL-owned authority) ⇒ footer stats are
+    /// authoritative ⇒ elision is sound.
+    Trusted,
+    /// External/federated/imported authority (`FederatedRead` /
+    /// `ExternalAuthoritative` / `ImportedSnapshot`) — the writer is not
+    /// ProximaDB, so footer stats are NOT trusted ⇒ elision is disabled; the
+    /// aggregate is computed by scanning real column data.
+    Untrusted,
+}
 
 // ---------------------------------------------------------------------------
 // Modality Discriminators
@@ -65,13 +103,6 @@ impl std::fmt::Display for DataModel {
         }
     }
 }
-
-/// Legacy alias for [`DataModel`]. Use `DataModel` in new code.
-#[deprecated(
-    since = "0.2.0",
-    note = "Renamed to DataModel per Overhaul Spec Section 3.3"
-)]
-pub type StoreType = DataModel;
 
 // ---------------------------------------------------------------------------
 // Typed Semantic Memory (Memanto — TD-055)
@@ -870,5 +901,161 @@ mod tests {
         let decoded = ProximaValue::from_jsonb_slice(&encoded).unwrap();
 
         assert_eq!(original, decoded);
+    }
+}
+use serde::{Deserialize, Serialize};
+
+pub type IndexStats = ServiceIndexStats;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServiceIndexStats {
+    /// Total vectors in the index
+    pub total_vectors: i64,
+    /// Vectors compared during distance calculation
+    pub vectors_compared: i64,
+    /// Vectors scanned (pre-filter)
+    pub vectors_scanned: i64,
+    /// Total distance calculations performed
+    pub distance_calculations: i64,
+    /// Number of index nodes visited during traversal
+    pub nodes_visited: i64,
+    /// Fraction of vectors eliminated by metadata filters (0.0 to 1.0)
+    pub filter_efficiency: f32,
+    /// Index cache hits during search
+    pub cache_hits: i64,
+    /// Index cache misses during search
+    pub cache_misses: i64,
+
+    // ── LLD trace-spine counters (Phase 0 additions; stub-zero until later phases)
+    /// Average per-block fill (0.0–1.0). Target rises above 0.30 once the
+    /// block-aware AXIS runtime lands; baseline is <0.15 per arXiv 2603.01779.
+    #[serde(default)]
+    pub block_fill_pct: f64,
+    /// Graph nodes routed through in memory without an SSD read because their
+    /// predicate failed (GateANN graph tunneling, arXiv 2603.21466). 0 until
+    /// tunneling is wired in Phase 3.
+    #[serde(default)]
+    pub tunneled_nodes: i64,
+    /// Candidates traversed in the quantized (2-bit/BQ) metric space (QuIVer
+    /// arXiv 2605.02171). 0 until the quantized route is enabled in Phase 4.
+    #[serde(default)]
+    pub quantized_hops: i64,
+    /// Record-level buffer-pool hits (VeloANN arXiv 2602.22805). Compared
+    /// against `page_hits` to validate the record-level cache wins.
+    #[serde(default)]
+    pub record_hits: i64,
+    /// Page-level cache hits, retained for comparison against `record_hits`.
+    #[serde(default)]
+    pub page_hits: i64,
+    /// Whether a catapult shortcut edge was used to pick the entry node
+    /// (CatapultDB arXiv 2603.02164). False until catapults land in Phase 7.
+    #[serde(default)]
+    pub catapult_used: bool,
+    /// Object-storage/SST selected blocks after vector access-method pruning.
+    #[serde(default)]
+    pub object_selected_blocks: i64,
+    /// Object-storage/SST blocks pruned before data-block reads.
+    #[serde(default)]
+    pub object_pruned_blocks: i64,
+    /// Planned object range GET/read requests.
+    #[serde(default)]
+    pub object_estimated_gets: i64,
+    /// Actual object range GET/read requests issued by the reader.
+    #[serde(default)]
+    pub object_actual_gets: i64,
+    /// Planned remote/range bytes for object-economy reads.
+    #[serde(default)]
+    pub object_estimated_remote_bytes: i64,
+    /// Actual remote/range bytes read by the object-economy path.
+    #[serde(default)]
+    pub object_actual_remote_bytes: i64,
+    /// Bytes read because selected blocks were coalesced across small gaps.
+    #[serde(default)]
+    pub object_overfetch_bytes: i64,
+    /// SST blocks skipped by per-block vector-bounds (L2 lower-bound) pruning,
+    /// before their data blocks were read (TD-040). Distinct from
+    /// `object_pruned_blocks`, which counts range-plan-level pruning.
+    #[serde(default)]
+    pub object_vector_bounds_pruned_blocks: i64,
+}
+
+// =========================================================================
+// Canonical DATE encoding (ADR-024 single-canonical)
+// =========================================================================
+
+/// Parse an ISO-8601 `YYYY-MM-DD` date into the canonical `ProximaValue::Date`
+/// encoding — **days since the Unix epoch (1970-01-01)**, the same i32 the
+/// write path stores and materialization keeps as Arrow `Date32`. Returns
+/// `None` on a malformed string so callers fail loud rather than guess.
+///
+/// Dependency-free (no chrono in this foundation leaf) via Howard Hinnant's
+/// `days_from_civil` algorithm — exact for the proleptic Gregorian calendar and
+/// bit-identical to `chrono::NaiveDate…num_days()`. This is THE canonical date
+/// parser: both the relational frontend (lowering `DATE '…'` literals) and the
+/// DML write path resolve dates through it, so a literal predicate and a stored
+/// column can never diverge in encoding.
+pub fn parse_iso_date_to_days(s: &str) -> Option<i32> {
+    let s = s.trim();
+    let mut parts = s.split('-');
+    // Leading '-' (negative year) is not expected for SQL date literals; reject.
+    let y: i32 = parts.next()?.parse().ok()?;
+    let m: u32 = parts.next()?.parse().ok()?;
+    let d: u32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    Some(days_from_civil(y, m, d))
+}
+
+/// Days since 1970-01-01 for a proleptic-Gregorian `(year, month, day)`
+/// (Hinnant's algorithm). `month` in 1..=12, `day` in 1..=31.
+fn days_from_civil(y: i32, m: u32, d: u32) -> i32 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = (y - era * 400) as i64; // [0, 399]
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64; // Mar=0 … Feb=11
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    (era as i64 * 146097 + doe - 719468) as i32
+}
+
+#[cfg(test)]
+mod date_encoding_tests {
+    use super::parse_iso_date_to_days;
+
+    #[test]
+    fn epoch_and_known_dates() {
+        assert_eq!(parse_iso_date_to_days("1970-01-01"), Some(0));
+        assert_eq!(parse_iso_date_to_days("1970-01-02"), Some(1));
+        assert_eq!(parse_iso_date_to_days("1969-12-31"), Some(-1));
+        // Verified against chrono / Python datetime.date.toordinal offset.
+        assert_eq!(parse_iso_date_to_days("2000-01-01"), Some(10957));
+        assert_eq!(parse_iso_date_to_days("1995-03-15"), Some(9204));
+        assert_eq!(parse_iso_date_to_days("1998-12-01"), Some(10561));
+        // Leap-day handling.
+        assert_eq!(parse_iso_date_to_days("2000-02-29"), Some(11016));
+        assert_eq!(
+            parse_iso_date_to_days("2000-03-01"),
+            Some(parse_iso_date_to_days("2000-02-29").unwrap() + 1)
+        );
+    }
+
+    #[test]
+    fn malformed_dates_return_none() {
+        for bad in [
+            "",
+            "1995-03",
+            "1995/03/15",
+            "not-a-date",
+            "1995-13-01",
+            "1995-03-32",
+            "1995-03-15-00",
+        ] {
+            assert_eq!(
+                parse_iso_date_to_days(bad),
+                None,
+                "expected None for {bad:?}"
+            );
+        }
     }
 }

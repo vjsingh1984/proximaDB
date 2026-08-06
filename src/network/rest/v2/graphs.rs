@@ -15,8 +15,8 @@ use crate::core::search::cross_modal_fusion::{FusionPolicy, FusionStats};
 use crate::core::search::fusion_route::RoutePolicy;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::network::rest::openapi::ErrorResponse;
-use crate::network::rest::v1::handlers::AppState;
 use crate::security::rbac_service::UnifiedUserContext;
 use crate::services::fusion_service::{
     DocumentFusionSpec, FusionOidKey, GraphFusionParams, GraphGrain,
@@ -170,6 +170,11 @@ pub async fn fusion_search_v2(
     let service = state.fusion_service.clone();
     let params = GraphFusionParams {
         graph_id,
+        // Structural tenant boundary — scopes both fusion legs (TD-ENTITY-TENANT-1).
+        tenant: Some(tenant.tenant_id.clone()),
+        // FA-2 PR-D3: stable tenant id for ABAC per-record enforcement (binding
+        // filter key). `None` ⇒ structural isolation only.
+        tenant_stable_id: tenant.tenant_stable_id,
         vector_collection: request.vector_collection,
         query_vector: request.query_vector,
         max_depth: request.max_depth,

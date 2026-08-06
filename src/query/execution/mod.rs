@@ -7,10 +7,19 @@
 
 pub mod datafusion_bridge;
 pub mod datafusion_engine;
+#[cfg(feature = "duckdb")]
+pub mod duckdb_engine;
 pub mod engine;
 
 pub mod executor;
 pub mod low_latency_executor;
+pub mod morsel_scheduler;
+pub mod native_engine;
+pub mod native_join_ops;
+pub mod native_ops;
+pub mod native_parquet_scan;
+pub mod native_scan;
+pub mod native_shadow;
 pub mod olap_delta_merge;
 pub mod plan_cache;
 pub mod planner;
@@ -264,7 +273,7 @@ pub struct ExplainResult {
     pub performance_hints: Vec<String>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod execution_tests {
     use super::*;
 
@@ -315,24 +324,10 @@ mod execution_tests {
         let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
         // Create WAL manager with default config
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-        use crate::storage::persistence::write_ahead_log::{WALBatchFactory, WALConfig};
-        let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(
-            FilesystemFactory::create(fs_config)
-                .await
-                .expect("Failed to create filesystem"),
-        );
+        use crate::storage::persistence::write_ahead_log::WALConfig;
         let wal_config = WALConfig::default();
-        let strategy = WALBatchFactory::create_batch_serialization_strategy(
-            wal_config.strategy_type,
-            &wal_config,
-            filesystem,
-        )
-        .await
-        .expect("Failed to create WAL strategy");
         let wal_manager = Arc::new(
-            WriteAheadLogManager::new(strategy, wal_config)
+            WriteAheadLogManager::new(wal_config)
                 .await
                 .expect("Failed to create WAL manager"),
         );

@@ -234,7 +234,12 @@ pub mod observability;
 pub mod streaming;
 
 /// Change Data Capture (CDC) module for database synchronization
-/// Captures changes from PostgreSQL, MySQL, MongoDB and streams to Kafka, webhooks
+/// Captures changes from PostgreSQL, MySQL, MongoDB and streams to Kafka, webhooks.
+/// Feature-gated behind `cdc-kafka` (not a default feature) — the module has 0
+/// cross-module inbound references (dead to the root), so excluding it from the
+/// default build removes ~16K symbols from the monolithic test binary (OOM relief,
+/// TD-CI-1) with zero caller impact. Enable with `--features cdc-kafka`.
+#[cfg(feature = "cdc-kafka")]
 #[allow(missing_docs)]
 pub mod cdc;
 
@@ -255,10 +260,10 @@ pub mod bench;
 
 pub mod version;
 
-/// Embedded mode for in-process database usage without network layer
-/// Enable with feature flag: --features python
-#[allow(missing_docs)]
-pub mod embedded;
+// Embedded mode has been extracted to the `proximadb-embedded` crate
+// (crates/horizontal/proximadb-embedded). The server binary no longer compiles
+// language bindings (Python/Java/Node.js/C-FFI); embedded builds as its own
+// wheel/cdylib depending on this root library.
 
 /// Core database instance and lifecycle management
 /// Moved from lib.rs to improve modularity
@@ -366,11 +371,6 @@ pub use storage::formats::{
 /// Prefer this over `Box<dyn Error>` to preserve error categorization
 /// for API-layer conversion (REST status codes, gRPC status).
 pub type Result<T> = std::result::Result<T, Error>;
-
-/// Legacy boxed result type kept for gradual migration of call sites
-/// that cannot yet propagate the typed error.
-#[deprecated(note = "Use the typed `Result<T>` alias instead of boxed errors")]
-pub type BoxedResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 // Re-export the main database instance from the database module
 pub use database::ProximaDB;

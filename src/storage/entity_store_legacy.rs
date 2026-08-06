@@ -658,6 +658,9 @@ impl EntityStore for ProximaEntityStore {
                         top_k,
                         core_filter.clone(),
                         Some(search_config),
+                        None,
+                        None,
+                        proximadb_tenant::AuthClass::Anonymous,
                     )
                     .await?;
 
@@ -1370,11 +1373,6 @@ mod tests {
             _ctx: &crate::storage::traits::StorageQueryContext,
         ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(vec![])
-        }
-        fn get_filesystem_factory(
-            &self,
-        ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-            &self.filesystem_factory
         }
     }
 

@@ -2,7 +2,10 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: 2026-06-17
+:last-updated: 2026-08-03
+// status-as-of: 2026-08-03
+// The status-as-of tag above is checked by scripts/check_status_as_of.py (wired into
+// `make work-commit-check`): re-verify the support tiers against HEAD, then bump it.
 
 [.lead]
 Canonical product support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
@@ -46,9 +49,27 @@ marking themselves historical, aspirational, or implementation-only:
 The Technical Debt Register tracks _implementation state_, which can run ahead of support
 level; this contract wins on any disagreement about what is customer-facing.
 
+== MVP Trust Corridor
+
+The broad matrix below describes the whole product. The smaller customer acquisition promise is
+**Object-storage-native context serving for SQL, JSON, and vectors**, delivered initially through
+single-tenant, single-node SST and canonical REST v2 record operations. Its machine-readable contract is
+link:./00-product/MVP_TRUST_CORRIDOR.toml[MVP_TRUST_CORRIDOR.toml].
+
+The corridor is intentionally stricter than this matrix: create, typed batch write, get, filtered
+scan, filtered vector search, delete, and route-health form one hard-failing roundtrip. pgwire,
+hybrid retrieval, multimodel projections, alternate engines, and distributed execution do not
+enter the MVP promise until their listed security, recovery, conformance, and evidence gates close.
+The quickstart uses local storage. S3, Azure, and GCS are co-design/evidence targets and remain Beta
+for the MVP until the same correctness, crash/restart, bounded-memory, and economic suite passes on
+each backend.
+Metadata filters in the smoke are query correctness boundaries, not authorization evidence.
+Multi-tenant ABAC remains Beta until stable tenant IDs are total, missing IDs fail closed, and the
+cross-surface REST/gRPC/Flight/pgwire admit/deny matrix passes.
+
 == Canonical API Surface
 
-REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of 2026-06-17.
+REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of 2026-08-03.
 
 [IMPORTANT]
 ====
@@ -77,7 +98,17 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 | *pgwire* (PostgreSQL wire)
 | ANSI *SQL* (DataFusion execution)
 | SQL clients and tools — psql, psycopg2/asyncpg, JDBC, BI/ORM ecosystem.
-| Supported
+| Beta — autocommit SQL subset; multi-tenant identity/ABAC closure is still tracked by TD-ABAC-10/11
+
+| *REST `POST /api/v2/sql`*
+| One authenticated *SQL* statement: tenant-scoped relational SELECT/DDL/DML
+  plus the existing vector/graph SQL extensions.
+| HTTP/JSON clients that need SQL without a PostgreSQL or gRPC driver. This is
+  a thin transport adapter over the same typed SQL port and relational
+  planner/executor as gRPC; execution cells remain `ProximaValue` until JSON
+  serialization. Request parameters are not yet supported, so clients must not
+  send or interpolate parameter payloads through this endpoint.
+| Beta (single statement; API-key/JWT identity + ABAC live-ratchet covered)
 
 | *gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery`*
 | *SQL with vector/graph extensions* (e.g. `VECTOR_SEARCH`) *and tenant-scoped
@@ -87,27 +118,27 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
   metadata (pgwire cannot) and uses HTTP/2 + protobuf. Relational SELECTs route
   through the same pipeline as pgwire (ComputeScheduler → DataFusion/Volcano);
   DDL/DML route through the same tenant-scoped `DdlService`/`DmlService` seams —
-  all scoped to the `x-tenant-id` tenant (TD-064). Multi-statement transactions
-  (BEGIN/COMMIT) remain pgwire-only (this RPC is single-statement).
-| Supported (vector/graph SQL + tenant-scoped relational SELECT/DDL/DML)
+  all scoped to the `x-tenant-id` tenant (TD-064). This RPC is single-statement;
+  pgwire is also autocommit-only and rejects transaction control with SQLSTATE `0A000`.
+| Beta — programmatic SQL exists, but broader relational and cross-modal parity is not in the MVP corridor
 
 | *REST/gRPC `/api/v2/query`* (unified query port)
 | *UQL* (unified multi-modal), *Federated* SQL extensions, *AQL*
 | ProximaDB-native cross-modal queries (vector + graph + relational) that SQL cannot express.
-| UQL/Federated Supported; AQL Planned
+| UQL/Federated Beta; AQL Planned
 
 | *gRPC `proximadb.v2.ProximaGraphService`*
 | Node/edge/query/traversal/shortest-path/stats + analytic
   (GetConnectedComponents, HasCycle), batch (BatchCreateNodes/Edges),
   unique-constraint DDL, and server-streaming (StreamTraverse) RPCs (TD-124).
 | Programmatic graph access from the SDK.
-| Supported
+| Beta
 
 | *Graph `ExecuteQuery`* (Cypher)
 | Declarative graph query — supported openCypher subset (single-node patterns
   and linear traversal chains with equality property constraints) on v2 (TD-124).
 | Now on v2 `ProximaGraphService`. GREMLIN reserved/unbacked.
-| Supported (subset)
+| Beta (subset)
 
 | *Graph `ExecuteHybridQuery` / `CreateGraphWithEngine` / `GetPulsarStats`*
 | Cross-modality hybrid query; engine-typed graph create; PULSAR stats
@@ -122,16 +153,21 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 ====
 * pgwire is *SQL-only* and cannot serve UQL/AQL/Cypher; those non-SQL languages require the
   unified query port (`/api/v2/query`) or the graph service — they are not replaceable by pgwire.
-* SQL is served by *two surfaces* (TD-121/TD-135). *pgwire* serves the PostgreSQL ecosystem
-  (psql/JDBC/BI/ORM, Postgres-native auth) and supports multi-statement transactions. The gRPC
+* SQL is served by *three adapters over one execution authority* (TD-121/TD-135).
+  *pgwire* serves the PostgreSQL ecosystem
+  (psql/JDBC/BI/ORM, Postgres-native auth) in autocommit mode. `BEGIN`, `COMMIT`, `ROLLBACK`,
+  savepoints, and other transaction-control statements return SQLSTATE `0A000`; a simple-query
+  batch containing transaction control is rejected before any statement in the batch executes.
+  REST `POST /api/v2/sql` serves authenticated HTTP/JSON clients and deliberately supports
+  one statement without parameter binding in its initial beta contract. The gRPC
   `ProximaRecordService.ExecuteQuery` RPC is *token/SSO-authenticated* (bearer/JWT in metadata,
   which pgwire's password/MD5 auth cannot carry) and serves vector/graph-extension SQL (e.g.
   `VECTOR_SEARCH`) plus *tenant-scoped relational SQL — SELECT reads AND DDL/DML writes*: SELECTs
   route through the *same* pipeline pgwire uses (`ComputeScheduler::route_select` →
   DataFusion/Volcano); DDL (CREATE/ALTER/DROP) and DML (INSERT/UPDATE/DELETE) route through the
   *same* tenant-scoped `DdlService`/`DmlService` seams — all scoped to the `x-tenant-id` tenant
-  (TD-064). *Out of scope on gRPC:* multi-statement transactions (BEGIN/COMMIT) — the RPC is
-  single-statement; use pgwire for transactional batches. It is *not* deprecated. For large
+  (TD-064). *Out of scope on gRPC:* multi-statement transactions — the RPC is single-statement.
+  It is *not* deprecated. For large
   columnar result sets prefer Arrow Flight.
 * *Apache Calcite*, if adopted, is an *internal* federated-SQL planner behind pgwire and the
   Federated path — not a client surface, and not a substitute for the non-SQL languages.
@@ -213,7 +249,7 @@ for evidence/provenance, and event/history records for temporal state. The v1
 
 | Vector CRUD and search
 | Supported
-| Canonical REST `/api/v2` record batch/search/get/scan flows and gRPC `proximadb.v2.ProximaRecordService` record operations. REST `/api/v1` and gRPC v1 vector-shaped flows are deprecated compatibility adapters for existing clients only (see Canonical API Surface above); they lower into canonical v2 handlers and will be retired. Record metadata filters are enforced on typed `/search` (`filters:[{field,op,value}]`) and `/records/scan` (`filter`) across the supported ops (`eq,neq,gt,gte,lt,lte,in,contains,between,starts_with,ends_with`), including tenant/account scoping; array-valued props support `in`/`contains` membership.
+| Canonical REST `/api/v2` record batch/search/get/scan flows, gRPC `proximadb.v2.ProximaRecordService` record operations, and Arrow Flight canonical `type: "vector_search"` `DoGet`. REST `/api/v1` and gRPC v1 vector-shaped flows are deprecated compatibility adapters for existing clients only (see Canonical API Surface above); they lower into canonical v2 handlers and will be retired. Record metadata filters are enforced on typed `/search` (`filters:[{field,op,value}]`) and `/records/scan` (`filter`) across the supported ops (`eq,neq,gt,gte,lt,lte,in,contains,between,starts_with,ends_with`), including tenant/account scoping; array-valued props support `in`/`contains` membership. Canonical REST search/point-get, authenticated gRPC v2 unary search/streaming search/point-get, and authenticated Flight record search have live provisioned-ABAC evidence for deny-before-provision, row-predicate filtering, principal isolation, and hot revoke.
 | Keep hybrid retrieval and distributed search claims separate from the supported vector surface. New clients must not target v1 `VectorRecord`/`SqlValue` payloads.
 
 | Federated SQL over function-backed sources
@@ -238,13 +274,13 @@ for evidence/provenance, and event/history records for temporal state. The v1
 
 | Security runtime
 | Beta
-| JWT, API key, SSO hooks, mTLS identity, and CRL-backed revocation reload/freshness checks are present.
-| Security admin/status APIs and stronger online revocation policy are incomplete.
+| JWT, API key, SSO hooks, mTLS identity, and CRL-backed revocation reload/freshness checks are present. Tenant identity is credential-bound by policy on EVERY network surface (TD-TENANT-1, one shared primitive in `proximadb-tenant`): an assertion that contradicts an authenticated tenant binding is always rejected (HTTP 403 / gRPC PERMISSION_DENIED / SQLSTATE 28000); the bare assertion (REST `X-Tenant-ID`, gRPC/Arrow Flight `x-tenant-id` metadata, pgwire startup `database` + tenant session vars) is governed by `HeaderTrustPolicy` (`open` default / `authenticated-only` in the multi-tenant strict preset / `gateway-only` for trusted-gateway delegation via a first-class gateway-principal role marker), configurable via `[security.tenant] header_trust` and overridable via `PROXIMADB_TENANT_HEADER_TRUST`. Rejections emit `proximadb::tenant_audit` warns.
+| Security admin/status APIs and stronger online revocation policy are incomplete. pgwire runs trust auth (no credential binding), so strict policies disable pgwire tenant selection rather than authenticate it; ADR-031 tenant stable-id minting behind the `TenantStableIdResolver` port is pending (TD-TENANT-1).
 
 | Hybrid retrieval
 | Beta
 | tantivy BM25 integration, RRF/weighted fusion, and canonical REST `/api/v2/collections/{id}/search` hybrid path (TD-008 resolved). REST `/api/v2/graphs/{graph_id}/fusion-search` is the first vector+graph instance of the shared cross-modal fusion seam (TD-137). The former `/api/v1/hybrid/search` facade is a deprecated compat alias only. Request `filters` are enforced on both dense/BM25 legs: the vector candidates are filtered server-side, and the text candidates are gated to that filtered id set so a scoped filter cannot leak through the text leg.
-| Backend integration improved; REST v1 hybrid alias is a deprecated compatibility surface (see Canonical API Surface above) and gRPC path parity is still in progress. v1 `GraphService.ExecuteHybridQuery` remains deferred; use the v2 REST fusion route for vector-seed -> graph-expand experiments. A BM25-only match that passes the filter but falls outside the vector leg's `top_k` (or a hybrid request with no query vector) is dropped rather than risk a leak — safe, but it can under-return; keeping that tail needs a resolving metadata fetch (follow-up). Wider Projection Fusion remains a shared planner contract until runtime implementation, explain output, and benchmarks are complete.
+| Backend integration improved; REST v1 hybrid alias is a deprecated compatibility surface (see Canonical API Surface above) and gRPC path parity is still in progress. v1 `GraphService.ExecuteHybridQuery` remains deferred; use the v2 REST fusion route for vector-seed -> graph-expand experiments. A BM25-only match that passes the filter but falls outside the vector leg's `top_k` (or a hybrid request with no query vector) is dropped rather than risk a leak — safe, but it can under-return; keeping that tail needs a resolving metadata fetch (follow-up). Wider Projection Fusion remains a shared planner contract until runtime implementation, explain output, and benchmarks are complete. The in-process BM25 full-text index behind `/api/v2/hybrid/search` is fed ONLY by explicit `POST /api/v2/hybrid/index` calls: `POST /api/v2/collections/{id}/documents` ingest does NOT feed it (by design — the BM25 index is an in-memory, explicitly-managed sidecar, not a durable index over the record store). Clients that want document text searchable through the hybrid text leg must call `/api/v2/hybrid/index` per ingest batch (issue #951 clarification).
 
 | PULSAR and QUASAR graph engine names
 | Retired / Not supported
@@ -260,6 +296,96 @@ for evidence/provenance, and event/history records for temporal state. The v1
 | Beta
 | TST engine complete (ASOF joins, downsampling, OHLC; TD-009). Event sourcing engine complete (append-only WAL, temporal queries; TD-010).
 | Product packaging, API parity, and production validation at scale still in progress.
+|===
+
+== Storage Engine Matrix (canonical inventory)
+
+// section verified against HEAD 2026-07-13 (TD-TAXO-1)
+Canonical inventory of every engine under `src/storage/engines/` (TD-TAXO-1). Design docs and
+diagrams link here instead of re-enumerating; an engine module header's self-claim
+("production-ready" etc.) does **not** confer a tier — this table does (per the Authority
+Hierarchy above). The tier caps what may be claimed when naming the engine; the capability rows
+in the Current Matrix stay authoritative for API-level claims. `StorageEngineStrategy` lives in
+`crates/storage/proximadb-storage-ports/src/capabilities.rs`; construction is
+`src/storage/engines/factory.rs`.
+
+|===
+| Engine | Tier | Purpose & wiring | Constraints / notes
+
+| SST
+| Supported
+| Default engine (`StorageEngineStrategy::Sst`, factory `create_sst`). Hybrid columnar OLTP/LSM over PAX blocks; serves the Supported vector surface.
+| The safe default for adoption and examples.
+
+| VIPER
+| Beta
+| `Viper` variant, factory-reachable, ungated. Columnar Parquet with advanced quantization; analytics-leaning.
+| Selectable per collection; no per-engine conformance ratchet published yet — do not market above Beta by name.
+
+| HELIX
+| Beta
+| `Helix` variant, factory-reachable, ungated. Spatial-locality vector storage (Hilbert-curve clustering, zone maps).
+| Same Beta cap as VIPER; see also TD-HELIX-1.
+
+| NOVA
+| Beta
+| `Nova` variant, factory-reachable, ungated. Columnar analytics engine with hierarchical statistics and integrated quantization.
+| Same Beta cap as VIPER/HELIX.
+
+| TST (TimeSeries)
+| Beta
+| `TimeSeries` variant, factory `create_tst`. Time-partitioned columnar: ASOF joins, downsampling, OHLC (TD-009).
+| Tier follows the "Time-series and event foundations" row above.
+
+| CEDAR
+| Beta
+| `Cedar` variant, factory-reachable. Document-oriented **compatibility projection** (Columnar Extensible Document Archive) over canonical `ProximaRecord` durable truth.
+| Not a separate durable authority; tier follows the Document row above.
+
+| SWIFT
+| Experimental
+| `Swift` variant; factory gated behind the `experimental-engines` feature. Hierarchical superblock architecture.
+| Marked incomplete in its own header (30+ deferred items); slated for removal in v1.0 unless completed. Do not market.
+
+| RAPTOR
+| Experimental
+| `Raptor` variant; factory gated behind `experimental-engines`. Row-aligned tiered tensor storage research.
+| Same removal caveat as SWIFT. Do not market.
+
+| EVENTLOG
+| Beta (infrastructure)
+| No enum variant; not factory-creatable. Append-only event-sourcing log (TD-010) behind the event foundations row.
+| Infrastructure, not a selectable collection engine.
+
+| SEQUOIA
+| Internal
+| No enum variant; direct instantiation only (not factory-reachable). Relational row-store storing typed rows against catalog schema (Phase 1).
+| In development; becomes selectable only when it earns a variant + factory route + tier row.
+
+| UNIVERSAL
+| — (not an engine)
+| No variant. Shared distance-compute subsystem (PQ/INT8 kernels, progressive refinement) used by the engines.
+| Listed to keep the inventory exhaustive; never present as an engine.
+
+| CHRONO
+| Removed
+| `Chrono` variant and proto value retained for wire compatibility only; the factory returns an error ("use SST, VIPER, HELIX, or NOVA").
+| Do not reference in new code or docs except as removed.
+
+| TITAN
+| — (graph modality)
+| Graph engine (see ORION row above for the graph tier); the legacy dir under `src/storage/engines/` is not a vector storage strategy — the storage factory falls back to SST with a warning.
+| Candidate for relocation next to ORION; tracked in TD-TAXO-1.
+
+| Hybrid (variant)
+| Planned
+| `Hybrid` enum variant reserved; not implemented — factory falls back to SST with a warning.
+| Do not market as implemented.
+
+| ORION
+| Beta
+| Graph modality engine (`crates/modalities/proximadb-orion-engine`), default and recommended for graph workloads; rebuildable CSR projection over canonical records.
+| Tier and scope per the "ORION graph operations" row above; not part of `StorageEngineStrategy`.
 |===
 
 == Not Supported in v0.2
@@ -345,8 +471,9 @@ must not list them under "supported", "production", or "ready":
 
 ProximaDB should currently be positioned as a developer-first context database:
 
-* One system for vectors, operational documents, graph context, and telemetry on the single-node developer path.
-* Best fit for integrated semantic + graph + telemetry workflows.
+* MVP wedge: object-storage-native context serving for typed JSON properties and vector retrieval.
+* One canonical REST v2 record path with SST as the safe single-node default.
+* Best fit today for metadata-aware semantic retrieval without a separate vector/payload join.
 * Not yet a like-for-like replacement for best-in-class distributed vector, graph, document, or observability platforms.
 
 == Near-Term Exit Criteria

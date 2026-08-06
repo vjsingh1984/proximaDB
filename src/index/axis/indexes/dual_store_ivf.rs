@@ -3509,18 +3509,18 @@ mod tests {
     /// embeddings (arxive bge-small, 384-d, unit-norm) to decide whether 1-bit
     /// cold serving clears the bar or the R4 2-bit MID tier is needed.
     ///
-    /// `#[ignore]` + env-gated: set `PROXIMADB_REAL_CORPUS` to a `[n][dim][f32…]`
+    /// `#[ignore]` + env-gated: set `PROXIMADB_TEST_REAL_CORPUS` to a `[n][dim][f32…]`
     /// file (see the arxive export) and run with `--ignored --nocapture`. Skips
     /// cleanly when the env var is unset (so it is inert in CI). The data file is
     /// local and never committed.
     #[tokio::test]
-    #[ignore = "needs a local real-vector corpus via PROXIMADB_REAL_CORPUS"]
+    #[ignore = "needs a local real-vector corpus via PROXIMADB_TEST_REAL_CORPUS"]
     async fn cold_stage1_recall_on_real_corpus() {
         let _ = proximadb_hardware::hardware_capabilities();
-        let path = match std::env::var("PROXIMADB_REAL_CORPUS") {
+        let path = match std::env::var("PROXIMADB_TEST_REAL_CORPUS") {
             Ok(p) => p,
             Err(_) => {
-                eprintln!("skip: set PROXIMADB_REAL_CORPUS to a real-vector corpus file");
+                eprintln!("skip: set PROXIMADB_TEST_REAL_CORPUS to a real-vector corpus file");
                 return;
             }
         };

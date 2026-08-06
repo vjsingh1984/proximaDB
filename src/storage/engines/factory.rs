@@ -133,7 +133,7 @@ pub fn global_capability_registry() -> &'static CapabilityRegistry {
 /// It ensures that the capability registry has up-to-date information about
 /// what each engine supports.
 fn register_engine_capabilities(engine: &Arc<dyn UnifiedStorageFormat>) {
-    let caps = engine.capabilities();
+    let caps = crate::storage::traits::engine_capabilities(engine.as_ref());
     let engine_name = engine.format_name();
     global_capability_registry().register_capabilities(engine_name, caps);
     info!("✅ Registered capabilities for engine: {}", engine_name);
@@ -215,7 +215,9 @@ impl StorageEngineFactory {
             }
             ProtoStorageEngine::Tst => Self::create_tst(),
             ProtoStorageEngine::Cedar => Self::create_cedar(),
-            ProtoStorageEngine::Chrono => Self::create_chrono(),
+            ProtoStorageEngine::Chrono => anyhow::bail!(
+                "CHRONO engine has been removed. Use SST, VIPER, HELIX, or NOVA instead."
+            ),
             ProtoStorageEngine::Titan => {
                 // TITAN is primarily a GraphEngine; for UnifiedStorageFormat, use SST as backing
                 warn!("TITAN is a graph engine; using SST for vector storage operations");
@@ -275,7 +277,9 @@ impl StorageEngineFactory {
             }
             ProtoStorageEngine::Tst => Self::create_tst_async().await,
             ProtoStorageEngine::Cedar => Self::create_cedar_async().await,
-            ProtoStorageEngine::Chrono => Self::create_chrono_async().await,
+            ProtoStorageEngine::Chrono => anyhow::bail!(
+                "CHRONO engine has been removed. Use SST, VIPER, HELIX, or NOVA instead."
+            ),
             ProtoStorageEngine::Titan => {
                 warn!("TITAN is a graph engine; using SST for vector storage operations");
                 Self::create_sst_async().await
@@ -373,10 +377,9 @@ impl StorageEngineFactory {
                 info!("Creating CEDAR (Document) engine");
                 Self::create_cedar()
             }
-            StorageEngineStrategy::Chrono => {
-                info!("Creating CHRONO (Observability) engine");
-                Self::create_chrono()
-            }
+            StorageEngineStrategy::Chrono => anyhow::bail!(
+                "CHRONO engine has been removed. Use SST, VIPER, HELIX, or NOVA instead."
+            ),
         }
     }
 
@@ -392,6 +395,32 @@ impl StorageEngineFactory {
         Ok(Arc::new(
             crate::storage::engines::tst::TimeSeriesEngine::new()?,
         ))
+    }
+
+    /// Run an async engine constructor on a fresh multi-thread tokio runtime,
+    /// returning its output — WITHOUT dropping the runtime.
+    ///
+    /// The engine constructors (`SstEngine::new`, `ViperEngine::new`, …) spawn
+    /// background workers (compaction, etc.) on the runtime they're called from.
+    /// A plain `let rt = Runtime::new()?; rt.block_on(..)` would drop `rt` on
+    /// return, and `Runtime::drop` shuts the runtime down + aborts those workers
+    /// — they'd silently never run (the compaction-queue hang). `mem::forget`
+    /// skips `Drop`, so the runtime (and its workers) live for the process —
+    /// matching the lifecycle of the engine it bootstraps. The sync factory
+    /// exists only for non-server contexts; the server boots engines on its own
+    /// live runtime via the `_async` variants.
+    fn block_on_with_persistent_runtime<T, F>(fut: F) -> Result<T>
+    where
+        F: std::future::Future<Output = Result<T>>,
+    {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        let out = runtime.block_on(fut);
+        // Intentionally leak: keep the runtime (and any workers the engine
+        // constructor spawned on it) alive for the process lifetime.
+        std::mem::forget(runtime);
+        out
     }
 
     /// Async version for use within async contexts (e.g., tests)
@@ -415,25 +444,6 @@ impl StorageEngineFactory {
         Self::create_cedar()
     }
 
-    /// Create CHRONO observability storage engine
-    ///
-    /// LSM-based engine optimized for:
-    /// - Metrics with Gorilla timestamp/value encoding
-    /// - Logs with label indexing and text search
-    /// - Traces with span assembly
-    /// - Time-window compaction with downsampling
-    pub fn create_chrono() -> Result<Arc<dyn UnifiedStorageFormat>> {
-        info!("Creating CHRONO (Observability) storage engine");
-        Ok(Arc::new(
-            crate::storage::engines::chrono::ChronoEngine::new()?,
-        ))
-    }
-
-    /// Async version for CHRONO
-    pub async fn create_chrono_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
-        Self::create_chrono()
-    }
-
     /// Create VIPER engine with default configuration
     ///
     /// ## VIPER Initialization:
@@ -447,8 +457,7 @@ impl StorageEngineFactory {
     /// In production, prefer async factory methods.
     pub fn create_viper() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating VIPER storage engine");
-        let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(async { ViperEngine::new().await })?;
+        let engine = Self::block_on_with_persistent_runtime(async { ViperEngine::new().await })?;
         let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
@@ -476,8 +485,7 @@ impl StorageEngineFactory {
     /// general-purpose nature and production stability.
     pub fn create_sst() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating SST storage engine");
-        let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(async { SstEngine::new().await })?;
+        let engine = Self::block_on_with_persistent_runtime(async { SstEngine::new().await })?;
         let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
@@ -510,8 +518,7 @@ impl StorageEngineFactory {
     pub fn create_swift() -> Result<Arc<dyn UnifiedStorageFormat>> {
         warn!("SWIFT engine is experimental and not production-ready");
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
-        let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(async { SwiftEngine::new().await })?;
+        let engine = Self::block_on_with_persistent_runtime(async { SwiftEngine::new().await })?;
         Ok(Arc::new(engine))
     }
 
@@ -540,8 +547,7 @@ impl StorageEngineFactory {
     /// while preserving 95%+ of variance.
     pub fn create_helix() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating HELIX storage engine");
-        let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(async {
+        let engine = Self::block_on_with_persistent_runtime(async {
             use crate::storage::engines::helix::HelixEngine;
             HelixEngine::new().await
         })?;
@@ -569,8 +575,7 @@ impl StorageEngineFactory {
     /// and statistics for superior analytics performance.
     pub fn create_nova() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
-        let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(NovaEngine::new())?;
+        let engine = Self::block_on_with_persistent_runtime(NovaEngine::new())?;
         let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
@@ -603,8 +608,7 @@ impl StorageEngineFactory {
     #[allow(deprecated)]
     pub fn create_raptor() -> Result<Arc<dyn UnifiedStorageFormat>> {
         warn!("RAPTOR engine is experimental and not production-ready");
-        let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(async { RaptorEngine::new().await })?;
+        let engine = Self::block_on_with_persistent_runtime(async { RaptorEngine::new().await })?;
         Ok(Arc::new(engine))
     }
 
@@ -1003,9 +1007,38 @@ impl StorageEngineFactory {
 mod tests {
     use super::*;
 
-    // -----------------------------------------------------------------------
-    // Engine creation tests via async factory methods
-    // -----------------------------------------------------------------------
+    /// TD-FACTORY-RUNTIME: the sync `create_*` factory methods must not drop the
+    /// temp tokio runtime while engine constructors have background workers
+    /// (compaction, etc.) spawned on it. Previously `let rt = Runtime::new()?;
+    /// rt.block_on(..)` dropped `rt` on return → `Runtime::drop` aborted those
+    /// workers (they'd silently never run — the compaction-queue hang). The fix
+    /// (`block_on_with_persistent_runtime`, which `mem::forget`s the runtime) is
+    /// asserted here by spawning a task that completes AFTER `block_on` returns;
+    /// it can only have run if the runtime survived.
+    #[test]
+    fn block_on_with_persistent_runtime_keeps_spawned_workers_alive() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let f = flag.clone();
+        let _: Result<()> = StorageFormatFactory::block_on_with_persistent_runtime(async move {
+            // Spawn a worker that completes AFTER block_on returns.
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                f.store(true, Ordering::SeqCst);
+            });
+            Ok(())
+        });
+        // Give the spawned worker time to fire on the (leaked) runtime.
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(
+            flag.load(Ordering::SeqCst),
+            "the temp runtime must survive block_on so background workers spawned by \
+             engine constructors actually run (otherwise compaction workers are aborted)"
+        );
+    }
 
     #[tokio::test]
     async fn test_create_sst_engine() {
@@ -1045,14 +1078,6 @@ mod tests {
             .await
             .expect("Failed to create CEDAR engine");
         assert_eq!(engine.format_name(), "cedar");
-    }
-
-    #[tokio::test]
-    async fn test_create_chrono_engine() {
-        let engine = StorageEngineFactory::create_chrono_async()
-            .await
-            .expect("Failed to create CHRONO engine");
-        assert_eq!(engine.format_name(), "chrono");
     }
 
     #[tokio::test]

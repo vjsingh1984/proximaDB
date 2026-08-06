@@ -348,7 +348,7 @@ To propose a change:
 
 - [Architecture Overview](../05-concepts/)
 - [Design Patterns](../12-design/DESIGN_PATTERNS.adoc)
-- [Technical Discussions](https://github.com/vjsingh1984/proximadb/discussions)
+- [Technical Discussions](https://github.com/anvai-labs/proximaDB/discussions)
 
 ---
 

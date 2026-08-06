@@ -10,7 +10,7 @@ name = "proximadb"
 version = "0.2.2"
 description = "Python client SDK for ProximaDB - Cloud-native vector database engineered for AI-first applications"
 authors = [
-    {name = "Vijaykumar Singh", email = "singhvjd@gmail.com"}
+    {name = "Vijaykumar Singh", email = "vijay@anvaiops.com"}
 ]
 license = {text = "Apache-2.0"}
 readme = "README.md"
@@ -177,6 +177,18 @@ test = [
     "pytest-xdist>=3.0.0",
     "sentence-transformers>=3.2,<6",
     "requests>=2.28.0",
+    # Complete the "run the unit suite" contract: unit tests hard-import these
+    # optional deps (arrow export/flight, dataframe builders, multi-bert psutil
+    # sizing, grpc codegen, config/openapi validation). Kept here so
+    # `pip install -e ".[test]"` is the single source of truth for CI — the
+    # previously hand-maintained CI dep list drifted and left the SDK lane red.
+    "pyarrow>=14.0.0",
+    "pandas>=2.0.0",
+    "psutil>=5.9.0",
+    "grpcio-tools>=1.60.0",
+    "pyyaml>=6.0",
+    "jsonschema>=4.0.0",
+    "httpx>=0.24.0",
 ]
 
 docs = [
@@ -196,10 +208,10 @@ proximadb-cli = "proximadb_sdk.cli:main"
 pdb-cli = "proximadb_sdk.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/vjsingh1984/proximadb"
-Documentation = "https://github.com/vjsingh1984/proximadb#readme"
-Repository = "https://github.com/vjsingh1984/proximadb"
-Issues = "https://github.com/vjsingh1984/proximadb/issues"
+Homepage = "https://github.com/anvai-labs/proximaDB"
+Documentation = "https://github.com/anvai-labs/proximaDB#readme"
+Repository = "https://github.com/anvai-labs/proximaDB"
+Issues = "https://github.com/anvai-labs/proximaDB/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -181,7 +181,13 @@ pub(crate) fn select_blocks_by_centroid(
             continue;
         }
         let dist = metric_distance(query, &centroid, metric);
-        scored.push((dist, idx));
+        // TD-RDSTRAT-5 lever-3: rank by the distance LOWER BOUND
+        // `d(query, centroid) − k·radius` — the closest a point in this block
+        // could be (triangle inequality). `radius_k = 0` ⇒ raw centroid distance
+        // (legacy). `> 0` keeps spread-out blocks that a center-only rank would
+        // wrongly prune, raising recall at a fixed keep-ratio.
+        let score = dist - prune.radius_k * entry.block_radius;
+        scored.push((score, idx));
     }
 
     if scored.is_empty() {
@@ -298,6 +304,80 @@ mod td096_block_skip_tests {
             selected.len(),
             10,
             "below MIN_BLOCKS_FOR_PRUNING, all blocks are kept"
+        );
+    }
+}
+
+#[cfg(test)]
+mod wlp3_radius_prune_tests {
+    //! TD-WLP-3 (ADR-061 D7): deterministic gates for the radius lower-bound
+    //! prune score `d(q, centroid) − k·radius`. The default `radius_k = 0.0`
+    //! must reproduce the legacy centroid-only selection EXACTLY (default
+    //! safety); a positive `k` must rescue a spread-out block that a
+    //! center-only rank would wrongly prune (the measured recall lever).
+    use super::*;
+    use crate::core::search::BlockPruneMode;
+
+    /// Blocks on a line: centroid_i = [i, 0, 0, 0] with the given per-block
+    /// radii, so L2 distance from an origin query ranks them by index.
+    fn line_entries(radii: &[f32]) -> Vec<IndexEntry> {
+        radii
+            .iter()
+            .enumerate()
+            .map(|(i, &radius)| IndexEntry {
+                block_centroid: vec![i as f32, 0.0, 0.0, 0.0],
+                block_centroid_fp16: None,
+                block_radius: radius,
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    /// `radius_k = 0.0` (the default) reproduces the legacy centroid-only
+    /// selection exactly, even when radii vary wildly — proves the ADR-061
+    /// default-OFF safety property at the scoring seam.
+    #[test]
+    fn radius_k_zero_reproduces_legacy_selection() {
+        // Wildly varying radii that WOULD reorder the ranking if consulted.
+        let entries = line_entries(&[0.0, 0.0, 100.0, 50.0, 25.0, 12.0, 6.0, 3.0]);
+        let mut cfg = BlockPruneConfig::for_testing();
+        cfg.mode = BlockPruneMode::Fixed(3);
+        assert_eq!(cfg.radius_k, 0.0, "default radius_k must be 0.0 (legacy)");
+        let query = vec![0.0f32; 4];
+        let selected = select_blocks_by_centroid(&query, &entries, DistanceMetric::Euclidean, &cfg);
+        assert_eq!(
+            selected,
+            vec![0, 1, 2],
+            "radius_k=0.0 must rank by raw centroid distance only (legacy \
+             selection), ignoring radii entirely"
+        );
+    }
+
+    /// A positive `radius_k` rescues a far-but-spread-out block whose distance
+    /// LOWER BOUND beats a nearer tight block — the exact failure mode behind
+    /// the measured 0.99→0.81 pruned-recall drop (ADR-061 §Context).
+    #[test]
+    fn radius_k_positive_rescues_spread_out_block() {
+        // Block 0: d=0, tight. Block 1: d=1, tight. Block 2: d=2, radius 1.8
+        // → lower bound 0.2, undercutting block 1's 1.0.
+        let entries = line_entries(&[0.0, 0.0, 1.8]);
+        let mut cfg = BlockPruneConfig::for_testing();
+        cfg.mode = BlockPruneMode::Fixed(2);
+        let query = vec![0.0f32; 4];
+
+        // Legacy (k=0): keeps the two nearest centroids {0, 1}.
+        let legacy = select_blocks_by_centroid(&query, &entries, DistanceMetric::Euclidean, &cfg);
+        assert_eq!(legacy, vec![0, 1], "k=0 keeps the two nearest centroids");
+
+        // k=1: block 2's lower bound (2 − 1.8 = 0.2) outranks block 1 (1.0).
+        cfg.radius_k = 1.0;
+        let with_radius =
+            select_blocks_by_centroid(&query, &entries, DistanceMetric::Euclidean, &cfg);
+        assert_eq!(
+            with_radius,
+            vec![0, 2],
+            "k=1 must keep the spread-out block whose distance lower bound \
+             undercuts a nearer tight block"
         );
     }
 }

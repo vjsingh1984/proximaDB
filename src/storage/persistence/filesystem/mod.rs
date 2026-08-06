@@ -278,28 +278,39 @@ impl std::fmt::Debug for FilesystemFactory {
 /// outside an active `io_trace` scope and when the `io-trace` perf-emission
 /// feature is compiled out, so this impl is unconditional and zero-cost when no
 /// query is being traced.
+///
+/// **Single-source discipline (io-trace GET/bytes):** ranged reads are accounted
+/// ONCE, by the leaf backend — `LocalFileSystem`/`AzureBlob`/`Gcs`/`AwsS3` each
+/// call `record_range_gets(1)` + `record_bytes_read` in their own `read_range`,
+/// and batched reads (`read_ranges`) loop `read_range` via the trait default. So
+/// this decorator records ONLY (a) the op verb (`get_ops` — no backend records
+/// it) and (b) whole-object `read()` bytes (no backend records those). Mirroring
+/// `range_gets`/`bytes_read` here too double-counted every ranged GET whenever
+/// the counting wrapper was active (io-trace reported 2× the real GET count under
+/// `PROXIMADB_COUNT_FS_IO`). Regression: `counting_wrapper_records_ranged_gets_once_not_twice`.
 #[derive(Debug, Default)]
 struct IoTraceFsRecorder;
 
 impl proximadb_storage_filesystem_types::counting::IoRecorder for IoTraceFsRecorder {
     fn record_full_read(&self, bytes: u64) {
+        // Whole-object reads are NOT re-accounted by the leaf backends (only
+        // ranged reads are), so the recorder is the sole io_trace source here.
         crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
         if bytes > 0 {
             crate::observability::io_trace::record_bytes_read(bytes);
         }
     }
-    fn record_range_read(&self, bytes: u64) {
+    fn record_range_read(&self, _bytes: u64) {
+        // The leaf backend's `read_range` already recorded `range_gets(1)` +
+        // `bytes_read`; re-recording here double-counts. Keep only the op verb.
         crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
-        crate::observability::io_trace::record_range_gets(1);
-        if bytes > 0 {
-            crate::observability::io_trace::record_bytes_read(bytes);
-        }
     }
-    fn record_batched_ranges(&self, bytes: u64) {
-        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
-        crate::observability::io_trace::record_range_gets(1);
-        if bytes > 0 {
-            crate::observability::io_trace::record_bytes_read(bytes);
+    fn record_batched_ranges(&self, physical_gets: u64, _bytes: u64) {
+        // `read_ranges` loops the leaf `read_range` (trait default), which
+        // already accounted each constituent range's bytes/range_gets. This
+        // decorator owns only the op verb, once per physical range.
+        for _ in 0..physical_gets {
+            crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
         }
     }
 }
@@ -334,23 +345,6 @@ impl FilesystemFactory {
         Ok(Arc::new(
             crate::storage::encryption::EncryptedFilesystem::new(filesystem, version_manager, true),
         ))
-    }
-
-    /// Create filesystem factory with default configuration
-    ///
-    /// **DEPRECATED**: Use `create_default()` instead. This method creates a non-functional
-    /// factory without registered filesystems and exists only for backward compatibility.
-    #[deprecated(
-        since = "0.1.5",
-        note = "Use `create_default()` instead - this creates a broken factory"
-    )]
-    #[allow(clippy::should_implement_trait)]
-    pub fn default() -> Self {
-        Self {
-            config: FilesystemConfig::default(),
-            filesystems: HashMap::new(),
-            tier_mapping: HashMap::new(),
-        }
     }
 
     /// Create a fully initialized filesystem factory with default configuration
@@ -397,19 +391,6 @@ impl FilesystemFactory {
         factory.initialize_tier_mapping();
 
         Ok(factory)
-    }
-
-    /// Create new filesystem factory with configuration
-    ///
-    /// **DEPRECATED**: Use `create()` instead for clearer semantics.
-    /// Having `new()` on a factory is confusing - factories should have static
-    /// creation methods like `create()`, `create_default()`, etc.
-    #[deprecated(
-        since = "0.1.5",
-        note = "Use `create(config)` instead for clearer factory semantics"
-    )]
-    pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
-        Self::create(config).await
     }
 
     /// Initialize all configured filesystem backends
@@ -589,48 +570,6 @@ impl FilesystemFactory {
         }
     }
 
-    /// Get an IntelligentFilesystem with automatic scheme-specific filesystem selection.
-    ///
-    /// This is the RECOMMENDED method for engines to get filesystems.
-    /// It automatically:
-    /// 1. Selects the right filesystem based on URL scheme
-    /// 2. Wraps it with IntelligentFilesystem for caching
-    /// 3. Returns a ready-to-use cached filesystem
-    ///
-    /// ## Benefits
-    ///
-    /// - **Cloud Storage**: Dramatically reduces API calls through metadata caching
-    /// - **Local Storage**: Adds bloom filter and block caching
-    /// - **All Storage**: Access pattern learning and predictive prefetching
-    ///
-    /// ## Example
-    ///
-    /// ```rust,ignore
-    /// // Instead of:
-    /// let fs = factory.get_filesystem("s3://bucket")?;
-    /// let cached_fs = IntelligentFilesystem::new(fs, collection_id, engine_type);
-    ///
-    /// // Just do:
-    /// let cached_fs = factory.get_intelligent_filesystem(
-    ///     "s3://bucket",
-    ///     collection_id,
-    ///     engine_type,
-    /// )?;
-    /// ```text
-    #[deprecated(
-        since = "1.0.0",
-        note = "Use get_unified_caching_filesystem instead. This method now redirects to it."
-    )]
-    pub fn get_intelligent_filesystem(
-        &self,
-        url: &str,
-        collection_id: String,
-        engine_type: String,
-    ) -> FsResult<Arc<dyn FileSystem>> {
-        // Redirect to the new unified filesystem
-        self.get_unified_caching_filesystem(url, collection_id, engine_type)
-    }
-
     /// Create filesystem with unified caching
     ///
     /// # Example
@@ -711,6 +650,44 @@ impl FilesystemFactory {
         trace!("to_path: {}", to_path);
         debug!("    [DEBUG] from_path resolved: {}", from_path);
         debug!("    [DEBUG] to_path resolved: {}", to_path);
+
+        // Same-backend fast path (TD-OBJSTORE-4 S1 review): comparing scheme
+        // STRINGS classifies az://→adls:// as cross-filesystem, and even same
+        // schemes fall into the streaming path below — which cloud backends do
+        // not support ("streaming open_file is not supported on the Azure
+        // backend"). Compare CANONICAL scheme groups (az/azure/adls/abfs are one
+        // backend; gs/gcs likewise) rather than Arc identity: per-call wrappers
+        // (the TD-096 PROXIMADB_COUNT_FS_IO CountingFileSystem) mint a fresh Arc
+        // per lookup and would silently defeat a ptr_eq check. Only cloud groups
+        // take this path — their whole-object copy() avoids the unsupported
+        // streaming API (today's backend copy() is client-side read+write;
+        // server-side copy is a follow-up optimization).
+        let same_cloud_backend = match (extract_scheme(from_url), extract_scheme(to_url)) {
+            (Ok(from_scheme), Ok(to_scheme)) => {
+                use crate::storage::persistence::filesystem::scheme_validation::FilesystemScheme;
+                let group = |s: FilesystemScheme| match s {
+                    FilesystemScheme::AzureBlobStorage | FilesystemScheme::AzureDataLakeStorage => {
+                        Some("azure")
+                    }
+                    FilesystemScheme::S3 => Some("s3"),
+                    FilesystemScheme::GoogleCloudStorage => Some("gs"),
+                    _ => None, // file/hdfs keep the existing streaming path
+                };
+                match (group(from_scheme), group(to_scheme)) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if same_cloud_backend || Arc::ptr_eq(&from_fs, &to_fs) {
+            from_fs.copy(&from_path, &to_path).await?;
+            trace!("Same-backend native copy complete");
+            debug!("    ✅ [DEBUG] Same-backend native copy complete");
+            trace!("📋 [] copy_atomic COMPLETE");
+            debug!("📋 [DEBUG] copy_atomic COMPLETE");
+            return Ok(());
+        }
 
         if from_fs.filesystem_type() == "encrypted" || to_fs.filesystem_type() == "encrypted" {
             let data = from_fs.read(&from_path).await?;
@@ -1016,15 +993,25 @@ impl FilesystemFactory {
                 Ok(after_file.to_string())
             }
         } else {
-            // Case 3: Non-file schemes still need URL parsing (s3://, azure://, etc.)
-            let parsed_url = Url::parse(url)
+            // Case 3: Cloud schemes (s3://, az://, adls://, abfs://, gs://, ...).
+            // The cloud backends parse the FULL url themselves to recover the
+            // container/bucket + blob key — e.g. `AzureBlobFileSystem::parse`
+            // strips the `az://` scheme and split_once('/')s the container off
+            // the blob. Returning only `parsed_url.path()` here drops the host
+            // (the container), so the backend rejects it: TD-FLUSH-6 root cause
+            // was the staging-dir `list` failing with
+            // `Invalid path: not an azure path: /1/data/__flush` (container
+            // `proximadb-bench` stripped). Pass the url through verbatim and let
+            // the backend parse it; only `file://` (Case 2 above) and scheme-less
+            // paths (Case 1) are reduced to a local path. Url::parse is kept as
+            // a fail-fast validity check; its `.path()` is intentionally unused.
+            let _parsed = Url::parse(url)
                 .map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL: {}", e)))?;
-            let path = parsed_url.path();
             trace!(
-                "🔍 [FILESYSTEM] resolve_path: Non-file scheme path: '{}'",
-                path
+                "🔍 [FILESYSTEM] resolve_path: cloud scheme — full url passed to backend: '{}'",
+                url
             );
-            Ok(path.to_string())
+            Ok(url.to_string())
         }
     }
 
@@ -1150,6 +1137,30 @@ impl FilesystemFactory {
         }
 
         result
+    }
+
+    /// Read a single byte range `[offset, offset+length)` from `url`. Convenience
+    /// over `get_filesystem(url).read_range(...)` mirroring [`Self::read`] — used by
+    /// the PAX-native ranged reader to fetch a segment's tail index and individual
+    /// surviving blocks without pulling the whole object (TD-DOC-PUSHDOWN-1).
+    pub async fn read_range(&self, url: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        let fs = self.get_filesystem(url)?;
+        let path = Self::resolve_path(url)?;
+        fs.read_range(&path, offset, length).await
+    }
+
+    /// Read multiple byte ranges from `url` in one batched call — the object-store
+    /// backend coalesces adjacent ranges into fewer GETs. Mirrors [`Self::read`];
+    /// the ranged PAX reader uses this to fetch all surviving blocks of a pruned
+    /// scan together.
+    pub async fn read_ranges(
+        &self,
+        url: &str,
+        ranges: Vec<std::ops::Range<u64>>,
+    ) -> FsResult<Vec<Vec<u8>>> {
+        let fs = self.get_filesystem(url)?;
+        let path = Self::resolve_path(url)?;
+        fs.read_ranges(&path, ranges).await
     }
 
     pub async fn write(
@@ -1381,6 +1392,56 @@ mod inline_tests {
         }
     }
 
+    /// Regression for the io-trace `range_gets` / `bytes_read` DOUBLE-COUNT.
+    /// `CountingFileSystem` (active under `PROXIMADB_COUNT_FS_IO`) wraps the leaf
+    /// `LocalFileSystem`; both used to call `record_range_gets(1)` +
+    /// `record_bytes_read` on every ranged GET, so io-trace reported 2× the real
+    /// GET count and 2× the real bytes whenever the counting wrapper was on (`avg_get_bytes`
+    /// self-corrected by cancelling both halves). The wrapper must now record only
+    /// the op verb + whole-read bytes; ranged GETs/bytes come once from the backend.
+    #[tokio::test]
+    async fn counting_wrapper_records_ranged_gets_once_not_twice() {
+        use crate::observability::io_trace;
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+
+        let temp = TempDir::new().unwrap();
+        let file_path = temp.path().join("seg.bin");
+        let payload = vec![7u8; 4096];
+        std::fs::write(&file_path, &payload).unwrap();
+        let url = format!("file://{}", file_path.display());
+
+        let inner = LocalFileSystem::new(LocalConfig::default()).await.unwrap();
+        let fs: Arc<dyn FileSystem> = Arc::new(CountingFileSystem::new_with_recorder(
+            Arc::new(inner),
+            global_counters(),
+            Arc::new(IoTraceFsRecorder),
+        ));
+
+        let snap = io_trace::scope(async {
+            let a = fs.read_range(&url, 0, 1024).await.unwrap();
+            let b = fs.read_range(&url, 1024, 2048).await.unwrap();
+            assert_eq!(a.len(), 1024);
+            assert_eq!(b.len(), 2048);
+            io_trace::snapshot().expect("io_trace scope active")
+        })
+        .await;
+
+        assert_eq!(
+            snap.range_gets, 2,
+            "each ranged GET must count once (leaf-backend source), not twice"
+        );
+        assert_eq!(
+            snap.bytes_read,
+            1024 + 2048,
+            "bytes must count once, not twice"
+        );
+        assert_eq!(
+            snap.get_ops, 2,
+            "op verb recorded once per read by the recorder (backends do not record it)"
+        );
+    }
+
     #[tokio::test]
     async fn test_filesystem_factory_creation() {
         let config = FilesystemConfig::default();
@@ -1457,13 +1518,41 @@ mod inline_tests {
             "/tmp/test.txt"
         );
         assert_eq!(
-            FilesystemFactory::resolve_path("s3://bucket/key")
-                .expect("Failed to resolve path from s3:// URL"),
-            "/key"
-        );
-        assert_eq!(
             FilesystemFactory::resolve_path("/local/path").expect("Failed to resolve local path"),
             "/local/path"
+        );
+    }
+
+    /// TD-FLUSH-6 regression: cloud-scheme URLs must be passed through VERBATIM
+    /// to the backend. The cloud backends (`AzureBlobFileSystem::parse`,
+    /// `AwsS3FileSystem`, ...) recover the container/bucket + blob key from the
+    /// full url themselves; stripping to `Url::path()` here dropped the host
+    /// (container) and made `list`/`copy`/`delete` fail with
+    /// `Invalid path: not an azure path: /1/data/__flush` on a clean object
+    /// store, blocking flush. `file://` (above) and scheme-less paths are still
+    /// reduced to a local path.
+    #[tokio::test]
+    async fn test_resolve_path_cloud_urls_pass_through_verbatim() {
+        // exact shape that broke the SST flush staging-dir list on Azurite
+        assert_eq!(
+            FilesystemFactory::resolve_path("az://proximadb-bench/1/data/__flush")
+                .expect("az:// staging url must resolve"),
+            "az://proximadb-bench/1/data/__flush"
+        );
+        // s3 / gs likewise — backend parses container+blob from the full url
+        assert_eq!(
+            FilesystemFactory::resolve_path("s3://bucket/key").expect("s3:// url must resolve"),
+            "s3://bucket/key"
+        );
+        assert_eq!(
+            FilesystemFactory::resolve_path("gs://bucket/a/b/c.pax")
+                .expect("gs:// url must resolve"),
+            "gs://bucket/a/b/c.pax"
+        );
+        // malformed url is still rejected (Url::parse validity check retained)
+        assert!(
+            FilesystemFactory::resolve_path("az://[bad").is_err(),
+            "malformed cloud url must be rejected"
         );
     }
 
@@ -1566,3 +1655,44 @@ mod inline_tests {
 
 #[cfg(test)]
 mod comprehensive_tests;
+
+// ============================================================================
+// FilesystemPort impl — Slice D port-inversion (gap 5/6 enabler)
+// ============================================================================
+// Exposes the root-local `FilesystemFactory` behind the `FilesystemPort` trait
+// (defined in `proximadb-storage-ports`) so engine leaves can depend on
+// `Arc<dyn FilesystemPort>` instead of this concrete type, enabling their
+// extraction to crates. Pure delegation to the inherent methods above; the
+// composition root injects `FilesystemFactory` (as `Arc<dyn FilesystemPort>`)
+// into engines. See `EngineFilesystemAccess` in `src/storage/traits/mod.rs` and
+// `ROOT_CRATE_DECOMPOSITION_ENGINES_EXTRACTION_2026_07_12.adoc`.
+#[async_trait::async_trait]
+impl proximadb_storage_ports::FilesystemPort for FilesystemFactory {
+    fn get_filesystem(&self, url: &str) -> FsResult<std::sync::Arc<dyn FileSystem>> {
+        FilesystemFactory::get_filesystem(self, url)
+    }
+
+    async fn create_dir_all(&self, url: &str) -> FsResult<()> {
+        FilesystemFactory::create_dir_all(self, url).await
+    }
+
+    async fn write(&self, url: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
+        FilesystemFactory::write(self, url, data, options).await
+    }
+
+    async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
+        FilesystemFactory::move_atomic(self, from_url, to_url).await
+    }
+
+    async fn delete(&self, url: &str) -> FsResult<()> {
+        FilesystemFactory::delete(self, url).await
+    }
+
+    async fn read(&self, url: &str) -> FsResult<Vec<u8>> {
+        FilesystemFactory::read(self, url).await
+    }
+
+    async fn list(&self, url: &str) -> FsResult<Vec<DirEntry>> {
+        FilesystemFactory::list(self, url).await
+    }
+}

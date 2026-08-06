@@ -4,7 +4,7 @@
 //! particularly around optimized format handling, workload hints, error cases,
 //! and service lifecycle management.
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -96,19 +96,10 @@ mod tests {
 
         // Create WAL manager
         let wal_config = WALConfig::default();
-        let strategy_type =
-            crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
-        let strategy = crate::storage::persistence::write_ahead_log::WALBatchFactory::create_batch_serialization_strategy(
-            strategy_type,
-            &wal_config,
-            filesystem.clone()
-        ).await.expect("Failed to create WAL strategy");
         let wal_manager = Arc::new(
-            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(
-                strategy, wal_config,
-            )
-            .await
-            .expect("Failed to create WAL manager"),
+            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(wal_config)
+                .await
+                .expect("Failed to create WAL manager"),
         );
 
         // Create required services for VectorOperationsService

@@ -90,17 +90,132 @@ pub trait CollectionPort: Send + Sync {
 
 // ── Vector operations ─────────────────────────────────────────────────────────
 
+/// The pre-resolution caller identity carried across port seams (TD-ABAC-7).
+///
+/// This is the RAW identity captured at the network boundary — not an
+/// authorization result (`AuthorizedReadContext` in `proximadb-abac` is what
+/// the enforcement seam *resolves from* it). Fields:
+///
+/// * `tenant_id` — the authoritative ADR-0083 string identity, used for
+///   tenant-scoped catalog/name resolution and `DrPathBuilder` paths.
+/// * `subject` — the authenticated principal (ABAC); `None` = unauthenticated
+///   / internal caller, which the seam treats as passthrough (no policy
+///   evaluation).
+/// * `tenant_stable_id` — the derived numeric projection of `tenant_id`
+///   (widened `account_u32`), the ABAC policy-lookup key. Never a second
+///   source of truth: the string stays authoritative.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PortIdentity<'a> {
+    pub tenant_id: Option<&'a str>,
+    pub subject: Option<&'a str>,
+    pub tenant_stable_id: Option<u64>,
+    /// How the identity was established (ADR-087) — audit-only at the seam:
+    /// enforcement stays deny-biased for any present subject regardless of
+    /// class; provenance-conditional policy is a future knob.
+    pub auth_class: proximadb_tenant::AuthClass,
+}
+
+/// Owned form of [`PortIdentity`] for planners/readers that must retain the
+/// identity after the protocol call frame. Convert back with
+/// [`Self::as_borrowed`] at the enforcement seam; fields remain one canonical
+/// carrier rather than parallel tenant/subject parameters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OwnedPortIdentity {
+    pub tenant_id: Option<String>,
+    pub subject: Option<String>,
+    pub tenant_stable_id: Option<u64>,
+    pub auth_class: proximadb_tenant::AuthClass,
+}
+
+impl OwnedPortIdentity {
+    pub fn as_borrowed(&self) -> PortIdentity<'_> {
+        PortIdentity {
+            tenant_id: self.tenant_id.as_deref(),
+            subject: self.subject.as_deref(),
+            tenant_stable_id: self.tenant_stable_id,
+            auth_class: self.auth_class,
+        }
+    }
+}
+
+impl<'a> PortIdentity<'a> {
+    /// No identity at all — internal/system callers; enforcement passthrough.
+    pub const fn anonymous() -> Self {
+        Self {
+            tenant_id: None,
+            subject: None,
+            tenant_stable_id: None,
+            auth_class: proximadb_tenant::AuthClass::Anonymous,
+        }
+    }
+
+    /// Tenant-scoped but with no authenticated ABAC principal.
+    pub const fn for_tenant(tenant_id: &'a str) -> Self {
+        Self {
+            tenant_id: Some(tenant_id),
+            subject: None,
+            tenant_stable_id: None,
+            auth_class: proximadb_tenant::AuthClass::Anonymous,
+        }
+    }
+
+    pub fn into_owned(self) -> OwnedPortIdentity {
+        OwnedPortIdentity {
+            tenant_id: self.tenant_id.map(str::to_string),
+            subject: self.subject.map(str::to_string),
+            tenant_stable_id: self.tenant_stable_id,
+            auth_class: self.auth_class,
+        }
+    }
+}
+
+/// ADR-087: the borrowed port-seam projection of the one foundation identity.
+impl<'a> From<&'a proximadb_tenant::ResolvedRequestIdentity> for PortIdentity<'a> {
+    fn from(identity: &'a proximadb_tenant::ResolvedRequestIdentity) -> Self {
+        Self {
+            tenant_id: Some(identity.tenant.as_str()),
+            subject: identity.subject.as_deref(),
+            tenant_stable_id: identity.tenant_stable_id,
+            auth_class: identity.auth_class,
+        }
+    }
+}
+
 /// Port for vector CRUD and search operations.
 ///
 /// Implemented by root-crate `VectorOperationsService`.
 #[async_trait]
 pub trait VectorOpsPort: Send + Sync {
-    /// Execute a vector search, tenant-scoped when `tenant_id` is provided.
+    /// Execute a vector search, tenant-scoped when `identity.tenant_id` is
+    /// provided; `identity.subject` + `identity.tenant_stable_id` drive ABAC
+    /// enforcement at the shared search seam (`unified_search_v1_inner`).
     async fn search(
         &self,
         request: VectorSearchRequest,
-        tenant_id: Option<&str>,
+        identity: PortIdentity<'_>,
     ) -> Result<VectorOperationResponse>;
+
+    /// TD-XMODAL-4 S2: the **single canonical native vector-search kernel** — the
+    /// v2 path shared by the pgvector `<->` operator and the `vector_search(...)`
+    /// UDTF, returning [`OptimizedSearchRecord`]s for internal (Rust) callers.
+    /// Tenant-scoped + **fail-closed** when `tenant_id` is provided (the impl
+    /// validates collection access for the tenant before searching). The default
+    /// impl returns empty (test doubles need not override).
+    ///
+    /// (This is the one port method that exposes the v2 search-result type rather
+    /// than a proto type — a deliberate exception so both SQL surfaces share one
+    /// kernel instead of diverging; the types are foundation crates, so
+    /// `proximadb-runtime` stays monolith-independent.)
+    async fn unified_search_native(
+        &self,
+        _collection_id: &str,
+        _query_vector: Vec<f32>,
+        _k: usize,
+        _filter: Option<proximadb_filter_expression::FilterExpression>,
+        _tenant_id: Option<&str>,
+    ) -> Result<Vec<proximadb_search_types::results::OptimizedSearchRecord>> {
+        Ok(Vec::new())
+    }
 
     /// Execute a batch upsert/delete, tenant-scoped when `tenant_id` is provided.
     async fn batch_upsert(
@@ -148,6 +263,25 @@ pub trait VectorOpsPort: Send + Sync {
 
 // ── Query facade ──────────────────────────────────────────────────────────────
 
+/// Protocol-neutral result of executing one SQL statement.
+///
+/// SQL values remain canonical [`proximadb_data_model::ProximaValue`] instances
+/// until a transport adapter serializes them. The v1 [`SqlValue`] type is a
+/// compatibility wire type and must not leak into this result.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SqlExecutionResult {
+    /// Ordered column names; every row uses the same ordinal layout.
+    pub columns: Vec<String>,
+    /// Canonical logical type labels aligned with `columns`.
+    pub column_types: Vec<String>,
+    /// Ordered, typed result cells.
+    pub rows: Vec<Vec<proximadb_data_model::ProximaValue>>,
+    /// Present for DDL/DML and absent for row-producing statements.
+    pub rows_affected: Option<u64>,
+    pub rows_scanned: u64,
+    pub execution_time_ms: u64,
+}
+
 /// Port for unified query routing (SQL, hybrid, vector-via-facade).
 ///
 /// Implemented by root-crate `QueryFacadeAdapter` when the `unified-facade-routing`
@@ -162,8 +296,16 @@ pub trait QueryAdapterPort: Send + Sync {
 
     /// Execute a SQL statement through the unified facade.
     ///
-    /// Returns rows as protocol-neutral JSON so the protocol layer can convert
-    /// to v1 `ExecuteQueryResponse`, v2 `ProximaValue` rows, or any wire format
-    /// without the port accumulating v1 surface debt.
-    async fn execute_sql(&self, query: String, collection: Option<String>) -> Result<JsonValue>;
+    /// Returns canonical typed rows. JSON and legacy v1 `SqlValue` conversion
+    /// belong exclusively to their respective transport adapters.
+    ///
+    /// `identity` is the canonical ADR-087 carrier. Its string tenant scopes
+    /// storage/catalog resolution while subject + stable key drive ABAC at the
+    /// relational read seam; callers must not flatten or re-derive these fields.
+    async fn execute_sql(
+        &self,
+        query: String,
+        collection: Option<String>,
+        identity: PortIdentity<'_>,
+    ) -> Result<SqlExecutionResult>;
 }

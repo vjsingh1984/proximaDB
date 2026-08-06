@@ -9,6 +9,7 @@
 //! `ProximaValue` model. Protocol adapters are responsible for converting
 //! legacy wire values at the edge.
 
+use crate::service_ports::PortIdentity;
 use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_data_model::{ProximaType, ProximaValue};
@@ -105,10 +106,13 @@ pub trait ApiHandlersPort: Send + Sync {
 
     // ── Vector ────────────────────────────────────────────────────────────────
 
+    /// `identity` carries the tenant scope + authenticated principal for ABAC
+    /// enforcement at the shared search seam (TD-ABAC-7);
+    /// [`PortIdentity::anonymous`] = no policy evaluation.
     async fn handle_vector_search_v1_for_tenant(
         &self,
         request: VectorSearchRequest,
-        tenant_id: Option<&str>,
+        identity: PortIdentity<'_>,
     ) -> Result<VectorOperationResponse>;
 
     async fn handle_vector_search_v1(
@@ -133,7 +137,7 @@ pub trait ApiHandlersPort: Send + Sync {
 
     // ── Hybrid ────────────────────────────────────────────────────────────────
 
-    /// DEPRECATED (TD-143): v1 hybrid query — dormant (behind `enable_grpc_v1_compat`),
+    /// DEPRECATED (TD-143): v1 hybrid query — dormant (v1 gRPC surface removed, TD-V1SUNSET-1),
     /// not tenant-scoped, owns its own ranking. Use v2 FusionSearch instead.
     #[deprecated(note = "v1 ExecuteHybridQuery is deprecated; use v2 FusionSearch. See TD-143.")]
     async fn execute_hybrid_query(
@@ -143,15 +147,24 @@ pub trait ApiHandlersPort: Send + Sync {
 
     // ── SQL ───────────────────────────────────────────────────────────────────
 
+    /// Execute SQL while retaining canonical `ProximaValue` cells across the
+    /// application boundary. New transports must use this method.
+    async fn execute_sql(
+        &self,
+        query: String,
+        parameters: Option<Vec<ProximaValue>>,
+        collection: Option<String>,
+        identity: crate::service_ports::PortIdentity<'_>,
+    ) -> Result<crate::service_ports::SqlExecutionResult>;
+
+    /// Legacy v1 protobuf compatibility adapter.
     async fn execute_sql_v1(
         &self,
         query: String,
         parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
-        // TD-064: the authenticated tenant scopes relational SQL to the tenant's
-        // partition. `None` keeps the legacy unscoped behavior (callers that
-        // haven't been wired pass `None`); production gRPC/REST threads the real
-        // tenant from the request.
-        tenant_id: Option<&str>,
+        // ADR-087: one canonical caller identity. Tenant scopes the partition;
+        // subject + stable key + auth class reach the relational ABAC seam.
+        identity: crate::service_ports::PortIdentity<'_>,
     ) -> Result<ExecuteQueryResponse>;
 }

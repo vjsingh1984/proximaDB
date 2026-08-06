@@ -33,10 +33,14 @@ pub mod document_service;
 pub mod entity_service;
 pub mod fusion_service;
 pub mod graph_service;
+#[cfg(feature = "experimental-ledger")]
+pub mod ledger_service;
 pub mod record_service;
 
 pub use document_service::ProximaDocumentServiceImpl;
 pub use entity_service::ProximaEntityServiceImpl;
 pub use fusion_service::ProximaFusionServiceImpl;
 pub use graph_service::ProximaGraphServiceImpl;
+#[cfg(feature = "experimental-ledger")]
+pub use ledger_service::ProximaLedgerServiceImpl;
 pub use record_service::ProximaRecordServiceImpl;

@@ -54,6 +54,9 @@ mod flush;
 // Collection-resolution + engine-resolution collaborator (Phase 2.1 decomposition)
 mod resolver;
 
+// WAL-first, per-collection-engine point-read collaborator
+mod read;
+
 // Pure input validators for inserts/queries (Phase 2.1 decomposition)
 mod input_validation;
 
@@ -65,6 +68,7 @@ mod legacy;
 
 // Public exports
 pub use config::{SearchPlanHints, UnifiedSearchConfig};
+#[cfg(feature = "axis")]
 pub use hybrid::build_axis_hybrid_query;
 pub(crate) use legacy::rich_filters_to_filter_expression;
 pub use legacy::{

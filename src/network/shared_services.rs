@@ -15,7 +15,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::api_handlers::UnifiedHandlers;
 use crate::metrics::MetricsConfig;
 use crate::monitoring::MetricsCollector;
 use crate::observability::query::ObservabilityQueryEngine;
@@ -74,6 +73,40 @@ fn lease_manifest_prune_interval_secs() -> u64 {
         .unwrap_or(300)
 }
 
+/// Join a subsystem subpath onto the configured durable storage base
+/// (TD-OBJSTORE-1, #960).
+///
+/// `base` is `storage.metadata_url`: a bare local path (`/data`), a `file://`
+/// URL, or an object-store URL (`s3://…`, `adls://…`, `abfs://…`, `gcs://…`).
+/// The scheme is preserved verbatim; a bare path stays bare (every downstream
+/// consumer normalizes with a `contains("://")` guard). Never strip a scheme
+/// and re-prepend one around this join — stripping `file://` off metadata_url
+/// and then formatting `file://{…}` back on is exactly what produced the
+/// invalid `file://adls://…` URLs on object-store deployments.
+pub(crate) fn join_storage_url(base: &str, sub: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    if sub.is_empty() {
+        trimmed.to_string()
+    } else {
+        format!("{}/{}", trimmed, sub.trim_start_matches('/'))
+    }
+}
+
+/// The local-filesystem view of a storage base, for subsystems that cannot yet
+/// run over an object store (TD-OBJSTORE-1 deferred set — e.g. the TST
+/// time-series engine). Returns `None` when the base carries a non-`file`
+/// scheme, so callers can fail over loudly instead of handing an
+/// `adls://…`-shaped string to `std::fs`.
+fn local_storage_path(base: &str) -> Option<std::path::PathBuf> {
+    if let Some(path) = base.strip_prefix("file://") {
+        Some(std::path::PathBuf::from(path))
+    } else if base.contains("://") {
+        None
+    } else {
+        Some(std::path::PathBuf::from(base))
+    }
+}
+
 /// Which consumer is constructing the shared service core.
 ///
 /// The core (catalog, collection, vector/doc/graph compute, storage/WAL,
@@ -116,6 +149,10 @@ pub struct SharedServices {
     pub vector_operations_service: Arc<VectorOperationsService>,
     /// Concrete graph database operations service for native graph APIs and gRPC graph endpoints
     pub graph_service: Arc<crate::graph::GraphService>,
+    /// Graph collection CRUD service (create/list/get/delete graph). The same
+    /// shared `Arc<GraphCollectionService>` instance `GraphOperationsService`
+    /// holds internally (TD-104 S3-f: hoisted out of the deleted root handler).
+    pub graph_collection_service: Arc<crate::services::GraphCollectionService>,
     /// Extracted graph query/traversal capability for query-facing orchestration layers
     pub graph_query_service: Arc<dyn GraphQueryService>,
     /// Extracted graph execution capability for planners/executors and API state holders
@@ -124,8 +161,10 @@ pub struct SharedServices {
     pub document_service: Arc<DocumentService>,
     /// Observability service for logs, metrics, and traces
     pub observability_service: Arc<crate::observability::ObservabilityService>,
-    /// Unified request handlers shared across all protocol layers
-    pub request_handlers: Arc<UnifiedHandlers>,
+    /// Canonical record-batch write orchestration (TD-104 S3-f: built once
+    /// here — formerly inside the deleted root `UnifiedHandlers::new` — so
+    /// every former `request_handlers.record_ops()` site shares one `Arc`).
+    pub record_ops: Arc<crate::api_handlers::record_ops_service::RecordOpsService>,
     /// ADR-022 auditable event log (append-only trail). The same
     /// `Arc<EventLogEngine>` handed to the unified handlers; exposed here so
     /// in-process surfaces (e.g. the reference MCP `event` tool) can append
@@ -288,15 +327,12 @@ pub struct SharedServices {
 
     /// Partition lease manager for per-collection write authority (Phase 7c).
     ///
-    /// When enabled via `PROXIMADB_PARTITION_LEASE_ON` and object-store
-    /// deployment, this manager acquires/renews generation-fenced leases
-    /// over `(tenant, collection)` partitions. Protocol handlers consult
-    /// `consult_for_write_leased` before DDL writes to ensure split-brain-free
-    /// local writes. Single-pod deployments leave this `None` (pure in-memory
-    /// `primary_pod_registry` lookup).
-    ///
-    /// The lease is a latency optimization; the object-store fence in
-    /// `SystemCatalog` is the correctness authority.
+    /// This is the same manager used by RecordOps/DML and the storage-write
+    /// fence, including its process-lifetime renewal loop. Protocol handlers
+    /// consult it before DDL writes so no per-surface manager or lease timeline
+    /// can diverge. `None` only when the configured lease store cannot open.
+    /// `SystemCatalog` separately fences catalog snapshot publication; it does
+    /// not fence MATERIALIZE/index side effects.
     pub partition_lease_manager:
         Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
 
@@ -316,6 +352,40 @@ pub struct SharedServices {
     /// (graph: tracing-only; pgwire: opens its own appender locally).
     pub canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
 
+    /// Experimental transactional ledger store (ADR-071 / TD-LEDGER-1) — the durable, tenant-scoped
+    /// ledger port shared with the gRPC `ProximaLedgerService`. Node-level (one store per node;
+    /// tenants are namespaced *inside* the keys, not by separate stores), with its WAL on local disk
+    /// (ADR-069). Present only under the `experimental-ledger` feature.
+    #[cfg(feature = "experimental-ledger")]
+    pub ledger_store: Arc<proximadb_ledger::LedgerService<proximadb_ledger::DurableLedger>>,
+
+    /// Durable ABAC attribute-authority handle (TD-ABAC control-plane /
+    /// `abac-policy`). The SAME `Arc<FileSystemAttributeAuthority>` instance the
+    /// live enforcer reads — so an admin provision written through this handle is
+    /// visible without a restart (hot-reload). `None` unless `abac-policy` is on
+    /// and `<data_dir>/abac/attribute-bindings.json` opens cleanly.
+    #[cfg(feature = "abac-policy")]
+    pub abac_authority: Option<Arc<proximadb_abac::FileSystemAttributeAuthority>>,
+
+    /// Durable ABAC policy-binding store handle (TD-ABAC control-plane /
+    /// `abac-policy`). Shared with the live enforcer; the admin policy-binding
+    /// endpoints (TD-ABAC control-plane PR-B) write through this handle. `None`
+    /// when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_binding_store: Option<Arc<proximadb_abac::FileSystemPolicyBindingStore>>,
+
+    /// Durable ABAC predicate-object store handle (TD-ABAC control-plane /
+    /// `abac-policy`). Shared with the live enforcer; the admin predicate-object
+    /// endpoints register/revoke through this handle. `None` when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_predicate_store: Option<Arc<proximadb_abac::FileSystemPredicateObjectStore>>,
+
+    /// Process-shared ABAC enforcer wired into every data-plane surface,
+    /// including pgwire's per-connection DML façade. Sharing this handle keeps
+    /// policy epoch/cache state and the three live durable stores convergent.
+    #[cfg(feature = "abac-policy")]
+    pub abac_enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
+
     /// The single canonical WAL-backed record store, built + WAL-recovered ONCE here and
     /// shared across ALL surfaces — the REST/gRPC `DmlService` and the pgwire direct-write
     /// path both route relational tables through this instance — so a write on any protocol
@@ -325,6 +395,14 @@ pub struct SharedServices {
     /// without `opt_config` (each consumer falls back to its own store).
     pub canonical_record_store:
         Option<Arc<crate::services::record_store::DirectWalTableRecordStore>>,
+
+    /// F5 / TD-OLTP-WIRING-1: the process-shared fenced `ConditionalKeyStore`
+    /// (ADR-072). `Some` only under the `oltp-integrity` feature with a durable
+    /// `data_dir`. Held here as the single source of truth so pgwire
+    /// (`multi_server.rs`) threads the SAME instance — one uniqueness index across
+    /// every write surface (two stores would corrupt one WAL or fence
+    /// inconsistently across gRPC vs pgwire).
+    pub conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
 
     /// Process-wide recall-probe gate (TD-064 / LLD §5). The gate enables
     /// the quantized candidate route only after the recall-probe set passes
@@ -346,7 +424,7 @@ pub struct SharedServices {
     /// Built around `ProductionHybridBackend` so retrieval lights up
     /// automatically as soon as ingestion populates per-collection BM25 +
     /// vector state.
-    pub rank_services: Arc<crate::network::rest::v1::rank::RankServices>,
+    pub rank_services: Arc<crate::network::rest::canonical::rank::RankServices>,
 
     /// Durable rank-profile catalog backed by the canonical WAL spine.
     ///
@@ -410,6 +488,18 @@ pub struct SharedServices {
     >,
 }
 
+/// The three durable ABAC substrate stores, each behind a shared `Arc` handle so
+/// the live `AbacEnforcer`(s) and the admin-provisioning writer observe the SAME
+/// instance — a runtime provision is visible to the enforcer without a restart
+/// (hot-reload, TD-ABAC control-plane). Opened once in
+/// [`SharedServices::open_abac_stores`].
+#[cfg(feature = "abac-policy")]
+struct AbacDurableStores {
+    authority: Arc<proximadb_abac::FileSystemAttributeAuthority>,
+    bindings: Arc<proximadb_abac::FileSystemPolicyBindingStore>,
+    predicate_objects: Arc<proximadb_abac::FileSystemPredicateObjectStore>,
+}
+
 impl SharedServices {
     /// Borrow the TurboQuant registry, if any. Convenience getter so call
     /// sites don't have to feature-gate the field access locally — this
@@ -432,6 +522,161 @@ impl SharedServices {
 }
 
 impl SharedServices {
+    /// Open the ONE process-shared fenced `ConditionalKeyStore`
+    /// (TD-OLTP-WIRING-1 / ADR-072). Returns `Some` only when the
+    /// `oltp-integrity` feature is compiled AND a durable `data_dir` is
+    /// configured — an in-memory store would lose uniqueness across restart. The
+    /// WAL is replayed by `open`, so PK/FK fencing state survives a restart.
+    /// `None` on default builds and embedded/ephemeral paths (unchanged behavior).
+    fn open_shared_conditional_key_store(
+        opt_config: Option<&crate::core::config::Config>,
+    ) -> Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>> {
+        #[cfg(not(feature = "oltp-integrity"))]
+        {
+            let _ = opt_config;
+            None
+        }
+        #[cfg(feature = "oltp-integrity")]
+        {
+            let data_dir = opt_config?.server.data_dir.clone();
+            let path = std::path::Path::new(&data_dir).join("oltp-cks.wal");
+            match proximadb_cks_local::LocalWalKeyStore::open(
+                &path,
+                proximadb_cks_local::SyncPolicy::PerOp,
+            ) {
+                Ok(store) => {
+                    tracing::info!(
+                        "oltp-integrity: fenced ConditionalKeyStore active at {}",
+                        path.display()
+                    );
+                    Some(Arc::new(store) as Arc<dyn proximadb_storage_ports::ConditionalKeyStore>)
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "oltp-integrity: failed to open ConditionalKeyStore at {}: {e}; fencing DISABLED",
+                        path.display()
+                    );
+                    None
+                }
+            }
+        }
+    }
+
+    /// Open the three durable ABAC substrate stores (`FileSystem*`) from
+    /// `<data_dir>/abac/` once at boot, each behind a shared `Arc` handle. The
+    /// live [`AbacEnforcer`](crate::security::rls::AbacEnforcer)(s) and the
+    /// admin-provisioning writer share these SAME instances, so a runtime
+    /// provision is visible to the enforcer without a restart (hot-reload,
+    /// TD-ABAC control-plane).
+    ///
+    /// Returns `None` on default builds (the feature is OFF) and when there is no
+    /// `data_dir` or a store cannot be opened — i.e. the status quo (no
+    /// enforcement). It never synthesizes an allow: absent ⇒ no enforcer ⇒ no
+    /// filtering, the same state as today.
+    #[cfg(feature = "abac-policy")]
+    fn open_abac_stores(
+        opt_config: Option<&crate::core::config::Config>,
+    ) -> Option<AbacDurableStores> {
+        use proximadb_abac::{
+            FileSystemAttributeAuthority, FileSystemPolicyBindingStore,
+            FileSystemPredicateObjectStore,
+        };
+
+        let data_dir = opt_config?.server.data_dir.clone();
+        let abac_dir = std::path::Path::new(&data_dir).join("abac");
+        // A missing `data_dir` (embedded/ephemeral paths) ⇒ no durable substrate ⇒
+        // no enforcer. Best-effort dir creation; a create failure ⇒ None too.
+        if std::fs::create_dir_all(&abac_dir).is_err() {
+            tracing::warn!(
+                "abac-policy: could not create abac dir at {}",
+                abac_dir.display()
+            );
+            return None;
+        }
+
+        let authority =
+            match FileSystemAttributeAuthority::open(abac_dir.join("attribute-bindings.json")) {
+                Ok(a) => Arc::new(a),
+                Err(e) => {
+                    tracing::error!(
+                        "abac-policy: failed to open attribute authority at {}: {e}; \
+                         enforcement DISABLED (no enforcer)",
+                        abac_dir.display()
+                    );
+                    return None;
+                }
+            };
+        let bindings =
+            match FileSystemPolicyBindingStore::open(abac_dir.join("policy-bindings.json")) {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    tracing::error!(
+                        "abac-policy: failed to open policy binding store at {}: {e}; \
+                     enforcement DISABLED (no enforcer)",
+                        abac_dir.display()
+                    );
+                    return None;
+                }
+            };
+        // TD-ABAC-4: durable predicate-object store — resolves the
+        // `PolicyBinding.predicate_ref` ObjectIds to their `FilterExpression`s so
+        // row-level enforcement (not just predicate-free table grants) works in
+        // production. Empty ⇒ every predicate ref resolves fail-closed.
+        let predicate_objects =
+            match FileSystemPredicateObjectStore::open(abac_dir.join("predicate-objects.json")) {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    tracing::error!(
+                        "abac-policy: failed to open predicate object store at {}: {e}; \
+                     enforcement DISABLED (no enforcer)",
+                        abac_dir.display()
+                    );
+                    return None;
+                }
+            };
+
+        tracing::info!(
+            "abac-policy: durable ABAC stores active at {} (authority + policy binding store + predicate object store)",
+            abac_dir.display()
+        );
+        Some(AbacDurableStores {
+            authority,
+            bindings,
+            predicate_objects,
+        })
+    }
+
+    /// Build a process-shared [`AbacEnforcer`] from already-opened shared stores,
+    /// cloning the `Arc` handles so the enforcer reads the same instances an admin
+    /// writer mutates (hot-reload). The policy-epoch source is in-memory today
+    /// (follow-on: durable epochs).
+    #[cfg(feature = "abac-policy")]
+    fn build_enforcer_from_stores(
+        stores: &AbacDurableStores,
+    ) -> Arc<crate::security::rls::AbacEnforcer> {
+        use proximadb_abac::InMemoryPolicyEpochs;
+        let enforcer = crate::security::rls::AbacEnforcer::new(
+            stores.authority.clone(),
+            stores.predicate_objects.clone(),
+            Arc::new(InMemoryPolicyEpochs::new()),
+        )
+        .with_binding_store(stores.bindings.clone());
+        Arc::new(enforcer)
+    }
+
+    /// Open the durable stores and build the enforcer in one shot. Test-only
+    /// convenience — production shares the opened stores across the vector/DML
+    /// enforcers AND `AppState` (see [`open_abac_stores`] +
+    /// [`build_enforcer_from_stores`]) so an admin provision is hot-visible to
+    /// every reader. Gated to `test` so it carries no dead-code weight in
+    /// `--lib` builds.
+    #[cfg(all(feature = "abac-policy", test))]
+    fn build_abac_enforcer(
+        opt_config: Option<&crate::core::config::Config>,
+    ) -> Option<Arc<crate::security::rls::AbacEnforcer>> {
+        Self::open_abac_stores(opt_config).map(|s| Self::build_enforcer_from_stores(&s))
+    }
+
     /// Create shared services with full business logic configuration
     /// SharedServices owns all business logic and configuration decisions
     /// Returns (SharedServices, CollectionService) - the collection service is needed by StorageEngine
@@ -506,6 +751,13 @@ impl SharedServices {
         }
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+        // Inject the object-store filesystem resolver (root half of the
+        // CatalogFilesystemResolver port-inversion). Lazily creates a
+        // FilesystemFactory only if an s3://gs://az:// catalog URL is used;
+        // local `file://` setups never touch it.
+        catalog_manager
+            .set_filesystem_resolver(Arc::new(crate::catalog::LazyFilesystemResolver::new()))
+            .await;
 
         // SharedServices owns metadata configuration logic
         info!(
@@ -521,10 +773,12 @@ impl SharedServices {
             // `NativeCatalog` for the duration of the cutover.
             let disable_system_catalog = std::env::var("PROXIMADB_DISABLE_SYSTEM_CATALOG").is_ok();
             let metadata_url = storage_config.metadata_url.clone();
-            let is_objstore = metadata_url.starts_with("s3://")
-                || metadata_url.starts_with("gs://")
-                || metadata_url.starts_with("az://")
-                || metadata_url.starts_with("memory://");
+            // ANY non-file scheme is an object store — never enumerate schemes
+            // here: `adls://`/`abfs://`/`azure://`/`gcs://` (documented aliases,
+            // ADR-036) used to fall through BOTH branches and land on
+            // NativeCatalog's non-durable temp cache, silently losing catalog
+            // durability on Azure deployments (TD-OBJSTORE-1, #960).
+            let is_objstore = metadata_url.contains("://") && !metadata_url.starts_with("file://");
             // Phase 5d: object-store deployments use the SystemCatalog too — its
             // snapshot blob persists to the object store under
             // `_operator/catalog/…` (real durability, replacing NativeCatalog's
@@ -545,7 +799,7 @@ impl SharedServices {
                 // operator control-plane prefix (`_operator/catalog/…`) so
                 // catalog I/O honours the structural-isolation mandate instead
                 // of a raw `{base}/system-catalog.wal`. Flag-gated + inert by
-                // default (mirrors `PROXIMADB_WAREHOUSE_DRPATH`): the local path
+                // default (mirrors the warehouse DrPath opt-in pattern): the local path
                 // is unchanged until a deployment opts in, keeping existing
                 // on-disk catalog state in place. The catalog is `Operator`-roled.
                 let wal_path = if std::env::var("PROXIMADB_CATALOG_DRPATH").is_ok() {
@@ -672,6 +926,27 @@ impl SharedServices {
                 );
             }
         }
+
+        // TD-ABAC-11 / ADR-087: make the policy-lookup key total before any
+        // authenticated request can reach an armed enforcer. This is an
+        // explicit bootstrap mutation, not an incidental side effect of the
+        // first table create. Both production catalog backends persist it
+        // (SystemCatalog WAL/snapshot; NativeCatalog account sidecar).
+        let default_tenant_stable_id = catalog_manager
+            .ensure_tenant_stable_id(proximadb_tenant::DEFAULT_TENANT)
+            .await
+            .context("Failed to mint the default tenant stable id at catalog bootstrap")?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "default catalog cannot mint a stable id for tenant '{}'",
+                    proximadb_tenant::DEFAULT_TENANT
+                )
+            })?;
+        info!(
+            tenant = proximadb_tenant::DEFAULT_TENANT,
+            tenant_stable_id = default_tenant_stable_id,
+            "✅ SharedServices: default tenant stable id is durable"
+        );
 
         // Phase P (Quantization Trait Convergence Plan): hoist the
         // TurboQuant store registry construction to BEFORE the
@@ -839,6 +1114,12 @@ impl SharedServices {
         );
         debug!("✅ SharedServices::new - Filesystem factory for engines created successfully");
 
+        // TD-DOC-PUSHDOWN-1: publish the storage filesystem factory as a process singleton so the
+        // DataFusion `documents(collection)` UDTF can build a `PaxTableProvider` over a collection's
+        // `.pax` segments for predicate pushdown. Idempotent (first wins); mirrors the
+        // document/timeseries service singletons.
+        crate::services::document_service::set_filesystem_factory(filesystem_factory.clone());
+
         // Create VIPER engine
         debug!("🔧 SharedServices::new - Creating VIPER engine...");
         let viper_config = crate::core::config::ViperConfig::default();
@@ -992,21 +1273,12 @@ impl SharedServices {
         // Phase 5 freshness LSN source.
         debug!("🔧 SharedServices::new - Creating WAL manager for two-stage search...");
         let wal_manager = {
-            use crate::storage::persistence::write_ahead_log::{
-                WALBatchFactory, WriteAheadLogManager,
-            };
+            use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
-            // Create WAL batch strategy
-            let strategy_type = crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
-            let strategy = WALBatchFactory::create_batch_serialization_strategy(
-                strategy_type,
-                &wal_config,
-                filesystem_factory.clone(),
-            )
-            .await?;
-
-            // Create WAL manager directly
-            Arc::new(WriteAheadLogManager::new(strategy, wal_config.clone()).await?)
+            // Create WAL manager directly. The batch-serialization strategy
+            // stack was removed — the manager routes on `config.strategy_type`
+            // plus the global write buffer, never a `WALBatchStrategy` object.
+            Arc::new(WriteAheadLogManager::new(wal_config.clone()).await?)
         };
         debug!("✅ SharedServices::new - WAL manager created successfully");
 
@@ -1032,11 +1304,41 @@ impl SharedServices {
         // Create SST engine
         debug!("🔧 SharedServices::new - Creating SST engine...");
         let sst_engine = {
-            let mut engine = crate::storage::engines::sst::SstEngine::new()
-                .await?
-                .with_directory_cache(directory_cache.clone());
+            let sst_config = storage_config.effective_sst_config();
+            let distance_compute =
+                Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
+            let mut engine = crate::storage::engines::sst::SstEngine::new_with_config(
+                sst_config,
+                filesystem_factory.clone(),
+                distance_compute,
+            )
+            .await?
+            .with_directory_cache(directory_cache.clone());
             if let Some(src) = freshness_lsn_source.clone() {
                 engine = engine.with_freshness_lsn_source(src);
+            }
+
+            // Catalog-driven storage-URL resolution: attach the catalog/config
+            // resolver so `get_collection_storage_url` resolves the real
+            // per-collection location (retires the `/data/collections/{id}`
+            // placeholder; the catalog is the single source of truth). Catalog
+            // first → `ConfigFallbackResolver` default, wrapped in `CachedResolver`.
+            // (WAL injection deferred: the WAL's fallback returns the base-location
+            // PREFIX, while these resolvers return the ROOT `{base}/{id}`;
+            // reconciling those contracts is a follow-up. SstEngine resolving
+            // correctly already achieves write/read agreement.)
+            {
+                use crate::storage::trait_components::path_resolver::{
+                    CachedResolver, CatalogResolver, CollectionPathResolver, CompositeResolver,
+                    ConfigFallbackResolver,
+                };
+                let chain: Vec<Arc<dyn CollectionPathResolver>> = vec![
+                    Arc::new(CatalogResolver::new()),
+                    Arc::new(ConfigFallbackResolver::default()),
+                ];
+                engine = engine.with_path_resolver(Arc::new(CachedResolver::new(Arc::new(
+                    CompositeResolver::new(chain),
+                ))));
             }
 
             // Attach tier-migration integration when configured. Reads
@@ -1138,57 +1440,72 @@ impl SharedServices {
         // SharedServices field that AppState/route-health read.
         let recall_probe_gate = Arc::new(crate::catalog::RecallProbeGate::new());
 
-        // Create AxisManager for index operations
-        debug!("🔧 SharedServices::new - Creating AxisManager for index operations...");
-        let mut axis_manager_inner =
-            crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?;
-        axis_manager_inner.set_recall_probe_gate(recall_probe_gate.clone());
-        // ADR-023 R3 Slice 4: give AXIS the shared FilesystemFactory so index
-        // persistence + cold-load can dispatch by scheme (s3/adls/gs/file).
-        axis_manager_inner.set_filesystem_factory(filesystem_factory.clone());
-        // Route index persistence through an object-store URI when configured
-        // (PROXIMADB_INDEX_PERSIST_URL=s3://bucket/prefix | adls://… | gs://…) —
-        // the cold-load path then reads only [header]+[COLD]+probed clusters via
-        // byte-range GETs. Otherwise persist under the local data dir so a cold
-        // collection warms from disk on first query (TD-087 Slice B; no-op without
-        // a data dir).
-        if let Ok(url) = std::env::var("PROXIMADB_INDEX_PERSIST_URL") {
-            axis_manager_inner.set_index_persist_url(url);
-        } else if let Some(cfg) = opt_config {
-            axis_manager_inner.set_index_persist_dir(cfg.server.data_dir.join("axis_indexes"));
-        }
+        // The Cargo feature is compile-time capability only. This runtime
+        // master switch must also be on before AXIS is registered with serving
+        // or any AXIS background maintenance loop is started.
+        #[cfg(feature = "axis")]
+        let axis_runtime_enabled = storage_config.optimization.enable_axis_indexes;
 
-        // CATALOG_OBJECT_MODEL #3 read-port: make catalog-resolved index locations
-        // live for ALL collections — boot-present AND runtime-created — by injecting
-        // a catalog resolver that AXIS pulls from on demand (and memoizes). For each
-        // collection's VectorAnn projection, an explicit `projection.location` is
-        // honored (relocated/tiered indexes); `PROXIMADB_INDEX_CATALOG_PATHS=1`
-        // additionally opts the fleet into the DrPathBuilder `indexes/<projection>/`
-        // layout. Default-off and additive: with no projection locations set the
-        // resolver returns `None` and AXIS keeps the `index_persist_url`/`dir`
-        // convention (mixed-safe). The resolver is catalog-free at the AXIS seam —
-        // this adapter lives in the control layer (dependency inversion).
-        {
-            let migrate = std::env::var_os("PROXIMADB_INDEX_CATALOG_PATHS").is_some();
-            axis_manager_inner.set_index_location_resolver(Arc::new(
-                crate::catalog::index_location_resolver::CatalogIndexLocationResolver::new(
-                    catalog_manager.clone(),
-                    migrate,
-                ),
-            ));
-        }
+        // Create AxisManager for index operations (AXIS-gated: the whole index
+        // engine + its registrations vanish from a PAX-exact-scan build).
+        #[cfg(feature = "axis")]
+        let axis_manager = {
+            debug!("🔧 SharedServices::new - Creating AxisManager for index operations...");
+            let mut axis_manager_inner =
+                crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?;
+            axis_manager_inner.set_recall_probe_gate(recall_probe_gate.clone());
+            // ADR-023 R3 Slice 4: give AXIS the shared FilesystemFactory so index
+            // persistence + cold-load can dispatch by scheme (s3/adls/gs/file).
+            axis_manager_inner.set_filesystem_factory(filesystem_factory.clone());
+            // Route index persistence through an object-store URI when configured
+            // (PROXIMADB_INDEX_PERSIST_URL=s3://bucket/prefix | adls://… | gs://…) —
+            // the cold-load path then reads only [header]+[COLD]+probed clusters via
+            // byte-range GETs. Otherwise persist under the local data dir so a cold
+            // collection warms from disk on first query (TD-087 Slice B; no-op
+            // without a data dir).
+            if let Ok(url) = std::env::var("PROXIMADB_INDEX_PERSIST_URL") {
+                axis_manager_inner.set_index_persist_url(url);
+            } else if let Some(cfg) = opt_config {
+                axis_manager_inner.set_index_persist_dir(cfg.server.data_dir.join("axis_indexes"));
+            }
 
-        let axis_manager = Arc::new(axis_manager_inner);
-        debug!("✅ SharedServices::new - AxisManager created successfully");
+            // CATALOG_OBJECT_MODEL #3 read-port: make catalog-resolved index locations
+            // live for ALL collections — boot-present AND runtime-created — by injecting
+            // a catalog resolver that AXIS pulls from on demand (and memoizes). For each
+            // collection's VectorAnn projection, an explicit `projection.location` is
+            // honored (relocated/tiered indexes); `PROXIMADB_INDEX_CATALOG_PATHS=1`
+            // additionally opts the fleet into the DrPathBuilder `indexes/<projection>/`
+            // layout. Default-off and additive: with no projection locations set the
+            // resolver returns `None` and AXIS keeps the `index_persist_url`/`dir`
+            // convention (mixed-safe). The resolver is catalog-free at the AXIS seam —
+            // this adapter lives in the control layer (dependency inversion).
+            {
+                let migrate = std::env::var_os("PROXIMADB_INDEX_CATALOG_PATHS").is_some();
+                axis_manager_inner.set_index_location_resolver(Arc::new(
+                    crate::catalog::index_location_resolver::CatalogIndexLocationResolver::new(
+                        catalog_manager.clone(),
+                        migrate,
+                    ),
+                ));
+            }
 
-        // Make AXIS manager available to graph-first entity store by default
-        crate::storage::entity_store::orion_backend::set_global_axis_manager(axis_manager.clone());
-
-        // Make AXIS manager available to SST engine for HNSW/IVF search
-        crate::storage::engines::sst::core::set_sst_axis_manager(axis_manager.clone());
-        debug!(
-            "✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search"
-        );
+            let m = Arc::new(axis_manager_inner);
+            debug!("✅ SharedServices::new - AxisManager created successfully");
+            if axis_runtime_enabled {
+                // Make AXIS available only when both its compile capability and
+                // process-level policy are enabled. Collection-level intent is
+                // checked at the ingest/search boundaries.
+                crate::storage::entity_store::orion_backend::set_global_axis_manager(m.clone());
+                crate::storage::engines::sst::core::set_sst_axis_manager(m.clone());
+                crate::storage::common::axis_flush_hook::set_flush_axis_manager(m.clone());
+                debug!("✅ SharedServices::new - AXIS runtime enabled and registered with serving");
+            } else {
+                info!(
+                    "AXIS capability compiled but runtime-disabled by storage.optimization.enable_axis_indexes=false"
+                );
+            }
+            m
+        };
 
         // Create VectorOperationsService with optimized architecture and two-stage search
         debug!(
@@ -1208,6 +1525,11 @@ impl SharedServices {
         };
         // Always register globally — idempotent via OnceLock
         CrossCacheOrchestrator::register_global(orchestrator.clone());
+        // Register the graph cache-hint bridge so graph engines (ORION) can hint
+        // the cache through the leaf port without naming the concrete orchestrator.
+        proximadb_storage_ports::register_graph_cache_hint(std::sync::Arc::new(
+            crate::storage::cache::orchestrator::GraphCacheHintBridge,
+        ));
 
         // =========================================================================
         // Initialize EventLog service and start AXIS consumer for async index building
@@ -1241,53 +1563,95 @@ impl SharedServices {
         } else {
             info!("✅ SharedServices: EventLog service initialized successfully");
 
-            // Start the AXIS EventLog consumer as a background task
-            // This polls the EventLog and builds AXIS indexes when flush events occur
-            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            // Start the AXIS EventLog consumer as a background task (AXIS-gated).
+            // This polls the EventLog and builds AXIS indexes when flush events occur.
+            #[cfg(feature = "axis")]
+            if axis_runtime_enabled {
+                let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+                // TD-LIFECYCLE-1: registered (not leaked) so a clean shutdown
+                // can stop the loop; see services::shutdown_registry.
+                crate::services::shutdown_registry::register("axis-eventlog-consumer", shutdown_tx);
+                if let Some(event_log_service) = crate::services::events::log::event_log_service() {
+                    let _consumer_handle =
+                        crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
+                            event_log_service.inner(),
+                            axis_manager.clone(),
+                            filesystem_factory.clone(),
+                            collection_cache.clone(),
+                            orchestrator.clone(),
+                            shutdown_rx,
+                        )
+                        .await;
 
-            // Store shutdown sender for graceful shutdown (could be stored in SharedServices if needed)
-            // For now, the consumer will run until the process exits
-            std::mem::forget(shutdown_tx); // Prevent sender from being dropped
-
-            if let Some(event_log_service) = crate::services::events::log::event_log_service() {
-                let _consumer_handle =
-                    crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
-                        event_log_service.inner(),
-                        axis_manager.clone(),
-                        filesystem_factory.clone(),
-                        collection_cache.clone(),
-                        orchestrator.clone(),
-                        shutdown_rx,
-                    )
-                    .await;
-
-                info!(
-                    "✅ SharedServices: AXIS EventLog consumer started - background index processing is available for collections that explicitly configure indexes"
-                );
-            } else {
-                warn!(
-                    "⚠️ SharedServices: EventLog service unavailable after initialization; AXIS consumer not started."
-                );
+                    info!(
+                        "✅ SharedServices: AXIS EventLog consumer started for explicitly indexed collections"
+                    );
+                } else {
+                    warn!(
+                        "⚠️ SharedServices: EventLog service unavailable after initialization; AXIS consumer not started."
+                    );
+                }
             }
         }
+
+        // Open the durable ABAC stores ONCE here (outer scope) so the
+        // vector-service enforcer, the DmlService enforcer, and the AppState
+        // admin handles all share the SAME store instances — a runtime provision
+        // is then hot-visible to every reader (TD-ABAC control-plane).
+        #[cfg(feature = "abac-policy")]
+        let abac_stores = Self::open_abac_stores(opt_config);
+        #[cfg(feature = "abac-policy")]
+        let abac_enforcer = abac_stores.as_ref().map(Self::build_enforcer_from_stores);
 
         // `directory_cache` constructed earlier (before SstEngine) so the
         // engine, the vector ops service, and the SharedServices public
         // field all share the same `Arc`.
-        let vector_operations_service = Arc::new(
-            VectorOperationsService::new(
-                sst_engine,
-                wal_manager,
-                axis_manager.clone(),
-                collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
-            )
+        let vector_operations_service = {
+            let svc = {
+                #[cfg(feature = "axis")]
+                {
+                    VectorOperationsService::new(
+                        sst_engine,
+                        wal_manager,
+                        axis_manager.clone(),
+                        collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+                    )
+                }
+                #[cfg(not(feature = "axis"))]
+                {
+                    VectorOperationsService::new(
+                        sst_engine,
+                        wal_manager,
+                        collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+                    )
+                }
+            }
             .with_orchestrator(Some(orchestrator.clone()))
             .with_directory_cache(directory_cache.clone())
             // Phase 7.2: thread the same affinity registry held by
             // the SharedServices field so search-path recordings and
             // operator inspection share state.
-            .with_affinity_registry(affinity_registry.clone()),
-        );
+            .with_affinity_registry(affinity_registry.clone());
+            #[cfg(feature = "axis")]
+            let svc = svc.with_axis_runtime_enabled(axis_runtime_enabled);
+            // FA-2 (abac-policy): wire the durable ABAC enforcer into the vector
+            // service so `unified_search_native` enforces the subject's accessibility
+            // predicate on every search (push-down for conjunctive policies, post-filter
+            // otherwise). Default-OFF ⇒ default builds are byte-for-byte unchanged; `None`
+            // ⇒ no enforcer ⇒ no per-record filtering (the status quo). Mirrors the
+            // DmlService wiring (`build_abac_enforcer`, TD-ABAC-2).
+            #[cfg(feature = "abac-policy")]
+            let svc = match &abac_enforcer {
+                Some(enforcer) => {
+                    debug!(
+                        "✅ SharedServices::new - durable ABAC enforcer wired into VectorOperationsService"
+                    );
+                    svc.with_abac_enforcer(enforcer.clone())
+                }
+                None => svc,
+            };
+            Arc::new(svc)
+        };
 
         info!(
             "✅ SharedServices: VectorOperationsService created successfully - 40-60% performance boost enabled"
@@ -1443,17 +1807,29 @@ impl SharedServices {
         debug!(
             "🔧 SharedServices::new - Creating SHARED GraphCollectionService instance with auto-recovery..."
         );
-        let graph_collection_service =
-            match crate::services::GraphCollectionService::new_with_recovery().await {
-                Ok(svc) => Arc::new(svc),
-                Err(e) => {
-                    warn!(
-                        "Failed to create GraphCollectionService with recovery: {}. Using non-persistent service.",
-                        e
-                    );
-                    Arc::new(crate::services::GraphCollectionService::new())
-                }
-            };
+        let graph_metadata_url =
+            join_storage_url(&storage_config.metadata_url, "graph_collections.json");
+        let graph_collection_service = match if graph_metadata_url.starts_with("file://") {
+            crate::services::GraphCollectionService::new_with_recovery_at(std::path::PathBuf::from(
+                graph_metadata_url.trim_start_matches("file://"),
+            ))
+            .await
+        } else {
+            crate::services::GraphCollectionService::new_with_recovery_at_url(
+                graph_metadata_url.clone(),
+                filesystem_factory.clone(),
+            )
+            .await
+        } {
+            Ok(svc) => Arc::new(svc),
+            Err(e) => {
+                warn!(
+                    "Failed to create GraphCollectionService with recovery at {}: {}. Using non-persistent service.",
+                    graph_metadata_url, e
+                );
+                Arc::new(crate::services::GraphCollectionService::new())
+            }
+        };
         debug!(
             "✅ SharedServices::new - Shared GraphCollectionService created (with auto-recovery)"
         );
@@ -1532,6 +1908,56 @@ impl SharedServices {
         } else {
             None
         };
+
+        // Experimental transactional ledger store (ADR-071 / TD-LEDGER-1): a node-level durable
+        // ledger shared with the gRPC `ProximaLedgerService`. Its WAL lives on LOCAL disk (ADR-069:
+        // the per-write log belongs on a reattachable local volume, not object storage); when the
+        // metadata store is object-backed (no `file://`), the ledger WAL falls back to a local
+        // `data/ledger` directory. One store per node — tenants are namespaced inside the keys.
+        #[cfg(feature = "experimental-ledger")]
+        let ledger_store = {
+            let ledger_url = join_storage_url(&storage_config.metadata_url, "ledger/ledger.wal");
+            let ledger_path = match ledger_url.strip_prefix("file://") {
+                Some(local) => std::path::PathBuf::from(local),
+                None => std::path::PathBuf::from("data/ledger/ledger.wal"),
+            };
+            if let Some(parent) = ledger_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating ledger WAL dir {}", parent.display()))?;
+            }
+            let durable = proximadb_ledger::DurableLedger::open(
+                &ledger_path,
+                proximadb_ledger::SyncPolicy::PerOp,
+            )
+            .with_context(|| format!("opening ledger WAL at {}", ledger_path.display()))?;
+            info!(
+                "✅ SharedServices: experimental ledger store opened at {}",
+                ledger_path.display()
+            );
+            Arc::new(proximadb_ledger::LedgerService::new(durable))
+        };
+
+        // Timed TTL reclaim (ADR-071 / TD-LEDGER-1, invariant C2): sweep expired ledger leases on a
+        // fixed cadence so a crashed reserver's held capacity is freed even when no request touches
+        // the scope. Server profile only; the sweep is idempotent and O(held leases) — cheap.
+        #[cfg(feature = "experimental-ledger")]
+        if profile.is_server() {
+            let sweeper = ledger_store.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+                loop {
+                    tick.tick().await;
+                    let now_ns = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
+                        .unwrap_or(0);
+                    let reclaimed = sweeper.reclaim_expired(now_ns);
+                    if reclaimed > 0 {
+                        tracing::debug!("ledger sweeper reclaimed {reclaimed} expired lease(s)");
+                    }
+                }
+            });
+        }
 
         // Create GraphOperationsService for native graph database operations
         // IMPORTANT: Pass the shared GraphCollectionService instance
@@ -1645,10 +2071,7 @@ impl SharedServices {
         let metrics_config = MetricsConfig {
             enabled: true,
             collection_partitions: 16,
-            storage_path: format!(
-                "file://{}/metrics",
-                storage_config.metadata_url.replace("file://", "")
-            ),
+            storage_path: join_storage_url(&storage_config.metadata_url, "metrics"),
             flush_interval_seconds: 60,
             retention_days: 7,
             parallel_scan_threshold: 1000,
@@ -1686,7 +2109,10 @@ impl SharedServices {
 
         // Create DocumentService (moved up for UnifiedHandlers)
         debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
-        let document_base_path = storage_config.metadata_url.replace("file://", "");
+        let document_base_path = join_storage_url(&storage_config.metadata_url, "");
+        // TD-DOC-RETIRE-1 P2 rewires this to the canonical constructor
+        // (with_canonical_record_store_and_wal); the deprecated call is intentional until then.
+        #[allow(deprecated)]
         let document_service = match DocumentService::new_with_wal(
             sst_engine_for_documents,
             &document_base_path,
@@ -1709,7 +2135,7 @@ impl SharedServices {
         debug!(
             "🔧 SharedServices::new - Creating ObservabilityQueryEngine for observability queries..."
         );
-        let observability_base_path = storage_config.metadata_url.replace("file://", "");
+        let observability_base_path = join_storage_url(&storage_config.metadata_url, "");
         let observability_storage = match ObservabilityStorage::new_with_wal(
             &observability_base_path,
         )
@@ -1732,9 +2158,9 @@ impl SharedServices {
 
         // Create EventLogEngine for persistent audit trails (TD-050 Phase 5)
         debug!("🔧 SharedServices::new - Creating EventLogEngine for audit trails...");
-        let event_log_base_path = storage_config.metadata_url.replace("file://", "") + "/auditlog";
+        let event_log_base_path = join_storage_url(&storage_config.metadata_url, "auditlog");
         let event_log_config = crate::storage::engines::eventlog::EventLogConfig {
-            base_dir: std::path::PathBuf::from(event_log_base_path),
+            base_dir: event_log_base_path,
             ..Default::default()
         };
         let event_log_filesystem = Arc::new(
@@ -1744,10 +2170,15 @@ impl SharedServices {
                 "eventlog".to_string(),
             ),
         );
-        let event_log = match crate::storage::engines::eventlog::EventLogEngine::new(
+        // `open` (not `new`) — recovers the sequence counter and index from what
+        // is already persisted. `new` alone would restart the counter at 0 and
+        // silently overwrite prior events (TD-EVENTLOG-1).
+        let event_log = match crate::storage::engines::eventlog::EventLogEngine::open(
             event_log_config,
             event_log_filesystem,
-        ) {
+        )
+        .await
+        {
             Ok(engine) => Some(Arc::new(engine)),
             Err(e) => {
                 warn!("Failed to create EventLogEngine for audit trails: {}", e);
@@ -1759,9 +2190,25 @@ impl SharedServices {
         // TST engine, rooted under the data dir. Non-fatal on failure (surface stays
         // unavailable rather than blocking bootstrap).
         {
-            let ts_base_path = std::path::PathBuf::from(
-                storage_config.metadata_url.replace("file://", "") + "/timeseries",
-            );
+            // The TST engine is local-filesystem-native (PathBuf WAL/segments);
+            // it cannot yet run over an object store. On an object-store
+            // metadata_url the time-series surface stays on local disk
+            // (non-durable across VM loss — TD-OBJSTORE-1 deferred item)
+            // instead of mangling the URL into a local path.
+            let ts_base_path = match local_storage_path(&storage_config.metadata_url) {
+                Some(local) => local.join("timeseries"),
+                None => {
+                    let fallback = std::env::temp_dir().join("proximadb").join("timeseries");
+                    warn!(
+                        "TimeSeriesService does not support object-store storage yet \
+                         (metadata_url={}); falling back to LOCAL, NON-DURABLE {} \
+                         (TD-OBJSTORE-1)",
+                        storage_config.metadata_url,
+                        fallback.display()
+                    );
+                    fallback
+                }
+            };
             if let Err(e) =
                 crate::services::timeseries_service::init_timeseries_service(ts_base_path)
             {
@@ -1777,25 +2224,40 @@ impl SharedServices {
         // Create unified handlers with SHARED graph services
         // IMPORTANT: Pass the pre-created GraphCollectionService and graph execution service
         // to ensure ALL graph endpoints and operations share the same state
-        debug!("🔧 SharedServices::new - Creating UnifiedHandlers with SHARED graph services...");
-        let request_handlers_instance = UnifiedHandlers::new(
-            collection_service.clone(),
-            vector_operations_service.clone(),
-            document_service.clone(),
-            observability_service.clone(),
-            event_log.clone(),
-            graph_collection_service.clone(), // SHARED instance
-            graph_service.clone(),            // Concrete native graph operations service
+        // TD-104 S3-f: build the shared `RecordOpsService` once here (formerly
+        // constructed inside the deleted root `UnifiedHandlers::new`). Every
+        // former `request_handlers.record_ops()` site clones this same `Arc`.
+        // The other services the root handler aggregated (document / graph /
+        // observability / event_log / graph_collection) now live directly on
+        // `SharedServices`.
+        debug!("🔧 SharedServices::new - Creating shared RecordOpsService...");
+        let record_ops = Arc::new(
+            crate::api_handlers::record_ops_service::RecordOpsService::new(
+                collection_service.clone(),
+                vector_operations_service.clone(),
+            ),
+        );
+        debug!("✅ SharedServices::new - Shared RecordOpsService created");
+        // NOTE: the former `set_hybrid_runtime(cfg.hybrid)` on the root handler is
+        // dropped here — `resolve_hybrid_static` (its only consumer) was
+        // root-internal and is deleted with the root handler; the runtime handler
+        // never read it, so the config was already dead wiring.
+
+        // ADR-009 document convergence: wire the single shared DocumentService onto the same
+        // tenant-scoped record/vector route REST v2 uses (via the shared RecordOpsService
+        // built above). Default-OFF per-collection gate — this only makes the route
+        // *available*; `doc_canonical_vector_enabled` decides per collection at call time. With
+        // this, gRPC/DocumentService and REST v2 writes converge on one store (no store-split).
+        document_service
+            .set_record_route(record_ops.clone() as Arc<dyn proximadb_runtime::RecordRoutePort>);
+        debug!(
+            "✅ SharedServices::new - DocumentService wired to canonical record route (ADR-009, gate default-OFF)"
         );
 
-        // Apply hybrid runtime config if provided
-        if let Some(cfg) = opt_config
-            && let Some(ref hybrid) = cfg.hybrid
-        {
-            request_handlers_instance.set_hybrid_runtime(hybrid.clone());
-        }
-        let request_handlers = Arc::new(request_handlers_instance);
-        debug!("✅ SharedServices::new - UnifiedHandlers created with shared graph services");
+        // ADR-055 P-DFSource: publish the document service as a process singleton so the DataFusion
+        // `documents(collection)` table function (registered per SessionContext) can read it. Mirrors
+        // the timeseries_service wiring; idempotent (first wins).
+        crate::services::document_service::set_document_service(document_service.clone());
 
         // ==================================================================================
         // Create UnifiedQueryFacade - single entry point for all query types
@@ -1871,12 +2333,18 @@ impl SharedServices {
         debug!(
             "🔧 SharedServices::new - Creating MultiModelStorageFacade for federated queries..."
         );
-        let vector_store = Arc::new(
-            crate::storage::multimodel::VectorStore::with_engine(
+        let vector_store = Arc::new({
+            let vs = crate::storage::multimodel::VectorStore::with_engine(
                 vector_operations_service.unified_engine(),
-            )
-            .with_index_manager(axis_manager.clone()),
-        );
+            );
+            #[cfg(feature = "axis")]
+            let vs = if axis_runtime_enabled {
+                vs.with_index_manager(axis_manager.clone())
+            } else {
+                vs
+            };
+            vs
+        });
         let graph_store = Arc::new(
             crate::storage::multimodel::GraphStore::new(Default::default())
                 .with_service(graph_service.clone()),
@@ -1885,7 +2353,7 @@ impl SharedServices {
             crate::storage::multimodel::DocumentStore::new(Default::default())
                 .with_service(document_service.clone()),
         );
-        let obs_base_path = storage_config.metadata_url.replace("file://", "");
+        let obs_base_path = join_storage_url(&storage_config.metadata_url, "");
         let observability_store = Arc::new(
             crate::storage::multimodel::ObservabilityStore::new(
                 crate::storage::multimodel::stores::observability_store::ObservabilityStoreConfig {
@@ -2026,6 +2494,9 @@ impl SharedServices {
                         pod_id.clone(),
                         10_000,
                     ));
+                    crate::cluster::partition_lease::install_global_partition_lease_manager(
+                        manager.clone(),
+                    );
                     // P1a: keep held leases warm. Without this the renew loop
                     // never runs in production (it was only spawned in tests),
                     // so held leases lapse after the 10s TTL and the
@@ -2090,6 +2561,16 @@ impl SharedServices {
                 ) as Arc<dyn crate::storage::write_fence::StorageWriteFence>
             });
 
+        // F5 / TD-OLTP-WIRING-1: open the ONE process-shared fenced
+        // ConditionalKeyStore (durable at <data_dir>/oltp-cks.wal; WAL-replayed on
+        // restart), threaded into this gRPC/REST `base_dml` and into pgwire via
+        // `multi_server`. Feature-gated (`oltp-integrity`) AND requires a
+        // `data_dir` — an in-memory store would silently lose uniqueness across a
+        // restart, worse than the honest legacy probe. `None` otherwise ⇒ default
+        // builds and embedded/ephemeral paths are byte-for-byte unchanged.
+        let conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>> =
+            Self::open_shared_conditional_key_store(opt_config);
+
         let base_dml = match canonical_record_store.clone() {
             Some(store) => DmlService::with_direct_record_storage(
                 catalog_manager.clone(),
@@ -2098,49 +2579,79 @@ impl SharedServices {
             ),
             None => DmlService::new(catalog_manager.clone(), vector_operations_service.clone()),
         };
+        let base_dml = match &conditional_key_store {
+            Some(cks) => base_dml.with_conditional_key_store(cks.clone()),
+            None => base_dml,
+        };
+        // TD-ABAC-2 (Phase 5b): construct the durable ABAC enforcer (authority +
+        // policy binding store, both at <data_dir>/abac/) and DI it into the
+        // DML read funnel. Fully behind `abac-policy` (default-OFF) ⇒ default
+        // builds are byte-for-byte unchanged; `None` ⇒ no enforcement (status quo).
+        #[cfg(feature = "abac-policy")]
+        let base_dml = match &abac_enforcer {
+            Some(enforcer) => {
+                debug!("✅ SharedServices::new - durable ABAC enforcer wired into DmlService");
+                base_dml.with_abac_enforcer(enforcer.clone())
+            }
+            None => base_dml,
+        };
         let dml_service_for_grpc = Arc::new(match dml_lock_service {
             Some(lock_service) => base_dml.with_dml_lock_service(lock_service),
             None => base_dml,
         });
 
-        // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing.
+        // TD-135: one DdlService Arc shared by BOTH the adapter (gRPC port path →
+        // adapter.execute_sql) and the RecordOpsService (REST write path), so DDL
+        // writes over either surface address the same catalog state and execute
+        // tenant-scoped.
+        // Wire the write-lease authority into DDL so collection/table-scoped DDL
+        // fast-fails misrouted writes (ADR-032): the primary-pod registry + pod id
+        // for in-memory routing, and — when the lease system is on — the SAME
+        // PartitionLeaseManager the DML write-gate uses (`lease_manager_for_writes`),
+        // so DDL and DML share one ownership view.
+        let mut ddl = crate::services::DdlService::new(catalog_manager.clone())
+            .with_primary_pod_registry(primary_pod_registry.clone())
+            .with_self_pod_id(crate::cluster::primary_pod_registry::resolve_self_pod_id(
+                None,
+            ));
+        if let Some(manager) = &lease_manager_for_writes {
+            ddl = ddl.with_partition_lease_manager(manager.clone());
+        }
+        let ddl_service = std::sync::Arc::new(ddl);
+        // Wire QueryFacadeAdapter onto the runtime handler for unified SQL routing.
         // This enables SQL queries to flow through the facade when the
         // unified-facade-routing feature is enabled. The adapter carries the
-        // DmlService so the port path (runtime handler → adapter.execute_sql)
-        // reproduces ROOT's EXPLAIN `<DML>` routing (TD-104 / seam S1).
+        // DmlService (EXPLAIN `<DML>`) AND the DdlService (relational DDL) so the
+        // port path (runtime handler → adapter.execute_sql) reproduces the former
+        // ROOT SQL behavior (TD-104 / seam S1, single SQL authority).
         let query_adapter = Arc::new(
             QueryFacadeAdapter::new(query_facade.clone())
-                .with_dml_service(dml_service_for_grpc.clone()),
+                .with_dml_service(dml_service_for_grpc.clone())
+                .with_ddl_service(ddl_service.clone()),
         );
-        request_handlers.set_query_adapter(query_adapter.clone());
-        debug!("✅ SharedServices::new - QueryFacadeAdapter wired to UnifiedHandlers");
-
-        request_handlers.set_dml_service(dml_service_for_grpc);
-        debug!("✅ SharedServices::new - DmlService wired to UnifiedHandlers for EXPLAIN routing");
+        // TD-104 S3-f: DML/DDL services and the lease manager are wired onto the
+        // shared RecordOpsService (their real owner — the root handler only
+        // forwarded these setters). The root's `set_query_adapter` is dropped: it
+        // stored the adapter in a field read only inside the (deleted) root, and
+        // the runtime handler already receives `query_adapter` at construction
+        // below.
+        record_ops.set_dml_service(dml_service_for_grpc);
+        debug!("✅ SharedServices::new - DmlService wired to RecordOpsService for EXPLAIN routing");
 
         // Lease-on-write: give RecordOpsService the durable lease manager so the
         // vector-record write path acquires/confirms the collection lease and the
         // shared registry the network gates consult reflects ground truth after
         // restart/partition (Scenario-1 routing truth). Absent → fail-open.
-        if let Some(lease_manager) = lease_manager_for_writes {
-            request_handlers
-                .record_ops()
-                .set_lease_manager(lease_manager);
+        if let Some(lease_manager) = &lease_manager_for_writes {
+            record_ops.set_lease_manager(lease_manager.clone());
             debug!(
                 "✅ SharedServices::new - PartitionLeaseManager wired to RecordOpsService (lease-on-write)"
             );
         }
 
-        // TD-135: wire a DdlService built from the SAME catalog_manager pgwire uses
-        // (DdlService is a thin wrapper over the shared catalog), so relational
-        // CREATE/ALTER/DROP submitted over the gRPC ExecuteQuery RPC addresses the
-        // same catalog state and executes tenant-scoped.
-        request_handlers.set_ddl_service(std::sync::Arc::new(crate::services::DdlService::new(
-            catalog_manager.clone(),
-        )));
-        debug!(
-            "✅ SharedServices::new - DdlService wired to UnifiedHandlers for relational DDL routing"
-        );
+        // TD-135 note: the shared DdlService drives relational DDL through the
+        // runtime handler's QueryFacadeAdapter (wired above via
+        // `with_ddl_service`); the record write path itself does not need it.
 
         // Build a port-backed runtime handler for collection/vector REST routes.
         // Uses trait objects so API routes are decoupled from root-crate concrete services.
@@ -2158,27 +2669,39 @@ impl SharedServices {
         // sender is intentionally leaked (matching the always-on
         // start_axis_consumer maintenance pattern): dropping it would make the
         // executor's `shutdown.changed()` return Err and exit immediately.
-        // Registry is in-memory for this first (experimental) wiring; durable
-        // persistence under the data dir is a follow-up.
+        // Registry is durable below metadata_url when a full config is present;
+        // embedded/test wiring without one remains in-memory.
         let snapshot_coordinator = Arc::new(
             crate::services::snapshot::SnapshotPublishCoordinator::new(catalog_manager.clone()),
         );
         // Phase 8 (F1): per-collection discovery-job registry. Durable when a
-        // full config is present (jobs + states survive restart), mirroring the
-        // primary-pod registry persistence pattern; in-memory otherwise
-        // (embedded/test harnesses without a data dir).
+        // full config is present (jobs + states survive restart). Object-store
+        // deployments route the sidecar through FileSystem below metadata_url;
+        // embedded/test harnesses without a config remain in-memory.
         let discovery_registry = match opt_config {
-            Some(cfg) => {
-                let path = cfg
-                    .server
-                    .data_dir
-                    .join("discovery_jobs")
-                    .join("registry.json");
+            Some(_cfg) => {
+                let url =
+                    join_storage_url(&storage_config.metadata_url, "discovery_jobs/registry.json");
                 info!(
                     "🔍 SharedServices: discovery-job registry persistence at {}",
-                    path.display()
+                    url
                 );
-                Arc::new(crate::services::discovery::DiscoveryRegistry::load_or_create_at(path))
+                if url.starts_with("file://") {
+                    Arc::new(
+                        crate::services::discovery::DiscoveryRegistry::load_or_create_at(
+                            std::path::PathBuf::from(url.trim_start_matches("file://")),
+                        ),
+                    )
+                } else {
+                    Arc::new(
+                        crate::services::discovery::DiscoveryRegistry::load_or_create_at_url(
+                            url,
+                            filesystem_factory.clone(),
+                        )
+                        .await
+                        .context("opening object-store discovery registry")?,
+                    )
+                }
             }
             None => Arc::new(crate::services::discovery::DiscoveryRegistry::new()),
         };
@@ -2210,13 +2733,24 @@ impl SharedServices {
                 Arc::new(crate::services::external_collection::ExternalCollectionRegistry::new())
             }
         };
-        let external_collection_service = Arc::new(
-            crate::services::external_collection::ExternalCollectionService::new(
-                external_collection_registry,
-                catalog_manager.clone(),
-                axis_manager.clone(),
-            ),
-        );
+        let external_collection_service = Arc::new({
+            #[cfg(feature = "axis")]
+            {
+                crate::services::external_collection::ExternalCollectionService::new(
+                    external_collection_registry,
+                    catalog_manager.clone(),
+                    axis_manager.clone(),
+                )
+                .with_axis_runtime_enabled(axis_runtime_enabled)
+            }
+            #[cfg(not(feature = "axis"))]
+            {
+                crate::services::external_collection::ExternalCollectionService::new(
+                    external_collection_registry,
+                    catalog_manager.clone(),
+                )
+            }
+        });
         {
             let executor = Arc::new(
                 crate::services::discovery::DiscoveryJobExecutor::new(
@@ -2226,7 +2760,7 @@ impl SharedServices {
                 .with_vector_ops(vector_operations_service.clone()),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("discovery-executor", shutdown_tx);
             // The discovery executor is a long-running background task; we
             // intentionally drop the JoinHandle so it runs for the process
             // lifetime. `spawn_discovery_executor` spawns its own task
@@ -2240,7 +2774,10 @@ impl SharedServices {
             );
             info!("✅ SharedServices: DiscoveryJobExecutor spawned (Phase 8 CS/CD loop)");
         }
-        {
+        // Phase-5 recall observer (AXIS-gated): the whole job probes AXIS-managed
+        // IVF/HNSW recall, so it is not spawned in a PAX-exact-scan build.
+        #[cfg(feature = "axis")]
+        if axis_runtime_enabled {
             // Phase-5 recall observer (TD-075 / F2): periodically probes
             // quantized-vs-exact recall per collection and feeds the shared
             // RecallProbeGate, so the quantized IVF route opens once recall is
@@ -2258,7 +2795,7 @@ impl SharedServices {
                 .with_discovery(discovery_service.clone()),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("recall-observer", shutdown_tx);
             #[allow(clippy::let_underscore_future)]
             let _ = crate::services::recall_observer::spawn_recall_observer(
                 observer,
@@ -2269,7 +2806,8 @@ impl SharedServices {
                 "✅ SharedServices: RecallObserver spawned (Phase 5 recall gate + F1 recall-degradation trigger)"
             );
         }
-        {
+        #[cfg(feature = "axis")]
+        if axis_runtime_enabled {
             // Trigger arm (T1.9): the write-volume drift watcher is the first
             // live producer — it counts each collection's own write batches since
             // its last completed recluster (per-collection, not a global-LSN
@@ -2291,7 +2829,7 @@ impl SharedServices {
                 ),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("drift-watcher", shutdown_tx);
             #[allow(clippy::let_underscore_future)]
             let _ = crate::services::discovery::spawn_drift_watcher(
                 watcher,
@@ -2302,7 +2840,10 @@ impl SharedServices {
                 "✅ SharedServices: DriftWatcher spawned (Phase 8 F1 trigger arm — write-volume drift)"
             );
         }
-        {
+        // Recall-drift sweeper (AXIS-gated): walks `recall_target:`-tagged
+        // collections and emits axis_recall_drift_* metrics — no AXIS, no drift.
+        #[cfg(feature = "axis")]
+        if axis_runtime_enabled {
             // Recall-drift sweeper: every 5 min, walk every
             // collection with a `recall_target:` tag and emit a
             // Prometheus drift observation
@@ -2317,7 +2858,7 @@ impl SharedServices {
                 ),
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            std::mem::forget(shutdown_tx);
+            crate::services::shutdown_registry::register("drift-observer", shutdown_tx);
             #[allow(clippy::let_underscore_future)]
             let _ = crate::services::recall_drift_sweeper::spawn_recall_drift_sweeper(
                 sweeper,
@@ -2332,60 +2873,10 @@ impl SharedServices {
         // Phase 7c: resolve self_pod_id for partition lease manager initialization
         let self_pod_id_resolved = crate::cluster::primary_pod_registry::resolve_self_pod_id(None);
 
-        // Phase 7c: partition lease manager for per-collection write authority
-        let partition_lease_manager: Option<
-            std::sync::Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
-        > = {
-            // Only initialize for object-store deployments when explicitly enabled
-            let is_objstore = storage_config.metadata_url.starts_with("s3://")
-                || storage_config.metadata_url.starts_with("gs://")
-                || storage_config.metadata_url.starts_with("az://")
-                || storage_config.metadata_url.starts_with("memory://");
-            let lease_enabled = std::env::var("PROXIMADB_PARTITION_LEASE_ON")
-                .ok()
-                .and_then(|v| v.parse::<bool>().ok())
-                .unwrap_or(false);
-
-            if is_objstore && lease_enabled {
-                use crate::storage::trait_components::path_resolver::DrPathBuilder;
-                // Use DrPathBuilder for the lease prefix (under _catalog/leases)
-                let lease_prefix = DrPathBuilder::partition_lease_prefix();
-                // Lease TTL: 60 seconds by default (configurable via env)
-                let lease_ms = std::env::var("PROXIMADB_PARTITION_LEASE_SECS")
-                    .ok()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(60) as i64
-                    * 1000;
-
-                match crate::cluster::partition_lease::PartitionLeaseStore::from_url(
-                    &storage_config.metadata_url,
-                    lease_prefix,
-                ) {
-                    Ok(lease_store) => {
-                        let lease_mgr = crate::cluster::partition_lease::PartitionLeaseManager::new(
-                            std::sync::Arc::new(lease_store),
-                            primary_pod_registry.clone(),
-                            &self_pod_id_resolved,
-                            lease_ms,
-                        );
-                        info!(
-                            "✅ SharedServices: partition lease manager enabled (TTL={}ms)",
-                            lease_ms
-                        );
-                        Some(std::sync::Arc::new(lease_mgr))
-                    }
-                    Err(err) => {
-                        warn!(
-                            "⚠️ SharedServices: failed to create partition lease store, disabling: {}",
-                            err
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        };
+        // Expose the exact manager already wired to DML and its renewal loop.
+        // The previous second constructor created an independent lease timeline
+        // (different TTL, no renew loop) for protocol DDL.
+        let partition_lease_manager = lease_manager_for_writes.clone();
 
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
@@ -2398,18 +2889,19 @@ impl SharedServices {
                 segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
                 collection_service: collection_service.clone(),
                 vector_operations_service: vector_operations_service.clone(),
-                graph_service,
+                graph_service: graph_service.clone(),
+                graph_collection_service: graph_collection_service.clone(),
                 graph_query_service,
                 graph_execution_service,
                 document_service: document_service.clone(),
                 observability_service: observability_service.clone(),
-                request_handlers: request_handlers.clone(),
+                record_ops: record_ops.clone(),
                 event_log,
                 metrics_collector,
                 metrics_updater: metrics_updater.clone(),
                 query_facade,
                 query_adapter: query_adapter.clone(),
-                api_handlers: runtime_api_handlers,
+                api_handlers: runtime_api_handlers.clone(),
                 // Task #72: ClusterPort wiring slot. Defaults to None for
                 // single-node bootstrap; populate via builder when [distributed]
                 // config is present and a ClusterManager has been constructed.
@@ -2439,7 +2931,8 @@ impl SharedServices {
                 // adapter wired (matches the production wiring at
                 // src/network/multi_server.rs:415).
                 graph_port: Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    request_handlers.clone(),
+                    graph_service.clone(),
+                    runtime_api_handlers.clone(),
                     query_adapter.clone(),
                 )) as Arc<dyn proximadb_runtime::GraphPort>,
                 // T3.2 Slice 1: shared full-text index map for hybrid
@@ -2483,6 +2976,21 @@ impl SharedServices {
                 // share the same next_sequence counter.
                 canonical_wal_appender,
                 canonical_record_store,
+                conditional_key_store,
+                #[cfg(feature = "experimental-ledger")]
+                ledger_store,
+                // TD-ABAC control-plane: the three durable ABAC store handles,
+                // cloned from the single `abac_stores` trio opened above so the
+                // admin-provisioning endpoints share the SAME instances the live
+                // enforcer reads (hot-reload). `None` when ABAC is off.
+                #[cfg(feature = "abac-policy")]
+                abac_authority: abac_stores.as_ref().map(|s| s.authority.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_binding_store: abac_stores.as_ref().map(|s| s.bindings.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_predicate_store: abac_stores.as_ref().map(|s| s.predicate_objects.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_enforcer,
                 // TD-064 / LLD §5: per-collection recall-probe gate. Empty
                 // at startup; populated as the stats refresher / search path
                 // observe probe outcomes. Route-health surfaces per-scope
@@ -2668,61 +3176,47 @@ impl SharedServices {
     fn convert_toml_to_wal_config(
         toml_config: &crate::core::config::WriteBufferUserConfig,
     ) -> crate::storage::persistence::write_ahead_log::config::WALConfig {
-        use crate::storage::persistence::write_ahead_log::config::{
-            MemTableConfig, MemTableType, PerformanceConfig, SyncMode, WALConfig,
-        };
-
-        // Create performance config with values from TOML
-        info!(
-            "📋 Converting WALConfig from TOML: memory_flush_size_bytes={} ({}MB), vector_count_threshold={}, write_buffer_size_mb={}MB",
-            toml_config.memory_flush_size_bytes,
-            toml_config.memory_flush_size_bytes / (1024 * 1024),
-            toml_config.vector_count_threshold,
-            toml_config.write_buffer_size_mb
-        );
-
-        let performance = PerformanceConfig {
-            memory_flush_size_bytes: toml_config.memory_flush_size_bytes,
-            global_flush_threshold: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
-            batch_threshold: toml_config.vector_count_threshold,
-            sync_mode: match toml_config.sync_mode.to_lowercase().as_str() {
-                "perbatch" => SyncMode::PerBatch,
-                "periodic" => SyncMode::Periodic,
-                "none" => SyncMode::Never,
-                _ => SyncMode::PerBatch,
-            },
-            ..Default::default()
-        };
-
-        // Create memtable config
-        let memtable = MemTableConfig {
-            global_memory_limit: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
-            memtable_type: match toml_config.memtable_type.to_lowercase().as_str() {
-                "btree" => MemTableType::BTree,
-                "skiplist" => MemTableType::SkipList,
-                _ => MemTableType::BTree,
-            },
-            ..Default::default()
-        };
-
-        // Create multi-disk config with WAL directory
-        let multi_disk = crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
-            data_directories: vec![toml_config.write_buffer_directory.clone()],
-            distribution_strategy: crate::storage::persistence::write_ahead_log::config::DiskDistributionStrategy::RoundRobin,
-            collection_affinity: true,
-        };
-
-        WALConfig {
-            performance,
-            memtable,
-            multi_disk,
-            enable_mvcc: true,                  // Enable MVCC for consistency
-            enable_ttl: true,                   // Enable TTL support
-            enable_background_compaction: true, // Enable background compaction
-            enable_optimized_writer: toml_config.enable_wal, // Use enable_wal to control optimized writer
-            global_manifest_url: toml_config.global_manifest_url.clone(),
-            ..Default::default()
+        // ADR-069 S1 guardrail: the WAL belongs on a local reattachable disk
+        // (object-store WAL was the pre-pivot architecture and pays an I/O
+        // round-trip per append). Warn — at `error` level when a durability-
+        // sensitive `sync_mode` is also set, because an object store does not
+        // honour `fsync` the way a local block device does, so a remote WAL +
+        // PerBatch/Always makes a durability claim that does not hold. A bare
+        // path (no `scheme://`) is local (resolved to `file://`).
+        {
+            let dir = toml_config.write_buffer_directory.trim();
+            let is_remote = dir.contains("://") && !dir.starts_with("file:");
+            if is_remote {
+                let sync = toml_config.sync_mode.to_lowercase();
+                if matches!(sync.as_str(), "perbatch" | "always") {
+                    tracing::error!(
+                        wal_dir = %dir,
+                        sync_mode = %toml_config.sync_mode,
+                        "ADR-069 S1: WAL write_buffer_directory is on a remote (object-store) \
+                         scheme with a durability-sensitive sync_mode — object stores do not \
+                         honour fsync like a local disk, so the durability claim is not trustworthy. \
+                         Move the WAL to a local file:// path."
+                    );
+                } else {
+                    tracing::warn!(
+                        wal_dir = %dir,
+                        "ADR-069 S1: WAL write_buffer_directory is on a remote (object-store) \
+                         scheme; ADR-069 places the WAL on local disk. Remote WAL pays an I/O \
+                         round-trip per append."
+                    );
+                }
+            }
         }
+
+        // TD-CONFIG-CONSOLIDATE-1 step 2: delegate the field-mapping to the SINGLE
+        // canonical conversion (`WriteBufferUserConfig::to_engine_config`), then
+        // apply the one server-only override — the optimized writer follows
+        // `enable_wal` (the embedded path intentionally keeps it off). Removes the
+        // dual-maintenance drift where every new WAL field had to be wired into BOTH
+        // converters (the wal_local_dir near-miss during ADR-069 S1).
+        let mut cfg = toml_config.to_engine_config();
+        cfg.enable_optimized_writer = toml_config.enable_wal;
+        cfg
     }
 }
 
@@ -2742,7 +3236,7 @@ async fn build_rank_services(
     fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
     canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
 ) -> (
-    Arc<crate::network::rest::v1::rank::RankServices>,
+    Arc<crate::network::rest::canonical::rank::RankServices>,
     Arc<dyn crate::services::RankProfileStore>,
 ) {
     use crate::services::record_store::TableWalAppender;
@@ -2874,12 +3368,12 @@ async fn build_rank_services_with_appender(
     store_appender: Arc<dyn crate::services::record_store::TableWalAppender>,
     recovered_entries: &[proximadb_storage_common::CanonicalWalEntry],
 ) -> (
-    Arc<crate::network::rest::v1::rank::RankServices>,
+    Arc<crate::network::rest::canonical::rank::RankServices>,
     Arc<dyn crate::services::RankProfileStore>,
 ) {
     use crate::core::search::hybrid::FusionStrategy;
-    use crate::network::rest::v1::rank::{HybridCoordinatorAdapter, RankServices};
-    use crate::network::rest::v1::rank_backend::ProductionHybridBackend;
+    use crate::network::rest::canonical::rank::{HybridCoordinatorAdapter, RankServices};
+    use crate::network::rest::canonical::rank_backend::ProductionHybridBackend;
     use crate::observability::rank_metrics::init_rank_pipeline_metrics;
     use crate::services::CanonicalWalRankProfileStore;
 
@@ -2934,7 +3428,7 @@ async fn build_rank_services_with_appender(
 }
 
 fn recover_profile(
-    services: &crate::network::rest::v1::rank::RankServices,
+    services: &crate::network::rest::canonical::rank::RankServices,
     profile: &crate::services::StoredRankProfile,
 ) -> Result<(), String> {
     use proximadb_rank_profile::{CompiledRankProfile, dsl::parse_single};
@@ -2966,7 +3460,7 @@ mod rank_services_wiring_tests {
         async fn search(
             &self,
             _request: crate::proto::proximadb_v1::VectorSearchRequest,
-            _tenant_id: Option<&str>,
+            _identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
             Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                 success: true,
@@ -3194,5 +3688,200 @@ mod function_store_wiring_tests {
     async fn build_function_store_without_wal_is_empty() {
         let store = build_function_store(None).await;
         assert_eq!(store.list_all().await.unwrap().len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod join_storage_url_tests {
+    use super::{join_storage_url, local_storage_path};
+
+    /// TD-OBJSTORE-1 (#960): every (base, sub) pair must join scheme-preserving
+    /// with no double scheme — the `file://adls://…` class must be impossible.
+    #[test]
+    fn joins_preserve_scheme_for_every_base_shape() {
+        let cases = [
+            ("/data", "metrics", "/data/metrics"),
+            ("/data/", "metrics", "/data/metrics"),
+            ("file:///data", "metrics", "file:///data/metrics"),
+            ("s3://bucket/data", "auditlog", "s3://bucket/data/auditlog"),
+            (
+                "adls://container/data/",
+                "timeseries",
+                "adls://container/data/timeseries",
+            ),
+            (
+                "abfs://container/data",
+                "metrics",
+                "abfs://container/data/metrics",
+            ),
+            (
+                "gcs://bucket/data",
+                "auditlog",
+                "gcs://bucket/data/auditlog",
+            ),
+            ("azure://container/data", "", "azure://container/data"),
+            ("s3://bucket/data", "", "s3://bucket/data"),
+            ("/data", "", "/data"),
+        ];
+        for (base, sub, expected) in cases {
+            let joined = join_storage_url(base, sub);
+            assert_eq!(joined, expected, "join_storage_url({base:?}, {sub:?})");
+            // No double scheme, ever.
+            assert_eq!(
+                joined.matches("://").count(),
+                expected.matches("://").count(),
+                "double scheme in {joined:?}"
+            );
+            assert!(
+                !joined.starts_with("file://s3://") && !joined.starts_with("file://adls://"),
+                "invalid double-scheme URL {joined:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_storage_path_rejects_object_store_bases() {
+        assert_eq!(
+            local_storage_path("/data").as_deref(),
+            Some(std::path::Path::new("/data"))
+        );
+        assert_eq!(
+            local_storage_path("file:///data").as_deref(),
+            Some(std::path::Path::new("/data"))
+        );
+        assert!(local_storage_path("adls://container/data").is_none());
+        assert!(local_storage_path("s3://bucket/data").is_none());
+        assert!(local_storage_path("abfs://container/data").is_none());
+    }
+}
+
+// ============================================================================
+// ABAC composition-root integration test (TD-ABAC-2/3/4)
+// ============================================================================
+//
+// The durable substrate (authority #1310 + bindings #1331 + predicate objects
+// #1335) and the pgwire subject activation (#1333) are each proven in isolation:
+// the abac-crate tests prove each `FileSystem*` store survives a restart, and
+// #1324's `abac_relational_enforcement_tests` proves the enforcer + scan filter
+// rows. The ONE integration point nothing covered was the composition root —
+// `build_abac_enforcer` loading all THREE durable files into a working enforcer.
+// These tests close that gap: seed the durable trio, call the real
+// `build_abac_enforcer`, and assert it produces an enforcer that enforces.
+#[cfg(all(test, feature = "abac-policy"))]
+mod abac_composition_root_tests {
+    use super::SharedServices;
+    use crate::core::config::Config;
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+    use crate::security::rls::AbacScanResult;
+    use proximadb_abac::{
+        AttributeBinding, FileSystemAttributeAuthority, FileSystemPolicyBindingStore,
+        FileSystemPredicateObjectStore,
+    };
+    use proximadb_catalog::fc_metamodel::{
+        AttrValue, Effect, PolicyBinding, Scope, SubjectId, Target,
+    };
+    use serde_json::json;
+
+    fn unique_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "proximadb-abac-comproot-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// Seed the durable trio, then exercise the REAL composition-root builder
+    /// (`build_abac_enforcer`) — proving the three `FileSystem*` stores load into a
+    /// working enforcer. This is the integration point no isolated unit test covers.
+    #[test]
+    fn build_abac_enforcer_loads_the_durable_trio_into_a_working_enforcer() {
+        let dir = unique_dir();
+        let abac_dir = dir.join("abac");
+        std::fs::create_dir_all(&abac_dir).expect("abac dir");
+
+        // 1. durable authority: alice → dept=eng in tenant 7.
+        {
+            let auth = FileSystemAttributeAuthority::open(abac_dir.join("attribute-bindings.json"))
+                .expect("open authority");
+            auth.upsert(
+                AttributeBinding::new("alice", 7).with_attr("dept", AttrValue::Str("eng".into())),
+            );
+        }
+        // 2. durable policy bindings: permit table 200 under predicate ref 42.
+        {
+            let bindings =
+                FileSystemPolicyBindingStore::open(abac_dir.join("policy-bindings.json"))
+                    .expect("open binding store");
+            bindings.replace_tenant(
+                7,
+                vec![PolicyBinding {
+                    object_id: 1,
+                    tenant_stable_id: 7,
+                    scope: Scope::Table(200),
+                    effect: Effect::Permit,
+                    predicate_ref: Some(42),
+                    field_mask: None,
+                }],
+            );
+        }
+        // 3. durable predicate objects: ref 42 → dept == "eng".
+        {
+            let preds =
+                FileSystemPredicateObjectStore::open(abac_dir.join("predicate-objects.json"))
+                    .expect("open predicate store");
+            preds.register(
+                42,
+                FilterExpression::Comparison {
+                    field: "dept".to_string(),
+                    operator: ComparisonOperator::Equals,
+                    value: json!("eng"),
+                },
+            );
+        }
+
+        // Composition root: build the enforcer from the data_dir (reads all 3 files).
+        let mut config = Config::default();
+        config.server.data_dir = dir.clone();
+        let enforcer = SharedServices::build_abac_enforcer(Some(&config))
+            .expect("durable substrate present ⇒ enforcer built");
+
+        let target = Target {
+            namespace: 3,
+            table: 200,
+            column: None,
+        };
+
+        // alice (dept=eng) ⇒ Restricted to dept=eng rows — the full chain
+        // (authority resolve → binding compose → predicate resolve) works through
+        // the composition root.
+        match enforcer.predicate_for(&SubjectId("alice".into()), 7, target) {
+            AbacScanResult::Restricted(_) => {}
+            _ => panic!("alice must be Restricted via the durable substrate"),
+        }
+        // An unbound subject ⇒ Denied (no attribute binding in the authority).
+        assert!(
+            matches!(
+                enforcer.predicate_for(&SubjectId("mallory".into()), 7, target),
+                AbacScanResult::Denied(_)
+            ),
+            "an unbound subject must be denied"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No `data_dir` (embedded/ephemeral paths) ⇒ no durable substrate ⇒ `None`.
+    /// This is the documented fail-open-to-status-quo behavior (never a
+    /// synthesized allow).
+    #[test]
+    fn build_abac_enforcer_returns_none_without_a_config() {
+        assert!(
+            SharedServices::build_abac_enforcer(None).is_none(),
+            "no opt_config ⇒ no enforcer (status quo)"
+        );
     }
 }

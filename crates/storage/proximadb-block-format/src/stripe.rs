@@ -69,7 +69,7 @@ impl ColumnRole {
 /// [4]      role           ColumnRole as u8
 /// [5]      data_type_id   proximadb_codec::TypeId as u8 (0xff = variable/string/bytes)
 /// [6]      encoding_id    ProximaScheme stable marker (0 accepted as legacy raw)
-/// [7]      flags          bit0=nullable, bit1=has_bloom, bit2=sorted
+/// [7]      flags          bit0=nullable, bit1=has_bloom, bit2=sorted, bit3=LZ4
 /// [8..12]  stripe_offset  u32 from body start (after row directory)
 /// [12..16] stripe_len     u32 encoded byte count
 /// [16..20] null_count     u32
@@ -94,6 +94,8 @@ pub struct ColumnMeta {
     pub nullable: bool,
     pub has_bloom: bool,
     pub is_sorted: bool,
+    /// Stripe payload is LZ4-compressed after the value codec.
+    pub is_lz4_compressed: bool,
     /// Byte offset of this column's stripe from the start of the block body
     /// (i.e., from `HEADER_SIZE + row_dir_size`).
     pub stripe_offset: u32,
@@ -118,8 +120,10 @@ impl ColumnMeta {
         b[4] = self.role as u8;
         b[5] = self.data_type_id;
         b[6] = self.encoding_id;
-        b[7] =
-            (self.nullable as u8) | ((self.has_bloom as u8) << 1) | ((self.is_sorted as u8) << 2);
+        b[7] = (self.nullable as u8)
+            | ((self.has_bloom as u8) << 1)
+            | ((self.is_sorted as u8) << 2)
+            | ((self.is_lz4_compressed as u8) << 3);
         b[8..12].copy_from_slice(&self.stripe_offset.to_le_bytes());
         b[12..16].copy_from_slice(&self.stripe_len.to_le_bytes());
         b[16..20].copy_from_slice(&self.null_count.to_le_bytes());
@@ -151,6 +155,7 @@ impl ColumnMeta {
             nullable: flags & 0x01 != 0,
             has_bloom: flags & 0x02 != 0,
             is_sorted: flags & 0x04 != 0,
+            is_lz4_compressed: flags & 0x08 != 0,
             stripe_offset: u32::from_le_bytes(b[8..12].try_into()?),
             stripe_len: u32::from_le_bytes(b[12..16].try_into()?),
             null_count: u32::from_le_bytes(b[16..20].try_into()?),
@@ -347,6 +352,51 @@ impl BlockStats {
     }
 }
 
+/// Per-segment statistics returned when a PAX segment is finalised.
+///
+/// Maps directly to Iceberg `DataFile` fields for manifest generation. Lives
+/// here (next to the per-block [`BlockStats`] it aggregates) so segment-level
+/// consumers below the storage layer — e.g. the catalog's segment registry —
+/// can depend on it without pulling in the segment writer/scanner runtime.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegmentMeta {
+    pub path: std::path::PathBuf,
+    pub size_bytes: u64,
+    pub block_count: u32,
+    pub row_count: u64,
+    /// Per-block statistics for Iceberg manifest data-file descriptors.
+    pub block_stats: Vec<BlockStats>,
+    /// TD-RDSTRAT-5 S1: per-block **centroid** (mean of the block's embedding-0
+    /// f32 vectors), one entry per block in emission order — the vector zone-map
+    /// the Vector Object Economy directory prunes on. Empty unless the writer was
+    /// built with `PaxSegmentWriter::with_block_centroids` (default off, so
+    /// pre-existing callers pay nothing). A block with no Fp32 embedding gets an
+    /// empty centroid.
+    pub block_centroids: Vec<Vec<f32>>,
+    /// TD-RDSTRAT-5 lever-3: per-block **RMS radius** (spread = √(mean‖x‖²−‖c‖²)),
+    /// 1:1 with `block_centroids` (`0.0` for a block with no Fp32 vector). Lets the
+    /// read-side prune rank blocks by the distance lower bound `d(q,c)−k·radius`
+    /// instead of raw centroid distance, so a spread-out block that could still
+    /// hold a near neighbour isn't wrongly pruned. Empty unless centroids opted in.
+    pub block_radii: Vec<f32>,
+    /// ADR-062 / TD-RDSTRAT-6: byte offset of the coalesced RaBitQ header region
+    /// (the file-level binary index). `(0, 0)` for legacy segments (no coalesced
+    /// region); non-zero for the new scan-then-rerank layout. Threaded into the
+    /// VOE `IndexEntry`/footer so the read path finds the region for the hot scan.
+    #[serde(default)]
+    pub rabitq_off: u64,
+    #[serde(default)]
+    pub rabitq_len: u64,
+    /// ADR-065 Region B: byte offset/length of the coalesced SQ8 rerank region
+    /// (the file-level rerank tier, hoisted out of blocks). `(0, 0)` for legacy
+    /// segments; non-zero for the region layout. Threaded into the VOE
+    /// `IndexEntry`/footer so the read path fetches survivor SQ8 from Region B.
+    #[serde(default)]
+    pub sq8_off: u64,
+    #[serde(default)]
+    pub sq8_len: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +411,7 @@ mod tests {
             nullable: false,
             has_bloom: false,
             is_sorted: true,
+            is_lz4_compressed: true,
             stripe_offset: 1024,
             stripe_len: 512,
             null_count: 0,

@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Read-side compute routing — the `ComputeScheduler` (P0).
+//! Read-side compute routing — the `ComputeScheduler`.
 //!
 //! Implements the planner-boundary half of the multi-engine routing contract in
 //! `docs/12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc`
@@ -23,15 +23,20 @@
 //! * `authority_mode`: control-plane routing decision; no durable authority.
 //! * `policy_boundary`: exactly one engine chosen per query plan at the planner
 //!   boundary (pgwire today), never per row.
-//! * `freshness`: P0 always selects [`ComputeBackend::Native`] — the live
-//!   Volcano executor over WAL+`RecordStorage`, i.e. strong freshness. The
-//!   DataFusion/Polars destinations are declared but not yet wired (course
-//!   correction §4 audit); P1+ flip the OLAP arm once a live DataFusion read
-//!   path exists.
+//! * `freshness`: the static rule keeps strong freshness on
+//!   [`ComputeBackend::Native`] — the live Volcano executor over
+//!   WAL+`RecordStorage`. Only OLAP-shape queries over Parquet-backed tables
+//!   route to `DataFusionLocal` (P1, live behind the default-on
+//!   `datafusion-integration` feature).
 //!
-//! P0 is purely additive: the chosen backend is ALWAYS `Native`, so nothing
-//! about execution changes — the scheduler only makes the decision observable so
-//! later phases have a single, contract-bound place to evolve.
+//! Routing is three tiers behind this one seam: the static shape rule
+//! ([`ComputeScheduler::route_select`]), the trace-driven cost-model consult
+//! ([`ComputeScheduler::route_select_advised`] — observe-mode advisory on every
+//! pgwire relational `SELECT`), and the flag-gated live override
+//! (`PROXIMADB_ROUTE_COST_OVERRIDE`, default OFF — explore/exploit over
+//! freshness-safe candidates with the TD-170 round-trip hard gate; enablement
+//! gated by TD-ROUTE-1's capability-aware candidate fix). The rule engine grows
+//! without moving the seam.
 
 use crate::query::read_route::{
     CandidateReadRoute, ReadFreshnessSla, ReadPolicyBoundary, ReadSplitSummary, RoutedReadPlan,
@@ -118,14 +123,158 @@ impl PartitionFanout {
     }
 }
 
+/// TD-OLAP-4 operation dimension: the OLAP operation class, so the cost model
+/// keys its per-engine samples by *what the query does* (the geometry the shadow
+/// ledger showed engines win/lose on), not just cardinality/partition. Default
+/// `Unknown` preserves the coarse class + warmed cells.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OperationClass {
+    #[default]
+    Unknown,
+    /// Unfiltered scalar aggregate answerable from footer stats — `COUNT(*)`,
+    /// `MIN`/`MAX`. Native wins (metadata elision, flat cost).
+    MetadataElidable,
+    /// Ungrouped scalar aggregate over column data — `SUM`/`AVG`/filtered `COUNT`.
+    /// Native-competitive once vectorized + morsel-parallel (TD-OLAP-12).
+    ScalarAggregate,
+    /// `GROUP BY` aggregate. High-cardinality → DataFusion (native has no spilling).
+    Grouped,
+    /// String-heavy predicate/projection — `LIKE`/regex/string funcs. DataFusion
+    /// (native has no predicate pushdown / wide-string kernels yet).
+    StringHeavy,
+    /// Anything else — joins, window, subquery, plain projection.
+    Other,
+}
+
+impl OperationClass {
+    pub(crate) fn class_suffix(self) -> Option<&'static str> {
+        match self {
+            OperationClass::Unknown => None,
+            OperationClass::MetadataElidable => Some("op=meta"),
+            OperationClass::ScalarAggregate => Some("op=agg"),
+            OperationClass::Grouped => Some("op=grp"),
+            OperationClass::StringHeavy => Some("op=str"),
+            OperationClass::Other => Some("op=other"),
+        }
+    }
+}
+
+/// Bucketed estimated plan depth — half of the TD-EXEC-2 geometry tier.
+///
+/// Seed cutoffs: `Shallow` (≤ 6) covers the maximal single-table operator chain
+/// (scan→filter→aggregate→having→project→sort — the ClickBench posture native
+/// wins per TD-OLAP-15); `Mid` (7–12) a few joins; `Deep` (> 12) join trees /
+/// nested subqueries (the TPC-H posture DataFusion wins). The ledger records the
+/// *measured* `plan_depth` per query (TD-EXEC-2 Slice 1), so these bands are
+/// refittable from evidence, not asserted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepthBand {
+    /// Estimated depth ≤ 6 — a single-table operator chain.
+    Shallow,
+    /// Estimated depth 7–12 — a handful of joins / one nesting level.
+    Mid,
+    /// Estimated depth > 12 — join trees, deep subquery nesting.
+    Deep,
+}
+
+impl DepthBand {
+    /// Bucket an estimated plan depth (operator count on the longest root→leaf path).
+    pub fn from_depth(depth: u32) -> Self {
+        match depth {
+            0..=6 => DepthBand::Shallow,
+            7..=12 => DepthBand::Mid,
+            _ => DepthBand::Deep,
+        }
+    }
+}
+
+/// Bucketed pipeline-breaker count (joins + sorts + aggregates — the ops
+/// `plan_geometry::OpKind::is_blocking` flags) — the other half of the geometry
+/// tier. Blocking count is the strongest engine discriminator TD-OLAP-15
+/// measured: zero/low = streaming scan shapes (native-competitive), high =
+/// join/agg-bound shapes (DataFusion's surface).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockingBand {
+    /// No pipeline breakers — pure scan/filter/project/limit, streams through.
+    Zero,
+    /// 1–2 breakers — a single aggregate and/or sort (scan-heavy analytics).
+    Low,
+    /// ≥ 3 breakers — join-bearing / multi-breaker plans.
+    High,
+}
+
+impl BlockingBand {
+    /// Bucket an estimated pipeline-breaker count.
+    pub fn from_count(count: u32) -> Self {
+        match count {
+            0 => BlockingBand::Zero,
+            1..=2 => BlockingBand::Low,
+            _ => BlockingBand::High,
+        }
+    }
+}
+
+/// TD-EXEC-2 Slice 3: the plan-geometry tier of the cost-model shape-class —
+/// bucketed estimated depth × pipeline-breaker bands, so the EWMA cost cells
+/// accumulate per shape⊕geometry class and `route_select_advised` compares
+/// engines on the geometry they measurably win/lose on (TD-OLAP-15). Estimated
+/// from the AST *before* lowering (the route decision precedes the physical
+/// plan); because `finalize_route` stamps this class into the io_trace, the
+/// consult key and the EWMA fold key are the same by construction. Default
+/// `Unknown` contributes no suffix — the coarse class and warmed cells are
+/// preserved (backward-compatible, like every other signal here).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum GeometryClass {
+    /// No geometry estimate available — class stays coarse.
+    #[default]
+    Unknown,
+    /// Bucketed estimate: depth band × blocking band.
+    Known {
+        /// Bucketed estimated plan depth.
+        depth: DepthBand,
+        /// Bucketed estimated pipeline-breaker count.
+        blocking: BlockingBand,
+    },
+}
+
+impl GeometryClass {
+    /// Bucket an estimated (depth, pipeline-breaker count) pair.
+    pub fn from_estimate(depth: u32, blocking: u32) -> Self {
+        GeometryClass::Known {
+            depth: DepthBand::from_depth(depth),
+            blocking: BlockingBand::from_count(blocking),
+        }
+    }
+
+    /// Stable shape-class suffix `geom=<depth-band>x<blocking-band>`, or `None`
+    /// when unknown (omitted from the key).
+    pub(crate) fn class_suffix(self) -> Option<&'static str> {
+        let GeometryClass::Known { depth, blocking } = self else {
+            return None;
+        };
+        Some(match (depth, blocking) {
+            (DepthBand::Shallow, BlockingBand::Zero) => "geom=sx0",
+            (DepthBand::Shallow, BlockingBand::Low) => "geom=sxlo",
+            (DepthBand::Shallow, BlockingBand::High) => "geom=sxhi",
+            (DepthBand::Mid, BlockingBand::Zero) => "geom=mx0",
+            (DepthBand::Mid, BlockingBand::Low) => "geom=mxlo",
+            (DepthBand::Mid, BlockingBand::High) => "geom=mxhi",
+            (DepthBand::Deep, BlockingBand::Zero) => "geom=dx0",
+            (DepthBand::Deep, BlockingBand::Low) => "geom=dxlo",
+            (DepthBand::Deep, BlockingBand::High) => "geom=dxhi",
+        })
+    }
+}
+
 /// Shape signals the scheduler routes on.
 ///
 /// P0 used only `engages_relational` — the join / `GROUP BY` / aggregate / set-op
 /// gate (the OLAP-shape signal). P1 added `parquet_backed`. C4 Phase-2b adds the
 /// §5.2 Phase-1 inputs — `cardinality` and `partition_fanout` — which refine the
 /// cost-model shape-class so routing and exploration discriminate beyond
-/// `olap/oltp × native/parquet`. Both default to `Unknown`, preserving the
-/// coarse class (and warmed cells) for planners that cannot estimate them.
+/// `olap/oltp × native/parquet`. TD-OLAP-4 adds `operation_class`; TD-EXEC-2
+/// Slice 3 adds `geometry`. All default to `Unknown`, preserving the coarse
+/// class (and warmed cells).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QueryShape {
     /// The query lowers against the relational algebra engine for a reason the
@@ -141,6 +290,41 @@ pub struct QueryShape {
     pub cardinality: CardinalityClass,
     /// Bucketed partition/row-group fan-out (§5.2 Phase-1). `Unknown` default.
     pub partition_fanout: PartitionFanout,
+    /// TD-OLAP-1 slice 2: tables backed by PAX segments (not Parquet). When
+    /// true + `pax_reader_enabled()`, routes to DataFusion via PaxSplitReader.
+    pub pax_backed: bool,
+    /// TD-OLAP-4: the OLAP operation class (metadata-elidable / scalar-aggregate /
+    /// grouped / string-heavy) — the geometry dimension the engines win/lose on.
+    pub operation_class: OperationClass,
+    /// TD-EXEC-2 Slice 3: bucketed plan-geometry estimate (depth band ×
+    /// pipeline-breaker band) refining the cost-model class. `Unknown` default.
+    pub geometry: GeometryClass,
+    /// TD-ROUTE-1: the plan contains a JOIN anywhere (top-level FROM, derived
+    /// table / nested join / CTE, or a subquery that lowers to a semi/anti/left
+    /// join) or a set-op body. The Native arm cannot serve these over Parquet —
+    /// Volcano has join executors but no external-parquet scan, and the
+    /// vectorized native-over-parquet path is single-scan-only — so a flipped
+    /// plan would be served by the DataFusion floor while the io_trace stamps
+    /// Native (poisoning the cost model's per-backend cells), and
+    /// `EXPLAIN ANALYZE` would execute a diverging plan. This is an
+    /// *eligibility* bit (ADR-058: eligibility precedes selection), not a cost
+    /// input: the cost-model override must never FLIP such a plan onto
+    /// `Native`; static routes are unaffected. It is a dedicated bit because
+    /// [`OperationClass`] cannot carry it — a `JOIN … GROUP BY` classifies as
+    /// `Grouped` (the FROM clause is never inspected there). Computed at the
+    /// pgwire boundary (`query_join_bearing`); `false` default.
+    pub join_bearing: bool,
+}
+
+/// TD-OLAP-1 slice 2: PAX-native OLAP scan gate (inline — not imported from
+/// `pax_adapter` so compute_scheduler compiles without `datafusion-integration`).
+fn pax_reader_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_DF_PAX_READER")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
 }
 
 /// What produced a [`SelectRouteDecision`] — a `route_decisions_total` metric
@@ -168,6 +352,85 @@ impl RouteSource {
     }
 }
 
+/// Process-level route master switches (TD-ROUTE-3). The env-driven
+/// `PROXIMADB_NATIVE_ROUTE` / `PROXIMADB_DUCKDB_ROUTE` gates are read ONCE at the
+/// pgwire boundary and threaded in here so the decision core
+/// ([`ComputeScheduler::route_select_advised`]) stays free of `std::env` reads
+/// and is unit-testable by injecting flags. When a switch is on and the shape is
+/// the corresponding primary's eligible shape, the decision IS that engine —
+/// authoritative for the thin `match decision.backend` dispatch (no downstream
+/// re-decision). Both default-`false` (`RouteFlags::default()`), preserving the
+/// static + cost-model route.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RouteFlags {
+    /// `PROXIMADB_NATIVE_ROUTE`: force the native-over-parquet vectorized engine
+    /// as PRIMARY for the ops it is eligible for (metadata-elidable / scalar
+    /// aggregate). DataFusion remains the correctness floor (the adapter's own
+    /// fine plan-shape gates + fallback).
+    pub native_route: bool,
+    /// `PROXIMADB_DUCKDB_ROUTE`: force DuckDB-local as PRIMARY for the join/grouped
+    /// parquet shapes it is the measured win for. DataFusion remains the floor.
+    pub duckdb_route: bool,
+}
+
+/// The two parquet-OLAP PRIMARY engines' *shape* eligibility (ADR-058:
+/// eligibility precedes selection). Pure over [`QueryShape`] and unit-testable;
+/// the fine plan-shape gates (single-scan / no-predicate / width-cap / stats
+/// trust) stay inside the native adapter (`try_native_over_parquet`), which needs
+/// the lowered physical plan.
+///
+/// The two sets are **disjoint** — native is the *single-scan* ungrouped
+/// scalar-aggregate shape (a join-bearing plan is NEVER native-servable, so it is
+/// excluded here; the adapter would decline it anyway), while DuckDB is the
+/// join/grouped shape. Disjointness makes the env-force precedence unambiguous and
+/// the dispatch `match` arms mutually exclusive: a `(scalar-agg, join-bearing)`
+/// query is DuckDB's, never native's — which is exactly where the former dispatch
+/// sent it (native attempted, declined the join, fell through to DuckDB).
+///
+/// Mirrors the former dispatch gates (`native_eligible_op &&` the adapter's
+/// single-scan gate / `duckdb_eligible_shape`) so folding them into the decision
+/// changes no served engine — only makes `decision.backend` authoritative.
+fn parquet_primary_eligibility(shape: &QueryShape) -> (bool, bool) {
+    let native_ok = !shape.join_bearing
+        && matches!(
+            shape.operation_class,
+            OperationClass::MetadataElidable | OperationClass::ScalarAggregate
+        );
+    let duckdb_ok = shape.join_bearing || matches!(shape.operation_class, OperationClass::Grouped);
+    (native_ok, duckdb_ok)
+}
+
+/// Which of ADR-058's three routing axes a [`RouteReason`] explains. The router
+/// decides in this order — a backend must be *eligible* (can serve the shape
+/// soundly) before it is *selected* (cheapest by the cost cells), and an
+/// external/Parquet route additionally passes a *trust* gate (are the catalog
+/// statistics trusted enough to route here, ADR-058 D5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum RouteAxis {
+    /// Soundness — this backend *can* serve the shape (ADR-058: eligibility
+    /// precedes selection).
+    Eligibility,
+    /// Cost — why this eligible backend was chosen (static rule or cost-model
+    /// override/explore).
+    Selection,
+    /// Statistics trust — the external/Parquet route trusts the catalog
+    /// base-snapshot (ADR-058 D5).
+    Trust,
+}
+
+/// One structured reason behind a [`SelectRouteDecision`], tagged by the axis it
+/// explains. Replaces the single flat `reason` string as the machine-readable
+/// record the ADR-064 query trace and `EXPLAIN` consume — the `reason` string is
+/// retained as the concatenated human one-liner (ADR-064 Decision 1 /
+/// TD-TRACE-1).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RouteReason {
+    /// Which routing axis this reason explains.
+    pub axis: RouteAxis,
+    /// Human-readable detail for the axis.
+    pub detail: String,
+}
+
 /// A materialized read-route decision: the engine, the workload it was
 /// classified as, and a human-readable reason. Emitted to telemetry and, once a
 /// SELECT `EXPLAIN` surface exists, surfaced there via [`Self::explain_line`].
@@ -177,13 +440,29 @@ pub struct SelectRouteDecision {
     pub backend: ComputeBackend,
     /// Workload classification this route was based on.
     pub workload_profile: CatalogWorkloadProfile,
-    /// Human-readable reason for the choice.
+    /// Human-readable reason for the choice (the concatenation of [`Self::reasons`]
+    /// details, kept for the one-line telemetry/`EXPLAIN` form).
     pub reason: String,
+    /// Structured, axis-tagged reasons behind the decision (ADR-058
+    /// eligibility→selection→trust). The machine-readable record the ADR-064
+    /// query trace consumes; never empty for a real decision (a static Selection
+    /// reason is always seeded).
+    pub reasons: Vec<RouteReason>,
     /// What produced this decision (static rule vs cost-model override/explore).
     pub source: RouteSource,
 }
 
 impl SelectRouteDecision {
+    /// Append a structured, axis-tagged reason (ADR-064 / TD-TRACE-1). Does not
+    /// touch the human `reason` string — callers that also want the one-liner
+    /// updated do that separately so the two never silently diverge.
+    fn push_reason(&mut self, axis: RouteAxis, detail: impl Into<String>) {
+        self.reasons.push(RouteReason {
+            axis,
+            detail: detail.into(),
+        });
+    }
+
     /// Stable one-line `EXPLAIN`/telemetry form, e.g.
     /// `Compute Route: Native(Volcano) (workload=Olap, reason="...")`.
     pub fn explain_line(&self) -> String {
@@ -292,18 +571,22 @@ fn access_method_for_backend(backend: &ComputeBackend) -> &'static str {
     }
 }
 
-/// Policy/heuristic read-route scheduler (course correction §5.2 Phase 1).
+/// Policy/heuristic read-route scheduler (course correction §5.2, P1 live).
 ///
-/// P0 ALWAYS returns [`ComputeBackend::Native`] (the live Volcano path) — purely
-/// additive, no behavior change — but classifies the workload so the decision is
-/// observable and P1 can flip the OLAP arm to `DataFusionLocal` in exactly one
-/// place. The rule engine grows (cardinality/partition/point-lookup, then the
-/// §5.2 Phase-2 `RLPlanner` learner) without moving this seam.
+/// The static rule routes OLAP-shape queries over Parquet-backed tables to
+/// [`ComputeBackend::DataFusionLocal`] and everything else to `Native` (the live
+/// Volcano path) in exactly one place ([`Self::route_select`]).
+/// [`Self::route_select_advised`] layers the trace-driven cost model on top:
+/// observe-mode advisory by default, with a flag-gated live override
+/// (`PROXIMADB_ROUTE_COST_OVERRIDE`, default OFF) that only flips between
+/// freshness-safe candidates. The rule engine grows
+/// (cardinality/partition/point-lookup, then the §5.2 Phase-2 `RLPlanner`
+/// learner) without moving this seam.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ComputeScheduler;
 
 impl ComputeScheduler {
-    /// Construct the (stateless, P0) scheduler.
+    /// Construct the (stateless) scheduler.
     pub fn new() -> Self {
         Self
     }
@@ -321,31 +604,52 @@ impl ComputeScheduler {
     /// wrap it (the latter may override the backend before stamping, so the
     /// stamp reflects the FINAL engine — see [`finalize_route`]).
     fn route_select_inner(&self, shape: QueryShape) -> SelectRouteDecision {
-        match (shape.engages_relational, shape.parquet_backed) {
+        let mut decision = match (shape.engages_relational, shape.parquet_backed) {
             // P1: OLAP shape over Parquet-backed (object-store) table(s) → DataFusion.
             (true, true) => SelectRouteDecision {
                 backend: ComputeBackend::DataFusionLocal,
                 workload_profile: CatalogWorkloadProfile::Olap,
                 reason: "OLAP shape over Parquet-backed table(s) — DataFusion over object storage"
                     .to_string(),
+                reasons: Vec::new(),
                 source: RouteSource::Static,
             },
             // OLAP shape on native storage — Volcano serves it from WAL+RecordStorage
             // until the relational base tier is Parquet/Iceberg (course-correction §6 P3).
-            (true, false) => SelectRouteDecision {
-                backend: ComputeBackend::Native,
-                workload_profile: CatalogWorkloadProfile::Olap,
-                reason: "OLAP shape (join/group-by/aggregate/set-op) on native storage — Volcano"
-                    .to_string(),
-                source: RouteSource::Static,
-            },
+            (true, false) => {
+                // TD-OLAP-1 slice 2: PAX-backed analytical → DataFusion via
+                // PaxSplitReader (flag-gated, default OFF per ADR-052).
+                if shape.pax_backed && pax_reader_enabled() {
+                    SelectRouteDecision {
+                        backend: ComputeBackend::DataFusionLocal,
+                        workload_profile: CatalogWorkloadProfile::Olap,
+                        reason: "OLAP shape on PAX-backed table(s) — DataFusion via PaxSplitReader"
+                            .to_string(),
+                        reasons: Vec::new(),
+                        source: RouteSource::Static,
+                    }
+                } else {
+                    SelectRouteDecision {
+                        backend: ComputeBackend::Native,
+                        workload_profile: CatalogWorkloadProfile::Olap,
+                        reason:
+                            "OLAP shape (join/group-by/aggregate/set-op) on native storage — Volcano"
+                                .to_string(),
+                        reasons: Vec::new(),
+                        source: RouteSource::Static,
+                    }
+                }
+            }
             (false, _) => SelectRouteDecision {
                 backend: ComputeBackend::Native,
                 workload_profile: CatalogWorkloadProfile::Oltp,
                 reason: "OLTP shape (point/simple select) — Volcano".to_string(),
+                reasons: Vec::new(),
                 source: RouteSource::Static,
             },
-        }
+        };
+        seed_static_route_reasons(&mut decision, shape);
+        decision
     }
 
     /// Route a relational `SELECT` and materialize the typed read-route plan.
@@ -369,20 +673,110 @@ impl ComputeScheduler {
         &self,
         shape: QueryShape,
         model: Option<&crate::query::route_cost_model::RouteCostModel>,
+        flags: RouteFlags,
     ) -> SelectRouteDecision {
         use crate::query::route_cost_model::RouteConsult;
 
         let mut decision = self.route_select_inner(shape);
+
+        // TD-ROUTE-3: env master-switch force takes precedence over the cost
+        // model — this mirrors the former dispatch order, where the native /
+        // DuckDB primary was attempted under `native_route_enabled() || advised`
+        // BEFORE the DataFusion floor. Folding it here makes `decision.backend`
+        // the engine that will actually be attempted, so dispatch is a thin
+        // `match` with no re-decision. The native/duckdb eligible shapes are
+        // disjoint, so at most one branch fires. Default-OFF: both flags false →
+        // falls straight through to the static + cost-model path unchanged. The
+        // adapter still owns the primary→floor fallback, so a forced primary that
+        // declines is still served correctly by DataFusion.
+        if shape.parquet_backed {
+            let (native_ok, duckdb_ok) = parquet_primary_eligibility(&shape);
+            if flags.native_route && native_ok {
+                let prev = backend_label(&decision.backend);
+                decision.backend = ComputeBackend::Native;
+                decision.reason = format!(
+                    "{} | PROXIMADB_NATIVE_ROUTE forces native-over-parquet PRIMARY \
+                     (op eligible; {prev} is the floor)",
+                    decision.reason
+                );
+                decision.push_reason(
+                    RouteAxis::Selection,
+                    "PROXIMADB_NATIVE_ROUTE forces native-over-parquet PRIMARY (op eligible)",
+                );
+                return finalize_route(decision, shape);
+            }
+            if flags.duckdb_route && duckdb_ok {
+                let prev = backend_label(&decision.backend);
+                decision.backend = ComputeBackend::DuckDbCompat;
+                decision.reason = format!(
+                    "{} | PROXIMADB_DUCKDB_ROUTE forces duckdb-local PRIMARY \
+                     (shape eligible; {prev} is the floor)",
+                    decision.reason
+                );
+                decision.push_reason(
+                    RouteAxis::Selection,
+                    "PROXIMADB_DUCKDB_ROUTE forces duckdb-local PRIMARY (shape eligible)",
+                );
+                return finalize_route(decision, shape);
+            }
+        }
+
         let Some(model) = model else {
             return finalize_route(decision, shape);
         };
         let class = crate::query::route_cost_model::shape_class(&shape);
 
-        // Lock-free consult: a single ArcSwap load + HashMap get. `None` on a
-        // cold table (no baked entry) → keep the static route unchanged.
-        let consult = model.consult(&class);
+        // Lock-free hierarchical consult: the refined class first, then each
+        // coarser ancestor — so a key-refinement tier (geom/op/card) never
+        // orphans warmed cells (ADR-058 D3 density across generations). `None`
+        // at EVERY level → keep the static route unchanged, and count the miss
+        // (a hot class that keeps missing after warm-up means the key
+        // fragmented faster than cells warm).
+        let consulted = model.consult_with_fallback(&class);
+        if consulted.is_none() {
+            crate::metrics::route_metrics::record_consult_miss(&class);
+        }
+        let (consult, consult_class) = match consulted {
+            Some((rec, level)) => (Some(rec), Some(level)),
+            None => (None, None),
+        };
+        // Disclose when an ancestor's cells served the decision (refined cell
+        // still cold) — visible in EXPLAIN/telemetry, zero behavior change.
+        let cells_note = match consult_class.as_deref() {
+            Some(level) if level != class => format!(" [cells: {level}]"),
+            _ => String::new(),
+        };
 
-        if model.override_active()
+        // TD-ROUTE-1 + TD-ROUTE-3 capability gate (ADR-058: eligibility precedes
+        // selection). A cost-model flip may only target a backend that will
+        // actually serve the shape as PRIMARY — otherwise the flip stamps that
+        // engine while the DataFusion floor serves, poisoning the cost cells (the
+        // "last-write-wins" mis-attribution TD-ROUTE-3 removes). The eligible
+        // shapes are the SAME sets the former dispatch gates checked
+        // (`native_eligible_op` / `duckdb_eligible_shape`), now the single source
+        // of truth via [`parquet_primary_eligibility`]:
+        //   - Native over Parquet: only the ungrouped scalar-aggregate ops the
+        //     native-over-parquet adapter can serve, and never a join-bearing
+        //     plan (no multi-table native scan; the single-scan vectorized path).
+        //   - DuckDB-local: only the join/grouped shapes it is the measured win
+        //     for.
+        // Other backends carry no extra primary-eligibility gate here. Static
+        // routes are untouched; override OFF (default) = no change.
+        // `native_flip_ok` already excludes join-bearing plans (see
+        // `parquet_primary_eligibility`), subsuming the former standalone
+        // `!join_bearing` Native guard.
+        let (native_flip_ok, duckdb_flip_ok) = parquet_primary_eligibility(&shape);
+        let flip_eligible = |b: &ComputeBackend| match b {
+            ComputeBackend::Native => native_flip_ok,
+            ComputeBackend::DuckDbCompat => duckdb_flip_ok,
+            _ => true,
+        };
+
+        // Per-class staged go-live (TD-EXEC-2 §3): the scope gate reads the
+        // DECISION class (the full refined key), so enabling an ancestor prefix
+        // enables all of its refinements — consistent with the hierarchical
+        // consult, even when an ancestor's cells served the recommendation.
+        if model.override_active_for(&class)
             && let Some(consult) = consult.as_ref()
         {
             // Exploration (warm-up) first: rate-limited flip to the baked
@@ -394,7 +788,8 @@ impl ComputeScheduler {
                 // last recompute; re-check against the frozen ranked samples (a
                 // target absent from `ranked` was never observed → still cold).
                 .filter(|t| {
-                    backend_label(t) != backend_label(&decision.backend)
+                    flip_eligible(t)
+                        && backend_label(t) != backend_label(&decision.backend)
                         && consult
                             .find(t)
                             .is_none_or(|c| c.samples < model.min_samples())
@@ -405,9 +800,16 @@ impl ComputeScheduler {
             {
                 let prev = backend_label(&decision.backend);
                 decision.reason = format!(
-                    "{} | cost-model EXPLORE {prev}→{} (gathering cost history)",
+                    "{} | cost-model EXPLORE {prev}→{} (gathering cost history){cells_note}",
                     decision.reason,
                     backend_label(target)
+                );
+                decision.push_reason(
+                    RouteAxis::Selection,
+                    format!(
+                        "cost-model EXPLORE {prev}→{} (gathering cost history){cells_note}",
+                        backend_label(target)
+                    ),
                 );
                 decision.backend = target.clone();
                 decision.source = RouteSource::OverrideExplore;
@@ -427,7 +829,7 @@ impl ComputeScheduler {
                     && let Some(within) = consult
                         .ranked()
                         .iter()
-                        .filter(|c| c.range_gets <= budget)
+                        .filter(|c| c.range_gets <= budget && flip_eligible(&c.backend))
                         .min_by(|a, b| {
                             a.score
                                 .partial_cmp(&b.score)
@@ -437,9 +839,16 @@ impl ComputeScheduler {
                 {
                     let prev = backend_label(&decision.backend);
                     decision.reason = format!(
-                        "{} | cost-model OVERRIDE {prev}→{} (RTT budget {budget:.0} exceeded)",
+                        "{} | cost-model OVERRIDE {prev}→{} (RTT budget {budget:.0} exceeded){cells_note}",
                         decision.reason,
                         backend_label(&within.backend)
+                    );
+                    decision.push_reason(
+                        RouteAxis::Selection,
+                        format!(
+                            "cost-model OVERRIDE {prev}→{} (RTT budget {budget:.0} exceeded){cells_note}",
+                            backend_label(&within.backend)
+                        ),
                     );
                     decision.backend = within.backend.clone();
                     decision.source = RouteSource::OverrideExploit;
@@ -451,22 +860,60 @@ impl ComputeScheduler {
                 if let Some(challenger) = consult
                     .ranked()
                     .iter()
-                    .filter(|c| c.samples >= model.min_samples())
+                    .filter(|c| c.samples >= model.min_samples() && flip_eligible(&c.backend))
                     .find(|c| backend_label(&c.backend) != backend_label(&decision.backend))
                     .filter(|c| c.score < static_choice.score * (1.0 - model.min_advantage()))
                 {
                     let prev = backend_label(&decision.backend);
                     decision.reason = format!(
-                        "{} | cost-model OVERRIDE {prev}→{} (score {:.1} vs {:.1})",
+                        "{} | cost-model OVERRIDE {prev}→{} (score {:.1} vs {:.1}){cells_note}",
                         decision.reason,
                         backend_label(&challenger.backend),
                         challenger.score,
                         static_choice.score
                     );
+                    decision.push_reason(
+                        RouteAxis::Selection,
+                        format!(
+                            "cost-model OVERRIDE {prev}→{} (score {:.1} vs {:.1}){cells_note}",
+                            backend_label(&challenger.backend),
+                            challenger.score,
+                            static_choice.score
+                        ),
+                    );
                     decision.backend = challenger.backend.clone();
                     decision.source = RouteSource::OverrideExploit;
                     return finalize_route(decision, shape);
                 }
+            }
+
+            // ADR-058 observability: disclose when *eligibility* removed Native
+            // from consideration — the warmed-cheapest candidate is Native but
+            // the plan is join-bearing. Phrased as ineligibility (not "a flip
+            // was suppressed"): the cost gates (min_samples/min_advantage/RTT)
+            // are not re-checked here, so a flip is not necessarily what the
+            // exploit path would have chosen.
+            if shape.join_bearing
+                && let Some(best) = consult
+                    .ranked()
+                    .iter()
+                    .find(|c| c.samples >= model.min_samples())
+                && matches!(best.backend, ComputeBackend::Native)
+                && backend_label(&best.backend) != backend_label(&decision.backend)
+            {
+                decision.reason = format!(
+                    "{} | cost-model: Native suppressed as flip target — join-bearing plan is \
+                     ineligible (no multi-table native-over-parquet scan; TD-ROUTE-1){cells_note}",
+                    decision.reason
+                );
+                decision.push_reason(
+                    RouteAxis::Eligibility,
+                    format!(
+                        "Native suppressed as flip target — join-bearing plan is ineligible \
+                         (no multi-table native-over-parquet scan; TD-ROUTE-1){cells_note}"
+                    ),
+                );
+                return finalize_route(decision, shape);
             }
         }
 
@@ -487,10 +934,47 @@ impl ComputeScheduler {
                     rec.score
                 )
             };
-            decision.reason = format!("{} | {advisory}", decision.reason);
+            decision.reason = format!("{} | {advisory}{cells_note}", decision.reason);
         }
 
         finalize_route(decision, shape)
+    }
+}
+
+/// Seed the structured, axis-tagged reasons (ADR-058 eligibility→selection→trust)
+/// on a decision produced by the static shape rule (ADR-064 / TD-TRACE-1). Every
+/// decision records at least one `Eligibility` + one `Selection` reason; the
+/// Parquet/PAX (external, base-snapshot) route additionally records a `Trust`
+/// reason. The cost-model advised path appends further reasons when it overrides.
+fn seed_static_route_reasons(decision: &mut SelectRouteDecision, shape: QueryShape) {
+    // Eligibility — why the chosen backend can serve this shape SOUNDLY.
+    let eligibility = match &decision.backend {
+        ComputeBackend::DataFusionLocal if shape.parquet_backed => {
+            "DataFusionLocal eligible: OLAP shape over Parquet-backed object-store table(s)"
+        }
+        ComputeBackend::DataFusionLocal => {
+            "DataFusionLocal eligible: OLAP shape over PAX-backed segment(s) via PaxSplitReader"
+        }
+        ComputeBackend::Native if shape.engages_relational => {
+            "Native(Volcano) eligible: OLAP shape on native storage (WAL+RecordStorage; \
+             no external scan required)"
+        }
+        ComputeBackend::Native => "Native(Volcano) eligible: point/OLTP shape",
+        _ => "route eligible for this shape (ADR-058 soundness gate)",
+    };
+    decision.push_reason(RouteAxis::Eligibility, eligibility);
+
+    // Selection — the static rule's cost rationale (the human one-liner).
+    let selection = decision.reason.clone();
+    decision.push_reason(RouteAxis::Selection, selection);
+
+    // Trust — the external Parquet/PAX route trusts the catalog base-snapshot
+    // statistics (ADR-058 D5); native storage is synchronous with no trust gate.
+    if shape.parquet_backed || (shape.pax_backed && pax_reader_enabled()) {
+        decision.push_reason(
+            RouteAxis::Trust,
+            "trusts object-store catalog base-snapshot statistics (ADR-058 D5)",
+        );
     }
 }
 
@@ -549,6 +1033,177 @@ mod tests {
         assert_eq!(d.backend, ComputeBackend::DataFusionLocal);
         assert_eq!(d.workload_profile, CatalogWorkloadProfile::Olap);
         assert_eq!(d.compute_route_label(), "DataFusionLocal");
+    }
+
+    // ---- TD-ROUTE-3: authoritative decision (shape + RouteFlags → backend) ----
+
+    fn parquet_shape(op: OperationClass, join_bearing: bool) -> QueryShape {
+        QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            operation_class: op,
+            join_bearing,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn native_eligible_op_with_native_flag_decides_native() {
+        // ScalarAggregate over parquet + PROXIMADB_NATIVE_ROUTE → the decision is
+        // authoritative Native (the engine dispatch will attempt as primary), no
+        // downstream re-check. `model: None` isolates the env-force fold.
+        let d = ComputeScheduler::new().route_select_advised(
+            parquet_shape(OperationClass::ScalarAggregate, false),
+            None,
+            RouteFlags {
+                native_route: true,
+                duckdb_route: false,
+            },
+        );
+        assert_eq!(d.backend, ComputeBackend::Native);
+    }
+
+    #[test]
+    fn native_eligible_op_without_flag_or_override_stays_datafusion() {
+        // Same shape, flags off, no cost model → the static parquet route
+        // (DataFusion floor). Native is NOT engaged just because the op is eligible.
+        let d = ComputeScheduler::new().route_select_advised(
+            parquet_shape(OperationClass::ScalarAggregate, false),
+            None,
+            RouteFlags::default(),
+        );
+        assert_eq!(d.backend, ComputeBackend::DataFusionLocal);
+    }
+
+    #[test]
+    fn join_bearing_with_duckdb_flag_decides_duckdb() {
+        let d = ComputeScheduler::new().route_select_advised(
+            parquet_shape(OperationClass::Other, true),
+            None,
+            RouteFlags {
+                native_route: false,
+                duckdb_route: true,
+            },
+        );
+        assert_eq!(d.backend, ComputeBackend::DuckDbCompat);
+    }
+
+    #[test]
+    fn join_bearing_with_native_flag_stays_datafusion_native_ineligible() {
+        // A join-bearing plan is NOT native-eligible (no multi-table native scan),
+        // so the native master switch cannot force it onto Native — the decision
+        // keeps the DataFusion floor. This is the core attribution invariant.
+        let d = ComputeScheduler::new().route_select_advised(
+            parquet_shape(OperationClass::Other, true),
+            None,
+            RouteFlags {
+                native_route: true,
+                duckdb_route: false,
+            },
+        );
+        assert_eq!(d.backend, ComputeBackend::DataFusionLocal);
+    }
+
+    #[test]
+    fn grouped_without_flags_stays_datafusion() {
+        let d = ComputeScheduler::new().route_select_advised(
+            parquet_shape(OperationClass::Grouped, false),
+            None,
+            RouteFlags::default(),
+        );
+        assert_eq!(d.backend, ComputeBackend::DataFusionLocal);
+    }
+
+    #[test]
+    fn route_flags_inert_on_non_parquet_shapes() {
+        // The env master switches gate only the parquet-OLAP primary arm. An
+        // OLAP-on-native shape stays Volcano/Native regardless of the flags.
+        let d = ComputeScheduler::new().route_select_advised(
+            QueryShape {
+                engages_relational: true,
+                parquet_backed: false,
+                operation_class: OperationClass::ScalarAggregate,
+                ..Default::default()
+            },
+            None,
+            RouteFlags {
+                native_route: true,
+                duckdb_route: true,
+            },
+        );
+        // (true, false) → native storage OLAP → Volcano. Unchanged by flags.
+        assert_eq!(d.backend, ComputeBackend::Native);
+        assert_eq!(d.workload_profile, CatalogWorkloadProfile::Olap);
+    }
+
+    #[test]
+    fn native_and_duckdb_primary_eligibility_are_disjoint() {
+        // At most one parquet primary is ever eligible for a given query, so the
+        // env-force precedence (native-first) is unambiguous and the dispatch
+        // `match` arms are mutually exclusive. Guards against a future
+        // OperationClass change silently making both fire.
+        use OperationClass::*;
+        for op in [
+            Unknown,
+            MetadataElidable,
+            ScalarAggregate,
+            Grouped,
+            StringHeavy,
+            Other,
+        ] {
+            for join_bearing in [false, true] {
+                let (native_ok, duckdb_ok) =
+                    parquet_primary_eligibility(&parquet_shape(op, join_bearing));
+                assert!(
+                    !(native_ok && duckdb_ok),
+                    "native/duckdb eligibility overlapped for op={op:?} join_bearing={join_bearing}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn decision_records_structured_eligibility_selection_trust_reasons() {
+        // ADR-064 / TD-TRACE-1: a route decision records structured, axis-tagged
+        // reasons (not just a flat string). The Parquet route exercises all three
+        // ADR-058 axes: eligibility (soundness), selection (cost), trust (stats).
+        let d = ComputeScheduler::new().route_select(QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        });
+        let axes: Vec<RouteAxis> = d.reasons.iter().map(|r| r.axis).collect();
+        assert!(
+            axes.contains(&RouteAxis::Eligibility),
+            "missing Eligibility reason: {:?}",
+            d.reasons
+        );
+        assert!(axes.contains(&RouteAxis::Selection));
+        assert!(
+            axes.contains(&RouteAxis::Trust),
+            "Parquet route must record a stats-trust reason (ADR-058 D5)"
+        );
+        // The Selection reason mirrors the human one-liner (never diverges).
+        assert!(
+            d.reasons
+                .iter()
+                .any(|r| r.axis == RouteAxis::Selection && r.detail == d.reason),
+        );
+
+        // Native-storage OLAP: eligible + selected, but NO trust gate (synchronous
+        // native storage, not an external base-snapshot).
+        let n = ComputeScheduler::new().route_select(QueryShape {
+            engages_relational: true,
+            parquet_backed: false,
+            ..Default::default()
+        });
+        assert_eq!(n.backend, ComputeBackend::Native);
+        assert!(n.reasons.iter().any(|r| r.axis == RouteAxis::Eligibility));
+        assert!(
+            !n.reasons.iter().any(|r| r.axis == RouteAxis::Trust),
+            "native storage has no external stats-trust gate: {:?}",
+            n.reasons
+        );
     }
 
     #[test]
@@ -617,7 +1272,7 @@ mod tests {
         };
         let s = ComputeScheduler::new();
         let plain = s.route_select(shape);
-        let advised = s.route_select_advised(shape, None);
+        let advised = s.route_select_advised(shape, None, RouteFlags::default());
         assert_eq!(advised.backend, plain.backend);
         assert_eq!(advised.reason, plain.reason);
     }
@@ -649,7 +1304,11 @@ mod tests {
                 &io_snap(300, 16 << 20),
             );
         }
-        let advised = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        let advised = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
         // Backend is UNCHANGED (observe-mode) ...
         assert_eq!(advised.backend, ComputeBackend::DataFusionLocal);
         // ... but the divergence is disclosed for EXPLAIN/validation.
@@ -673,7 +1332,11 @@ mod tests {
         for _ in 0..3 {
             model.observe("oltp/native", &ComputeBackend::Native, &io_snap(2, 8192));
         }
-        let advised = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        let advised = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
         assert_eq!(advised.backend, ComputeBackend::Native);
         assert!(advised.reason.contains("cost-model concurs"));
     }
@@ -701,7 +1364,11 @@ mod tests {
                 &io_snap(300, 16 << 20),
             );
         }
-        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        let d = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
         // Native is far cheaper, but override is off → static DataFusion holds.
         assert_eq!(d.backend, ComputeBackend::DataFusionLocal);
         assert!(d.reason.contains("would prefer Native") && d.reason.contains("observe-mode"));
@@ -710,9 +1377,16 @@ mod tests {
     #[test]
     fn override_on_flips_olap_parquet_to_the_cheaper_backend() {
         use crate::query::route_cost_model::RouteCostModel;
+        // TD-ROUTE-3: a Native flip is only eligible for a native-servable shape
+        // (ungrouped scalar aggregate) — an Unknown-op shape can never be served by
+        // the native-over-parquet adapter, so flipping the DECISION onto Native
+        // there would mis-attribute (the floor serves). The refined `op=agg` class
+        // consults the warmed `olap/parquet` ancestor cells via hierarchical
+        // fallback.
         let shape = QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            operation_class: OperationClass::ScalarAggregate,
             ..Default::default()
         }; // static => DataFusionLocal
         let model = RouteCostModel::new()
@@ -731,18 +1405,207 @@ mod tests {
                 &io_snap(300, 16 << 20),
             );
         }
-        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        let d = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
         // Override fires: the route is flipped to the measured-cheaper engine.
         assert_eq!(d.backend, ComputeBackend::Native);
         assert!(d.reason.contains("OVERRIDE"));
     }
 
     #[test]
-    fn override_on_explores_under_explored_olap_parquet_candidate() {
+    fn class_scoped_override_gates_on_the_decision_class() {
+        use crate::query::compute_scheduler::{GeometryClass, OperationClass};
+        use crate::query::route_cost_model::{OverrideScope, RouteCostModel, shape_class};
+        // TD-EXEC-2 per-class staged go-live at the router: two shapes whose
+        // refined classes differ only in operation class; the scope enables one
+        // prefix. Warm identical Native-cheaper evidence under BOTH refined
+        // classes — the scoped-in shape flips, the scoped-out shape stays
+        // static (observe-mode advisory only).
+        let scoped_in = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            operation_class: OperationClass::ScalarAggregate,
+            geometry: GeometryClass::from_estimate(3, 1),
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let scoped_out = QueryShape {
+            operation_class: OperationClass::Grouped,
+            ..scoped_in
+        };
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
+        for shape in [scoped_in, scoped_out] {
+            let class = shape_class(&shape);
+            for _ in 0..5 {
+                model.observe(&class, &ComputeBackend::Native, &io_snap(3, 16 << 20));
+                model.observe(
+                    &class,
+                    &ComputeBackend::DataFusionLocal,
+                    &io_snap(300, 16 << 20),
+                );
+            }
+        }
+        model.set_override_scope(OverrideScope::Classes(vec![
+            "olap/parquet/op=agg".to_string(),
+        ]));
+        let d = ComputeScheduler::new().route_select_advised(
+            scoped_in,
+            Some(&model),
+            RouteFlags::default(),
+        );
+        assert_eq!(d.backend, ComputeBackend::Native);
+        assert!(d.reason.contains("OVERRIDE"), "got: {}", d.reason);
+        let d = ComputeScheduler::new().route_select_advised(
+            scoped_out,
+            Some(&model),
+            RouteFlags::default(),
+        );
+        assert_eq!(
+            d.backend,
+            ComputeBackend::DataFusionLocal,
+            "a class outside the override scope must keep its static route"
+        );
+        assert!(
+            !d.reason.contains("OVERRIDE") && !d.reason.contains("EXPLORE"),
+            "scoped-out class must stay observe-only, got: {}",
+            d.reason
+        );
+    }
+
+    #[test]
+    fn override_never_flips_join_bearing_plan_to_native() {
+        use crate::query::route_cost_model::RouteCostModel;
+        // Same warmed model as the flip test — Native measured far cheaper —
+        // but the plan carries a JOIN, which the Native arm cannot serve over
+        // Parquet (TD-ROUTE-1: no multi-table native-over-parquet scan).
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            join_bearing: true,
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
+        model.set_override_enabled(true);
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::Native,
+                &io_snap(3, 16 << 20),
+            );
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(300, 16 << 20),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
+        assert_eq!(
+            d.backend,
+            ComputeBackend::DataFusionLocal,
+            "a join-bearing plan must never be flipped onto Native (no multi-table native-over-parquet scan)"
+        );
+        assert!(
+            d.reason.contains("suppressed"),
+            "eligibility veto must be disclosed, got: {}",
+            d.reason
+        );
+    }
+
+    #[test]
+    fn exploration_skips_native_for_join_bearing_plan() {
         use crate::query::route_cost_model::RouteCostModel;
         let shape = QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            join_bearing: true,
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_exploration_interval(1)
+            .with_recompute_every(1);
+        model.set_override_enabled(true);
+        // DataFusion warm, Native cold — exploration would normally pick Native.
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(4, 8192),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
+        assert_eq!(
+            d.backend,
+            ComputeBackend::DataFusionLocal,
+            "exploration must not route a join-bearing plan onto Native"
+        );
+        assert!(!d.reason.contains("EXPLORE"), "got: {}", d.reason);
+    }
+
+    #[test]
+    fn rtt_budget_flip_respects_join_eligibility() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            join_bearing: true,
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1)
+            .with_rtt_budget(Some(10.0));
+        model.set_override_enabled(true);
+        // Static (DataFusion) blows the RTT budget; Native is within it — but
+        // the plan is join-bearing, so the hard gate must NOT flip to Native.
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::Native,
+                &io_snap(3, 16 << 20),
+            );
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(300, 16 << 20),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
+        assert_eq!(
+            d.backend,
+            ComputeBackend::DataFusionLocal,
+            "the RTT-budget hard gate must not flip a join-bearing plan onto Native"
+        );
+    }
+
+    #[test]
+    fn override_on_explores_under_explored_olap_parquet_candidate() {
+        use crate::query::route_cost_model::RouteCostModel;
+        // TD-ROUTE-3: exploration may only target a native-servable shape
+        // (native-eligible op); the refined `op=agg` class consults the warmed
+        // `olap/parquet` ancestor cells via hierarchical fallback.
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            operation_class: OperationClass::ScalarAggregate,
             ..Default::default()
         }; // static => DataFusionLocal
         let model = RouteCostModel::new()
@@ -758,7 +1621,11 @@ mod tests {
                 &io_snap(4, 8192),
             );
         }
-        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        let d = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
         assert_eq!(
             d.backend,
             ComputeBackend::Native,
@@ -789,7 +1656,11 @@ mod tests {
                 &io_snap(1, 4096),
             );
         }
-        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        let d = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
         assert_eq!(d.backend, ComputeBackend::Native);
         assert!(!d.reason.contains("EXPLORE"));
     }
@@ -822,7 +1693,11 @@ mod tests {
                 &io_snap(1, 4096),
             );
         }
-        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        let d = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
         assert_eq!(
             d.backend,
             ComputeBackend::Native,
@@ -859,7 +1734,11 @@ mod tests {
             parquet_backed: true,
             ..Default::default()
         };
-        let advised = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        let advised = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
         assert_eq!(advised.backend, ComputeBackend::DataFusionLocal);
         assert_eq!(advised.source, RouteSource::Static);
         assert!(!advised.reason.contains("cost-model"));
@@ -868,9 +1747,12 @@ mod tests {
     #[test]
     fn override_sets_decision_source_label() {
         use crate::query::route_cost_model::RouteCostModel;
+        // TD-ROUTE-3: native-eligible shape so the override→Native flip is a valid
+        // (servable) route, not a mis-attribution.
         let shape = QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            operation_class: OperationClass::ScalarAggregate,
             ..Default::default()
         };
         let model = RouteCostModel::new()
@@ -889,7 +1771,11 @@ mod tests {
                 &io_snap(300, 16 << 20),
             );
         }
-        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        let d = ComputeScheduler::new().route_select_advised(
+            shape,
+            Some(&model),
+            RouteFlags::default(),
+        );
         assert_eq!(d.backend, ComputeBackend::Native);
         assert_eq!(d.source, RouteSource::OverrideExploit);
     }

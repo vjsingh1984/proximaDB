@@ -51,6 +51,17 @@ dependencies = [
 
 [[package]]
 name = "ahash"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "891477e0c6a8957309ee5c45a6368af3ae14bb510732d2684ffa19af310920f9"
+dependencies = [
+ "getrandom 0.2.17",
+ "once_cell",
+ "version_check",
+]
+
+[[package]]
+name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
@@ -180,8 +191,8 @@ dependencies = [
  "regex-lite",
  "serde",
  "serde_json",
- "strum",
- "strum_macros",
+ "strum 0.25.0",
+ "strum_macros 0.25.3",
  "thiserror 1.0.69",
  "typed-builder",
  "uuid",
@@ -206,6 +217,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+dependencies = [
+ "derive_arbitrary",
+]
+
+[[package]]
 name = "arc-swap"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -227,6 +247,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
+name = "arrayvec"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
 name = "arrow"
 version = "58.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -241,7 +267,6 @@ dependencies = [
  "arrow-ipc",
  "arrow-json",
  "arrow-ord",
- "arrow-pyarrow",
  "arrow-row",
  "arrow-schema",
  "arrow-select",
@@ -268,7 +293,7 @@ version = "58.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfd33d3e92f207444098c75b42de99d329562be0cf686b307b097cc52b4e999e"
 dependencies = [
- "ahash",
+ "ahash 0.8.12",
  "arrow-buffer",
  "arrow-data",
  "arrow-schema",
@@ -426,18 +451,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrow-pyarrow"
-version = "58.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d29abdf672a81c1aeb57fd2661457f9918964d49aed0e9f18932535f2a9e49ce"
-dependencies = [
- "arrow-array",
- "arrow-data",
- "arrow-schema",
- "pyo3",
-]
-
-[[package]]
 name = "arrow-row"
 version = "58.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -467,7 +480,7 @@ version = "58.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8cd065c54172ac787cf3f2f8d4107e0d3fdc26edba76fdf4f4cc170258942222"
 dependencies = [
- "ahash",
+ "ahash 0.8.12",
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
@@ -1467,6 +1480,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitvec"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddcec3d12c579d40898fe0a9a358a803c23e9c52ca3c425707f81c9436211837"
+dependencies = [
+ "funty",
+ "radium",
+ "tap",
+ "wyz",
+]
+
+[[package]]
 name = "block"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1501,6 +1526,30 @@ dependencies = [
  "futures-io",
  "futures-lite",
  "piper",
+]
+
+[[package]]
+name = "borsh"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3f6da4992df95bbcd9af42a6c7dcb994498fc9048230405f3b36ff7cd3f145"
+dependencies = [
+ "borsh-derive",
+ "bytes",
+ "cfg_aliases",
+]
+
+[[package]]
+name = "borsh-derive"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ae8fb4fb5740e4b2c4884ff95f5f32f5e8479db1e8fd8eb49ddbe09eb09bb7c"
+dependencies = [
+ "once_cell",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1550,6 +1599,28 @@ name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
+
+[[package]]
+name = "bytecheck"
+version = "0.6.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23cdc57ce23ac53c931e88a43d06d070a6fd142f2617be5855eb75efc9beb1c2"
+dependencies = [
+ "bytecheck_derive",
+ "ptr_meta",
+ "simdutf8",
+]
+
+[[package]]
+name = "bytecheck_derive"
+version = "0.6.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db406d29fbcd95542e92559bed4d8ad92636d1ca8b3b72ede10b4bcc010e659"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
 
 [[package]]
 name = "bytemuck"
@@ -2887,6 +2958,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "derive_builder"
 version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2994,10 +3076,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
+name = "duckdb"
+version = "1.10501.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f13bc6d6487032fc2825a62ef8b4924b2378a2eb3166e132e5f3141ae9dd633f"
+dependencies = [
+ "arrow",
+ "cast",
+ "fallible-iterator 0.3.0",
+ "fallible-streaming-iterator",
+ "hashlink 0.10.0",
+ "libduckdb-sys",
+ "num-integer",
+ "rust_decimal",
+ "strum 0.27.2",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
+
+[[package]]
+name = "dyn-clone"
+version = "1.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dyn-stack"
@@ -3248,6 +3353,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
 
 [[package]]
+name = "fallible-iterator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
+
+[[package]]
 name = "fastdivide"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3258,6 +3375,16 @@ name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
+
+[[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -3295,6 +3422,7 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -3414,6 +3542,12 @@ name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
+
+[[package]]
+name = "funty"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "futures"
@@ -3854,6 +3988,15 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+dependencies = [
+ "ahash 0.7.8",
+]
+
+[[package]]
+name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
@@ -3889,6 +4032,15 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
+]
+
+[[package]]
+name = "hashlink"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
+dependencies = [
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -4816,6 +4968,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
+name = "libduckdb-sys"
+version = "1.10501.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12096c1694924782b3fe21e790630b77bacb4fcb7ad9d7ee0fec626f985bf248"
+dependencies = [
+ "cc",
+ "flate2",
+ "pkg-config",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tar",
+ "vcpkg",
+ "zip",
+]
+
+[[package]]
 name = "libflate"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5151,7 +5320,7 @@ version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fde3af1a009ed76a778cb84fdef9e7dbbdf5775ae3e4cc1f434a6a307f6f76c5"
 dependencies = [
- "ahash",
+ "ahash 0.8.12",
  "metrics-macros",
  "portable-atomic",
 ]
@@ -5937,7 +6106,7 @@ version = "58.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5dafa7d01085b62a47dd0c1829550a0a36710ea9c4fe358a05a85477cec8a908"
 dependencies = [
- "ahash",
+ "ahash 0.8.12",
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
@@ -6290,7 +6459,7 @@ dependencies = [
  "base64 0.22.1",
  "byteorder",
  "bytes",
- "fallible-iterator",
+ "fallible-iterator 0.2.0",
  "hmac 0.13.0",
  "md-5 0.11.0",
  "memchr",
@@ -6308,7 +6477,7 @@ dependencies = [
  "array-init",
  "bytes",
  "chrono",
- "fallible-iterator",
+ "fallible-iterator 0.2.0",
  "postgres-protocol",
 ]
 
@@ -6350,6 +6519,15 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "proc-macro-crate"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
+dependencies = [
+ "toml_edit 0.25.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -6485,7 +6663,7 @@ dependencies = [
 
 [[package]]
 name = "proximadb"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -6521,6 +6699,7 @@ dependencies = [
  "dashmap",
  "datafusion",
  "datafusion-common",
+ "duckdb",
  "env_logger",
  "flate2",
  "flume 0.11.1",
@@ -6535,7 +6714,6 @@ dependencies = [
  "hyper 1.10.1",
  "hyper-util",
  "ipnet",
- "jni 0.21.1",
  "jsonpath-rust",
  "jsonwebtoken 10.4.0",
  "lazy_static",
@@ -6548,11 +6726,8 @@ dependencies = [
  "metrics",
  "moka",
  "nalgebra",
- "napi",
- "napi-derive",
  "nom 7.1.3",
  "num_cpus",
- "numpy",
  "object_store",
  "once_cell",
  "opentelemetry",
@@ -6565,44 +6740,68 @@ dependencies = [
  "proptest",
  "prost",
  "prost-types",
+ "proximadb-abac",
  "proximadb-admin-ui",
  "proximadb-api",
+ "proximadb-audit",
+ "proximadb-auth-sso",
+ "proximadb-automl",
  "proximadb-block-format",
  "proximadb-bloom",
  "proximadb-cache",
  "proximadb-catalog",
+ "proximadb-catalog-introspection",
+ "proximadb-cdc",
+ "proximadb-cks-local",
+ "proximadb-clustering-kernel",
  "proximadb-codec",
  "proximadb-compression",
  "proximadb-compression-types",
+ "proximadb-concurrent",
  "proximadb-config",
+ "proximadb-cross-modal-fusion",
  "proximadb-data-model",
  "proximadb-distance-kernel",
  "proximadb-distance-types",
  "proximadb-document",
  "proximadb-document-query",
+ "proximadb-embedded",
  "proximadb-embedded-common",
  "proximadb-embedding",
+ "proximadb-engine-core",
+ "proximadb-execution-contracts",
  "proximadb-filter-expression",
  "proximadb-functions",
  "proximadb-graph",
  "proximadb-graph-arrow",
+ "proximadb-graph-engine-traits",
+ "proximadb-graph-model",
  "proximadb-graph-query",
  "proximadb-graph-subset",
  "proximadb-hardware",
  "proximadb-hardware-caps",
  "proximadb-iceberg-engine",
+ "proximadb-index-storage",
  "proximadb-index-traits",
  "proximadb-index-types",
+ "proximadb-interner",
  "proximadb-kernel",
+ "proximadb-ledger",
  "proximadb-mcp",
+ "proximadb-metrics",
+ "proximadb-mongodb-parser",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
+ "proximadb-network-middleware",
  "proximadb-object-store",
  "proximadb-observability",
+ "proximadb-observability-engine",
  "proximadb-observability-query",
+ "proximadb-orion-engine",
  "proximadb-pipeline-operator",
  "proximadb-proto",
  "proximadb-quantization-kernel",
+ "proximadb-quantization-model",
  "proximadb-quantization-types",
  "proximadb-query",
  "proximadb-query-capability",
@@ -6615,6 +6814,8 @@ dependencies = [
  "proximadb-rank-features",
  "proximadb-rank-onnx",
  "proximadb-rank-profile",
+ "proximadb-raptor-common",
+ "proximadb-raptor-engine",
  "proximadb-records",
  "proximadb-relational-algebra",
  "proximadb-relational-engine",
@@ -6623,6 +6824,7 @@ dependencies = [
  "proximadb-relational-planner",
  "proximadb-relational-reader",
  "proximadb-relational-types",
+ "proximadb-resilience",
  "proximadb-runtime",
  "proximadb-runtime-common",
  "proximadb-sdk",
@@ -6638,14 +6840,15 @@ dependencies = [
  "proximadb-storage-ports",
  "proximadb-storage-strategy",
  "proximadb-storage-tenant",
+ "proximadb-storage-traits",
  "proximadb-storage-transaction",
  "proximadb-telemetry",
  "proximadb-tenant",
  "proximadb-tls",
  "proximadb-uql",
+ "proximadb-utility-scorer",
  "proximadb-vector",
  "proximadb-vector-query",
- "pyo3",
  "rand 0.8.6",
  "rand_chacha 0.3.1",
  "rand_distr",
@@ -6659,6 +6862,7 @@ dependencies = [
  "rocksdb",
  "rustls 0.23.41",
  "rustls-pemfile 2.2.0",
+ "sandhi-core",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -6666,6 +6870,7 @@ dependencies = [
  "snap",
  "sqlparser 0.59.0",
  "sqlx",
+ "stacker",
  "sysinfo",
  "tantivy",
  "tempfile",
@@ -6696,6 +6901,18 @@ dependencies = [
  "x509-parser",
  "xz2",
  "zstd",
+]
+
+[[package]]
+name = "proximadb-abac"
+version = "0.2.0"
+dependencies = [
+ "proximadb-catalog",
+ "proximadb-filter-expression",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -6732,6 +6949,7 @@ dependencies = [
  "proximadb-query-filter",
  "proximadb-records",
  "proximadb-runtime",
+ "proximadb-tenant",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -6743,6 +6961,47 @@ dependencies = [
  "tower-http",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-audit"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dashmap",
+ "proximadb-security",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-auth-sso"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dashmap",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "proximadb-automl"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -6772,6 +7031,7 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-filter-expression",
  "proximadb-records",
+ "rayon",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -6794,10 +7054,14 @@ dependencies = [
 name = "proximadb-cache"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
+ "crc32fast",
  "dashmap",
  "moka",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
  "tokio",
 ]
 
@@ -6806,15 +7070,26 @@ name = "proximadb-catalog"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "arrow-array",
  "arrow-schema",
  "async-trait",
  "aws-config",
  "aws-sdk-glue",
+ "chrono",
  "dashmap",
+ "futures",
+ "object_store",
  "parking_lot",
+ "prost",
+ "proximadb-block-format",
+ "proximadb-cache",
  "proximadb-compression-types",
  "proximadb-data-model",
  "proximadb-distance-types",
+ "proximadb-filter-expression",
+ "proximadb-iceberg-engine",
+ "proximadb-kernel",
+ "proximadb-proto",
  "proximadb-quantization-types",
  "proximadb-records",
  "proximadb-storage-filesystem-types",
@@ -6831,12 +7106,88 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-catalog-introspection"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb",
+ "proximadb-catalog",
+ "proximadb-data-model",
+ "serde",
+ "sqlparser 0.59.0",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "proximadb-cdc"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "futures",
+ "proximadb-config",
+ "rand 0.8.6",
+ "regex",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "proximadb-cks-local"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "proximadb-storage-ports",
+ "tokio",
+]
+
+[[package]]
+name = "proximadb-cks-objectstore"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "object_store",
+ "proximadb-kernel",
+ "proximadb-object-store",
+ "proximadb-storage-ports",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "proximadb-clustering-kernel"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "rand 0.8.6",
+]
+
+[[package]]
 name = "proximadb-codec"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "metal",
+ "proximadb-compression",
+ "proximadb-config",
+ "proximadb-hardware-caps",
+ "proximadb-runtime-common",
+ "rayon",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -6865,6 +7216,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-concurrent"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "dashmap",
+ "serde",
+]
+
+[[package]]
 name = "proximadb-config"
 version = "0.2.0"
 dependencies = [
@@ -6878,11 +7239,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-cross-modal-fusion"
+version = "0.2.0"
+
+[[package]]
 name = "proximadb-data-model"
 version = "0.2.0"
 dependencies = [
  "anyhow",
  "arrow-schema",
+ "prost-types",
+ "proximadb-interner",
+ "proximadb-proto",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -6943,8 +7311,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-embedded"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "arrow-ipc",
+ "bincode",
+ "chrono",
+ "crc32fast",
+ "hostname 0.4.2",
+ "jni 0.21.1",
+ "libc",
+ "napi",
+ "napi-derive",
+ "num_cpus",
+ "numpy",
+ "proximadb",
+ "proximadb-abac",
+ "proximadb-data-model",
+ "proximadb-embedded-common",
+ "proximadb-hardware",
+ "proximadb-records",
+ "proximadb-runtime",
+ "proximadb-tenant",
+ "pyo3",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "proximadb-embedded-common"
 version = "0.2.0"
+dependencies = [
+ "proximadb-data-model",
+ "serde_json",
+]
 
 [[package]]
 name = "proximadb-embedding"
@@ -6977,6 +7384,36 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proximadb-engine-core"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "half",
+ "proximadb-clustering-kernel",
+ "proximadb-compression",
+ "proximadb-distance-kernel",
+ "proximadb-kernel",
+ "proximadb-records",
+ "proximadb-storage-common",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "proximadb-execution-contracts"
+version = "0.2.0"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "arrow-schema",
+ "async-trait",
+ "futures",
  "thiserror 1.0.69",
 ]
 
@@ -7033,6 +7470,24 @@ dependencies = [
  "proximadb-graph-query",
  "proximadb-kernel",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-graph-engine-traits"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "proximadb-compression-types",
+ "proximadb-graph-model",
+ "proximadb-kernel",
+]
+
+[[package]]
+name = "proximadb-graph-model"
+version = "0.2.0"
+dependencies = [
+ "proximadb-proto",
+ "serde",
 ]
 
 [[package]]
@@ -7103,6 +7558,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-index-storage"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "dashmap",
+]
+
+[[package]]
 name = "proximadb-index-traits"
 version = "0.2.0"
 dependencies = [
@@ -7124,6 +7588,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-interner"
+version = "0.2.0"
+dependencies = [
+ "dashmap",
+ "proximadb-kernel",
+]
+
+[[package]]
 name = "proximadb-kernel"
 version = "0.2.0"
 dependencies = [
@@ -7135,6 +7607,15 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-ledger"
+version = "0.2.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "tempfile",
 ]
 
 [[package]]
@@ -7156,6 +7637,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-metrics"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "lazy_static",
+ "prometheus",
+ "proximadb-catalog",
+ "proximadb-config",
+ "proximadb-hardware",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "proximadb-migrate"
 version = "0.2.0"
 dependencies = [
@@ -7165,6 +7668,16 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "proximadb-mongodb-parser"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "nom 7.1.3",
+ "proximadb-proto",
+ "serde_json",
 ]
 
 [[package]]
@@ -7194,6 +7707,20 @@ dependencies = [
  "proximadb-query-filter",
  "proximadb-query-fusion",
  "proximadb-vector-query",
+]
+
+[[package]]
+name = "proximadb-network-middleware"
+version = "0.2.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml 0.8.23",
+ "tower-http",
+ "tracing",
 ]
 
 [[package]]
@@ -7230,11 +7757,84 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-observability-engine"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "chrono-tz",
+ "crossbeam",
+ "dashmap",
+ "futures",
+ "hex",
+ "lettre",
+ "num_cpus",
+ "object_store",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "prometheus",
+ "proximadb-data-model",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-rank-core",
+ "proximadb-rank-onnx",
+ "proximadb-records",
+ "proximadb-search-types",
+ "proximadb-tenant",
+ "regex",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "tantivy",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "proximadb-observability-query"
 version = "0.2.0"
 dependencies = [
  "async-trait",
  "proximadb-kernel",
+]
+
+[[package]]
+name = "proximadb-orion-engine"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "dashmap",
+ "lru 0.18.0",
+ "lz4_flex 0.11.6",
+ "memmap2",
+ "parking_lot",
+ "proximadb-compression-types",
+ "proximadb-distance-kernel",
+ "proximadb-graph",
+ "proximadb-graph-engine-traits",
+ "proximadb-graph-model",
+ "proximadb-kernel",
+ "proximadb-metrics",
+ "proximadb-proto",
+ "proximadb-storage-common",
+ "proximadb-storage-ports",
+ "proximadb-storage-tenant",
+ "rand 0.8.6",
+ "rayon",
+ "serde",
+ "serde_json",
+ "snap",
+ "tokio",
+ "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -7277,15 +7877,26 @@ dependencies = [
  "async-trait",
  "chrono",
  "dashmap",
+ "proximadb-clustering-kernel",
  "proximadb-distance-kernel",
  "proximadb-hardware",
+ "proximadb-quantization-model",
  "proximadb-quantization-types",
+ "proximadb-storage-ports",
  "proximadb-vector",
  "rand 0.8.6",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-quantization-model"
+version = "0.2.0"
+dependencies = [
+ "proximadb-quantization-types",
+ "serde",
 ]
 
 [[package]]
@@ -7351,6 +7962,8 @@ name = "proximadb-query-fusion"
 version = "0.2.0"
 dependencies = [
  "proximadb-data-model",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7449,6 +8062,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-raptor-common"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb-bloom",
+ "proximadb-codec",
+ "proximadb-compression",
+ "proximadb-compression-types",
+ "proximadb-data-model",
+ "proximadb-hardware-caps",
+ "proximadb-proto",
+ "serde",
+]
+
+[[package]]
+name = "proximadb-raptor-engine"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arrow-array",
+ "arrow-ipc",
+ "arrow-schema",
+ "async-trait",
+ "base64 0.22.1",
+ "bincode",
+ "chrono",
+ "dashmap",
+ "prost",
+ "proximadb-bloom",
+ "proximadb-codec",
+ "proximadb-compression",
+ "proximadb-distance-kernel",
+ "proximadb-hardware-caps",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-raptor-common",
+ "proximadb-runtime-common",
+ "proximadb-search-types",
+ "proximadb-storage-filesystem-types",
+ "proximadb-storage-ports",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "proximadb-recall-bench"
 version = "0.2.0"
 dependencies = [
@@ -7516,6 +8176,7 @@ dependencies = [
  "proximadb-relational-reader",
  "proximadb-relational-types",
  "serde",
+ "stacker",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -7542,6 +8203,7 @@ dependencies = [
  "proximadb-relational-reader",
  "proximadb-relational-types",
  "serde",
+ "stacker",
  "thiserror 1.0.69",
 ]
 
@@ -7570,24 +8232,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-resilience"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "rand 0.8.6",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "proximadb-runtime"
 version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
+ "dashmap",
+ "futures",
  "num_cpus",
  "proximadb-config",
  "proximadb-data-model",
+ "proximadb-distance-types",
+ "proximadb-filter-expression",
  "proximadb-graph-query",
  "proximadb-hardware",
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-records",
+ "proximadb-search-types",
+ "proximadb-tenant",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "sysinfo",
  "thiserror 1.0.69",
  "tokio",
+ "tonic",
  "tracing",
  "uuid",
 ]
@@ -7608,12 +8292,13 @@ dependencies = [
 
 [[package]]
 name = "proximadb-sdk"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "httpmock",
  "progenitor-client",
  "proximadb",
+ "proximadb-embedded",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
@@ -7633,6 +8318,7 @@ dependencies = [
  "proximadb-filter-expression",
  "proximadb-kernel",
  "proximadb-proto",
+ "proximadb-quantization-model",
  "proximadb-records",
  "serde",
  "serde_json",
@@ -7682,10 +8368,14 @@ dependencies = [
  "clap",
  "proximadb",
  "proximadb-embedding",
+ "reqwest 0.11.27",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -7694,6 +8384,7 @@ version = "0.2.0"
 dependencies = [
  "jni 0.21.1",
  "proximadb",
+ "proximadb-embedded",
  "tracing",
 ]
 
@@ -7719,6 +8410,7 @@ dependencies = [
  "proximadb-block-format",
  "proximadb-cache",
  "proximadb-catalog",
+ "proximadb-codec",
  "proximadb-compression-types",
  "proximadb-data-model",
  "proximadb-filter-expression",
@@ -7759,6 +8451,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures",
  "memmap2",
  "proximadb-kernel",
  "serde",
@@ -7810,8 +8503,17 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "proximadb-distance-kernel",
+ "proximadb-filter-expression",
+ "proximadb-graph-model",
+ "proximadb-kernel",
  "proximadb-proto",
+ "proximadb-quantization-model",
+ "proximadb-records",
  "proximadb-storage-common",
+ "proximadb-storage-filesystem-types",
+ "serde",
+ "tokio",
 ]
 
 [[package]]
@@ -7839,6 +8541,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-storage-traits"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "proximadb-data-model",
+ "proximadb-distance-kernel",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-quantization-types",
+ "proximadb-records",
+ "proximadb-search-types",
+ "proximadb-storage-common",
+ "proximadb-storage-ports",
+ "proximadb-tenant",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "proximadb-storage-transaction"
 version = "0.2.0"
 dependencies = [
@@ -7863,7 +8588,15 @@ dependencies = [
 name = "proximadb-tenant"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
  "proximadb-proto",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -7905,6 +8638,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-utility-scorer"
+version = "0.2.0"
+
+[[package]]
 name = "proximadb-vector"
 version = "0.2.0"
 dependencies = [
@@ -7917,6 +8654,7 @@ dependencies = [
  "proximadb-hardware",
  "proximadb-kernel",
  "proximadb-proto",
+ "proximadb-quantization-model",
  "proximadb-quantization-types",
  "proximadb-query-filter",
  "proximadb-records",
@@ -7959,6 +8697,26 @@ checksum = "645dbe486e346d9b5de3ef16ede18c26e6c70ad97418f4874b8b1889d6e761ea"
 dependencies = [
  "ar_archive_writer",
  "cc",
+]
+
+[[package]]
+name = "ptr_meta"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0738ccf7ea06b608c10564b31debd4f5bc5e197fc8bfe088f68ae5ce81e7a4f1"
+dependencies = [
+ "ptr_meta_derive",
+]
+
+[[package]]
+name = "ptr_meta_derive"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16b845dbfca988fa33db069c0e230574d15a3088f147a87b64c7589eb662c9ac"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -8169,6 +8927,12 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "radium"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
@@ -8405,6 +9169,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "rend"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71fe3824f5629716b1589be05dacd749f6aa084c87e00e016714a8cdfccc997c"
+dependencies = [
+ "bytecheck",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.11.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8552,6 +9325,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "rkyv"
+version = "0.7.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2297bf9c81a3f0dc96bc9521370b88f054168c29826a75e89c55ff196e7ed6a1"
+dependencies = [
+ "bitvec",
+ "bytecheck",
+ "bytes",
+ "hashbrown 0.12.3",
+ "ptr_meta",
+ "rend",
+ "rkyv_derive",
+ "seahash",
+ "tinyvec",
+ "uuid",
+]
+
+[[package]]
+name = "rkyv_derive"
+version = "0.7.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84d7b42d4b8d06048d3ac8db0eb31bcb942cbeb709f0b5f2b2ebde398d3038f5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "rle-decode-fast"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8618,6 +9420,23 @@ checksum = "e46a2036019fdb888131db7a4c847a1063a7493f971ed94ea82c67eada63ca54"
 dependencies = [
  "serde",
  "serde_derive",
+]
+
+[[package]]
+name = "rust_decimal"
+version = "1.42.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be2a24f50780bc85f09cc6ac299bdf1424302742d77221106859c9d8b102126a"
+dependencies = [
+ "arrayvec",
+ "borsh",
+ "bytes",
+ "num-traits",
+ "rand 0.8.6",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -8836,12 +9655,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "sandhi-core"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd53a6bbdfc8c7f8d82cb7d65ce4a18deedb1e90d5d016eae6360a09ab9096ad"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "time",
+ "tracing",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "schemars"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
+dependencies = [
+ "dyn-clone",
+ "schemars_derive",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -8859,6 +9715,12 @@ dependencies = [
  "ring",
  "untrusted 0.9.0",
 ]
+
+[[package]]
+name = "seahash"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "security-framework"
@@ -8931,6 +9793,17 @@ name = "serde_derive"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "serde_derive_internals"
+version = "0.29.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9270,6 +10143,7 @@ checksum = "4591acadbcf52f0af60eafbb2c003232b2b4cd8de5f0e9437cb8b1b59046cc0f"
 dependencies = [
  "log",
  "recursive",
+ "sqlparser_derive 0.3.0",
 ]
 
 [[package]]
@@ -9279,7 +10153,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c6d1b651dc4edf07eead2a0c6c78016ce971bc2c10da5266861b13f25e7cec"
 dependencies = [
  "log",
- "sqlparser_derive",
+ "sqlparser_derive 0.5.0",
+]
+
+[[package]]
+name = "sqlparser_derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da5fc6819faabb412da764b99d3b713bb55083c11e7e0c00144d386cd6a1939c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -9325,7 +10210,7 @@ dependencies = [
  "futures-io",
  "futures-util",
  "hashbrown 0.16.1",
- "hashlink",
+ "hashlink 0.11.1",
  "indexmap",
  "log",
  "memchr",
@@ -9546,6 +10431,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
 
 [[package]]
+name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros 0.27.2",
+]
+
+[[package]]
 name = "strum_macros"
 version = "0.25.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9555,6 +10449,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
  "syn 2.0.118",
 ]
 
@@ -9837,6 +10743,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "tap"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "target-lexicon"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10087,7 +11010,7 @@ dependencies = [
  "async-trait",
  "byteorder",
  "bytes",
- "fallible-iterator",
+ "fallible-iterator 0.2.0",
  "futures-channel",
  "futures-util",
  "log",
@@ -10170,7 +11093,7 @@ dependencies = [
  "serde",
  "serde_spanned 0.6.9",
  "toml_datetime 0.6.11",
- "toml_edit",
+ "toml_edit 0.22.27",
 ]
 
 [[package]]
@@ -10216,6 +11139,18 @@ dependencies = [
  "toml_datetime 0.6.11",
  "toml_write",
  "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.25.12+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2153edc6955a6c354fad8f5efd38b6a8769bdccf9fe50f8e1329f81b0baa5d7"
+dependencies = [
+ "indexmap",
+ "toml_datetime 1.1.1+spec-1.1.0",
+ "toml_parser",
+ "winnow 1.0.3",
 ]
 
 [[package]]
@@ -10868,6 +11803,7 @@ dependencies = [
  "cfg-if",
  "once_cell",
  "rustversion",
+ "serde",
  "wasm-bindgen-macro",
  "wasm-bindgen-shared",
 ]
@@ -11465,6 +12401,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
+name = "wyz"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
+dependencies = [
+ "tap",
+]
+
+[[package]]
 name = "x509-certificate"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11501,6 +12446,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix 1.1.4",
+]
+
+[[package]]
 name = "xmlparser"
 version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11523,7 +12478,7 @@ checksum = "631a50d867fafb7093e709d75aaee9e0e0d5deb934021fcea25ac2fe09edc51e"
 dependencies = [
  "arraydeque",
  "encoding_rs",
- "hashlink",
+ "hashlink 0.11.1",
 ]
 
 [[package]]
@@ -11653,10 +12608,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb2a05c7c36fde6c09b08576c9f7fb4cda705990f73b58fe011abf7dfb24168b"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "zopfli",
+]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b142a20ec14a91d5bc708c1dc21b080c550113d8aa77afa29635673a65dd02c5"
+
+[[package]]
 name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[package]]
+name = "zopfli"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f05cd8797d63865425ff89b5c4a48804f35ba0ce8d125800027ad6017d2b5249"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zstd"

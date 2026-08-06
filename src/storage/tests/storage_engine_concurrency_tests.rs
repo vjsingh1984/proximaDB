@@ -64,6 +64,7 @@ mod tests {
             vector_encoding_strategy: "FullVector".to_string(),
             block_format: "ProximaBlocks".to_string(),
             tiering: None,
+            ..Default::default()
         });
 
         // Configure write buffer separately
@@ -76,6 +77,7 @@ mod tests {
             write_buffer_directory: base_path.display().to_string(),
             enable_wal: true,
             global_manifest_url: None,
+            ..Default::default()
         };
 
         // For testing, we'll create the engine without collection service

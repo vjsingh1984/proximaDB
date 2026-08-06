@@ -310,15 +310,26 @@ impl SstEngine {
         Ok(results)
     }
 
-    /// Get storage URL for a collection
+    /// Get storage URL for a collection — resolved via the injected
+    /// `CollectionPathResolver` (catalog → config fallback; the single source of
+    /// truth), retiring the `/data/collections/{id}` placeholder. The resolver
+    /// returns the collection ROOT (`{base}/{collection_id}`); `/data` is the
+    /// segment subdirectory (matches `StoragePath::collection_data_path` + the
+    /// flush's `get_collection_storage_url_from_params`). When no resolver is
+    /// injected (un-wired deployment / test), a `ConfigFallbackResolver` is
+    /// default-constructed so the URL is still well-formed. Production wires the
+    /// catalog-coupled resolver via `SharedServices::new`.
     async fn get_collection_storage_url(&self, collection_id: &str) -> Result<String> {
-        // In a real implementation, this would:
-        // 1. Look up the collection's storage assignment
-        // 2. Return the appropriate storage URL
-
-        // For now, use a default path structure
-        let storage_url = format!("/data/collections/{}", collection_id);
-
+        use crate::storage::trait_components::path_resolver::CollectionPathResolver;
+        let root = match self.path_resolver.as_ref() {
+            Some(resolver) => resolver.resolve_base_location(collection_id).await?,
+            None => {
+                crate::storage::trait_components::path_resolver::ConfigFallbackResolver::default()
+                    .resolve_base_location(collection_id)
+                    .await?
+            }
+        };
+        let storage_url = format!("{root}/data");
         debug!(
             "📂 Storage URL for collection {}: {}",
             collection_id, storage_url

@@ -9,6 +9,8 @@ point at deterministic policies:
 * CI and Makefile still invoke that profile
 * architecture docs still separate code presence from support level
 * tenant/path mandates remain visible in the system map
+* Arrow Flight exports bind client paths to the selected collection
+* query ratchets count only executed queries and cloud proofs cover every backend
 * conflict markers are not staged into source/docs
 """
 
@@ -72,6 +74,14 @@ def require_contains(findings: list[Finding], check: str, path: str, needle: str
     text = read_text(path)
     if needle not in text and compact_whitespace(needle) not in compact_whitespace(text):
         findings.append(Finding(check, f"{path} must contain: {needle!r}"))
+
+
+def require_not_contains(
+    findings: list[Finding], check: str, path: str, needle: str
+) -> None:
+    text = read_text(path)
+    if needle in text or compact_whitespace(needle) in compact_whitespace(text):
+        findings.append(Finding(check, f"{path} must not contain: {needle!r}"))
 
 
 def check_nextest_contract(findings: list[Finding]) -> None:
@@ -139,13 +149,43 @@ def check_gate_wiring(findings: list[Finding]) -> None:
         findings,
         "gate-wiring",
         "Makefile",
-        "release-check: work-commit-check",
+        "release-check: work-commit-check proto-check release-smoke query-conformance-check build-server",
+    )
+    require_contains(
+        findings,
+        "gate-wiring",
+        "Makefile",
+        "query-conformance-check:",
+    )
+    require_contains(
+        findings,
+        "gate-wiring",
+        "Makefile",
+        "cargo test --test tpch_pgwire_e2e",
+    )
+    require_contains(
+        findings,
+        "gate-wiring",
+        "Makefile",
+        "cargo test --test tpcds_pgwire_e2e",
     )
     require_contains(
         findings,
         "gate-wiring",
         ".github/workflows/layering-check.yml",
         "python3 scripts/check_tenant_path_guard.py",
+    )
+    require_contains(
+        findings,
+        "gate-wiring",
+        "Makefile",
+        "tenant-ingress-check",
+    )
+    require_contains(
+        findings,
+        "gate-wiring",
+        ".github/workflows/layering-check.yml",
+        "python3 scripts/check_tenant_ingress_contract.py",
     )
 
 
@@ -212,6 +252,74 @@ def check_architecture_contract(findings: list[Finding]) -> None:
     )
 
 
+def check_flight_export_authority(findings: list[Finding]) -> None:
+    handler = "src/network/arrow_ipc/file_export.rs"
+    service = "src/network/arrow_ipc/service.rs"
+
+    require_contains(
+        findings,
+        "flight-export-authority",
+        handler,
+        "pub fn resolve_collection_file(",
+    )
+    require_contains(
+        findings,
+        "flight-export-authority",
+        handler,
+        "pub fn read_collection_file(",
+    )
+    require_contains(
+        findings,
+        "flight-export-authority",
+        service,
+        ".read_collection_file(&collection, &file_ticket.file_path)",
+    )
+    require_not_contains(
+        findings,
+        "flight-export-authority",
+        service,
+        ".read_arrow_file(&file_ticket.file_path)",
+    )
+
+
+def check_query_conformance_authority(findings: list[Finding]) -> None:
+    harness = "tests/tpch_pgwire_e2e.rs"
+    require_contains(
+        findings,
+        "query-conformance-authority",
+        harness,
+        "passed.len() >= TPCH_RATCHET",
+    )
+    require_not_contains(
+        findings,
+        "query-conformance-authority",
+        harness,
+        "passed.len() + skipped.len()",
+    )
+    require_not_contains(
+        findings,
+        "query-conformance-authority",
+        harness,
+        'let skip: &[&str] = &["Q2"]',
+    )
+
+
+def check_object_store_proof_authority(findings: list[Finding]) -> None:
+    launcher = "scripts/prove_object_store_durability.sh"
+    require_contains(
+        findings,
+        "object-store-proof-authority",
+        launcher,
+        "gs://*|gcs://*) feature=gcp ;;",
+    )
+    require_contains(
+        findings,
+        "object-store-proof-authority",
+        "docs/10-quality/td/TD-OBJSTORE-2.adoc",
+        "OSS owns this backend-neutral proof mechanism; anvaiops owns",
+    )
+
+
 def tracked_files() -> list[Path]:
     try:
         output = subprocess.check_output(
@@ -257,11 +365,17 @@ def main() -> int:
     check_nextest_contract(findings)
     check_gate_wiring(findings)
     check_architecture_contract(findings)
+    check_flight_export_authority(findings)
+    check_query_conformance_authority(findings)
+    check_object_store_proof_authority(findings)
     check_conflict_markers(findings)
 
     print("Deterministic commit contract")
     if not findings:
-        print("OK: nextest, CI/Makefile wiring, architecture guards, and conflict-marker checks pass.")
+        print(
+            "OK: nextest, CI/Makefile wiring, architecture guards, Flight/query/object-store "
+            "authorities, and conflict-marker checks pass."
+        )
         return 0
 
     print(f"FAILED: {len(findings)} finding(s)")

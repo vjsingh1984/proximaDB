@@ -76,7 +76,6 @@ use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::trait_components::path_resolver::{
     collection_data_path_typed, collection_index_path_typed, collection_wal_path_typed,
-    typed_paths_enabled,
 };
 use proximadb_storage_common::storage_path::StoragePath;
 
@@ -576,6 +575,54 @@ impl CollectionService {
         Ok(response)
     }
 
+    /// Idempotent get-or-create by name for the document canonical-vector route (ADR-055
+    /// P-Provision): build a minimal `CollectionConfig` and create it, treating an already-existing
+    /// collection as success. `dimension == 0` ⇒ a vectorless (pure-document) collection. The v1
+    /// `CollectionConfig`/`StorageEngine` construction lives HERE (where those types are already in
+    /// scope) so callers (e.g. `RecordOpsService::ensure_collection`) stay v1-proto-free (TD-123).
+    pub async fn get_or_create_by_name(
+        &self,
+        name: &str,
+        dimension: u32,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+        promote_keys: &[String],
+    ) -> Result<()> {
+        // P-Shred follow-up (ADR-055): declared hot keys become filterable columns (typed, id >= 100
+        // in the catalog schema), which `catalog_schema_from_collection` then registers as
+        // props-auto-promotion `promoted_keys` for document collections — so those props shred into
+        // typed user-columns at flush. Default type Text/String; the shred writer coerces per value.
+        let filterable_columns = promote_keys
+            .iter()
+            .filter(|k| !k.is_empty())
+            .map(|k| crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: k.clone(),
+                indexed: true,
+                supports_range: true,
+                ..Default::default()
+            })
+            .collect();
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension,
+            storage_engine: Some(StorageEngine::Sst as i32),
+            enable_proxima_record: Some(true),
+            filterable_columns,
+            ..Default::default()
+        };
+        let resp = self
+            .create_collection_with_tenant_context(&config, tenant_context)
+            .await?;
+        if resp.success || resp.error_code.as_deref() == Some("COLLECTION_EXISTS") {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "get_or_create_by_name '{}' failed: {:?}",
+                name,
+                resp.error_code
+            ))
+        }
+    }
+
     /// Create collection with tenant context validation
     pub async fn create_collection_with_tenant_context(
         &self,
@@ -682,24 +729,34 @@ impl CollectionService {
         if let Some(recall_target) =
             crate::services::collection::recall_target::parse_recall_target(&enriched_config)
         {
-            let applied = crate::services::collection::recall_target::apply_advisor_to_indexes(
-                &mut enriched_config,
-                recall_target,
-            );
-            for advice in &applied {
-                tracing::info!(
-                    target: "collection.recall_target",
-                    collection = %enriched_config.name,
-                    index = %advice.index_name,
-                    recall_target = recall_target,
-                    algorithm = %advice.output.kind.label(),
-                    clamped_by_budget = advice.output.clamped_by_budget,
-                    projected_recall = ?advice.output.projected_recall,
-                    estimated_memory_mb = advice.output.estimated_memory_mb,
-                    estimated_per_query_work = advice.output.estimated_per_query_work,
-                    rationale = %advice.output.rationale,
-                    "auto-sized index from recall_target"
+            // The advisor sizes AXIS HNSW/IVF params — skipped in a PAX-exact-scan
+            // (`axis` off) build; the recall_target tag is still parsed above so the
+            // rest of collection-create is unaffected.
+            #[cfg(feature = "axis")]
+            {
+                let applied = crate::services::collection::recall_target::apply_advisor_to_indexes(
+                    &mut enriched_config,
+                    recall_target,
                 );
+                for advice in &applied {
+                    tracing::info!(
+                        target: "collection.recall_target",
+                        collection = %enriched_config.name,
+                        index = %advice.index_name,
+                        recall_target = recall_target,
+                        algorithm = %advice.output.kind.label(),
+                        clamped_by_budget = advice.output.clamped_by_budget,
+                        projected_recall = ?advice.output.projected_recall,
+                        estimated_memory_mb = advice.output.estimated_memory_mb,
+                        estimated_per_query_work = advice.output.estimated_per_query_work,
+                        rationale = %advice.output.rationale,
+                        "auto-sized index from recall_target"
+                    );
+                }
+            }
+            #[cfg(not(feature = "axis"))]
+            {
+                let _ = recall_target;
             }
         }
 
@@ -742,7 +799,9 @@ impl CollectionService {
         if let Some(ref mut storage_cfg) = enriched_config.storage_config {
             let resolved_compression = self.resolve_compression_config(
                 None, // No existing compression config to resolve from
-                config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
+                enriched_config
+                    .storage_engine
+                    .unwrap_or(StorageEngine::Sst as i32),
             );
             if let Some(compression_config) = resolved_compression {
                 storage_cfg.compression = Some(compression_config.algorithm);
@@ -1037,12 +1096,13 @@ impl CollectionService {
         // The account string is derived from the tenant context inside
         // `mint_typed_identity_for_collection` (Phase 4 collapses tenant into
         // account; see the helper for the rationale + the Phase 5 forward-note).
-        let typed_identity = if typed_paths_enabled() {
-            self.mint_typed_identity_for_collection(tenant_context, &enriched_config.name, &uuid)
-                .await
-        } else {
-            None
-        };
+        // ADR-0083 rev2 D3: the composite is ALWAYS minted (not env-gated) —
+        // it is the sole collection identity. The PATH layout stays env-gated
+        // (typed_paths_enabled), but the composite on StorageAssignment is
+        // always Some so admission/flush/compaction can key on it.
+        let typed_identity = self
+            .mint_typed_identity_for_collection(tenant_context, &enriched_config.name, &uuid)
+            .await;
 
         // Create storage directories (tenant-isolated if multi-tenant mode)
         let tenant_id = tenant_context.map(|ctx| ctx.tenant_id.as_str());
@@ -1052,7 +1112,9 @@ impl CollectionService {
                 &enriched_config.name,
                 &uuid,
                 tenant_id,
-                typed_identity,
+                crate::storage::trait_components::path_resolver::typed_path_identity(
+                    typed_identity,
+                ),
             )
             .await
             .context("Failed to create storage directories")?;
@@ -1092,7 +1154,9 @@ impl CollectionService {
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
                 primary_path: tenant_base_location.clone(),
                 backup_paths: vec![],
-                engine: config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
+                engine: enriched_config
+                    .storage_engine
+                    .unwrap_or(StorageEngine::Sst as i32),
                 engine_config: std::collections::HashMap::new(),
                 base_location: tenant_base_location.clone(), // Tenant-prefixed path
                 assigned_at: chrono::Utc::now().timestamp_micros(),
@@ -1951,10 +2015,13 @@ impl CollectionService {
         // `MiddlewareTenantContext.account_id` is a separate (Phase 5) field not
         // threaded to the storage-layer `StorageTenantContext` yet; when it is,
         // prefer it here. Until then the tenant IS the account (Phase 4 collapse).
-        let account = tenant_context.map(|ctx| ctx.tenant_id.as_str())?;
-        if account.is_empty() {
-            return None;
-        }
+        // ADR-0083 rev2 D3: always mint — assign "default" account for
+        // embedded/single-tenant paths (no tenant_context). The composite is
+        // the sole collection identity, so it must be Some on every create.
+        let account = tenant_context
+            .map(|ctx| ctx.tenant_id.as_str())
+            .filter(|a| !a.is_empty())
+            .unwrap_or("default");
         // Derive the namespace_key the SAME way `upsert_collection_catalog_asset`
         // → `collection_table_identifier` scopes the asset: parse the qualified
         // name, default the namespace to `["default"]` when bare (mirrors
@@ -2149,6 +2216,19 @@ impl CollectionService {
                             warn!(
                                 "⚠️ Failed to check existence of collection directory {}: {}",
                                 collection_dir, e
+                            );
+                        }
+                    }
+                    if cleaned_components == 3 {
+                        let purged = crate::storage::engines::sst::core::purge_warm_tier_prefix(
+                            &collection_dir,
+                        )
+                        .await;
+                        if purged > 0 {
+                            debug!(
+                                collection_dir,
+                                purged,
+                                "Reclaimed retired collection entries from the PAX warm tier"
                             );
                         }
                     }
@@ -2361,7 +2441,7 @@ impl CollectionService {
         // ADR-031: the collection ID is the stable object_id (u64) as a decimal
         // string — NOT a UUID. The monotonic allocator guarantees uniqueness by
         // construction (no retry loop needed). base62 is reserved for path
-        // segments only (DrResolvedPath), not the collection.id variable.
+        // segments only (DrCollectionPath), not the collection.id variable.
         Ok(generate_numeric_collection_id())
     }
 }
@@ -2378,7 +2458,7 @@ static COLLECTION_ID_ALLOCATOR: std::sync::OnceLock<proximadb_catalog::id_alloca
 /// the canonical identity, never stringified for keying/lookup). Its
 /// client-facing string form (the `collection.id` API field) is the **decimal**
 /// `object_id` — numeric, opaque, JSON-safe. The **base62** encoding is reserved
-/// strictly for object-store *path segments* (`DrResolvedPath`), where
+/// strictly for object-store *path segments* (`DrCollectionPath`), where
 /// zero-padded base62 gives lexicographic S3 LIST order; it is NOT used for the
 /// `collection.id` variable.
 fn generate_numeric_collection_id() -> String {

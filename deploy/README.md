@@ -334,5 +334,5 @@ curl http://localhost:5678/health
 ## Support
 
 - Documentation: https://docs.proximadb.io
-- Issues: https://github.com/vjsingh1984/proximadb/issues
-- Discussions: https://github.com/vjsingh1984/proximadb/discussions
+- Issues: https://github.com/anvai-labs/proximaDB/issues
+- Discussions: https://github.com/anvai-labs/proximaDB/discussions

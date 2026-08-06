@@ -690,6 +690,7 @@ mod tests {
 
     fn create_test_index_entries() -> Vec<IndexEntry> {
         vec![IndexEntry {
+            block_radius: 0.0,
             key: "vec1".to_string(),
             last_key: None,
             offset: 0,

@@ -21,6 +21,12 @@ the support contract, that tier wins for customer and release-note claims.
 vision delivered through a narrow, reliable supported MVP surface. See
 link:../12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc[the Data
 Warehouse & Engineering course correction] for the active architectural direction.
+
+*Executable MVP contract (2026-08-03):* acquisition starts one step narrower, with canonical REST
+v2 typed context records, metadata scan, and vector retrieval on single-tenant, single-node SST. The exact promise,
+exclusions, release evidence, and activation targets are machine-readable in
+link:MVP_TRUST_CORRIDOR.toml[MVP_TRUST_CORRIDOR.toml]. pgwire joins that corridor only after its
+identity/ABAC gates close; its implementation presence alone is not a support claim.
 ====
 
 == Product Overview
@@ -31,7 +37,12 @@ ProximaDB v0.2.0 is *The Context Database* -- a unified engine purpose-built for
 
 === Positioning Statement
 
-For AI/ML engineers, platform engineers, data engineers, and trading system developers who need to store and query contextual data across multiple modalities, ProximaDB is a unified multi-model database that eliminates the operational complexity of managing separate vector, document, graph, time-series, and event stores. Unlike Pinecone (vectors only), Neo4j (graphs only), or TimescaleDB (time-series only), ProximaDB provides cross-model SQL joins, embedded deployment, and sub-millisecond latency in a single Rust binary.
+For AI application and platform engineers who currently join a vector index back to operational
+metadata, ProximaDB is object-storage-native context serving for SQL, JSON, and vectors: one typed
+record, one canonical API, and query-scoped physical-cost evidence. Unlike a feature checklist,
+the MVP promise is a tested create/write/filter/search/get/delete corridor. Graph, document,
+observability, broader SQL, and distributed execution remain explicit graduation paths rather than
+claims bundled into the first sale.
 
 === Primary Personas
 
@@ -663,7 +674,8 @@ Theme: Production-ready with distributed consensus and security hardening.
 
 | Cross-Model ACID Transactions
 | Saga pattern, compensating transactions, read-your-writes consistency
-| ✅ Complete (Mar 2026, TD-038; 2PC with durable participants, MVCC isolation)
+| Experimental foundation only; participant durability, rollback, isolation, and restart
+  conformance remain release gates. pgwire transaction control is unsupported in v0.2.
 
 | SOC 2 Type II Compliance
 | Encryption at rest, complete RBAC, audit trail integrity, change management

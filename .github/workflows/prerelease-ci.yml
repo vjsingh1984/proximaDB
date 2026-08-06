@@ -68,7 +68,7 @@ concurrency:
   # Dedup push+PR of the same branch into one group; cancel superseded
   # runs on feature/PR branches, but let protected-branch runs finish.
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'development' }}
+  cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'develop' }}
 
 jobs:
   # ============================================================================
@@ -564,7 +564,7 @@ jobs:
   #           -n proximadb \
   #           -v "$VERSION" \
   #           --description "ProximaDB - Cloud-native vector database" \
-  #           --url "https://github.com/vjsingh1984/proximadb" \
+  #           --url "https://github.com/anvai-labs/proximaDB" \
   #           --license "Apache-2.0" \
   #           --after-install packaging/scripts/postinstall.sh \
   #           rpm_build/=/
@@ -608,7 +608,7 @@ jobs:
   #         cp -r config/* deb_build/etc/proximadb/ 2>/dev/null || true
   #
   #         # Build DEB (single line to avoid parsing issues)
-  #         fpm -s dir -t deb -n proximadb -v "$VERSION" --description "ProximaDB - Cloud-native vector database" --url "https://github.com/vjsingh1984/proximadb" --license "Apache-2.0" --deb-systemd deb_build/=/
+  #         fpm -s dir -t deb -n proximadb -v "$VERSION" --description "ProximaDB - Cloud-native vector database" --url "https://github.com/anvai-labs/proximaDB" --license "Apache-2.0" --deb-systemd deb_build/=/
   #
   #     - name: Upload DEB Artifact
   #       uses: actions/upload-artifact@v4

@@ -296,6 +296,16 @@ fn project_embedded_record(r: EmbeddedRecord, tenant_id: &str, now_ns: i64) -> P
     for (k, v) in r.metadata {
         props.insert(k, ProximaTreeNode::Value(ProximaValue::String(v)));
     }
+    // #950: the tenant must be queryable, not just carried on the isolation
+    // field — metadata filters and record GET read `props`. The envelope
+    // metadata normally carries the producer's stamp already; this makes the
+    // sink self-sufficient (server value wins over any conflicting metadata).
+    if !tenant_id.is_empty() {
+        props.insert(
+            "tenant_id".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String(tenant_id.to_string())),
+        );
+    }
     let (values, precision) = match r.target_precision {
         None | Some(proximadb_records::EmbeddingScalarType::Fp32) => (
             proximadb_records::EmbeddingValues::Fp32(r.vector),
@@ -466,6 +476,37 @@ mod tests {
             }
             other => panic!("expected Fp16, got {:?}", other.scalar_type()),
         }
+    }
+
+    /// #950: the queued /documents path must persist a queryable tenant stamp.
+    /// The isolation field AND the `tenant_id` prop (what metadata filters and
+    /// record GET read) both carry the request tenant, and the server value
+    /// overrides a conflicting client-supplied `tenant_id` metadata entry.
+    #[test]
+    fn project_embedded_record_stamps_tenant_field_and_prop() {
+        let mut embedded = make_embedded(None);
+        embedded
+            .metadata
+            .insert("tenant_id".to_string(), "spoofed".to_string());
+        embedded
+            .metadata
+            .insert("source".to_string(), "uat".to_string());
+        let r = project_embedded_record(embedded, "demo1", 1_000);
+        assert_eq!(r.tenant_id, "demo1");
+        assert_eq!(
+            r.props.get("tenant_id"),
+            Some(&ProximaTreeNode::Value(ProximaValue::String(
+                "demo1".to_string()
+            ))),
+            "server tenant must win over client-supplied metadata"
+        );
+        assert_eq!(
+            r.props.get("source"),
+            Some(&ProximaTreeNode::Value(ProximaValue::String(
+                "uat".to_string()
+            ))),
+            "user metadata must survive the envelope"
+        );
     }
 
     #[test]

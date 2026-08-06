@@ -13,6 +13,7 @@
 //!
 //! See `docs/12-design/PHASE8_CONTINUOUS_LOOP_HLD_LLD_2026_05_28.adoc` (F1).
 
+#[cfg(feature = "axis")]
 mod drift;
 mod executor;
 mod job;
@@ -21,6 +22,7 @@ mod registry;
 mod service;
 mod trigger;
 
+#[cfg(feature = "axis")]
 pub use drift::{
     DEFAULT_DRIFT_INTERVAL, DEFAULT_DRIFT_THRESHOLD_WRITES, DriftWatcher, drift_exceeds,
     interval_from_env, spawn_drift_watcher, threshold_writes_from_env,

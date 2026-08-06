@@ -525,8 +525,28 @@ def test_search(monkeypatch):
     assert results[0].id == "r1"
     assert results[0].score == pytest.approx(0.9)
     assert results[0].vector == []
+    # TD-FLIGHT-1: the ticket is the canonical v2 shape (type:"vector_search"
+    # + query_vector), not the legacy v1 keys the server mis-parsed.
     ticket = fake.calls[0][1]
     assert b"col" in ticket.ticket
+    assert b"vector_search" in ticket.ticket
+    assert b"query_vector" in ticket.ticket
+
+
+def test_search_reads_properties(monkeypatch):
+    """The v2 response's `properties` column (full props map as JSON) is decoded
+    into the result metadata (TD-FLIGHT-1)."""
+    import json as _json
+
+    cols = {
+        "id": pa.array(["r1"]),
+        "score": pa.array([0.9], type=pa.float32()),
+        "properties": pa.array([_json.dumps({"category": "books", "year": 2024})]),
+    }
+    c, fake = make_client(monkeypatch)
+    fake.search_chunks = [FakeSearchChunk(pa.record_batch(cols))]
+    results = c.search("col", [0.1, 0.2], top_k=1)
+    assert results[0].metadata == {"category": "books", "year": 2024}
 
 
 def test_search_include_vectors(monkeypatch):

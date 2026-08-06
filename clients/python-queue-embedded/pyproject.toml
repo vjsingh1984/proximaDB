@@ -6,10 +6,10 @@ build-backend = "maturin"
 name = "proximadb_queue_embedded"
 version = "0.2.0"
 description = "ProximaDB Queue (Embedded) — in-process tiered persistent queue with Python bindings"
-authors = [{name = "Vijaykumar Singh", email = "singhvjd@gmail.com"}]
+authors = [{name = "Vijaykumar Singh", email = "vijay@anvaiops.com"}]
 license = {text = "Apache-2.0"}
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 keywords = ["queue", "persistent", "pyo3", "tokio", "wal", "lsm"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -27,8 +27,8 @@ dev = [
 ]
 
 [tool.maturin]
-# Build the queue crate directly (it lives under crates/modalities/).
-manifest-path = "../../crates/modalities/proximadb-queue/Cargo.toml"
+# Build the queue crate directly (it lives under crates/horizontal/).
+manifest-path = "../../crates/horizontal/proximadb-queue/Cargo.toml"
 features = ["proximadb-queue/python"]
 python-source = "src"
 module-name = "proximadb_queue_embedded._native"

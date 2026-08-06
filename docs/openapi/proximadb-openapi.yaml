@@ -1827,6 +1827,76 @@ components:
       - results
       - total
       type: object
+    SqlRequest:
+      description: |-
+        One SQL statement executed through the shared SQL authority.
+
+        Parameter binding is intentionally not advertised yet: the relational
+        execution port currently has no typed binding contract. Callers must not be
+        offered a field that an adapter would silently ignore or interpolate.
+      properties:
+        collection:
+          description: Optional collection context used by vector/graph SQL extensions.
+          type:
+          - string
+          - 'null'
+        query:
+          maxLength: 1048576
+          minLength: 1
+          type: string
+        timeout_ms:
+          description: Per-request deadline. Defaults to 30 seconds and is capped at 5 minutes.
+          format: int64
+          maximum: 300000
+          minimum: 1
+          type:
+          - integer
+          - 'null'
+      required:
+      - query
+      type: object
+    SqlResponse:
+      description: |-
+        Stable JSON envelope for SQL reads and writes.
+
+        For reads, `rows_returned` is the row count. For DDL/DML, the shared SQL
+        authority reports the affected count in `rows_returned` and `rows` is empty.
+      properties:
+        column_types:
+          items:
+            type: string
+          type: array
+        columns:
+          items:
+            type: string
+          type: array
+        execution_time_ms:
+          format: int64
+          minimum: 0
+          type: integer
+        request_id:
+          type: string
+        rows:
+          items:
+            type: object
+          type: array
+        rows_returned:
+          format: int64
+          minimum: 0
+          type: integer
+        rows_scanned:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - rows
+      - columns
+      - column_types
+      - rows_returned
+      - rows_scanned
+      - execution_time_ms
+      - request_id
+      type: object
     TextFieldInput:
       description: |-
         Input format for TEXT fields
@@ -2230,7 +2300,7 @@ components:
       type: http
 info:
   contact:
-    email: singhvjd@gmail.com
+    email: vijay@anvaiops.com
     name: Vijaykumar Singh
   description: SDK-facing ProximaDB REST contract. This specification is v2-first and centers on ProximaRecord, typed schemas, record search, and collection lifecycle operations. Legacy v1 compatibility routes are intentionally not part of this publishable SDK surface.
   license:
@@ -2245,6 +2315,13 @@ paths:
       description: |
         Advertises API version, supported features, limits, and the error- envelope contract so SDKs can adapt instead of hard-coding assumptions.
       operationId: getCapabilities
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -2298,6 +2375,12 @@ paths:
         required: false
         schema:
           type: boolean
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -2326,6 +2409,13 @@ paths:
         - `409 Conflict`: Collection already exists
         - `500 Internal Server Error`: Creation failed
       operationId: createCollection
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -2360,6 +2450,12 @@ paths:
         in: path
         name: collection_id
         required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
         schema:
           type: string
       responses:
@@ -2402,6 +2498,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -2427,6 +2529,12 @@ paths:
         in: path
         name: collection_id
         required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
         schema:
           type: string
       requestBody:
@@ -2467,6 +2575,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -2502,6 +2616,12 @@ paths:
         in: path
         name: collection_id
         required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
         schema:
           type: string
       requestBody:
@@ -2547,6 +2667,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -2581,6 +2707,12 @@ paths:
         in: path
         name: entity_id
         required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
         schema:
           type: string
       responses:
@@ -2630,6 +2762,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -2668,6 +2806,12 @@ paths:
         in: path
         name: collection_id
         required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
         schema:
           type: string
       requestBody:
@@ -2713,6 +2857,12 @@ paths:
         in: path
         name: record_id
         required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
         schema:
           type: string
       responses:
@@ -2773,6 +2923,12 @@ paths:
         required: false
         schema:
           type: boolean
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -2812,6 +2968,12 @@ paths:
         in: path
         name: collection_id
         required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
         schema:
           type: string
       responses:
@@ -2865,6 +3027,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -2913,6 +3081,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -2938,6 +3112,13 @@ paths:
   /api/v2/document-collections:
     get:
       operationId: listDocumentCollections
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -2951,6 +3132,13 @@ paths:
       - Documents
     post:
       operationId: createDocumentCollection
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -2972,6 +3160,13 @@ paths:
   /api/v2/document-collections/{collection}/documents:
     get:
       operationId: queryDocuments
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -2991,6 +3186,13 @@ paths:
         type: string
     post:
       operationId: insertDocument
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3014,6 +3216,13 @@ paths:
   /api/v2/graphs:
     get:
       operationId: listGraphs
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -3026,6 +3235,13 @@ paths:
       - Graphs
     post:
       operationId: createGraph
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3047,6 +3263,13 @@ paths:
   /api/v2/graphs/{graph_id}:
     delete:
       operationId: deleteGraph
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -3061,6 +3284,13 @@ paths:
       - Graphs
     get:
       operationId: getGraph
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -3080,6 +3310,13 @@ paths:
     - $ref: '#/components/parameters/GraphId'
     post:
       operationId: createEdge
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3107,6 +3344,13 @@ paths:
       description: |
         Batch counterpart to `createEdge`.
       operationId: batchCreateEdges
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3135,6 +3379,12 @@ paths:
         in: path
         name: graph_id
         required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
         schema:
           type: string
       requestBody:
@@ -3175,6 +3425,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3210,6 +3466,13 @@ paths:
     - $ref: '#/components/parameters/GraphId'
     post:
       operationId: createNode
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3238,6 +3501,13 @@ paths:
         Batch counterpart to `createNode`. Use this on bulk-ingest paths
         where individual round-trips would dominate latency.
       operationId: batchCreateNodes
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3261,6 +3531,13 @@ paths:
   /api/v2/graphs/{graph_id}/nodes/{node_id}:
     delete:
       operationId: deleteNode
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -3275,6 +3552,13 @@ paths:
       - Graphs
     get:
       operationId: getNode
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -3293,6 +3577,13 @@ paths:
   /api/v2/graphs/{graph_id}/stats:
     get:
       operationId: getGraphStats
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -3310,6 +3601,13 @@ paths:
     - $ref: '#/components/parameters/GraphId'
     post:
       operationId: traverseGraph
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3331,6 +3629,13 @@ paths:
   /api/v2/hybrid/index:
     post:
       operationId: hybridIndex
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3355,6 +3660,13 @@ paths:
   /api/v2/hybrid/search:
     post:
       operationId: hybridSearch
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3399,6 +3711,13 @@ paths:
         type: string
     post:
       operationId: ingestLog
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3426,6 +3745,13 @@ paths:
         type: string
     post:
       operationId: queryLogs
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3449,10 +3775,18 @@ paths:
       description: |-
         The canonical unified query surface: UQL (unified multi-modal), federated SQL
         extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-        pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
-        pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
-        only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
+        UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
+        this endpoint remains their canonical home. Authenticated programmatic SQL
+        is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
+        replacement for this UQL/federated surface.
       operationId: executeQuery
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3478,6 +3812,13 @@ paths:
   /api/v2/query/explain:
     post:
       operationId: explainQuery
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3500,9 +3841,70 @@ paths:
       summary: Explain an AQL or UQL query through the shared query facade.
       tags:
       - Query
+  /api/v2/sql:
+    post:
+      description: |-
+        The required foundation identity is inserted by the root tenant middleware
+        after authentication. A router mounted without that middleware fails closed
+        at extraction instead of constructing an anonymous authorization carrier.
+      operationId: executeSql
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SqlRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SqlResponse'
+          description: SQL result or write count.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid SQL request.
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Query deadline exceeded.
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Write lock conflict.
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: SQL execution failure.
+      summary: Execute one authenticated SQL statement.
+      tags:
+      - SQL
   /health:
     get:
       operationId: getHealth
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -3517,6 +3919,13 @@ paths:
   /health/live:
     get:
       operationId: getLiveness
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -3531,6 +3940,13 @@ paths:
   /health/ready:
     get:
       operationId: getReadiness
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           content:
@@ -3558,6 +3974,8 @@ tags:
   name: Search
 - description: AQL / UQL query facade.
   name: Query
+- description: Authenticated single-statement SQL transport.
+  name: SQL
 - description: Entity orchestration (graph node + embeddings + provenance).
   name: Entities
 - description: Native-embedding document ingest.

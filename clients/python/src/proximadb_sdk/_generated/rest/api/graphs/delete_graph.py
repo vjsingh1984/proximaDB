@@ -12,12 +12,17 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.delete_graph_response import DeleteGraphResponse
 from ...models.error_response import ErrorResponse
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     graph_id: str,
+    *,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "delete",
@@ -26,6 +31,7 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -61,11 +67,13 @@ def sync_detailed(
     graph_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[DeleteGraphResponse, ErrorResponse]]:
     """Delete a graph collection.
 
     Args:
         graph_id (str):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -77,6 +85,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         graph_id=graph_id,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -90,11 +99,13 @@ def sync(
     graph_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[DeleteGraphResponse, ErrorResponse]]:
     """Delete a graph collection.
 
     Args:
         graph_id (str):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -107,6 +118,7 @@ def sync(
     return sync_detailed(
         graph_id=graph_id,
         client=client,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -114,11 +126,13 @@ async def asyncio_detailed(
     graph_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[DeleteGraphResponse, ErrorResponse]]:
     """Delete a graph collection.
 
     Args:
         graph_id (str):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,6 +144,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         graph_id=graph_id,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -141,11 +156,13 @@ async def asyncio(
     graph_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[DeleteGraphResponse, ErrorResponse]]:
     """Delete a graph collection.
 
     Args:
         graph_id (str):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -159,5 +176,6 @@ async def asyncio(
         await asyncio_detailed(
             graph_id=graph_id,
             client=client,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

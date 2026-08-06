@@ -47,7 +47,7 @@ use crate::api_handlers::{
 use crate::errors::{ApiError, ApiResult};
 use crate::network::auth::middleware::DataPlaneCapability;
 use crate::network::middleware::tenant::TenantContext;
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::services::{
     WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
 };
@@ -1299,13 +1299,32 @@ pub async fn insert_records(
             // HTTP 404 here so SDK consumers and curl users see the same
             // signal. Other failure codes still flow through the body, which
             // matches the batched per-record contract.
-            if !resp.success && resp.error_code.as_deref() == Some("NOT_FOUND") {
-                return Err(ApiError::NotFound(
-                    resp.errors
-                        .into_iter()
-                        .next()
-                        .unwrap_or_else(|| format!("Collection '{}' not found", collection)),
-                ));
+            if !resp.success {
+                if resp.error_code.as_deref() == Some("NOT_FOUND") {
+                    return Err(ApiError::NotFound(
+                        resp.errors
+                            .into_iter()
+                            .next()
+                            .unwrap_or_else(|| format!("Collection '{}' not found", collection)),
+                    ));
+                }
+                // ADR-069 S4: the whole batch was shed by write-admission
+                // backpressure — surface 429 / RESOURCE_EXHAUSTED so the client
+                // retries with backoff. (`WAL_BACKPRESSURE` is raised inside the
+                // write path; `WAL_LANE_REJECTED` is the #951 pre-write lane
+                // rejection. No partial results to represent — unlike a partial
+                // success, the batch was wholly rejected.)
+                if matches!(
+                    resp.error_code.as_deref(),
+                    Some("WAL_BACKPRESSURE") | Some("WAL_LANE_REJECTED")
+                ) {
+                    return Err(ApiError::ResourceExhausted(
+                        resp.errors.into_iter().next().unwrap_or_else(|| {
+                            "WAL write-admission backpressure; retry after a flush drains"
+                                .to_string()
+                        }),
+                    ));
+                }
             }
             // Check for success - if successful, all records were inserted
             let validation_error_count = errors.len();
@@ -1351,7 +1370,12 @@ pub async fn insert_records(
         }
         Err(e) => {
             error!("V2 API: Batch insert failed: {}", e);
-            Err(ApiError::Internal(format!("Insert failed: {}", e)))
+            // ADR-069 S4: promote a WalBackpressure in the chain to a retryable
+            // status (429 / RESOURCE_EXHAUSTED) instead of a non-retryable 500.
+            // NOTE: the batch path folds WAL-lane rejections into Ok(success=false)
+            // (#951), so this arm sees backpressure only on Err-propagating inserts;
+            // end-to-end 429 for the batch path is the TD-WAL-1 S4 residual.
+            Err(ApiError::from_write_error("Insert failed", e))
         }
     }
 }
@@ -1595,13 +1619,13 @@ pub async fn search_with_typed_filters(
     // below this — but small enough that a single bad request can't
     // exhaust memory. Operators can raise it via an env var if they
     // need a wider window for benchmark or batch-export shapes.
-    let max_top_k: usize = std::env::var("PROXIMADB_MAX_SEARCH_TOP_K")
+    let max_top_k: usize = std::env::var("PROXIMADB_SEARCH_MAX_TOP_K")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(10_000);
     if request.top_k > max_top_k {
         return Err(ApiError::InvalidArgument(format!(
-            "top_k={} exceeds server cap {} (set PROXIMADB_MAX_SEARCH_TOP_K to override)",
+            "top_k={} exceeds server cap {} (set PROXIMADB_SEARCH_MAX_TOP_K to override)",
             request.top_k, max_top_k
         )));
     }
@@ -1653,13 +1677,19 @@ pub async fn search_with_typed_filters(
         turboquant_hints,
         vector_bounds_pruned_blocks,
         egress_bytes,
-    ) = crate::observability::io_trace::instrument(
+        object_store_gets,
+        object_store_bytes_read,
+    ) = crate::observability::io_trace::instrument_with_stable_tenant(
         Some(tenant.tenant_id.clone()),
+        tenant.tenant_stable_id,
         "rest.v2.records.search",
         crate::observability::predicate_diagnostics::scope(async {
             let outcome = state
                 .record_ops
-                .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
+                .handle_record_search_for_tenant(
+                    search_request,
+                    proximadb_runtime::PortIdentity::from(&tenant),
+                )
                 .await;
             let downgraded =
                 crate::observability::predicate_diagnostics::take_quantized_downgrade();
@@ -1684,9 +1714,16 @@ pub async fn search_with_typed_filters(
             // ends when this future completes — same constraint as the takes
             // above). 0 on the free same-AZ path. Flowed into the response
             // SearchPlanTrace as actual_egress_gb (the KEU billing quantity).
-            let egress_bytes = crate::observability::io_trace::snapshot()
-                .map(|s| s.egress_bytes)
-                .unwrap_or(0);
+            // TD-IOTRACE-2: read the physical object-store meters alongside
+            // egress — range_gets (the accurate ranged-GET count) + bytes_read —
+            // BEFORE this scope closes (the task-local binding ends when this
+            // future completes). Flowed into the response SearchPlanTrace as
+            // object_store_gets / object_store_bytes_read (the physical KRU
+            // billing input, TD-IOTRACE-3). 0 when no I/O occurred.
+            let (egress_bytes, object_store_gets, object_store_bytes_read) =
+                crate::observability::io_trace::snapshot()
+                    .map(|s| (s.egress_bytes, s.range_gets, s.bytes_read))
+                    .unwrap_or((0, 0, 0));
             (
                 outcome,
                 downgraded,
@@ -1694,6 +1731,8 @@ pub async fn search_with_typed_filters(
                 tq_hints,
                 vb_pruned,
                 egress_bytes,
+                object_store_gets,
+                object_store_bytes_read,
             )
         }),
     )
@@ -1806,7 +1845,10 @@ pub async fn search_with_typed_filters(
                     trace_id: request_id.clone(),
                     tenant_id: tenant.tenant_id.clone(),
                     collection_name: collection.clone(),
-                    plan: &cached_plan.plan,
+                    filter_strategy: cached_plan.plan.filter_strategy.clone(),
+                    index_route: cached_plan.plan.index_route.clone(),
+                    estimated_selectivity: cached_plan.plan.estimated_selectivity,
+                    gls_score: cached_plan.plan.gls_score,
                     latency_ms: latency_ms as f64,
                     index_stats: crate::core::service_types::IndexStats::default(),
                     candidate_count: results.len() as u32,
@@ -1825,6 +1867,11 @@ pub async fn search_with_typed_filters(
                     // in-scope above → actual_egress_gb (the KEU billing quantity
                     // the control plane prices). 0 on the free same-AZ path.
                     egress_bytes,
+                    // TD-IOTRACE-2: physical object-store meters from the
+                    // io_trace snapshot (captured in-scope above). The physical
+                    // KRU billing input (TD-IOTRACE-3).
+                    object_store_gets,
+                    object_store_bytes_read,
                     // TD-064: shortfall is now a first-class field on the
                     // service response (`resp.predicate_shortfall`),
                     // recomputed authoritatively against the final merged
@@ -2057,7 +2104,7 @@ pub async fn get_record_v2(
                 include_vector,
                 include_props: true,
             },
-            Some(&tenant.tenant_id),
+            proximadb_runtime::PortIdentity::from(&tenant),
         )
         .await
     {

@@ -45,7 +45,7 @@ impl PgwireTestServer {
         // falls through for pgwire-created tables, but forcing it off keeps the
         // test deterministic and immune to a future PATH B that reads real data.
         unsafe {
-            std::env::set_var("PROXIMADB_NEW_RELATIONAL_PIPELINE", "0");
+            std::env::set_var("PROXIMADB_PGWIRE_RELATIONAL_PIPELINE", "0");
         }
 
         let pg_port = free_port();

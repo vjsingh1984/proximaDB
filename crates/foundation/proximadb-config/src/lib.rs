@@ -114,6 +114,17 @@ pub struct ApiConfig {
     #[serde(default)]
     pub pg_port: Option<u16>,
 
+    /// Optional override for the unified-mode internal multiplexer upstream
+    /// port (the loopback gRPC + Arrow Flight listener the TCP multiplexer
+    /// forwards HTTP/2 to). When `None` (the default), the port is resolved
+    /// from the `PROXIMADB_INTERNAL_MUX_PORT` env var, else derived as
+    /// `unified_port + 10001` (5678 → 15679, the historical constant), so
+    /// co-hosted instances with distinct unified ports get distinct internal
+    /// upstreams instead of hijacking each other's gRPC/Flight traffic
+    /// (TD-NET-1).
+    #[serde(default)]
+    pub internal_mux_port: Option<u16>,
+
     /// Optional port for the reference MCP (Model Context Protocol) surface
     /// (ADR-037 Decision 5). When `None` (the default) the MCP transport is
     /// **off** — it is bound only when a port is configured here (or via the
@@ -191,6 +202,7 @@ impl Default for ApiConfig {
             http2_max_concurrent_streams: 1000,
             max_connections: 10000,
             pg_port: None,
+            internal_mux_port: None,
             mcp_port: None,
             transport: default_transport(),
             socket_dir: None,
@@ -252,6 +264,14 @@ pub struct ServerConfig {
     /// without the section keep parsing (and keep the dashboard off).
     #[serde(default)]
     pub admin_ui: AdminUiConfig,
+
+    /// Request tenant resolution mode for protocol edges.
+    ///
+    /// Defaults to `auto` for mixed-read-safe compatibility: startup derives
+    /// the historic behavior from security mode until operators explicitly set
+    /// `single_tenant` or `multi_tenant`.
+    #[serde(default)]
+    pub tenant: ServerTenantConfig,
 }
 
 /// Configuration for the read-only embedded admin dashboard served at `/admin`.
@@ -266,6 +286,67 @@ pub struct AdminUiConfig {
     /// (`bool::default()`).
     #[serde(default)]
     pub enabled: bool,
+
+    /// Enable client-side auto-refresh of the dashboard. Default: `false`
+    /// (`bool::default()`). When `false`, the auto-refresh toggle in the UI is
+    /// rendered **disabled** (greyed out) and the page only refreshes on an
+    /// explicit click — an operator must opt in here to allow live polling.
+    /// The setting is server-injected into the page; it does not persist per
+    /// user session beyond the configured default.
+    #[serde(default)]
+    pub auto_refresh: bool,
+
+    /// Auto-refresh poll interval in seconds. Default: `30`. Only takes effect
+    /// when `auto_refresh = true`. Clamped to a minimum of `5` at serve time so
+    /// a misconfigured tiny interval cannot DoS the diagnostic endpoints.
+    #[serde(default = "default_admin_refresh_interval")]
+    pub refresh_interval_seconds: u32,
+}
+
+/// Default admin-dashboard auto-refresh interval (seconds).
+fn default_admin_refresh_interval() -> u32 {
+    30
+}
+
+/// Request-tenant resolution mode encoded in TOML.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerTenantMode {
+    /// Preserve the pre-existing runtime heuristic while operators roll out an
+    /// explicit mode. This is compatibility-only; production SaaS deployments
+    /// should set `multi_tenant`.
+    #[default]
+    Auto,
+    /// Missing tenant signal resolves to `default_tenant`.
+    SingleTenant,
+    /// Every request must carry an explicit tenant signal at the edge.
+    MultiTenant,
+}
+
+/// Server-level tenant configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServerTenantConfig {
+    /// Deployment mode: `auto`, `single_tenant`, or `multi_tenant`.
+    #[serde(default)]
+    pub mode: ServerTenantMode,
+
+    /// Default tenant used only in `single_tenant` mode, or when `auto`
+    /// resolves to single-tenant.
+    #[serde(default = "default_request_tenant")]
+    pub default_tenant: String,
+}
+
+impl Default for ServerTenantConfig {
+    fn default() -> Self {
+        Self {
+            mode: ServerTenantMode::Auto,
+            default_tenant: default_request_tenant(),
+        }
+    }
+}
+
+fn default_request_tenant() -> String {
+    "default".to_string()
 }
 
 impl Default for ServerConfig {
@@ -277,6 +358,7 @@ impl Default for ServerConfig {
             grpc_port: None,
             data_dir: PathBuf::from("./data"),
             admin_ui: AdminUiConfig::default(),
+            tenant: ServerTenantConfig::default(),
         }
     }
 }
@@ -495,95 +577,6 @@ impl Default for HardwareConfig {
             gpu_min_batch_size: 100,
         }
     }
-}
-
-/// Metadata backend configuration for cloud and local storage.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetadataBackendConfig {
-    /// Backend type (filestore, memory).
-    pub backend_type: String,
-
-    /// Storage URL (file://, s3://, adls://, gcs://).
-    pub storage_url: String,
-
-    /// Cloud-specific configuration.
-    pub cloud_config: Option<CloudStorageConfig>,
-
-    /// In-memory cache size in megabytes for metadata.
-    pub cache_size_mb: Option<u64>,
-
-    /// Interval in seconds between metadata flush operations.
-    pub flush_interval_secs: Option<u64>,
-}
-
-impl Default for MetadataBackendConfig {
-    fn default() -> Self {
-        Self {
-            backend_type: "filestore".to_string(),
-            storage_url: "file://./metadata".to_string(),
-            cloud_config: None,
-            cache_size_mb: Some(256),
-            flush_interval_secs: Some(60),
-        }
-    }
-}
-
-/// Cloud storage configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CloudStorageConfig {
-    /// AWS S3 configuration.
-    pub s3_config: Option<S3Config>,
-
-    /// Azure Blob Storage configuration.
-    pub azure_config: Option<AzureConfig>,
-
-    /// Google Cloud Storage configuration.
-    pub gcs_config: Option<GcsConfig>,
-}
-
-/// AWS S3 configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct S3Config {
-    /// AWS region (e.g., "us-east-1").
-    pub region: String,
-    /// S3 bucket name.
-    pub bucket: String,
-    /// AWS access key ID (optional if using IAM role).
-    pub access_key_id: Option<String>,
-    /// AWS secret access key (optional if using IAM role).
-    pub secret_access_key: Option<String>,
-    /// Use IAM role-based authentication instead of static keys.
-    pub use_iam_role: bool,
-    /// Custom S3-compatible endpoint URL (e.g., MinIO).
-    pub endpoint: Option<String>,
-}
-
-/// Azure Blob Storage configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AzureConfig {
-    /// Azure Storage account name.
-    pub account_name: String,
-    /// Blob container name.
-    pub container: String,
-    /// Storage account access key (optional if using managed identity).
-    pub access_key: Option<String>,
-    /// Shared Access Signature token (optional).
-    pub sas_token: Option<String>,
-    /// Use Azure Managed Identity for authentication.
-    pub use_managed_identity: bool,
-}
-
-/// Google Cloud Storage configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GcsConfig {
-    /// Google Cloud project ID.
-    pub project_id: String,
-    /// GCS bucket name.
-    pub bucket: String,
-    /// Path to the service account JSON key file.
-    pub service_account_path: Option<String>,
-    /// Use GKE Workload Identity for authentication.
-    pub use_workload_identity: bool,
 }
 
 /// Filesystem configuration for performance optimization.
@@ -825,10 +818,25 @@ pub struct CompactionConfig {
     /// L0 file count threshold for compaction.
     pub l0_file_threshold: usize,
 
+    /// Query-visible file-count threshold for L1 and higher levels.
+    ///
+    /// This is intentionally lower than the L0 admission threshold: L0
+    /// batches writes, while every steady-state higher-level segment adds a
+    /// search cascade. Two is the smallest threshold that actually reduces
+    /// fanout: a pair of immutable segments is merged once, while the
+    /// single-file rewrite guard prevents pointless level promotion.
+    #[serde(default = "default_higher_level_file_threshold")]
+    pub higher_level_file_threshold: usize,
+
     /// L0 size threshold in MB for compaction.
     pub l0_size_threshold_mb: usize,
 
-    /// Multiplier for higher level thresholds.
+    /// Multiplier for higher-level file-count thresholds.
+    ///
+    /// Vector search pays a read-amplification cost for every query-visible
+    /// segment, so the default is deliberately `1.0`: every level consolidates
+    /// at the L0 threshold. A RocksDB-style `2.0` default optimizes write
+    /// amplification but lets L1/L2 segment counts grow geometrically.
     pub level_multiplier: f64,
 
     /// Maximum number of levels.
@@ -839,19 +847,116 @@ pub struct CompactionConfig {
 
     /// Target output file size in MB for size-based compaction.
     pub target_file_size_mb: usize,
+
+    /// Conservative peak-memory estimate per byte of input segment data.
+    ///
+    /// The initial `12.0` default includes headroom over the 9.85x incremental
+    /// RSS measured by the 3.3M-vector PAX compaction benchmark. This is an
+    /// admission estimate, not an allocation limit; operators can tighten it
+    /// as the streaming writer reduces measured amplification.
+    #[serde(default = "default_compaction_memory_amplification")]
+    pub memory_amplification_factor: f64,
+
+    /// Maximum share of process-visible capacity reserved for compactions.
+    /// Process-visible capacity is cgroup-constrained in containers.
+    #[serde(default = "default_compaction_memory_budget_fraction")]
+    pub memory_budget_fraction: f64,
+
+    /// Maximum share of currently available memory that compactions may
+    /// reserve. This live-pressure guard is applied in addition to the stable
+    /// capacity fraction.
+    #[serde(default = "default_compaction_available_memory_fraction")]
+    pub available_memory_fraction: f64,
+
+    /// Optional absolute ceiling for all in-flight compaction reservations.
+    /// Zero means automatic sizing from capacity and live availability.
+    #[serde(default)]
+    pub max_memory_mb: u64,
+
+    /// Enable deterministic local-disk spill when an otherwise eligible
+    /// compaction does not fit the in-memory projection. Default-off keeps the
+    /// existing execution path behavior-neutral until spill has baked.
+    #[serde(default)]
+    pub spill_enabled: bool,
+
+    /// Local scratch directory used only for recoverable compaction
+    /// intermediates. This must be a filesystem path, not an object-store URL.
+    #[serde(default)]
+    pub spill_directory: Option<String>,
+
+    /// Fixed RAM reservation for one spill compaction worker.
+    #[serde(default = "default_compaction_spill_working_memory_mb")]
+    pub spill_working_memory_mb: u64,
+
+    /// Conservative scratch-space reservation per byte of input segment data.
+    /// The 10x default includes 33% headroom over the 7.53x logical scratch
+    /// peak measured by the release/Azurite 3.3M PAX spill benchmark. Scratch
+    /// expands compressed input into external record and f32/cell-order runs
+    /// while the disk-backed PAX writer builds its output components.
+    #[serde(default = "default_compaction_spill_scratch_amplification")]
+    pub spill_scratch_amplification_factor: f64,
+
+    /// Maximum share of currently available scratch space that all spill
+    /// compactions may reserve.
+    #[serde(default = "default_compaction_spill_available_disk_fraction")]
+    pub spill_available_disk_fraction: f64,
+
+    /// Optional absolute ceiling for all in-flight scratch reservations.
+    /// Zero means automatic sizing from live disk availability.
+    #[serde(default)]
+    pub spill_max_disk_mb: u64,
 }
 
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
             l0_file_threshold: 5,
+            higher_level_file_threshold: default_higher_level_file_threshold(),
             l0_size_threshold_mb: 256,
-            level_multiplier: 2.0,
+            level_multiplier: 1.0,
             max_levels: 7,
             strategy: "hybrid".to_string(),
             target_file_size_mb: 128,
+            memory_amplification_factor: default_compaction_memory_amplification(),
+            memory_budget_fraction: default_compaction_memory_budget_fraction(),
+            available_memory_fraction: default_compaction_available_memory_fraction(),
+            max_memory_mb: 0,
+            spill_enabled: false,
+            spill_directory: None,
+            spill_working_memory_mb: default_compaction_spill_working_memory_mb(),
+            spill_scratch_amplification_factor: default_compaction_spill_scratch_amplification(),
+            spill_available_disk_fraction: default_compaction_spill_available_disk_fraction(),
+            spill_max_disk_mb: 0,
         }
     }
+}
+
+fn default_higher_level_file_threshold() -> usize {
+    2
+}
+
+fn default_compaction_memory_amplification() -> f64 {
+    12.0
+}
+
+fn default_compaction_memory_budget_fraction() -> f64 {
+    0.25
+}
+
+fn default_compaction_available_memory_fraction() -> f64 {
+    0.5
+}
+
+fn default_compaction_spill_working_memory_mb() -> u64 {
+    512
+}
+
+fn default_compaction_spill_scratch_amplification() -> f64 {
+    10.0
+}
+
+fn default_compaction_spill_available_disk_fraction() -> f64 {
+    0.5
 }
 
 /// Performance optimization configuration.
@@ -866,6 +971,14 @@ pub struct OptimizationConfig {
     pub enable_zone_map_pruning: bool,
 
     /// Enable AXIS indexes for approximate nearest neighbor search.
+    ///
+    /// Runtime master switch; the Cargo `axis` feature must also be compiled
+    /// and the collection must explicitly declare `index_configs`. Default is
+    /// `false` per ADR-070: the co-design PAX scan + survivor cache is the
+    /// default ANN path. The lightweight manager value may still be
+    /// constructed to keep the compile-time type graph stable, but it is not
+    /// registered with serving and no AXIS maintenance loops start while this
+    /// flag is false.
     #[serde(default = "default_enable_axis_indexes")]
     pub enable_axis_indexes: bool,
 
@@ -891,7 +1004,8 @@ fn default_enable_zone_map_pruning() -> bool {
 }
 
 fn default_enable_axis_indexes() -> bool {
-    true
+    // ADR-070: co-design (PAX scan + survivor cache) is the default ANN path.
+    false
 }
 
 fn default_index_type() -> String {
@@ -962,76 +1076,14 @@ impl Default for AdvancedPruneConfig {
     }
 }
 
-/// WAL storage configuration supporting multiple directories and cloud storage.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalStorageConfig {
-    /// Distribution strategy for collections across storage locations.
-    pub distribution_strategy: WalDistributionStrategy,
-
-    /// Whether to keep each collection on a single WAL directory.
-    pub collection_affinity: bool,
-
-    /// Memory flush threshold per collection (bytes).
-    pub memory_flush_size_bytes: usize,
-
-    /// Global WAL size threshold for forced flush (bytes).
-    pub global_flush_threshold: usize,
-
-    /// WAL strategy type (Avro vs Bincode).
-    pub strategy_type: Option<String>,
-
-    /// Memtable type for memory structure.
-    pub memtable_type: Option<String>,
-
-    /// Sync mode for durability vs performance tradeoff.
-    pub sync_mode: Option<String>,
-
-    /// Batch threshold for operations.
-    pub batch_threshold: Option<usize>,
-
-    /// Write buffer size in MB.
-    pub write_buffer_size_mb: Option<usize>,
-
-    /// Maximum concurrent flush operations.
-    pub concurrent_flushes: Option<usize>,
-
-    /// Shrink factor for global threshold management (percentage).
-    pub global_shrink_factor: Option<f64>,
-
-    /// Global manifest location (optional - explicit configuration).
-    pub global_manifest_url: Option<String>,
-}
-
-/// Strategy for distributing WAL segments across multiple storage directories.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub enum WalDistributionStrategy {
-    /// Round-robin across WAL directories.
-    RoundRobin,
-    /// Hash-based distribution (consistent).
-    Hash,
-    /// Load-balanced distribution (dynamic).
-    #[default]
-    LoadBalanced,
-}
-
-impl Default for WalStorageConfig {
-    fn default() -> Self {
-        Self {
-            global_manifest_url: None,
-            distribution_strategy: WalDistributionStrategy::LoadBalanced,
-            collection_affinity: true,
-            memory_flush_size_bytes: 10 * 1024 * 1024,
-            global_flush_threshold: 4 * 1024 * 1024 * 1024,
-            strategy_type: None,
-            memtable_type: None,
-            sync_mode: None,
-            batch_threshold: None,
-            write_buffer_size_mb: None,
-            concurrent_flushes: None,
-            global_shrink_factor: Some(0.4),
-        }
-    }
-}
+// NOTE: `WalStorageConfig` + `WalDistributionStrategy` were RETIRED
+// (TD-CONFIG-CONSOLIDATE-1, Core Directive #19). They were a stranded
+// decomposition duplicate of the LIVE `WriteBufferUserConfig` (src/core/config.rs)
+// — extracted into this foundation crate but never wired into the assembled
+// `CoreStorageConfig`, and consumed only by a test-only `From<&WalStorageConfig>
+// for WALConfig`. Keeping the dead twin caused drift (fields added to each in
+// parallel). The canonical WAL config is `WriteBufferUserConfig`; do NOT
+// re-add a foundation twin.
 
 // ---------------------------------------------------------------------------
 // Embedding-precision rollout (PR 3 of EMBEDDING_PRECISION_LLD_2026_05_22)
@@ -1125,20 +1177,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wal_storage_defaults_match_root_runtime_expectations() {
-        let config = WalStorageConfig::default();
-
-        assert!(matches!(
-            config.distribution_strategy,
-            WalDistributionStrategy::LoadBalanced
-        ));
-        assert!(config.collection_affinity);
-        assert_eq!(config.memory_flush_size_bytes, 10 * 1024 * 1024);
-        assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024);
-        assert_eq!(config.global_shrink_factor, Some(0.4));
-    }
-
-    #[test]
     fn hardware_defaults_match_root_runtime_expectations() {
         let config = HardwareConfig::default();
 
@@ -1150,17 +1188,6 @@ mod tests {
         assert!(config.enable_gpu_similarity);
         assert_eq!(config.gpu_min_vector_size, 64);
         assert_eq!(config.gpu_min_batch_size, 100);
-    }
-
-    #[test]
-    fn metadata_backend_defaults_match_root_runtime_expectations() {
-        let config = MetadataBackendConfig::default();
-
-        assert_eq!(config.backend_type, "filestore");
-        assert_eq!(config.storage_url, "file://./metadata");
-        assert!(config.cloud_config.is_none());
-        assert_eq!(config.cache_size_mb, Some(256));
-        assert_eq!(config.flush_interval_secs, Some(60));
     }
 
     #[test]
@@ -1206,6 +1233,33 @@ mod tests {
         assert!(config.enable_arrow_flight);
         assert_eq!(config.http2_max_concurrent_streams, 1000);
         assert_eq!(config.max_connections, 10000);
+        assert_eq!(config.pg_port, None);
+        assert_eq!(config.internal_mux_port, None);
+    }
+
+    /// TD-NET-1 S1: `[api] internal_mux_port` deserializes when present and
+    /// defaults to `None` when absent (same optional-port pattern as
+    /// `pg_port`).
+    #[test]
+    fn api_internal_mux_port_parses_and_defaults_none() {
+        let mut value = serde_json::to_value(ApiConfig::default())
+            .unwrap_or_else(|e| panic!("default api config must serialize: {e}"));
+        let obj = value
+            .as_object_mut()
+            .unwrap_or_else(|| panic!("api config must serialize to a JSON object"));
+
+        obj.insert("internal_mux_port".to_string(), serde_json::json!(25679));
+        let parsed: ApiConfig = serde_json::from_value(value.clone())
+            .unwrap_or_else(|e| panic!("api config with internal_mux_port must parse: {e}"));
+        assert_eq!(parsed.internal_mux_port, Some(25679));
+
+        let obj = value
+            .as_object_mut()
+            .unwrap_or_else(|| panic!("api config must serialize to a JSON object"));
+        obj.remove("internal_mux_port");
+        let absent: ApiConfig = serde_json::from_value(value)
+            .unwrap_or_else(|e| panic!("api config without internal_mux_port must parse: {e}"));
+        assert_eq!(absent.internal_mux_port, None);
     }
 
     #[test]
@@ -1316,8 +1370,16 @@ mod tests {
         let config = CompactionConfig::default();
 
         assert_eq!(config.l0_file_threshold, 5);
+        assert_eq!(
+            config.higher_level_file_threshold, 2,
+            "two query-visible files must consolidate instead of stranding a pair"
+        );
         assert_eq!(config.l0_size_threshold_mb, 256);
-        assert_eq!(config.level_multiplier, 2.0);
+        assert_eq!(
+            config.level_multiplier, 1.0,
+            "vector-search levels must consolidate at the L0 threshold; \
+             a RocksDB-style 2.0 multiplier strands query-visible segments"
+        );
         assert_eq!(config.max_levels, 7);
         assert_eq!(config.strategy, "hybrid");
         assert_eq!(config.target_file_size_mb, 128);
@@ -1329,7 +1391,8 @@ mod tests {
 
         assert!(config.enable_mmap);
         assert!(config.enable_zone_map_pruning);
-        assert!(config.enable_axis_indexes);
+        // ADR-070: AXIS is opt-in; co-design PAX + survivor cache is the default.
+        assert!(!config.enable_axis_indexes);
         assert_eq!(config.default_index_type, "hnsw");
         assert!(config.enable_progressive_search);
         assert!(config.enable_bloom_filters);

@@ -543,7 +543,7 @@ impl AxisManager {
     /// `index_persist_url`/`index_persist_dir` conventions in
     /// [`index_fs_and_path`](Self::index_fs_and_path), so the index path is
     /// authoritative-from-catalog (relocatable/tierable per projection). The boot
-    /// adapter computes this via `DrResolvedPath::resolve_index_location`
+    /// adapter computes this via `DrCollectionPath::resolve_index_location`
     /// (projection `location`, else the derived `indexes/<projection>/` default).
     ///
     /// `&self` + async because the location memo is interior-mutable (filled at
@@ -1707,7 +1707,7 @@ impl AxisManager {
                 // this site built `AxisHnswConfig { distance_metric,
                 // ..Default::default() }`, ignoring the strategy spec's
                 // m / ef_construction / ef_search entirely. Customers
-                // (and the bench) had to use the PROXIMADB_BENCH_HNSW_EF
+                // (and the bench) had to use the (un-prefixed) BENCH_HNSW_EF
                 // env override to influence search behaviour because
                 // the `IndexAlgorithm::HNSW { m, ef_construction,
                 // ef_search, max_elements }` fields they put in their
@@ -1919,27 +1919,17 @@ impl AxisManager {
             Arc::new(HashMap::new())
         };
 
-        let predicate_id_filters = query.id_filters.clone();
+        // F7 / TD-HYBRID-1 D2: one compiled predicate (id filters + metadata
+        // expression) shared by the traversal closure below and the residual
+        // re-filter further down, replacing three hand-rolled copies.
+        let compiled_filter = crate::core::search::CompiledGlobalFilter::new(
+            query.id_filters.clone(),
+            metadata_expression.clone(),
+        );
         let predicate_metadata = Arc::clone(&metadata_by_id);
-        let predicate_expression = metadata_expression.clone();
-        let predicate = move |id: &str| -> bool {
-            if !predicate_id_filters.is_empty()
-                && !predicate_id_filters
-                    .iter()
-                    .any(|filter_id| filter_id.as_str() == id)
-            {
-                return false;
-            }
-
-            let Some(expr) = &predicate_expression else {
-                return true;
-            };
-            let Some(metadata) = predicate_metadata.get(id) else {
-                return false;
-            };
-
-            crate::core::search::json_comparison::evaluate_filter(expr, metadata)
-        };
+        let predicate_filter = compiled_filter.clone();
+        let predicate =
+            move |id: &str| -> bool { predicate_filter.matches(id, predicate_metadata.get(id)) };
 
         // TD-064 / ADR-011 §4.3: oversample to absorb post-filter recall loss.
         // PostFilter uses the catalog policy's effective_top_k_for_post_filter
@@ -1980,20 +1970,7 @@ impl AxisManager {
         let metric = index.distance_metric();
         let results: Vec<ScoredResult> = raw
             .into_iter()
-            .filter(|(id, _)| {
-                if !query.id_filters.is_empty() && !query.id_filters.contains(id) {
-                    return false;
-                }
-
-                let Some(expr) = &metadata_expression else {
-                    return true;
-                };
-                let Some(metadata) = metadata_by_id.get(id) else {
-                    return false;
-                };
-
-                crate::core::search::json_comparison::evaluate_filter(expr, metadata)
-            })
+            .filter(|(id, _)| compiled_filter.matches(id, metadata_by_id.get(id)))
             .take(query.top_k)
             .map(|(id, raw_distance)| {
                 let raw_for_similarity = if metric.is_similarity() {
@@ -3501,6 +3478,14 @@ impl AxisManager {
         self.hnsw_indexes.read().await.contains_key(collection_id)
     }
 
+    /// Whether a published ANN index currently serves this collection.
+    ///
+    /// Continuous reclustering is maintenance for an existing served index;
+    /// it must not bootstrap one by first materializing the entire collection.
+    pub async fn has_served_index(&self, collection_id: &str) -> bool {
+        self.has_ivf_index(collection_id).await || self.has_hnsw_index(collection_id).await
+    }
+
     /// Phase 8 F1 recluster apply-step for HNSW-served collections: rebuild the
     /// collection's HNSW graph from a complete record set and **atomically swap**
     /// it in as the served index. Same atomic-swap pattern as the IVF path — a
@@ -4384,18 +4369,18 @@ impl AxisManager {
         } else {
             Some(self.metadata_filters_to_expression(&query.metadata_filters))
         };
+        // F7 / TD-HYBRID-1 D2: same compiled predicate as the Inline path — the
+        // exact branch applies it to every record, id filter then metadata.
+        let compiled_filter = crate::core::search::CompiledGlobalFilter::new(
+            query.id_filters.clone(),
+            metadata_expression,
+        );
 
         let mut results = Vec::new();
 
         for record in records {
-            if !query.id_filters.is_empty() && !query.id_filters.contains(&record.oid) {
-                continue;
-            }
-
             let metadata = self.record_filter_metadata(&record);
-            if let Some(expr) = &metadata_expression
-                && !crate::core::search::json_comparison::evaluate_filter(expr, &metadata)
-            {
+            if !compiled_filter.matches(&record.oid, Some(&metadata)) {
                 continue;
             }
 
@@ -4577,8 +4562,8 @@ impl AxisManager {
     /// ## Process
     ///
     /// 1. Initialize HMGI components if not already done
-    /// 2. Register collection as HMGI-enabled
-    /// 3. Migrate existing vectors to modality partitions
+    /// 2. Migrate existing vectors to owned modality partitions
+    /// 3. Publish the collection as HMGI-enabled
     ///
     /// ## Example
     ///
@@ -4591,22 +4576,50 @@ impl AxisManager {
         modality_field: Option<String>,
         oid: u64,
     ) -> Result<()> {
+        if self.is_hmgi_enabled(collection_id).await {
+            let existing_oid = self
+                .hmgi_collection_oids
+                .read()
+                .await
+                .get(collection_id)
+                .copied()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "HMGI lifecycle state for collection '{collection_id}' has no OID"
+                    )
+                })?;
+            if existing_oid == oid {
+                return Ok(());
+            }
+            anyhow::bail!(
+                "HMGI collection '{collection_id}' is already bound to OID {existing_oid}; \
+                 disable it before binding OID {oid}"
+            );
+        }
+
         // Store the field for logging before moving
         let field_display = modality_field.clone();
 
         // Initialize HMGI components if not already done
         self.ensure_hmgi_initialized(modality_field).await?;
 
-        // Register collection as HMGI-enabled
-        {
-            let mut enabled = self.hmgi_enabled_collections.write().await;
-            enabled.insert(collection_id.to_string());
+        // Build and register every existing modality partition before publishing
+        // enablement. If migration fails, remove any partial graph state so callers
+        // never observe an enabled collection with an incomplete registry.
+        if let Err(error) = self.migrate_collection_to_hmgi(collection_id, oid).await {
+            if let Some(registry) = &self.hmgi_registry {
+                registry.drop_collection_partitions(collection_id).await?;
+            }
+            return Err(error);
         }
 
-        // Store OID for partition key generation
         {
             let mut oids = self.hmgi_collection_oids.write().await;
             oids.insert(collection_id.to_string(), oid);
+        }
+        {
+            let mut enabled = self.hmgi_enabled_collections.write().await;
+            enabled.insert(collection_id.to_string());
         }
 
         tracing::info!(
@@ -4614,9 +4627,6 @@ impl AxisManager {
             collection_id,
             field_display
         );
-
-        // Migrate existing vectors to HMGI partitions
-        self.migrate_collection_to_hmgi(collection_id).await?;
 
         Ok(())
     }
@@ -4680,33 +4690,10 @@ impl AxisManager {
         Ok(Some(detection))
     }
 
-    /// Ensure a collection has HMGI partitioning before dense vector indexing.
-    ///
-    /// **Behaviour change (HMGI auto-enable reconciliation 2026-05-28)**:
-    /// previously this method unconditionally turned HMGI on for any
-    /// collection that received a dense vector. That made HMGI the
-    /// effective default for ALL collections, including single-modality
-    /// workloads (the vast majority) where HMGI gives no benefit but
-    /// adds partition-routing overhead and (until commit b3985b59c)
-    /// exposed callers to the distance/similarity sort-direction bug.
-    /// It also bypassed the carefully-engineered detection logic in
-    /// `src/index/axis/hmgi/detection.rs`, which had a `should_enable_hmgi`
-    /// rule (>= 2 distinct modalities, see arXiv:2510.10123).
-    ///
-    /// The method is now a no-op for collections that haven't already
-    /// opted in. Enablement happens via:
-    /// * `enable_hmgi(...)` — explicit operator action (control plane).
-    /// * `maybe_auto_enable_hmgi(...)` — sample-based detection. Today
-    ///   this is called from explicit eval paths; a future background
-    ///   task can call it periodically without paying the per-insert
-    ///   `hmgi_detection_samples` cost (which clones every record's
-    ///   metadata — O(N) per call).
-    ///
-    /// Already-enabled HMGI collections are unaffected — the early
-    /// return preserves their behaviour. Collections without HMGI
-    /// drop through to `insert_into_hnsw`, which honors the
-    /// configured metric and avoids HMGI's per-partition routing
-    /// overhead.
+    /// Ensure a collection has the canonical HMGI partition wrapper before dense
+    /// vector indexing. A single-modality collection has one HNSW partition;
+    /// additional modality tags add partitions without changing the graph
+    /// implementation.
     async fn ensure_hmgi_collection_enabled(&self, collection_id: &str) -> Result<()> {
         if self.is_hmgi_enabled(collection_id).await {
             return Ok(());
@@ -4722,6 +4709,64 @@ impl AxisManager {
         // commit b3985b59c, so enabling on insert is safe again.
         let oid = self.hmgi_oid_for_collection(collection_id).await;
         self.enable_hmgi(collection_id, None, oid).await
+    }
+
+    /// Resolve the HNSW graph contract shared by HMGI migration and steady-state
+    /// inserts. `HmgiRegistry::get_or_create_partition` preserves the first config
+    /// used for a partition, so every creation path must use this authority; a
+    /// default-config migration would otherwise permanently shadow the collection's
+    /// metric and tuned `m`/`ef` values.
+    async fn hmgi_hnsw_config(
+        &self,
+        collection_id: &str,
+        algorithm: Option<&IndexAlgorithm>,
+        modality_tag: &str,
+    ) -> crate::index::axis::indexes::hnsw_index::AxisHnswConfig {
+        use crate::compute::distance_computation::DistanceMetric;
+
+        let distance_metric = self
+            .get_collection_distance_metric(collection_id)
+            .await
+            .unwrap_or(DistanceMetric::Cosine);
+        Self::hmgi_hnsw_config_for_metric(distance_metric, algorithm, modality_tag)
+    }
+
+    fn hmgi_hnsw_config_for_metric(
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        algorithm: Option<&IndexAlgorithm>,
+        modality_tag: &str,
+    ) -> crate::index::axis::indexes::hnsw_index::AxisHnswConfig {
+        use crate::index::axis::indexes::hnsw_index::AxisHnswConfig;
+
+        let defaults = AxisHnswConfig::default();
+        let (m, ef_construction, ef) = match algorithm {
+            Some(IndexAlgorithm::HNSW {
+                m,
+                ef_construction,
+                ef_search,
+                ..
+            }) => (*m as usize, *ef_construction as usize, *ef_search as usize),
+            Some(IndexAlgorithm::HMGI { per_modality, .. }) => per_modality
+                .iter()
+                .find(|partition| partition.modality_tag == modality_tag)
+                .map(|partition| {
+                    (
+                        partition.m as usize,
+                        partition.ef_construction as usize,
+                        partition.ef_search as usize,
+                    )
+                })
+                .unwrap_or((defaults.m, defaults.ef_construction, defaults.ef)),
+            _ => (defaults.m, defaults.ef_construction, defaults.ef),
+        };
+
+        AxisHnswConfig {
+            distance_metric,
+            m,
+            ef_construction,
+            ef,
+            ..defaults
+        }
     }
 
     fn is_hmgi_routable_query(&self, query: &AxisHybridQuery) -> bool {
@@ -4804,6 +4849,10 @@ impl AxisManager {
             .collect();
         let modality_tag = extractor.extract_modality(&metadata);
 
+        let config = self
+            .hmgi_hnsw_config(collection_id, algorithm, &modality_tag)
+            .await;
+
         // Create partition key
         let partition_key = HmgiPartitionKey::new(oid, 1, modality_tag, None);
 
@@ -4818,50 +4867,12 @@ impl AxisManager {
             vec_values.len()
         };
 
-        // Get or create partition with collection-aware config.
-        //
-        // **Metric plumbing (reconciled 2026-05-28 with HMGI recall
-        // investigation)**: previously this used
-        // `AxisHnswConfig::default()` and never consulted the
-        // collection's configured metric. That default carries
-        // `distance_metric: Cosine`, so cosine collections worked by
-        // coincidence but Euclidean / DotProduct / Manhattan
-        // collections silently fell back to Cosine inside the HMGI
-        // partition — different metric than the engine's exact path
-        // → unbounded recall divergence. Resolving via
-        // `get_collection_distance_metric` here makes the HMGI
-        // partition mirror the collection's contract.
-        let resolved_metric = self.get_collection_distance_metric(collection_id).await;
-        let distance_metric =
-            resolved_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
-        // **End-to-end ef_search wiring**: extract HNSW knobs from
-        // the strategy spec when present, otherwise use the partition
-        // default. Same plumbing as `insert_into_hnsw` — see that
-        // function for the rationale.
-        let defaults = crate::index::axis::indexes::hnsw_index::AxisHnswConfig::default();
-        let (config_m, config_ef_construction, config_ef_search) = match algorithm {
-            Some(IndexAlgorithm::HNSW {
-                m,
-                ef_construction,
-                ef_search,
-                ..
-            }) => (*m as usize, *ef_construction as usize, *ef_search as usize),
-            _ => (defaults.m, defaults.ef_construction, defaults.ef),
-        };
-        let config = crate::index::axis::indexes::hnsw_index::AxisHnswConfig {
-            distance_metric,
-            m: config_m,
-            ef_construction: config_ef_construction,
-            ef: config_ef_search,
-            ..defaults
-        };
         tracing::info!(
             target: "axis_diag",
             site = "insert_hmgi",
             collection_id = collection_id,
             partition = ?partition_key,
-            resolved_metric = ?resolved_metric,
-            using_metric = ?distance_metric,
+            using_metric = ?config.distance_metric,
             m = config.m,
             ef_construction = config.ef_construction,
             ef_search = config.ef,
@@ -4869,11 +4880,13 @@ impl AxisManager {
             "HMGI partition HNSW config (metric + HNSW knobs)"
         );
         let index = registry
-            .get_or_create_partition(partition_key.clone(), config, dimension)
+            .get_or_create_collection_partition(
+                collection_id,
+                partition_key.clone(),
+                config,
+                dimension,
+            )
             .await?;
-        registry
-            .register_collection_partition(collection_id, partition_key.clone())
-            .await;
 
         use crate::index::axis::index_factory::AxisVectorIndex;
         if !record.oid.is_empty() && !vec_values.is_empty() {
@@ -5014,7 +5027,7 @@ impl AxisManager {
     }
 
     /// Migrate existing collection vectors to HMGI partitions
-    async fn migrate_collection_to_hmgi(&self, collection_id: &str) -> Result<()> {
+    async fn migrate_collection_to_hmgi(&self, collection_id: &str, oid: u64) -> Result<()> {
         let extractor = self
             .hmgi_extractor
             .as_ref()
@@ -5024,14 +5037,6 @@ impl AxisManager {
             .hmgi_registry
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("HMGI registry not initialized"))?;
-
-        // Get OID for this collection
-        let oid = {
-            let oids = self.hmgi_collection_oids.read().await;
-            *oids
-                .get(collection_id)
-                .ok_or_else(|| anyhow::anyhow!("No OID found for collection '{}'", collection_id))?
-        };
 
         // Get existing vectors
         let vectors = {
@@ -5048,25 +5053,41 @@ impl AxisManager {
             collection_id
         );
 
+        // Auto-enable happens after the first record enters `collection_vectors`.
+        // Resolve the active dense strategy before migration so that first record
+        // cannot create a default-config partition that shadows the declared graph
+        // contract for every subsequent insert.
+        let strategy = self.get_collection_strategy(collection_id).await.ok();
+        let dense_algorithm = strategy.as_ref().and_then(|strategy| {
+            strategy
+                .indexes
+                .iter()
+                .find(|spec| matches!(spec.data_type, Data::DenseVector { .. }))
+                .map(|spec| &spec.algorithm)
+        });
+        let distance_metric = self
+            .get_collection_distance_metric(collection_id)
+            .await
+            .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+
         let mut migrated = 0;
         for record in vectors {
             // Extract modality
             let metadata = self.record_filter_metadata(&record);
             let modality_tag = extractor.extract_modality(&metadata);
+            let config =
+                Self::hmgi_hnsw_config_for_metric(distance_metric, dense_algorithm, &modality_tag);
 
             // Create partition key
             let partition_key = HmgiPartitionKey::new(oid, 1, modality_tag, None);
 
-            // Get or create partition with default config
+            // Get or create the partition with the same collection-aware graph
+            // contract used by steady-state inserts.
             let record_vector = self.record_dense_vector(&record);
             let dimension = record_vector.map_or(128, <[f32]>::len);
-            let config = crate::index::axis::indexes::hnsw_index::AxisHnswConfig::default();
-            let _index = registry
-                .get_or_create_partition(partition_key.clone(), config, dimension)
+            let index = registry
+                .get_or_create_collection_partition(collection_id, partition_key, config, dimension)
                 .await?;
-            registry
-                .register_collection_partition(collection_id, partition_key)
-                .await;
             use crate::index::axis::index_factory::AxisVectorIndex;
             if let Some(record_vector) = record_vector
                 && !record.oid.is_empty()
@@ -5077,7 +5098,7 @@ impl AxisManager {
                         &record,
                         &crate::index::axis::filterable_metadata::FilterableFieldsConfig::default(),
                     );
-                _index
+                index
                     .add_with_metadata(
                         record.oid.clone(),
                         record_vector.to_vec(),
@@ -5562,6 +5583,22 @@ mod recluster_apply_tests {
             !results.is_empty(),
             "ColdBinaryOnly index must serve Stage-1 despite a closed recall gate"
         );
+    }
+
+    #[tokio::test]
+    async fn served_index_presence_is_false_until_an_index_is_published() {
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+
+        assert!(!manager.has_served_index("pax-only").await);
+
+        let records = batch("served", 40, 8, 1);
+        assert!(
+            manager
+                .rebuild_and_swap_ivf_index("indexed", &records)
+                .await
+                .unwrap()
+        );
+        assert!(manager.has_served_index("indexed").await);
     }
 
     #[tokio::test]
@@ -6716,5 +6753,60 @@ mod clear_collection_vectors_tests {
             1,
             "post-flush insert must repopulate the projection"
         );
+    }
+}
+
+#[cfg(test)]
+mod hmgi_lifecycle_tests {
+    use super::*;
+    use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+    #[tokio::test]
+    async fn failed_enable_does_not_publish_or_leave_owned_partitions() {
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+        let collection_id = "invalid_hmgi";
+        let invalid_vector = vec![0.0; 100_001];
+        let record = ProximaRecord {
+            oid: "oversized_embedding".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: invalid_vector.len() as u32,
+                values: EmbeddingValues::Fp32(invalid_vector),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        manager
+            .collection_vectors
+            .write()
+            .await
+            .entry(collection_id.to_string())
+            .or_default()
+            .insert(record.oid.clone(), record);
+
+        let error = manager
+            .enable_hmgi(collection_id, None, 42)
+            .await
+            .err()
+            .expect("oversized partition migration must fail");
+
+        assert!(error.to_string().contains("dimension"));
+        assert!(!manager.is_hmgi_enabled(collection_id).await);
+        assert!(
+            !manager
+                .hmgi_collection_oids
+                .read()
+                .await
+                .contains_key(collection_id)
+        );
+        let registry = manager.hmgi_registry().unwrap();
+        assert!(
+            registry
+                .get_partitions_for_collection(collection_id)
+                .await
+                .is_empty()
+        );
+        assert!(registry.is_empty().await);
     }
 }

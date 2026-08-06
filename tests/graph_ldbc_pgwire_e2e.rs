@@ -201,8 +201,22 @@ fn graph_queries() -> Vec<(&'static str, String)> {
     ]
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn graph_ldbc_pgwire_conformance() {
+// 8 MB stack: this LDBC/pgwire e2e evaluates a `WITH RECURSIVE` transitive-closure
+// CTE over the `knows` graph, whose bounded-but-deep recursion overflows the tokio
+// worker default 2 MB stack intermittently under CI load. Run on a larger-stack
+// runtime, matching the tpcds/tpch/duckdb pgwire e2e tests.
+#[test]
+fn graph_ldbc_pgwire_conformance() {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
+        .block_on(graph_ldbc_pgwire_conformance_inner());
+}
+
+async fn graph_ldbc_pgwire_conformance_inner() {
     let server = PgServer::start().await.expect("server start");
     let (client, conn) = tokio_postgres::connect(&server.conn_str(), tokio_postgres::NoTls)
         .await
@@ -348,8 +362,19 @@ async fn graph_ldbc_pgwire_conformance() {
 /// passes every existing graph test (the conformance suite never mutates after
 /// MATERIALIZE). The materialized-but-unmutated `gperson` dimension exercises the
 /// empty-delta fast path in the same query.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn graph_deletion_vector_reflects_edge_mutations() {
+// 8 MB stack (same rationale as `graph_ldbc_pgwire_conformance`).
+#[test]
+fn graph_deletion_vector_reflects_edge_mutations() {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
+        .block_on(graph_deletion_vector_reflects_edge_mutations_inner());
+}
+
+async fn graph_deletion_vector_reflects_edge_mutations_inner() {
     let server = PgServer::start().await.expect("server start");
     let (client, conn) = tokio_postgres::connect(&server.conn_str(), tokio_postgres::NoTls)
         .await

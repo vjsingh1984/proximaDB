@@ -31,17 +31,17 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::api_handlers::request_handlers::UnifiedHandlers;
 use crate::catalog::CatalogManager;
 use crate::network::auth::middleware::DataPlaneCapability;
-use crate::proto::proximadb_v1::VectorSearchRequest;
 use crate::security::{AuthenticationData, ClientCertificateData, SecurityCoordinator};
 use crate::services::operations::{
     BatchOperationResult, BulkWriteMode, CatalogBulkWriteResult, CatalogBulkWriteService,
 };
 use chrono::Utc;
 
-use super::codec::{ArrowProtoCodec, FlightWriteOperation, WriteMode};
+use super::codec::{
+    ArrowProtoCodec, FlightFilter, FlightSearchTicket, FlightWriteOperation, WriteMode,
+};
 use super::file_export::{
     ArrowFileExportHandler, ArrowFileRequest, ArrowFileTicket, FlightCompression,
 };
@@ -67,10 +67,70 @@ fn flight_data_wire_bytes(flight_data: &[FlightData]) -> u64 {
         .sum()
 }
 
-#[derive(Debug, Clone, Default)]
+/// Optional control frame for the `bulk_search` DoExchange (TD-FLIGHT-1).
+/// Carried as JSON in a `FlightData.app_metadata` message ahead of the query
+/// batches; sets top_k / filters / include_vector for the queries that follow.
+/// Absent ⇒ defaults (top_k = 10, no filters), matching the pre-TD-FLIGHT-1
+/// behavior but now on the canonical v2 search path.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct BulkSearchControl {
+    #[serde(default)]
+    top_k: Option<u32>,
+    #[serde(default)]
+    include_vector: bool,
+    #[serde(default)]
+    filters: Vec<FlightFilter>,
+}
+
+/// Build a control-only `FlightData` frame (no body) carrying `metadata` as
+/// app-metadata — used for per-query error frames and the bulk_search
+/// completion frame.
+fn control_flight_data(metadata: Vec<u8>) -> FlightData {
+    FlightData {
+        flight_descriptor: None,
+        data_header: Default::default(),
+        app_metadata: metadata.into(),
+        data_body: Default::default(),
+    }
+}
+
+#[derive(Debug, Clone)]
 struct AuthenticatedFlightContext {
-    tenant_id: Option<String>,
+    tenant_id: String,
+    /// The authenticated principal's user id (TD-ABAC-6), threaded as the ABAC
+    /// subject on the v2 search path. `None` on the trust-asserted path (no
+    /// credential) or when no subject was resolved.
+    user_id: Option<String>,
+    /// ADR-087: the tenant's stable u64 (ABAC policy key), stamped ONCE by the
+    /// identity orchestrator — never re-resolved per handler.
+    tenant_stable_id: Option<u64>,
+    /// ADR-087: trust provenance of this identity (audit-only at the seam).
+    auth_class: proximadb_tenant::AuthClass,
     capability: Option<DataPlaneCapability>,
+}
+
+impl AuthenticatedFlightContext {
+    /// The owned foundation identity for spawned/streaming paths (bulk_search).
+    fn owned_identity(&self) -> proximadb_tenant::ResolvedRequestIdentity {
+        proximadb_tenant::ResolvedRequestIdentity {
+            tenant: self.tenant_id.clone(),
+            subject: self.user_id.clone(),
+            auth_class: self.auth_class,
+            tenant_stable_id: self.tenant_stable_id,
+        }
+    }
+}
+
+/// ADR-087: the borrowed port-seam projection of the Flight identity.
+impl<'a> From<&'a AuthenticatedFlightContext> for proximadb_runtime::PortIdentity<'a> {
+    fn from(ctx: &'a AuthenticatedFlightContext) -> Self {
+        Self {
+            tenant_id: Some(ctx.tenant_id.as_str()),
+            subject: ctx.user_id.as_deref(),
+            tenant_stable_id: ctx.tenant_stable_id,
+            auth_class: ctx.auth_class,
+        }
+    }
 }
 
 /// DoGet ticket for the batched columnar graph export path. JSON-encoded in the
@@ -129,21 +189,35 @@ fn graph_flight_err(e: anyhow::Error) -> FlightError {
 /// - **.arrow**: Arrow IPC files (from SST, HELIX engines)
 /// - **.parquet**: Parquet files (from Nova, VIPER engines)
 pub struct ProximaFlightService {
-    // TD-104 S3: the Flight service depends on ports + the concrete services it
-    // actually uses, not the root `UnifiedHandlers`. Vector search goes through
-    // `ApiHandlersPort`, record-batch ingest through `RecordOpsPort`; the
-    // vector-ops/collection services are held directly (same Arcs as before).
-    api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+    // TD-104 S3 / TD-FLIGHT-1: the Flight service depends on ports + the
+    // concrete services it actually uses, not a monolithic handler. Canonical
+    // v2 vector search goes through `RecordSearchPort`, record-batch ingest
+    // through `RecordOpsPort`; the vector-ops/collection services are held
+    // directly (same Arcs as before). (TD-FLIGHT-2: the deprecated v1
+    // `api_port`/`ApiHandlersPort` search field was removed once #1351 landed —
+    // the v1 method stays on `ApiHandlersPort` for REST `/progressive/search`.)
     record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
+    record_search_port: Arc<dyn proximadb_runtime::RecordSearchPort>,
     vector_operations_service: Arc<crate::services::VectorOperationsService>,
     collection_service: Arc<crate::services::CollectionService>,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
+    /// TD-TENANT-1: the deployment's bare `x-tenant-id` trust policy,
+    /// enforced through the ONE shared primitive in
+    /// `authenticated_flight_context`. Default `Open` (legacy behavior).
+    tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// Whether missing request identity may resolve to a configured default.
+    tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
     catalog_manager: Option<Arc<CatalogManager>>,
+    /// TD-TENANT-1: catalog-backed tenant stable-id resolver, mirroring the
+    /// REST `TenantExtractor::with_stable_id_resolver` seam. When present,
+    /// `handle_v2_search` stamps the resolved stable u64 into the io_trace
+    /// boundary (so Flight search is attributable per-tenant like REST).
+    stable_id_resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
     /// R-7c.4b: when present, the `rank_features_export` Flight action
     /// drives the multi-phase ranking pipeline through this singleton.
     /// Absent means the action returns `Unimplemented` (deployments that
     /// didn't opt into the ranking framework don't pay for it).
-    rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+    rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
     /// Slice 6.2: primary-pod write router. Same shape as the gRPC v2
     /// service's `primary_pod_gate` — when present, `do_put` consults
     /// the registry before any storage work and rejects misrouted
@@ -227,19 +301,22 @@ impl ProximaFlightService {
     /// routes through ROOT). The vector-ops/collection services and the storage
     /// locations are passed in by the boot wiring (multi_server / ArrowFlightServer).
     pub fn new(
-        api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
         record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
+        record_search_port: Arc<dyn proximadb_runtime::RecordSearchPort>,
         vector_operations_service: Arc<crate::services::VectorOperationsService>,
         collection_service: Arc<crate::services::CollectionService>,
         storage_locations: Vec<String>,
     ) -> Self {
         Self {
-            api_port,
             record_port,
+            record_search_port,
             vector_operations_service,
             collection_service,
             security_coordinator: None,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
             catalog_manager: None,
+            stable_id_resolver: None,
             rank_services: None,
             primary_pod_gate: None,
             graph_service: None,
@@ -259,36 +336,33 @@ impl ProximaFlightService {
         self
     }
 
-    /// Boot adapter that derives the injected pieces from a root `UnifiedHandlers`.
-    ///
-    /// The Flight write path is wired to the runtime `RecordOpsService` (via
-    /// `UnifiedHandlers::record_ops`) rather than ROOT's `RecordOpsPort` impl, so
-    /// `do_put` ingest no longer routes through ROOT even via this convenience.
-    pub fn from_unified_handlers(request_handlers: Arc<UnifiedHandlers>) -> Self {
-        let storage_locations = request_handlers
+    /// Boot adapter (TD-104 S3-c/S3-e): build a `ProximaFlightService` from the
+    /// runtime ports plus the concrete services it needs, all passed directly
+    /// (no root `UnifiedHandlers` indirection). `storage_locations` is derived
+    /// from the collection service's storage config — the same read the former
+    /// root `storage_config()` delegated to.
+    pub fn from_services(
+        record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
+        record_search_port: Arc<dyn proximadb_runtime::RecordSearchPort>,
+        vector_operations_service: Arc<crate::services::VectorOperationsService>,
+        collection_service: Arc<crate::services::CollectionService>,
+        graph_service: Arc<crate::graph::GraphOperationsService>,
+    ) -> Self {
+        let storage_locations: Vec<String> = collection_service
             .storage_config()
-            .map(|config| {
-                config
-                    .storage_locations
-                    .iter()
-                    .map(|loc| loc.url.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> = request_handlers.clone();
-        let record_port: Arc<dyn proximadb_runtime::RecordOpsPort> = request_handlers.record_ops();
-        let vector_operations_service = request_handlers.vector_operations_service.clone();
-        let collection_service = request_handlers.collection_service.clone();
+            .storage_locations
+            .iter()
+            .map(|loc| loc.url.clone())
+            .collect();
 
         Self::new(
-            api_port,
             record_port,
+            record_search_port,
             vector_operations_service,
             collection_service,
             storage_locations,
         )
-        .with_graph_service(request_handlers.graph_operations_service.clone())
+        .with_graph_service(graph_service)
     }
 
     /// Slice 6.2: attach the primary-pod write router. Once set,
@@ -313,7 +387,7 @@ impl ProximaFlightService {
     /// of truth across all three protocols.
     pub fn with_rank_services(
         mut self,
-        rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+        rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
     ) -> Self {
         self.rank_services = rank_services;
         self
@@ -328,9 +402,53 @@ impl ProximaFlightService {
         self
     }
 
+    /// Set the deployment's bare `x-tenant-id` trust policy (TD-TENANT-1) —
+    /// the same policy the REST middleware, gRPC auth layer, and pgwire
+    /// resolve seams enforce through the shared primitive.
+    pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tenant_header_trust = policy;
+        self
+    }
+
+    /// Set the request-tenant presence contract independently of authentication.
+    pub fn with_tenant_deployment_mode(
+        mut self,
+        mode: proximadb_tenant::TenantDeploymentMode,
+    ) -> Self {
+        self.tenant_deployment_mode = mode;
+        self
+    }
+
+    fn resolve_tenant_for_mode(
+        tenant_id: Option<&str>,
+        mode: &proximadb_tenant::TenantDeploymentMode,
+    ) -> std::result::Result<String, TonicStatus> {
+        proximadb_tenant::resolve_request_tenant_for_mode(tenant_id, mode).map_err(|error| {
+            match error {
+                proximadb_tenant::ResolveRequestTenantError::MissingTenant => {
+                    TonicStatus::unauthenticated(error.to_string())
+                }
+                proximadb_tenant::ResolveRequestTenantError::InvalidTenant(_) => {
+                    TonicStatus::invalid_argument(error.to_string())
+                }
+            }
+        })
+    }
+
     /// Attach xCatalog metadata for relational/table Flight schema resolution.
     pub fn with_catalog_manager(mut self, catalog_manager: Option<Arc<CatalogManager>>) -> Self {
         self.catalog_manager = catalog_manager;
+        self
+    }
+
+    /// Wire the catalog-backed tenant stable-id resolver (TD-TENANT-1), mirroring
+    /// REST's `TenantExtractor::with_stable_id_resolver`. When set, Flight search
+    /// stamps the resolved stable id into the io_trace boundary.
+    pub fn with_stable_id_resolver(
+        mut self,
+        resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
+    ) -> Self {
+        self.stable_id_resolver = resolver;
         self
     }
 
@@ -479,16 +597,12 @@ impl ProximaFlightService {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            if let Some(token) = auth_header.strip_prefix("Bearer ") {
-                return Ok(Some(AuthenticationData::JWTToken(token.to_string())));
-            }
-            if let Some(key) = auth_header
-                .strip_prefix("API-Key ")
-                .or_else(|| auth_header.strip_prefix("Api-Key "))
-            {
-                return Ok(Some(AuthenticationData::ApiKey(key.to_string())));
-            }
-            return Ok(Some(AuthenticationData::ApiKey(auth_header.to_string())));
+            // TD-ABAC-6: the shared credential parser — this branch was a
+            // verbatim copy of gRPC's `auth_data_from_headers` and REST's
+            // `map_header_to_auth_data` (same Bearer/API-Key/raw logic).
+            return Ok(Some(
+                crate::security::request_identity::parse_authorization(auth_header),
+            ));
         }
 
         for key in ["x-api-key", "api-key"] {
@@ -539,36 +653,81 @@ impl ProximaFlightService {
         peer_certs: Option<Arc<Vec<tonic::transport::CertificateDer<'static>>>>,
     ) -> std::result::Result<AuthenticatedFlightContext, TonicStatus> {
         let requested_tenant_id = Self::tenant_id_from_metadata(metadata);
-        let Some(security_coordinator) = &self.security_coordinator else {
-            return Ok(AuthenticatedFlightContext {
-                tenant_id: requested_tenant_id,
-                capability: None,
-            });
-        };
+        let credential = Self::auth_data_from_metadata(metadata)?
+            .or_else(|| Self::auth_data_from_peer_certs(peer_certs));
+        let coordinator = self.security_coordinator.as_deref();
 
-        let auth_data = Self::auth_data_from_metadata(metadata)?
-            .or_else(|| Self::auth_data_from_peer_certs(peer_certs))
-            .ok_or_else(|| TonicStatus::unauthenticated("Arrow Flight authentication required"))?;
-        let user_context = security_coordinator
-            .authenticate_request(auth_data)
-            .await
-            .map_err(|e| TonicStatus::unauthenticated(format!("Authentication failed: {}", e)))?;
+        // An auth-wired deployment (coordinator present) requires a credential —
+        // token or mTLS peer cert. No credential ⇒ unauthenticated.
+        if coordinator.is_some() && credential.is_none() {
+            return Err(TonicStatus::unauthenticated(
+                "Arrow Flight authentication required",
+            ));
+        }
 
-        let capability = DataPlaneCapability::from_user_context(&user_context);
-        let tenant_id = match (requested_tenant_id, user_context.tenant_id) {
-            (Some(requested), Some(authenticated)) if requested != authenticated => {
-                return Err(TonicStatus::permission_denied(format!(
-                    "Tenant '{}' does not match authenticated tenant '{}'",
-                    requested, authenticated
-                )));
-            }
-            (Some(requested), _) => Some(requested),
-            (None, authenticated) => authenticated,
-        };
+        // TD-ABAC-6: the ONE identity resolver (authenticate → tenant/subject
+        // trust-gate → mode gate). Arrow has no subject-assertion surface, so
+        // the subject comes from the credential (authenticated) or is absent
+        // (trust-asserted). The two former branches — no-coordinator (bare
+        // assertion) and coordinator (authenticated binding) — are exactly the
+        // orchestrator's trust-asserted vs authenticated paths.
+        let resolved = crate::security::request_identity::resolve_request_identity(
+            coordinator,
+            credential,
+            requested_tenant_id.as_deref(),
+            None,
+            self.tenant_header_trust,
+            &self.tenant_deployment_mode,
+            self.stable_id_resolver.as_deref(),
+        )
+        .await
+        .map_err(|err| Self::identity_error_to_flight_status(err, self.tenant_header_trust))?;
+
         Ok(AuthenticatedFlightContext {
-            tenant_id,
-            capability,
+            tenant_id: resolved.identity.tenant,
+            // #1309: surface the authenticated principal so the vector/ANN read
+            // path can thread it as the ABAC subject (previously dropped here).
+            user_id: resolved.identity.subject,
+            tenant_stable_id: resolved.identity.tenant_stable_id,
+            auth_class: resolved.identity.auth_class,
+            capability: resolved
+                .user_context
+                .as_ref()
+                .and_then(DataPlaneCapability::from_user_context),
         })
+    }
+
+    /// Map the unified [`IdentityError`] onto a Flight gRPC status, preserving
+    /// the per-surface `tenant_audit` trail for assertion rejections
+    /// (TD-TENANT-1). The orchestrator never logs; each surface owns its audit.
+    fn identity_error_to_flight_status(
+        error: crate::security::request_identity::IdentityError,
+        trust: proximadb_tenant::HeaderTrustPolicy,
+    ) -> TonicStatus {
+        use crate::security::request_identity::IdentityError;
+        match error {
+            IdentityError::Authentication(message) => {
+                TonicStatus::unauthenticated(format!("Authentication failed: {message}"))
+            }
+            IdentityError::Assertion(error) => {
+                tracing::warn!(
+                    target: "proximadb::tenant_audit",
+                    surface = "arrow_flight",
+                    policy = %trust,
+                    %error,
+                    "rejected x-tenant-id under tenant trust policy"
+                );
+                TonicStatus::permission_denied(error.to_string())
+            }
+            IdentityError::TenantResolution(error) => match error {
+                proximadb_tenant::ResolveRequestTenantError::MissingTenant => {
+                    TonicStatus::unauthenticated(error.to_string())
+                }
+                proximadb_tenant::ResolveRequestTenantError::InvalidTenant(_) => {
+                    TonicStatus::invalid_argument(error.to_string())
+                }
+            },
+        }
     }
 
     fn validate_flight_write_capability(
@@ -731,19 +890,28 @@ impl ProximaFlightService {
     ) -> Result<Vec<arrow_array::RecordBatch>> {
         info!(
             collection_id = %file_ticket.collection_id,
-            file_path = %file_ticket.file_path,
             "Arrow Flight file export"
         );
 
-        // Read the Arrow file
+        let collection = self
+            .collection_service
+            .collection(&file_ticket.collection_id)
+            .await?
+            .with_context(|| format!("Collection not found: {}", file_ticket.collection_id))?;
+
         self.file_export_handler
-            .read_arrow_file(&file_ticket.file_path)
+            .read_collection_file(&collection, &file_ticket.file_path)
     }
 
     async fn trigger_collection_compaction(&self, collection_id: &str) -> Result<()> {
+        let collection = self
+            .collection_service
+            .collection(collection_id)
+            .await?
+            .with_context(|| format!("Collection not found: {collection_id}"))?;
         let storage_engine = self.vector_operations_service.unified_engine();
         storage_engine
-            .compact_collection(collection_id, None)
+            .compact_collection(&collection.id, Some(&collection))
             .await
             .with_context(|| format!("Failed to compact collection '{}'", collection_id))?;
         Ok(())
@@ -1044,35 +1212,47 @@ impl ProximaFlightService {
             .await
     }
 
-    /// Handle vector search (DoGet)
-    async fn handle_vector_search(
+    /// Canonical v2 vector search (TD-FLIGHT-1). Routes through the
+    /// `RecordSearchPort` — the same `RecordOpsService::handle_record_search_for_tenant`
+    /// authority REST v2 and gRPC v2 use — so Flight inherits typed filters,
+    /// WAL delta-merge, MVCC/tombstone filtering, Strong-freshness cache
+    /// behavior, and the tenant-collection-access check. Wrapped in the same
+    /// query-scoped I/O-trace boundary as REST v2 (route
+    /// `arrow_flight.v2.records.search`) so object GETs/bytes stay attributable
+    /// per query. The tenant stable id (TD-TENANT-1) is resolved via the wired
+    /// `TenantStableIdResolver` when present, else `None`.
+    async fn handle_v2_search(
         &self,
-        request: VectorSearchRequest,
+        ticket: FlightSearchTicket,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<Vec<arrow_array::RecordBatch>> {
+        let include_vector = ticket.include_vector;
+        let request = ticket.to_rich_request()?;
         debug!(
             collection_id = %request.collection_id,
             top_k = request.top_k,
-            "Arrow IPC vector search"
+            include_vector,
+            "Arrow Flight canonical v2 vector search"
         );
 
-        // Execute search via UnifiedHandlers (reuses existing path)
-        let response = self.api_port.handle_vector_search_v1(request).await?;
+        // ADR-087: the stable id arrives on the identity, stamped ONCE by the
+        // identity orchestrator — no per-handler re-resolution.
+        let response = crate::observability::io_trace::instrument_with_stable_tenant(
+            identity.tenant_id.map(str::to_string),
+            identity.tenant_stable_id,
+            "arrow_flight.v2.records.search",
+            crate::observability::predicate_diagnostics::scope(async {
+                self.record_search_port
+                    .search_record(request, identity)
+                    .await
+            }),
+        )
+        .await?;
 
-        // Convert results to Arrow RecordBatch
-        let search_results = response
-            .results
-            .as_ref()
-            .map(|r| &r.results)
-            .filter(|results| !results.is_empty());
-
-        let Some(results) = search_results else {
-            return Ok(Vec::new());
-        };
-
-        let dimension = results[0].vector.len();
-
-        let batch = ArrowProtoCodec::search_results_to_batch(results, dimension)?;
-
+        // Always emit one batch of the canonical v2 schema — even when empty
+        // (acceptance: empty results / optional vectors must not panic).
+        let batch =
+            ArrowProtoCodec::rich_search_results_to_batch(&response.results, include_vector)?;
         Ok(vec![batch])
     }
 }
@@ -1099,6 +1279,11 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<Criteria>,
     ) -> TonicResult<Self::ListFlightsStream> {
+        let auth_context = self
+            .authenticated_flight_context(request.metadata(), request.peer_certs())
+            .await?;
+        let tenant_context =
+            crate::storage::tenant::TenantContext::for_tenant_id(&auth_context.tenant_id);
         let criteria = request.into_inner();
 
         // Parse collection_id from criteria expression
@@ -1116,7 +1301,11 @@ impl FlightService for ProximaFlightService {
         // Get collections to list
         let collections = if let Some(cid) = collection_id {
             // Get specific collection
-            match self.collection_service.collection(&cid).await {
+            match self
+                .collection_service
+                .get_collection_with_tenant_context(&cid, Some(&tenant_context))
+                .await
+            {
                 Ok(Some(c)) => vec![c],
                 Ok(None) => {
                     return Err(TonicStatus::not_found(format!(
@@ -1134,7 +1323,7 @@ impl FlightService for ProximaFlightService {
         } else {
             // List all collections
             self.collection_service
-                .list_collections()
+                .list_collections_with_tenant_context(Some(&tenant_context))
                 .await
                 .map_err(|e| TonicStatus::internal(format!("Failed to list collections: {}", e)))?
         };
@@ -1171,6 +1360,11 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<FlightDescriptor>,
     ) -> TonicResult<FlightInfo> {
+        let auth_context = self
+            .authenticated_flight_context(request.metadata(), request.peer_certs())
+            .await?;
+        let tenant_context =
+            crate::storage::tenant::TenantContext::for_tenant_id(&auth_context.tenant_id);
         let descriptor = request.into_inner();
 
         // Parse request from descriptor
@@ -1186,7 +1380,7 @@ impl FlightService for ProximaFlightService {
         // Get collection
         let collection = self
             .collection_service
-            .collection(&file_request.collection_id)
+            .get_collection_with_tenant_context(&file_request.collection_id, Some(&tenant_context))
             .await
             .map_err(|e| TonicStatus::internal(format!("Failed to get collection: {}", e)))?
             .ok_or_else(|| {
@@ -1232,6 +1426,11 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<FlightDescriptor>,
     ) -> TonicResult<SchemaResult> {
+        let auth_context = self
+            .authenticated_flight_context(request.metadata(), request.peer_certs())
+            .await?;
+        let tenant_context =
+            crate::storage::tenant::TenantContext::for_tenant_id(&auth_context.tenant_id);
         let descriptor = request.into_inner();
 
         if let Some(schema) =
@@ -1253,7 +1452,7 @@ impl FlightService for ProximaFlightService {
         // Get collection to determine dimension
         let collection = self
             .collection_service
-            .collection(&metadata.collection_id)
+            .get_collection_with_tenant_context(&metadata.collection_id, Some(&tenant_context))
             .await
             .map_err(|e| TonicStatus::internal(format!("Failed to get collection: {}", e)))?
             .ok_or_else(|| TonicStatus::not_found("Collection not found"))?;
@@ -1305,16 +1504,19 @@ impl FlightService for ProximaFlightService {
 
             debug!(
                 collection_id = %file_ticket.collection_id,
-                file_path = %file_ticket.file_path,
                 compression = ?compression,
                 "Arrow file export via do_get"
             );
 
             // Stream Arrow file contents
+            let collection_id = file_ticket.collection_id.clone();
             let batches = self
                 .handle_arrow_file_export(file_ticket)
                 .await
-                .map_err(|e| TonicStatus::internal(format!("File export failed: {}", e)))?;
+                .map_err(|error| {
+                    warn!(%collection_id, %error, "Arrow file export rejected");
+                    TonicStatus::not_found("Export file is unavailable")
+                })?;
 
             // Convert batches to FlightData stream with compression
             // Use the new compression-aware encoder for all batches
@@ -1327,7 +1529,7 @@ impl FlightService for ProximaFlightService {
             // KOU result-egress: meter the actual encoded FlightData bytes (the
             // client picked the compression via the ticket).
             edge.record_result_egress(
-                auth_context.tenant_id.as_deref(),
+                Some(auth_context.tenant_id.as_str()),
                 flight_data_wire_bytes(&flight_data),
             );
 
@@ -1345,46 +1547,63 @@ impl FlightService for ProximaFlightService {
                 &graph_ticket.graph_id,
             )?;
             let stream = self
-                .graph_export_flight_stream(graph_ticket, auth_context.tenant_id.clone(), edge)
+                .graph_export_flight_stream(
+                    graph_ticket,
+                    Some(auth_context.tenant_id.clone()),
+                    edge,
+                )
                 .await?;
             return Ok(TonicResponse::new(stream));
         }
 
-        // Otherwise, handle as vector search request
-        let search_request = ArrowProtoCodec::ticket_to_search_request(&ticket).map_err(|e| {
-            TonicStatus::invalid_argument(format!("Failed to parse search request: {}", e))
-        })?;
-        Self::validate_flight_search_capability(
-            auth_context.capability.as_ref(),
-            &search_request.collection_id,
-        )?;
+        // Canonical v2 vector search (TD-FLIGHT-1): a self-describing JSON
+        // ticket discriminated by "type":"vector_search". This replaces the
+        // deprecated v1 `VectorSearchRequest` fallback — Flight search now runs
+        // the same canonical search authority (RecordSearchPort) as REST v2 /
+        // gRPC v2, with full-fidelity props and the tenant-collection-access
+        // check.
+        if let Some(search_ticket) = FlightSearchTicket::from_ticket(&ticket) {
+            Self::validate_flight_search_capability(
+                auth_context.capability.as_ref(),
+                &search_ticket.collection_id,
+            )?;
 
-        // Execute search
-        let batches = self
-            .handle_vector_search(search_request)
-            .await
-            .map_err(|e| TonicStatus::internal(format!("Search failed: {}", e)))?;
+            let batches = self
+                .handle_v2_search(
+                    search_ticket,
+                    proximadb_runtime::PortIdentity::from(&auth_context),
+                )
+                .await
+                .map_err(|e| TonicStatus::internal(format!("Search failed: {}", e)))?;
 
-        // Egress-aware shaping (co-design D2): for a chargeable (far) client, encode
-        // the result batches with ZSTD — a lossless byte-minimization the Arrow
-        // reader decompresses transparently. Near/free clients stay uncompressed
-        // (save CPU). Then meter the ACTUAL encoded bytes so the bill reflects the
-        // compressed egress that really left.
-        let compression = if edge.shape_policy().compress {
-            FlightCompression::Zstd.to_arrow_compression()
-        } else {
-            None
-        };
-        let flight_data =
-            ArrowProtoCodec::batches_to_flight_data_with_compression(&batches, compression)
-                .map_err(|e| TonicStatus::internal(format!("Failed to encode batches: {}", e)))?;
-        edge.record_result_egress(
-            auth_context.tenant_id.as_deref(),
-            flight_data_wire_bytes(&flight_data),
-        );
-        let stream = stream::iter(flight_data.into_iter().map(Ok));
+            // Egress-aware shaping (co-design D2): for a chargeable (far)
+            // client, encode the result batches with ZSTD — a lossless
+            // byte-minimization the Arrow reader decompresses transparently.
+            // Near/free clients stay uncompressed (save CPU). Then meter the
+            // ACTUAL encoded bytes so the bill reflects the compressed egress.
+            let compression = if edge.shape_policy().compress {
+                FlightCompression::Zstd.to_arrow_compression()
+            } else {
+                None
+            };
+            let flight_data =
+                ArrowProtoCodec::batches_to_flight_data_with_compression(&batches, compression)
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to encode batches: {}", e))
+                    })?;
+            edge.record_result_egress(
+                Some(auth_context.tenant_id.as_str()),
+                flight_data_wire_bytes(&flight_data),
+            );
+            let stream = stream::iter(flight_data.into_iter().map(Ok));
+            return Ok(TonicResponse::new(Box::pin(stream)));
+        }
 
-        Ok(TonicResponse::new(Box::pin(stream)))
+        // Unknown ticket shape — no longer silently coerced into v1 search.
+        Err(TonicStatus::invalid_argument(
+            "Unrecognized Flight DoGet ticket: expected an arrow_file, graph, \
+             or vector_search (type:\"vector_search\") ticket",
+        ))
     }
 
     async fn do_put(
@@ -1434,7 +1653,7 @@ impl FlightService for ProximaFlightService {
         // pure reads use do_get and don't pass through here.
         check_flight_primary_pod_gate(
             &self.primary_pod_gate,
-            auth_context.tenant_id.as_deref().unwrap_or(""),
+            &auth_context.tenant_id,
             &write_target,
         )?;
 
@@ -1464,7 +1683,7 @@ impl FlightService for ProximaFlightService {
                         table_fqn.as_deref(),
                         operation,
                         metadata.write_mode,
-                        auth_context.tenant_id.as_deref(),
+                        Some(auth_context.tenant_id.as_str()),
                         batch,
                         (operation == FlightWriteOperation::Insert).then_some(&mut insert_seen_ids),
                     )
@@ -1473,7 +1692,7 @@ impl FlightService for ProximaFlightService {
                 FlightWriteOperation::Delete => {
                     self.handle_record_delete_batch(
                         &write_target,
-                        auth_context.tenant_id.as_deref(),
+                        Some(auth_context.tenant_id.as_str()),
                         batch,
                     )
                     .await
@@ -1514,6 +1733,11 @@ impl FlightService for ProximaFlightService {
     }
 
     async fn do_action(&self, request: TonicRequest<Action>) -> TonicResult<Self::DoActionStream> {
+        let auth_context = self
+            .authenticated_flight_context(request.metadata(), request.peer_certs())
+            .await?;
+        let tenant_context =
+            crate::storage::tenant::TenantContext::for_tenant_id(&auth_context.tenant_id);
         let action = request.into_inner();
 
         match action.r#type.as_str() {
@@ -1632,7 +1856,7 @@ impl FlightService for ProximaFlightService {
                 // Create collection via service
                 let result = self
                     .collection_service
-                    .create_collection(&config)
+                    .create_collection_with_tenant_context(&config, Some(&tenant_context))
                     .await
                     .map_err(|e| {
                         TonicStatus::internal(format!("Failed to create collection: {}", e))
@@ -1681,7 +1905,7 @@ impl FlightService for ProximaFlightService {
 
                 // Delete collection via service
                 self.collection_service
-                    .delete_collection(collection_id)
+                    .delete_collection_with_tenant_context(collection_id, Some(&tenant_context))
                     .await
                     .map_err(|e| {
                         TonicStatus::internal(format!("Failed to delete collection: {}", e))
@@ -1722,7 +1946,7 @@ impl FlightService for ProximaFlightService {
                 // Get collection via service
                 let collection = self
                     .collection_service
-                    .collection(collection_id)
+                    .get_collection_with_tenant_context(collection_id, Some(&tenant_context))
                     .await
                     .map_err(|e| TonicStatus::internal(format!("Failed to get collection: {}", e)))?
                     .ok_or_else(|| {
@@ -1759,13 +1983,13 @@ impl FlightService for ProximaFlightService {
                 debug!("Arrow Flight: list_collections");
 
                 // List all collections via service
-                let collections =
-                    self.collection_service
-                        .list_collections()
-                        .await
-                        .map_err(|e| {
-                            TonicStatus::internal(format!("Failed to list collections: {}", e))
-                        })?;
+                let collections = self
+                    .collection_service
+                    .list_collections_with_tenant_context(Some(&tenant_context))
+                    .await
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to list collections: {}", e))
+                    })?;
 
                 let collection_summaries: Vec<serde_json::Value> = collections
                     .iter()
@@ -1891,7 +2115,11 @@ impl FlightService for ProximaFlightService {
                 // Insert via the canonical rich-record port.
                 let result = self
                     .record_port
-                    .upsert_record_batch(collection_id, records, None)
+                    .upsert_record_batch(
+                        collection_id,
+                        records,
+                        Some(auth_context.tenant_id.as_str()),
+                    )
                     .await
                     .map_err(|e| {
                         TonicStatus::internal(format!("Failed to insert vectors: {}", e))
@@ -2006,6 +2234,14 @@ impl FlightService for ProximaFlightService {
                     "Arrow Flight: get_vectors"
                 );
 
+                self.collection_service
+                    .get_collection_with_tenant_context(collection_id, Some(&tenant_context))
+                    .await
+                    .map_err(|e| TonicStatus::internal(format!("Failed to get collection: {}", e)))?
+                    .ok_or_else(|| {
+                        TonicStatus::not_found(format!("Collection not found: {}", collection_id))
+                    })?;
+
                 // Get vectors via vector operations service
                 let mut found_vectors = Vec::new();
                 for vector_id in &vector_ids {
@@ -2111,10 +2347,7 @@ impl FlightService for ProximaFlightService {
 
                 info!(collection_id = %collection_id, "Arrow Flight: compact_collection");
 
-                // Compact collection via storage engine
-                let storage_engine = self.vector_operations_service.unified_engine();
-                storage_engine
-                    .compact_collection(collection_id, None)
+                self.trigger_collection_compaction(collection_id)
                     .await
                     .map_err(|e| {
                         TonicStatus::internal(format!("Failed to compact collection: {}", e))
@@ -2160,9 +2393,7 @@ impl FlightService for ProximaFlightService {
                         TonicStatus::internal(format!("Failed to flush collection: {}", e))
                     })?;
 
-                let storage_engine = self.vector_operations_service.unified_engine();
-                storage_engine
-                    .compact_collection(collection_id, None)
+                self.trigger_collection_compaction(collection_id)
                     .await
                     .map_err(|e| {
                         TonicStatus::internal(format!("Failed to compact collection: {}", e))
@@ -2199,7 +2430,7 @@ impl FlightService for ProximaFlightService {
                 // Get collection
                 let collection = self
                     .collection_service
-                    .collection(collection_id)
+                    .get_collection_with_tenant_context(collection_id, Some(&tenant_context))
                     .await
                     .map_err(|e| TonicStatus::internal(format!("Failed to get collection: {}", e)))?
                     .ok_or_else(|| {
@@ -2446,7 +2677,7 @@ impl FlightService for ProximaFlightService {
                     write_target,
                     table_fqn,
                     operation,
-                    auth_context.tenant_id.clone(),
+                    Some(auth_context.tenant_id.clone()),
                     auth_context.capability.clone(),
                     first_msg,
                     stream,
@@ -2458,7 +2689,7 @@ impl FlightService for ProximaFlightService {
                     write_target,
                     table_fqn,
                     FlightWriteOperation::Delete,
-                    auth_context.tenant_id.clone(),
+                    Some(auth_context.tenant_id.clone()),
                     auth_context.capability.clone(),
                     first_msg,
                     stream,
@@ -2479,7 +2710,7 @@ impl FlightService for ProximaFlightService {
                 self.handle_graph_write_exchange(
                     collection_id,
                     is_nodes,
-                    auth_context.tenant_id.clone(),
+                    Some(auth_context.tenant_id.clone()),
                     first_msg,
                     stream,
                 )
@@ -2490,8 +2721,13 @@ impl FlightService for ProximaFlightService {
                     auth_context.capability.as_ref(),
                     &collection_id,
                 )?;
-                self.handle_bulk_search_exchange(collection_id, first_msg, stream)
-                    .await
+                self.handle_bulk_search_exchange(
+                    collection_id,
+                    auth_context.owned_identity(),
+                    first_msg,
+                    stream,
+                )
+                .await
             }
             "data_transfer" => {
                 if auth_context.capability.is_some() {
@@ -2650,19 +2886,6 @@ impl ProximaFlightService {
         Ok(TonicResponse::new(Box::pin(stream)))
     }
 
-    /// Derive the effective backing graph namespace from the request tenant.
-    ///
-    /// Structural isolation: the tenant is folded into the graph storage key
-    /// (mirrors the gRPC v2 graph surface's `effective_graph_id`), never a
-    /// per-query predicate. Unauthenticated calls (no tenant) fall back to the
-    /// raw graph id.
-    fn effective_graph_id(tenant: Option<&str>, graph_id: &str) -> String {
-        match tenant {
-            Some(t) if !t.is_empty() => format!("{t}::{graph_id}"),
-            _ => graph_id.to_string(),
-        }
-    }
-
     /// Handle the batched columnar graph ingest exchange (`graph_nodes` /
     /// `graph_edges`). Each streamed Arrow `RecordBatch` is decoded via
     /// [`super::graph_codec`] into neutral nodes/edges and upserted through the
@@ -2679,7 +2902,11 @@ impl ProximaFlightService {
         let graph = self.graph_service.as_ref().ok_or_else(|| {
             TonicStatus::unimplemented("graph Flight path requires the graph backing service")
         })?;
-        let effective_graph_id = Self::effective_graph_id(tenant_id.as_deref(), &graph_id);
+        // Structural isolation: resolve the tenant and route through the scoped handle,
+        // which composes `{tenant}/{graph_id}` once. The graph_id stays tenant-clean.
+        let tenant =
+            Self::resolve_tenant_for_mode(tenant_id.as_deref(), &self.tenant_deployment_mode)?;
+        let ops = graph.for_tenant(&tenant);
 
         let mut total_rows = 0u64;
         let mut total_batches = 0u64;
@@ -2695,15 +2922,13 @@ impl ProximaFlightService {
             let written = if is_nodes {
                 let nodes = super::graph_codec::batch_to_nodes(&batch)
                     .map_err(|e| TonicStatus::invalid_argument(format!("decode nodes: {}", e)))?;
-                graph
-                    .batch_create_nodes_with_strategy(&effective_graph_id, nodes, "update")
+                ops.batch_create_nodes_with_strategy(&graph_id, nodes, "update")
                     .await
                     .map(|created| created.len() as u64)
             } else {
                 let edges = super::graph_codec::batch_to_edges(&batch)
                     .map_err(|e| TonicStatus::invalid_argument(format!("decode edges: {}", e)))?;
-                graph
-                    .batch_create_edges(&effective_graph_id, edges)
+                ops.batch_create_edges(&graph_id, edges)
                     .await
                     .map(|created| created.len() as u64)
             };
@@ -2712,7 +2937,7 @@ impl ProximaFlightService {
                 Ok(n) => (n, true),
                 Err(e) => {
                     all_success = false;
-                    tracing::error!(graph_id = %effective_graph_id, error = %e, "graph Flight ingest batch failed");
+                    tracing::error!(graph_id = %graph_id, error = %e, "graph Flight ingest batch failed");
                     (0, false)
                 }
             };
@@ -2748,7 +2973,7 @@ impl ProximaFlightService {
         }));
 
         info!(
-            graph_id = %effective_graph_id,
+            graph_id = %graph_id,
             kind = if is_nodes { "graph_nodes" } else { "graph_edges" },
             total_batches = total_batches,
             total_rows_written = total_rows,
@@ -2785,7 +3010,11 @@ impl ProximaFlightService {
         let graph = self.graph_service.clone().ok_or_else(|| {
             TonicStatus::unimplemented("graph Flight path requires the graph backing service")
         })?;
-        let gid = Self::effective_graph_id(tenant_id.as_deref(), &ticket.graph_id);
+        // Read the SAME structural key the write path composes (`{tenant}/{graph_id}`).
+        let tenant =
+            Self::resolve_tenant_for_mode(tenant_id.as_deref(), &self.tenant_deployment_mode)?;
+        let gid = crate::graph::scoped_graph_id(&tenant, &ticket.graph_id)
+            .map_err(|e| TonicStatus::invalid_argument(format!("invalid tenant: {e}")))?;
         let page = ticket
             .limit
             .map(|l| l as usize)
@@ -2940,11 +3169,21 @@ impl ProximaFlightService {
     async fn handle_bulk_search_exchange(
         &self,
         collection_id: String,
+        identity: proximadb_tenant::ResolvedRequestIdentity,
         first_msg: FlightData,
         mut stream: TonicStreaming<FlightData>,
     ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
-        let mut results = Vec::new();
+        let mut results: Vec<std::result::Result<FlightData, TonicStatus>> = Vec::new();
         let mut query_count = 0u64;
+
+        // The bulk_search exchange carries query vectors as Arrow batches of
+        // ProximaRecord envelopes. Optional control frames (JSON in
+        // `app_metadata`) set top_k / filters / include_vector for the queries
+        // that follow; absent a control frame the defaults are top_k=10 and no
+        // filters — but now on the canonical v2 search path (TD-FLIGHT-1).
+        let mut top_k: u32 = 10;
+        let mut include_vector = false;
+        let mut filters: Vec<FlightFilter> = Vec::new();
         let mut flight_messages = vec![first_msg];
 
         while let Some(data) = stream
@@ -2953,9 +3192,16 @@ impl ProximaFlightService {
             .map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?
         {
             if !data.app_metadata.is_empty()
-                && let Ok(config) = serde_json::from_slice::<serde_json::Value>(&data.app_metadata)
+                && let Ok(control) = serde_json::from_slice::<BulkSearchControl>(&data.app_metadata)
             {
-                debug!("Received search config: {:?}", config);
+                debug!(?control, "Received bulk_search control frame");
+                if let Some(k) = control.top_k {
+                    top_k = k;
+                }
+                include_vector = control.include_vector;
+                if !control.filters.is_empty() {
+                    filters = control.filters;
+                }
                 continue;
             }
             flight_messages.push(data);
@@ -2963,18 +3209,29 @@ impl ProximaFlightService {
 
         let query_batches = ArrowProtoCodec::flight_data_stream_to_batches(&flight_messages)
             .map_err(|e| TonicStatus::internal(format!("Failed to parse query batches: {}", e)))?;
+
         for batch in query_batches {
             // Extract query vectors from batch using canonical ProximaRecord envelopes.
             let query_records = match ArrowProtoCodec::batches_to_proxima_records(vec![batch]) {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!("Failed to extract query vectors: {}", e);
+                    // Surface the per-batch decode error as a frame instead of
+                    // silently dropping the whole batch.
+                    let meta = serde_json::to_vec(&serde_json::json!({
+                        "type": "error", "stage": "decode", "message": e.to_string()
+                    }))
+                    .unwrap_or_default();
+                    results.push(Ok(control_flight_data(meta)));
+                    warn!("Failed to extract query vectors: {e}");
                     continue;
                 }
             };
 
-            // Execute searches for each query vector
+            // Execute one canonical v2 search per query vector, preserving input
+            // order. A failed query surfaces an error frame at its position
+            // rather than vanishing (acceptance #2).
             for query_record in query_records {
+                let query_index = query_count;
                 query_count += 1;
 
                 let query_vector = query_record
@@ -2983,44 +3240,42 @@ impl ProximaFlightService {
                     .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default();
 
-                let search_request = crate::proto::proximadb_v1::VectorSearchRequest {
+                // Build a canonical v2 ticket (reuses the DoGet filter lowering)
+                // and route through the same RecordSearchPort authority.
+                let ticket = FlightSearchTicket {
+                    ticket_type: "vector_search".to_string(),
                     collection_id: collection_id.clone(),
-                    queries: vec![crate::proto::proximadb_v1::SearchQuery {
-                        vector: query_vector,
-                        filters: std::collections::HashMap::new(),
-                        advanced_filter: None,
-                    }],
-                    top_k: 10, // Default top_k
-                    include_fields: Some(crate::proto::proximadb_v1::IncludeFields {
-                        vector: true,
-                        metadata: true,
-                        score: true,
-                        rank: true,
-                        source: false,
-                        source_options: std::collections::HashMap::new(),
-                    }),
-                    search_params: None,
-                    distance_metric_override: None,
-                    search_optimization: None,
+                    query_vector,
+                    top_k,
+                    filters: filters.clone(),
+                    include_vector,
                 };
 
-                // Execute search
-                let search_response = match self.handle_vector_search(search_request).await {
+                let search_batches = match self
+                    .handle_v2_search(ticket, proximadb_runtime::PortIdentity::from(&identity))
+                    .await
+                {
                     Ok(batches) => batches,
                     Err(e) => {
-                        warn!("Search failed for query {}: {}", query_record.oid, e);
+                        let meta = serde_json::to_vec(&serde_json::json!({
+                            "type": "error",
+                            "query_index": query_index,
+                            "query_id": query_record.oid.to_string(),
+                            "message": e.to_string()
+                        }))
+                        .unwrap_or_default();
+                        results.push(Ok(control_flight_data(meta)));
+                        warn!(query_index, query_id = %query_record.oid, "bulk_search query failed: {e}");
                         continue;
                     }
                 };
 
-                // Convert result batches to FlightData
-                for result_batch in search_response {
+                for result_batch in search_batches {
                     let flight_data_vec =
                         ArrowProtoCodec::batch_to_flight_data(&result_batch, &Default::default())
                             .map_err(|e| {
                             TonicStatus::internal(format!("Failed to encode result: {}", e))
                         })?;
-
                     for fd in flight_data_vec {
                         results.push(Ok(fd));
                     }
@@ -3028,26 +3283,19 @@ impl ProximaFlightService {
             }
         }
 
-        // Send completion message
-        let complete_msg = serde_json::json!({
+        // Completion frame.
+        let complete_meta = serde_json::to_vec(&serde_json::json!({
             "type": "complete",
             "query_count": query_count,
             "collection_id": collection_id
-        });
-
-        let complete_data = FlightData {
-            flight_descriptor: None,
-            data_header: Default::default(),
-            app_metadata: serde_json::to_vec(&complete_msg).unwrap_or_default().into(),
-            data_body: Default::default(),
-        };
-
-        results.push(Ok(complete_data));
+        }))
+        .unwrap_or_default();
+        results.push(Ok(control_flight_data(complete_meta)));
 
         info!(
             collection_id = %collection_id,
-            query_count = query_count,
-            "Arrow Flight: bulk_search exchange completed"
+            query_count,
+            "Arrow Flight: bulk_search exchange completed (canonical v2 path)"
         );
 
         Ok(TonicResponse::new(Box::pin(stream::iter(results))))
@@ -3126,765 +3374,5 @@ impl ProximaFlightService {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::catalog::TableIdentifier;
-    use crate::network::arrow_ipc::file_export::{
-        ArrowFileExportHandler, ArrowFileInfo, ArrowFileRequest, ArrowFileTicket, ExportFileFormat,
-    };
-    use crate::services::operations::OperationMetrics;
-    use arrow_schema::DataType;
-    use proximadb_catalog::{CatalogColumn, CatalogTableSchema};
-    use proximadb_data_model::ProximaType;
-
-    #[test]
-    fn test_batch_result_app_metadata_uses_rich_shape() {
-        let result = BatchOperationResult::success(
-            vec!["record-1".to_string()],
-            OperationMetrics {
-                total_processed: 1,
-                successful_count: 1,
-                failed_count: 0,
-                updated_count: 0,
-                processing_time_us: 123,
-                wal_write_time_us: 10,
-                index_update_time_us: 20,
-            },
-        );
-
-        let metadata = ProximaFlightService::batch_result_app_metadata(&result).unwrap();
-        let value: serde_json::Value = serde_json::from_slice(&metadata).unwrap();
-
-        assert_eq!(value["success"], true);
-        assert_eq!(value["vector_ids"], serde_json::json!(["record-1"]));
-        assert_eq!(value["metrics"]["successful_count"], 1);
-        assert!(value.get("operation").is_none());
-        assert!(value.get("error_message").is_none());
-    }
-
-    #[test]
-    fn test_table_fqn_from_descriptor_requires_relational_model() {
-        let relational_path =
-            FlightDescriptor::new_path(vec!["relational".to_string(), "events".to_string()]);
-        assert_eq!(
-            ProximaFlightService::table_fqn_from_descriptor(&relational_path).unwrap(),
-            Some("events".to_string())
-        );
-
-        let relational_cmd = FlightDescriptor::new_cmd(
-            serde_json::to_vec(&serde_json::json!({
-                "model_type": "relational",
-                "table_fqn": "analytics.events"
-            }))
-            .unwrap(),
-        );
-        assert_eq!(
-            ProximaFlightService::table_fqn_from_descriptor(&relational_cmd).unwrap(),
-            Some("analytics.events".to_string())
-        );
-
-        let vector_path = FlightDescriptor::new_path(vec!["vectors".to_string()]);
-        assert_eq!(
-            ProximaFlightService::table_fqn_from_descriptor(&vector_path).unwrap(),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn test_catalog_arrow_schema_for_descriptor_uses_xcatalog_schema() {
-        let manager = Arc::new(CatalogManager::new());
-        let temp_dir = tempfile::tempdir().unwrap();
-        let catalog = manager
-            .create_native_catalog("default", &format!("file://{}", temp_dir.path().display()))
-            .await
-            .unwrap();
-        let _ = catalog
-            .create_namespace(&["default".to_string()], Default::default())
-            .await;
-
-        let table_id = TableIdentifier::new(vec!["default".to_string()], "events".to_string());
-        let mut embedding = CatalogColumn::new(
-            3,
-            "embedding",
-            ProximaType::DenseVector {
-                element: proximadb_data_model::VectorElement::Float32,
-                dim: 0,
-            },
-        );
-        embedding
-            .properties
-            .insert("dimension".to_string(), "3".to_string());
-        let table_schema = CatalogTableSchema::new("events")
-            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "payload", ProximaType::Json))
-            .with_column(embedding);
-        catalog.create_table(&table_id, table_schema).await.unwrap();
-
-        let descriptor =
-            FlightDescriptor::new_path(vec!["relational".to_string(), "events".to_string()]);
-        let schema =
-            ProximaFlightService::catalog_arrow_schema_for_descriptor(Some(&manager), &descriptor)
-                .await
-                .unwrap()
-                .expect("catalog schema");
-
-        assert_eq!(schema.fields().len(), 3);
-        assert_eq!(schema.field(0).name(), "id");
-        assert_eq!(*schema.field(0).data_type(), DataType::Int64);
-        assert!(!schema.field(0).is_nullable());
-        assert_eq!(schema.field(1).name(), "payload");
-        assert_eq!(*schema.field(1).data_type(), DataType::Utf8);
-        assert_eq!(
-            *schema.field(2).data_type(),
-            DataType::List(
-                Box::new(arrow_schema::Field::new("item", DataType::Float32, true)).into()
-            )
-        );
-    }
-
-    #[tokio::test]
-    async fn test_records_for_write_batches_uses_catalog_bulk_validation_for_tables() {
-        let manager = Arc::new(CatalogManager::new());
-        let temp_dir = tempfile::tempdir().unwrap();
-        let catalog = manager
-            .create_native_catalog("default", &format!("file://{}", temp_dir.path().display()))
-            .await
-            .unwrap();
-        let _ = catalog
-            .create_namespace(&["default".to_string()], Default::default())
-            .await;
-
-        let table_id = TableIdentifier::new(vec!["default".to_string()], "events".to_string());
-        let table_schema = CatalogTableSchema::new("events")
-            .with_column(CatalogColumn::new(1, "id", ProximaType::String).nullable(false))
-            .with_column(CatalogColumn::new(2, "payload", ProximaType::String));
-        catalog.create_table(&table_id, table_schema).await.unwrap();
-
-        let schema = Arc::new(Schema::new(vec![
-            arrow_schema::Field::new("id", DataType::Utf8, false),
-            arrow_schema::Field::new("payload", DataType::Utf8, true),
-        ]));
-        let batch = arrow_array::RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(arrow_array::StringArray::from(vec!["event-1"])),
-                Arc::new(arrow_array::StringArray::from(vec!["loaded"])),
-            ],
-        )
-        .unwrap();
-
-        let (records, catalog_result) = ProximaFlightService::records_for_write_batches(
-            Some(&manager),
-            Some("events"),
-            FlightWriteOperation::Upsert,
-            WriteMode::WAL,
-            &[batch],
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].oid, "event-1");
-        let catalog_result = catalog_result.expect("catalog preparation result");
-        assert_eq!(catalog_result.records_written, 1);
-        assert!(!catalog_result.table_created);
-    }
-
-    #[test]
-    fn test_batch_progress_metadata_is_record_oriented() {
-        let result = BatchOperationResult::failure(
-            "bad record".to_string(),
-            "VALIDATION_FAILED".to_string(),
-        );
-
-        let metadata = ProximaFlightService::batch_progress_app_metadata(
-            FlightWriteOperation::Delete,
-            2,
-            10,
-            7,
-            &result,
-        )
-        .unwrap();
-        let value: serde_json::Value = serde_json::from_slice(&metadata).unwrap();
-
-        assert_eq!(value["type"], "progress");
-        assert_eq!(value["operation"], "delete");
-        assert_eq!(value["batch"], 2);
-        assert_eq!(value["batch_rows"], 10);
-        assert_eq!(value["total_records"], 7);
-        assert_eq!(value["successful_count"], 0);
-        assert_eq!(value["failed_count"], 1);
-        assert_eq!(value["errors"], serde_json::json!(["bad record"]));
-        assert!(value.get("total_vectors").is_none());
-    }
-
-    #[test]
-    fn test_bulk_completion_metadata_is_operation_tagged() {
-        let metadata = ProximaFlightService::bulk_insert_complete_app_metadata(
-            FlightWriteOperation::Upsert,
-            3,
-            25,
-            2,
-            false,
-        )
-        .unwrap();
-        let value: serde_json::Value = serde_json::from_slice(&metadata).unwrap();
-
-        assert_eq!(value["type"], "complete");
-        assert_eq!(value["operation"], "upsert");
-        assert_eq!(value["total_batches"], 3);
-        assert_eq!(value["total_records"], 25);
-        assert_eq!(value["total_failed"], 2);
-        assert_eq!(value["success"], false);
-        assert!(value.get("total_vectors").is_none());
-    }
-
-    #[test]
-    fn test_tenant_id_from_flight_metadata_prefers_proximadb_header() {
-        let mut metadata = tonic::metadata::MetadataMap::new();
-        metadata.insert("x-tenant-id", "tenant-b".parse().unwrap());
-        metadata.insert("x-proximadb-tenant-id", "tenant-a".parse().unwrap());
-
-        assert_eq!(
-            ProximaFlightService::tenant_id_from_metadata(&metadata),
-            Some("tenant-a".to_string())
-        );
-    }
-
-    #[test]
-    fn test_tenant_id_from_flight_metadata_ignores_empty_header() {
-        let mut metadata = tonic::metadata::MetadataMap::new();
-        metadata.insert("x-proximadb-tenant-id", "".parse().unwrap());
-
-        assert_eq!(
-            ProximaFlightService::tenant_id_from_metadata(&metadata),
-            None
-        );
-    }
-
-    #[test]
-    fn test_auth_data_from_flight_metadata_accepts_api_key_scheme() {
-        let mut metadata = tonic::metadata::MetadataMap::new();
-        metadata.insert("authorization", "API-Key key-1".parse().unwrap());
-
-        let auth_data = ProximaFlightService::auth_data_from_metadata(&metadata)
-            .unwrap()
-            .expect("auth data");
-
-        match auth_data {
-            AuthenticationData::ApiKey(key) => assert_eq!(key, "key-1"),
-            other => panic!("expected API key auth data, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_auth_data_from_flight_metadata_accepts_bearer_jwt() {
-        let mut metadata = tonic::metadata::MetadataMap::new();
-        metadata.insert("authorization", "Bearer jwt-1".parse().unwrap());
-
-        let auth_data = ProximaFlightService::auth_data_from_metadata(&metadata)
-            .unwrap()
-            .expect("auth data");
-
-        match auth_data {
-            AuthenticationData::JWTToken(token) => assert_eq!(token, "jwt-1"),
-            other => panic!("expected JWT auth data, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_auth_data_from_flight_metadata_accepts_x_api_key() {
-        let mut metadata = tonic::metadata::MetadataMap::new();
-        metadata.insert("x-api-key", "key-2".parse().unwrap());
-
-        let auth_data = ProximaFlightService::auth_data_from_metadata(&metadata)
-            .unwrap()
-            .expect("auth data");
-
-        match auth_data {
-            AuthenticationData::ApiKey(key) => assert_eq!(key, "key-2"),
-            other => panic!("expected API key auth data, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_auth_data_from_peer_certificate_der_uses_raw_cert_bytes() {
-        let auth_data = ProximaFlightService::auth_data_from_peer_certificate_der(&[1, 2, 3])
-            .expect("auth data");
-
-        match auth_data {
-            AuthenticationData::ClientCertificate(cert_data) => {
-                assert_eq!(cert_data.raw_cert_der, Some(vec![1, 2, 3]));
-            }
-            other => panic!("expected client certificate auth data, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_auth_data_from_peer_certificate_der_ignores_empty_cert() {
-        assert!(
-            ProximaFlightService::auth_data_from_peer_certificate_der(&[]).is_none(),
-            "empty peer certs should not create auth data"
-        );
-    }
-
-    #[test]
-    fn test_insert_request_conflict_result_rejects_duplicate_ids() {
-        let mut seen = HashSet::new();
-        let records = vec![
-            ProximaRecord {
-                oid: "r1".to_string(),
-                ..ProximaRecord::default()
-            },
-            ProximaRecord {
-                oid: "r1".to_string(),
-                ..ProximaRecord::default()
-            },
-        ];
-
-        let result = ProximaFlightService::insert_request_conflict_result(&records, &mut seen)
-            .expect("duplicate insert should return conflict");
-
-        assert!(!result.success);
-        assert_eq!(result.error_code.as_deref(), Some("INSERT_CONFLICT"));
-        assert_eq!(result.metrics.successful_count, 0);
-        assert!(result.errors[0].contains("appears more than once"));
-    }
-
-    #[test]
-    fn test_insert_request_conflict_result_tracks_ids_across_batches() {
-        let mut seen = HashSet::new();
-        let first_batch = vec![ProximaRecord {
-            oid: "r1".to_string(),
-            ..ProximaRecord::default()
-        }];
-        let second_batch = vec![ProximaRecord {
-            oid: "r1".to_string(),
-            ..ProximaRecord::default()
-        }];
-
-        assert!(
-            ProximaFlightService::insert_request_conflict_result(&first_batch, &mut seen).is_none()
-        );
-        let result = ProximaFlightService::insert_request_conflict_result(&second_batch, &mut seen)
-            .expect("duplicate across batches should return conflict");
-
-        assert!(!result.success);
-        assert_eq!(result.error_code.as_deref(), Some("INSERT_CONFLICT"));
-    }
-
-    #[test]
-    fn test_exchange_descriptor_from_path() {
-        let descriptor =
-            FlightDescriptor::new_path(vec!["bulk_delete".to_string(), "records".to_string()]);
-
-        let (exchange_type, collection_id, operation) =
-            ProximaFlightService::parse_exchange_descriptor(&descriptor).unwrap();
-
-        assert_eq!(exchange_type, "bulk_delete");
-        assert_eq!(collection_id, "records");
-        assert_eq!(operation, Some(FlightWriteOperation::Delete));
-    }
-
-    #[test]
-    fn test_exchange_descriptor_from_command() {
-        let descriptor = FlightDescriptor::new_cmd(
-            serde_json::to_vec(&serde_json::json!({
-                "exchange_type": "bulk_upsert",
-                "collection_id": "records"
-            }))
-            .unwrap(),
-        );
-
-        let (exchange_type, collection_id, operation) =
-            ProximaFlightService::parse_exchange_descriptor(&descriptor).unwrap();
-
-        assert_eq!(exchange_type, "bulk_upsert");
-        assert_eq!(collection_id, "records");
-        assert_eq!(operation, Some(FlightWriteOperation::Upsert));
-    }
-
-    #[test]
-    fn test_exchange_descriptor_from_command_operation_alias() {
-        let descriptor = FlightDescriptor::new_cmd(
-            serde_json::to_vec(&serde_json::json!({
-                "operation": "delete",
-                "collection": "records"
-            }))
-            .unwrap(),
-        );
-
-        let (exchange_type, collection_id, operation) =
-            ProximaFlightService::parse_exchange_descriptor(&descriptor).unwrap();
-
-        assert_eq!(exchange_type, "bulk_delete");
-        assert_eq!(collection_id, "records");
-        assert_eq!(operation, Some(FlightWriteOperation::Delete));
-    }
-
-    #[test]
-    fn test_exchange_descriptor_from_command_upsert_alias() {
-        let descriptor = FlightDescriptor::new_cmd(
-            serde_json::to_vec(&serde_json::json!({
-                "operation": "upsert",
-                "collection_id": "records"
-            }))
-            .unwrap(),
-        );
-
-        let (exchange_type, collection_id, operation) =
-            ProximaFlightService::parse_exchange_descriptor(&descriptor).unwrap();
-
-        assert_eq!(exchange_type, "bulk_upsert");
-        assert_eq!(collection_id, "records");
-        assert_eq!(operation, Some(FlightWriteOperation::Upsert));
-    }
-
-    #[test]
-    fn test_arrow_file_ticket_detection() {
-        // Test valid arrow file ticket
-        let valid_ticket = Ticket {
-            ticket: serde_json::to_vec(&serde_json::json!({
-                "type": "arrow_file",
-                "collection_id": "test_collection",
-                "file_path": "/path/to/file.arrow"
-            }))
-            .unwrap()
-            .into(),
-        };
-        assert!(ArrowFileTicket::is_arrow_file_ticket(&valid_ticket));
-
-        // Test search request ticket (not an arrow file ticket)
-        let search_ticket = Ticket {
-            ticket: serde_json::to_vec(&serde_json::json!({
-                "collection_id": "test_collection",
-                "query_vector": [0.1, 0.2, 0.3],
-                "top_k": 10
-            }))
-            .unwrap()
-            .into(),
-        };
-        assert!(!ArrowFileTicket::is_arrow_file_ticket(&search_ticket));
-
-        // Test invalid JSON ticket
-        let invalid_ticket = Ticket {
-            ticket: b"not json".to_vec().into(),
-        };
-        assert!(!ArrowFileTicket::is_arrow_file_ticket(&invalid_ticket));
-    }
-
-    #[test]
-    fn test_arrow_file_ticket_parsing() {
-        let ticket = Ticket {
-            ticket: serde_json::to_vec(&serde_json::json!({
-                "type": "arrow_file",
-                "collection_id": "my_collection",
-                "file_path": "/data/my_collection/data/block_0.arrow"
-            }))
-            .unwrap()
-            .into(),
-        };
-
-        let parsed = ArrowFileTicket::from_ticket(&ticket).unwrap();
-        assert_eq!(parsed.ticket_type, "arrow_file");
-        assert_eq!(parsed.collection_id, "my_collection");
-        assert_eq!(parsed.file_path, "/data/my_collection/data/block_0.arrow");
-    }
-
-    #[test]
-    fn test_arrow_file_info_serialization() {
-        let file_info = ArrowFileInfo {
-            path: "/data/test/data/block_0.arrow".to_string(),
-            filename: "block_0.arrow".to_string(),
-            size_bytes: 1024 * 1024, // 1MB
-            num_batches: 10,
-            total_records: 10000,
-            dimension: 768,
-            modified_at: 1704067200, // 2024-01-01 00:00:00 UTC
-            format: ExportFileFormat::Arrow,
-        };
-
-        let json = serde_json::to_string(&file_info).unwrap();
-        let parsed: ArrowFileInfo = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(parsed.path, file_info.path);
-        assert_eq!(parsed.filename, file_info.filename);
-        assert_eq!(parsed.size_bytes, file_info.size_bytes);
-        assert_eq!(parsed.num_batches, file_info.num_batches);
-        assert_eq!(parsed.total_records, file_info.total_records);
-        assert_eq!(parsed.dimension, file_info.dimension);
-        assert_eq!(parsed.format, ExportFileFormat::Arrow);
-    }
-
-    #[test]
-    fn test_arrow_file_export_handler_creation() {
-        let storage_locations = vec![
-            "file:///tmp/proximadb/d1".to_string(),
-            "file:///tmp/proximadb/d2".to_string(),
-        ];
-        // Handler should be created successfully with storage locations
-        let _handler = ArrowFileExportHandler::new(storage_locations);
-        // If we get here without panic, the handler was created successfully
-    }
-
-    #[test]
-    fn test_arrow_file_request_ticket_creation() {
-        let request = ArrowFileRequest {
-            collection_id: "test_collection".to_string(),
-            file_pattern: Some("*.arrow".to_string()),
-            limit: Some(100),
-            compression: None,
-        };
-
-        let ticket = request.create_ticket("/path/to/file.arrow");
-
-        // Verify ticket can be parsed back
-        let parsed = ArrowFileTicket::from_ticket(&ticket).unwrap();
-        assert_eq!(parsed.collection_id, "test_collection");
-        assert_eq!(parsed.file_path, "/path/to/file.arrow");
-    }
-
-    // ── Native embedding dispatch tests (Phase 1) ──────────────────────────
-
-    fn init_embedding_singleton() {
-        use proximadb_embedding::{
-            EmbeddingService,
-            config::{ChunkConfig, EmbedRoute, EmbeddingConfig},
-            scheduler::EmbedSchedulerConfig,
-        };
-
-        // Idempotent: second call to initialize is a no-op via OnceCell.
-        if EmbeddingService::try_global().is_some() {
-            return;
-        }
-        let _ = EmbeddingService::initialize(
-            EmbeddingConfig {
-                route: EmbedRoute::BgeSmall,
-                chunk: ChunkConfig::default(),
-            },
-            EmbedSchedulerConfig::default(),
-        );
-    }
-
-    /// Records arriving with text but no vector get their `embeddings` field
-    /// populated by the in-process EmbeddingService at the route's declared
-    /// dimension (384 for bge-small), which is exactly what the downstream
-    /// WAL + index paths need to function end-to-end.
-    ///
-    /// Gated on `--features onnx`: the BGE route requires the real ONNX
-    /// runtime, and `BgeModel::initialize` deliberately returns
-    /// `ModelUnavailable` when `onnx` is off (synthetic fallback is forbidden
-    /// in production paths — see bge.rs). Without the gate this test fails in
-    /// every default (onnx-off) build.
-    #[cfg(feature = "onnx")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn embed_text_only_records_populates_empty_embeddings() {
-        use proximadb_data_model::ProximaValue;
-        use proximadb_records::{ProximaRecord, ProximaTreeNode};
-
-        init_embedding_singleton();
-
-        let mut records = vec![
-            ProximaRecord {
-                oid: "doc-1".to_string(),
-                local_id: Some("doc-1".to_string()),
-                tenant_id: "tenant-a".to_string(),
-                props: {
-                    let mut m = std::collections::HashMap::new();
-                    m.insert(
-                        "text".to_string(),
-                        ProximaTreeNode::Value(ProximaValue::String(
-                            "API gateway returned 503; check upstream connector health".into(),
-                        )),
-                    );
-                    m
-                },
-                ..ProximaRecord::default()
-            },
-            ProximaRecord {
-                oid: "doc-2".to_string(),
-                local_id: Some("doc-2".to_string()),
-                tenant_id: "tenant-a".to_string(),
-                props: {
-                    let mut m = std::collections::HashMap::new();
-                    m.insert(
-                        "text".to_string(),
-                        ProximaTreeNode::Value(ProximaValue::String("rate limit 429 retry".into())),
-                    );
-                    m
-                },
-                ..ProximaRecord::default()
-            },
-        ];
-
-        ProximaFlightService::embed_text_only_records(&mut records, Some("tenant-a"))
-            .await
-            .unwrap();
-
-        assert_eq!(records[0].embeddings.len(), 1);
-        assert_eq!(records[1].embeddings.len(), 1);
-        assert_eq!(records[0].embeddings[0].dim, 384, "bge-small dimension");
-        assert_eq!(records[0].embeddings[0].values.len(), 384);
-        assert_eq!(records[0].embeddings[0].modality, "dense_vector");
-        // Deterministic: same text → same vector
-        assert_ne!(
-            records[0].embeddings[0].values,
-            records[1].embeddings[0].values
-        );
-    }
-
-    /// Records that already have a vector populated should pass through
-    /// untouched — no embedding inference happens, no extra EmbeddingCell.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn embed_text_only_records_skips_records_with_existing_vector() {
-        use proximadb_records::{EmbeddingCell, ProximaRecord};
-
-        init_embedding_singleton();
-
-        let mut records = vec![ProximaRecord {
-            oid: "doc-prevector".to_string(),
-            local_id: Some("doc-prevector".to_string()),
-            tenant_id: "tenant-b".to_string(),
-            embeddings: vec![EmbeddingCell {
-                model_id: "client-provided".to_string(),
-                modality: "dense_vector".to_string(),
-                dim: 1536,
-                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1_f32; 1536]),
-                ..Default::default()
-            }],
-            ..ProximaRecord::default()
-        }];
-
-        ProximaFlightService::embed_text_only_records(&mut records, Some("tenant-b"))
-            .await
-            .unwrap();
-
-        // Unchanged: still exactly one embedding, still 1536-dim, still the
-        // client-provided model id.
-        assert_eq!(records[0].embeddings.len(), 1);
-        assert_eq!(records[0].embeddings[0].dim, 1536);
-        assert_eq!(records[0].embeddings[0].model_id, "client-provided");
-    }
-
-    /// extract_record_text reads from `text` first, then falls back to `body`
-    /// and `title` so connectors that normalize through AnvaiDocument (which
-    /// carries title/body separately) still produce embeddings.
-    #[test]
-    fn extract_record_text_prefers_text_then_body_then_title() {
-        use proximadb_data_model::ProximaValue;
-        use proximadb_records::{ProximaRecord, ProximaTreeNode};
-
-        let mk = |key: &str, value: &str| {
-            let mut r = ProximaRecord::default();
-            r.oid = "r".into();
-            r.props.insert(
-                key.to_string(),
-                ProximaTreeNode::Value(ProximaValue::String(value.into())),
-            );
-            r
-        };
-
-        assert_eq!(
-            ProximaFlightService::extract_record_text(&mk("text", "from-text")),
-            Some("from-text".to_string())
-        );
-        assert_eq!(
-            ProximaFlightService::extract_record_text(&mk("body", "from-body")),
-            Some("from-body".to_string())
-        );
-        assert_eq!(
-            ProximaFlightService::extract_record_text(&mk("title", "from-title")),
-            Some("from-title".to_string())
-        );
-        assert_eq!(
-            ProximaFlightService::extract_record_text(&ProximaRecord::default()),
-            None
-        );
-    }
-
-    // ── Slice 6.2: primary-pod gate ─────────────────────────────────
-
-    use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
-
-    fn make_gate(
-        registry: Arc<PrimaryPodRegistry>,
-        self_pod_id: &str,
-    ) -> Option<FlightPrimaryPodGate> {
-        Some(FlightPrimaryPodGate {
-            registry,
-            self_pod_id: self_pod_id.to_string(),
-        })
-    }
-
-    #[test]
-    fn flight_gate_unconfigured_allows_writes() {
-        // Backwards-compat: deployments that don't set
-        // with_primary_pod_gate (eg. embedded / unit-test
-        // construction) must NOT see any new rejections.
-        assert!(check_flight_primary_pod_gate(&None, "tenant-a", "coll-1").is_ok());
-    }
-
-    #[test]
-    fn flight_gate_allows_when_no_binding_exists() {
-        let registry = Arc::new(PrimaryPodRegistry::new());
-        let g = make_gate(registry, "pod-self");
-        assert!(check_flight_primary_pod_gate(&g, "tenant-a", "coll-1").is_ok());
-    }
-
-    #[test]
-    fn flight_gate_allows_when_binding_matches_self_pod() {
-        let registry = Arc::new(PrimaryPodRegistry::new());
-        registry.assign("tenant-a", "coll-1", "pod-self", AssignmentReason::Create);
-        let g = make_gate(registry, "pod-self");
-        assert!(check_flight_primary_pod_gate(&g, "tenant-a", "coll-1").is_ok());
-    }
-
-    #[test]
-    fn flight_gate_rejects_misrouted_with_failed_precondition_and_metadata() {
-        // Locks the wire contract: same Status code + same trailing
-        // metadata keys as the gRPC v2 path (covered by
-        // record_service tests). A future change that drops one of
-        // these headers breaks both at once — that's the point.
-        let registry = Arc::new(PrimaryPodRegistry::new());
-        registry.assign(
-            "tenant-a",
-            "coll-1",
-            "pod-other",
-            AssignmentReason::Operator,
-        );
-        let g = make_gate(registry, "pod-self");
-        let status = check_flight_primary_pod_gate(&g, "tenant-a", "coll-1")
-            .expect_err("must reject misrouted write");
-
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
-
-        let md = status.metadata();
-        assert_eq!(
-            md.get("x-primary-pod").unwrap().to_str().unwrap(),
-            "pod-other"
-        );
-        assert_eq!(md.get("x-tenant-id").unwrap().to_str().unwrap(), "tenant-a");
-        assert_eq!(
-            md.get("x-collection-id").unwrap().to_str().unwrap(),
-            "coll-1"
-        );
-    }
-
-    #[test]
-    fn flight_gate_scopes_per_tenant_collection_pair() {
-        // Binding on (tenant-a, coll-1) must not leak to other pairs.
-        // Same property the gRPC v2 + REST v2 paths enforce.
-        let registry = Arc::new(PrimaryPodRegistry::new());
-        registry.assign(
-            "tenant-a",
-            "coll-1",
-            "pod-other",
-            AssignmentReason::Operator,
-        );
-        let g = make_gate(registry, "pod-self");
-
-        assert!(check_flight_primary_pod_gate(&g, "tenant-a", "coll-2").is_ok());
-        assert!(check_flight_primary_pod_gate(&g, "tenant-b", "coll-1").is_ok());
-        assert!(check_flight_primary_pod_gate(&g, "tenant-a", "coll-1").is_err());
-    }
-}
+#[path = "service_tests.rs"]
+mod tests;

@@ -321,11 +321,11 @@ async fn recall_and_leaks(
 /// TD-182 P2 (the foundation's own goal): ANN recall UNDER DELETES + compaction —
 /// the audit's vector gap. A deleted vector is the ANN recall hazard (visited-then-
 /// filtered). The relational OLAP read-merge does NOT apply to vector (you can't
-/// merge a WAL delta into HNSW), so this targets the IMPLEMENTED path: MVCC tombstone
-/// filtered at search time (hot), then physically dropped at compaction. The contract
-/// it pins (for ADR-025 PR4's segment-DV to keep): after deletes, (a) deleted ids never
-/// surface in results, and (b) recall@k over the LIVE set holds — across the
-/// flush/compaction boundary (where the dead bytes finally stop leaving object storage).
+/// merge a WAL delta into HNSW), so this targets the IMPLEMENTED default path: MVCC
+/// tombstones remain durable in WAL while vector-only batches materialize to immutable
+/// segments. Physical deletion/reclamation requires the deletion-vector path. The
+/// contract pinned here is that (a) deleted ids never surface and (b) recall@k over the
+/// LIVE set holds across vector flushes without accidentally retiring tombstone batches.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vector_ann_recall_under_deletes_and_compaction() {
     let server = VecServer::start().await.expect("server start");
@@ -398,7 +398,8 @@ async fn vector_ann_recall_under_deletes_and_compaction() {
     let (mean_a, leaks_a) = recall_and_leaks(&http, &base, &coll, &corpus, &live, &deleted).await;
     eprintln!("=== recall-under-deletes (pre-flush): mean={mean_a:.3}, leaks={leaks_a} ===");
 
-    // Phase B — force flush + compaction (dead vectors physically dropped from the SST).
+    // Phase B — publish vector-only batches. Tombstone-only batches remain in WAL
+    // because the default immutable PAX format cannot represent them safely.
     server
         .db
         .as_ref()
@@ -408,7 +409,7 @@ async fn vector_ann_recall_under_deletes_and_compaction() {
         .expect("force flush");
     sleep(Duration::from_millis(750)).await;
     let (mean_b, leaks_b) = recall_and_leaks(&http, &base, &coll, &corpus, &live, &deleted).await;
-    eprintln!("=== recall-under-deletes (post-compaction): mean={mean_b:.3}, leaks={leaks_b} ===");
+    eprintln!("=== recall-under-deletes (post-flush): mean={mean_b:.3}, leaks={leaks_b} ===");
 
     // TD-188 Phase A (pre-flush) — deleted vectors must be suppressed at scale.
     // Fixed by exempting WAL tombstones from the ANN top-k truncation in
@@ -423,21 +424,21 @@ async fn vector_ann_recall_under_deletes_and_compaction() {
         "pre-flush recall over the live set regressed: {mean_a:.3} < {RECALL_RATCHET}"
     );
 
-    // TD-188 Phase B (post flush/compaction) — deletes survive the flush: the
-    // tombstones flush in the same batch as their live copies, so they reconcile.
+    // TD-188 Phase B (post flush) — the segment claim retires vector-only batches
+    // while tombstone-only batches remain visible on the WAL suppression path.
     assert_eq!(
         leaks_b, 0,
-        "post-compaction: {leaks_b} deleted vectors leaked into ANN top-k"
+        "post-flush: {leaks_b} deleted vectors leaked into ANN top-k"
     );
     assert!(
         mean_b >= RECALL_RATCHET,
-        "post-compaction recall over the live set regressed: {mean_b:.3} < {RECALL_RATCHET}"
+        "post-flush recall over the live set regressed: {mean_b:.3} < {RECALL_RATCHET}"
     );
 
-    // Phase C — CROSS-SEGMENT durability: delete a SECOND disjoint subset whose live
-    // copies are already in the flushed SST, then flush AGAIN so the tombstones land
-    // in a *separate* segment from the live copies (no in-batch reconcile). This is
-    // the genuine durable-deletion case the ADR-025 PR4 segment-DV targets.
+    // Phase C — CROSS-TIER durability: delete a SECOND disjoint subset whose live
+    // copies are already in immutable SST, then force flush again. The tombstone-only
+    // source must remain durable in WAL; a batch-granular claim must never retire it
+    // after an empty segment publication. Segment DVs eventually make this cold-only.
     let deleted2: HashSet<String> = (0..N)
         .filter(|i| i % 7 == 0 && i % 5 != 0)
         .map(|i| format!("rec-{i}"))
@@ -473,7 +474,7 @@ async fn vector_ann_recall_under_deletes_and_compaction() {
     let (mean_c, leaks_c) =
         recall_and_leaks(&http, &base, &coll, &corpus, &live2, &all_deleted).await;
     eprintln!(
-        "=== recall-under-deletes (cross-segment, delete-after-flush + reflush): mean={mean_c:.3}, leaks={leaks_c} ==="
+        "=== recall-under-deletes (cross-tier, delete-after-flush + reflush): mean={mean_c:.3}, leaks={leaks_c} ==="
     );
     assert_eq!(
         leaks_c, 0,

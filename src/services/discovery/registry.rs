@@ -1,12 +1,12 @@
 //! `DiscoveryRegistry` — durable in-memory registry of discovery jobs.
 //!
-//! Mirrors the persistence pattern of
-//! `crate::cluster::primary_pod_registry::PrimaryPodRegistry`: a `DashMap` is
-//! authoritative in memory; when constructed with a path, every mutation
-//! atomically rewrites a JSON sidecar (temp file + rename). Write failures are
-//! logged, never propagated — the in-memory state stays authoritative.
+//! A `DashMap` is authoritative in memory. Local persistence atomically rewrites
+//! a JSON sidecar (temp file + rename); object-store persistence sends ordered
+//! full-snapshot PUTs through the unified filesystem. Write failures are logged,
+//! never propagated — the in-memory state stays authoritative.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -22,10 +22,26 @@ struct PersistedRegistry {
 }
 
 /// Durable registry of discovery jobs keyed by `job_id`.
-#[derive(Default)]
 pub struct DiscoveryRegistry {
     jobs: DashMap<String, DiscoveryJob>,
-    persistence_path: Option<PathBuf>,
+    persistence: Option<RegistryPersistence>,
+}
+
+enum RegistryPersistence {
+    Local(PathBuf),
+    ObjectStore {
+        url: String,
+        writer: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    },
+}
+
+impl Default for DiscoveryRegistry {
+    fn default() -> Self {
+        Self {
+            jobs: DashMap::new(),
+            persistence: None,
+        }
+    }
 }
 
 impl DiscoveryRegistry {
@@ -40,7 +56,7 @@ impl DiscoveryRegistry {
     pub fn load_or_create_at(path: PathBuf) -> Self {
         let registry = Self {
             jobs: DashMap::new(),
-            persistence_path: Some(path.clone()),
+            persistence: Some(RegistryPersistence::Local(path.clone())),
         };
 
         match std::fs::read(&path) {
@@ -73,6 +89,70 @@ impl DiscoveryRegistry {
         }
 
         registry
+    }
+
+    /// Registry persisted through the unified filesystem at a scheme-qualified
+    /// URL. This is the production constructor for object-store metadata; URL-
+    /// shaped paths never reach `std::fs`.
+    pub async fn load_or_create_at_url(
+        url: String,
+        filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+    ) -> anyhow::Result<Self> {
+        let filesystem = filesystem_factory.get_filesystem(&url)?;
+        let (writer, mut writes) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let writer_url = url.clone();
+        let writer_filesystem = filesystem.clone();
+        // One worker serializes full-snapshot PUTs in mutation order. Spawning
+        // one task per mutation could let an older snapshot land after a newer
+        // one and roll the registry backward.
+        tokio::spawn(async move {
+            while let Some(serialized) = writes.recv().await {
+                if let Err(err) = writer_filesystem
+                    .write_atomic(&writer_url, &serialized, None)
+                    .await
+                {
+                    tracing::warn!(
+                        "DiscoveryRegistry: failed to persist to {} ({}); in-memory state remains authoritative",
+                        writer_url,
+                        err
+                    );
+                }
+            }
+        });
+        let registry = Self {
+            jobs: DashMap::new(),
+            persistence: Some(RegistryPersistence::ObjectStore {
+                url: url.clone(),
+                writer,
+            }),
+        };
+        if filesystem.exists(&url).await? {
+            match filesystem.read(&url).await {
+                Ok(bytes) => match serde_json::from_slice::<PersistedRegistry>(&bytes) {
+                    Ok(persisted) => {
+                        tracing::info!(
+                            "DiscoveryRegistry: loaded {} jobs from {}",
+                            persisted.jobs.len(),
+                            url
+                        );
+                        for job in persisted.jobs {
+                            registry.jobs.insert(job.job_id.clone(), job);
+                        }
+                    }
+                    Err(err) => tracing::warn!(
+                        "DiscoveryRegistry: object at {} is corrupt ({}); starting empty",
+                        url,
+                        err
+                    ),
+                },
+                Err(err) => tracing::warn!(
+                    "DiscoveryRegistry: cannot read {} ({}); starting empty",
+                    url,
+                    err
+                ),
+            }
+        }
+        Ok(registry)
     }
 
     /// Record a newly created (`Scheduled`) job.
@@ -147,19 +227,41 @@ impl DiscoveryRegistry {
     }
 
     fn persist_if_configured(&self) {
-        let Some(path) = self.persistence_path.as_ref() else {
+        let Some(persistence) = self.persistence.as_ref() else {
             return;
         };
         let persisted = PersistedRegistry {
             schema_version: REGISTRY_SCHEMA_VERSION,
             jobs: self.jobs.iter().map(|e| e.value().clone()).collect(),
         };
-        if let Err(err) = atomic_write_json(path, &persisted) {
-            tracing::warn!(
-                "DiscoveryRegistry: failed to persist to {} ({}); in-memory state remains authoritative",
-                path.display(),
-                err
-            );
+        match persistence {
+            RegistryPersistence::Local(path) => {
+                if let Err(err) = atomic_write_json(path, &persisted) {
+                    tracing::warn!(
+                        "DiscoveryRegistry: failed to persist to {} ({}); in-memory state remains authoritative",
+                        path.display(),
+                        err
+                    );
+                }
+            }
+            RegistryPersistence::ObjectStore { url, writer } => {
+                let serialized = match serde_json::to_vec_pretty(&persisted) {
+                    Ok(serialized) => serialized,
+                    Err(err) => {
+                        tracing::warn!("DiscoveryRegistry: serialization failed: {err}");
+                        return;
+                    }
+                };
+                // Mutations are synchronous control-plane calls today. Enqueue
+                // the full snapshot to the single ordered remote writer rather
+                // than blocking the caller's worker thread on object-store I/O.
+                if writer.send(serialized).is_err() {
+                    tracing::warn!(
+                        "DiscoveryRegistry: persistence worker for {} stopped; in-memory state remains authoritative",
+                        url
+                    );
+                }
+            }
         }
     }
 }

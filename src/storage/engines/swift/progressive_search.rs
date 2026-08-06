@@ -8,12 +8,12 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use super::{MetadataFilter, SwiftFile};
-use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
+use proximadb_quantization_model::UnifiedQuantizationLevel;
 use proximadb_records::ProximaRecord;
 
 fn record_vector(record: &ProximaRecord) -> &[f32] {
@@ -1302,6 +1302,7 @@ mod tests {
 
         let metric = DistanceMetric::Euclidean;
         let prune = crate::core::search::BlockPruneConfig {
+            radius_k: 0.0,
             mode: crate::core::search::BlockPruneMode::Ratio,
             ratio: 0.25, // keep ~1 of 4
             min_keep: 1,
@@ -1341,6 +1342,7 @@ mod tests {
 
         let metric = DistanceMetric::Euclidean;
         let prune = crate::core::search::BlockPruneConfig {
+            radius_k: 0.0,
             force_exact: true,
             mode: crate::core::search::BlockPruneMode::Sqrt,
             ratio: 0.2,
@@ -1383,6 +1385,7 @@ mod tests {
         };
 
         let prune = crate::core::search::BlockPruneConfig {
+            radius_k: 0.0,
             mode: crate::core::search::BlockPruneMode::Fixed(3),
             force_exact: false,
             ratio: 0.2,

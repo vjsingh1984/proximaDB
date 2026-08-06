@@ -19,6 +19,8 @@ use google_cloud_storage::http::objects::download::Range;
 use google_cloud_storage::http::objects::get::GetObjectRequest;
 use google_cloud_storage::http::objects::list::ListObjectsRequest;
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
+use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
+use tokio::io::AsyncReadExt;
 
 use super::{
     DirEntry, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsFileMetadata, FsResult,
@@ -48,6 +50,8 @@ impl std::fmt::Debug for GcsFileSystem {
 }
 
 impl GcsFileSystem {
+    const RESUMABLE_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
+
     pub async fn new(cfg: GcsConfig) -> FsResult<Self> {
         let mut config = if cfg.anonymous {
             ClientConfig::default().anonymous()
@@ -85,6 +89,74 @@ impl GcsFileSystem {
 
     fn net(ctx: &str, e: impl std::fmt::Display) -> FilesystemError {
         FilesystemError::Network(format!("{ctx}: {e}"))
+    }
+
+    fn next_resumable_chunk(offset: u64, total: u64) -> Option<(usize, bool)> {
+        let remaining = total.checked_sub(offset)?;
+        if remaining == 0 {
+            return None;
+        }
+        let bytes = remaining.min(Self::RESUMABLE_CHUNK_BYTES);
+        Some((bytes as usize, bytes == remaining))
+    }
+
+    fn parse_resumable_range(value: &str) -> Option<u64> {
+        value
+            .strip_prefix("bytes=0-")
+            .and_then(|end| end.parse::<u64>().ok())
+    }
+
+    async fn list_paginated(
+        &self,
+        path: &str,
+        max_results: Option<i32>,
+    ) -> FsResult<Vec<DirEntry>> {
+        let (bucket, prefix) = Self::parse(path)?;
+        let mut entries = Vec::new();
+        let mut page_token = None;
+
+        loop {
+            let requested_page_token = page_token.clone();
+            let res = self
+                .client
+                .list_objects(&ListObjectsRequest {
+                    bucket: bucket.clone(),
+                    prefix: Some(prefix.clone()),
+                    max_results,
+                    page_token: requested_page_token.clone(),
+                    ..Default::default()
+                })
+                .await
+                .map_err(|e| Self::net("GCS list_objects", e))?;
+
+            for obj in res.items.unwrap_or_default() {
+                let name = obj.name.rsplit('/').next().unwrap_or(&obj.name).to_string();
+                entries.push(DirEntry {
+                    name,
+                    url: format!("gs://{bucket}/{}", obj.name),
+                    metadata: FsFileMetadata {
+                        path: format!("gs://{bucket}/{}", obj.name),
+                        size: obj.size.max(0) as u64,
+                        is_directory: false,
+                        etag: Some(obj.etag),
+                        ..Default::default()
+                    },
+                });
+            }
+
+            page_token = res.next_page_token.filter(|token| !token.is_empty());
+            match &page_token {
+                None => break,
+                Some(next) if Some(next) == requested_page_token.as_ref() => {
+                    return Err(FilesystemError::Network(format!(
+                        "GCS list_objects returned a repeated page token for {path}"
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+
+        Ok(entries)
     }
 }
 
@@ -159,6 +231,131 @@ impl FileSystem for GcsFileSystem {
         Ok(())
     }
 
+    fn supports_bounded_local_file_write(&self) -> bool {
+        true
+    }
+
+    async fn write_local_file(
+        &self,
+        path: &str,
+        local_path: &std::path::Path,
+        _options: Option<FileOptions>,
+    ) -> FsResult<u64> {
+        let (bucket, object) = Self::parse(path)?;
+        let mut file = tokio::fs::File::open(local_path).await?;
+        let bytes = file.metadata().await?.len();
+        let mut media = Media::new(object);
+        media.content_length = Some(bytes);
+        let upload_type = UploadType::Simple(media);
+        let session = self
+            .client
+            .prepare_resumable_upload(
+                &UploadObjectRequest {
+                    bucket,
+                    ..Default::default()
+                },
+                &upload_type,
+            )
+            .await
+            .map_err(|error| Self::net("GCS resumable begin", error))?;
+
+        if bytes == 0 {
+            session
+                .upload_single_chunk(Vec::<u8>::new(), 0)
+                .await
+                .map_err(|error| Self::net("GCS resumable empty upload", error))?;
+            return Ok(0);
+        }
+
+        // The 0.15 SDK's `UploadStatus::ResumeIncomplete` drops GCS's `Range`
+        // response header. The JSON API explicitly requires clients to advance
+        // from the acknowledged range rather than assume a whole request was
+        // persisted. Use the authenticated session URL directly and fail
+        // closed on a partial acknowledgement; compaction can retry from its
+        // authoritative inputs without risking a corrupt final object.
+        let upload_http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|error| Self::net("GCS resumable HTTP client", error))?;
+        let mut buffer = vec![0u8; Self::RESUMABLE_CHUNK_BYTES as usize];
+        let mut offset = 0u64;
+        while let Some((chunk_bytes, final_chunk)) = Self::next_resumable_chunk(offset, bytes) {
+            file.read_exact(&mut buffer[..chunk_bytes]).await?;
+            let end = offset + chunk_bytes as u64 - 1;
+            let response = match upload_http
+                .put(session.url())
+                .header(CONTENT_RANGE, format!("bytes {offset}-{end}/{bytes}"))
+                .header(CONTENT_LENGTH, chunk_bytes)
+                .body(buffer[..chunk_bytes].to_vec())
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    let _ = session.cancel().await;
+                    return Err(Self::net("GCS resumable chunk", error));
+                }
+            };
+            let accepted = if final_chunk {
+                response.status().is_success()
+            } else {
+                response.status().as_u16() == 308
+                    && response
+                        .headers()
+                        .get(RANGE)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(Self::parse_resumable_range)
+                        == Some(end)
+            };
+            if !accepted {
+                let status = response.status();
+                let acknowledged = response
+                    .headers()
+                    .get(RANGE)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("missing");
+                let _ = session.cancel().await;
+                return Err(FilesystemError::Network(format!(
+                    "GCS resumable chunk {offset}-{end}/{bytes} was not fully acknowledged: \
+                     status={status}, range={acknowledged}"
+                )));
+            }
+            offset = end + 1;
+        }
+        Ok(bytes)
+    }
+
+    async fn write_if_absent(
+        &self,
+        path: &str,
+        data: &[u8],
+        _options: Option<FileOptions>,
+    ) -> FsResult<()> {
+        let (bucket, object) = Self::parse(path)?;
+        let upload_type = UploadType::Simple(Media::new(object));
+        let result = self
+            .client
+            .upload_object(
+                &UploadObjectRequest {
+                    bucket,
+                    if_generation_match: Some(0),
+                    ..Default::default()
+                },
+                data.to_vec(),
+                &upload_type,
+            )
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(google_cloud_storage::http::Error::Response(response))
+                if response.code == 409 || response.code == 412 =>
+            {
+                Err(FilesystemError::AlreadyExists(path.to_string()))
+            }
+            Err(error) => Err(Self::net("GCS conditional upload_object", error)),
+        }
+    }
+
     async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
         Err(FilesystemError::InvalidOperation(
             "GCS objects are immutable; append is unsupported".to_string(),
@@ -211,32 +408,7 @@ impl FileSystem for GcsFileSystem {
     }
 
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>> {
-        let (bucket, prefix) = Self::parse(path)?;
-        let res = self
-            .client
-            .list_objects(&ListObjectsRequest {
-                bucket: bucket.clone(),
-                prefix: Some(prefix),
-                ..Default::default()
-            })
-            .await
-            .map_err(|e| Self::net("GCS list_objects", e))?;
-        let mut entries = Vec::new();
-        for obj in res.items.unwrap_or_default() {
-            let name = obj.name.rsplit('/').next().unwrap_or(&obj.name).to_string();
-            entries.push(DirEntry {
-                name,
-                url: format!("gs://{bucket}/{}", obj.name),
-                metadata: FsFileMetadata {
-                    path: format!("gs://{bucket}/{}", obj.name),
-                    size: obj.size.max(0) as u64,
-                    is_directory: false,
-                    etag: Some(obj.etag),
-                    ..Default::default()
-                },
-            });
-        }
-        Ok(entries)
+        self.list_paginated(path, None).await
     }
 
     async fn create_dir(&self, _path: &str) -> FsResult<()> {
@@ -298,6 +470,40 @@ mod tests {
         assert!(GcsFileSystem::parse("gs:///obj").is_err());
     }
 
+    #[test]
+    fn resumable_chunk_plan_is_bounded_contiguous_and_finalized_once() {
+        let total = 2 * GcsFileSystem::RESUMABLE_CHUNK_BYTES + 19;
+        let first = GcsFileSystem::next_resumable_chunk(0, total).unwrap();
+        let second = GcsFileSystem::next_resumable_chunk(first.0 as u64, total).unwrap();
+        let third =
+            GcsFileSystem::next_resumable_chunk(first.0 as u64 + second.0 as u64, total).unwrap();
+
+        assert_eq!(
+            first,
+            (GcsFileSystem::RESUMABLE_CHUNK_BYTES as usize, false)
+        );
+        assert_eq!(
+            second,
+            (GcsFileSystem::RESUMABLE_CHUNK_BYTES as usize, false)
+        );
+        assert_eq!(third, (19, true));
+        assert_eq!(GcsFileSystem::next_resumable_chunk(total, total), None);
+    }
+
+    #[test]
+    fn resumable_range_parser_requires_a_contiguous_zero_based_ack() {
+        assert_eq!(
+            GcsFileSystem::parse_resumable_range("bytes=0-8388607"),
+            Some(8_388_607)
+        );
+        assert_eq!(
+            GcsFileSystem::parse_resumable_range("bytes=1-8388607"),
+            None
+        );
+        assert_eq!(GcsFileSystem::parse_resumable_range("8388607"), None);
+        assert_eq!(GcsFileSystem::parse_resumable_range("bytes=0-nope"), None);
+    }
+
     #[tokio::test]
     async fn anonymous_endpoint_config_builds_a_client() {
         // fake-gcs shape: anonymous + custom endpoint must construct without auth I/O.
@@ -308,5 +514,44 @@ mod tests {
         })
         .await;
         assert!(fs.is_ok(), "anonymous+endpoint client should build offline");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs fake-gcs-server — set PROXIMADB_GCS_TEST_ENDPOINT"]
+    async fn list_consumes_all_pages_against_fake_gcs() {
+        let Ok(endpoint) = std::env::var("PROXIMADB_GCS_TEST_ENDPOINT") else {
+            eprintln!("skip: set PROXIMADB_GCS_TEST_ENDPOINT with fake-gcs-server running");
+            return;
+        };
+        let bucket = std::env::var("PROXIMADB_GCS_TEST_BUCKET")
+            .unwrap_or_else(|_| "proximadb-test".to_string());
+        let fs = GcsFileSystem::new(GcsConfig {
+            endpoint_url: Some(endpoint),
+            anonymous: true,
+            project_id: Some("proximadb".to_string()),
+        })
+        .await
+        .expect("fake-gcs client");
+        let prefix = format!("td-objstore-4/{}/", uuid::Uuid::new_v4());
+
+        for index in 0..5 {
+            let path = format!("gs://{bucket}/{prefix}{index}.bcwal");
+            fs.write(&path, &[index], None).await.expect("seed object");
+        }
+
+        let prefix_path = format!("gs://{bucket}/{prefix}");
+        assert!(
+            !fs.exists(&prefix_path).await.expect("prefix HEAD"),
+            "a flat-key prefix must not exist as an exact object"
+        );
+        let entries = fs
+            .list_paginated(&prefix_path, Some(2))
+            .await
+            .expect("multi-page prefix LIST");
+        assert_eq!(entries.len(), 5, "LIST must consume every GCS page");
+
+        for entry in entries {
+            fs.delete(&entry.url).await.expect("cleanup object");
+        }
     }
 }

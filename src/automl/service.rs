@@ -6,7 +6,6 @@
 //! Core AutoML Service Implementation
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,53 +14,8 @@ use tokio::time::interval;
 use tracing::{debug, info, warn};
 
 use crate::metrics::{CollectionMetrics, UnifiedMetricsCollector};
-
-/// AutoML Service Configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutoMLConfig {
-    /// Enable AutoML optimization
-    pub enabled: bool,
-
-    /// Minimum data points required for optimization
-    pub min_data_points: usize,
-
-    /// Optimization interval in seconds
-    pub optimization_interval_secs: u64,
-
-    /// Minimum improvement threshold (percentage)
-    pub min_improvement_threshold: f64,
-
-    /// Maximum concurrent optimizations
-    pub max_concurrent_optimizations: usize,
-
-    /// Enable workload prediction
-    pub enable_workload_prediction: bool,
-
-    /// Enable hyperparameter tuning
-    pub enable_hyperparameter_tuning: bool,
-
-    /// Enable automatic index selection
-    pub enable_auto_indexing: bool,
-
-    /// Enable quantization optimization
-    pub enable_quantization_optimization: bool,
-}
-
-impl Default for AutoMLConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            min_data_points: 1000,
-            optimization_interval_secs: 300, // 5 minutes
-            min_improvement_threshold: 5.0,  // 5% improvement required
-            max_concurrent_optimizations: 4,
-            enable_workload_prediction: true,
-            enable_hyperparameter_tuning: true,
-            enable_auto_indexing: true,
-            enable_quantization_optimization: true,
-        }
-    }
-}
+// AutoMLConfig moved to proximadb-automl crate (TD-DECOMP-15); re-export for existing callers.
+pub use proximadb_automl::AutoMLConfig;
 
 /// Optimization request
 #[derive(Debug, Clone)]

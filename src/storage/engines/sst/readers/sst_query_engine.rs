@@ -47,6 +47,9 @@ use super::block_filter::{BlockFilter, IntelligentBlockFilter};
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::search::SearchParams;
+use crate::storage::engines::core::coalesce_strategy::{
+    CoalesceStrategy, choose_read_strategy, is_cloud_path, read_strategy_chooser_enabled,
+};
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
@@ -880,7 +883,7 @@ impl ModularBlockReader {
     ) -> Result<
         Option<(
             Vec<Vec<u8>>,
-            crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel,
+            proximadb_quantization_model::UnifiedQuantizationLevel,
         )>,
     > {
         // For now, read the entire block and extract quantized section
@@ -948,12 +951,80 @@ impl ModularBlockReader {
         let mut distance_results: Vec<proximadb_distance_kernel::engine::SimilarityResult> =
             Vec::new();
 
-        // Scan all blocks and compute distances
-        for (block_idx, _index_entry) in index_entries.iter().enumerate() {
-            let data_block = reader_clone
-                .read_data_block_async(block_idx as u64, ReadMode::Direct)
-                .await?;
+        // Source all data blocks. Precedence: kill-switch (PROXIMADB_DISABLE_SST_SCAN_COALESCE) →
+        // per-block; cost-driven chooser (PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER) → choose_read_strategy;
+        // default → always-coalesce (slice 2). All paths produce byte-identical ProximaDataBlocks
+        // (both parse [4-byte len][ProximaDataBlock::deserialize]). (TD-RDSTRAT-1 slice 3b wiring.)
+        let kill = std::env::var_os("PROXIMADB_DISABLE_SST_SCAN_COALESCE").is_some();
+        let plan = if !kill {
+            let all_indices: Vec<usize> = (0..index_entries.len()).collect();
+            Some(reader_clone.plan_selected_block_ranges(
+                &index_entries,
+                &all_indices,
+                &ObjectRangeCoalescePolicy::default(),
+            )?)
+        } else {
+            None
+        };
+        let strategy = if kill {
+            CoalesceStrategy::PerBlock
+        } else if read_strategy_chooser_enabled() {
+            match &plan {
+                Some(p) => {
+                    let total_bytes = index_entries.iter().map(|e| u64::from(e.size)).sum::<u64>();
+                    let is_cloud = is_cloud_path(&reader_clone.file_path);
+                    let strat = choose_read_strategy(
+                        is_cloud,
+                        index_entries.len() as u64,
+                        total_bytes,
+                        p.estimated_get_requests as u64,
+                        p.estimated_bytes,
+                    );
+                    tracing::debug!(
+                        target: "rdstrat",
+                        strategy = ?strat,
+                        is_cloud,
+                        n_blocks = index_entries.len(),
+                        coalesced_gets = p.estimated_get_requests,
+                        coalesced_bytes = p.estimated_bytes,
+                        total_bytes,
+                        "TD-RDSTRAT-1 SST scan read-strategy choice (observe)"
+                    );
+                    strat
+                }
+                // Unreachable: kill=false ⇒ plan is Some.
+                None => CoalesceStrategy::Coalesced,
+            }
+        } else {
+            CoalesceStrategy::Coalesced
+        };
+        let data_blocks: Vec<ProximaDataBlock> = match (&strategy, &plan) {
+            (CoalesceStrategy::Coalesced, Some(p)) => {
+                let mut loaded = reader_clone.read_blocks_by_range_plan(p).await?;
+                // Match the original ascending block order (block_id == block index).
+                loaded.sort_by_key(|(block_id, _)| *block_id);
+                loaded.into_iter().map(|(_, block)| block).collect()
+            }
+            (CoalesceStrategy::PerBlock, _) => {
+                let mut out = Vec::with_capacity(index_entries.len());
+                for block_idx in 0..index_entries.len() {
+                    out.push(
+                        reader_clone
+                            .read_data_block_async(block_idx as u64, ReadMode::Direct)
+                            .await?,
+                    );
+                }
+                out
+            }
+            // Unreachable: Coalesced requires !kill ⇒ plan is Some.
+            (CoalesceStrategy::Coalesced, None) => {
+                return Err(anyhow::anyhow!(
+                    "coalesced strategy selected without a range plan"
+                ));
+            }
+        };
 
+        for data_block in data_blocks {
             // Preserve the original counter semantics: every record (including
             // those with empty vectors) is counted as "scanned".
             total_records_scanned += data_block.records.len();
@@ -2282,7 +2353,7 @@ impl UnifiedSstableReader {
         let params = SearchParams {
             vector: Some(query_vector.to_vec()),
             filter_expression: filter.clone(),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             distance_metric: Some(distance_metric),
             block_prune: block_prune.clone(),
             ..Default::default()
@@ -2418,7 +2489,7 @@ impl UnifiedSstableReader {
         let params = SearchParams {
             vector: Some(query_vector.to_vec()),
             filter_expression: filter.clone(),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             distance_metric: Some(distance_metric),
             block_prune: block_prune.clone(),
             ..Default::default()
@@ -2547,7 +2618,7 @@ impl UnifiedSstableReader {
         let params = SearchParams {
             vector: Some(query_vector.to_vec()),
             filter_expression: filter.clone(),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             distance_metric: Some(distance_metric),
             block_prune: block_prune.clone(),
             ..Default::default()
@@ -2710,7 +2781,7 @@ impl UnifiedSstableReader {
         let params = SearchParams {
             vector: Some(query_vector.to_vec()),
             filter_expression: filter.clone(),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             distance_metric: Some(distance_metric),
             block_prune: block_prune.clone(),
             ..Default::default()
@@ -3600,7 +3671,7 @@ impl UnifiedSstableReader {
             .first_query_vector()
             .ok_or_else(|| anyhow::anyhow!("Query vector required"))?;
 
-        let k = params.top_k.unwrap_or(10);
+        let k = params.top_k.unwrap_or(10) as usize;
         let distance_metric = params.distance_metric;
 
         debug!(
@@ -6208,7 +6279,7 @@ impl UnifiedSstableReader {
             )
             .await?;
 
-        let k = search_params.top_k.unwrap_or(10).max(1);
+        let k = search_params.top_k.unwrap_or(10).max(1) as usize;
         let threshold = vector_bounds_provisional_threshold(&blocks, query, k);
 
         // Pass 2: prune the remainder against τ, then read the survivors.

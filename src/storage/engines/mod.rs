@@ -102,16 +102,17 @@ pub mod core;
 pub mod helix;
 pub mod impls; // Deprecated: Moving engines directly to engines/ level
 pub mod nova; // Phase 1: Moved from impls/nova/
+// RAPTOR fundamentally uses AXIS clustering; gated by `experimental-engines`
+// (which implies `axis`). Not compiled for PAX-exact-scan builds.
+#[cfg(feature = "experimental-engines")]
 pub mod raptor; // Phase 1: Moved from impls/raptor/
 pub mod sst; // Phase 1: Moved from impls/sst/
 pub mod swift; // Phase 1: Moved from impls/swift/
 pub mod viper; // Phase 1: Moved from impls/viper/ // Phase 1: Moved from impls/helix/
 // Phase 2: Moved remaining specialized engines from impls/
 pub mod cedar; // CEDAR: Columnar Extensible Document Archive
-pub mod chrono; // CHRONO: Chronological Hierarchical Record and Observation store
 pub mod eventlog; // Event Sourcing Engine
 pub mod sequoia; // SEQUOIA: Relational row-store with typed schema validation
-pub mod titan; // TITAN: Traversal-Indexed Topology and Adjacency Network
 pub mod tst; // TST: Time-Series Storage
 
 // Keep these at the top level for now (will be moved/refactored later)
@@ -134,6 +135,7 @@ pub use crate::storage::traits::{
 pub use helix::HelixEngine;
 #[allow(deprecated)]
 pub use nova::NovaEngine; // Phase 1: Moved from impls/
+#[cfg(feature = "experimental-engines")]
 #[allow(deprecated)]
 pub use raptor::RaptorEngine; // Phase 1: Moved from impls/
 #[allow(deprecated)]
@@ -144,10 +146,8 @@ pub use swift::SwiftEngine; // Phase 1: Moved from impls/
 pub use viper::ViperEngine; // Phase 1: Moved from impls/ // Phase 1: Moved from impls/
 // Phase 2: Moved remaining specialized engines from impls/
 pub use cedar::CedarEngine;
-pub use chrono::ChronoEngine;
 pub use eventlog::EventLogEngine;
 pub use sequoia::SequoiaEngine;
-pub use titan::TitanEngine;
 pub use tst::TimeSeriesEngine;
 
 // Re-export constants

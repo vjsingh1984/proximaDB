@@ -51,6 +51,12 @@ use proximadb_relational_types::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Plan geometry — a cheap, pre-execution geometric summary of a [`PhysicalPlan`]
+/// (TD-EXEC-2 Slice 1). Observe-only: it makes no decision and changes no behavior.
+pub mod plan_geometry;
+pub mod stack_probe;
+pub use plan_geometry::{OpKind, PlanGeometry, measure_geometry};
+
 // =========================================================================
 // Errors
 // =========================================================================
@@ -734,7 +740,32 @@ pub fn fold_expr(expr: Expr) -> Expr {
 // Pass 2: Lower to physical
 // =========================================================================
 
+/// Stack red-zone / growth for the plan-tree lowering recursion (TD-EXEC-2 §1.a).
+/// Deliberately generous pending Slice-1 frame-cost calibration: the per-frame
+/// check is a TLS read + pointer compare (~ns) and a fresh segment is allocated
+/// only when the descent actually nears the limit — so any plan depth lowers
+/// correctly on any worker stack, retiring the flat-8 MB dependence.
+const LOWER_RED_ZONE: usize = 256 * 1024;
+const LOWER_STACK_GROW: usize = 4 * 1024 * 1024;
+
+/// Lower a logical plan to a physical plan.
+///
+/// Guards every recursion level with [`stacker::maybe_grow`] so a deeply nested
+/// plan (deep join / correlated-subquery trees, e.g. TPC-H Q2/Q7) grows the stack
+/// on demand instead of overflowing the worker thread (TD-EXEC-2 §1.a). The
+/// recursive descent goes back through this public entry, so each level checks its
+/// own headroom.
 pub fn lower_to_physical(node: LogicalNode) -> PhysicalPlan {
+    stacker::maybe_grow(LOWER_RED_ZONE, LOWER_STACK_GROW, || {
+        // TD-EXEC-2 Slice 1: sample the recursion's stack low-water mark when a
+        // probe is armed (a TLS read + branch otherwise — same order as the
+        // maybe_grow check above).
+        stack_probe::note();
+        lower_to_physical_inner(node)
+    })
+}
+
+fn lower_to_physical_inner(node: LogicalNode) -> PhysicalPlan {
     match node {
         LogicalNode::Scan {
             table,
@@ -1041,8 +1072,30 @@ pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) 
                     let left_width = left.output_schema().columns.len();
                     let mut left_bucket: Vec<Expr> = Vec::new();
                     let mut right_bucket: Vec<Expr> = Vec::new();
+                    let mut implicit_join_bucket: Vec<Expr> = Vec::new();
                     let mut residual: Vec<Expr> = Vec::new();
                     for conj in flatten_and(&predicate).into_iter().cloned() {
+                        if kind == JoinKind::Cross && is_cross_side_equality(&conj, left_width) {
+                            implicit_join_bucket.push(conj);
+                            continue;
+                        }
+                        // Factor a cross-side equi-key shared by EVERY branch of a
+                        // top-level disjunction out of the OR, so a comma-join whose
+                        // join key only appears inside an `OR` of range predicates
+                        // (TPC-H Q19) still normalizes to an equi-join instead of a
+                        // raw cross product. `(A=B ∧ p1) ∨ (A=B ∧ p2)` ≡
+                        // `A=B ∧ (p1 ∨ p2)`: A=B becomes the join key, the reduced
+                        // disjunction the residual filter.
+                        if kind == JoinKind::Cross
+                            && let Some((commons, reduced)) =
+                                factor_common_cross_equalities(&conj, left_width)
+                        {
+                            implicit_join_bucket.extend(commons);
+                            if let Some(r) = reduced {
+                                residual.push(r);
+                            }
+                            continue;
+                        }
                         let mut ords = Vec::new();
                         collect_column_ordinals(&conj, &mut ords);
                         if ords.is_empty() {
@@ -1076,6 +1129,17 @@ pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) 
                         )),
                         None => right,
                     };
+                    let (kind, on, strategy) =
+                        if kind == JoinKind::Cross && !implicit_join_bucket.is_empty() {
+                            let on = combine_all(implicit_join_bucket);
+                            (
+                                JoinKind::Inner,
+                                on.clone(),
+                                pick_join_strategy(JoinKind::Inner, on.as_ref()),
+                            )
+                        } else {
+                            (kind, on, strategy)
+                        };
                     let joined = PhysicalPlan::Join {
                         left: new_left,
                         right: new_right,
@@ -1462,6 +1526,113 @@ fn flatten_and_into<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
     }
 }
 
+/// Whether `expr` is a column equality spanning the two inputs of a
+/// left++right combined schema. These are the safe join keys that normalize
+/// ANSI comma joins from `Cross + Filter` to an inner equi-join.
+fn is_cross_side_equality(expr: &Expr, left_width: usize) -> bool {
+    let Expr::BinaryOp {
+        op: BinaryOp::Eq,
+        left,
+        right,
+    } = expr
+    else {
+        return false;
+    };
+    let (Expr::Column(left), Expr::Column(right)) = (left.as_ref(), right.as_ref()) else {
+        return false;
+    };
+    (left.ordinal < left_width) != (right.ordinal < left_width)
+}
+
+/// Flatten a top-level disjunction into its OR-branches (descending only through
+/// `Or` nodes, mirroring [`flatten_and`]). A non-`Or` expression yields one branch.
+fn flatten_or(expr: &Expr) -> Vec<&Expr> {
+    let mut out = Vec::new();
+    flatten_or_into(expr, &mut out);
+    out
+}
+
+fn flatten_or_into<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
+    match expr {
+        Expr::BinaryOp {
+            op: BinaryOp::Or,
+            left,
+            right,
+        } => {
+            flatten_or_into(left, out);
+            flatten_or_into(right, out);
+        }
+        other => out.push(other),
+    }
+}
+
+/// Combine predicates with `OR` (the disjunctive mirror of [`combine_all`]).
+fn combine_any(preds: Vec<Expr>) -> Option<Expr> {
+    preds.into_iter().fold(None, |acc, p| match acc {
+        None => Some(p),
+        Some(l) => Some(Expr::BinaryOp {
+            op: BinaryOp::Or,
+            left: Box::new(l),
+            right: Box::new(p),
+        }),
+    })
+}
+
+/// Factor cross-side equi-join keys shared by EVERY branch of a top-level
+/// disjunction out of that disjunction. `(A=B ∧ p1) ∨ (A=B ∧ p2) ∨ …` is
+/// logically `A=B ∧ (p1 ∨ p2 ∨ …)` — A=B distributes over the OR because it
+/// appears in every branch — so a comma-join whose join key only lives inside an
+/// `OR` of range predicates (TPC-H Q19) still normalizes to an equi-join rather
+/// than a raw cross product.
+///
+/// Returns the extracted equi-terms plus the reduced disjunction (the residual to
+/// keep as a `Filter`), or `None` if `conj` is not a real (≥2-branch) disjunction
+/// or shares no cross-side equality across all branches. If stripping the common
+/// terms empties any branch — that branch was exactly `A=B`, so the disjunction
+/// collapses to `A=B` by absorption — the residual is `None`.
+fn factor_common_cross_equalities(
+    conj: &Expr,
+    left_width: usize,
+) -> Option<(Vec<Expr>, Option<Expr>)> {
+    let branches = flatten_or(conj);
+    if branches.len() < 2 {
+        return None;
+    }
+    let branch_terms: Vec<Vec<&Expr>> = branches.iter().map(|b| flatten_and(b)).collect();
+    // Common cross-side equalities = those in the first branch present (structurally)
+    // in every branch.
+    let mut commons: Vec<Expr> = Vec::new();
+    for t in &branch_terms[0] {
+        if is_cross_side_equality(t, left_width)
+            && !commons.contains(*t)
+            && branch_terms.iter().all(|terms| terms.contains(t))
+        {
+            commons.push((*t).clone());
+        }
+    }
+    if commons.is_empty() {
+        return None;
+    }
+    // Rebuild each branch without the common terms; an emptied branch means the
+    // whole disjunction reduces to the common terms (no residual filter).
+    let mut reduced_branches: Vec<Expr> = Vec::with_capacity(branch_terms.len());
+    for terms in &branch_terms {
+        let remaining: Vec<Expr> = terms
+            .iter()
+            .filter(|t| !commons.contains(**t))
+            .map(|t| (*t).clone())
+            .collect();
+        if remaining.is_empty() {
+            return Some((commons, None));
+        }
+        if let Some(b) = combine_all(remaining) {
+            reduced_branches.push(b);
+        }
+    }
+    let reduced = combine_any(reduced_branches);
+    Some((commons, reduced))
+}
+
 fn expression_references_columns(expr: &Expr) -> bool {
     match expr {
         Expr::Column(_) => true,
@@ -1732,6 +1903,24 @@ pub fn push_projections(plan: PhysicalPlan) -> Result<PhysicalPlan, PlanError> {
 fn rebind_columns(expr: Expr, schema: &RelationalSchema) -> Result<Expr, PlanError> {
     match expr {
         Expr::Column(c) => {
+            // Preserve the existing ordinal when it still names this column —
+            // i.e. projection-pushdown did NOT narrow/shift this slot. Required
+            // for SELF-JOINS: the join output carries DUPLICATE column names
+            // (both aliases of the same table), and a blind `column_by_name`
+            // returns the FIRST match, collapsing every reference onto one
+            // alias's ordinal (TD-REL-EXEC-1 — a silent wrong result). The
+            // column's own ordinal is the authoritative reference; the name
+            // only re-derives it when narrowing actually moved the column, in
+            // which case the by-name fallback below applies.
+            if c.ordinal < schema.columns.len() && schema.columns[c.ordinal].name == c.name {
+                let info = &schema.columns[c.ordinal];
+                return Ok(Expr::Column(ColumnRef {
+                    ordinal: c.ordinal,
+                    ty: info.ty.clone(),
+                    nullable: info.nullable,
+                    name: c.name,
+                }));
+            }
             let (idx, info) = schema.column_by_name(&c.name).ok_or_else(|| {
                 PlanError::Internal(format!(
                     "rebind_columns: column `{}` not in narrowed schema",
@@ -2353,6 +2542,102 @@ mod tests {
             pk_columns: pk,
             secondary_columns: secondary.into_iter().map(String::from).collect(),
         }
+    }
+
+    // --- Stack safety (TD-EXEC-2 §1.a) --------------------------------
+
+    /// By-construction gate: a pathologically deep plan lowers without a stack
+    /// overflow. `lower_to_physical` recurses once per plan level; on a small
+    /// worker stack a deep enough plan overflows unless `stacker::maybe_grow`
+    /// grows the stack on demand. We run the lowering on a deliberately tiny
+    /// 512 KiB thread stack and a depth far beyond what that stack holds by
+    /// recursion — so a regression that drops the `maybe_grow` guard aborts the
+    /// process (SIGSEGV/SIGABRT → test fails) instead of passing by luck on the
+    /// large default stack. This is the correctness half of TD-EXEC-2's stack
+    /// model, independent of any calibrated estimate.
+    #[test]
+    fn deep_plan_lowers_without_stack_overflow() {
+        // ~20 k levels: a 512 KiB stack holds only ~1 k lowering frames, so this
+        // FORCES `maybe_grow` to fire many times.
+        const DEPTH: usize = 20_000;
+        // Build iteratively (no build-time recursion) so only the LOWERING
+        // recursion is exercised.
+        let mut node = users_scan();
+        for _ in 0..DEPTH {
+            node = LogicalNode::Filter {
+                input: Box::new(node),
+                predicate: Expr::literal(ProximaValue::Int64(1)),
+            };
+        }
+        let handle = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                let physical = lower_to_physical(node);
+                // The unit under test (deep lowering) has already succeeded; avoid a
+                // recursive Drop of the deep result overflowing this small stack.
+                std::mem::forget(physical);
+            })
+            .expect("spawn small-stack thread");
+        handle
+            .join()
+            .expect("deep lowering must not overflow the 512 KiB stack (maybe_grow)");
+    }
+
+    /// Lowering stack high-water for a `depth`-level filter chain, measured on a
+    /// dedicated large-stack thread so `maybe_grow` never switches segments and
+    /// the probe reading is exact (see `stack_probe` module docs).
+    fn lowering_stack_hwm(depth: usize) -> u64 {
+        std::thread::Builder::new()
+            // Large enough that even TD-EXEC-1's 200 KB/frame upper guess for
+            // ~1.1k frames fits without segment growth.
+            .stack_size(256 * 1024 * 1024)
+            .spawn(move || {
+                let mut node = users_scan();
+                for _ in 0..depth {
+                    node = LogicalNode::Filter {
+                        input: Box::new(node),
+                        predicate: Expr::literal(ProximaValue::Int64(1)),
+                    };
+                }
+                let (physical, hwm) = stack_probe::probe(|| lower_to_physical(node));
+                // Avoid a deep recursive Drop; only the measurement matters.
+                std::mem::forget(physical);
+                hwm
+            })
+            .expect("spawn large-stack calibration thread")
+            .join()
+            .expect("calibration lowering must not fail")
+    }
+
+    /// TD-EXEC-2 Slice 1 calibration: measure the real per-frame stack cost of
+    /// the lowering recursion, resolving the ~100× `frame_bytes` unknown
+    /// (TD-EXEC-1 estimated 100–200 KB/frame; a code probe suggested ~1 KB).
+    /// The delta between two chain depths divides out the fixed arm-to-entry
+    /// overhead, leaving bytes-per-frame. The upper bound is a regression
+    /// ratchet: a change that bloats lowering frames past 32 KiB fails here
+    /// long before it re-approaches the TD-EXEC-1 guess.
+    #[test]
+    fn calibrate_lowering_frame_cost() {
+        let shallow = lowering_stack_hwm(100);
+        let deep = lowering_stack_hwm(1100);
+        if shallow == 0 && deep == 0 {
+            // Platform cannot report remaining stack; nothing to calibrate.
+            return;
+        }
+        assert!(
+            deep > shallow,
+            "1100-deep lowering must consume more stack than 100-deep: \
+             shallow={shallow} deep={deep}"
+        );
+        let per_frame = (deep - shallow) / 1000;
+        eprintln!(
+            "TD-EXEC-2 Slice-1 calibration: lowering frame cost ≈ {per_frame} B/frame \
+             (hwm {shallow} B @ depth 100 → {deep} B @ depth 1100)"
+        );
+        assert!(
+            per_frame <= 32 * 1024,
+            "lowering frame cost regressed past 32 KiB/frame: measured {per_frame} B/frame"
+        );
     }
 
     // --- Constant folding ---------------------------------------------
@@ -3172,6 +3457,154 @@ mod tests {
             matches!(result, PhysicalPlan::Filter { .. }),
             "cross-side conjunct cannot be pushed to one child"
         );
+    }
+
+    #[test]
+    fn comma_join_filter_normalizes_to_hash_join_with_residual() {
+        let join_key = Expr::bin(
+            BinaryOp::Eq,
+            col_at(0, "id", ProximaType::Int64),
+            col_at(4, "user_id", ProximaType::Int64),
+        );
+        let residual = Expr::bin(
+            BinaryOp::Gt,
+            col_at(5, "total", ProximaType::Float64),
+            Expr::literal(ProximaValue::Float64(10.0)),
+        );
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(PhysicalPlan::Join {
+                left: Box::new(lower_to_physical(users_scan())),
+                right: Box::new(lower_to_physical(orders_scan())),
+                kind: JoinKind::Cross,
+                on: None,
+                strategy: JoinStrategy::NestedLoop,
+            }),
+            predicate: Expr::bin(BinaryOp::And, join_key, residual),
+        };
+
+        let result = push_predicates(physical, &cap_full(Vec::new()));
+        let PhysicalPlan::Join {
+            kind,
+            on,
+            strategy,
+            right,
+            ..
+        } = result
+        else {
+            panic!("expected normalized join with right residual pushed");
+        };
+        assert_eq!(kind, JoinKind::Inner);
+        assert!(on.is_some(), "cross-side equality becomes the ON key");
+        assert!(matches!(strategy, JoinStrategy::Hash { .. }));
+        assert!(matches!(
+            *right,
+            PhysicalPlan::Scan {
+                predicate: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn comma_join_disjunction_factors_shared_equi_key() {
+        // TD-REL-LOWER-6 (Q19 shape): the join key `id = user_id` appears inside
+        // EVERY branch of a top-level OR of range predicates. It must be factored
+        // out to an equi-join, leaving the disjunction of residuals as a Filter
+        // above the join — not left as a raw cross product.
+        let join_key = || {
+            Expr::bin(
+                BinaryOp::Eq,
+                col_at(0, "id", ProximaType::Int64),
+                col_at(4, "user_id", ProximaType::Int64),
+            )
+        };
+        let hi = Expr::bin(
+            BinaryOp::Gt,
+            col_at(5, "total", ProximaType::Float64),
+            Expr::literal(ProximaValue::Float64(100.0)),
+        );
+        let lo = Expr::bin(
+            BinaryOp::Lt,
+            col_at(5, "total", ProximaType::Float64),
+            Expr::literal(ProximaValue::Float64(5.0)),
+        );
+        let predicate = Expr::bin(
+            BinaryOp::Or,
+            Expr::bin(BinaryOp::And, join_key(), hi),
+            Expr::bin(BinaryOp::And, join_key(), lo),
+        );
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(PhysicalPlan::Join {
+                left: Box::new(lower_to_physical(users_scan())),
+                right: Box::new(lower_to_physical(orders_scan())),
+                kind: JoinKind::Cross,
+                on: None,
+                strategy: JoinStrategy::NestedLoop,
+            }),
+            predicate,
+        };
+
+        let result = push_predicates(physical, &cap_full(Vec::new()));
+        // Residual disjunction sits as a Filter above the normalized equi-join.
+        let PhysicalPlan::Filter {
+            input,
+            predicate: resid,
+        } = result
+        else {
+            panic!("expected residual Filter over the normalized join");
+        };
+        assert!(
+            matches!(
+                resid,
+                Expr::BinaryOp {
+                    op: BinaryOp::Or,
+                    ..
+                }
+            ),
+            "residual is the reduced disjunction (total>100 OR total<5)"
+        );
+        let PhysicalPlan::Join {
+            kind, on, strategy, ..
+        } = *input
+        else {
+            panic!("expected a normalized equi-join under the residual filter");
+        };
+        assert_eq!(kind, JoinKind::Inner, "shared equi-key normalizes to Inner");
+        assert!(
+            on.is_some(),
+            "the shared cross-side equality becomes the ON key"
+        );
+        assert!(matches!(strategy, JoinStrategy::Hash { .. }));
+    }
+
+    #[test]
+    fn cross_join_without_equality_is_not_misrewritten() {
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(PhysicalPlan::Join {
+                left: Box::new(lower_to_physical(users_scan())),
+                right: Box::new(lower_to_physical(orders_scan())),
+                kind: JoinKind::Cross,
+                on: None,
+                strategy: JoinStrategy::NestedLoop,
+            }),
+            predicate: Expr::bin(
+                BinaryOp::Gt,
+                col_at(0, "id", ProximaType::Int64),
+                col_at(4, "user_id", ProximaType::Int64),
+            ),
+        };
+
+        let result = push_predicates(physical, &cap_full(Vec::new()));
+        let PhysicalPlan::Filter { input, .. } = result else {
+            panic!("non-equi predicate must remain residual");
+        };
+        assert!(matches!(
+            *input,
+            PhysicalPlan::Join {
+                kind: JoinKind::Cross,
+                ..
+            }
+        ));
     }
 
     #[test]

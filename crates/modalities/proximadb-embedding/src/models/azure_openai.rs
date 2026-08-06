@@ -11,6 +11,7 @@
 //! - `AZURE_OPENAI_DEPLOYMENT_SMALL`  — deployment name for text-embedding-3-small
 
 use crate::config::AzureModel;
+use crate::models::EmbedUsage;
 use crate::{EmbeddingError, Result};
 
 pub struct AzureOpenAiClient {
@@ -44,7 +45,15 @@ impl AzureOpenAiClient {
         })
     }
 
-    pub fn embed_batch(&self, model: &AzureModel, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    /// Embed a batch and return the provider's **real** token usage alongside the vectors
+    /// (TD-SANDHI-1 / ADR-067). Azure OpenAI's embeddings response carries
+    /// `usage.{prompt_tokens,total_tokens}`; this parses it so KEU is metered from measured
+    /// values instead of a `count*512` heuristic. `None` only if the provider omits `usage`.
+    pub fn embed_batch_with_usage(
+        &self,
+        model: &AzureModel,
+        texts: &[String],
+    ) -> Result<(Vec<Vec<f32>>, Option<EmbedUsage>)> {
         let deployment = match model {
             AzureModel::TextEmbed3Large => &self.deployment_large,
             AzureModel::TextEmbed3Small => &self.deployment_small,
@@ -73,13 +82,35 @@ impl AzureOpenAiClient {
         let body: AzureEmbedResponse = resp
             .json()
             .map_err(|e| EmbeddingError::Other(anyhow::anyhow!(e)))?;
-        Ok(body.data.into_iter().map(|d| d.embedding).collect())
+        let usage = body.usage.map(|u| EmbedUsage {
+            input_tokens: u.prompt_tokens,
+            total_tokens: u.total_tokens,
+        });
+        let vectors = body.data.into_iter().map(|d| d.embedding).collect();
+        Ok((vectors, usage))
+    }
+
+    /// Vectors only — thin delegate over [`Self::embed_batch_with_usage`] for callers that
+    /// don't need the token usage.
+    pub fn embed_batch(&self, model: &AzureModel, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch_with_usage(model, texts)
+            .map(|(vectors, _)| vectors)
     }
 }
 
 #[derive(serde::Deserialize)]
 struct AzureEmbedResponse {
     data: Vec<AzureEmbedDatum>,
+    #[serde(default)]
+    usage: Option<AzureUsage>,
+}
+
+#[derive(serde::Deserialize)]
+struct AzureUsage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    total_tokens: u64,
 }
 
 #[derive(serde::Deserialize)]

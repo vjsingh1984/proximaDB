@@ -267,16 +267,14 @@ pub enum FilterLogic {
     Not,
 }
 
-/// Hints to guide the filter optimizer for better execution plans
-#[derive(Debug, Clone, Default)]
-pub struct FilterOptimizationHints {
-    /// Expected fraction of rows that will pass the filter (0.0 to 1.0)
-    pub expected_selectivity: Option<f64>,
-    /// Name of the preferred index to use for this filter
-    pub preferred_index: Option<String>,
-    /// Whether parallel execution is permitted
-    pub allow_parallel: bool,
-}
+/// Hints to guide the filter optimizer for better execution plans (re-export).
+///
+/// `FilterOptimizationHints` has been hoisted to the `proximadb-search-types`
+/// crate as part of the `UnifiedSearchParams` cluster (root-crate
+/// decomposition, gap 1). This thin re-export preserves the existing
+/// `crate::query::query_optimizer::FilterOptimizationHints` path so every
+/// caller resolves unchanged.
+pub use proximadb_search_types::search_params::FilterOptimizationHints;
 
 // ================================================================================
 // UNIFIED EXECUTION PLAN (Combines both search and filter plans)
@@ -1279,7 +1277,7 @@ impl UnifiedQueryOptimizer {
                             .and_then(|v| v.as_u64())
                             .map(|v| v as usize),
                         query_vector: None, // Will be set during execution
-                        top_k: context.search_params.and_then(|p| p.top_k).unwrap_or(10),
+                        top_k: context.search_params.and_then(|p| p.top_k).unwrap_or(10) as usize,
                         filter: None, // Will be set from filter params if needed
                     },
                 },
@@ -2199,7 +2197,7 @@ impl UnifiedQueryOptimizer {
             has_metadata_filter: filter_expression.is_some(),
             has_aggregation: false,
             query_complexity,
-            top_k,
+            top_k: top_k as usize,
         })
     }
 
@@ -2886,7 +2884,8 @@ impl UnifiedQueryOptimizer {
                         use_two_stage: false,
                         candidate_multiplier: 5,
                     }),
-                    candidates: context.search_params.and_then(|p| p.top_k).unwrap_or(10) * 20,
+                    candidates: context.search_params.and_then(|p| p.top_k).unwrap_or(10) as usize
+                        * 20,
                 }],
                 resource_allocation: ResourceAllocation {
                     memory_budget_mb: 128,

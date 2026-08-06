@@ -16,8 +16,35 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+// Proto re-export so modules extracted from the root `src/catalog` keep their
+// `crate::proto::proximadb_v1::*` paths (mirrors the observability engine crate).
+pub mod proto {
+    pub use proximadb_proto::proximadb_v1;
+}
+
 pub mod cache;
+// Runtime/wiring modules extracted from the root `src/catalog` (decomposition
+// Slice 1 — foundation-pure leaves). The root `crate::catalog` re-exports these
+// so existing `crate::catalog::*` import paths are unchanged.
 pub mod canonical_precision;
+pub mod corpus_version_fs_store;
+#[cfg(feature = "fc-metamodel")]
+pub mod fc_metamodel;
+pub mod internal;
+pub mod partition_pruning;
+pub mod recall_probe;
+pub mod syscat_cache;
+pub mod syscat_warm;
+// Catalog runtime manager (Slice 2) — `CatalogManager` + `TableOpLockRegistry`,
+// moved from the root `src/catalog/mod.rs`. Object-store catalog URLs route
+// through the injected `CatalogFilesystemResolver` port (no catalog->storage
+// up-edge).
+pub mod manager;
+pub use manager::{CatalogFilesystemResolver, CatalogManager, TableOpLockRegistry};
+// Catalog federation (Slice 3) — unified view across internal + external
+// catalogs, moved from root src/catalog/federation (now that CatalogManager is
+// in this crate).
+pub mod federation;
 // Collection-level DR / CRR engine contract (P1 of
 // COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc).
 pub mod collection_dr_policy;
@@ -39,13 +66,26 @@ pub mod embedding_precision_policy;
 pub mod glue;
 pub mod hive;
 pub mod iceberg;
+// Iceberg REST catalog service + PAX segment registry (moved from the root
+// `src/catalog` — they follow `CatalogManager` into this crate now that the
+// `ObjectStoreBridge` contract and `SegmentMeta` live at or below this layer).
+pub mod iceberg_rest_service;
 pub mod id_allocator;
 pub mod native;
+#[cfg(test)]
+pub(crate) mod testfs;
+// The canonical object-storage bridge contract (moved down from
+// `proximadb-storage-common`, which re-exports it at the old path). Lives in
+// this cross-layer contract crate so catalog services (Iceberg REST manifest
+// generation) and the storage plane share one trait without a dependency cycle.
+pub mod object_store_bridge;
 pub mod oltp;
 #[cfg(feature = "polaris-catalog")]
 pub mod polaris;
 pub mod relational;
 pub mod schema;
+pub mod segment_registry;
+pub use segment_registry::SegmentRegistry;
 pub mod system_columns;
 #[cfg(feature = "unity-catalog")]
 pub mod unity;
@@ -836,6 +876,42 @@ impl CatalogTableSchema {
     /// Add an index
     pub fn with_index(mut self, index: CatalogIndex) -> Self {
         self.indexes.push(index);
+        self
+    }
+
+    /// Declare a `UNIQUE` on `columns` — **the one way to do it** (ADR-077 M1).
+    ///
+    /// A UNIQUE has a canonical home and a projection, and they must not drift:
+    ///
+    /// * canonical — `relational_capabilities.constraints`, which is what the
+    ///   uniqueness enforcement path reads;
+    /// * projection — `relational_capabilities.unique_indexes`, which the pg/JDBC
+    ///   introspection surfaces render as an index.
+    ///
+    /// Setting either field directly is how a UNIQUE ends up cataloged but never
+    /// enforced. This maintains both together, so that state is not reachable
+    /// through the builder. `validate_schema` rejects it if reached another way.
+    ///
+    /// Idempotent and order-insensitive: re-declaring the same key — even with the
+    /// columns in a different order — does not fence it twice.
+    pub fn with_unique(mut self, index_name: impl Into<String>, columns: Vec<String>) -> Self {
+        if columns.is_empty() {
+            return self;
+        }
+        let already = self.relational_capabilities.constraints.iter().any(|c| {
+            matches!(c, ColumnConstraint::Unique { columns: existing }
+                              if crate::schema::same_column_set(existing, &columns))
+        });
+        if !already {
+            self.relational_capabilities
+                .constraints
+                .push(ColumnConstraint::Unique {
+                    columns: columns.clone(),
+                });
+            self.relational_capabilities
+                .unique_indexes
+                .push(CatalogIndex::new(index_name, columns, CatalogIndexType::BTree).unique());
+        }
         self
     }
 
@@ -4426,6 +4502,14 @@ pub trait Catalog: Send + Sync {
     /// catalogs have no typed identity (legacy paths).
     async fn account_id_u32(&self, _account: &str) -> anyhow::Result<Option<u32>> {
         Ok(None)
+    }
+    /// TD-TENANT-1 item 3: SYNC lookup of the account u32 — no mint, no I/O.
+    /// For the request-hot `TenantStableIdResolver` (which is sync). Returns the
+    /// already-minted u32 for an account/tenant string, or `None` when unminted
+    /// (fail-closed deny). Default `None` — only the native catalog has a
+    /// registry; federated/external catalogs stay `None` (legacy-safe).
+    fn account_id_u32_lookup(&self, _account: &str) -> Option<u32> {
+        None
     }
     /// ADR-031 allocator unification: the highest persisted `object_id` across
     /// all tables (from the durable `object_name_index`). The root startup path

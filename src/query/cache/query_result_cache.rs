@@ -1,7 +1,34 @@
 //! # Query Result Cache Implementation
 //!
-//! Core types and cache implementation for query result caching.
-//! This cache benefits agentic AI workloads with repetitive queries.
+//! Core types and cache implementation for query result caching. The cache is
+//! generic over the cached result type `T` (any [`CacheableResult`]) so the
+//! same machinery serves both the federated query path (caching
+//! `ExecutionResult`) and the pgwire OLAP path (caching
+//! `ExecutionPipelineResult`).
+//!
+//! ## Multi-tenant structural keying
+//!
+//! The cache is keyed STRUCTURALLY on `(tenant, namespace, query)` — tenant is
+//! a *leading* key component, never a predicate on the value (multi-tenant
+//! co-design mandate). [`StructuralKey`] folds all three into a
+//! [`CompositeMapKey`] used as the DashMap key, and every stored
+//! [`CachedResult`] additionally records the full `(tenant, namespace,
+//! query_fingerprint)` triple which is re-verified on lookup. A cross-tenant
+//! collision would require a simultaneous 192-bit hash collision; the
+//! stored-triple check defends against it regardless.
+//!
+//! ## Read-after-write freshness
+//!
+//! [`QueryResultCache::get_fresh`] gates serving on [`VectorFreshnessMode`]:
+//!
+//! - **Strong** (ADR-051 D2): serve iff `computed_at_lsn == Some(current_lsn)`
+//!   and `current_lsn != 0`. Any write bumps the canonical-WAL LSN → guaranteed
+//!   miss → read-after-write correct (mandate #16c).
+//! - **BoundedStale**: serve iff `age <= max_staleness_ms`.
+//! - **StaleOk**: serve iff not TTL-expired.
+//!
+//! TTL is the universal entry lifetime: an entry older than its TTL is dead for
+//! every mode and is evicted. See [`freshness_eligible`].
 
 use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
@@ -14,6 +41,7 @@ use dashmap::DashMap;
 use thiserror::Error;
 use tracing::{debug, info};
 
+use crate::core::search::VectorFreshnessMode;
 use crate::query::federated::ExecutionResult;
 
 /// Unique identifier for a cached query result
@@ -31,7 +59,7 @@ pub enum QueryCacheError {
     Expired(QueryCacheKey),
 
     /// Cache is full and cannot accept new entries
-    #[error("Query cache is full (max: {0})")]
+    #[error("Cache is full (max: {0})")]
     CacheFull(usize),
 
     /// Failed to compute query key
@@ -45,6 +73,28 @@ pub enum QueryCacheError {
 
 /// Result type for query cache operations
 pub type QueryCacheResult<T> = Result<T, QueryCacheError>;
+
+/// What the cache requires of a cached result type so it can estimate the
+/// in-memory footprint of an entry (for size limits / eviction). Implemented
+/// by the concrete result types that instantiate [`QueryResultCache`].
+pub trait CacheableResult: Send + Sync {
+    /// Rough estimated size of this result in bytes.
+    fn estimated_size_bytes(&self) -> usize;
+}
+
+impl CacheableResult for ExecutionResult {
+    fn estimated_size_bytes(&self) -> usize {
+        // Rough estimation based on row count and schema width — same heuristic
+        // the old hardcoded estimator used.
+        let row_count = self.row_count();
+        let field_count = self.schema.fields().len();
+        // Assume average of 100 bytes per field per row.
+        let estimated_data = row_count * field_count * 100;
+        // Add overhead for schema and metadata.
+        let schema_overhead = field_count * 64;
+        estimated_data + schema_overhead + 256 // Base overhead
+    }
+}
 
 /// Configuration for the query result cache
 #[derive(Debug, Clone)]
@@ -122,15 +172,68 @@ impl QueryKey {
     }
 }
 
+/// Composite DashMap key folding tenant + namespace + query fingerprint.
+/// Deriving `Hash`/`Eq` over all three makes tenant a STRUCTURAL key
+/// component (not a predicate on the value).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CompositeMapKey {
+    pub tenant_hash: u64,
+    pub ns_hash: u64,
+    pub query_hash: u64,
+}
+
+/// Structural cache key: tenant and namespace are the LEADING components; the
+/// query is last. This is the multi-tenant isolation surface — tenant is part
+/// of the key, never a predicate.
+#[derive(Debug, Clone)]
+pub struct StructuralKey {
+    /// Tenant identifier (structural leading component).
+    pub tenant: String,
+    /// Namespace / schema identifier (structural component).
+    pub namespace: String,
+    /// The query fingerprint + SQL.
+    pub query: QueryKey,
+}
+
+impl StructuralKey {
+    /// Build a structural key from its three components.
+    pub fn new(tenant: impl Into<String>, namespace: impl Into<String>, query: QueryKey) -> Self {
+        Self {
+            tenant: tenant.into(),
+            namespace: namespace.into(),
+            query,
+        }
+    }
+
+    fn hash_str(s: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        s.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Fold the three components into the DashMap composite key.
+    pub fn composite(&self) -> CompositeMapKey {
+        CompositeMapKey {
+            tenant_hash: Self::hash_str(&self.tenant),
+            ns_hash: Self::hash_str(&self.namespace),
+            query_hash: self.query.fingerprint,
+        }
+    }
+}
+
 /// A cached query result with metadata
 #[derive(Debug)]
-pub struct CachedResult {
+pub struct CachedResult<T> {
     /// The cached execution result
-    pub result: ExecutionResult,
-    /// Collections/tables that this result depends on
+    pub result: T,
+    /// Collections/tables that this result depends on (normalized table keys)
     pub dependencies: Vec<String>,
     /// Query fingerprint for verification
     pub query_fingerprint: u64,
+    /// Tenant this entry belongs to (structural isolation re-check).
+    pub tenant: String,
+    /// Namespace this entry belongs to (structural isolation re-check).
+    pub namespace: String,
     /// Time-to-live for this entry
     pub ttl: Duration,
     /// Creation timestamp
@@ -141,18 +244,15 @@ pub struct CachedResult {
     pub access_count: AtomicU64,
     /// Estimated size in bytes
     pub size_bytes: usize,
+    /// Canonical-WAL LSN the result was computed at — the Strong-freshness
+    /// anchor (ADR-051 D2). `None` = LSN not tracked (never served to Strong).
+    pub computed_at_lsn: Option<u64>,
 }
 
-impl CachedResult {
-    /// Check if this cached result has expired
+impl<T> CachedResult<T> {
+    /// Check if this cached result has expired (age > TTL).
     pub fn is_expired(&self) -> bool {
         self.created_at.elapsed() > self.ttl
-    }
-
-    /// Update the last access time and increment access count
-    pub fn touch(&mut self) {
-        self.last_accessed = Instant::now();
-        self.access_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get the age of this cached result
@@ -166,22 +266,50 @@ impl CachedResult {
     }
 }
 
-/// Thread-safe cache for query results
+/// Decide whether a cached entry is eligible to serve under the given
+/// freshness mode. Pure + deterministic so it is unit-tested directly.
 ///
-/// This cache provides high-performance caching of query results for
-/// agentic AI workloads with repetitive queries. It features:
+/// Policy (ADR-051 D2 / mandate #16c):
+/// - TTL is the universal entry lifetime — an expired entry is never eligible.
+/// - **Strong**: eligible iff `computed_at_lsn == Some(current_lsn)` and
+///   `current_lsn != 0`. Any write bumps the LSN → guaranteed miss.
+/// - **BoundedStale**: eligible iff `age <= max_staleness_ms`.
+/// - **StaleOk**: eligible (within TTL, already checked above).
+pub fn freshness_eligible(
+    mode: &VectorFreshnessMode,
+    age: Duration,
+    ttl: Duration,
+    computed_at_lsn: Option<u64>,
+    current_lsn: u64,
+) -> bool {
+    // Universal expiry: an entry older than its TTL is dead for every mode.
+    if age > ttl {
+        return false;
+    }
+    match mode {
+        VectorFreshnessMode::Strong => current_lsn != 0 && computed_at_lsn == Some(current_lsn),
+        VectorFreshnessMode::BoundedStale { max_staleness_ms } => {
+            age <= Duration::from_millis(*max_staleness_ms)
+        }
+        VectorFreshnessMode::StaleOk => true,
+    }
+}
+
+/// Thread-safe cache for query results, generic over the result type.
 ///
-/// - Thread-safe concurrent access using DashMap
-/// - TTL-based expiration
-/// - Dependency tracking for invalidation
-/// - LRU-like eviction when full
-/// - Metrics for monitoring cache performance
-pub struct QueryResultCache {
+/// This cache provides high-performance caching of query results with:
+///
+/// - Structural `(tenant, namespace, query)` keying for multi-tenant isolation
+/// - TTL-based expiration + LRU-like eviction
+/// - Tenant-scoped dependency tracking for invalidation
+/// - Freshness gating via [`VectorFreshnessMode`] (Strong LSN-pinning)
+pub struct QueryResultCache<T: Clone + CacheableResult + Send + Sync + 'static> {
     /// The result cache using DashMap for concurrent access
-    cache: DashMap<QueryCacheKey, Arc<CachedResult>>,
-    /// Registry mapping collection names to affected cache keys
-    /// Used for efficient invalidation when a collection is modified
-    invalidation_registry: DashMap<String, HashSet<QueryCacheKey>>,
+    cache: DashMap<CompositeMapKey, Arc<CachedResult<T>>>,
+    /// Registry mapping `(tenant, collection)` to affected cache keys.
+    /// Tenant-scoped so invalidating `(tenant-A, coll)` never touches
+    /// tenant-B's entries.
+    invalidation_registry: DashMap<(String, String), HashSet<CompositeMapKey>>,
     /// Configuration
     config: QueryResultCacheConfig,
     /// Cache statistics
@@ -219,7 +347,7 @@ impl QueryResultCacheStatistics {
     }
 }
 
-impl QueryResultCache {
+impl<T: Clone + CacheableResult + Send + Sync + 'static> QueryResultCache<T> {
     /// Create a new query result cache with the given configuration
     pub fn new(config: QueryResultCacheConfig) -> Self {
         Self {
@@ -235,36 +363,56 @@ impl QueryResultCache {
         Self::new(QueryResultCacheConfig::default())
     }
 
-    /// Get a cached result by query key
-    ///
-    /// Returns `Some(result)` if found and not expired, `None` otherwise.
-    pub fn get(&self, key: &QueryKey) -> Option<Arc<CachedResult>> {
-        let cache_key = key.cache_key();
+    /// Freshness-gated lookup honoring [`VectorFreshnessMode`] (ADR-051 D2 /
+    /// mandate #16c). Returns the cached entry only when the structural key
+    /// matches AND the entry is fresh enough for the requested mode.
+    pub fn get_fresh(
+        &self,
+        key: &StructuralKey,
+        mode: &VectorFreshnessMode,
+        current_lsn: u64,
+    ) -> Option<Arc<CachedResult<T>>> {
+        let map_key = key.composite();
 
-        if let Some(entry) = self.cache.get_mut(&cache_key) {
-            // Check expiration
+        if let Some(entry) = self.cache.get(&map_key) {
+            // Check expiration first.
             if entry.is_expired() {
                 drop(entry);
-                self.remove_entry(cache_key);
+                self.remove_entry(map_key);
                 self.stats.expirations.fetch_add(1, Ordering::Relaxed);
                 self.stats.misses.fetch_add(1, Ordering::Relaxed);
                 return None;
             }
 
-            // Verify fingerprint matches (collision check)
-            if entry.query_fingerprint != key.fingerprint {
+            // Structural isolation re-check: tenant + namespace + query must
+            // ALL match the stored entry. Defends against a composite-key
+            // collision and documents the cross-tenant guarantee explicitly.
+            if entry.tenant != key.tenant
+                || entry.namespace != key.namespace
+                || entry.query_fingerprint != key.query.fingerprint
+            {
                 debug!(
-                    expected = key.fingerprint,
-                    actual = entry.query_fingerprint,
-                    "Cache key collision detected"
+                    expected_tenant = %key.tenant,
+                    stored_tenant = %entry.tenant,
+                    "Cache structural-key mismatch (cross-tenant guard)"
                 );
                 self.stats.misses.fetch_add(1, Ordering::Relaxed);
                 return None;
             }
 
-            // Update access tracking (need to get mutable reference)
+            // Freshness gate.
+            if !freshness_eligible(
+                mode,
+                entry.age(),
+                entry.ttl,
+                entry.computed_at_lsn,
+                current_lsn,
+            ) {
+                self.stats.misses.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+
             let result = Arc::clone(&*entry);
-            // We cannot call touch() on Arc directly, but we track access via stats
             drop(entry);
 
             self.stats.hits.fetch_add(1, Ordering::Relaxed);
@@ -275,31 +423,36 @@ impl QueryResultCache {
         }
     }
 
-    /// Insert a query result into the cache
-    ///
-    /// # Arguments
-    /// * `key` - The query key
-    /// * `result` - The execution result to cache
-    /// * `dependencies` - Collection names that this result depends on
-    pub fn insert(
+    /// Insert a query result with a structural key + the LSN it was computed at
+    /// (the Strong-freshness anchor). Dependencies are registered under
+    /// `(key.tenant, dep)` for tenant-scoped invalidation.
+    pub fn insert_fresh(
         &self,
-        key: QueryKey,
-        result: ExecutionResult,
+        key: StructuralKey,
+        result: T,
         dependencies: Vec<String>,
+        computed_at_lsn: Option<u64>,
     ) -> QueryCacheResult<()> {
-        self.insert_with_ttl(key, result, dependencies, self.config.default_ttl)
+        self.insert_entry(
+            key,
+            result,
+            dependencies,
+            self.config.default_ttl,
+            computed_at_lsn,
+        )
     }
 
-    /// Insert a query result with a custom TTL
-    pub fn insert_with_ttl(
+    /// Core insert worker shared by the freshness-aware and legacy APIs.
+    fn insert_entry(
         &self,
-        key: QueryKey,
-        result: ExecutionResult,
+        key: StructuralKey,
+        result: T,
         dependencies: Vec<String>,
         ttl: Duration,
+        computed_at_lsn: Option<u64>,
     ) -> QueryCacheResult<()> {
         // Estimate result size
-        let size_bytes = self.estimate_result_size(&result);
+        let size_bytes = result.estimated_size_bytes();
 
         // Check size limit
         if size_bytes > self.config.max_result_size_bytes {
@@ -332,35 +485,38 @@ impl QueryResultCache {
             }
         }
 
-        let cache_key = key.cache_key();
+        let map_key = key.composite();
         let now = Instant::now();
 
         let cached = Arc::new(CachedResult {
             result,
             dependencies: dependencies.clone(),
-            query_fingerprint: key.fingerprint,
+            query_fingerprint: key.query.fingerprint,
+            tenant: key.tenant.clone(),
+            namespace: key.namespace.clone(),
             ttl,
             created_at: now,
             last_accessed: now,
             access_count: AtomicU64::new(0),
             size_bytes,
+            computed_at_lsn,
         });
 
         // Insert into cache
-        self.cache.insert(cache_key, cached);
+        self.cache.insert(map_key, cached);
 
-        // Register dependencies for invalidation
+        // Register dependencies for tenant-scoped invalidation
         for dep in dependencies {
             self.invalidation_registry
-                .entry(dep)
+                .entry((key.tenant.clone(), dep))
                 .or_default()
-                .insert(cache_key);
+                .insert(map_key);
         }
 
         self.stats.inserts.fetch_add(1, Ordering::Relaxed);
 
         debug!(
-            key = cache_key,
+            key = ?map_key,
             ttl_secs = ttl.as_secs(),
             size_bytes,
             "Cached query result"
@@ -369,33 +525,56 @@ impl QueryResultCache {
         Ok(())
     }
 
-    /// Remove a cached entry by key
+    // ---------------------------------------------------------------------
+    // Backward-compatible legacy API (no tenant, no freshness).
+    //
+    // These delegate to the structural/freshness API with `tenant=""`,
+    // `namespace=""`, `computed_at_lsn=None`, and `StaleOk` eligibility,
+    // preserving the original TTL-only semantics. Kept so the federated
+    // query path and its existing tests compile unchanged.
+    // ---------------------------------------------------------------------
+
+    /// Legacy TTL-only lookup (no tenant context). Delegates with the empty
+    /// tenant and `StaleOk` eligibility.
+    pub fn get(&self, key: &QueryKey) -> Option<Arc<CachedResult<T>>> {
+        let skey = StructuralKey::new("", "", key.clone());
+        self.get_fresh(&skey, &VectorFreshnessMode::StaleOk, 0)
+    }
+
+    /// Insert a query result into the cache (legacy, no tenant context).
+    pub fn insert(
+        &self,
+        key: QueryKey,
+        result: T,
+        dependencies: Vec<String>,
+    ) -> QueryCacheResult<()> {
+        self.insert_with_ttl(key, result, dependencies, self.config.default_ttl)
+    }
+
+    /// Insert a query result with a custom TTL (legacy, no tenant context).
+    pub fn insert_with_ttl(
+        &self,
+        key: QueryKey,
+        result: T,
+        dependencies: Vec<String>,
+        ttl: Duration,
+    ) -> QueryCacheResult<()> {
+        let skey = StructuralKey::new("", "", key);
+        self.insert_entry(skey, result, dependencies, ttl, None)
+    }
+
+    /// Remove a cached entry by key (legacy).
     pub fn remove(&self, key: &QueryKey) -> bool {
-        self.remove_entry(key.cache_key())
+        let skey = StructuralKey::new("", "", key.clone());
+        self.remove_entry(skey.composite())
     }
 
-    /// Internal method to remove an entry and clean up invalidation registry
-    fn remove_entry(&self, cache_key: QueryCacheKey) -> bool {
-        if let Some((_, cached)) = self.cache.remove(&cache_key) {
-            // Remove from invalidation registry
-            for dep in &cached.dependencies {
-                if let Some(mut keys) = self.invalidation_registry.get_mut(dep) {
-                    keys.remove(&cache_key);
-                }
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Invalidate all cached results that depend on a collection
-    ///
-    /// This should be called when data in a collection is modified.
-    pub fn invalidate_collection(&self, collection: &str) -> usize {
-        let keys_to_remove: Vec<QueryCacheKey> = self
+    /// Tenant-scoped invalidation: drop every entry registered under
+    /// `(tenant, collection)`. Never touches another tenant's entries.
+    pub fn invalidate_tenant_collection(&self, tenant: &str, collection: &str) -> usize {
+        let keys_to_remove: Vec<CompositeMapKey> = self
             .invalidation_registry
-            .get(collection)
+            .get(&(tenant.to_string(), collection.to_string()))
             .map(|keys| keys.iter().copied().collect())
             .unwrap_or_default();
 
@@ -406,13 +585,15 @@ impl QueryResultCache {
         }
 
         // Clean up the registry entry
-        self.invalidation_registry.remove(collection);
+        self.invalidation_registry
+            .remove(&(tenant.to_string(), collection.to_string()));
 
         if count > 0 {
             self.stats
                 .invalidations
                 .fetch_add(count as u64, Ordering::Relaxed);
             info!(
+                tenant,
                 collection,
                 invalidated = count,
                 "Invalidated cached query results"
@@ -422,7 +603,13 @@ impl QueryResultCache {
         count
     }
 
-    /// Invalidate all cached results that depend on any of the given collections
+    /// Legacy: invalidate by collection name under the empty tenant.
+    pub fn invalidate_collection(&self, collection: &str) -> usize {
+        self.invalidate_tenant_collection("", collection)
+    }
+
+    /// Invalidate cached results for any of the given collections (legacy,
+    /// empty-tenant scope).
     pub fn invalidate_collections(&self, collections: &[&str]) -> usize {
         let mut total = 0;
         for collection in collections {
@@ -431,9 +618,27 @@ impl QueryResultCache {
         total
     }
 
+    /// Internal method to remove an entry and clean up invalidation registry
+    fn remove_entry(&self, map_key: CompositeMapKey) -> bool {
+        if let Some((_, cached)) = self.cache.remove(&map_key) {
+            // Remove from invalidation registry (tenant-scoped)
+            for dep in &cached.dependencies {
+                if let Some(mut keys) = self
+                    .invalidation_registry
+                    .get_mut(&(cached.tenant.clone(), dep.clone()))
+                {
+                    keys.remove(&map_key);
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     /// Cleanup expired entries
     pub fn cleanup_expired(&self) -> usize {
-        let expired_keys: Vec<QueryCacheKey> = self
+        let expired_keys: Vec<CompositeMapKey> = self
             .cache
             .iter()
             .filter(|entry| entry.value().is_expired())
@@ -459,7 +664,7 @@ impl QueryResultCache {
     /// Evict the oldest entries to make room
     fn evict_oldest(&self, count: usize) -> usize {
         // Collect entries with their creation times
-        let mut entries: Vec<(QueryCacheKey, Instant)> = self
+        let mut entries: Vec<(CompositeMapKey, Instant)> = self
             .cache
             .iter()
             .map(|entry| (*entry.key(), entry.value().created_at))
@@ -510,11 +715,15 @@ impl QueryResultCache {
         self.cache.is_empty()
     }
 
-    /// Check if a query is cached
+    /// Check if a query is cached (legacy, empty-tenant scope)
     pub fn contains(&self, key: &QueryKey) -> bool {
-        let cache_key = key.cache_key();
-        if let Some(entry) = self.cache.get(&cache_key) {
-            !entry.is_expired() && entry.query_fingerprint == key.fingerprint
+        let skey = StructuralKey::new("", "", key.clone());
+        let map_key = skey.composite();
+        if let Some(entry) = self.cache.get(&map_key) {
+            !entry.is_expired()
+                && entry.tenant.is_empty()
+                && entry.namespace.is_empty()
+                && entry.query_fingerprint == key.fingerprint
         } else {
             false
         }
@@ -537,21 +746,6 @@ impl QueryResultCache {
         }
     }
 
-    /// Estimate the size of an execution result
-    fn estimate_result_size(&self, result: &ExecutionResult) -> usize {
-        // Rough estimation based on row count and schema
-        let row_count = result.row_count();
-        let field_count = result.schema.fields().len();
-
-        // Assume average of 100 bytes per field per row
-        let estimated_data = row_count * field_count * 100;
-
-        // Add overhead for schema and metadata
-        let schema_overhead = field_count * 64;
-
-        estimated_data + schema_overhead + 256 // Base overhead
-    }
-
     /// Get total size of all cached entries
     fn total_size_bytes(&self) -> usize {
         self.cache
@@ -566,11 +760,16 @@ impl QueryResultCache {
     }
 }
 
-impl Default for QueryResultCache {
+impl<T: Clone + CacheableResult + Send + Sync + 'static> Default for QueryResultCache<T> {
     fn default() -> Self {
         Self::with_defaults()
     }
 }
+
+/// Alias for the cache instantiation used by the federated query path.
+/// Letting `CacheInvalidator` / `FederatedQueryContext` reference the alias
+/// keeps the generic-ization from rippling through every call site.
+pub type FederatedQueryResultCache = QueryResultCache<ExecutionResult>;
 
 /// Public cache statistics.
 ///
@@ -600,7 +799,7 @@ pub struct QueryCacheStats {
     pub expirations: u64,
     /// Total size of cached data in bytes
     pub total_size_bytes: usize,
-    /// Number of tracked collections for invalidation
+    /// Number of tracked (tenant, collection) pairs for invalidation
     pub tracked_collections: usize,
 }
 
@@ -670,7 +869,9 @@ mod tests {
 
     #[test]
     fn test_cache_miss() {
-        let cache = QueryResultCache::with_defaults();
+        // Type-annotate via the alias so the bare `with_defaults()` (no insert
+        // to infer `T`) resolves to the federated result type.
+        let cache = FederatedQueryResultCache::with_defaults();
         let key = QueryKey::from_sql("SELECT * FROM nonexistent");
 
         assert!(!cache.contains(&key));
@@ -880,5 +1081,266 @@ mod tests {
         // Invalidating any dependency should remove the entry
         cache.invalidate_collection("b");
         assert!(!cache.contains(&key));
+    }
+
+    // =====================================================================
+    // Structural keying + freshness tests (pgwire OLAP wiring, ADR-051 D2).
+    // =====================================================================
+
+    fn skey(tenant: &str, namespace: &str, sql: &str) -> StructuralKey {
+        StructuralKey::new(tenant, namespace, QueryKey::from_sql(sql))
+    }
+
+    #[test]
+    fn structural_key_folds_all_three_components() {
+        // Same query + namespace, different tenant → different composite.
+        let a = skey("tenant-a", "public", "SELECT 1");
+        let b = skey("tenant-b", "public", "SELECT 1");
+        assert_ne!(a.composite(), b.composite());
+        // Same query + tenant, different namespace → different composite.
+        let c = skey("tenant-a", "other", "SELECT 1");
+        assert_ne!(a.composite(), c.composite());
+        // Identical → same composite.
+        let a2 = skey("tenant-a", "public", "SELECT 1");
+        assert_eq!(a.composite(), a2.composite());
+    }
+
+    #[test]
+    fn cross_tenant_key_isolation() {
+        // Tenant A's write must NEVER serve tenant B, even with identical SQL
+        // and namespace. Insert under A, lookup under B → miss.
+        let cache = QueryResultCache::with_defaults();
+        let key_a = skey("tenant-a", "public", "SELECT * FROM orders");
+        let key_b = skey("tenant-b", "public", "SELECT * FROM orders");
+
+        cache
+            .insert_fresh(
+                key_a.clone(),
+                create_test_result(),
+                vec!["orders".to_string()],
+                Some(42),
+            )
+            .expect("insert");
+
+        // A hits (Strong at the pinned LSN).
+        assert!(
+            cache
+                .get_fresh(&key_a, &VectorFreshnessMode::Strong, 42)
+                .is_some()
+        );
+        // B never hits A's entry — Strong or otherwise.
+        assert!(
+            cache
+                .get_fresh(&key_b, &VectorFreshnessMode::Strong, 42)
+                .is_none()
+        );
+        assert!(
+            cache
+                .get_fresh(&key_b, &VectorFreshnessMode::StaleOk, 0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cross_tenant_invalidation_does_not_touch_other_tenant() {
+        let cache = QueryResultCache::with_defaults();
+        let key_a = skey("tenant-a", "public", "SELECT * FROM orders");
+        let key_b = skey("tenant-b", "public", "SELECT * FROM orders");
+
+        cache
+            .insert_fresh(
+                key_a.clone(),
+                create_test_result(),
+                vec!["orders".to_string()],
+                Some(42),
+            )
+            .expect("insert a");
+        cache
+            .insert_fresh(
+                key_b.clone(),
+                create_test_result(),
+                vec!["orders".to_string()],
+                Some(42),
+            )
+            .expect("insert b");
+
+        // Invalidate (tenant-a, orders) — must drop only A.
+        let dropped = cache.invalidate_tenant_collection("tenant-a", "orders");
+        assert_eq!(dropped, 1);
+        assert!(
+            cache
+                .get_fresh(&key_a, &VectorFreshnessMode::Strong, 42)
+                .is_none()
+        );
+        assert!(
+            cache
+                .get_fresh(&key_b, &VectorFreshnessMode::Strong, 42)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn strong_lsn_pinned_serve() {
+        // Strong serves iff computed_at_lsn == current_lsn && lsn != 0.
+        let cache = QueryResultCache::with_defaults();
+        let key = skey("t", "public", "SELECT * FROM orders");
+        cache
+            .insert_fresh(
+                key.clone(),
+                create_test_result(),
+                vec!["orders".to_string()],
+                Some(42),
+            )
+            .expect("insert");
+
+        // Matching LSN → serve.
+        assert!(
+            cache
+                .get_fresh(&key, &VectorFreshnessMode::Strong, 42)
+                .is_some()
+        );
+        // Advanced LSN (simulates a write) → bypass.
+        assert!(
+            cache
+                .get_fresh(&key, &VectorFreshnessMode::Strong, 43)
+                .is_none()
+        );
+        // current_lsn == 0 (LSN tracking unavailable) → never serve Strong.
+        assert!(
+            cache
+                .get_fresh(&key, &VectorFreshnessMode::Strong, 0)
+                .is_none()
+        );
+        // An entry written without an LSN anchor is never Strong-eligible.
+        let key2 = skey("t", "public", "SELECT * FROM other");
+        cache
+            .insert_fresh(
+                key2.clone(),
+                create_test_result(),
+                vec!["other".to_string()],
+                None,
+            )
+            .expect("insert no-lsn");
+        assert!(
+            cache
+                .get_fresh(&key2, &VectorFreshnessMode::Strong, 42)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn strong_serves_until_ttl_even_with_stable_lsn() {
+        // TTL is the universal entry lifetime: even a stable LSN cannot serve
+        // an expired entry.
+        let config = QueryResultCacheConfig {
+            default_ttl: Duration::from_millis(1),
+            ..Default::default()
+        };
+        let cache = QueryResultCache::new(config);
+        let key = skey("t", "public", "SELECT * FROM orders");
+        cache
+            .insert_fresh(
+                key.clone(),
+                create_test_result(),
+                vec!["orders".to_string()],
+                Some(42),
+            )
+            .expect("insert");
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(
+            cache
+                .get_fresh(&key, &VectorFreshnessMode::Strong, 42)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn bounded_stale_window() {
+        let cache = QueryResultCache::with_defaults();
+        let key = skey("t", "public", "SELECT * FROM orders");
+        cache
+            .insert_fresh(
+                key.clone(),
+                create_test_result(),
+                vec!["orders".to_string()],
+                None,
+            )
+            .expect("insert");
+
+        // Within the staleness window → serve.
+        let within = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 60_000,
+        };
+        assert!(cache.get_fresh(&key, &within, 0).is_some());
+
+        // Past the window → bypass (age > max_staleness_ms).
+        let past = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 0,
+        };
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(cache.get_fresh(&key, &past, 0).is_none());
+    }
+
+    #[test]
+    fn freshness_eligible_predicate_units() {
+        // Pure predicate: exercise each branch without a cache.
+        let ttl = Duration::from_secs(60);
+        // Strong
+        assert!(freshness_eligible(
+            &VectorFreshnessMode::Strong,
+            Duration::from_secs(1),
+            ttl,
+            Some(7),
+            7
+        ));
+        assert!(!freshness_eligible(
+            &VectorFreshnessMode::Strong,
+            Duration::from_secs(1),
+            ttl,
+            Some(7),
+            8
+        ));
+        assert!(!freshness_eligible(
+            &VectorFreshnessMode::Strong,
+            Duration::from_secs(1),
+            ttl,
+            Some(7),
+            0
+        ));
+        // BoundedStale
+        assert!(freshness_eligible(
+            &VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 1_000
+            },
+            Duration::from_millis(500),
+            ttl,
+            None,
+            0
+        ));
+        assert!(!freshness_eligible(
+            &VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 1_000
+            },
+            Duration::from_millis(2_000),
+            ttl,
+            None,
+            0
+        ));
+        // StaleOk
+        assert!(freshness_eligible(
+            &VectorFreshnessMode::StaleOk,
+            Duration::from_secs(1),
+            ttl,
+            None,
+            0
+        ));
+        // Universal TTL expiry overrides every mode.
+        assert!(!freshness_eligible(
+            &VectorFreshnessMode::StaleOk,
+            Duration::from_secs(120),
+            ttl,
+            Some(7),
+            7
+        ));
     }
 }

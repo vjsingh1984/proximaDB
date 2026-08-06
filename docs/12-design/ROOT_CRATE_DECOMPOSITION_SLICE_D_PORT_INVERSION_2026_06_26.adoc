@@ -294,3 +294,95 @@ and storage→`core::search::{FilterExpression,ComparisonOperator}` edge counts 
 `search-types`/`bloom` leaf extractions (D1), and the port inversions (D2–D5) follow.
 
 Ref: `ROOT_CRATE_DECOMPOSITION_PLAN_2026_06_21.adoc` (Slice D row), TD-104.
+
+== 2026-07-10 refresh — D-quant status + the factory-as-injection-boundary plan
+
+Progress on the quantization up-edge class (the dominant remaining blocker):
+
+* **#812** — redirected the 6 round-trip `selection`/`global_cache` refs
+  (`storage::compute_bridge` is their true home; `compute::quantization` just re-exports
+  them). Ratchet 271→250 (also captured stale drift — the ceiling had drifted to 256
+  without being re-ratcheted).
+* **#822** — `QuantizationEnginePort` (`proximadb-storage-ports`): the 8 primitive
+  `quantize_to_*` + `calculate_hamming_distance` methods (every signature is primitive
+  in/out → **no facade DTOs**). `impl … for UnifiedQuantizationEngine` in the **modality
+  kernel** — a downward dep (modality→storage-ports is layering-**allowed**; only
+  storage→modality is forbidden). `UniversalSearchPipeline` holds `Arc<dyn Port>`.
+  Ratchet 250→248.
+* **#831** — pre-extracted the `UnifiedQuantizationLevel` cluster (rich `QuantizationLevel`
+  + Product/Scalar/Binary/Uniform/No/Custom/Turbo payloads + `QuantizationMethod` impls,
+  ~620 lines, foundation-pure) to a NEW foundation crate `proximadb-quantization-model`;
+  redirected storage's ~43 type refs. **Removes the divergent-types trap** structurally.
+  Ratchet 248→205.
+
+**Current ratchet: 205** (`compute::quantization` ~94 `quantization_engine` + ~54
+`storage_engine`; plus index 14 / query 12 / services 11).
+
+=== The cascade finding (6× confirmed) — why field-retype slices are exhausted
+
+The `QuantizationEnginePort` field-retype (#822) worked for `UniversalSearchPipeline`
+*only because its engine value never flowed OUT of the struct* (only method calls).
+Everywhere else, the quantization-engine value **flows through the call graph**, so a
+field retype cascades instead of containing:
+
+* The progressive subsystem (`progressive_search`/`factory`/`stage`) holds the engine and
+  `factory.rs` passes it to **engine-specific Binary stages** (`SstBinaryStage`/
+  `NovaQuantizationStage`/… in 5 separate per-engine stage files) whose `::new()` params
+  are still concrete → `E0308`. Retyping those pushes the cascade to the next layer.
+* `StorageQuantizationEngine` (the 54-ref class) is **held + cloned** by storage (which
+  calls NO methods on it directly — the write/flush path is the real consumer) and its
+  methods return **modality types** (`StorageQuantizedData`, `QuantizedVector`), so a port
+  for it needs **facade DTOs** — it is NOT primitive like `QuantizationEnginePort`.
+* Engines wrap `UnifiedQuantizationEngine` inside `StorageQuantizationEngine` at
+  construction (e.g. nova/sst), so inverting the unified engine alone is impossible — the
+  storage-aware wrapper needs the concrete inner engine.
+
+**Conclusion:** there is no contained `Mechanism-A`/field-retype slice left. The remaining
+~150 refs require the **cascading construction-inversion**: construction must LEAVE
+`src/storage` entirely. This is the hot coordination-window phase.
+
+=== The factory-as-injection-boundary (the recommended execution shape)
+
+`StorageEngineFactory` (`src/storage/engines/factory.rs`) builds every engine
+(`create_sst`/`create_nova`/`create_viper`/…), each calling `Engine::new()`. It is the
+single natural injection seam. Invert there:
+
+....
+ composition root (apps/proximadb-server / proximadb-runtime)
+   constructs UnifiedQuantizationEngine(+StorageQuantizationEngine)  ← allowed: platform→modality
+   injects  Arc<dyn QuantizationEnginePort>  (+ the storage-aware port) into:
+        ↓
+ StorageEngineFactory  (the injection boundary)
+   create_nova(quant: Arc<dyn QuantizationEnginePort>, …) → injects into:
+        ↓
+ NovaEngine::new(quant)  (stops calling UnifiedQuantizationEngine::new)
+   injects into its progressive subsystem + per-engine stages
+....
+
+Sequencing (each a focused PR, announced coordination window — these touch `engine.rs`,
+`factory.rs`, `progressive/*`; land within the day, one engine at a time):
+
+* **D2b — `StorageQuantizationEnginePort` + facades.** Its surface (`quantize_batch` →
+  `Vec<StorageQuantizedData>`, `dequantize(&QuantizedVector)`) is non-primitive → define
+  foundation-tier facade DTOs + translation adapters in the impl. *OR* scope it out by
+  moving the write-path batch quantization behind `QuantizationEnginePort` (the write path
+  is the real consumer; storage only clones). Decide per-call-site with a trace.
+* **D3 — the factory seam.** `StorageEngineFactory` (or its caller) receives the injected
+  quant provider(s); the `create_*` methods thread them into the engines. NovaEngine is the
+  cleanest pilot (only 2 callers, both in the factory).
+* **D4 — per-engine injection.** Each engine's `new()` takes `Arc<dyn …Port>` instead of
+  constructing; its progressive/stage chain receives the injected port. One engine per PR,
+  land fast (divergence is the dominant risk).
+* **D5 — gate to ~0.** `--max-storage-up-edges` ratcheted down as each engine inverts;
+  terminal target `crate::compute::quantization` refs under `src/storage` == 0 → Slice E
+  (engine extraction) unblocked.
+
+Non-goal: do NOT attempt this as a single opportunistic PR — it is the doc's "large,
+coordinated window." One engine's chain per PR, announced.
+
+=== Remaining non-quant edges (after D-quant)
+
+`index` 14 (`AxisManager` → `IndexPort`, leaks `Axis*` types — pre-extract or facade),
+`query` 12 (SearchParams/FilterCondition/OptimizationGoal/QuantizationStage — small
+extraction to a contract crate), `services` 11 (mostly done via CollectionMetadataPort).
+These follow D-quant; they are smaller and less cascading than the quant construction.

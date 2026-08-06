@@ -265,5 +265,5 @@ Apache-2.0
 ## Contact
 
 For questions or issues:
-- GitHub: https://github.com/vjsingh1984/proximadb/issues
-- Email: singhvjd@gmail.com
+- GitHub: https://github.com/anvai-labs/proximaDB/issues
+- Email: vijay@anvaiops.com

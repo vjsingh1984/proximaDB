@@ -79,6 +79,12 @@ pub struct ObjectEconomyBlockEntry {
     pub record_count: u32,
     pub centroid_fp16: Option<Vec<u16>>,
     pub centroid_fp32: Option<Vec<f32>>,
+    /// TD-RDSTRAT-5 lever-3: block RMS radius (spread). `#[serde(default)]` →
+    /// legacy sidecars (no radius) deserialize to `0.0`, so the read-side prune
+    /// scores `d(q,c) − k·0 = d(q,c)` (today's centroid-only ranking) — a change
+    /// is mixed-read-safe until segments are re-flushed with the field.
+    #[serde(default)]
+    pub centroid_radius: f32,
     pub zorder_code: Option<SpatialCode>,
     pub metadata_min_values: serde_json::Map<String, serde_json::Value>,
     pub metadata_max_values: serde_json::Map<String, serde_json::Value>,
@@ -324,6 +330,7 @@ impl ObjectEconomyBlockEntry {
             } else {
                 Some(entry.block_centroid.clone())
             },
+            centroid_radius: entry.block_radius,
             zorder_code: entry.zorder_code.clone(),
             metadata_min_values: entry.metadata_min_values.clone().into_iter().collect(),
             metadata_max_values: entry.metadata_max_values.clone().into_iter().collect(),
@@ -432,6 +439,22 @@ impl<'a> VectorObjectEconomyDirectoryStore<'a> {
     pub async fn store(&self, directory: &VectorObjectEconomyDirectory) -> Result<()> {
         let bytes = directory.serialize()?;
         let path = self.path();
+        // Ensure the `oedir/` parent exists before writing. Object stores have no
+        // real directories so this is a no-op there; on a LOCAL filesystem the
+        // write ENOENTs without it — which silently degraded the sidecar to
+        // "missing", dropping the centroid probe-prune to a full scan
+        // (`centroid_pruned_blocks=0`, caught by the SIFT recall gate). Mirrors the
+        // `.pax`/Arrow flush write paths, which create the parent dir first.
+        if let Some(parent) = path.rfind('/').map(|i| &path[..i])
+            && let Err(err) = self.fs.create_dir_all(parent).await
+        {
+            // Non-fatal: surface as a warn and let the write below report the real
+            // failure if the parent is genuinely unwritable.
+            tracing::warn!(
+                "object-economy directory: create_dir_all({parent}) failed ({err}); \
+                 sidecar write may follow"
+            );
+        }
         self.fs
             .write(&path, &bytes, None)
             .await

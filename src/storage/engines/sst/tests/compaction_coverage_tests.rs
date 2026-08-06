@@ -105,6 +105,7 @@ mod tests {
         let output_file = PathBuf::from("/tmp/output.sstable");
 
         let task = CompactionTask {
+            collection_object_id: 1,
             level: 2,
             input_files: input_files.clone(),
             output_file: output_file.clone(),
@@ -148,7 +149,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_manager_worker_lifecycle() {
         let config = create_test_sst_config();
-        let mut manager = Compaction::new(config).await.unwrap();
+        let manager = std::sync::Arc::new(Compaction::new(config).await.unwrap());
 
         // Test starting workers with different counts
         assert!(manager.start_workers(0).await.is_ok()); // Zero workers should be OK
@@ -202,6 +203,7 @@ mod tests {
 
         // Test scheduling task with empty input files
         let task = CompactionTask {
+            collection_object_id: 1,
             level: 1,
             input_files: vec![], // Empty input files
             output_file: PathBuf::from("/tmp/empty_output.sstable"),
@@ -224,6 +226,7 @@ mod tests {
             .collect();
 
         let task = CompactionTask {
+            collection_object_id: 1,
             level: 2,
             input_files: many_files,
             output_file: PathBuf::from("/tmp/multi_output.sstable"),
@@ -334,6 +337,7 @@ mod tests {
         priority: CompactionPriority,
     ) -> CompactionTask {
         CompactionTask {
+            collection_object_id: 1,
             level,
             input_files: vec![
                 PathBuf::from(format!("/tmp/{}_input1.sstable", collection_id)),

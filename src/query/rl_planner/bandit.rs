@@ -137,12 +137,16 @@ pub struct ContextualBanditPlanner {
     /// Exploration rate for ε-greedy fallback
     exploration_rate: f32,
     /// Base exploration rate (before decay) — used to reset for new contexts
+    #[serde(skip_serializing, default)]
     base_exploration_rate: f32,
     /// Use Thompson Sampling (true) or ε-greedy (false)
+    #[serde(skip_serializing, default)]
     use_thompson_sampling: bool,
     /// Per-engine action spaces
+    #[serde(skip_serializing, default)]
     engine_action_spaces: HashMap<String, ActionSpace>,
     /// Default action space
+    #[serde(skip_serializing, default)]
     default_action_space: ActionSpace,
     /// Total number of updates
     total_updates: u64,
@@ -155,7 +159,11 @@ impl ContextualBanditPlanner {
     /// Create new contextual bandit planner
     pub fn new(exploration_rate: f32, use_thompson_sampling: bool) -> Self {
         let mut engine_action_spaces = HashMap::new();
-        for engine in &["SST", "HELIX", "VIPER", "SWIFT", "NOVA", "RAPTOR"] {
+        // Only live storage engines get action spaces. SWIFT and RAPTOR are
+        // retired/experimental-off; a query routed to an engine without a space
+        // falls back to `default_action_space` (SST) via the `unwrap_or` in
+        // select/exploit, which is safe.
+        for engine in &["SST", "HELIX", "VIPER", "NOVA"] {
             engine_action_spaces.insert(engine.to_string(), ActionSpace::for_engine(engine));
         }
 
@@ -438,6 +446,10 @@ impl ContextualBanditPlanner {
         self.context_weights = loaded.context_weights;
         self.exploration_rate = loaded.exploration_rate;
         self.total_updates = loaded.total_updates;
+        // Restore per-engine learning maturity too. Without this every engine
+        // looks "new" (0 updates) after restart and exploration is wrongly
+        // boosted via the <50-updates branch in select_action.
+        self.engine_update_counts = loaded.engine_update_counts;
 
         tracing::info!(
             "Loaded RL planner state from {} ({} actions, {} updates)",
@@ -705,6 +717,27 @@ mod tests {
         // Should have same stats
         assert_eq!(planner.total_updates(), loaded.total_updates());
         assert_eq!(planner.action_stats.len(), loaded.action_stats.len());
+
+        // The static action-space config must NOT be persisted (it's regenerated
+        // by `new()` and never read back); only learned state is on disk. This
+        // is what keeps the policy file small.
+        let on_disk = tokio::fs::read_to_string(path).await.unwrap();
+        assert!(
+            !on_disk.contains("engine_action_spaces"),
+            "persisted policy must omit static engine_action_spaces, got: {on_disk}"
+        );
+        assert!(
+            !on_disk.contains("default_action_space"),
+            "persisted policy must omit static default_action_space"
+        );
+
+        // engine_update_counts is learned state and must round-trip (it was
+        // previously dropped on load, making every engine look "new" after a
+        // restart and wrongly boosting exploration).
+        assert_eq!(
+            planner.engine_update_counts, loaded.engine_update_counts,
+            "engine_update_counts must round-trip through save/load"
+        );
 
         // Cleanup
         let _ = tokio::fs::remove_file(path).await;

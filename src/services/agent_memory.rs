@@ -557,7 +557,16 @@ impl MemoryStore for VectorMemoryStore {
         let vector = self.embedder.embed(&fact.text, &scope.tenant_id).await?;
         let results = self
             .vector_ops
-            .unified_search_v1(&scope.collection, vector, k, scope_filter(scope), None)
+            .unified_search_v1(
+                &scope.collection,
+                vector,
+                k,
+                scope_filter(scope),
+                None,
+                None,
+                None,
+                proximadb_tenant::AuthClass::Anonymous,
+            )
             .await
             .map_err(|e| anyhow!("memory retrieve failed: {e}"))?;
 
@@ -1289,7 +1298,7 @@ mod tests {
     }
 
     async fn temp_event_log(name: &str) -> Arc<EventLogEngine> {
-        let base_dir = std::path::PathBuf::from(format!("/tmp/test_memaudit_{name}"));
+        let base_dir = format!("/tmp/test_memaudit_{name}");
         let _ = std::fs::remove_dir_all(&base_dir);
         std::fs::create_dir_all(&base_dir).expect("create dir");
         let cfg = crate::storage::engines::eventlog::EventLogConfig {

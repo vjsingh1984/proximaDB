@@ -9,7 +9,7 @@ correctness properties, not add-ons.
 **Do not open a public issue for security vulnerabilities.**
 
 Please report privately via GitHub's [private vulnerability
-reporting](https://github.com/vjsingh1984/proximaDB/security/advisories/new)
+reporting](https://github.com/anvai-labs/proximaDB/security/advisories/new)
 (Security tab → "Report a vulnerability"). This routes the report to the
 maintainers confidentially.
 

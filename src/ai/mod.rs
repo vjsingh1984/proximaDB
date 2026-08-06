@@ -1,8 +1,6 @@
 //! AI-powered intelligence for Release 2 enterprise platform
 
 pub mod analytics;
-pub mod business_intelligence;
-pub mod executive_dashboard;
 pub mod insights;
 pub mod llm;
 pub mod llm_integration;
@@ -12,11 +10,6 @@ pub mod nlp;
 
 pub use analytics::{
     ConversationalAnalyticsEngine, GovernanceAnalyticsEngine, PredictiveAnalyticsEngine,
-};
-pub use business_intelligence::engine::ExecutiveDashboard;
-pub use business_intelligence::{BusinessInsight, BusinessIntelligenceEngine};
-pub use executive_dashboard::{
-    AIExecutiveDashboard, AIExecutiveDashboardResponse, ExecutiveDashboardRequest,
 };
 pub use insights::{AutomatedInsightEngine, BusinessInsightsGenerator, InsightType};
 pub use llm::{AIIntelligenceFoundation, BusinessIntent, LLMIntegrationEngine};
@@ -115,7 +108,7 @@ impl AIEnterpiseIntelligenceCoordinator {
                 prediction_horizon,
             } => {
                 let tenant_user_context: crate::storage::tenant::UserContext =
-                    user_context.clone().into();
+                    crate::auth::enterprise_to_storage_user_context(user_context.clone());
                 let result = self
                     .predictive_analytics
                     .execute_business_prediction(
@@ -135,7 +128,7 @@ impl AIEnterpiseIntelligenceCoordinator {
                 context,
             } => {
                 let tenant_user_context: crate::storage::tenant::UserContext =
-                    user_context.clone().into();
+                    crate::auth::enterprise_to_storage_user_context(user_context.clone());
                 let result = self
                     .conversational_analytics
                     .start_conversational_session(

@@ -132,7 +132,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::debug;
 
-use super::cache::{CacheInvalidator, QueryKey, QueryResultCache};
+use super::cache::{CacheInvalidator, FederatedQueryResultCache, QueryKey};
 use crate::catalog::CatalogManager;
 use crate::storage::MultiModelStorageFacade;
 
@@ -147,7 +147,7 @@ pub struct FederatedQueryContext {
     /// Federated executor
     pub executor: FederatedExecutor,
     /// Query result cache for repetitive queries
-    pub cache: Option<Arc<QueryResultCache>>,
+    pub cache: Option<Arc<FederatedQueryResultCache>>,
     /// Cache invalidator for real-time invalidation
     pub invalidator: Option<Arc<CacheInvalidator>>,
     /// Catalog manager for external table resolution
@@ -198,7 +198,7 @@ impl FederatedQueryContext {
     /// the first-phase-only stub for any rank profile.
     pub fn with_rank_services(
         mut self,
-        rank_services: Arc<crate::network::rest::v1::rank::RankServices>,
+        rank_services: Arc<crate::network::rest::canonical::rank::RankServices>,
     ) -> Self {
         self.executor = self.executor.with_rank_services(rank_services);
         self
@@ -218,7 +218,10 @@ impl FederatedQueryContext {
     }
 
     /// Create a new federated query context with caching enabled
-    pub fn with_cache(storage: Arc<MultiModelStorageFacade>, cache: Arc<QueryResultCache>) -> Self {
+    pub fn with_cache(
+        storage: Arc<MultiModelStorageFacade>,
+        cache: Arc<FederatedQueryResultCache>,
+    ) -> Self {
         let invalidator = Arc::new(CacheInvalidator::new(cache.clone()));
         Self {
             storage: storage.clone(),
@@ -248,14 +251,14 @@ impl FederatedQueryContext {
     }
 
     /// Enable caching on an existing context
-    pub fn enable_cache(&mut self, cache: Arc<QueryResultCache>) {
+    pub fn enable_cache(&mut self, cache: Arc<FederatedQueryResultCache>) {
         let invalidator = Arc::new(CacheInvalidator::new(cache.clone()));
         self.cache = Some(cache);
         self.invalidator = Some(invalidator);
     }
 
     /// Get the cache if enabled
-    pub fn get_cache(&self) -> Option<&Arc<QueryResultCache>> {
+    pub fn get_cache(&self) -> Option<&Arc<FederatedQueryResultCache>> {
         self.cache.as_ref()
     }
 
@@ -399,7 +402,7 @@ mod tests {
         MetricAggregation, MetricSample, ObservabilityNamespaceConfig, RetentionConfig, Severity,
         SqlArray, SqlObject, SqlValue, TraceData, sql_value,
     };
-    use crate::query::federated::{FederatedQueryContext, QueryResultCache};
+    use crate::query::federated::{FederatedQueryContext, FederatedQueryResultCache};
     use crate::storage::MultiModelStorageFacade;
     use crate::storage::multimodel::stores::{
         DocumentStore, DocumentStoreConfig, GraphStore, GraphStoreConfig, ObservabilityStore,
@@ -512,10 +515,6 @@ mod tests {
                     .push(storage_url.to_string());
             }
             Ok(self.results.clone())
-        }
-
-        fn get_filesystem_factory(&self) -> &FilesystemFactory {
-            &self.filesystem_factory
         }
     }
 
@@ -1013,7 +1012,7 @@ mod tests {
     #[test]
     fn test_federated_context_with_cache() {
         let storage = Arc::new(MultiModelStorageFacade::new());
-        let cache = Arc::new(QueryResultCache::with_defaults());
+        let cache = Arc::new(FederatedQueryResultCache::with_defaults());
         let ctx = FederatedQueryContext::with_cache(storage, cache);
 
         assert!(ctx.cache.is_some());
@@ -1177,7 +1176,7 @@ mod tests {
 
         assert!(ctx.cache.is_none());
 
-        let cache = Arc::new(QueryResultCache::with_defaults());
+        let cache = Arc::new(FederatedQueryResultCache::with_defaults());
         ctx.enable_cache(cache);
 
         assert!(ctx.cache.is_some());
@@ -1187,7 +1186,7 @@ mod tests {
     #[test]
     fn test_cache_stats() {
         let storage = Arc::new(MultiModelStorageFacade::new());
-        let cache = Arc::new(QueryResultCache::with_defaults());
+        let cache = Arc::new(FederatedQueryResultCache::with_defaults());
         let ctx = FederatedQueryContext::with_cache(storage, cache);
 
         let stats = ctx.cache_stats();
@@ -1202,7 +1201,7 @@ mod tests {
     #[test]
     fn test_invalidate_collection() {
         let storage = Arc::new(MultiModelStorageFacade::new());
-        let cache = Arc::new(QueryResultCache::with_defaults());
+        let cache = Arc::new(FederatedQueryResultCache::with_defaults());
         let ctx = FederatedQueryContext::with_cache(storage, cache);
 
         // With no cached entries, invalidation returns 0

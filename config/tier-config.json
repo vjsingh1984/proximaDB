@@ -17,10 +17,10 @@
     "Overlay JSON may use any tier ids that map to a Tier variant via",
     "the serde aliases declared in src/catalog/tenant_tier.rs.",
     "",
-    "File still named pricing.json (not tier-config.json) during the",
-    "Phase B-4 migration window — Phase B-5 will rename + update the",
-    "include_str! path + the anvaiops commercial-image COPY destination",
-    "in lockstep."
+    "Boundary-spec remediation (OSS_ENTERPRISE_BOUNDARY_2026_06_17)",
+    "phases B-4/B-5 are complete: this file is the renamed, neutral",
+    "baseline. Changes here must regenerate the sha256 fingerprint",
+    "(scripts/check_tier_config_fingerprint.sh)."
   ],
 
   "schema_version": 1,

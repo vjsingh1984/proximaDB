@@ -53,6 +53,29 @@ pub struct RaBitQCode {
     pub inv_factor: f32,
 }
 
+/// Reusable per-worker storage for RaBitQ encoding.
+///
+/// Segment encoders process millions of rows. Allocating residual, normalized,
+/// and rotated vectors for every row causes allocator fragmentation and a large
+/// retained-RSS tail even though only a handful of rows are active at once.
+/// One scratch value per worker bounds those allocations to `O(workers * dim)`.
+#[derive(Debug, Default)]
+pub struct RaBitQEncodeScratch {
+    residual: Vec<f32>,
+    unit: Vec<f32>,
+    rotated: Vec<f32>,
+}
+
+impl RaBitQEncodeScratch {
+    pub fn new(dim: usize) -> Self {
+        Self {
+            residual: Vec::with_capacity(dim),
+            unit: Vec::with_capacity(dim),
+            rotated: Vec::with_capacity(dim),
+        }
+    }
+}
+
 /// SplitMix64 — a tiny, dependency-free deterministic PRNG so the rotation is
 /// reproducible from `seed` on both encode and decode.
 struct SplitMix64(u64);
@@ -205,27 +228,86 @@ fn packed_len(dim: usize) -> usize {
 /// Encode one vector to a [`RaBitQCode`] using a prebuilt `rotation`
 /// (`build_rotation(params.dim, params.seed)`).
 pub fn encode(vector: &[f32], params: &RaBitQParams, rotation: &[f32]) -> RaBitQCode {
+    let mut scratch = RaBitQEncodeScratch::new(params.dim);
+    let mut bits = vec![0u8; packed_len(params.dim)];
+    let encoded = encode_into(vector, params, rotation, &mut bits, &mut scratch);
+    let (dist_to_centroid, inv_factor) = encoded.unwrap_or((0.0, 0.0));
+    RaBitQCode {
+        bits,
+        dist_to_centroid,
+        inv_factor,
+    }
+}
+
+/// Encode into caller-owned bits using reusable scratch storage.
+///
+/// The arithmetic order intentionally matches [`encode`] so the optimized
+/// segment writer remains byte-identical to the established on-disk format.
+/// Returns `(distance_to_centroid, inverse_factor)`.
+pub fn encode_into(
+    vector: &[f32],
+    params: &RaBitQParams,
+    rotation: &[f32],
+    bits: &mut [u8],
+    scratch: &mut RaBitQEncodeScratch,
+) -> Result<(f32, f32)> {
     let dim = params.dim;
+    if dim == 0 {
+        bail!("RaBitQ encode requires dim > 0");
+    }
+    if vector.len() != dim || params.centroid.len() != dim {
+        bail!(
+            "RaBitQ encode dimension mismatch: vector={}, centroid={}, dim={dim}",
+            vector.len(),
+            params.centroid.len()
+        );
+    }
+    if rotation.len() != dim.saturating_mul(dim) {
+        bail!(
+            "RaBitQ rotation length {} != dim squared {}",
+            rotation.len(),
+            dim.saturating_mul(dim)
+        );
+    }
+    if bits.len() != packed_len(dim) {
+        bail!(
+            "RaBitQ output length {} != packed length {}",
+            bits.len(),
+            packed_len(dim)
+        );
+    }
+
     // residual = v - centroid
-    let residual: Vec<f32> = vector
-        .iter()
-        .zip(params.centroid.iter())
-        .map(|(&v, &c)| v - c)
-        .collect();
-    let dist_to_centroid = residual.iter().map(|v| v * v).sum::<f32>().sqrt();
+    scratch.residual.clear();
+    scratch.residual.extend(
+        vector
+            .iter()
+            .zip(params.centroid.iter())
+            .map(|(&v, &c)| v - c),
+    );
+    let dist_to_centroid = scratch.residual.iter().map(|v| v * v).sum::<f32>().sqrt();
 
     // unit residual, then rotate.
-    let unit: Vec<f32> = if dist_to_centroid > 1e-12 {
-        residual.iter().map(|v| v / dist_to_centroid).collect()
+    scratch.unit.clear();
+    if dist_to_centroid > 1e-12 {
+        scratch
+            .unit
+            .extend(scratch.residual.iter().map(|v| v / dist_to_centroid));
     } else {
-        vec![0.0; dim]
-    };
-    let rotated = apply_rotation(rotation, &unit);
+        scratch.unit.resize(dim, 0.0);
+    }
+    scratch.rotated.clear();
+    scratch.rotated.extend(rotation.chunks(dim).map(|row| {
+        row.iter()
+            .zip(&scratch.unit)
+            .map(|(a, b)| a * b)
+            .sum::<f32>()
+    }));
 
     // sign bits + factor = <x̄, õ> = (1/√D) Σ|õ_i|
-    let mut bits = vec![0u8; packed_len(dim)];
+    bits.fill(0);
     let mut abs_sum = 0.0f32;
-    for (i, &val) in rotated.iter().enumerate() {
+    for (i, &val) in scratch.rotated.iter().enumerate() {
         if val >= 0.0 {
             bits[i / 8] |= 1u8 << (i % 8);
         }
@@ -235,11 +317,7 @@ pub fn encode(vector: &[f32], params: &RaBitQParams, rotation: &[f32]) -> RaBitQ
     let factor = inv_sqrt_d * abs_sum; // ⟨x̄, õ⟩ ∈ [0,1]
     let inv_factor = if factor > 1e-6 { 1.0 / factor } else { 0.0 };
 
-    RaBitQCode {
-        bits,
-        dist_to_centroid,
-        inv_factor,
-    }
+    Ok((dist_to_centroid, inv_factor))
 }
 
 /// Rotate a query's residual once per query: `q̃ = P · (query − centroid)`.
@@ -312,14 +390,8 @@ impl RaBitQCode {
 /// full-precision source (decoupled rerank, per RABITQ_ANN_INTEGRATION_SCOPING) — the
 /// codes alone are ~30× smaller and too coarse to be the final answer.
 pub fn rank_candidates(q_rotated: &[f32], codes: &[Option<RaBitQCode>], pool: usize) -> Vec<usize> {
-    let mut scored: Vec<(usize, f32)> = codes
-        .iter()
-        .enumerate()
-        .filter_map(|(i, c)| c.as_ref().map(|c| (i, c.l2_rank_score(q_rotated))))
-        .collect();
-    scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-    scored.truncate(pool);
-    scored.into_iter().map(|(i, _)| i).collect()
+    let lut = QueryLut::build(q_rotated);
+    rank_candidates_lut(&lut, codes, pool)
 }
 
 /// Stage-1 RaBitQ candidate ranking by **inner product** (cosine / max-IP):
@@ -331,13 +403,171 @@ pub fn rank_candidates_ip(
     codes: &[Option<RaBitQCode>],
     pool: usize,
 ) -> Vec<usize> {
-    let mut scored: Vec<(usize, f32)> = codes
+    let lut = QueryLut::build(q_rotated);
+    rank_candidates_ip_lut(&lut, codes, pool)
+}
+
+// ---------------------------------------------------------------------------
+// Query-bound LUT for fast RaBitQ binary_dot (FAISS-standard approach).
+// ---------------------------------------------------------------------------
+
+/// Query-bound lookup table for fast RaBitQ `binary_dot`. Built once per query
+/// from the rotated query `q̃` — then each candidate's `binary_dot` is 16 table
+/// lookups + 15 additions (vs 128 branchless multiply-adds per code in the scalar
+/// path). ~27× faster per code; the LUT build cost (~50µs) is negligible.
+///
+/// **Layout:** `tables[k * 256 + byte]` = the partial dot product contribution
+/// of byte-position `k` when the packed-bits byte equals `byte`. The final
+/// `sum_q` (Σ q̃) is stored at `tables[n_bytes * 256]` for the
+/// `binary_dot = (2 × dot − sum_q) × inv_sqrt_d` correction.
+///
+/// Size: `(n_bytes × 256 + 1) × 4` bytes ≈ 16 KB for 128-dim (fits in L1).
+pub struct QueryLut {
+    tables: Vec<f32>,
+    n_bytes: usize,
+    inv_sqrt_d: f32,
+    sum_q: f32,
+}
+
+impl QueryLut {
+    /// Build the LUT from the rotated query `q̃`. Call once per query (or per
+    /// `rabitq_rank` call), then pass to `rank_candidates_lut`.
+    pub fn build(q_rotated: &[f32]) -> Self {
+        let dim = q_rotated.len();
+        let n_bytes = dim.div_ceil(8);
+        let inv_sqrt_d = 1.0 / (dim as f32).sqrt();
+        let sum_q: f32 = q_rotated.iter().sum();
+        let mut tables = vec![0.0f32; n_bytes * 256];
+        for k in 0..n_bytes {
+            for byte in 0..256u32 {
+                let mut partial = 0.0f32;
+                for bit in 0..8 {
+                    let dim_idx = k * 8 + bit;
+                    if dim_idx < dim && (byte >> bit) & 1 == 1 {
+                        partial += q_rotated[dim_idx];
+                    }
+                }
+                tables[k * 256 + byte as usize] = partial;
+            }
+        }
+        Self {
+            tables,
+            n_bytes,
+            inv_sqrt_d,
+            sum_q,
+        }
+    }
+
+    /// Fast `binary_dot` via LUT lookup: 16 indexed loads + 15 additions.
+    #[inline(always)]
+    pub fn binary_dot(&self, bits: &[u8]) -> f32 {
+        let mut dot = 0.0f32;
+        for k in 0..self.n_bytes {
+            dot += self.tables[k * 256 + bits[k] as usize];
+        }
+        (2.0 * dot - self.sum_q) * self.inv_sqrt_d
+    }
+
+    /// L2 rank score (lower = nearer). Same formula as
+    /// [`RaBitQCode::l2_rank_score`] but via the LUT.
+    #[inline(always)]
+    pub fn l2_rank_score(&self, code: &RaBitQCode) -> f32 {
+        self.l2_rank_score_parts(code.dist_to_centroid, code.inv_factor, &code.bits)
+            .unwrap_or(f32::INFINITY)
+    }
+
+    /// IP rank score (lower = higher IP = nearer).
+    #[inline(always)]
+    pub fn ip_rank_score(&self, code: &RaBitQCode) -> f32 {
+        self.ip_rank_score_parts(code.dist_to_centroid, code.inv_factor, &code.bits)
+            .unwrap_or(f32::INFINITY)
+    }
+
+    /// L2 rank score directly from the packed code fields.
+    ///
+    /// This avoids constructing an owned [`RaBitQCode`] when a storage reader
+    /// already has a validated fixed-stride `dist | inv | bits` row.
+    #[inline(always)]
+    pub fn l2_rank_score_parts(
+        &self,
+        dist_to_centroid: f32,
+        inv_factor: f32,
+        bits: &[u8],
+    ) -> Option<f32> {
+        if bits.len() != self.n_bytes {
+            return None;
+        }
+        let ip = self.binary_dot(bits) * inv_factor;
+        Some(dist_to_centroid * dist_to_centroid - 2.0 * dist_to_centroid * ip)
+    }
+
+    /// Inner-product rank score directly from the packed code fields.
+    #[inline(always)]
+    pub fn ip_rank_score_parts(
+        &self,
+        dist_to_centroid: f32,
+        inv_factor: f32,
+        bits: &[u8],
+    ) -> Option<f32> {
+        if bits.len() != self.n_bytes {
+            return None;
+        }
+        let ip = self.binary_dot(bits) * inv_factor;
+        Some(-dist_to_centroid * ip)
+    }
+}
+
+/// LUT-accelerated `rank_candidates` — takes a pre-built [`QueryLut`] (caller
+/// builds once per query, reuses across blocks).
+pub fn rank_candidates_lut(
+    lut: &QueryLut,
+    codes: &[Option<RaBitQCode>],
+    pool: usize,
+) -> Vec<usize> {
+    let scored: Vec<(usize, f32)> = codes
         .iter()
         .enumerate()
-        .filter_map(|(i, c)| c.as_ref().map(|c| (i, c.ip_rank_score(q_rotated))))
+        .filter_map(|(i, c)| c.as_ref().map(|c| (i, lut.l2_rank_score(c))))
         .collect();
-    scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-    scored.truncate(pool);
+    select_top_scores(scored, pool)
+}
+
+/// LUT-accelerated `rank_candidates_ip` — takes a pre-built [`QueryLut`].
+pub fn rank_candidates_ip_lut(
+    lut: &QueryLut,
+    codes: &[Option<RaBitQCode>],
+    pool: usize,
+) -> Vec<usize> {
+    let scored: Vec<(usize, f32)> = codes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| c.as_ref().map(|c| (i, lut.ip_rank_score(c))))
+        .collect();
+    select_top_scores(scored, pool)
+}
+
+/// Keep only the best `pool` scores before sorting the retained prefix.
+///
+/// The old ranker fully sorted every probed row even though the cascade keeps
+/// only a small survivor pool (normally 1%). `select_nth_unstable_by` reduces
+/// that work from `O(N log N)` to expected `O(N) + O(pool log pool)`. The row
+/// ordinal is an explicit tie-breaker, preserving the old stable-sort result
+/// for equal finite scores while keeping the optimized result deterministic.
+fn select_top_scores(mut scored: Vec<(usize, f32)>, pool: usize) -> Vec<usize> {
+    let keep = pool.min(scored.len());
+    if keep == 0 {
+        return Vec::new();
+    }
+    let compare = |a: &(usize, f32), b: &(usize, f32)| {
+        a.1.partial_cmp(&b.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    };
+    if keep < scored.len() {
+        scored.select_nth_unstable_by(keep, compare);
+        scored.truncate(keep);
+    }
+    scored.sort_unstable_by(compare);
     scored.into_iter().map(|(i, _)| i).collect()
 }
 
@@ -408,6 +638,80 @@ mod tests {
     }
 
     #[test]
+    fn reusable_encode_is_byte_identical_and_rejects_bad_shapes() {
+        let dim = 32;
+        let seed = 73;
+        let corpus = [
+            (0..dim).map(|i| i as f32 * 0.25).collect::<Vec<_>>(),
+            (0..dim).map(|i| (i as f32 * 0.3).sin()).collect::<Vec<_>>(),
+        ];
+        let refs = corpus.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let params = fit_params(&refs, dim, seed);
+        let rotation = build_rotation(dim, seed);
+        // Allocation-heavy reference retained in the test to pin the exact
+        // arithmetic order and therefore the persisted code bytes.
+        let residual = corpus[1]
+            .iter()
+            .zip(&params.centroid)
+            .map(|(&value, &centroid)| value - centroid)
+            .collect::<Vec<_>>();
+        let expected_distance = residual
+            .iter()
+            .map(|value| value * value)
+            .sum::<f32>()
+            .sqrt();
+        let unit = if expected_distance > 1e-12 {
+            residual
+                .iter()
+                .map(|value| value / expected_distance)
+                .collect::<Vec<_>>()
+        } else {
+            vec![0.0; dim]
+        };
+        let rotated = apply_rotation(&rotation, &unit);
+        let mut expected_bits = vec![0u8; dim.div_ceil(8)];
+        let mut abs_sum = 0.0f32;
+        for (index, &value) in rotated.iter().enumerate() {
+            if value >= 0.0 {
+                expected_bits[index / 8] |= 1u8 << (index % 8);
+            }
+            abs_sum += value.abs();
+        }
+        let factor = abs_sum / (dim as f32).sqrt();
+        let expected_inverse = if factor > 1e-6 { 1.0 / factor } else { 0.0 };
+        let mut bits = vec![0u8; dim.div_ceil(8)];
+        let mut scratch = RaBitQEncodeScratch::new(dim);
+        let (distance, inverse) =
+            encode_into(&corpus[1], &params, &rotation, &mut bits, &mut scratch)
+                .expect("valid shapes encode");
+        assert_eq!(bits, expected_bits);
+        assert_eq!(distance.to_bits(), expected_distance.to_bits());
+        assert_eq!(inverse.to_bits(), expected_inverse.to_bits());
+
+        assert!(
+            encode_into(
+                &corpus[1][..dim - 1],
+                &params,
+                &rotation,
+                &mut bits,
+                &mut scratch
+            )
+            .is_err()
+        );
+        let short_len = bits.len() - 1;
+        assert!(
+            encode_into(
+                &corpus[1],
+                &params,
+                &rotation,
+                &mut bits[..short_len],
+                &mut scratch
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn estimator_orders_by_similarity() {
         // A vector close to the query should score lower (nearer) than a far one.
         let dim = 64;
@@ -430,6 +734,28 @@ mod tests {
             near_code.l2_rank_score(&q),
             far_code.l2_rank_score(&q)
         );
+    }
+
+    #[test]
+    fn partial_selection_matches_full_stable_sort() {
+        let scores = (0..10_003)
+            .map(|i| {
+                // Deliberate ties exercise the row-ordinal tie break.
+                let score = ((i * 7919) % 257) as f32;
+                (i, score)
+            })
+            .collect::<Vec<_>>();
+        for pool in [0, 1, 17, 100, scores.len(), scores.len() + 1] {
+            let mut expected = scores.clone();
+            expected.sort_by(|a, b| {
+                a.1.partial_cmp(&b.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            expected.truncate(pool);
+            let expected = expected.into_iter().map(|(i, _)| i).collect::<Vec<_>>();
+            assert_eq!(select_top_scores(scores.clone(), pool), expected);
+        }
     }
 
     #[test]
@@ -487,6 +813,31 @@ mod tests {
         assert!(
             recall >= 0.8,
             "RaBitQ recall@10 with rerank = {recall} (< 0.8)"
+        );
+    }
+
+    #[test]
+    fn packed_field_scoring_matches_owned_code() {
+        let query = (0..129)
+            .map(|index| (index as f32 * 0.137).sin())
+            .collect::<Vec<_>>();
+        let lut = QueryLut::build(&query);
+        let code = RaBitQCode {
+            dist_to_centroid: 3.25,
+            inv_factor: 0.875,
+            bits: (0..17).map(|index| (index * 37 + 11) as u8).collect(),
+        };
+        assert_eq!(
+            lut.l2_rank_score_parts(code.dist_to_centroid, code.inv_factor, &code.bits),
+            Some(lut.l2_rank_score(&code))
+        );
+        assert_eq!(
+            lut.ip_rank_score_parts(code.dist_to_centroid, code.inv_factor, &code.bits),
+            Some(lut.ip_rank_score(&code))
+        );
+        assert!(
+            lut.l2_rank_score_parts(code.dist_to_centroid, code.inv_factor, &code.bits[..16])
+                .is_none()
         );
     }
 }

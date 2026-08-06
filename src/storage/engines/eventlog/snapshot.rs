@@ -20,10 +20,10 @@
 //! avoiding full event replay for entities with many events.
 
 use crate::storage::engines::eventlog::{EntityId, EventSequence};
+use crate::storage::persistence::filesystem::{FileOptions, FileSystem};
 use chrono::{DateTime, Utc};
 use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -42,8 +42,8 @@ pub struct SnapshotMetadata {
     /// Snapshot creation timestamp
     pub created_at: DateTime<Utc>,
 
-    /// Snapshot file path
-    pub file_path: PathBuf,
+    /// Snapshot file path (local path or object-store URL)
+    pub file_path: String,
 
     /// Snapshot size in bytes
     pub size_bytes: usize,
@@ -51,8 +51,13 @@ pub struct SnapshotMetadata {
 
 /// Snapshot manager for efficient state reconstruction
 pub struct SnapshotManager {
-    /// Base directory for snapshot storage
-    base_dir: PathBuf,
+    /// Base location for snapshot storage (local path or object-store URL)
+    base_dir: String,
+
+    /// Filesystem all snapshot I/O routes through — never direct
+    /// `std::fs`/`tokio::fs`, which cannot address object-store bases
+    /// (TD-OBJSTORE-1, #960).
+    filesystem: Arc<dyn FileSystem>,
 
     /// Snapshot metadata index
     snapshots: Arc<RwLock<HashMap<EntityId, Vec<SnapshotMetadata>>>>,
@@ -79,16 +84,20 @@ pub struct SnapshotStats {
 
 impl SnapshotManager {
     /// Create a new snapshot manager
-    pub fn new(base_dir: PathBuf) -> Result<Self> {
-        debug!("Creating snapshot manager at {:?}", base_dir);
+    pub fn new(base_dir: String, filesystem: Arc<dyn FileSystem>) -> Result<Self> {
+        debug!("Creating snapshot manager at {}", base_dir);
 
-        // Create snapshot directory
-        std::fs::create_dir_all(&base_dir).map_err(|e| {
-            ProximaDBError::Internal(format!("Failed to create snapshot dir: {}", e))
-        })?;
+        // Only local bases get a directory; object-store bases (s3://,
+        // adls://, …) are flat keyspaces and must never reach std::fs.
+        if !base_dir.contains("://") {
+            std::fs::create_dir_all(&base_dir).map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to create snapshot dir: {}", e))
+            })?;
+        }
 
         Ok(Self {
             base_dir,
+            filesystem,
             snapshots: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(SnapshotStats::default())),
         })
@@ -137,15 +146,16 @@ impl SnapshotManager {
 
         let size_bytes = serialized.len();
 
-        // Create entity directory if it doesn't exist
-        if let Some(entity_dir) = snapshot_path.parent() {
-            tokio::fs::create_dir_all(entity_dir).await.map_err(|e| {
-                ProximaDBError::Internal(format!("Failed to create entity dir: {}", e))
-            })?;
-        }
-
-        // Write snapshot file
-        tokio::fs::write(&snapshot_path, serialized)
+        // Write through the injected filesystem; `create_dirs` covers the
+        // entity subdirectory on local bases and is a no-op on flat
+        // object-store keyspaces.
+        let options = FileOptions {
+            create_dirs: true,
+            overwrite: true,
+            ..Default::default()
+        };
+        self.filesystem
+            .write(&snapshot_path, &serialized, Some(options))
             .await
             .map_err(|e| ProximaDBError::Internal(format!("Failed to write snapshot: {}", e)))?;
 
@@ -216,8 +226,10 @@ impl SnapshotManager {
                 })?
         };
 
-        // Read snapshot file
-        let data = tokio::fs::read(&snapshot_path)
+        // Read snapshot file through the injected filesystem
+        let data = self
+            .filesystem
+            .read(&snapshot_path)
             .await
             .map_err(|e| ProximaDBError::Internal(format!("Failed to read snapshot: {}", e)))?;
 
@@ -306,14 +318,15 @@ impl SnapshotManager {
             let original_count = entity_snapshots.len();
 
             if entity_snapshots.len() > keep_latest {
-                // Sort by sequence descending and keep latest N
+                // Sort by sequence descending, split off the stale tail
+                // BEFORE truncating (truncating first left the tail slice
+                // empty, so the stale files were never actually deleted).
                 entity_snapshots.sort_by_key(|s| std::cmp::Reverse(s.sequence));
-                entity_snapshots.truncate(keep_latest);
+                let to_delete = entity_snapshots.split_off(keep_latest);
 
-                // Delete files for removed snapshots
-                let to_delete = &entity_snapshots[keep_latest..];
-                for snapshot in to_delete {
-                    let _ = tokio::fs::remove_file(&snapshot.file_path).await;
+                // Delete files for removed snapshots via the filesystem
+                for snapshot in &to_delete {
+                    let _ = self.filesystem.delete(&snapshot.file_path).await;
                 }
 
                 let deleted = original_count - keep_latest;
@@ -330,13 +343,17 @@ impl SnapshotManager {
         self.stats.read().await.clone()
     }
 
-    /// Get storage path for a snapshot
-    fn get_snapshot_path(&self, entity_id: &EntityId, sequence: EventSequence) -> PathBuf {
+    /// Get storage path for a snapshot. String-joined (never
+    /// `PathBuf::join`) so an object-store base URL survives verbatim.
+    fn get_snapshot_path(&self, entity_id: &EntityId, sequence: EventSequence) -> String {
         // Sanitize entity_id for filesystem
         let safe_id = entity_id.replace(':', "_");
-        self.base_dir
-            .join(format!("entity_{}", safe_id))
-            .join(format!("snapshot_{:010}.json", sequence))
+        format!(
+            "{}/entity_{}/snapshot_{:010}.json",
+            self.base_dir.trim_end_matches('/'),
+            safe_id,
+            sequence
+        )
     }
 }
 
@@ -344,18 +361,40 @@ impl SnapshotManager {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_snapshot_manager_creation() {
-        let base_dir = PathBuf::from("/tmp/test_snapshot_manager");
-        let manager = SnapshotManager::new(base_dir.clone())
+    async fn local_fs() -> Arc<dyn FileSystem> {
+        let fs = crate::storage::persistence::filesystem::local::LocalFileSystem::new(
+            crate::storage::persistence::filesystem::local::LocalConfig::default(),
+        )
+        .await
+        .expect("local fs");
+        Arc::new(fs)
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_manager_creation() {
+        let base_dir = "/tmp/test_snapshot_manager".to_string();
+        let manager = SnapshotManager::new(base_dir.clone(), local_fs().await)
             .expect("Failed to create snapshot manager for test");
         assert_eq!(manager.base_dir, base_dir);
     }
 
     #[tokio::test]
+    async fn test_snapshot_manager_object_store_url_skips_local_mkdir() {
+        // Object-store bases must never reach std::fs (TD-OBJSTORE-1, #960).
+        let manager =
+            SnapshotManager::new("s3://bucket/data/auditlog".to_string(), local_fs().await)
+                .expect("Failed to create snapshot manager for object-store base");
+        assert_eq!(
+            manager.get_snapshot_path(&"entity:x".to_string(), 7),
+            "s3://bucket/data/auditlog/entity_entity_x/snapshot_0000000007.json"
+        );
+        assert!(!std::path::Path::new("s3:").exists());
+    }
+
+    #[tokio::test]
     async fn test_create_snapshot() {
-        let base_dir = PathBuf::from("/tmp/test_create_snapshot");
-        let manager = SnapshotManager::new(base_dir.clone())
+        let base_dir = "/tmp/test_create_snapshot".to_string();
+        let manager = SnapshotManager::new(base_dir.clone(), local_fs().await)
             .expect("Failed to create snapshot manager for test");
 
         let metadata = manager
@@ -365,7 +404,7 @@ mod tests {
 
         assert_eq!(metadata.entity_id, "entity:test");
         assert_eq!(metadata.sequence, 100);
-        assert!(metadata.file_path.exists());
+        assert!(std::path::Path::new(&metadata.file_path).exists());
 
         // Cleanup
         let _ = std::fs::remove_dir_all(base_dir);
@@ -373,8 +412,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_snapshot() {
-        let base_dir = PathBuf::from("/tmp/test_load_snapshot");
-        let manager = SnapshotManager::new(base_dir.clone())
+        let base_dir = "/tmp/test_load_snapshot".to_string();
+        let manager = SnapshotManager::new(base_dir.clone(), local_fs().await)
             .expect("Failed to create snapshot manager for test");
 
         // Create snapshot
@@ -397,8 +436,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_old_snapshots() {
-        let base_dir = PathBuf::from("/tmp/test_cleanup_snapshots");
-        let manager = SnapshotManager::new(base_dir.clone())
+        let base_dir = "/tmp/test_cleanup_snapshots".to_string();
+        let manager = SnapshotManager::new(base_dir.clone(), local_fs().await)
             .expect("Failed to create snapshot manager for test");
 
         // Create multiple snapshots

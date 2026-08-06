@@ -450,4 +450,4 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
 ---
 
-*Need help?* [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues)
+*Need help?* [GitHub Issues](https://github.com/anvai-labs/proximaDB/issues)

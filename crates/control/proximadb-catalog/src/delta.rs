@@ -60,6 +60,7 @@ use tracing::{debug, info, warn};
 use crate::cache::CatalogCache;
 use crate::schema::{apply_evolution, validate_schema};
 use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+use proximadb_storage_filesystem_types::{FileOptions, FileSystem};
 
 use crate::{
     Catalog, CatalogColumn, CatalogHealth, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
@@ -95,8 +96,16 @@ pub struct DeltaCatalog {
     name: String,
     /// Configuration
     config: DeltaCatalogConfig,
-    /// Base path for local storage
+    /// Base path for local storage (unused in object-store mode)
     base_path: PathBuf,
+    /// Object-store mode (TD-OBJSTORE-1, #960): `Some` when `storage_url`
+    /// carries a non-`file` scheme and the composition root injected a
+    /// `FileSystem`. All persistence then routes through it with
+    /// scheme-qualified URLs joined from `storage_url` — the old behavior
+    /// (staging catalog metadata in a LOCAL temp cache, non-durable across
+    /// VM loss) only remains for the direct `new()` constructor without an
+    /// injected filesystem.
+    filesystem: Option<Arc<dyn FileSystem>>,
     /// Catalog cache
     cache: Arc<CatalogCache>,
     /// In-memory storage for namespaces
@@ -222,27 +231,56 @@ struct DeltaFormat {
 }
 
 impl DeltaCatalog {
-    /// Create a new Delta Lake catalog
+    /// Create a new Delta Lake catalog over the local filesystem (no injected
+    /// backend). Prefer [`Self::new_with_filesystem`] via
+    /// `CatalogManager::create_delta_catalog`, which resolves an object-store
+    /// `FileSystem` for cloud URLs (TD-OBJSTORE-1, #960).
     pub async fn new(
         name: String,
         config: DeltaCatalogConfig,
         cache: Arc<CatalogCache>,
     ) -> Result<Self> {
+        Self::new_with_filesystem(name, config, cache, None).await
+    }
+
+    /// Create a new Delta Lake catalog. With `filesystem: Some(_)` all
+    /// persistence (catalog metadata, delta logs) routes through the injected
+    /// backend against scheme-qualified URLs joined from
+    /// `config.storage_url` — durable on `s3://`/`adls://`/`abfs://`/`gcs://`.
+    /// With `None`, the pre-existing local layout is byte-identical.
+    pub async fn new_with_filesystem(
+        name: String,
+        config: DeltaCatalogConfig,
+        cache: Arc<CatalogCache>,
+        filesystem: Option<Arc<dyn FileSystem>>,
+    ) -> Result<Self> {
         info!(
-            "Initializing Delta Lake catalog: {} at {}",
-            name, config.storage_url
+            "Initializing Delta Lake catalog: {} at {} ({})",
+            name,
+            config.storage_url,
+            if filesystem.is_some() {
+                "object-store backend"
+            } else {
+                "local filesystem"
+            }
         );
 
-        // Parse storage URL to base path
-        let base_path = Self::parse_storage_url(&config.storage_url)?;
-
-        // Ensure base path exists
-        fs::create_dir_all(&base_path).await?;
+        let base_path = if filesystem.is_some() {
+            // Object-store mode never touches local paths; keep a placeholder.
+            PathBuf::new()
+        } else {
+            // Parse storage URL to base path
+            let base_path = Self::parse_storage_url(&config.storage_url)?;
+            // Ensure base path exists
+            fs::create_dir_all(&base_path).await?;
+            base_path
+        };
 
         let catalog = Self {
             name,
             config,
             base_path,
+            filesystem,
             cache,
             namespaces: tokio::sync::RwLock::new(HashMap::new()),
             tables: tokio::sync::RwLock::new(HashMap::new()),
@@ -258,13 +296,22 @@ impl DeltaCatalog {
     fn parse_storage_url(url: &str) -> Result<PathBuf> {
         if let Some(path) = url.strip_prefix("file://") {
             Ok(PathBuf::from(path))
-        } else if url.starts_with("s3://")
-            || url.starts_with("gs://")
-            || url.starts_with("az://")
-            || url.starts_with("abfs://")
-        {
-            // For cloud storage, use local cache directory
+        } else if url.contains("://") {
+            // ANY non-file scheme (s3://, gs://, gcs://, az://, azure://,
+            // adls://, abfs://, …) — never enumerate schemes here: an
+            // unlisted alias used to fall through to "local path" and
+            // create a literal `adls:` directory (TD-OBJSTORE-1, #960).
+            //
+            // The delta catalog does not yet write its metadata to the
+            // object store: it stages into a LOCAL cache directory, which
+            // is NOT durable across VM loss (TD-OBJSTORE-1 deferred item).
             let cache_dir = std::env::temp_dir().join("proximadb_delta_cache");
+            tracing::warn!(
+                "DeltaCatalog storage_url '{}' is an object store; catalog metadata is staged \
+                 in LOCAL, NON-DURABLE {} (TD-OBJSTORE-1)",
+                url,
+                cache_dir.display()
+            );
             Ok(cache_dir)
         } else {
             // Assume local path
@@ -272,12 +319,69 @@ impl DeltaCatalog {
         }
     }
 
+    /// Scheme-qualified URL for `rel` under the configured storage base
+    /// (object-store mode only). String-joined so the scheme survives
+    /// verbatim (TD-OBJSTORE-1, #960).
+    fn object_url(&self, rel: &str) -> String {
+        format!(
+            "{}/{}",
+            self.config.storage_url.trim_end_matches('/'),
+            rel.trim_start_matches('/')
+        )
+    }
+
+    /// Read `rel` (relative to the storage base) from whichever backend this
+    /// catalog runs on. `Ok(None)` = not found.
+    async fn read_catalog_object(&self, rel: &str) -> Result<Option<Vec<u8>>> {
+        if let Some(fs_backend) = &self.filesystem {
+            let url = self.object_url(rel);
+            match fs_backend.exists(&url).await {
+                Ok(false) => return Ok(None),
+                Ok(true) => {}
+                Err(e) => return Err(anyhow!("checking catalog object {url}: {e}")),
+            }
+            let data = fs_backend
+                .read(&url)
+                .await
+                .map_err(|e| anyhow!("reading catalog object {url}: {e}"))?;
+            Ok(Some(data))
+        } else {
+            match fs::read(self.base_path.join(rel)).await {
+                Ok(data) => Ok(Some(data)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e.into()),
+            }
+        }
+    }
+
+    /// Write `rel` (relative to the storage base) to whichever backend this
+    /// catalog runs on, creating parents as needed.
+    async fn write_catalog_object(&self, rel: &str, data: &[u8]) -> Result<()> {
+        if let Some(fs_backend) = &self.filesystem {
+            let url = self.object_url(rel);
+            let options = FileOptions {
+                create_dirs: true,
+                overwrite: true,
+                ..Default::default()
+            };
+            fs_backend
+                .write(&url, data, Some(options))
+                .await
+                .map_err(|e| anyhow!("writing catalog object {url}: {e}"))?;
+        } else {
+            let path = self.base_path.join(rel);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+            fs::write(&path, data).await?;
+        }
+        Ok(())
+    }
+
     /// Load catalog metadata from storage
     async fn load_catalog_metadata(&self) -> Result<()> {
-        let catalog_path = self.base_path.join("_delta_catalog.json");
-
-        match fs::read(&catalog_path).await {
-            Ok(data) => {
+        match self.read_catalog_object("_delta_catalog.json").await {
+            Ok(Some(data)) => {
                 let catalog_data: CatalogData = serde_json::from_slice(&data)?;
                 *self.namespaces.write().await = catalog_data.namespaces;
                 *self.tables.write().await = catalog_data.tables;
@@ -287,7 +391,7 @@ impl DeltaCatalog {
                     self.tables.read().await.len()
                 );
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(None) => {
                 debug!("No existing Delta catalog found, starting fresh");
             }
             Err(e) => {
@@ -297,18 +401,21 @@ impl DeltaCatalog {
         Ok(())
     }
 
-    /// Save catalog metadata to storage
+    /// Save catalog metadata to storage.
+    ///
+    /// Last-writer-wins on the single `_delta_catalog.json` object — parity
+    /// with the pre-existing local layout. Multi-writer CAS (ETag / put-if-
+    /// absent, ManifestCommitter-style) is the SystemCatalog's job; the
+    /// warehouse Delta catalog is single-writer per deployment (TD-CAT-4).
     async fn save_catalog_metadata(&self) -> Result<()> {
-        let catalog_path = self.base_path.join("_delta_catalog.json");
-
         let catalog_data = CatalogData {
             namespaces: self.namespaces.read().await.clone(),
             tables: self.tables.read().await.clone(),
         };
 
         let data = serde_json::to_vec_pretty(&catalog_data)?;
-        fs::write(&catalog_path, &data).await?;
-        Ok(())
+        self.write_catalog_object("_delta_catalog.json", &data)
+            .await
     }
 
     /// Get namespace key
@@ -321,7 +428,12 @@ impl DeltaCatalog {
         format!("{}.{}", identifier.namespace.join("."), identifier.name)
     }
 
-    /// Get Delta log directory path
+    /// Table root relative to the storage base (`ns1/ns2/table`).
+    fn table_rel(identifier: &TableIdentifier) -> String {
+        format!("{}/{}", identifier.namespace.join("/"), identifier.name)
+    }
+
+    /// Get Delta log directory path (local mode)
     fn delta_log_path(&self, identifier: &TableIdentifier) -> PathBuf {
         self.base_path
             .join(identifier.namespace.join("/"))
@@ -329,11 +441,23 @@ impl DeltaCatalog {
             .join("_delta_log")
     }
 
-    /// Get table data path
+    /// Get table data path (local mode)
     fn table_data_path(&self, identifier: &TableIdentifier) -> PathBuf {
         self.base_path
             .join(identifier.namespace.join("/"))
             .join(&identifier.name)
+    }
+
+    /// The table's location string as recorded in catalog metadata: a
+    /// scheme-qualified URL in object-store mode, a local path otherwise.
+    fn table_location(&self, identifier: &TableIdentifier) -> String {
+        if self.filesystem.is_some() {
+            self.object_url(&Self::table_rel(identifier))
+        } else {
+            self.table_data_path(identifier)
+                .to_string_lossy()
+                .to_string()
+        }
     }
 
     /// Write Delta log entry
@@ -343,18 +467,17 @@ impl DeltaCatalog {
         version: i64,
         actions: Vec<DeltaAction>,
     ) -> Result<()> {
-        let log_path = self.delta_log_path(identifier);
-        fs::create_dir_all(&log_path).await?;
-
-        let log_file = log_path.join(format!("{:020}.json", version));
         let mut lines = Vec::new();
         for action in actions {
             lines.push(serde_json::to_string(&action)?);
         }
         let content = lines.join("\n");
-        fs::write(&log_file, content).await?;
-
-        Ok(())
+        let rel = format!(
+            "{}/_delta_log/{:020}.json",
+            Self::table_rel(identifier),
+            version
+        );
+        self.write_catalog_object(&rel, content.as_bytes()).await
     }
 
     /// Convert Spark SQL type to canonical [`ProximaType`].
@@ -493,14 +616,23 @@ impl Catalog for DeltaCatalog {
             return Err(anyhow!("Namespace '{}' already exists", key));
         }
 
-        let location = self
-            .base_path
-            .join(namespace.join("/"))
-            .to_string_lossy()
-            .to_string();
+        let rel = namespace.join("/");
+        let location = if self.filesystem.is_some() {
+            self.object_url(&rel)
+        } else {
+            self.base_path.join(&rel).to_string_lossy().to_string()
+        };
 
-        // Create directory
-        fs::create_dir_all(&location).await?;
+        // Create the directory on local backends; object stores are flat
+        // keyspaces (the injected backend's create_dir_all is a no-op there).
+        if let Some(fs_backend) = &self.filesystem {
+            fs_backend
+                .create_dir_all(&location)
+                .await
+                .map_err(|e| anyhow!("creating namespace location {location}: {e}"))?;
+        } else {
+            fs::create_dir_all(&location).await?;
+        }
 
         let ns = DeltaNamespace {
             namespace: namespace.to_vec(),
@@ -548,9 +680,13 @@ impl Catalog for DeltaCatalog {
 
         let removed = self.namespaces.write().await.remove(&key).is_some();
         if removed {
-            // Optionally remove directory
-            let dir_path = self.base_path.join(namespace.join("/"));
-            let _ = fs::remove_dir(&dir_path).await; // Ignore errors if not empty
+            // Optionally remove the directory (local mode only; object stores
+            // have no directories — namespace objects are removed with their
+            // tables).
+            if self.filesystem.is_none() {
+                let dir_path = self.base_path.join(namespace.join("/"));
+                let _ = fs::remove_dir(&dir_path).await; // Ignore errors if not empty
+            }
 
             self.save_catalog_metadata().await?;
             info!("Dropped Delta namespace: {}", key);
@@ -639,6 +775,13 @@ impl Catalog for DeltaCatalog {
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,
     ) -> Result<CatalogTableSchema> {
+        // ADR-077 M1: normalize BEFORE validating. A creation path may legitimately
+        // hand us a UNIQUE recorded only in the projection — `CREATE TABLE … UNIQUE(x)`
+        // lowers to `relational_capabilities.unique_indexes` — and rejecting that would
+        // break table creation. Folding it into the canonical field first is what makes
+        // the invariant hold by construction rather than by rejecting real schemas.
+        let mut schema = schema;
+        crate::schema::normalize_identity(&mut schema);
         validate_schema(&schema)?;
 
         let key = Self::table_key(identifier);
@@ -648,10 +791,7 @@ impl Catalog for DeltaCatalog {
         }
 
         let now = Self::now_ms()?;
-        let location = self
-            .table_data_path(identifier)
-            .to_string_lossy()
-            .to_string();
+        let location = self.table_location(identifier);
 
         // Convert schema to Delta format
         let fields: Vec<DeltaField> = schema
@@ -694,9 +834,12 @@ impl Catalog for DeltaCatalog {
             last_modified_ms: now,
         };
 
-        // Create Delta log directory and initial commit
-        let log_path = self.delta_log_path(identifier);
-        fs::create_dir_all(&log_path).await?;
+        // Create the Delta log directory on local backends (object stores
+        // need none; `write_delta_log` creates parents as it writes).
+        if self.filesystem.is_none() {
+            let log_path = self.delta_log_path(identifier);
+            fs::create_dir_all(&log_path).await?;
+        }
 
         // Write initial Delta log entries
         let schema_string = Self::build_schema_string(&delta_schema);
@@ -748,8 +891,25 @@ impl Catalog for DeltaCatalog {
         if removed {
             if purge {
                 // Delete table data and logs
-                let data_path = self.table_data_path(identifier);
-                let _ = fs::remove_dir_all(&data_path).await;
+                if let Some(fs_backend) = &self.filesystem {
+                    // Object store: enumerate the table prefix and delete
+                    // each object (best-effort, mirroring the local
+                    // `remove_dir_all`'s ignored errors).
+                    let prefix = self.object_url(&Self::table_rel(identifier));
+                    match fs_backend.list(&prefix).await {
+                        Ok(entries) => {
+                            for entry in entries {
+                                if let Err(e) = fs_backend.delete(&entry.url).await {
+                                    warn!("purging delta table object {}: {e}", entry.url);
+                                }
+                            }
+                        }
+                        Err(e) => warn!("listing delta table prefix {prefix} for purge: {e}"),
+                    }
+                } else {
+                    let data_path = self.table_data_path(identifier);
+                    let _ = fs::remove_dir_all(&data_path).await;
+                }
             }
 
             self.cache
@@ -854,20 +1014,31 @@ impl Catalog for DeltaCatalog {
         table.last_modified_ms = Self::now_ms()?;
 
         // Update location
-        table.location = self.table_data_path(to).to_string_lossy().to_string();
+        table.location = self.table_location(to);
 
         tables.insert(to_key, table);
         drop(tables);
 
-        // Move the table directory
-        let from_path = self.table_data_path(from);
-        let to_path = self.table_data_path(to);
+        if self.filesystem.is_none() {
+            // Move the table directory (local mode). Object stores have no
+            // rename — data objects stay at the old prefix and the catalog
+            // pointer above is the authority (documented Delta-on-object-store
+            // semantics; a copy-based relocation is a TD-CAT-4 follow-up).
+            let from_path = self.table_data_path(from);
+            let to_path = self.table_data_path(to);
 
-        if let Some(parent) = to_path.parent() {
-            fs::create_dir_all(parent).await?;
+            if let Some(parent) = to_path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            let _ = fs::rename(&from_path, &to_path).await;
+        } else {
+            warn!(
+                "Delta table rename {} -> {} on an object store updates the catalog pointer \
+                 only; data objects are not relocated (TD-CAT-4)",
+                from, to
+            );
         }
-
-        let _ = fs::rename(&from_path, &to_path).await;
 
         self.cache.invalidate_table_in_catalog(&self.name, from);
         self.save_catalog_metadata().await?;
@@ -1197,14 +1368,32 @@ impl Catalog for DeltaCatalog {
     async fn health_check(&self) -> Result<CatalogHealth> {
         let start = Instant::now();
 
-        match fs::metadata(&self.base_path).await {
-            Ok(_) => {
-                let latency = start.elapsed().as_millis() as u64;
-                Ok(CatalogHealth::healthy(latency)
-                    .with_detail("storage_url", &self.config.storage_url)
-                    .with_detail("catalog_type", "delta"))
+        if let Some(fs_backend) = &self.filesystem {
+            // One cheap round-trip against the backend: an existence probe on
+            // the catalog metadata object. Both outcomes are healthy (a fresh
+            // catalog has no metadata object yet); only a backend error is not.
+            match fs_backend
+                .exists(&self.object_url("_delta_catalog.json"))
+                .await
+            {
+                Ok(_) => {
+                    let latency = start.elapsed().as_millis() as u64;
+                    Ok(CatalogHealth::healthy(latency)
+                        .with_detail("storage_url", &self.config.storage_url)
+                        .with_detail("catalog_type", "delta"))
+                }
+                Err(e) => Ok(CatalogHealth::unhealthy(e.to_string())),
             }
-            Err(e) => Ok(CatalogHealth::unhealthy(e.to_string())),
+        } else {
+            match fs::metadata(&self.base_path).await {
+                Ok(_) => {
+                    let latency = start.elapsed().as_millis() as u64;
+                    Ok(CatalogHealth::healthy(latency)
+                        .with_detail("storage_url", &self.config.storage_url)
+                        .with_detail("catalog_type", "delta"))
+                }
+                Err(e) => Ok(CatalogHealth::unhealthy(e.to_string())),
+            }
         }
     }
 
@@ -1582,5 +1771,93 @@ mod tests {
 
         // Cleanup
         let _ = fs::remove_dir_all(&temp_dir).await;
+    }
+    /// TD-OBJSTORE-1 (#960): with an injected object-store backend, the Delta
+    /// catalog persists its metadata and delta logs as scheme-qualified
+    /// objects — no local temp-cache staging — and a FRESH catalog instance
+    /// over the same backend recovers the full state (durability across a
+    /// process/VM loss).
+    #[tokio::test]
+    async fn object_store_backend_round_trips() {
+        use crate::testfs::MemFs;
+        use proximadb_storage_filesystem_types::FileSystem as _;
+
+        let fs_backend: Arc<MemFs> = Arc::new(MemFs::default());
+        let cfg = || DeltaCatalogConfig {
+            storage_url: "adls://container/warehouse".to_string(),
+            ..Default::default()
+        };
+        let cache = Arc::new(CatalogCache::new(1000, 300));
+
+        let catalog = DeltaCatalog::new_with_filesystem(
+            "delta-objstore".to_string(),
+            cfg(),
+            cache.clone(),
+            Some(fs_backend.clone()),
+        )
+        .await
+        .expect("object-store delta catalog");
+
+        catalog
+            .create_namespace(&["lake".to_string()], HashMap::new())
+            .await
+            .expect("create namespace");
+
+        let schema = CatalogTableSchema::new("events")
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false));
+        let identifier = TableIdentifier::new(vec!["lake".to_string()], "events".to_string());
+        catalog
+            .create_table(&identifier, schema)
+            .await
+            .expect("create table");
+
+        // The catalog pointer and the v0 delta log are OBJECTS under the
+        // scheme-qualified base — nothing staged under a local temp dir.
+        assert!(
+            fs_backend
+                .exists("adls://container/warehouse/_delta_catalog.json")
+                .await
+                .expect("exists"),
+            "catalog metadata object must live under the storage_url"
+        );
+        assert!(
+            fs_backend
+                .exists(
+                    "adls://container/warehouse/lake/events/_delta_log/00000000000000000000.json"
+                )
+                .await
+                .expect("exists"),
+            "v0 delta log object must live under the storage_url"
+        );
+        // Table location is a scheme-qualified URL, not a local path.
+        let table = catalog.get_table(&identifier).await.expect("get table");
+        assert_eq!(table.name, "events");
+
+        // Durability: a FRESH instance over the same backend recovers state.
+        let reopened = DeltaCatalog::new_with_filesystem(
+            "delta-objstore".to_string(),
+            cfg(),
+            Arc::new(CatalogCache::new(1000, 300)),
+            Some(fs_backend.clone()),
+        )
+        .await
+        .expect("reopen object-store delta catalog");
+        assert!(
+            reopened
+                .table_exists(&identifier)
+                .await
+                .expect("table_exists"),
+            "table written through the injected backend must survive a reopen"
+        );
+        assert!(
+            reopened
+                .namespace_exists(&["lake".to_string()])
+                .await
+                .expect("namespace_exists")
+        );
+
+        // Health probes the backend, not the local filesystem.
+        let health = reopened.health_check().await.expect("health");
+        assert!(health.is_healthy);
     }
 }

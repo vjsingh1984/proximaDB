@@ -8,3 +8,5 @@ mod tests;
 
 pub use parser::SqlFrontendParser;
 pub use parser::parse_explain_kind;
+pub use parser::parse_select_aliases;
+pub use parser::validate_single_statement;

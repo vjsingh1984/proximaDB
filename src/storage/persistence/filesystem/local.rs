@@ -558,6 +558,52 @@ impl FileSystem for LocalFileSystem {
         Ok(())
     }
 
+    async fn write_if_absent(
+        &self,
+        path: &str,
+        data: &[u8],
+        options: Option<FileOptions>,
+    ) -> FsResult<()> {
+        let resolved_path = PathBuf::from(self.resolve_path(path)?);
+        if options.as_ref().is_some_and(|o| o.create_dirs)
+            && let Some(parent) = resolved_path.parent()
+        {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(FilesystemError::Io)?;
+        }
+
+        let data_to_write = if let Some(ref encryption) = self.encryption_layer {
+            encryption.encrypt_file(path, data).map_err(|e| {
+                FilesystemError::Io(std::io::Error::other(format!(
+                    "Encryption failed for {path}: {e}"
+                )))
+            })?
+        } else {
+            data.to_vec()
+        };
+
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&resolved_path)
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    FilesystemError::AlreadyExists(resolved_path.display().to_string())
+                } else {
+                    FilesystemError::Io(e)
+                }
+            })?;
+        file.write_all(&data_to_write)
+            .await
+            .map_err(FilesystemError::Io)?;
+        if self.config.sync_enabled {
+            file.sync_all().await.map_err(FilesystemError::Io)?;
+        }
+        Ok(())
+    }
+
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()> {
         let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
@@ -576,6 +622,10 @@ impl FileSystem for LocalFileSystem {
         }
 
         Ok(())
+    }
+
+    fn supports_append(&self) -> bool {
+        true
     }
 
     async fn delete(&self, path: &str) -> FsResult<()> {
@@ -738,6 +788,9 @@ impl FileSystem for LocalFileSystem {
         if let Ok(ref bytes) = result {
             crate::observability::io_trace::record_range_gets(1);
             crate::observability::io_trace::record_bytes_read(bytes.len() as u64);
+            if std::env::var_os("PROXIMADB_TRACE_GETS").is_some() {
+                eprintln!("[FS GET] {path} off={offset} len={length}");
+            }
         }
         result
     }
@@ -969,6 +1022,39 @@ impl FileSystem for LocalFileSystem {
         file.sync_all().await.map_err(FilesystemError::Io)?;
 
         tracing::debug!("✅ File synced to disk: {}", resolved_path.display());
+        Ok(())
+    }
+
+    async fn sync_data(&self, path: &str) -> FsResult<()> {
+        // fdatasync: flush the file's data (and only the metadata required to
+        // read it back) without the full inode metadata flush of `sync_all`.
+        // This is the genuine `DurabilityLevel::SyncData` fast-path on local
+        // disks; remote backends fall back to a full `sync_file` via the trait
+        // default.
+        let path_str = self.resolve_path(path)?;
+        let resolved_path = PathBuf::from(path_str);
+
+        if !self.config.sync_enabled {
+            return Ok(());
+        }
+
+        let file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&resolved_path)
+            .await
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    FilesystemError::NotFound(resolved_path.display().to_string())
+                }
+                _ => FilesystemError::Io(e),
+            })?;
+
+        // sync_data() maps to fdatasync(2) — data durability without the extra
+        // metadata barrier of fsync(2)/sync_all().
+        file.sync_data().await.map_err(FilesystemError::Io)?;
+
+        tracing::debug!("✅ File data synced to disk: {}", resolved_path.display());
         Ok(())
     }
 
@@ -1867,5 +1953,33 @@ mod tests {
                 path
             );
         }
+    }
+
+    #[tokio::test]
+    async fn write_if_absent_is_atomic_and_preserves_first_value() {
+        let temp_dir = TempDir::new().unwrap();
+        let fs = LocalFileSystem::new(LocalConfig {
+            root_dir: Some(temp_dir.path().to_path_buf()),
+            sync_enabled: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        fs.write_if_absent(
+            "commit.pax",
+            b"first",
+            Some(FileOptions {
+                create_dirs: true,
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap();
+        let error = fs
+            .write_if_absent("commit.pax", b"second", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, FilesystemError::AlreadyExists(_)));
+        assert_eq!(fs.read("commit.pax").await.unwrap(), b"first");
     }
 }

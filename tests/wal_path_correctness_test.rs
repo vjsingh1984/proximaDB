@@ -52,9 +52,13 @@ async fn test_graph_wal_path_with_persistence() {
     tracing::info!("Test storage path: {:?}", storage_path);
 
     // Create ORION engine with persistence using the correct API
-    let engine = OrionGraphEngine::with_persistence(storage_path, true)
-        .await
-        .expect("Failed to create engine with persistence");
+    let engine = OrionGraphEngine::with_persistence(
+        storage_path,
+        true,
+        proximadb::graph::unified_wal_factory(),
+    )
+    .await
+    .expect("Failed to create engine with persistence");
 
     // Create a test node with proper proto types
     let mut properties = HashMap::new();
@@ -103,9 +107,13 @@ async fn test_delete_operations_write_to_wal() {
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let storage_path = temp_dir.path();
 
-    let engine = OrionGraphEngine::with_persistence(storage_path, true)
-        .await
-        .expect("Failed to create engine with persistence");
+    let engine = OrionGraphEngine::with_persistence(
+        storage_path,
+        true,
+        proximadb::graph::unified_wal_factory(),
+    )
+    .await
+    .expect("Failed to create engine with persistence");
 
     let ts = now_ms();
 
@@ -192,9 +200,13 @@ async fn test_update_operations_write_to_wal() {
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let storage_path = temp_dir.path();
 
-    let engine = OrionGraphEngine::with_persistence(storage_path, true)
-        .await
-        .expect("Failed to create engine with persistence");
+    let engine = OrionGraphEngine::with_persistence(
+        storage_path,
+        true,
+        proximadb::graph::unified_wal_factory(),
+    )
+    .await
+    .expect("Failed to create engine with persistence");
 
     let ts = now_ms();
 

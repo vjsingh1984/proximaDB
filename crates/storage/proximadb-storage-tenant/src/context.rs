@@ -19,6 +19,23 @@ pub struct StorageTenantContext {
     pub status: TenantStatus,
     pub domains: Arc<DashMap<String, DomainContext>>,
     pub resource_limits: ContextResourceLimits,
+    /// ADR-074 S1: identity tiers threaded from the ingress context
+    /// (`MiddlewareTenantContext`) via the `From<&MiddlewareTenantContext>`
+    /// bridge, so `DrPathBuilder` sources them from identity instead of
+    /// storage-layer constants. All `Option` + default `None` ⇒ zero behavior
+    /// change (paths byte-identical; single-tenant resolves namespace to
+    /// `ns_default`). Populated by the bridge; legacy `for_tenant_id` callers
+    /// leave them `None`.
+    pub account_id: Option<String>,
+    pub tenant_stable_id: Option<u64>,
+    pub namespace_id: Option<String>,
+    /// Stable numeric namespace id (ADR-031 `NamespaceId = u16`) — the
+    /// AUTHORITATIVE namespace identity (ADR-074: rename-safe). The string
+    /// `namespace_id` is a derived legacy-compat form carried so the legacy
+    /// string-resolved path can read existing data (mixed-read-safe,
+    /// deprecated once typed paths go default-on). Threaded but unused until
+    /// `PROXIMADB_TYPED_PATHS`.
+    pub namespace_stable_id: Option<u16>,
 }
 
 /// Tenant configuration
@@ -151,6 +168,10 @@ impl StorageTenantContext {
             status: TenantStatus::Active,
             domains: Arc::new(DashMap::new()),
             resource_limits: ContextResourceLimits::default(),
+            account_id: None,
+            tenant_stable_id: None,
+            namespace_id: None,
+            namespace_stable_id: None,
         }
     }
 
@@ -244,6 +265,10 @@ mod tests {
             status: TenantStatus::Active,
             domains: Arc::new(DashMap::new()),
             resource_limits: ContextResourceLimits::default(),
+            account_id: None,
+            tenant_stable_id: None,
+            namespace_id: None,
+            namespace_stable_id: None,
         };
 
         assert_eq!(context.tenant_id, "test_tenant");
@@ -262,6 +287,10 @@ mod tests {
             status: TenantStatus::Active,
             domains: Arc::new(DashMap::new()),
             resource_limits: ContextResourceLimits::default(),
+            account_id: None,
+            tenant_stable_id: None,
+            namespace_id: None,
+            namespace_stable_id: None,
         };
 
         let business_context = BusinessContext {

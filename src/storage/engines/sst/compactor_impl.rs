@@ -983,11 +983,21 @@ impl SstCompactor {
                     .unwrap_or("default")
                     .to_string();
                 let records: Vec<ProximaRecord> = records.iter().map(ProximaRecord::from).collect();
+                // TD-COMPACT-2 root cause: this argument is the collection's
+                // embedding-MODALITY count, not the record count (`records.len()`
+                // allocated one embedding column buffer per record in the block
+                // writer). Derive it from the merged records.
+                let embedding_count = records
+                    .iter()
+                    .map(|r| r.embeddings.len())
+                    .max()
+                    .unwrap_or(1)
+                    .max(1);
                 crate::storage::engines::sst::segment_format::write_pax_segment(
                     path,
                     &records,
                     &collection_id,
-                    records.len(),
+                    embedding_count,
                     proximadb_block_format::VectorQuant::RaBitQ,
                     None,
                 )?;
@@ -1296,17 +1306,14 @@ mod tests {
 
         let storage_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
-                primary_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(32),
-                ),
+                primary_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::pq8(
+                    32,
+                )),
                 filter_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::binary(),
+                    proximadb_quantization_model::UnifiedQuantizationLevel::binary(),
                 ),
-                fast_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
-                ),
-                distance_metric:
-                    proximadb_distance_kernel::engine::DistanceMetric::Cosine,
+                fast_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::int8()),
+                distance_metric: proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                 enable_progressive: true,
                 filter_threshold: 100.0,
                 candidate_multiplier: 4,

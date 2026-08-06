@@ -1,3 +1,4 @@
+#![cfg(feature = "experimental-engines")] // RAPTOR needs the `experimental-engines` feature.
 #![allow(deprecated)]
 //! RAPTOR Recall Test - Verify 100% recall after close/reopen
 //!
@@ -184,7 +185,7 @@ mod raptor_recall_tests {
 
             let search_params = Arc::new(SearchParams {
                 vector: Some(query.clone()),
-                top_k: Some(K_NEIGHBORS),
+                top_k: Some(K_NEIGHBORS as u16),
                 distance_metric: Some(
                     proximadb::compute::distance_computation::DistanceMetric::Euclidean,
                 ),
@@ -242,7 +243,7 @@ mod raptor_recall_tests {
 
             let search_params = Arc::new(SearchParams {
                 vector: Some(query.clone()),
-                top_k: Some(K_NEIGHBORS),
+                top_k: Some(K_NEIGHBORS as u16),
                 distance_metric: Some(
                     proximadb::compute::distance_computation::DistanceMetric::Euclidean,
                 ),

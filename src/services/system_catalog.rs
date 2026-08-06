@@ -102,6 +102,9 @@ pub struct SystemCatalog {
     /// provisioning splits data-plane catalogs out per account.
     role: proximadb_catalog::CatalogRole,
     state: Arc<SystemCatalogState>,
+    /// Next durable account/tenant stable id. Recovered from the WAL/snapshot
+    /// state at boot; u64 lets us detect u32 exhaustion instead of wrapping.
+    account_floor: AtomicU64,
     appender: Arc<dyn TableWalAppender>,
     /// Serializes the durable-append → in-RAM-apply pair so concurrent DDL can
     /// never interleave such that a lower-LSN mutation applies after a higher
@@ -146,10 +149,12 @@ impl SystemCatalog {
         state: SystemCatalogState,
         appender: Arc<dyn TableWalAppender>,
     ) -> Self {
+        let account_floor = state.max_account_id().map_or(1, |id| u64::from(id) + 1);
         Self {
             name: name.into(),
             role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
+            account_floor: AtomicU64::new(account_floor),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: None,
@@ -284,10 +289,12 @@ impl SystemCatalog {
             .filter(|n| *n > 0)
             .unwrap_or(DEFAULT_SNAPSHOT_THRESHOLD);
 
+        let account_floor = state.max_account_id().map_or(1, |id| u64::from(id) + 1);
         Ok(Self {
             name: name.into(),
             role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
+            account_floor: AtomicU64::new(account_floor),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: Some(SnapshotConfig {
@@ -317,6 +324,13 @@ impl SystemCatalog {
             ));
         }
         let _guard = self.write_lock.lock().await;
+        self.commit_batch_locked(deltas).await
+    }
+
+    /// Commit with [`Self::write_lock`] already held. Account-id minting needs
+    /// to check-and-insert under the same lock so two first requests for one
+    /// tenant cannot receive different ids.
+    async fn commit_batch_locked(&self, deltas: Vec<CatalogDelta>) -> Result<()> {
         let ops = deltas
             .iter()
             .map(|d| d.to_operation())
@@ -331,11 +345,36 @@ impl SystemCatalog {
                 .commits_since_snapshot
                 .fetch_add(applied, Ordering::SeqCst)
                 + applied;
-            if n >= cfg.threshold {
+            // For an object-store catalog the local WAL is only a staging log:
+            // a VM/pod replacement starts with a fresh local data_dir, so the
+            // snapshot is the ONLY catalog artifact that survives. Publish it
+            // before acknowledging every DDL. Local catalogs retain the normal
+            // threshold because their WAL itself is durable.
+            if cfg.store.requires_snapshot_on_commit() || n >= cfg.threshold {
                 self.checkpoint_locked(cfg).await?;
                 self.commits_since_snapshot.store(0, Ordering::SeqCst);
             }
         }
+        Ok(())
+    }
+
+    /// Retry a failed object-store publication before a control-plane caller
+    /// treats an already-visible account id as durable. `commit_batch_locked`
+    /// applies the WAL entry before publishing the required snapshot; if that
+    /// publication fails, `commits_since_snapshot` intentionally stays nonzero
+    /// and the next mint-or-return call repairs it here.
+    async fn publish_pending_snapshot_locked(&self) -> Result<()> {
+        let Some(cfg) = &self.snapshot else {
+            return Ok(());
+        };
+        if self.read_only.load(Ordering::SeqCst)
+            || !cfg.store.requires_snapshot_on_commit()
+            || self.commits_since_snapshot.load(Ordering::SeqCst) == 0
+        {
+            return Ok(());
+        }
+        self.checkpoint_locked(cfg).await?;
+        self.commits_since_snapshot.store(0, Ordering::SeqCst);
         Ok(())
     }
 
@@ -480,6 +519,14 @@ impl SystemCatalog {
                     cfg.store.describe()
                 )
             })?;
+        // The snapshot may contain account ids minted by another pod after
+        // this instance booted. Keep the local allocator strictly above every
+        // adopted id even when the reload is same-generation (and therefore
+        // does not force this instance read-only).
+        if let Some(max) = self.state.max_account_id() {
+            self.account_floor
+                .fetch_max(u64::from(max) + 1, Ordering::SeqCst);
+        }
         self.loaded_version.store(read.version, Ordering::SeqCst);
         self.loaded_generation
             .store(read.generation, Ordering::SeqCst);
@@ -672,6 +719,76 @@ impl Catalog for SystemCatalog {
         self.state
             .get_namespace(namespace)
             .ok_or_else(|| anyhow!("Namespace '{}' not found", namespace.join(".")))
+    }
+
+    /// Mint-or-return the durable tenant/account stable id through the same
+    /// canonical WAL as every other SystemCatalog mutation. This is the normal
+    /// server path (SystemCatalog is the default backend), so inheriting the
+    /// trait's `None` implementation would leave ABAC silently unkeyed.
+    async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
+        let account = account.trim();
+        if account.is_empty() {
+            return Ok(None);
+        }
+        if let Some(id) = self.state.account_id_u32(account) {
+            if self
+                .snapshot
+                .as_ref()
+                .is_some_and(|cfg| cfg.store.requires_snapshot_on_commit())
+                && self.commits_since_snapshot.load(Ordering::SeqCst) > 0
+                && !self.read_only.load(Ordering::SeqCst)
+            {
+                let _guard = self.write_lock.lock().await;
+                self.publish_pending_snapshot_locked().await?;
+                // A fencing reload can replace the state while repairing the
+                // publication, so never return the pre-lock value blindly.
+                return Ok(self.state.account_id_u32(account));
+            }
+            return Ok(Some(id));
+        }
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "tenant '{account}' has no stable id and system catalog '{}' is read-only; \
+                 mint it on the owning pod",
+                self.name
+            ));
+        }
+
+        // Check + allocate + durable append are one writer critical section.
+        // Without the second check, concurrent first requests could return two
+        // different policy keys for the same tenant.
+        let _guard = self.write_lock.lock().await;
+        if let Some(id) = self.state.account_id_u32(account) {
+            self.publish_pending_snapshot_locked().await?;
+            if self.read_only.load(Ordering::SeqCst) {
+                return Ok(self.state.account_id_u32(account));
+            }
+            return Ok(Some(id));
+        }
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "tenant '{account}' has no stable id and system catalog '{}' became read-only; \
+                 mint it on the owning pod",
+                self.name
+            ));
+        }
+        let next = self.account_floor.fetch_add(1, Ordering::SeqCst);
+        let stable_id = u32::try_from(next)
+            .map_err(|_| anyhow!("tenant stable-id space exhausted at {next}"))?;
+        self.commit_batch_locked(vec![CatalogDelta::UpsertAccount {
+            account: account.to_string(),
+            stable_id,
+        }])
+        .await?;
+        Ok(Some(stable_id))
+    }
+
+    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
+        let account = account.trim();
+        if account.is_empty() {
+            return None;
+        }
+        self.state.account_id_u32(account)
     }
 
     async fn update_namespace_properties(
@@ -955,6 +1072,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tenant_stable_ids_are_durable_and_allocator_floor_recovers() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+
+        let cat = SystemCatalog::open("default", &wal).await?;
+        let default_id = cat
+            .account_id_u32(proximadb_tenant::DEFAULT_TENANT)
+            .await?
+            .expect("default tenant must mint");
+        assert_eq!(default_id, 1);
+        drop(cat);
+
+        let reopened = SystemCatalog::open("default", &wal).await?;
+        assert_eq!(
+            reopened.account_id_u32_lookup(proximadb_tenant::DEFAULT_TENANT),
+            Some(default_id),
+            "WAL replay must restore the policy key"
+        );
+        assert_eq!(
+            reopened.account_id_u32("acme").await?,
+            Some(2),
+            "a new tenant must mint above the replayed floor"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_first_mint_returns_one_id_for_one_tenant() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cat = Arc::new(catalog(dir.path()).await);
+        let (left, right) = tokio::join!(cat.account_id_u32("acme"), cat.account_id_u32("acme"));
+        let left = left?;
+        let right = right?;
+        assert_eq!(left, right);
+        assert_eq!(cat.account_id_u32_lookup("acme"), left);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn namespace_and_table_crud() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let cat = catalog(dir.path()).await;
@@ -1232,13 +1388,17 @@ mod tests {
             cat.checkpoint().await?;
             assert_eq!(wal_entry_count(dir.path()).await, 0);
 
-            // A post-snapshot DDL lands only on the local WAL tail.
+            // A post-snapshot DDL on an object-store catalog is acknowledged only
+            // after it publishes its own snapshot (TD-OBJSTORE-2: the local WAL is
+            // a staging log that does not survive VM/pod replacement, so the
+            // snapshot must carry every committed DDL). That publish compacts the
+            // local WAL tail back to empty — the DDL now lives in the snapshot.
             cat.create_table(
                 &TableIdentifier::new(nslevels(&["s"]), "t3"),
                 vec_schema("t3"),
             )
             .await?;
-            assert_eq!(wal_entry_count(dir.path()).await, 1);
+            assert_eq!(wal_entry_count(dir.path()).await, 0);
         }
 
         // Reopen with a new store handle over the SAME backing object store and
@@ -1257,6 +1417,67 @@ mod tests {
                 "table {t} must survive object-store snapshot + WAL tail + reopen"
             );
         }
+        Ok(())
+    }
+
+    /// TD-OBJSTORE-2 regression: one collection-sized DDL batch must survive a
+    /// restart onto a fresh local volume without an explicit checkpoint. Before
+    /// this fix the default threshold (1,000 mutations) left these mutations
+    /// only in the local catalog WAL, so a VM replacement recovered an empty
+    /// catalog even though the data WAL was durable in object storage.
+    #[tokio::test]
+    async fn object_store_commit_survives_fresh_local_wal_without_checkpoint() -> Result<()> {
+        use crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore;
+        use proximadb_object_store::ProximaObjectStore;
+
+        let first_vm = tempfile::tempdir()?;
+        let replacement_vm = tempfile::tempdir()?;
+        let backing: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let key = "_operator/catalog/_manifests/";
+
+        {
+            let store = Arc::new(ObjectStoreSnapshotStore::new(
+                ProximaObjectStore::new(backing.clone()),
+                "memory:///",
+                key,
+            ));
+            let cat = SystemCatalog::open_with_snapshot_store(
+                "default",
+                first_vm.path().join("catalog.wal"),
+                store,
+            )
+            .await?;
+            cat.create_namespace(&nslevels(&["default"]), HashMap::new())
+                .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["default"]), "durable_collection"),
+                vec_schema("durable_collection"),
+            )
+            .await?;
+            // No checkpoint and no graceful shutdown: model abrupt VM loss.
+        }
+
+        let store = Arc::new(ObjectStoreSnapshotStore::new(
+            ProximaObjectStore::new(backing),
+            "memory:///",
+            key,
+        ));
+        let reopened = SystemCatalog::open_with_snapshot_store(
+            "default",
+            replacement_vm.path().join("catalog.wal"),
+            store,
+        )
+        .await?;
+        assert!(
+            reopened
+                .table_exists(&TableIdentifier::new(
+                    nslevels(&["default"]),
+                    "durable_collection"
+                ))
+                .await?,
+            "catalog DDL must be present when the replacement VM has no local WAL"
+        );
         Ok(())
     }
 
@@ -1434,6 +1655,7 @@ mod tests {
         owner
             .create_namespace(&nslevels(&["s"]), HashMap::new())
             .await?;
+        assert_eq!(owner.account_id_u32("tenant-one").await?, Some(1));
         owner.create_table(&tid("t1"), vec_schema("t1")).await?;
         owner.checkpoint().await?;
 
@@ -1455,6 +1677,7 @@ mod tests {
         // Owner commits more DDL and republishes. The follower is stale until it
         // polls; a no-publish probe is cheap and a no-op.
         owner.create_table(&tid("t2"), vec_schema("t2")).await?;
+        assert_eq!(owner.account_id_u32("tenant-two").await?, Some(2));
         owner.checkpoint().await?;
 
         // Sinval: the follower observes the newer pointer version and reloads.
@@ -1466,6 +1689,12 @@ mod tests {
             other => panic!("expected a reload, got {other:?}"),
         }
         assert!(follower.table_exists(&tid("t2")).await?);
+        assert_eq!(follower.account_id_u32_lookup("tenant-two"), Some(2));
+        assert_eq!(
+            follower.account_floor.load(Ordering::SeqCst),
+            3,
+            "snapshot reload must advance the local account allocator floor"
+        );
         // Polling again with nothing new is a no-op.
         assert_eq!(follower.reload_if_stale().await?, ReloadOutcome::UpToDate);
         Ok(())
@@ -1499,10 +1728,18 @@ mod tests {
         Ok(())
     }
 
-    /// A **superseded** owner steps down: when a newer-generation pod has taken
-    /// the catalog over, a sinval poll on the old owner reloads the newer
-    /// snapshot, **discards** its own now-doomed unpublished writes, and flips to
-    /// read-only (no lost update — the fence + step-down converge to one writer).
+    /// A **superseded** owner steps down on its next sinval poll: when a
+    /// newer-generation pod has taken the catalog over, an old owner that has
+    /// not written since the takeover learns of it lazily, reloads the newer
+    /// snapshot, and flips to read-only (no lost update — the fence + step-down
+    /// converge to one writer).
+    ///
+    /// With object-store snapshot-on-commit (TD-OBJSTORE-2) every DDL publishes,
+    /// so a superseded owner fences on its *next write* rather than via a later
+    /// poll — there is no "unpublished local write" window to exercise here.
+    /// The poll path is therefore driven by an owner that has been silent since
+    /// the takeover. (The write-time fence + discard of a doomed write is
+    /// covered by `fenced_checkpoint_steps_down_and_reloads`.)
     #[tokio::test]
     async fn superseded_owner_steps_down_via_poll() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -1524,10 +1761,9 @@ mod tests {
         pod_b.create_table(&tid("t2"), vec_schema("t2")).await?;
         pod_b.checkpoint().await?;
 
-        // Pod A writes t3 locally — unaware it has been superseded; it is visible
-        // on A until the next poll.
-        pod_a.create_table(&tid("t3"), vec_schema("t3")).await?;
-        assert!(pod_a.table_exists(&tid("t3")).await?);
+        // Pod A has not written since the takeover, so no checkpoint-time fence
+        // has fired yet — it still believes it owns the catalog.
+        assert!(!pod_a.is_read_only());
 
         // Sinval poll on A: a higher generation owns the catalog → step down.
         match pod_a.reload_if_stale().await? {
@@ -1545,13 +1781,9 @@ mod tests {
             pod_a.is_read_only(),
             "superseded owner must step down to read-only"
         );
-        // A converges to B's snapshot: sees t1 + t2, and its doomed t3 is gone.
+        // A converges to B's snapshot: sees t1 + t2.
         assert!(pod_a.table_exists(&tid("t1")).await?);
         assert!(pod_a.table_exists(&tid("t2")).await?);
-        assert!(
-            !pod_a.table_exists(&tid("t3")).await?,
-            "the superseded pod's unpublished write must be discarded (no lost update)"
-        );
         // A can no longer write.
         assert!(
             pod_a

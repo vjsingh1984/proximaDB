@@ -10,7 +10,7 @@ concurrency:
   # Dedup push+PR of the same branch into one group; cancel superseded
   # runs on feature/PR branches, but let protected-branch runs finish.
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'development' }}
+  cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'develop' }}
 
 # Least-privilege default GITHUB_TOKEN scope (CodeQL actions/missing-workflow-permissions).
 # Default read-only; the single job elevates only what it needs.
@@ -63,6 +63,9 @@ jobs:
     # known, tracked bypasses warn but do not block (run with --strict to gate them).
     - name: Run tenant-path guard (DrPathBuilder mandate)
       run: python3 scripts/check_tenant_path_guard.py
+
+    - name: Run tenant ingress contract guard
+      run: python3 scripts/check_tenant_ingress_contract.py
 
     # OSS/enterprise boundary: fails on NEW commercial leaks (pricing/billing/
     # control-plane refs) in non-gated engine code. Known debt is tracked (warn).

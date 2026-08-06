@@ -74,6 +74,26 @@ The course correction above is the target. This section records what is *actuall
 built today* so the roadmap (§6) closes a real gap, not an imagined one. Audited
 against the live tree on branch `proximadb-embedding`.
 
+[NOTE]
+====
+**Point-in-time audit — key rows since superseded (do not cite as current state).**
+This table is the 2026-06-04 snapshot; an external analysis has already mis-read it as
+current. As of 2026-07-12:
+
+* **DataFusion "UNWIRED, test-only"** — superseded. `DataFusionLocal` routes live on
+  pgwire for OLAP-shape Parquet-backed tables via `ComputeScheduler::route_select`,
+  behind the *default-on* `datafusion-integration` feature (ADR-052, Accepted
+  2026-07-04, makes it the OLAP execution engine behind the `ComputeBackend` seam).
+* **`ComputeProvider` / `LocalComputeProvider` "DEAD STUB"** — the scaffold was
+  **deleted the same day** as this audit (see the 2026-06-04 note in
+  `src/compute/mod.rs`); it no longer exists.
+* **"No Parquet/Iceberg write"** — superseded. `ALTER TABLE … MATERIALIZE` (warehouse
+  materializer, auto-wired from `data_dir`) writes Parquet for the DataFusion route.
+
+Current state of record: `SYSTEM_MAP_2026_05_30.adoc` (§"Current state and MVP
+readiness", `status-as-of` tagged and guard-checked).
+====
+
 [cols="3,1,1,4",options="header"]
 |===
 | Component | Exists | Wired live | Notes (file)
@@ -246,8 +266,7 @@ full distribution (Raft/sharding) is §9.2 Phase 6, funded by MVP revenue.
 Secondary track (vector-era cleanup, not on the warehouse critical path):
 **TD-104 ROOT deletion** — the `UnifiedHandlers` monolith is vector-DB-era; the
 relational/pgwire wedge already bypasses it (pgwire never used the monolith). Continue
-per the S3-a..f plan in `CONVERGENCE_SESSION_HANDOFF_2026_06_03.adoc` §3bis when
-warehouse phases permit; it does not block P0–P7.
+when warehouse phases permit; it does not block P0–P7.
 
 == 7. Anchoring
 

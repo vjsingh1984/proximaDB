@@ -443,6 +443,11 @@ async fn execute_vector_search(
             expr.top_k as usize,
             None, // No filter for now - could add threshold filter later
             None, // Use default search config
+            #[cfg(feature = "abac-policy")]
+            &proximadb_abac::ReadContext::system(
+                proximadb_abac::SystemReadReason::Statistics,
+                "unified::executor [CLIENT-PLACEHOLDER]",
+            ),
         )
         .await;
 

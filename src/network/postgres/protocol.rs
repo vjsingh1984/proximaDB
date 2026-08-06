@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result, anyhow};
 use bytes::{Buf, BufMut, BytesMut};
@@ -19,7 +20,7 @@ use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use super::session::Session;
+use super::session::{Session, SessionManager};
 use super::translator::QueryTranslator;
 use super::types::{FieldDescription, PgType};
 use crate::catalog::CatalogManager;
@@ -47,6 +48,9 @@ pub struct PostgresProtocol {
     stream: TcpStream,
     /// Session state
     session: Arc<RwLock<Session>>,
+    /// Shared registry used to resolve PostgreSQL CancelRequest backend keys.
+    session_manager: Option<Arc<SessionManager>>,
+    cancel_request_processed: bool,
     /// Collection service
     collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     /// Vector operations service for search
@@ -99,6 +103,47 @@ pub struct PostgresProtocol {
     /// result set, flushed to the meter (direction=result) at CommandComplete /
     /// PortalSuspended. Zero on the free path / non-row commands.
     result_bytes_pending: u64,
+    /// TD-TENANT-1: the deployment's bare tenant-assertion trust policy. On
+    /// pgwire there is NO authenticated binding (trust auth), so a startup
+    /// `database` (== tenant/catalog, TD-064) or `SET proximadb.write.tenant_id`
+    /// naming a non-default tenant is a bare assertion by definition — strict
+    /// policies reject it at the assertion point (SQLSTATE 28000) through the
+    /// same shared primitive REST/gRPC/Arrow Flight use. Default `Open`.
+    tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// Request-tenant presence/defaulting contract for this deployment.
+    tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
+    /// TD-ABAC-10 (ADR-087): resolver stamping `tenant_stable_id` on the
+    /// session identity ONCE at the startup handshake (the same catalog-backed
+    /// resolver REST/gRPC/Arrow use). `None` = unwired ⇒ identity carries no
+    /// stable id (pgwire ABAC inert for policy lookup, same default REST had).
+    stable_id_resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransactionControlPolicy {
+    Unsupported,
+}
+
+fn transaction_control_policy(query: &str) -> Option<TransactionControlPolicy> {
+    let normalized = query.trim().trim_end_matches(';').trim().to_uppercase();
+    let words: Vec<&str> = normalized.split_whitespace().collect();
+    let first = words.first().copied().unwrap_or_default();
+    let second = words.get(1).copied().unwrap_or_default();
+    let is_control = matches!(
+        first,
+        "BEGIN" | "COMMIT" | "END" | "ROLLBACK" | "ABORT" | "SAVEPOINT" | "RELEASE"
+    ) || (first == "START" && second == "TRANSACTION")
+        || (first == "PREPARE" && second == "TRANSACTION")
+        || (first == "SET" && matches!(second, "TRANSACTION" | "CONSTRAINTS"))
+        || (words.as_slice().starts_with(&[
+            "SET",
+            "SESSION",
+            "CHARACTERISTICS",
+            "AS",
+            "TRANSACTION",
+        ]));
+
+    is_control.then_some(TransactionControlPolicy::Unsupported)
 }
 
 /// Slice 6.3 gate-input bundle. Distinct type per surface for module
@@ -235,6 +280,77 @@ fn pg_type_for_catalog_column(column_type: &str) -> PgType {
     }
 }
 
+/// Enforce the pgwire width-safety invariant on a catalog-introspection result
+/// before any frame is written: the RowDescription field count MUST equal every
+/// DataRow cell count. `RowDescription` and `DataRow` widths are encoded
+/// independently on the wire (`send_row_description` writes `fields.len()`;
+/// `send_data_row*` writes `values.len()`), so a mismatch emits a desync'd
+/// frame that crashes psql with libpq's `"column number N is out of range 0..M"`.
+///
+/// Rules, in order:
+/// 1. If the client's parsed SELECT aliases are present and their count differs
+///    from the result's column count, dispatch routed the query to a wrong-shape
+///    builder → return a safe EMPTY result (the client's alias names, all `text`,
+///    zero rows) so the client renders nothing instead of crashing.
+/// 2. Pad `column_types` to `columns.len()` with `"text"` (or truncate if longer).
+/// 3. Drop any row whose cell count ≠ column count.
+fn sanitize_catalog_result(
+    mut result: crate::services::CatalogIntrospectionResult,
+    select_aliases: Option<&[String]>,
+    query_for_logs: &str,
+) -> crate::services::CatalogIntrospectionResult {
+    // (1) Dispatch-vs-SELECT shape mismatch → graceful empty.
+    if let Some(aliases) = select_aliases
+        && aliases.len() != result.columns.len()
+    {
+        tracing::warn!(
+            target: "proximadb::pgwire::catalog",
+            query = %query_for_logs,
+            expected_columns = aliases.len(),
+            got_columns = result.columns.len(),
+            "catalog introspection shape mismatch; returning empty result to avoid a width-desync'd pgwire frame"
+        );
+        return crate::services::CatalogIntrospectionResult {
+            columns: aliases.to_vec(),
+            column_types: aliases.iter().map(|_| "text".to_string()).collect(),
+            rows: Vec::new(),
+        };
+    }
+
+    // (2) Make column_types exactly columns.len().
+    let ncols = result.columns.len();
+    if result.column_types.len() < ncols {
+        let missing = ncols - result.column_types.len();
+        result
+            .column_types
+            .extend(std::iter::repeat_n("text".to_string(), missing));
+        tracing::warn!(
+            target: "proximadb::pgwire::catalog",
+            query = %query_for_logs,
+            padded_to = ncols,
+            "padded catalog-introspection column_types with text"
+        );
+    } else if result.column_types.len() > ncols {
+        result.column_types.truncate(ncols);
+    }
+
+    // (3) Drop width-mismatched rows.
+    let before = result.rows.len();
+    result.rows.retain(|row| row.len() == ncols);
+    let dropped = before - result.rows.len();
+    if dropped > 0 {
+        tracing::warn!(
+            target: "proximadb::pgwire::catalog",
+            query = %query_for_logs,
+            dropped,
+            expected_width = ncols,
+            "dropped catalog-introspection rows with mismatched cell count"
+        );
+    }
+
+    result
+}
+
 fn pg_type_for_catalog_data_type(data_type: &ProximaType) -> PgType {
     match data_type {
         ProximaType::Boolean => PgType::Bool,
@@ -320,6 +436,8 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
+            session_manager: None,
+            cancel_request_processed: false,
             collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
@@ -338,7 +456,15 @@ impl PostgresProtocol {
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            stable_id_resolver: None,
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
+    }
+
+    pub fn with_session_manager(mut self, manager: Arc<SessionManager>) -> Self {
+        self.session_manager = Some(manager);
+        self
     }
 
     /// Attach a shared per-IP rate limiter (and this connection's peer IP) so the
@@ -368,6 +494,8 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
+            session_manager: None,
+            cancel_request_processed: false,
             collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
@@ -386,6 +514,9 @@ impl PostgresProtocol {
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            stable_id_resolver: None,
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
 
@@ -413,6 +544,8 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
+            session_manager: None,
+            cancel_request_processed: false,
             collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
@@ -431,6 +564,9 @@ impl PostgresProtocol {
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            stable_id_resolver: None,
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
     }
 
@@ -452,6 +588,193 @@ impl PostgresProtocol {
         self
     }
 
+    /// TD-TENANT-1: set the deployment's bare tenant-assertion trust policy —
+    /// the same `HeaderTrustPolicy` REST/gRPC/Arrow Flight enforce.
+    pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tenant_header_trust = policy;
+        self
+    }
+
+    /// TD-ABAC-10 (ADR-087): wire the catalog-backed stable-id resolver so the
+    /// session identity carries the ABAC policy key, stamped once at startup.
+    pub fn with_stable_id_resolver(
+        mut self,
+        resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
+    ) -> Self {
+        self.stable_id_resolver = resolver;
+        self
+    }
+
+    /// Attach the process-shared ABAC enforcer to this connection's DML service.
+    ///
+    /// pgwire constructs a small per-connection DML façade, unlike REST/gRPC's
+    /// shared façade. The underlying enforcer must nevertheless be the exact
+    /// composition-root instance so live admin writes and every transport read
+    /// one policy state. A non-unique DML Arc is a wiring error and remains
+    /// unenforced only with an explicit error log; production calls this before
+    /// any clone escapes the connection constructor.
+    #[cfg(feature = "abac-policy")]
+    pub fn with_abac_enforcer(
+        mut self,
+        enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
+    ) -> Self {
+        if let Some(enforcer) = enforcer {
+            match self.dml_service.as_mut().and_then(Arc::get_mut) {
+                Some(dml) => dml.set_abac_enforcer(enforcer),
+                None => tracing::error!(
+                    "pgwire ABAC enforcer could not be attached to the per-connection DML service"
+                ),
+            }
+        }
+        self
+    }
+
+    pub fn with_tenant_deployment_mode(
+        mut self,
+        mode: proximadb_tenant::TenantDeploymentMode,
+    ) -> Self {
+        self.tenant_deployment_mode = mode;
+        self
+    }
+
+    fn resolve_startup_tenant(
+        database: Option<&str>,
+        mode: &proximadb_tenant::TenantDeploymentMode,
+    ) -> std::result::Result<String, String> {
+        proximadb_tenant::resolve_request_tenant_for_mode(database, mode)
+            .map_err(|error| error.to_string())
+    }
+
+    /// TD-TENANT-1: gate a pgwire tenant assertion (startup `database` or the
+    /// tenant session var) through the shared trust primitive. pgwire has no
+    /// authenticated binding (trust auth), so the binding is always `None`;
+    /// the ONE canonical default tenant does not count as an assertion.
+    /// Returns the audit-logged error message to send when rejected.
+    fn check_pgwire_tenant_assertion(&self, asserted: &str) -> std::result::Result<(), String> {
+        use proximadb_tenant::identity_trust::resolve_tenant_assertion;
+
+        let asserted = asserted.trim();
+        if asserted.is_empty() || asserted == proximadb_tenant::DEFAULT_TENANT {
+            return Ok(());
+        }
+        match resolve_tenant_assertion(Some(asserted), None, self.tenant_header_trust) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                warn!(
+                    target: "proximadb::tenant_audit",
+                    surface = "pgwire",
+                    policy = %self.tenant_header_trust,
+                    %error,
+                    "rejected bare pgwire tenant assertion"
+                );
+                Err(error.to_string())
+            }
+        }
+    }
+
+    /// TD-ABAC-10 (ADR-087): build the connection's ONE caller identity from
+    /// the gate-accepted startup values. Pure (no `self`, no I/O beyond the
+    /// resolver lookup) so the truth table is unit-testable in isolation —
+    /// ADR-087's "one reviewable identity function" principle.
+    ///
+    /// pgwire runs trust auth, so an accepted `user` is a client *assertion*,
+    /// never a credential ⇒ [`AuthClass::TrustAsserted`](proximadb_tenant::AuthClass);
+    /// empty/`anonymous` ⇒ no subject ⇒ `Anonymous` (the same non-assertion rule
+    /// [`Self::check_pgwire_subject_assertion`] applies). The strict-policy
+    /// REJECTION of a bare subject stays in that gate, which runs first — this
+    /// function only classifies what the gate already admitted. The stable id
+    /// (the ABAC policy key) is stamped exactly once, here.
+    fn startup_identity(
+        tenant: &str,
+        user: &str,
+        stable_id_resolver: Option<&dyn proximadb_tenant::TenantStableIdResolver>,
+    ) -> proximadb_tenant::ResolvedRequestIdentity {
+        let subject = Some(user.trim().to_string()).filter(|s| !s.is_empty() && s != "anonymous");
+        proximadb_tenant::ResolvedRequestIdentity {
+            tenant: tenant.to_string(),
+            auth_class: if subject.is_some() {
+                proximadb_tenant::AuthClass::TrustAsserted
+            } else {
+                proximadb_tenant::AuthClass::Anonymous
+            },
+            subject,
+            tenant_stable_id: None,
+        }
+        .stamp_stable_id(stable_id_resolver)
+    }
+
+    /// TD-ABAC-10 (ADR-087): the connection's ABAC subject, read from the ONE
+    /// session identity built at the startup handshake — never re-derived from
+    /// `session.user` per query. `None` ⇒ no subject ⇒ passthrough (the
+    /// composition rule at the seam decides what that means).
+    ///
+    /// Every pgwire read path that enforces MUST source its subject here, so a
+    /// new path cannot silently become a bypass by forgetting to derive one.
+    #[cfg(feature = "abac-policy")]
+    async fn session_subject(&self) -> Option<proximadb_catalog::fc_metamodel::SubjectId> {
+        self.session
+            .read()
+            .await
+            .identity
+            .as_ref()
+            .and_then(|id| id.subject.clone())
+            .map(proximadb_catalog::fc_metamodel::SubjectId)
+    }
+
+    /// TD-ABAC-3: gate a pgwire SUBJECT assertion (startup `user`) through the
+    /// SAME [`HeaderTrustPolicy`](proximadb_tenant::HeaderTrustPolicy) the tenant
+    /// assertion uses. pgwire is trust auth, so the binding is always `None`;
+    /// under `Open` (the default) the asserted subject is accepted (same trust
+    /// class as the tenant assertion), under a strict policy a bare subject
+    /// assertion is rejected at the handshake so ABAC enforcement is not
+    /// spoofable on a strict deployment. `anonymous`/empty = no assertion.
+    #[cfg(feature = "abac-policy")]
+    fn check_pgwire_subject_assertion(&self, asserted: &str) -> std::result::Result<(), String> {
+        use proximadb_tenant::identity_trust::resolve_tenant_assertion;
+
+        let asserted = asserted.trim();
+        if asserted.is_empty() || asserted == "anonymous" {
+            return Ok(());
+        }
+        // Reuse the shared bare-assertion policy check — its `(Some, None)` arm is
+        // generic over any client-asserted identity with no authenticated binding,
+        // which is exactly the subject case under pgwire trust auth.
+        match resolve_tenant_assertion(Some(asserted), None, self.tenant_header_trust) {
+            Ok(_) => Ok(()),
+            Err(_error) => {
+                warn!(
+                    target: "proximadb::tenant_audit",
+                    surface = "pgwire",
+                    policy = %self.tenant_header_trust,
+                    "rejected bare pgwire subject assertion '{asserted}'"
+                );
+                Err(format!(
+                    "subject '{asserted}' asserted without authenticated credentials; \
+                     this deployment requires a subject-bound credential (header-trust={})",
+                    self.tenant_header_trust
+                ))
+            }
+        }
+    }
+
+    /// Attach the durable partition-lease authority to this connection's DDL
+    /// service after rank/materializer decoration has finished.
+    pub fn with_ddl_lease_manager(
+        mut self,
+        manager: Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) -> Self {
+        if let Some(ddl) = self.ddl_service.as_mut().and_then(Arc::get_mut) {
+            ddl.set_write_lease_authority(manager, registry, self_pod_id);
+        } else {
+            tracing::error!(
+                "pgwire DDL lease authority could not be attached to the per-connection service"
+            );
+        }
+        self
+    }
+
     /// Attach catalog-backed DDL/DML services to an existing protocol handler.
     pub fn with_catalog_manager(mut self, catalog_manager: Arc<CatalogManager>) -> Self {
         self.ddl_service = Some(Arc::new(DdlService::new(catalog_manager.clone())));
@@ -469,13 +792,20 @@ impl PostgresProtocol {
         mut self,
         catalog_manager: Arc<CatalogManager>,
         canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
+        conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
     ) -> Self {
         self.ddl_service = Some(Arc::new(DdlService::new(catalog_manager.clone())));
-        self.dml_service = Some(Arc::new(DmlService::with_direct_record_storage(
+        // F5 / TD-OLTP-WIRING-1: fence pgwire writes on the SAME shared CKS as
+        // gRPC/REST (threaded from SharedServices via DirectPgwireWriteServices).
+        let mut dml = DmlService::with_direct_record_storage(
             catalog_manager.clone(),
             self.vector_ops.clone(),
             canonical_store,
-        )));
+        );
+        if let Some(cks) = conditional_key_store {
+            dml = dml.with_conditional_key_store(cks);
+        }
+        self.dml_service = Some(Arc::new(dml));
         self.catalog_manager = Some(catalog_manager);
         self
     }
@@ -491,7 +821,7 @@ impl PostgresProtocol {
     /// anyway, so a catalog-less handler stays catalog-less.
     pub fn with_rank_pipeline(
         mut self,
-        services: Arc<crate::network::rest::v1::rank::RankServices>,
+        services: Arc<crate::network::rest::canonical::rank::RankServices>,
         store: Arc<dyn crate::services::RankProfileStore>,
         function_store: Arc<dyn crate::services::FunctionStore>,
     ) -> Self {
@@ -562,6 +892,9 @@ impl PostgresProtocol {
     pub async fn run(&mut self) -> Result<()> {
         // Handle startup
         self.handle_startup().await?;
+        if self.cancel_request_processed {
+            return Ok(());
+        }
 
         // Main loop
         loop {
@@ -629,8 +962,18 @@ impl PostgresProtocol {
 
         // Check for cancel request
         if version == 80877102 {
-            // Cancel request - not implemented
-            return Err(anyhow!("Cancel request not supported"));
+            if length != 16 {
+                return Err(anyhow!("Invalid cancel request length"));
+            }
+            let process_id = self.read_i32().await? as u32;
+            let secret_key = self.read_i32().await? as u32;
+            let cancelled = match &self.session_manager {
+                Some(manager) => manager.cancel_query(process_id, secret_key).await,
+                None => false,
+            };
+            debug!(process_id, cancelled, "Processed PostgreSQL CancelRequest");
+            self.cancel_request_processed = true;
+            return Ok(());
         }
 
         // Read startup parameters
@@ -638,15 +981,55 @@ impl PostgresProtocol {
         let params = self.read_bytes(param_len).await?;
         let params = self.parse_startup_params(&params)?;
 
+        let startup_tenant = match Self::resolve_startup_tenant(
+            params.get("database").map(String::as_str),
+            &self.tenant_deployment_mode,
+        ) {
+            Ok(tenant) => tenant,
+            Err(message) => {
+                self.send_error("FATAL", "28000", &message).await?;
+                return Err(anyhow!("pgwire tenant resolution rejected: {message}"));
+            }
+        };
+
+        // TD-TENANT-1: the startup `database` doubles as the tenant/catalog
+        // (TD-064) and pgwire runs trust auth — the assertion is bare by
+        // definition. Under a strict policy, reject the connection at the
+        // handshake (SQLSTATE 28000) instead of granting the asserted tenant.
+        if let Some(database) = params.get("database")
+            && let Err(message) = self.check_pgwire_tenant_assertion(database)
+        {
+            self.send_error("FATAL", "28000", &message).await?;
+            return Err(anyhow!("pgwire tenant assertion rejected: {message}"));
+        }
+
+        // TD-ABAC-3: gate the startup `user` (the ABAC subject assertion) through
+        // the same trust policy as the tenant — so a strict deployment rejects a
+        // bare, unauthenticated subject at the handshake rather than letting ABAC
+        // enforce against a spoofable id. Default-OFF surface (`abac-policy`);
+        // under `Open` (default) the assertion is accepted like the tenant's.
+        #[cfg(feature = "abac-policy")]
+        if let Some(user) = params.get("user")
+            && let Err(message) = self.check_pgwire_subject_assertion(user)
+        {
+            self.send_error("FATAL", "28000", &message).await?;
+            return Err(anyhow!("pgwire subject assertion rejected: {message}"));
+        }
+
         // Store parameters in session
         {
             let mut session = self.session.write().await;
             if let Some(user) = params.get("user") {
                 session.user = user.clone();
             }
-            if let Some(database) = params.get("database") {
-                session.database = database.clone();
-            }
+            // TD-ABAC-10 (ADR-087): construct the ONE session identity from the
+            // gate-accepted startup values (pure fn — see `startup_identity`).
+            session.identity = Some(Self::startup_identity(
+                &startup_tenant,
+                &session.user,
+                self.stable_id_resolver.as_deref(),
+            ));
+            session.database = startup_tenant;
             // Open-core cache tier hook: a `proximadb_tier` startup parameter
             // (control-plane supplied) records the connection tenant's tier for
             // the cache policy. database == tenant/catalog (TD-064). Opaque id.
@@ -704,6 +1087,17 @@ impl PostgresProtocol {
         let query = self.parse_cstring(body)?;
         debug!("Received query: {}", query);
 
+        if transaction_control_policy(&query).is_some() {
+            self.send_error(
+                "ERROR",
+                "0A000",
+                "transactions are not supported; pgwire executes individual statements in autocommit mode",
+            )
+            .await?;
+            self.send_ready_for_query('I').await?;
+            return Ok(());
+        }
+
         if Self::is_set_statement(&query) {
             match self.execute_set_parameter(&query).await {
                 Ok(()) => {}
@@ -730,6 +1124,19 @@ impl PostgresProtocol {
         // disappeared. This was a data-loss bug, not a feature gap.
         let statements = Self::split_sql_statements(&query);
         if statements.is_empty() {
+            self.send_ready_for_query('I').await?;
+            return Ok(());
+        }
+        if statements
+            .iter()
+            .any(|statement| transaction_control_policy(statement).is_some())
+        {
+            self.send_error(
+                "ERROR",
+                "0A000",
+                "transactions are not supported; pgwire executes individual statements in autocommit mode",
+            )
+            .await?;
             self.send_ready_for_query('I').await?;
             return Ok(());
         }
@@ -873,6 +1280,19 @@ impl PostgresProtocol {
 
     async fn execute_set_parameter(&mut self, query: &str) -> Result<()> {
         let (name, value) = Self::parse_set_parameter(query)?;
+        // TD-TENANT-1: the tenant session vars are the second pgwire
+        // assertion entry point (after the startup `database`). Gate them
+        // through the same policy — an ERROR, not a silent no-op, so the
+        // client knows the assertion did not take effect.
+        let normalized_name = name.trim().to_ascii_lowercase();
+        if matches!(
+            normalized_name.as_str(),
+            "proximadb.write.tenant_id" | "proximadb.write_tenant_id"
+        ) && let Err(message) = self.check_pgwire_tenant_assertion(&value)
+        {
+            self.send_error("ERROR", "28000", &message).await?;
+            return Ok(());
+        }
         {
             let mut session = self.session.write().await;
             session.set_parameter(&name, &value);
@@ -942,8 +1362,11 @@ impl PostgresProtocol {
     async fn execute_query_with_controls(
         &mut self,
         query: &str,
-        controls: ExecutionControls,
+        mut controls: ExecutionControls,
     ) -> Result<()> {
+        let cancellation_flag = self.session.read().await.cancellation_flag.clone();
+        cancellation_flag.store(false, Ordering::Relaxed);
+        controls.cancellation_flag = Some(cancellation_flag);
         // E0 rate-limiting: reject over-quota queries up front with a pgwire
         // error, using the SAME converged RateLimitState check REST uses (no
         // duplicate limiter). No-op when unset/disabled.
@@ -983,80 +1406,12 @@ impl PostgresProtocol {
     ) -> Result<()> {
         let upper = query.to_uppercase();
 
-        // Transaction control. ProximaDB does not yet implement real
-        // MVCC isolation, so BEGIN/COMMIT/ROLLBACK are autocommit
-        // no-ops at the engine level. We still emit the correct
-        // PostgreSQL command tag so clients (psql, ORM drivers,
-        // connection poolers) parse the response normally instead of
-        // silently mis-classifying it. The tracing warning records
-        // the autocommit truth so operator dashboards can surface it
-        // until real transactions land in Phase 3.
-        //
-        // Previously these statements fell through to
-        // `send_command_complete("OK")` at the bottom of this
-        // method — which caused multi-statement queries like
-        // `BEGIN; INSERT ...; COMMIT;` to look successful while
-        // silently dropping work. See ADR-018 for the autocommit
-        // contract and the Phase 3 plan for real transactions.
-        let trimmed_upper = upper.trim();
-        let trimmed_upper = trimmed_upper
-            .strip_suffix(';')
-            .map(str::trim)
-            .unwrap_or(trimmed_upper);
-        if trimmed_upper == "BEGIN"
-            || trimmed_upper == "BEGIN TRANSACTION"
-            || trimmed_upper == "BEGIN WORK"
-            || trimmed_upper == "START TRANSACTION"
-        {
-            warn!(
-                target: "proximadb::pgwire::transactions",
-                "BEGIN observed; ProximaDB pgwire is autocommit-only — \
-                 isolation/savepoints are not yet implemented"
-            );
-            return self.send_command_complete("BEGIN").await;
-        }
-        if trimmed_upper == "COMMIT"
-            || trimmed_upper == "COMMIT TRANSACTION"
-            || trimmed_upper == "COMMIT WORK"
-            || trimmed_upper == "END"
-            || trimmed_upper == "END TRANSACTION"
-            || trimmed_upper == "END WORK"
-        {
-            return self.send_command_complete("COMMIT").await;
-        }
-        if trimmed_upper == "ROLLBACK"
-            || trimmed_upper == "ROLLBACK TRANSACTION"
-            || trimmed_upper == "ROLLBACK WORK"
-            || trimmed_upper == "ABORT"
-            || trimmed_upper == "ABORT TRANSACTION"
-            || trimmed_upper == "ABORT WORK"
-        {
-            // Loud warning because ROLLBACK is the dangerous one:
-            // clients calling ROLLBACK expect uncommitted writes to
-            // disappear, but under autocommit each statement has
-            // already committed and there is nothing to roll back.
-            // Phase 3 will replace this with real rollback semantics.
-            warn!(
-                target: "proximadb::pgwire::transactions",
-                "ROLLBACK observed but pgwire is autocommit-only — \
-                 prior statements in this query have ALREADY been \
-                 applied; this ROLLBACK has no effect"
-            );
-            return self.send_command_complete("ROLLBACK").await;
-        }
-        if trimmed_upper.starts_with("SAVEPOINT ")
-            || trimmed_upper.starts_with("RELEASE SAVEPOINT ")
-            || trimmed_upper.starts_with("ROLLBACK TO ")
-        {
-            // Loud error: savepoints have no defensible autocommit
-            // emulation, and tools that issue them (e.g. SQLAlchemy
-            // nested-transaction emulation) MUST know they are not
-            // supported instead of silently misbehaving.
+        if transaction_control_policy(query).is_some() {
             return self
                 .send_error(
                     "ERROR",
                     "0A000",
-                    "savepoints are not supported (autocommit-only pgwire)",
+                    "transactions are not supported; pgwire executes individual statements in autocommit mode",
                 )
                 .await;
         }
@@ -1157,7 +1512,7 @@ impl PostgresProtocol {
             {
                 return match result {
                     Ok(pr) => self.emit_pipeline_result(pr).await,
-                    Err(msg) => self.send_error("ERROR", "XX000", &msg).await,
+                    Err(msg) => self.send_relational_error(&msg).await,
                 };
             }
             if let Some((column, value)) = Self::extract_simple_constant_select(query) {
@@ -1167,6 +1522,27 @@ impl PostgresProtocol {
             // Check if this is a vector search query
             if upper.contains("<->") || upper.contains("<=>") || upper.contains("<#>") {
                 return self.execute_vector_search(query).await;
+            }
+
+            // TD-REL-LOWER-1: the legacy path below is SINGLE-TABLE only — its
+            // `FROM <token>` extraction misparses a multi-table FROM
+            // (`customer,` / `(select` become "table names") and then fails
+            // with a misleading "Table/Column does not exist". If the
+            // relational pipeline declined a multi-table query, say so
+            // specifically instead of dispatching it here.
+            if let Some(shape) = Self::legacy_unsupported_from_shape(&upper) {
+                return self
+                    .send_error(
+                        "ERROR",
+                        "0A000",
+                        &format!(
+                            "SELECT with {shape} in FROM is not supported on the legacy \
+                             single-table path; the relational engine declined to lower this \
+                             query (TD-REL-LOWER-1). Run the server with \
+                             RUST_LOG=proximadb=debug to see the decline reason."
+                        ),
+                    )
+                    .await;
             }
 
             // Check if this is a simple table query
@@ -1218,6 +1594,22 @@ impl PostgresProtocol {
                     // CREATE-then-INSERT address one tenant-prefixed schema row.
                     let ddl_tenant = self.pgwire_resolve_write_tenant().await;
                     let ddl_scope = (!ddl_tenant.is_empty()).then_some(ddl_tenant);
+                    // Capture the target table BEFORE the statement is moved into
+                    // execute_scoped, so the success branch can invalidate the
+                    // tenant-scoped OLAP result cache for it.
+                    let ddl_table: Option<String> = match &statement {
+                        crate::services::DdlStatement::CreateTable { table_name, .. }
+                        | crate::services::DdlStatement::DropTable { table_name, .. }
+                        | crate::services::DdlStatement::AlterTable { table_name, .. }
+                        | crate::services::DdlStatement::CreateIndex { table_name, .. }
+                        | crate::services::DdlStatement::DropIndex { table_name, .. } => {
+                            Some(table_name.clone())
+                        }
+                        crate::services::DdlStatement::MaterializeTable { name, .. } => {
+                            Some(name.clone())
+                        }
+                        _ => None,
+                    };
                     match ddl_service
                         .execute_scoped(statement, ddl_scope.as_deref())
                         .await
@@ -1246,6 +1638,15 @@ impl PostgresProtocol {
                             } else {
                                 "OK"
                             };
+                            // Mandate #16b: invalidate the tenant-scoped OLAP
+                            // result cache for the DDL'd table (default-OFF no-op).
+                            if let Some(table) = &ddl_table {
+                                super::relational_pipeline::invalidate_olap_result_cache_for(
+                                    ddl_scope.as_deref().unwrap_or(""),
+                                    table,
+                                )
+                                .await;
+                            }
                             info!(message = %result.message, "DDL executed via catalog service");
                             return self.send_command_complete(tag).await;
                         }
@@ -1418,6 +1819,14 @@ impl PostgresProtocol {
             return self.send_empty_result().await;
         };
 
+        // Width-safety: guarantee the RowDescription field count equals every
+        // DataRow cell count. If dispatch routed this query to a builder whose
+        // shape doesn't match the client's SELECT list, substitute a safe empty
+        // result rather than emit a desync'd frame (which crashes psql with
+        // libpq's "column number N is out of range"). See `sanitize_catalog_result`.
+        let select_aliases = crate::query::sql_frontend::parse_select_aliases(query);
+        let result = sanitize_catalog_result(result, select_aliases.as_deref(), query);
+
         let fields = result
             .columns
             .iter()
@@ -1453,6 +1862,9 @@ impl PostgresProtocol {
         &mut self,
         result: ExecutionPipelineResult,
     ) -> anyhow::Result<()> {
+        // TD-OLAP-4 result-path probe: time the row encode + socket write, the
+        // last unmeasured span of the per-query wall floor.
+        let emit_start = std::time::Instant::now();
         // RowDescription.
         let fields: Vec<crate::network::postgres::types::FieldDescription> = result
             .schema
@@ -1474,7 +1886,9 @@ impl PostgresProtocol {
             self.send_data_row_nullable(&cells).await?;
         }
         // CommandComplete.
-        self.send_command_complete(&format!("SELECT {n}")).await
+        let done = self.send_command_complete(&format!("SELECT {n}")).await;
+        crate::observability::io_trace::record_emit_ms(emit_start.elapsed().as_millis() as u64);
+        done
     }
 
     /// Try to materialize a SELECT through the relational execution seam.
@@ -1484,17 +1898,38 @@ impl PostgresProtocol {
         controls: ExecutionControls,
     ) -> Option<Result<ExecutionPipelineResult, String>> {
         let read_tenant = self.pgwire_resolve_read_tenant().await;
+        // Namespace (pgwire `search_path`) + the shared OLAP result cache are a
+        // structural key component / a short-circuit. The cache is default-OFF
+        // (`PROXIMADB_QUERY_RESULT_CACHE`); `None` ⇒ this path is byte-identical
+        // to the pre-cache behavior.
+        let namespace = self.session.read().await.current_schema();
+        let olap_cache = super::relational_pipeline::olap_result_cache();
+        // TD-ABAC-10b: carry the one startup identity intact. The fallback is
+        // tenant-only for pre-startup/internal test sessions; it has no subject
+        // and therefore remains an explicit system passthrough.
+        let session_identity = self.session.read().await.identity.clone();
+        let identity = session_identity
+            .as_ref()
+            .map(proximadb_runtime::PortIdentity::from)
+            .unwrap_or_else(|| proximadb_runtime::PortIdentity::for_tenant(&read_tenant));
         super::relational_pipeline::try_run_select(
             query,
             self.dml_service.as_ref(),
             // F4: hand the OLAP route the live vector service so a cross-modal
             // `... JOIN vector_search('coll','[..]',k)` resolves over pgwire.
             Some(self.vector_ops.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>),
-            Some(read_tenant.as_str()),
+            // F6: likewise the graph read service for `... JOIN graph_traverse(...)`
+            // (`GraphService = GraphOperationsService: GraphQueryReadService`).
+            self.graph_service
+                .clone()
+                .map(|g| g as Arc<dyn proximadb_graph_query::service::GraphQueryReadService>),
+            identity,
             controls,
             // pgwire keeps simple single-table SELECTs on its hardened legacy
             // path; only relational-engaging shapes go through this pipeline.
             true,
+            Some(namespace.as_str()),
+            olap_cache.as_deref(),
         )
         .await
     }
@@ -1556,12 +1991,19 @@ impl PostgresProtocol {
             // route-only disclosure when no DmlService is available.
             // TD-064: resolve EXPLAIN's schema/plan under the connection tenant.
             let explain_tenant = self.pgwire_resolve_read_tenant().await;
+            // TD-ABAC-10b: EXPLAIN ANALYZE executes, so carry the exact whole
+            // session identity used by normal SELECT execution.
+            let session_identity = self.session.read().await.identity.clone();
+            let explain_identity = session_identity
+                .as_ref()
+                .map(proximadb_runtime::PortIdentity::from)
+                .unwrap_or_else(|| proximadb_runtime::PortIdentity::for_tenant(&explain_tenant));
             let routing = match self.dml_service.clone() {
                 Some(dml) if is_analyze => {
                     crate::network::postgres::relational_pipeline::explain_analyze_select_with_catalog(
                         inner_query,
                         &dml,
-                        Some(explain_tenant.as_str()),
+                        explain_identity,
                     )
                     .await
                 }
@@ -1569,7 +2011,7 @@ impl PostgresProtocol {
                     crate::network::postgres::relational_pipeline::explain_select_route_with_catalog(
                         inner_query,
                         &dml,
-                        Some(explain_tenant.as_str()),
+                        explain_identity,
                     )
                     .await
                 }
@@ -1684,11 +2126,14 @@ impl PostgresProtocol {
             .iter()
             .map(|(k, v)| (k.to_ascii_lowercase(), v.clone()))
             .collect();
-        normalized
+        // One canonical default across all surfaces (foundation): a bare connection
+        // with no session var resolves to `DEFAULT_TENANT`, not `""` — the empty
+        // string used to split pgwire reads/writes from REST's `"default"` bucket.
+        let session_var = normalized
             .get("proximadb.write.tenant_id")
             .or_else(|| normalized.get("proximadb.write_tenant_id"))
-            .cloned()
-            .unwrap_or_default()
+            .map(String::as_str);
+        proximadb_tenant::resolve_request_tenant(session_var)
     }
 
     /// TD-064 S1 (read-half): resolve the tenant/catalog scope used to authorize
@@ -1829,6 +2274,32 @@ impl PostgresProtocol {
     }
 
     /// Extract table name from query
+    /// TD-REL-LOWER-1: detect a multi-table / derived-table FROM in an
+    /// (uppercased) SELECT the relational pipeline has already declined, so the
+    /// legacy single-table path can reject it with a specific error instead of
+    /// misparsing `customer,` or `(select` as a table name. Inspects only the
+    /// FROM clause segment (up to the next clause keyword), so commas in the
+    /// projection, WHERE `IN (…)` lists, or ORDER BY never false-positive.
+    fn legacy_unsupported_from_shape(upper: &str) -> Option<&'static str> {
+        let from_pos = upper.find("FROM ")?;
+        let after = &upper[from_pos + 5..];
+        let clause_end = [" WHERE ", " GROUP ", " ORDER ", " HAVING ", " LIMIT ", ";"]
+            .iter()
+            .filter_map(|kw| after.find(kw))
+            .min()
+            .unwrap_or(after.len());
+        let from_clause = after[..clause_end].trim();
+        if from_clause.starts_with('(') {
+            Some("a derived table (subquery)")
+        } else if from_clause.contains(',') {
+            Some("a comma-separated table list")
+        } else if from_clause.contains(" JOIN ") {
+            Some("a JOIN")
+        } else {
+            None
+        }
+    }
+
     fn extract_table_name(&self, query: &str) -> Option<String> {
         // Simple extraction: look for FROM <table>
         let from_pos = query.find("FROM ")?;
@@ -1906,6 +2377,56 @@ impl PostgresProtocol {
             metadata_filter.is_some()
         );
 
+        // TD-ABAC-10c (ADR-087): resolve the CLIENT read context from the
+        // session identity through the ONE composition rule every surface
+        // shares (`records_read_context`) — this path previously passed a
+        // hardcoded `System` context ("[CLIENT-PLACEHOLDER]"), so every pgwire
+        // pgvector search bypassed ABAC entirely. `None` ⇒ the subject was
+        // DENIED ⇒ fail closed: emit an empty result set, never rows.
+        #[cfg(feature = "abac-policy")]
+        let read_context = {
+            let (subject, tenant_stable_id, auth_class) = {
+                let session = self.session.read().await;
+                match session.identity.as_ref() {
+                    Some(identity) => (
+                        identity.subject.clone(),
+                        identity.tenant_stable_id,
+                        identity.auth_class,
+                    ),
+                    None => (None, None, proximadb_tenant::AuthClass::Anonymous),
+                }
+            };
+            match self
+                .vector_ops
+                .records_read_context(
+                    subject.as_deref(),
+                    tenant_stable_id,
+                    auth_class,
+                    &table_name,
+                )
+                .await
+            {
+                Some(context) => context,
+                None => {
+                    warn!(
+                        target: "proximadb::tenant_audit",
+                        surface = "pgwire",
+                        collection = %table_name,
+                        subject = ?subject,
+                        "ABAC denied the pgwire vector search subject — failing closed (empty result)"
+                    );
+                    let fields = vec![
+                        FieldDescription::new("id", PgType::Text),
+                        FieldDescription::new("distance", PgType::Float8),
+                        FieldDescription::new("metadata", PgType::Jsonb),
+                    ];
+                    self.send_row_description(&fields).await?;
+                    self.send_command_complete("SELECT 0").await?;
+                    return Ok(());
+                }
+            }
+        };
+
         if let Some(ref vector) = query_vector {
             // Execute actual vector search
             match self
@@ -1916,6 +2437,8 @@ impl PostgresProtocol {
                     top_k,
                     metadata_filter, // TD-100: mem0 metadata-scoped WHERE pushdown
                     None,            // Default config
+                    #[cfg(feature = "abac-policy")]
+                    &read_context,
                 )
                 .await
             {
@@ -2537,6 +3060,24 @@ impl PostgresProtocol {
         // machinery). If sqlparser can't parse the query (pg-specific syntax)
         // or its WHERE has an unsupported expression, fall back to the legacy
         // string-predicate path — over-inclusive full scan, never empty.
+        // TD-ABAC-10c (ADR-087): this LEGACY fallback has no row-filter wiring,
+        // so under an armed enforcer + a client subject it would serve
+        // unenforced rows — the bypass this closes. It fails CLOSED instead of
+        // growing a second enforcement implementation (two implementations of
+        // one rule is the drift seam ADR-087 removes). The real fix is
+        // coverage: shapes that reach this fallback should be lowered by the
+        // enforcing relational pipeline (the ANSI-SQL-over-pgwire mandate's
+        // direction anyway).
+        #[cfg(feature = "abac-policy")]
+        if self.session_subject().await.is_some() && dml_service.has_abac_enforcer() {
+            return Err(anyhow!(
+                "this query shape is not supported for a policy-governed subject: \
+                 it falls back to the legacy single-table reader, which cannot \
+                 apply row-level security. Rewrite it into a shape the relational \
+                 pipeline lowers, or run it as an ungoverned (no-subject) connection."
+            ));
+        }
+
         // TD-064: scope the legacy relational SELECT to the connection tenant.
         let read_tenant = self.pgwire_resolve_read_tenant().await;
         let read_tenant_ctx = (!read_tenant.is_empty())
@@ -3598,6 +4139,13 @@ impl PostgresProtocol {
                             rows_affected = result.rows_affected,
                             "INSERT executed via DmlService"
                         );
+                        // Mandate #16b: invalidate the tenant-scoped OLAP result
+                        // cache for the written table (default-OFF no-op).
+                        super::relational_pipeline::invalidate_olap_result_cache_for(
+                            &write_tenant,
+                            &table,
+                        )
+                        .await;
                         self.send_command_complete(&format!("INSERT 0 {}", result.rows_affected))
                             .await
                     }
@@ -3713,6 +4261,13 @@ impl PostgresProtocol {
                             rows_affected = result.rows_affected,
                             "DELETE executed via DmlService"
                         );
+                        // Mandate #16b: invalidate the tenant-scoped OLAP result
+                        // cache for the written table (default-OFF no-op).
+                        super::relational_pipeline::invalidate_olap_result_cache_for(
+                            &write_tenant,
+                            &table,
+                        )
+                        .await;
                         self.send_command_complete(&format!("DELETE {}", result.rows_affected))
                             .await
                     }
@@ -3822,6 +4377,13 @@ impl PostgresProtocol {
                             rows_affected = result.rows_affected,
                             "UPDATE executed via DmlService"
                         );
+                        // Mandate #16b: invalidate the tenant-scoped OLAP result
+                        // cache for the written table (default-OFF no-op).
+                        super::relational_pipeline::invalidate_olap_result_cache_for(
+                            &write_tenant,
+                            &table,
+                        )
+                        .await;
                         self.send_command_complete(&format!("UPDATE {}", result.rows_affected))
                             .await
                     }
@@ -4449,10 +5011,12 @@ impl PostgresProtocol {
         // Read statement name (source prepared statement)
         let statement_name = self.read_cstring(&mut cursor)?;
 
-        // Read format codes count (currently ignored - we use text format)
+        // Read parameter format codes. Per the PG protocol: 0 codes → all params
+        // are text; 1 code → it applies to every param; N codes → one per param.
         let format_code_count = cursor.get_i16() as usize;
+        let mut format_codes: Vec<i16> = Vec::with_capacity(format_code_count);
         for _ in 0..format_code_count {
-            let _format_code = cursor.get_i16();
+            format_codes.push(cursor.get_i16());
         }
 
         // Read parameter values count
@@ -4477,13 +5041,22 @@ impl PostgresProtocol {
             let _ = cursor.get_i16();
         }
 
+        // Normalize parameter format codes to one-per-parameter.
+        let param_formats: Vec<i16> = (0..param_count)
+            .map(|i| match format_codes.len() {
+                0 => 0,
+                1 => format_codes[0],
+                _ => format_codes.get(i).copied().unwrap_or(0),
+            })
+            .collect();
+
         // Get the prepared statement data (extract to avoid borrow conflicts)
         let stmt_data = self
             .prepared_statements
             .get(&statement_name)
-            .map(|s| (s.query.clone(), s.translated.clone()));
+            .map(|s| (s.query.clone(), s.translated.clone(), s.param_types.clone()));
 
-        let (stmt_query, stmt_translated) = match stmt_data {
+        let (stmt_query, stmt_translated, stmt_param_types) = match stmt_data {
             Some(data) => data,
             None => {
                 // If unnamed statement (""), use the query directly
@@ -4500,8 +5073,19 @@ impl PostgresProtocol {
             }
         };
 
-        // Bind parameters to the query
-        let bound_query = self.bind_parameters(&stmt_query, &param_values)?;
+        // Bind parameters to the query (format- and type-aware).
+        let bound_query = match self.bind_parameters(
+            &stmt_query,
+            &param_values,
+            &param_formats,
+            &stmt_param_types,
+        ) {
+            Ok(q) => q,
+            Err(e) => {
+                // 22P03 = invalid_binary_representation.
+                return self.send_error("ERROR", "22P03", &format!("{}", e)).await;
+            }
+        };
 
         // Create portal
         let portal = Portal {
@@ -4517,25 +5101,44 @@ impl PostgresProtocol {
         self.send_bind_complete().await
     }
 
-    /// Bind parameter values to a query string
-    fn bind_parameters(&self, query: &str, param_values: &[Option<Vec<u8>>]) -> Result<String> {
-        let mut result = query.to_string();
-
+    /// Bind parameter values into a query by substituting `$N` placeholders.
+    ///
+    /// Fixes two long-standing bugs in the old ordered `str::replace` approach:
+    /// (1) replacing `$1` before `$10` corrupted every placeholder ≥ 10 (and any
+    /// injected value that happened to contain a later `$N`); (2) every parameter
+    /// was decoded as UTF-8 text, silently mangling **binary-format** params
+    /// (int/float/vector sent with format code 1). Substitution is now a single
+    /// left-to-right pass ([`substitute_placeholders`]) and binary params are
+    /// decoded per their type ([`decode_binary_param`]) before rendering.
+    ///
+    /// `param_formats[i]` is the wire format code for parameter i (0 = text,
+    /// 1 = binary); `param_types[i]` is its type (from Parse / inferred).
+    fn bind_parameters(
+        &self,
+        query: &str,
+        param_values: &[Option<Vec<u8>>],
+        param_formats: &[i16],
+        param_types: &[PgType],
+    ) -> Result<String> {
+        let mut rendered: Vec<Option<String>> = Vec::with_capacity(param_values.len());
         for (i, value) in param_values.iter().enumerate() {
-            let placeholder = format!("${}", i + 1);
-            let replacement = match value {
-                Some(v) => {
-                    // Convert bytes to string (assuming UTF-8 text format)
-                    let s = String::from_utf8_lossy(v);
-                    // Escape single quotes
-                    format!("'{}'", s.replace('\'', "''"))
+            match value {
+                None => rendered.push(None),
+                Some(bytes) => {
+                    let is_binary = param_formats.get(i).copied().unwrap_or(0) == 1;
+                    let text = if is_binary {
+                        let ty = param_types.get(i).cloned().unwrap_or(PgType::Unknown);
+                        decode_binary_param(bytes, &ty).map_err(|e| {
+                            anyhow::anyhow!("parameter ${} binary decode failed: {}", i + 1, e)
+                        })?
+                    } else {
+                        String::from_utf8_lossy(bytes).into_owned()
+                    };
+                    rendered.push(Some(text));
                 }
-                None => "NULL".to_string(),
-            };
-            result = result.replace(&placeholder, &replacement);
+            }
         }
-
-        Ok(result)
+        Ok(substitute_placeholders(query, &rendered))
     }
 
     /// Handle Execute message - executes a portal
@@ -4605,13 +5208,22 @@ impl PostgresProtocol {
             // same scope in the next slice (kept out here to avoid restructuring
             // the borrow in this `&&` let-chain).
             if query.trim_start().to_uppercase().starts_with("SELECT")
-                && let Some(result) = self
-                    .try_run_relational_select_pipeline(query, ExecutionControls::default())
+                && let Some(result) = {
+                    let cancellation_flag = self.session.read().await.cancellation_flag.clone();
+                    cancellation_flag.store(false, Ordering::Relaxed);
+                    self.try_run_relational_select_pipeline(
+                        query,
+                        ExecutionControls {
+                            cancellation_flag: Some(cancellation_flag),
+                            ..Default::default()
+                        },
+                    )
                     .await
+                }
             {
                 let result = match result {
                     Ok(result) => result,
-                    Err(msg) => return self.send_error("ERROR", "XX000", &msg).await,
+                    Err(msg) => return self.send_relational_error(&msg).await,
                 };
                 if let Some(portal) = self.portals.get_mut(portal_name) {
                     portal.execution_state = Some(PortalExecutionState {
@@ -4694,6 +5306,17 @@ impl PostgresProtocol {
             max_rows: Some(max_rows as usize),
             row_limit_mode: RowLimitMode::Truncate,
             ..Default::default()
+        }
+    }
+
+    async fn send_relational_error(&mut self, message: &str) -> Result<()> {
+        if message.contains("query execution was cancelled") {
+            self.send_error("ERROR", "57014", "canceling statement due to user request")
+                .await
+        } else if let Some(message) = message.strip_prefix("0A000: ") {
+            self.send_error("ERROR", "0A000", message).await
+        } else {
+            self.send_error("ERROR", "XX000", message).await
         }
     }
 
@@ -4991,1230 +5614,165 @@ impl PostgresProtocol {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::catalog::{CatalogColumn, CatalogTableSchema};
-    use crate::query::multimodal_router;
-    use proximadb_records::{ProximaRecord, ProximaTreeNode};
-
-    #[test]
-    fn test_frontend_message() {
-        assert_eq!(FrontendMessage::Query as u8, b'Q');
-        assert_eq!(FrontendMessage::Terminate as u8, b'X');
-    }
-
-    // pgvector WHERE-filter + extended-protocol param tests (TD-100/TD-102)
-    // live in `super::super::pgvector_params` where the logic now resides.
-
-    #[test]
-    fn test_store_type_detection_vector() {
-        // Vector queries contain <->, <=>, or <#> operators (pgvector syntax)
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM embeddings ORDER BY vec <-> '[0.1, 0.2, 0.3]' LIMIT 10",
-                "embeddings",
-                None,
-            ),
-            DataModel::Vector
-        );
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT id, vec <=> '[0.5, 0.5]' AS similarity FROM items",
-                "items",
-                None,
-            ),
-            DataModel::Vector
-        );
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT id FROM products ORDER BY embedding <#> $1 LIMIT 5",
-                "products",
-                None,
-            ),
-            DataModel::Vector
-        );
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT id FROM products ORDER BY VECTOR_DISTANCE(embedding, [0.1, 0.2], 'l2') LIMIT 5",
-                "products",
-                None,
-            ),
-            DataModel::Vector
-        );
-
-        // CREATE TABLE with VECTOR column type
-        assert_eq!(
-            multimodal_router::detect_store_type_from_create(
-                "CREATE TABLE items (id TEXT, embedding VECTOR(384))",
-            ),
-            DataModel::Vector
-        );
-
-        // Explicit USING VECTOR clause
-        assert_eq!(
-            multimodal_router::detect_store_type_from_create(
-                "CREATE TABLE vecs (id TEXT, data FLOAT[]) USING VECTOR",
-            ),
-            DataModel::Vector
-        );
-    }
-
-    #[test]
-    fn test_store_type_detection_document() {
-        // Document queries use JSON path expressions ($.)
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM products WHERE data $.price > 100",
-                "products",
-                None,
-            ),
-            DataModel::Document
-        );
-
-        // Document tables detected by doc_ prefix
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM doc_users WHERE active = true",
-                "doc_users",
-                None,
-            ),
-            DataModel::Document
-        );
-
-        // document_ prefix also works
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM document_orders",
-                "document_orders",
-                None,
-            ),
-            DataModel::Document
-        );
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM products WHERE JSON_EXTRACT_TEXT(metadata, 'tenant') = 'acme'",
-                "products",
-                None,
-            ),
-            DataModel::Document
-        );
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM products WHERE JSON_CONTAINS(metadata, '{\"role\":\"planner\"}')",
-                "products",
-                None,
-            ),
-            DataModel::Document
-        );
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM DOCUMENT_QUERY('agent_docs', '$.role = \"planner\"')",
-                "agent_queries",
-                None,
-            ),
-            DataModel::Document
-        );
-
-        // CREATE with JSONB column
-        assert_eq!(
-            multimodal_router::detect_store_type_from_create(
-                "CREATE TABLE docs (id TEXT PRIMARY KEY, data JSONB)",
-            ),
-            DataModel::Document
-        );
-
-        // CREATE with explicit USING DOCUMENT
-        assert_eq!(
-            multimodal_router::detect_store_type_from_create(
-                "CREATE TABLE catalog (id TEXT, payload JSON) USING DOCUMENT",
-            ),
-            DataModel::Document
-        );
-    }
-
-    #[test]
-    fn test_store_type_detection_graph() {
-        // Graph tables detected by graph_ prefix
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM graph_social WHERE node_type = 'person'",
-                "graph_social",
-                None,
-            ),
-            DataModel::Graph
-        );
-
-        // node_ prefix
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM node_users",
-                "node_users",
-                None,
-            ),
-            DataModel::Graph
-        );
-
-        // edge_ prefix
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM edge_follows",
-                "edge_follows",
-                None,
-            ),
-            DataModel::Graph
-        );
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM GRAPH_QUERY('MATCH (n:Agent)-[:CALLS]->(m) RETURN m')",
-                "agent_queries",
-                None,
-            ),
-            DataModel::Graph
-        );
-
-        // CREATE with explicit USING GRAPH
-        assert_eq!(
-            multimodal_router::detect_store_type_from_create(
-                "CREATE TABLE social_network (id TEXT) USING GRAPH",
-            ),
-            DataModel::Graph
-        );
-    }
-
-    #[test]
-    fn test_store_type_detection_observability() {
-        // log_ prefix -> Observability
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM log_application WHERE severity = 'error'",
-                "log_application",
-                None,
-            ),
-            DataModel::Observability
-        );
-
-        // metric_ prefix -> Observability
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM metric_http_requests",
-                "metric_http_requests",
-                None,
-            ),
-            DataModel::Observability
-        );
-
-        // trace_ prefix -> Observability
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM trace_spans WHERE service = 'gateway'",
-                "trace_spans",
-                None,
-            ),
-            DataModel::Observability
-        );
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM LOGS('production') WHERE severity = 'ERROR'",
-                "ops_queries",
-                None,
-            ),
-            DataModel::Observability
-        );
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM METRICS('system') WHERE metric_name = 'cpu_usage'",
-                "ops_queries",
-                None,
-            ),
-            DataModel::Observability
-        );
-
-        // CREATE with USING OBSERVABILITY
-        assert_eq!(
-            multimodal_router::detect_store_type_from_create(
-                "CREATE TABLE system_logs (ts TIMESTAMP, msg TEXT) USING OBSERVABILITY",
-            ),
-            DataModel::Observability
-        );
-
-        // CREATE with USING TIMESERIES (also maps to Observability)
-        assert_eq!(
-            multimodal_router::detect_store_type_from_create(
-                "CREATE TABLE sensor_data (ts TIMESTAMP, value FLOAT) USING TIMESERIES",
-            ),
-            DataModel::Observability
-        );
-    }
-
-    #[test]
-    fn test_store_type_detection_relational() {
-        // Standard SQL without any special markers -> Relational (default)
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT id, name, email FROM users WHERE active = true",
-                "users",
-                None,
-            ),
-            DataModel::Relational
-        );
-
-        // CREATE TABLE without USING clause or special column types
-        assert_eq!(
-            multimodal_router::detect_store_type_from_create(
-                "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255), email TEXT)",
-            ),
-            DataModel::Relational
-        );
-
-        // Verify priority: vector operators override table name prefix
-        // Even with a graph_ prefix, <-> forces Vector detection
-        assert_eq!(
-            multimodal_router::detect_store_type_from_query(
-                "SELECT * FROM graph_nodes ORDER BY embedding <-> '[0.1]' LIMIT 5",
-                "graph_nodes",
-                None,
-            ),
-            DataModel::Vector
-        );
-    }
-
-    #[test]
-    fn test_frontend_message_types() {
-        // Verify all FrontendMessage enum byte values match PostgreSQL protocol spec
-        assert_eq!(FrontendMessage::Startup as u8, 0);
-        assert_eq!(FrontendMessage::Query as u8, b'Q'); // 0x51
-        assert_eq!(FrontendMessage::Parse as u8, b'P'); // 0x50
-        assert_eq!(FrontendMessage::Bind as u8, b'B'); // 0x42
-        assert_eq!(FrontendMessage::Execute as u8, b'E'); // 0x45
-        assert_eq!(FrontendMessage::Describe as u8, b'D'); // 0x44
-        assert_eq!(FrontendMessage::Sync as u8, b'S'); // 0x53
-        assert_eq!(FrontendMessage::Flush as u8, b'H'); // 0x48
-        assert_eq!(FrontendMessage::Close as u8, b'C'); // 0x43
-        assert_eq!(FrontendMessage::Password as u8, b'p'); // 0x70
-        assert_eq!(FrontendMessage::Terminate as u8, b'X'); // 0x58
-        assert_eq!(FrontendMessage::CopyData as u8, b'd'); // 0x64
-        assert_eq!(FrontendMessage::CopyDone as u8, b'c'); // 0x63
-        assert_eq!(FrontendMessage::CopyFail as u8, b'f'); // 0x66
-
-        // Verify exact hex values for key protocol messages
-        assert_eq!(FrontendMessage::Query as u8, 0x51);
-        assert_eq!(FrontendMessage::Parse as u8, 0x50);
-        assert_eq!(FrontendMessage::Bind as u8, 0x42);
-        assert_eq!(FrontendMessage::Terminate as u8, 0x58);
-    }
-
-    #[test]
-    fn execute_max_rows_maps_to_truncating_execution_controls() {
-        let unlimited = PostgresProtocol::execution_controls_for_execute_max_rows(0);
-        assert_eq!(unlimited.max_rows, None);
-        assert_eq!(unlimited.row_limit_mode, RowLimitMode::Error);
-
-        let negative = PostgresProtocol::execution_controls_for_execute_max_rows(-1);
-        assert_eq!(negative.max_rows, None);
-        assert_eq!(negative.row_limit_mode, RowLimitMode::Error);
-
-        let capped = PostgresProtocol::execution_controls_for_execute_max_rows(5);
-        assert_eq!(capped.max_rows, Some(5));
-        assert_eq!(capped.row_limit_mode, RowLimitMode::Truncate);
-    }
-
-    #[test]
-    fn portal_page_bounds_reports_suspended_and_complete_pages() {
-        let (end, complete) = PostgresProtocol::portal_page_bounds(5, 0, 2);
-        assert_eq!(end, 2);
-        assert!(!complete);
-
-        let (end, complete) = PostgresProtocol::portal_page_bounds(5, 2, 3);
-        assert_eq!(end, 5);
-        assert!(complete);
-
-        let (end, complete) = PostgresProtocol::portal_page_bounds(5, 5, 2);
-        assert_eq!(end, 5);
-        assert!(complete);
-    }
-
-    #[test]
-    fn portal_page_bounds_treats_zero_budget_as_unlimited() {
-        let (end, complete) = PostgresProtocol::portal_page_bounds(5, 1, 0);
-        assert_eq!(end, 5);
-        assert!(complete);
-    }
-
-    #[test]
-    fn test_copy_format_detection() {
-        // CopyFormat is private, so we test the detect_copy_format delegation path
-        // by verifying the enum values and their properties directly.
-        assert_eq!(CopyFormat::Text, CopyFormat::Text);
-        assert_eq!(CopyFormat::Csv, CopyFormat::Csv);
-        assert_eq!(CopyFormat::Binary, CopyFormat::Binary);
-        assert_eq!(CopyFormat::Arrow, CopyFormat::Arrow);
-
-        // All four variants are distinct
-        assert_ne!(CopyFormat::Text, CopyFormat::Csv);
-        assert_ne!(CopyFormat::Text, CopyFormat::Binary);
-        assert_ne!(CopyFormat::Text, CopyFormat::Arrow);
-        assert_ne!(CopyFormat::Csv, CopyFormat::Binary);
-        assert_ne!(CopyFormat::Csv, CopyFormat::Arrow);
-        assert_ne!(CopyFormat::Binary, CopyFormat::Arrow);
-
-        // Verify the detection logic inline (mirrors detect_copy_format)
-        let detect = |query: &str| -> CopyFormat {
-            let upper = query.to_uppercase();
-            if upper.contains("FORMAT ARROW") || upper.contains("FORMAT 'ARROW'") {
-                CopyFormat::Arrow
-            } else if upper.contains("FORMAT CSV") || upper.contains("FORMAT 'CSV'") {
-                CopyFormat::Csv
-            } else if upper.contains("FORMAT BINARY") || upper.contains("FORMAT 'BINARY'") {
-                CopyFormat::Binary
-            } else {
-                CopyFormat::Text
+/// Substitute `$N` placeholders in `query` with the rendered parameter values in
+/// a single left-to-right pass. `rendered[N-1]` is the parameter's textual value
+/// (`None` = SQL NULL); present values are emitted as quoted, `''`-escaped string
+/// literals (implicit-cast in the SQL layer, matching the historical behavior).
+///
+/// Correctness properties the old ordered `str::replace` lacked:
+/// - Each `$N` is matched by its **full digit run**, so `$10` is never clobbered
+///   by the `$1` substitution, and a substituted value that itself contains a
+///   `$K` sequence is never re-substituted (single forward pass).
+/// - `$N` inside single-quoted string literals is left untouched.
+/// - UTF-8 is preserved (verbatim spans are copied as `&str` slices).
+///
+/// An out-of-range or unparsable `$N` is passed through verbatim.
+fn substitute_placeholders(query: &str, rendered: &[Option<String>]) -> String {
+    let bytes = query.as_bytes();
+    let mut out = String::with_capacity(query.len() + 16);
+    let mut last = 0usize; // start of the not-yet-copied verbatim span
+    let mut i = 0usize;
+    let mut in_squote = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_squote {
+            if c == b'\'' {
+                // '' is an escaped quote inside the literal — stay inside.
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    i += 2;
+                    continue;
+                }
+                in_squote = false;
             }
-        };
-
-        assert_eq!(
-            detect("COPY my_table FROM STDIN WITH (FORMAT ARROW)"),
-            CopyFormat::Arrow
-        );
-        assert_eq!(
-            detect("COPY my_table FROM STDIN WITH (FORMAT 'ARROW')"),
-            CopyFormat::Arrow
-        );
-        assert_eq!(
-            detect("COPY my_table FROM STDIN WITH (FORMAT CSV, HEADER true)"),
-            CopyFormat::Csv
-        );
-        assert_eq!(
-            detect("COPY my_table FROM STDIN WITH (FORMAT 'CSV')"),
-            CopyFormat::Csv
-        );
-        assert_eq!(
-            detect("COPY my_table FROM STDIN WITH (FORMAT BINARY)"),
-            CopyFormat::Binary
-        );
-        assert_eq!(
-            detect("COPY my_table FROM STDIN WITH (FORMAT 'BINARY')"),
-            CopyFormat::Binary
-        );
-        // Default is Text when no FORMAT clause
-        assert_eq!(detect("COPY my_table FROM STDIN"), CopyFormat::Text);
-        assert_eq!(
-            detect("COPY my_table FROM STDIN WITH (HEADER true)"),
-            CopyFormat::Text
-        );
-    }
-
-    // Note: a prior `test_extract_explain_inner_query_for_table_write`
-    // covered `PostgresProtocol::extract_explain_inner_query`, which
-    // was removed alongside `strip_explain_prefix` in clippy cleanup
-    // batch 14 (commit `555ed5b2a`). `extract_explain_with_analyze`
-    // is the surviving entry point and is exercised below.
-
-    #[test]
-    fn test_extract_explain_with_analyze_detects_analyze_flag() {
-        let (is_analyze, inner) = PostgresProtocol::extract_explain_with_analyze(
-            "EXPLAIN (ANALYZE, FORMAT JSON) INSERT INTO facts SELECT * FROM staging;",
-        )
-        .expect("analyze EXPLAIN should parse");
-
-        assert!(is_analyze, "ANALYZE option should be detected");
-        assert_eq!(inner, "INSERT INTO facts SELECT * FROM staging;");
-    }
-
-    #[test]
-    fn test_extract_explain_with_analyze_bare_analyze_keyword() {
-        let (is_analyze, inner) = PostgresProtocol::extract_explain_with_analyze(
-            "EXPLAIN ANALYZE INSERT INTO facts SELECT * FROM staging;",
-        )
-        .expect("bare EXPLAIN ANALYZE should parse");
-
-        assert!(is_analyze, "bare ANALYZE should be detected");
-        assert_eq!(inner, "INSERT INTO facts SELECT * FROM staging;");
-    }
-
-    #[test]
-    fn test_extract_explain_without_analyze_returns_false() {
-        let (is_analyze, inner) = PostgresProtocol::extract_explain_with_analyze(
-            "EXPLAIN (FORMAT JSON) INSERT INTO facts SELECT * FROM staging;",
-        )
-        .expect("plain EXPLAIN should parse");
-
-        assert!(!is_analyze, "no ANALYZE option — flag should be false");
-        assert_eq!(inner, "INSERT INTO facts SELECT * FROM staging;");
-    }
-
-    #[test]
-    fn test_parse_set_parameter_for_write_intent_hint() {
-        let (name, value) = PostgresProtocol::parse_set_parameter(
-            "SET proximadb.write.row_count_hint = '100_000';",
-        )
-        .expect("SET should parse");
-
-        assert_eq!(name, "proximadb.write.row_count_hint");
-        assert_eq!(value, "100_000");
-    }
-
-    #[test]
-    fn test_parse_set_parameter_supports_to_syntax() {
-        let (name, value) = PostgresProtocol::parse_set_parameter(
-            "SET proximadb.write.batch_local_constraints_sufficient TO on;",
-        )
-        .expect("SET TO should parse");
-
-        assert_eq!(name, "proximadb.write.batch_local_constraints_sufficient");
-        assert_eq!(value, "on");
-    }
-
-    #[test]
-    fn test_write_intent_overrides_from_session_parameters() {
-        let params = std::collections::HashMap::from([
-            (
-                "proximadb.write.tenant_id".to_string(),
-                "tenant-a".to_string(),
-            ),
-            ("proximadb.write.actor".to_string(), "benchbase".to_string()),
-            (
-                "proximadb.write.row_count_hint".to_string(),
-                "100_000".to_string(),
-            ),
-            (
-                "proximadb.write.estimated_bytes".to_string(),
-                "4096".to_string(),
-            ),
-            (
-                "proximadb.write.requires_row_level_semantics".to_string(),
-                "off".to_string(),
-            ),
-            (
-                "proximadb.write.batch_local_constraints_sufficient".to_string(),
-                "true".to_string(),
-            ),
-        ]);
-
-        let overrides = PostgresProtocol::write_intent_overrides_from_params(&params);
-
-        assert_eq!(overrides.tenant_id.as_deref(), Some("tenant-a"));
-        assert_eq!(overrides.actor.as_deref(), Some("benchbase"));
-        assert_eq!(overrides.row_count_hint, Some(100_000));
-        assert_eq!(overrides.estimated_bytes, Some(4096));
-        assert_eq!(overrides.requires_row_level_semantics, Some(false));
-        assert_eq!(overrides.batch_local_constraints_sufficient, Some(true));
-    }
-
-    #[test]
-    fn test_extract_select_limit_for_relational_scan() {
-        assert_eq!(
-            PostgresProtocol::extract_select_limit("SELECT * FROM t LIMIT 25;"),
-            Some(25)
-        );
-        assert_eq!(
-            PostgresProtocol::extract_select_limit("SELECT * FROM t ORDER BY id"),
-            None
-        );
-    }
-
-    #[test]
-    fn test_extract_selected_column_names_for_relational_select() {
-        assert!(
-            PostgresProtocol::extract_selected_column_names("SELECT * FROM customers").is_empty()
-        );
-        assert_eq!(
-            PostgresProtocol::extract_selected_column_names(
-                "SELECT c_id, customers.c_name AS name FROM customers WHERE c_id = 1"
-            ),
-            vec!["c_id".to_string(), "c_name".to_string()]
-        );
-    }
-
-    #[test]
-    fn test_extract_select_where_predicates_for_relational_scan() {
-        let predicates = PostgresProtocol::extract_select_where_predicates(
-            "SELECT * FROM customers WHERE c_name = 'alice updated' AND c_active = true LIMIT 1;",
-        )
-        .expect("simple AND predicates should parse");
-
-        assert_eq!(predicates.len(), 2);
-        assert_eq!(predicates[0].column_name, "c_name");
-        match &predicates[0].condition {
-            SelectPredicateCondition::Comparison { operator, literal } => {
-                assert_eq!(*operator, SelectPredicateOperator::Equal);
-                assert_eq!(literal, "alice updated");
-            }
-            other => panic!("unexpected predicate: {other:?}"),
+            i += 1;
+            continue;
         }
-        assert_eq!(predicates[1].column_name, "c_active");
-        match &predicates[1].condition {
-            SelectPredicateCondition::Comparison { literal, .. } => {
-                assert_eq!(literal, "true");
+        match c {
+            b'\'' => {
+                in_squote = true;
+                i += 1;
             }
-            other => panic!("unexpected predicate: {other:?}"),
+            b'$' if i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() => {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if let Ok(num) = query[i + 1..j].parse::<usize>()
+                    && num >= 1
+                    && num <= rendered.len()
+                {
+                    out.push_str(&query[last..i]);
+                    match &rendered[num - 1] {
+                        Some(v) => {
+                            out.push('\'');
+                            out.push_str(&v.replace('\'', "''"));
+                            out.push('\'');
+                        }
+                        None => out.push_str("NULL"),
+                    }
+                    last = j;
+                }
+                i = j;
+            }
+            _ => i += 1,
         }
     }
+    out.push_str(&query[last..]);
+    out
+}
 
-    #[test]
-    fn test_extract_select_where_in_like_and_null_predicates() {
-        let predicates = PostgresProtocol::extract_select_where_predicates(
-            "SELECT * FROM customers WHERE c_id IN (1, 2) AND c_name LIKE 'alice%' AND c_notes IS NULL;",
-        )
-        .expect("IN, LIKE, and IS NULL predicates should parse");
-
-        assert_eq!(predicates.len(), 3);
-        match &predicates[0].condition {
-            SelectPredicateCondition::In { literals, negated } => {
-                assert!(!negated);
-                assert_eq!(literals, &vec!["1".to_string(), "2".to_string()]);
-            }
-            other => panic!("unexpected predicate: {other:?}"),
-        }
-        match &predicates[1].condition {
-            SelectPredicateCondition::Like { pattern, negated } => {
-                assert!(!negated);
-                assert_eq!(pattern, "alice%");
-            }
-            other => panic!("unexpected predicate: {other:?}"),
-        }
-        match &predicates[2].condition {
-            SelectPredicateCondition::IsNull { negated } => assert!(!negated),
-            other => panic!("unexpected predicate: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_record_matches_relational_scan_predicates() {
-        let record = ProximaRecord {
-            oid: "1".to_string(),
-            props: proximadb_records::ProximaTree::from([
-                (
-                    "name".to_string(),
-                    ProximaTreeNode::Value(ProximaValue::String("alice".to_string())),
-                ),
-                (
-                    "balance".to_string(),
-                    ProximaTreeNode::Value(ProximaValue::Decimal("75.25".to_string())),
-                ),
-                (
-                    "active".to_string(),
-                    ProximaTreeNode::Value(ProximaValue::Boolean(true)),
-                ),
-            ]),
-            ..Default::default()
-        };
-        let schema = CatalogTableSchema::new("customers")
-            .with_column(CatalogColumn::new(1, "id", ProximaType::Int32))
-            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
-            .with_column(CatalogColumn::new(
-                3,
-                "balance",
-                ProximaType::Decimal {
-                    precision: 38,
-                    scale: 10,
-                },
+/// Decode a **binary-format** (format code 1) bound parameter into its textual
+/// representation, per the parameter's PostgreSQL type. Integers/floats are
+/// big-endian per the wire protocol; text-like types pass through as UTF-8.
+/// Returns an error (surfaced to the client as SQLSTATE 22P03) for types whose
+/// binary layout we do not decode — better than silently mangling the value,
+/// which the previous UTF-8-only path did.
+fn decode_binary_param(bytes: &[u8], ty: &PgType) -> std::result::Result<String, String> {
+    let fixed = |n: usize| -> std::result::Result<(), String> {
+        if bytes.len() == n {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} expects {n} bytes, got {}",
+                ty.name(),
+                bytes.len()
             ))
-            .with_column(CatalogColumn::new(4, "active", ProximaType::Boolean))
-            .with_primary_key(vec!["id".to_string()]);
-        let predicates = vec![
-            SelectPredicate {
-                column_name: "name".to_string(),
-                condition: SelectPredicateCondition::Comparison {
-                    operator: SelectPredicateOperator::Equal,
-                    literal: "alice".to_string(),
-                },
-            },
-            SelectPredicate {
-                column_name: "balance".to_string(),
-                condition: SelectPredicateCondition::Comparison {
-                    operator: SelectPredicateOperator::GreaterThanOrEqual,
-                    literal: "75.00".to_string(),
-                },
-            },
-            SelectPredicate {
-                column_name: "active".to_string(),
-                condition: SelectPredicateCondition::Comparison {
-                    operator: SelectPredicateOperator::Equal,
-                    literal: "true".to_string(),
-                },
-            },
-        ];
-
-        assert!(
-            DmlService::record_matches_select_predicate_inputs(&record, &schema, &predicates)
-                .expect("predicates should resolve")
-        );
-    }
-
-    #[test]
-    fn test_record_matches_in_like_and_null_relational_scan_predicates() {
-        let record = ProximaRecord {
-            oid: "1".to_string(),
-            props: proximadb_records::ProximaTree::from([
-                (
-                    "name".to_string(),
-                    ProximaTreeNode::Value(ProximaValue::String("alice updated".to_string())),
-                ),
-                (
-                    "active".to_string(),
-                    ProximaTreeNode::Value(ProximaValue::Boolean(true)),
-                ),
-            ]),
-            ..Default::default()
-        };
-        let schema = CatalogTableSchema::new("customers")
-            .with_column(CatalogColumn::new(1, "id", ProximaType::Int32))
-            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
-            .with_column(CatalogColumn::new(3, "notes", ProximaType::String))
-            .with_primary_key(vec!["id".to_string()]);
-        let predicates = vec![
-            SelectPredicate {
-                column_name: "id".to_string(),
-                condition: SelectPredicateCondition::In {
-                    literals: vec!["1".to_string(), "2".to_string()],
-                    negated: false,
-                },
-            },
-            SelectPredicate {
-                column_name: "name".to_string(),
-                condition: SelectPredicateCondition::Like {
-                    pattern: "alice%".to_string(),
-                    negated: false,
-                },
-            },
-            SelectPredicate {
-                column_name: "notes".to_string(),
-                condition: SelectPredicateCondition::IsNull { negated: false },
-            },
-        ];
-
-        assert!(
-            DmlService::record_matches_select_predicate_inputs(&record, &schema, &predicates)
-                .expect("predicates should resolve")
-        );
-    }
-
-    #[test]
-    fn test_record_matches_not_in_rejects_excluded_values() {
-        let schema = CatalogTableSchema::new("orders")
-            .with_column(CatalogColumn::new(1, "id", ProximaType::Int32))
-            .with_column(CatalogColumn::new(2, "status", ProximaType::String))
-            .with_primary_key(vec!["id".to_string()]);
-
-        // Record with id=5 should be rejected by NOT IN (1, 2, 5) predicate.
-        let excluded_record = ProximaRecord {
-            oid: "5".to_string(),
-            ..Default::default()
-        };
-        let predicates = vec![SelectPredicate {
-            column_name: "id".to_string(),
-            condition: SelectPredicateCondition::In {
-                literals: vec!["1".to_string(), "2".to_string(), "5".to_string()],
-                negated: true,
-            },
-        }];
-        assert!(
-            !DmlService::record_matches_select_predicate_inputs(
-                &excluded_record,
-                &schema,
-                &predicates
-            )
-            .expect("NOT IN must resolve"),
-            "record with id in the excluded list must not match NOT IN"
-        );
-
-        // Record with id=99 should pass NOT IN (1, 2, 5).
-        let passing_record = ProximaRecord {
-            oid: "99".to_string(),
-            ..Default::default()
-        };
-        assert!(
-            DmlService::record_matches_select_predicate_inputs(
-                &passing_record,
-                &schema,
-                &predicates
-            )
-            .expect("NOT IN must resolve"),
-            "record with id not in the excluded list must match NOT IN"
-        );
-    }
-
-    #[test]
-    fn test_record_matches_is_not_null_accepts_present_field_rejects_absent() {
-        let schema = CatalogTableSchema::new("users")
-            .with_column(CatalogColumn::new(1, "id", ProximaType::String))
-            .with_column(CatalogColumn::new(2, "email", ProximaType::String))
-            .with_primary_key(vec!["id".to_string()]);
-
-        let predicates = vec![SelectPredicate {
-            column_name: "email".to_string(),
-            condition: SelectPredicateCondition::IsNull { negated: true },
-        }];
-
-        // Record WITH email field → matches IS NOT NULL.
-        let with_email = ProximaRecord {
-            oid: "u1".to_string(),
-            props: proximadb_records::ProximaTree::from([(
-                "email".to_string(),
-                ProximaTreeNode::Value(ProximaValue::String("u@example.com".to_string())),
-            )]),
-            ..Default::default()
-        };
-        assert!(
-            DmlService::record_matches_select_predicate_inputs(&with_email, &schema, &predicates)
-                .expect("IS NOT NULL must resolve"),
-            "record with email present must match IS NOT NULL"
-        );
-
-        // Record WITHOUT email field → must NOT match IS NOT NULL.
-        let without_email = ProximaRecord {
-            oid: "u2".to_string(),
-            ..Default::default()
-        };
-        assert!(
-            !DmlService::record_matches_select_predicate_inputs(
-                &without_email,
-                &schema,
-                &predicates
-            )
-            .expect("IS NOT NULL must resolve"),
-            "record with absent email must not match IS NOT NULL"
-        );
-    }
-
-    #[test]
-    fn test_extract_vector_dimension() {
-        // extract_vector_dimension is a method on PostgresProtocol which requires
-        // a full instance with TcpStream. Instead, test the parsing logic directly
-        // since it's a pure string operation.
-        let extract = |query: &str| -> Option<u32> {
-            let vector_pos = query.find("VECTOR(")?;
-            let after_vector = &query[vector_pos + 7..];
-            let dim_end = after_vector.find(')')?;
-            after_vector[..dim_end].trim().parse().ok()
-        };
-
-        // Standard dimension extraction
-        assert_eq!(
-            extract("CREATE TABLE items (id TEXT, embedding VECTOR(384))"),
-            Some(384)
-        );
-        assert_eq!(
-            extract("CREATE TABLE docs (id TEXT, vec VECTOR(128))"),
-            Some(128)
-        );
-        assert_eq!(
-            extract("CREATE TABLE large (id TEXT, emb VECTOR(1536))"),
-            Some(1536)
-        );
-
-        // Small dimension
-        assert_eq!(extract("CREATE TABLE tiny (id TEXT, v VECTOR(2))"), Some(2));
-
-        // Whitespace around number
-        assert_eq!(
-            extract("CREATE TABLE ws (id TEXT, v VECTOR( 256 ))"),
-            Some(256)
-        );
-
-        // No VECTOR column -> None
-        assert_eq!(extract("CREATE TABLE plain (id INT, name TEXT)"), None);
-
-        // Malformed (no closing paren) -> None
-        assert_eq!(extract("CREATE TABLE broken (id TEXT, v VECTOR("), None);
-
-        // Non-numeric content -> None
-        assert_eq!(
-            extract("CREATE TABLE broken (id TEXT, v VECTOR(abc))"),
-            None
-        );
-    }
-
-    #[test]
-    fn test_or_predicate_same_column_folds_to_in() {
-        let predicates = PostgresProtocol::extract_select_where_predicates(
-            "SELECT c_id, c_name FROM pgwire_smoke_customer WHERE c_id = 1 OR c_id = 2;",
-        )
-        .expect("single-column OR should fold to IN");
-
-        assert_eq!(predicates.len(), 1);
-        assert_eq!(predicates[0].column_name, "c_id");
-        match &predicates[0].condition {
-            SelectPredicateCondition::In { literals, negated } => {
-                assert!(!negated);
-                assert_eq!(literals, &vec!["1".to_string(), "2".to_string()]);
-            }
-            other => panic!("expected In, got: {other:?}"),
         }
-    }
-
-    #[test]
-    fn test_or_predicate_three_values_folds_to_in() {
-        let predicates = PostgresProtocol::extract_select_where_predicates(
-            "SELECT * FROM orders WHERE status = 'N' OR status = 'P' OR status = 'C';",
-        )
-        .expect("three-value OR on same column should fold");
-
-        assert_eq!(predicates.len(), 1);
-        match &predicates[0].condition {
-            SelectPredicateCondition::In { literals, .. } => {
-                assert_eq!(
-                    literals,
-                    &vec!["N".to_string(), "P".to_string(), "C".to_string()]
-                );
-            }
-            other => panic!("expected In, got: {other:?}"),
+    };
+    match ty {
+        PgType::Bool => {
+            fixed(1)?;
+            Ok(if bytes[0] == 0 { "false" } else { "true" }.to_string())
         }
-    }
-
-    #[test]
-    fn test_or_predicate_multi_column_falls_back_to_full_scan() {
-        // Different columns: col1 = v1 OR col2 = v2 — cannot fold, returns None → full scan
-        let result = PostgresProtocol::extract_select_where_predicates(
-            "SELECT * FROM t WHERE col1 = 1 OR col2 = 2;",
-        );
-        assert!(
-            result.is_none(),
-            "multi-column OR should return None (full scan)"
-        );
-    }
-
-    #[test]
-    fn test_or_predicate_non_equality_falls_back_to_full_scan() {
-        // OR with non-equality: col > v1 OR col < v2 — cannot fold
-        let result = PostgresProtocol::extract_select_where_predicates(
-            "SELECT * FROM t WHERE col > 5 OR col < 0;",
-        );
-        assert!(
-            result.is_none(),
-            "non-equality OR should return None (full scan)"
-        );
-    }
-
-    #[test]
-    fn test_and_chain_with_in_predicate_parses_correctly() {
-        // AND-chain: one IN predicate + one equality — both must be extracted
-        let result = PostgresProtocol::extract_select_where_predicates(
-            "SELECT * FROM t WHERE c_id IN (1, 2, 3) AND c_active = true;",
-        );
-        let predicates = result.expect("AND chain with IN must parse");
-        assert_eq!(predicates.len(), 2);
-        let in_pred = predicates
-            .iter()
-            .find(|p| p.column_name.eq_ignore_ascii_case("c_id"))
-            .expect("IN predicate for c_id must be present");
-        match &in_pred.condition {
-            SelectPredicateCondition::In { literals, negated } => {
-                assert!(!negated);
-                assert_eq!(literals.len(), 3);
-            }
-            other => panic!("expected In condition, got {:?}", other),
+        PgType::Int2 => {
+            fixed(2)?;
+            Ok(i16::from_be_bytes([bytes[0], bytes[1]]).to_string())
         }
-        let eq_pred = predicates
-            .iter()
-            .find(|p| p.column_name.eq_ignore_ascii_case("c_active"))
-            .expect("equality predicate for c_active must be present");
-        match &eq_pred.condition {
-            SelectPredicateCondition::Comparison { literal, .. } => {
-                assert_eq!(literal, "true");
-            }
-            other => panic!("expected Comparison condition, got {:?}", other),
+        PgType::Int4 => {
+            fixed(4)?;
+            Ok(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).to_string())
         }
-    }
-
-    #[test]
-    fn test_and_chain_with_is_null_predicate() {
-        let result = PostgresProtocol::extract_select_where_predicates(
-            "SELECT * FROM t WHERE label IS NULL AND c_id = 5;",
-        );
-        let predicates = result.expect("AND chain with IS NULL must parse");
-        assert_eq!(predicates.len(), 2);
-        let null_pred = predicates
-            .iter()
-            .find(|p| p.column_name.eq_ignore_ascii_case("label"))
-            .expect("IS NULL predicate for label must be present");
-        match &null_pred.condition {
-            SelectPredicateCondition::IsNull { negated } => {
-                assert!(!negated, "IS NULL must not be negated");
-            }
-            other => panic!("expected IsNull condition, got {:?}", other),
+        PgType::Int8 => {
+            fixed(8)?;
+            let mut a = [0u8; 8];
+            a.copy_from_slice(bytes);
+            Ok(i64::from_be_bytes(a).to_string())
         }
-    }
-
-    #[test]
-    fn test_and_chain_with_like_predicate_parses_correctly() {
-        let result = PostgresProtocol::extract_select_where_predicates(
-            "SELECT * FROM t WHERE label LIKE 'prefix%' AND c_id = 5;",
-        );
-        let predicates = result.expect("AND chain with LIKE must parse");
-        assert_eq!(predicates.len(), 2);
-        let like_pred = predicates
-            .iter()
-            .find(|p| p.column_name.eq_ignore_ascii_case("label"))
-            .expect("LIKE predicate for label must be present");
-        match &like_pred.condition {
-            SelectPredicateCondition::Like { pattern, negated } => {
-                assert_eq!(pattern, "prefix%");
-                assert!(!negated, "LIKE must not be negated");
-            }
-            other => panic!("expected Like condition, got {:?}", other),
+        PgType::Float4 => {
+            fixed(4)?;
+            Ok(f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).to_string())
         }
-        let id_pred = predicates
-            .iter()
-            .find(|p| p.column_name.eq_ignore_ascii_case("c_id"))
-            .expect("comparison predicate for c_id must be present");
-        assert!(matches!(
-            &id_pred.condition,
-            SelectPredicateCondition::Comparison { literal, .. } if literal == "5"
-        ));
-    }
-
-    #[test]
-    fn test_and_chain_with_is_not_null_predicate() {
-        let result = PostgresProtocol::extract_select_where_predicates(
-            "SELECT * FROM t WHERE label IS NOT NULL AND c_active = true;",
-        );
-        let predicates = result.expect("AND chain with IS NOT NULL must parse");
-        assert_eq!(predicates.len(), 2);
-        let not_null_pred = predicates
-            .iter()
-            .find(|p| p.column_name.eq_ignore_ascii_case("label"))
-            .expect("IS NOT NULL predicate for label must be present");
-        match &not_null_pred.condition {
-            SelectPredicateCondition::IsNull { negated } => {
-                assert!(*negated, "IS NOT NULL must be negated=true");
-            }
-            other => panic!("expected IsNull(negated=true) condition, got {:?}", other),
+        PgType::Float8 => {
+            fixed(8)?;
+            let mut a = [0u8; 8];
+            a.copy_from_slice(bytes);
+            Ok(f64::from_be_bytes(a).to_string())
         }
-    }
-
-    #[test]
-    fn test_and_chain_with_not_in_predicate_parses_correctly() {
-        let result = PostgresProtocol::extract_select_where_predicates(
-            "SELECT * FROM t WHERE c_id NOT IN (10, 20, 30) AND c_active = false;",
-        );
-        let predicates = result.expect("AND chain with NOT IN must parse");
-        assert_eq!(predicates.len(), 2);
-        let not_in_pred = predicates
-            .iter()
-            .find(|p| p.column_name.eq_ignore_ascii_case("c_id"))
-            .expect("NOT IN predicate for c_id must be present");
-        match &not_in_pred.condition {
-            SelectPredicateCondition::In { literals, negated } => {
-                assert_eq!(literals.len(), 3);
-                assert!(*negated, "NOT IN must be negated=true");
-            }
-            other => panic!("expected In(negated=true) condition, got {:?}", other),
+        PgType::Text | PgType::Varchar | PgType::Json | PgType::Jsonb | PgType::Uuid => {
+            Ok(String::from_utf8_lossy(bytes).into_owned())
         }
-    }
-
-    // === ADR-018 Phase 2: IF NOT EXISTS tests ===
-
-    #[test]
-    fn test_create_table_without_if_not_exists() {
-        let upper = "CREATE TABLE users (id TEXT, name TEXT)";
-        assert!(!upper.contains("IF NOT EXISTS"));
-    }
-
-    #[test]
-    fn test_create_table_with_if_not_exists() {
-        let upper = "CREATE TABLE IF NOT EXISTS users (id TEXT, name TEXT)";
-        assert!(upper.contains("IF NOT EXISTS"));
-    }
-
-    #[test]
-    fn test_drop_table_without_if_exists() {
-        let upper = "DROP TABLE users";
-        assert!(!upper.contains("IF EXISTS"));
-    }
-
-    #[test]
-    fn test_drop_table_with_if_exists() {
-        let upper = "DROP TABLE IF EXISTS users";
-        assert!(upper.contains("IF EXISTS"));
-    }
-
-    // ---------------- ADR-018 Phase 2: multi-column ORDER BY ----------------
-
-    #[test]
-    fn order_by_single_column_default_asc_nulls_last() {
-        let keys = PostgresProtocol::extract_select_order_by("SELECT * FROM t ORDER BY name")
-            .expect("single-col ORDER BY must parse");
-        assert_eq!(keys.len(), 1);
-        assert_eq!(keys[0].column, "name");
-        assert!(!keys[0].desc);
-        // Postgres default: ASC → NULLS LAST.
-        assert!(!keys[0].nulls_first);
-    }
-
-    #[test]
-    fn order_by_explicit_desc_default_nulls_first() {
-        let keys = PostgresProtocol::extract_select_order_by("SELECT * FROM t ORDER BY score DESC")
-            .unwrap();
-        assert_eq!(keys.len(), 1);
-        assert_eq!(keys[0].column, "score");
-        assert!(keys[0].desc);
-        // Postgres default: DESC → NULLS FIRST.
-        assert!(keys[0].nulls_first);
-    }
-
-    #[test]
-    fn order_by_explicit_nulls_first_overrides_default() {
-        let keys = PostgresProtocol::extract_select_order_by(
-            "SELECT * FROM t ORDER BY score ASC NULLS FIRST",
-        )
-        .unwrap();
-        assert_eq!(keys.len(), 1);
-        assert!(!keys[0].desc);
-        // Override: NULLS FIRST under ASC.
-        assert!(keys[0].nulls_first);
-    }
-
-    #[test]
-    fn order_by_explicit_nulls_last_overrides_default() {
-        let keys = PostgresProtocol::extract_select_order_by(
-            "SELECT * FROM t ORDER BY score DESC NULLS LAST",
-        )
-        .unwrap();
-        assert_eq!(keys.len(), 1);
-        assert!(keys[0].desc);
-        // Override: NULLS LAST under DESC.
-        assert!(!keys[0].nulls_first);
-    }
-
-    #[test]
-    fn order_by_multi_column_preserves_declaration_order() {
-        let keys = PostgresProtocol::extract_select_order_by(
-            "SELECT * FROM t ORDER BY name ASC, score DESC, created_at",
-        )
-        .expect("multi-col ORDER BY must parse (Phase 2)");
-        assert_eq!(keys.len(), 3);
-        assert_eq!(keys[0].column, "name");
-        assert!(!keys[0].desc);
-        assert_eq!(keys[1].column, "score");
-        assert!(keys[1].desc);
-        assert_eq!(keys[2].column, "created_at");
-        assert!(!keys[2].desc);
-    }
-
-    #[test]
-    fn order_by_multi_column_per_key_nulls() {
-        let keys = PostgresProtocol::extract_select_order_by(
-            "SELECT * FROM t ORDER BY a NULLS FIRST, b DESC NULLS LAST",
-        )
-        .unwrap();
-        assert_eq!(keys.len(), 2);
-        assert!(keys[0].nulls_first); // explicit NULLS FIRST on ASC
-        assert!(!keys[1].nulls_first); // explicit NULLS LAST on DESC
-    }
-
-    #[test]
-    fn order_by_terminates_at_limit() {
-        let keys =
-            PostgresProtocol::extract_select_order_by("SELECT * FROM t ORDER BY name LIMIT 10")
-                .unwrap();
-        assert_eq!(keys.len(), 1);
-        assert_eq!(keys[0].column, "name");
-    }
-
-    #[test]
-    fn order_by_terminates_at_offset() {
-        let keys =
-            PostgresProtocol::extract_select_order_by("SELECT * FROM t ORDER BY name OFFSET 5")
-                .unwrap();
-        assert_eq!(keys.len(), 1);
-        assert_eq!(keys[0].column, "name");
-    }
-
-    #[test]
-    fn order_by_no_clause_returns_none() {
-        assert!(PostgresProtocol::extract_select_order_by("SELECT * FROM t").is_none(),);
-    }
-
-    #[test]
-    fn split_top_level_commas_respects_string_literals() {
-        let parts = PostgresProtocol::split_top_level_commas("a, 'b, c', d");
-        assert_eq!(parts.len(), 3);
-        assert_eq!(parts[0].trim(), "a");
-        assert_eq!(parts[1].trim(), "'b, c'");
-        assert_eq!(parts[2].trim(), "d");
-    }
-
-    // ── Slice 6.3: primary-pod gate ─────────────────────────────────
-
-    use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
-
-    fn make_pgwire_gate(
-        registry: Arc<PrimaryPodRegistry>,
-        self_pod_id: &str,
-    ) -> Option<PgwirePrimaryPodGate> {
-        Some(PgwirePrimaryPodGate {
-            registry,
-            self_pod_id: self_pod_id.to_string(),
-        })
-    }
-
-    #[test]
-    fn pgwire_gate_unconfigured_allows_writes() {
-        let outcome = check_pgwire_primary_pod_gate(&None, "tenant-a", "users");
-        assert!(matches!(outcome, PgwireGateOutcome::Allow));
-    }
-
-    #[test]
-    fn pgwire_gate_allows_when_no_binding_exists() {
-        let registry = Arc::new(PrimaryPodRegistry::new());
-        let g = make_pgwire_gate(registry, "pod-self");
-        assert!(matches!(
-            check_pgwire_primary_pod_gate(&g, "tenant-a", "users"),
-            PgwireGateOutcome::Allow
-        ));
-    }
-
-    #[test]
-    fn pgwire_gate_allows_when_binding_matches_self_pod() {
-        let registry = Arc::new(PrimaryPodRegistry::new());
-        registry.assign("tenant-a", "users", "pod-self", AssignmentReason::Create);
-        let g = make_pgwire_gate(registry, "pod-self");
-        assert!(matches!(
-            check_pgwire_primary_pod_gate(&g, "tenant-a", "users"),
-            PgwireGateOutcome::Allow
-        ));
-    }
-
-    #[test]
-    fn pgwire_gate_returns_misrouted_with_target_pod() {
-        // The pgwire surface conveys the target pod by surfacing it
-        // in the SQLSTATE-57P03 error MESSAGE rather than trailing
-        // metadata (pgwire has no equivalent). The structured outcome
-        // here is what feeds that format!() call, so locking it in
-        // protects the operator-visible psql error text.
-        let registry = Arc::new(PrimaryPodRegistry::new());
-        registry.assign("tenant-a", "users", "pod-other", AssignmentReason::Operator);
-        let g = make_pgwire_gate(registry, "pod-self");
-
-        match check_pgwire_primary_pod_gate(&g, "tenant-a", "users") {
-            PgwireGateOutcome::Misrouted { target_pod } => {
-                assert_eq!(target_pod, "pod-other");
-            }
-            PgwireGateOutcome::Allow => panic!("expected misrouted, got allow"),
-        }
-    }
-
-    #[test]
-    fn pgwire_gate_scopes_per_tenant_collection_pair() {
-        // Same scoping invariant as the other gate surfaces — bindings
-        // don't bleed across (tenant_id, collection_id) pairs.
-        let registry = Arc::new(PrimaryPodRegistry::new());
-        registry.assign("tenant-a", "users", "pod-other", AssignmentReason::Operator);
-        let g = make_pgwire_gate(registry, "pod-self");
-
-        assert!(matches!(
-            check_pgwire_primary_pod_gate(&g, "tenant-a", "orders"),
-            PgwireGateOutcome::Allow
-        ));
-        assert!(matches!(
-            check_pgwire_primary_pod_gate(&g, "tenant-b", "users"),
-            PgwireGateOutcome::Allow
-        ));
-        assert!(matches!(
-            check_pgwire_primary_pod_gate(&g, "tenant-a", "users"),
-            PgwireGateOutcome::Misrouted { .. }
-        ));
+        PgType::Vector => decode_binary_vector(bytes),
+        other => Err(format!(
+            "binary format for parameter type '{}' is not supported",
+            other.name()
+        )),
     }
 }
+
+/// Decode a pgvector binary parameter (`int16 dim`, `int16 unused`, then
+/// `dim × big-endian float4`) into the `[a,b,c]` text literal the SQL layer
+/// parses.
+fn decode_binary_vector(bytes: &[u8]) -> std::result::Result<String, String> {
+    if bytes.len() < 4 {
+        return Err("vector binary too short for header".to_string());
+    }
+    let dim = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+    let expected = 4 + dim * 4;
+    if bytes.len() < expected {
+        return Err(format!(
+            "vector binary: expected {expected} bytes for dim {dim}, got {}",
+            bytes.len()
+        ));
+    }
+    let mut vals = Vec::with_capacity(dim);
+    let mut off = 4;
+    for _ in 0..dim {
+        vals.push(f32::from_be_bytes([
+            bytes[off],
+            bytes[off + 1],
+            bytes[off + 2],
+            bytes[off + 3],
+        ]));
+        off += 4;
+    }
+    let joined = vals
+        .iter()
+        .map(|f| f.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok(format!("[{joined}]"))
+}
+
+#[cfg(test)]
+#[path = "protocol_tests.rs"]
+mod tests;

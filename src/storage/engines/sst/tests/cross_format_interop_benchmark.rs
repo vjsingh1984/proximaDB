@@ -223,7 +223,7 @@ mod tests {
         let query_vector = vectors[0].vector.clone();
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector.clone()),
-            top_k: Some(vectors.len()), // Get all
+            top_k: Some(vectors.len() as u16), // Get all
             filters: None,
             filter_expression: None,
             ..Default::default()
@@ -332,7 +332,7 @@ mod tests {
         let query_vector = vectors[0].vector.clone();
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector.clone()),
-            top_k: Some(vectors.len()),
+            top_k: Some(vectors.len() as u16),
             filters: None,
             filter_expression: None,
             ..Default::default()
@@ -438,7 +438,7 @@ mod tests {
         let query_vector = vectors[0].vector.clone();
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector.clone()),
-            top_k: Some(vectors.len()),
+            top_k: Some(vectors.len() as u16),
             filters: None,
             filter_expression: None,
             ..Default::default()

@@ -4,38 +4,42 @@
 :icons: font
 
 [.lead]
-**Developer‑first multi‑model database for vectors, documents, graphs, and observability data**
+**Object-storage-native context serving for SQL, JSON, and vectors**
 
-ProximaDB lets builders store and query embeddings, JSON documents, graph relationships, and
-observability logs/metrics in one system. It is optimized for early‑stage product teams who want
-one data plane for RAG, code search, recommendation graphs, and telemetry prototypes.
+ProximaDB's MVP gives AI application teams one typed record and one canonical REST API for
+metadata-aware vector retrieval. The broader document, graph, time-series, event, observability,
+and SQL-extension architecture remains the product direction, but it graduates only through the
+link:docs/00-product/MVP_TRUST_CORRIDOR.toml[machine-checked MVP trust corridor].
 
 ---
 
 == Why Developers Use ProximaDB
 
-* **One API surface** for embeddings, documents, graphs, and observability
-* **Unified WAL** for durability across vector, document, and observability writes
-* **Multi‑engine storage** tuned for write‑heavy, read‑heavy, or analytics workloads
-* **Cross‑model queries** (vector + document + graph + logs) in a single request
-* **SQL interface with extensions** - pgvector-compatible `<->` operator, GRAPH_QUERY, DOCUMENT_QUERY
+* **One canonical record** for an identifier, typed JSON properties, and an embedding
+* **One supported API path** for create, batch write, get, scan, vector search, and delete
+* **Metadata filters on both scan and vector search**, proven by the same first-run smoke
+* **SST as the safe default**, backed by the canonical WAL on the single-node path
+* **Object-storage-aware internals** with measured request, byte, cache, and compute signals
 
-=== Multi-Model: The Key Differentiator
+=== Context Serving: The MVP Differentiator
 
-Most vector databases are single-model systems. They excel at vector search but require external systems for graphs, documents, and logs. ProximaDB unifies all data models behind a single SQL interface:
+Modern vector systems increasingly include document payloads, metadata filters, hybrid search,
+and distributed operation. ProximaDB therefore does not differentiate by pretending those features
+are absent. Its wager is narrower: one typed context record, served through standard interfaces,
+with workload-specific projections and object-economics evidence behind it.
 
 |===
-| Capability | Traditional Vector DBs | ProximaDB
+| Capability | MVP trust corridor | Broader ProximaDB direction
 
-| Vector Search | Yes | Yes
-| Graph Traversal | No | *Yes* (ORION engine)
-| Document Store | No | *Yes* (WAL-backed)
-| Observability | No | *Yes* (Logs + Metrics)
-| Cross-Model Joins | No | *Yes* (SQL)
-| SQL Interface | Limited | *Full SQL + Extensions*
+| Typed context records | *Supported* | Canonical authority for every modality
+| Metadata scan + vector search | *Supported* | Hybrid and cross-modal retrieval
+| SST single-node storage | *Supported* | Object-storage-aware projection placement
+| pgwire SQL subset | Beta | Wider relational/context query surface
+| Document, graph, observability | Beta | Rebuildable projections over canonical records
+| Distributed execution | Excluded | Evidence-gated post-MVP capability
 |===
 
-*Example cross-model query:*
+*Beta vision example — outside the MVP trust corridor:*
 [source,sql]
 ----
 -- Find similar products for a user, then get reviews from the document store
@@ -54,31 +58,24 @@ JOIN LATERAL DOCUMENT_QUERY('reviews', 'product_id = "' || v.product_id || '"') 
 %%{init: {"theme": "neutral"}}%%
 flowchart TB
   subgraph API[API Layer]
-    UNIFIED[Unified Port :5678
-REST + gRPC + Arrow Flight]
-    PG[Postgres Wire :5433]
+    REST[Canonical REST v2]
+    BETA[Beta gRPC / pgwire / multimodel APIs]
   end
 
   subgraph Services[Services]
-    VEC[Vector Ops]
-    DOC[Document Ops]
-    GRAPH[Graph Ops]
-    OBS[Observability Ops]
-    UQ[Unified Query]
+    RECORD[Typed Context Record Ops]
+    PROJ[Beta Projection Services]
   end
 
   subgraph DataPlane[Data Plane]
-    WAL[Unified WAL]
+    WAL[Canonical WAL]
     MEM[Memtables]
-    ENG["Vector Engines<br/>(SST, VIPER, HELIX, NOVA)"]
-    GRAPHENG["Graph Engine<br/>(ORION)"]
-    OBSSTORE["Observability Storage<br/>(partitioned logs, time-series, traces)"]
+    SST["SST / PAX<br/>(Supported default)"]
+    BETAENG["Graph / document / observability / alternate engines<br/>(Beta; recovery parity incomplete)"]
   end
 
-  API --> Services --> WAL --> MEM
-  MEM --> ENG
-  MEM --> GRAPHENG
-  MEM --> OBSSTORE
+  REST --> RECORD --> WAL --> MEM --> SST
+  BETA -.-> PROJ -.-> BETAENG
 ----
 
 ---
@@ -122,39 +119,24 @@ release split.
 
 == Quick Start
 
-=== Platform Packages (Linux/Windows)
+The supported first-run path is Docker plus the canonical v2 smoke. It fails on any incorrect
+status, missing record, filter leak, unsupported write-contract signal, or deprecated route.
 
 [source,bash]
 ----
-# Linux (RPM - RHEL/CentOS/Fedora)
-sudo rpm -ivh proximadb-0.2.0-1.el8.x86_64.rpm
-sudo systemctl start proximadb
-
-# Linux (DEB - Debian/Ubuntu)
-sudo dpkg -i proximadb_0.2.0_amd64.deb
-sudo systemctl start proximadb
-
-# Windows
-msiexec /i proximadb-0.2.0-x64.msi
+docker run --rm -d --name proximadb-mvp -p 5678:5678 vjsingh1984/proximadb:latest
+python3 scripts/mvp_smoke.py --base-url http://127.0.0.1:5678
 ----
 
-See link:docs/02-guides/platform-packages.md[Platform Packages Guide] for details.
-
-=== Docker
-
-[source,bash]
-----
-docker run -it --rm \
-  -p 5678:5678 \
-  -p 5433:5433 \
-  vjsingh1984/proximadb:latest
-----
+See link:docs/01-quick-start/CONTEXT_SERVING_MVP.adoc[Context Serving MVP Quickstart] for the
+verified request sequence and production caveats. Release archives currently cover Linux x86_64
+(glibc) and Windows x86_64; the release page is authoritative for available assets.
 
 === From Source (Rust)
 
 [source,bash]
 ----
-git clone https://github.com/vjsingh1984/proximaDB
+git clone https://github.com/anvai-labs/proximaDB
 cd proximaDB
 cargo run --release --bin proximadb-server
 ----
@@ -167,13 +149,13 @@ cargo run --release --bin proximadb-server
 Embeddings + metadata with similarity search and filtering.
 
 === Documents
-JSON documents with WAL‑backed durability and indexed paths (read path is in‑memory today).
+Beta JSON/document projection; canonical-record convergence and recovery parity are incomplete.
 
 === Graphs
-Nodes/edges with traversal support (ORION engine default).
+Beta nodes/edges and traversal through ORION; shared-WAL replay parity is incomplete.
 
 === Observability
-Logs and metrics with WAL‑backed ingestion, partitioned storage, and aggregation.
+Beta logs, metrics, and traces with modality-specific ingestion and incomplete canonical recovery.
 
 ---
 
@@ -320,13 +302,13 @@ link:docs/SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`]:
 |===
 | Capability | Status | Notes
 
-| Vector search + filters | Supported | 4 supported storage engines (SST/VIPER/HELIX/NOVA) + AXIS (HNSW/IVF) indexes, metadata filters
+| Vector search + filters | Supported | SST is the supported storage engine; VIPER/HELIX/NOVA are Beta. AXIS (HNSW/IVF) indexes and metadata filters
 | Document store | Beta | WAL‑backed, JSON path queries, full‑text search; canonical record storage is the convergence path
 | Graph traversal | Beta | ORION (in‑memory CSR), WAL persistence, algorithms; some v1-only RPCs deferred
 | Observability logs | Beta | WAL‑backed, partitioned storage, 6 SIEM adapters
 | Observability metrics | Beta | Time‑series aggregation, downsampling
 | Unified multi‑model query | Beta | Cross‑model joins, parallel execution; strongest on function-backed sources
-| Postgres wire protocol | Supported | ANSI SQL for SQL clients (psql/JDBC/ORM), transactions, pgvector-compatible operator; full Postgres/SQL parity remains Experimental
+| Postgres wire protocol | Supported | ANSI SQL for SQL clients (psql/JDBC/ORM), autocommit statements, pgvector-compatible operator; transaction control returns `0A000` and full Postgres/SQL parity remains Experimental
 | Unified port mode | Experimental | Arrow Flight / gRPC service multiplexing is an experimental customer-facing transport
 | Web UI dashboard | Beta | SQL editor, graph visualization, dark/light theme; fronts Beta surfaces
 | Python SDK | Beta | Graph analytics, AutoML, observability, security; wraps Beta surfaces

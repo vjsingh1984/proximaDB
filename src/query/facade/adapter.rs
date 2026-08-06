@@ -30,7 +30,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use tracing::{debug, info, instrument, warn};
 
 use serde::{Deserialize, Serialize};
@@ -91,6 +91,10 @@ pub struct QueryFacadeAdapter {
     /// degrades gracefully through the facade (parity with ROOT when its
     /// DmlService is unset). Part of TD-104 / seam S1 (single SQL authority).
     dml_service: Option<Arc<crate::services::dml::DmlService>>,
+    /// Optional DdlService for relational DDL (CREATE/ALTER/DROP) on the SQL port
+    /// path (TD-135). Wired in production via `SharedServices`; `None` ⇒ DDL
+    /// falls through. Part of TD-104 / seam S1 (single SQL authority).
+    ddl_service: Option<Arc<crate::services::DdlService>>,
 }
 
 impl QueryFacadeAdapter {
@@ -103,6 +107,7 @@ impl QueryFacadeAdapter {
             validator,
             validation_enabled: true,
             dml_service: None,
+            ddl_service: None,
         }
     }
 
@@ -117,6 +122,7 @@ impl QueryFacadeAdapter {
             validator,
             validation_enabled: false,
             dml_service: None,
+            ddl_service: None,
         }
     }
 
@@ -128,6 +134,13 @@ impl QueryFacadeAdapter {
     /// facade exactly as ROOT does when its DmlService is unwired.
     pub fn with_dml_service(mut self, dml_service: Arc<crate::services::dml::DmlService>) -> Self {
         self.dml_service = Some(dml_service);
+        self
+    }
+
+    /// Attach a `DdlService` so the SQL port path can route relational DDL
+    /// (CREATE/ALTER/DROP) tenant-scoped (TD-135) — parity with the ROOT handler.
+    pub fn with_ddl_service(mut self, ddl_service: Arc<crate::services::DdlService>) -> Self {
+        self.ddl_service = Some(ddl_service);
         self
     }
 
@@ -360,11 +373,25 @@ impl QueryFacadeAdapter {
             query_request = query_request.with_vector_advanced_filter(filter);
         }
 
-        // Execute through facade
-        let result = self.facade.execute(query_request).await?;
+        // Execute through facade. TD-METRICS-1: this is the cross-surface
+        // search entry, so the operational query counters + latency histogram
+        // live here (the /metrics/prometheus signal that replaced the stale
+        // struct-exporter zeros).
+        crate::metrics::operational_metrics::QUERIES_TOTAL.inc();
+        let result = match self.facade.execute(query_request).await {
+            Ok(result) => result,
+            Err(e) => {
+                crate::metrics::operational_metrics::QUERIES_FAILED_TOTAL.inc();
+                crate::metrics::operational_metrics::SEARCH_LATENCY_SECONDS
+                    .observe(start.elapsed().as_secs_f64());
+                return Err(e);
+            }
+        };
 
         // Convert QueryResult to VectorOperationResponse
         let response = self.query_result_to_vector_response(result)?;
+        crate::metrics::operational_metrics::SEARCH_LATENCY_SECONDS
+            .observe(start.elapsed().as_secs_f64());
 
         debug!(
             results = response.results.as_ref().map_or(0, |r| r.results.len()),
@@ -693,8 +720,10 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
         &self,
         query: String,
         _collection: Option<String>,
-    ) -> anyhow::Result<serde_json::Value> {
+        identity: proximadb_runtime::PortIdentity<'_>,
+    ) -> anyhow::Result<proximadb_runtime::SqlExecutionResult> {
         use crate::query::QueryResultData;
+        let tenant_id = identity.tenant_id;
 
         // EXPLAIN [ANALYZE] <DML> routing — parity with the ROOT handler's
         // execute_sql_v1. Detected via the shared sql_frontend parser; routed
@@ -715,17 +744,72 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
                     .map_err(|e| anyhow!("EXPLAIN failed: {}", e))?;
                     let plan_json = serde_json::to_string_pretty(&explanation)
                         .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e));
-                    return Ok(serde_json::json!({
-                        "columns": ["QUERY PLAN"],
-                        "column_types": ["jsonb"],
-                        "records": [{ "QUERY PLAN": plan_json }],
-                    }));
+                    return Ok(proximadb_runtime::SqlExecutionResult {
+                        columns: vec!["QUERY PLAN".to_string()],
+                        column_types: vec!["JSONB".to_string()],
+                        rows: vec![vec![proximadb_data_model::ProximaValue::String(plan_json)]],
+                        rows_scanned: 1,
+                        ..Default::default()
+                    });
                 }
                 Ok(None) => return Err(anyhow!("Invalid EXPLAIN statement")),
                 Err(e) => return Err(anyhow!("EXPLAIN parse error: {}", e)),
             }
             // DmlService not wired: fall through to the facade so EXPLAIN
             // degrades gracefully (matches ROOT when its DmlService is unset).
+        }
+
+        // TD-135: route relational WRITES (DDL + DML) through the same shared,
+        // tenant-scoped dispatch the ROOT handler uses (TD-104 / seam S1). The
+        // gRPC ExecuteQuery path reaches this adapter (not the ROOT handler), so
+        // without this block CREATE/INSERT fell through to the legacy facade and
+        // was rejected. Returns None for reads / when the service isn't wired →
+        // fall through to TD-121 SELECT routing / sql_query unchanged.
+        if let Some(rows_affected) = try_sql_write_dispatch(
+            &query,
+            tenant_id,
+            self.dml_service.as_ref(),
+            self.ddl_service.as_ref(),
+        )
+        .await?
+        {
+            return Ok(proximadb_runtime::SqlExecutionResult {
+                rows_affected: Some(rows_affected),
+                rows_scanned: rows_affected,
+                ..Default::default()
+            });
+        }
+
+        // TD-121 relational SELECT routing — parity with the runtime handler's
+        // execute_sql_v1. Both the gRPC and REST SQL routes reach this adapter
+        // (TD-104 S4 converged REST onto the runtime handler → adapter), so
+        // relational SELECT over EITHER surface routes through the tenant-scoped
+        // pipeline here. `require_engagement=false`
+        // routes any resolvable relational SELECT; queries whose tables don't
+        // resolve return `None` and fall through to `sql_query` (vector/graph
+        // SQL, unchanged). The OLAP result cache IS consulted (same-crate call,
+        // no layering issue) — default-OFF behind PROXIMADB_QUERY_RESULT_CACHE,
+        // so this is a no-op unless the flag is set.
+        // namespace=None: SQL port path has no pgwire search_path.
+        let olap_result_cache = crate::network::postgres::relational_pipeline::olap_result_cache();
+        if let Some(dml) = self.dml_service.as_ref()
+            && let Some(outcome) = crate::network::postgres::relational_pipeline::try_run_select(
+                &query,
+                Some(dml),
+                None,
+                None,
+                identity,
+                crate::query::execution::ExecutionControls::default(),
+                false,
+                None,
+                olap_result_cache.as_deref(),
+            )
+            .await
+        {
+            return match outcome {
+                Ok(result) => Ok(pipeline_result_to_sql_result(result)),
+                Err(msg) => Err(anyhow!("Relational query execution failed: {msg}")),
+            };
         }
 
         let query_result = self.sql_query(&query).await?;
@@ -754,15 +838,117 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
     }
 }
 
-/// Assemble the SQL port-path response envelope that the runtime handler's
-/// `execute_sql_v1` parses: `{ "columns", "column_types", "records" }`.
+/// Dispatch a SQL **write** (DDL or DML) through the tenant-scoped service seams.
 ///
-/// Columns and their coarse types are derived from the first record's object
-/// keys, mirroring the ROOT handler's `convert_query_result_to_sql_response`
-/// so the port path shapes an identical `ExecuteQueryResponse`. This is the
-/// contract that was previously broken — the adapter emitted `{ "rows": … }`,
-/// which the runtime handler does not read (TD-104 / seam S1).
-fn shape_sql_records(records: Vec<serde_json::Value>) -> serde_json::Value {
+/// Shared by the ROOT handler's `execute_sql_v1` and this adapter's
+/// `execute_sql` (TD-104 / seam S1 — single SQL authority) so the two write
+/// paths cannot diverge.
+///
+/// Returns:
+/// - `Ok(Some(rows_affected))` — the statement was a write and was executed
+///   (DDL `affected_count` / DML `rows_affected`).
+/// - `Ok(None)` — not a write keyword, OR the matching service isn't wired → the
+///   caller falls through to read routing / the facade.
+///
+/// `tenant_id` scopes the write to its partition (TD-064); `None` writes
+/// unscoped (as pgwire does for a connection with no `database`), never another
+/// tenant's partition. DML errors use `.context` (NOT `anyhow!`) so a typed
+/// `ProximaDBError::DmlLockConflict` survives in the chain for the protocol
+/// layer (gRPC/pgwire) to downcast + map to ABORTED/55P03.
+pub async fn try_sql_write_dispatch(
+    query: &str,
+    tenant_id: Option<&str>,
+    dml: Option<&Arc<crate::services::dml::DmlService>>,
+    ddl: Option<&Arc<crate::services::DdlService>>,
+) -> Result<Option<u64>> {
+    use crate::query::sql_frontend::SqlFrontendParser;
+    use crate::services::dml::DmlStatement;
+
+    let leading = query.trim_start().get(..7).map(str::to_ascii_uppercase);
+    let leading = leading.as_deref().unwrap_or("");
+
+    // DDL: CREATE / ALTER / DROP.
+    if (leading.starts_with("CREATE ")
+        || leading.starts_with("ALTER ")
+        || leading.starts_with("DROP "))
+        && let Some(ddl) = ddl
+    {
+        match SqlFrontendParser::new().parse_ddl(query) {
+            Ok(Some(statement)) => {
+                let result = ddl
+                    .execute_scoped(statement, tenant_id)
+                    .await
+                    .map_err(|e| anyhow!("DDL failed: {e}"))?;
+                return Ok(Some(result.affected_count as u64));
+            }
+            Ok(None) => {}
+            Err(e) => return Err(anyhow!("DDL parse error: {e}")),
+        }
+    }
+
+    // DML writes: INSERT / UPDATE / DELETE (+ UPSERT/MERGE shapes via parse_dml).
+    if (leading.starts_with("INSERT ")
+        || leading.starts_with("UPDATE ")
+        || leading.starts_with("DELETE ")
+        || leading.starts_with("UPSERT ")
+        || leading.starts_with("MERGE "))
+        && let Some(dml) = dml
+        && let Ok(Some(statement)) = SqlFrontendParser::new().parse_dml(query)
+    {
+        let is_write = matches!(
+            statement,
+            DmlStatement::Insert { .. }
+                | DmlStatement::Update { .. }
+                | DmlStatement::Delete { .. }
+                | DmlStatement::Upsert { .. }
+                | DmlStatement::InsertSelect { .. }
+                | DmlStatement::InsertOverwrite { .. }
+        );
+        if is_write {
+            let tenant_ctx =
+                tenant_id.map(crate::storage::tenant::context::TenantContext::for_tenant_id);
+            let result = dml
+                .execute_scoped(statement, tenant_ctx.as_ref())
+                .await
+                .context("DML failed")?;
+            return Ok(Some(result.rows_affected));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Preserve a relational-pipeline result as typed SQL output. No wire-format
+/// conversion occurs at this application seam.
+fn pipeline_result_to_sql_result(
+    result: crate::query::execution::ExecutionPipelineResult,
+) -> proximadb_runtime::SqlExecutionResult {
+    let columns: Vec<String> = result
+        .schema
+        .columns
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    let column_types = result
+        .schema
+        .columns
+        .iter()
+        .map(|c| format!("{:?}", c.ty))
+        .collect();
+    let rows_scanned = result.rows.len() as u64;
+    proximadb_runtime::SqlExecutionResult {
+        columns,
+        column_types,
+        rows: result.rows,
+        rows_scanned,
+        ..Default::default()
+    }
+}
+
+/// Normalize the legacy facade's JSON-shaped fallback into canonical typed
+/// rows. This is the one migration bridge for non-relational facade results;
+/// every downstream consumer receives `ProximaValue` rather than JSON.
+fn shape_sql_records(records: Vec<serde_json::Value>) -> proximadb_runtime::SqlExecutionResult {
     let mut columns: Vec<String> = Vec::new();
     let mut column_types: Vec<String> = Vec::new();
     if let Some(serde_json::Value::Object(map)) = records.first() {
@@ -770,13 +956,33 @@ fn shape_sql_records(records: Vec<serde_json::Value>) -> serde_json::Value {
             columns.push(k.clone());
             column_types.push(infer_json_type(v));
         }
+    } else if !records.is_empty() {
+        columns.push("value".to_string());
+        column_types.push(infer_json_type(&records[0]));
     }
 
-    serde_json::json!({
-        "columns": columns,
-        "column_types": column_types,
-        "records": records,
-    })
+    let rows = records
+        .iter()
+        .map(|record| match record {
+            serde_json::Value::Object(map) => columns
+                .iter()
+                .map(|column| {
+                    map.get(column).map_or(
+                        proximadb_data_model::ProximaValue::Null,
+                        proximadb_records::conversions::json_to_proxima,
+                    )
+                })
+                .collect(),
+            value => vec![proximadb_records::conversions::json_to_proxima(value)],
+        })
+        .collect();
+    proximadb_runtime::SqlExecutionResult {
+        columns,
+        column_types,
+        rows,
+        rows_scanned: records.len() as u64,
+        ..Default::default()
+    }
 }
 
 /// Infer a coarse SQL type label for a JSON value (column-type metadata).
@@ -810,38 +1016,32 @@ fn infer_json_type(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod sql_envelope_tests {
     use super::{infer_json_type, shape_sql_records};
+    use proximadb_data_model::ProximaValue;
 
     #[test]
-    fn shape_emits_columns_types_and_records_keys() {
-        // The runtime handler reads `columns`/`column_types`/`records` — NOT the
-        // old `rows` key. This guards the contract that was previously broken.
+    fn shape_normalizes_json_fallback_to_typed_rows() {
         let records = vec![serde_json::json!({"id": 7, "name": "alice", "score": 0.5})];
-        let env = shape_sql_records(records.clone());
+        let result = shape_sql_records(records);
 
-        let cols: Vec<String> = env["columns"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap().to_string())
-            .collect();
         // serde_json::Map preserves insertion order? It is BTreeMap by default →
         // keys are sorted. Assert as a set to stay order-agnostic.
-        assert_eq!(cols.len(), 3);
-        assert!(cols.contains(&"id".to_string()));
-        assert!(cols.contains(&"name".to_string()));
-        assert!(cols.contains(&"score".to_string()));
-
-        assert_eq!(env["column_types"].as_array().unwrap().len(), 3);
-        assert_eq!(env["records"].as_array().unwrap().len(), 1);
-        assert!(env.get("rows").is_none(), "must not emit legacy `rows` key");
+        assert_eq!(result.columns.len(), 3);
+        assert!(result.columns.contains(&"id".to_string()));
+        assert!(result.columns.contains(&"name".to_string()));
+        assert!(result.columns.contains(&"score".to_string()));
+        assert_eq!(result.column_types.len(), 3);
+        assert_eq!(result.rows.len(), 1);
+        assert!(result.rows[0].contains(&ProximaValue::Int64(7)));
+        assert!(result.rows[0].contains(&ProximaValue::String("alice".to_string())));
+        assert!(result.rows[0].contains(&ProximaValue::Float64(0.5)));
     }
 
     #[test]
     fn shape_empty_records_yields_empty_columns() {
-        let env = shape_sql_records(vec![]);
-        assert_eq!(env["columns"].as_array().unwrap().len(), 0);
-        assert_eq!(env["column_types"].as_array().unwrap().len(), 0);
-        assert_eq!(env["records"].as_array().unwrap().len(), 0);
+        let result = shape_sql_records(vec![]);
+        assert!(result.columns.is_empty());
+        assert!(result.column_types.is_empty());
+        assert!(result.rows.is_empty());
     }
 
     #[test]

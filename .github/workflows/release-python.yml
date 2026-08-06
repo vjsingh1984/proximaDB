@@ -15,7 +15,7 @@
 # Publishing uses PyPI Trusted Publishing (OIDC) — NO API token secret. Configure one
 # trusted publisher PER PyPI project (one-time):
 #   https://pypi.org/manage/account/publishing/ -> add a GitHub publisher with
-#     owner=vjsingh1984  repo=proximaDB  workflow=release-python.yml  environment=pypi
+#     owner=anvai-labs  repo=proximaDB  workflow=release-python.yml  environment=pypi
 #   Repeat for projects `proximadb` and `proximadb_embedded` (and environment `testpypi`).
 # TestPyPI is advisory/optional (continue-on-error) — PyPI never waits on it.
 
@@ -64,18 +64,19 @@ jobs:
 
   # ---- Native engine: proximadb_embedded (platform wheels via maturin) ---------------
   build-embedded-wheels:
-    name: Build embedded wheels (${{ matrix.target }})
+    name: Build embedded wheels (${{ matrix.os }} ${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # Linux-only: proximadb_embedded links the full Rust engine, which is
-        # Linux-native (unix storage APIs). Windows does not compile
-        # (proximadb-storage-common: E0425/E0433/E0599 — no MSVC port); macOS is
-        # deferred. Linux x86_64 + aarch64 is the embedded / edge / air-gapped
-        # deployment surface for an in-process engine. macOS/Windows embedded
-        # wheels are a tracked follow-up (Windows blocked on engine portability,
-        # not a build-config fix).
+        # proximadb_embedded links the full Rust engine. It is unix-native (the
+        # storage layer uses unix syscalls + memmap2), so Linux AND macOS build;
+        # only Windows is blocked (proximadb-storage-common: no MSVC port —
+        # std::os::unix / libc / mmap across dozens of files; tracked as an
+        # engine-portability effort in TD-EMBED-1, NOT a build-config fix).
+        # Each target builds NATIVELY on its own runner (no cross-toolchain):
+        # the engine's C deps (aws-lc-sys rustls crypto, vendored OpenSSL) don't
+        # cross-compile cleanly, but compile the same way natively per-arch.
         include:
           - os: ubuntu-latest
             target: x86_64
@@ -88,6 +89,23 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64
             manylinux: auto
+          # macOS aarch64 (Apple Silicon) — native arm64 runner. Intel macOS is
+          # intentionally NOT built: Apple ships only Apple-Silicon hardware, so
+          # x86_64-apple-darwin is no longer a produced target. Watch for the ring
+          # 0.17.x aarch64 CAPS_STATIC const-assertion (documented on the macos-14
+          # runner in ci.yml's GPU job); fail-fast:false keeps the Linux wheels
+          # flowing if it bites, and it surfaces as its own portability follow-up.
+          - os: macos-14
+            target: aarch64
+          # Windows x86_64 (MSVC). Enabled after the windows-compile-ratchet
+          # (TD-EMBED-1) proved the whole engine + `python` feature + C-deps
+          # compile on x86_64-pc-windows-msvc: two small #[cfg(unix)] gates
+          # (memmap2::Advice #800, Unix-domain sockets #808) were the only
+          # blockers. Pinned to windows-2022 to match the ratchet-proven env —
+          # the runner ships NASM + Strawberry Perl, so openssl/vendored's
+          # openssl-src build (VC-WIN64A) works without extra setup.
+          - os: windows-2022
+            target: x86_64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

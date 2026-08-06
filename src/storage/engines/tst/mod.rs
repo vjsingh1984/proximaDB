@@ -392,6 +392,17 @@ impl TimeSeriesEngine {
         recovery.recover(self).await
     }
 
+    /// F3 / TD-WAL-2: flush (fsync) the WAL's buffered appends to disk. `append`
+    /// only buffers, so a crash before the next partition rotation would lose
+    /// un-flushed records — callers flush after a write batch (durability =
+    /// fsync-per-commit-batch, not per-record). No-op when the WAL is disabled.
+    pub async fn flush_wal(&self) -> Result<()> {
+        if let Some(ref wal) = self.wal_writer {
+            wal.flush().await?;
+        }
+        Ok(())
+    }
+
     /// Insert a time-series record
     ///
     /// Automatically determines the correct partition based on timestamp
@@ -1330,28 +1341,6 @@ impl UnifiedStorageFormat for TimeSeriesEngine {
         <TimeSeriesEngine as StorageMetrics>::collect_engine_metrics(self).await
     }
 
-    fn get_filesystem_factory(&self) -> &FilesystemFactory {
-        // Deferred: Return actual filesystem factory
-        // For now, create a default one (note: this leaks memory but is acceptable for a stub)
-        use std::sync::OnceLock;
-        static DUMMY_FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
-        use futures::executor::block_on;
-
-        DUMMY_FACTORY.get_or_init(|| {
-            block_on(async {
-                FilesystemFactory::create(FilesystemConfig::default())
-                    .await
-                    .unwrap_or_else(|_| {
-                        // Stub implementation panic - indicates incomplete code
-                        #[allow(clippy::panic)]
-                        {
-                            panic!("Failed to create filesystem factory")
-                        }
-                    })
-            })
-        })
-    }
-
     async fn vector_by_id(
         &self,
         collection_id: &str,
@@ -1512,6 +1501,30 @@ impl UnifiedStorageFormat for TimeSeriesEngine {
         };
 
         Ok(Box::new(iterator))
+    }
+}
+
+impl crate::storage::traits::EngineFilesystemAccess for TimeSeriesEngine {
+    fn get_filesystem_factory(&self) -> &FilesystemFactory {
+        // Deferred: Return actual filesystem factory
+        // For now, create a default one (note: this leaks memory but is acceptable for a stub)
+        use std::sync::OnceLock;
+        static DUMMY_FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
+        use futures::executor::block_on;
+
+        DUMMY_FACTORY.get_or_init(|| {
+            block_on(async {
+                FilesystemFactory::create(FilesystemConfig::default())
+                    .await
+                    .unwrap_or_else(|_| {
+                        // Stub implementation panic - indicates incomplete code
+                        #[allow(clippy::panic)]
+                        {
+                            panic!("Failed to create filesystem factory")
+                        }
+                    })
+            })
+        })
     }
 }
 

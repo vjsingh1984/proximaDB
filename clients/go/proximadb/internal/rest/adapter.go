@@ -387,7 +387,7 @@ func (a *Adapter) CreateCollection(ctx context.Context, req *CreateCollectionReq
 		body.Engine = ptr(req.Engine)
 	}
 
-	resp, err := a.gen.CreateCollection(ctx, body)
+	resp, err := a.gen.CreateCollection(ctx, nil, body)
 	if err != nil {
 		return nil, mapTransportError(ctx, err)
 	}
@@ -452,7 +452,7 @@ func (a *Adapter) ListCollections(ctx context.Context) ([]*CollectionInfo, error
 
 // GetCollection returns information about a specific collection.
 func (a *Adapter) GetCollection(ctx context.Context, name string) (*CollectionInfo, error) {
-	resp, err := a.gen.GetCollection(ctx, name)
+	resp, err := a.gen.GetCollection(ctx, name, nil)
 	if err != nil {
 		return nil, mapTransportError(ctx, err)
 	}
@@ -485,7 +485,7 @@ func (a *Adapter) GetCollection(ctx context.Context, name string) (*CollectionIn
 
 // DeleteCollection deletes a collection.
 func (a *Adapter) DeleteCollection(ctx context.Context, name string) error {
-	resp, err := a.gen.DeleteCollection(ctx, name)
+	resp, err := a.gen.DeleteCollection(ctx, name, nil)
 	if err != nil {
 		return mapTransportError(ctx, err)
 	}
@@ -511,7 +511,7 @@ func (a *Adapter) writeRecords(ctx context.Context, collection string, records [
 		body.Upsert = ptr(true)
 	}
 
-	resp, err := a.gen.InsertRecords(ctx, collection, body)
+	resp, err := a.gen.InsertRecords(ctx, collection, nil, body)
 	if err != nil {
 		return mapTransportError(ctx, err)
 	}
@@ -540,7 +540,7 @@ func (a *Adapter) Search(ctx context.Context, collection string, query *SearchQu
 		IncludeVector: ptr(query.IncludeVectors),
 	}
 
-	resp, err := a.gen.SearchRecords(ctx, collection, body)
+	resp, err := a.gen.SearchRecords(ctx, collection, nil, body)
 	if err != nil {
 		return nil, mapTransportError(ctx, err)
 	}
@@ -584,7 +584,7 @@ func (a *Adapter) Get(ctx context.Context, collection string, ids []string) ([]*
 // Delete removes vectors by their IDs.
 func (a *Adapter) Delete(ctx context.Context, collection string, ids []string) error {
 	for _, id := range ids {
-		resp, err := a.gen.DeleteRecord(ctx, collection, id)
+		resp, err := a.gen.DeleteRecord(ctx, collection, id, nil)
 		if err != nil {
 			return mapTransportError(ctx, err)
 		}
@@ -597,7 +597,7 @@ func (a *Adapter) Delete(ctx context.Context, collection string, ids []string) e
 
 // Health checks the server health.
 func (a *Adapter) Health(ctx context.Context) (*HealthStatus, error) {
-	resp, err := a.gen.GetHealth(ctx)
+	resp, err := a.gen.GetHealth(ctx, nil)
 	if err != nil {
 		return nil, mapTransportError(ctx, err)
 	}
@@ -610,7 +610,7 @@ func (a *Adapter) Health(ctx context.Context) (*HealthStatus, error) {
 
 // HealthLive issues a Kubernetes liveness probe (GET /health/live).
 func (a *Adapter) HealthLive(ctx context.Context) (*ProbeResponse, error) {
-	resp, err := a.gen.GetLiveness(ctx)
+	resp, err := a.gen.GetLiveness(ctx, nil)
 	if err != nil {
 		return nil, mapTransportError(ctx, err)
 	}
@@ -623,7 +623,7 @@ func (a *Adapter) HealthLive(ctx context.Context) (*ProbeResponse, error) {
 
 // HealthReady issues a Kubernetes readiness probe (GET /health/ready).
 func (a *Adapter) HealthReady(ctx context.Context) (*ProbeResponse, error) {
-	resp, err := a.gen.GetReadiness(ctx)
+	resp, err := a.gen.GetReadiness(ctx, nil)
 	if err != nil {
 		return nil, mapTransportError(ctx, err)
 	}
@@ -636,7 +636,7 @@ func (a *Adapter) HealthReady(ctx context.Context) (*ProbeResponse, error) {
 
 // GetCollectionSchema fetches the schema for a collection.
 func (a *Adapter) GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error) {
-	resp, err := a.gen.GetCollectionSchema(ctx, collectionID)
+	resp, err := a.gen.GetCollectionSchema(ctx, collectionID, nil)
 	if err != nil {
 		return nil, mapTransportError(ctx, err)
 	}
@@ -658,7 +658,7 @@ func (a *Adapter) UpdateCollectionSchema(ctx context.Context, collectionID strin
 		body.Enforcement = ptr(req.Enforcement)
 	}
 
-	resp, err := a.gen.UpdateCollectionSchema(ctx, collectionID, body)
+	resp, err := a.gen.UpdateCollectionSchema(ctx, collectionID, nil, body)
 	if err != nil {
 		return nil, mapTransportError(ctx, err)
 	}
@@ -683,7 +683,7 @@ func (a *Adapter) ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryRes
 		body.Parameters = toGenQueryParams(req.Parameters)
 	}
 
-	resp, err := a.gen.ExecuteQuery(ctx, body)
+	resp, err := a.gen.ExecuteQuery(ctx, nil, body)
 	if err != nil {
 		return nil, mapTransportError(ctx, err)
 	}
@@ -702,7 +702,7 @@ func (a *Adapter) ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (Q
 		Collection: req.Collection,
 	}
 
-	resp, err := a.gen.ExplainQuery(ctx, body)
+	resp, err := a.gen.ExplainQuery(ctx, nil, body)
 	if err != nil {
 		return nil, mapTransportError(ctx, err)
 	}

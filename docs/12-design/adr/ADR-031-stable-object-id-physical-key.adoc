@@ -4,7 +4,7 @@
 
 [cols="1,3"]
 |===
-|Status|Proposed
+|Status|**Superseded (u64-as-identity) by ADR-0083 (2026-07-30).** The global `object_id` u64 is retired as a collection identity; the composite `CollectionIdentity {account, namespace, collection}` is now the sole canonical identity. This ADR's *path-isolation* intent (name is metadata; structural isolation) survives in ADR-0083; its *u64-as-physical-key* decision is reversed — two identity systems (u64 + composite) was an inconsistency seam (the #1325 regression). See ADR-0083 + `CATALOG_IDENTITY_RESEARCH_2026_07_30.adoc`.
 |Date|2026-06-26
 |Deciders|Vijaykumar Singh
 |Relates to|ADR-020 (Canonical WAL Authority), ADR-025 (Deletion Vectors), ADR-010 (PAX Block Format), ADR-024 (single canonical type — the 2026-06-27 identity addendum distinguishes this catalog `object_id` from the data-record `oid` and from `pgwire_oid`), ADR-027 (DrPath / storage layout), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (structural isolation)

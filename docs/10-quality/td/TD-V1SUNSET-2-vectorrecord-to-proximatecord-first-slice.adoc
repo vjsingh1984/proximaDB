@@ -1,0 +1,225 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-V1SUNSET-2: VectorRecord → ProximaRecord — scoped first migration slice (ADR-024 Tier-3 kick-off)
+:toc: macro
+:icons: font
+:last-updated: 2026-07-09
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+
+| Status | **Scoped (execution plan; implementation not started).** This TD is the *plan* for the first
+safe slice — it migrates nothing. The first slice (S1) is internal-only and needs no flag; later
+durable-path changes are default-OFF until baked.
+| Severity | Medium — `VectorRecord` is a v1 proto *wire* type (`proximadb.v1.rs:2011`) **and** a legacy
+durable format, so this is a link:../../12-design/adr/ADR-024-single-canonical-data-type-and-schema.adoc[ADR-024]
+storage-format migration: mixed-read-safe, default-OFF for durable changes, round-trip + recall
+tested (CLAUDE.md mandate #8). Recovery for S1 is a revert of an internal-only cluster.
+| Component | Data model / storage: `VectorRecord` callers across `src/storage/engines/**`, `src/core/**`,
+`src/index/**`, `src/services/**`; the v1↔v2 bridge
+(`crates/foundation/proximadb-records/src/conversions.rs`); the legacy SST1 row format
+(`src/storage/engines/sst/mod.rs` `SstEntry`).
+| Tracked-by | link:../../12-design/adr/ADR-024-single-canonical-data-type-and-schema.adoc[ADR-024] (the
+canonical-type decision); link:../../12-design/V1_RETIREMENT_ROADMAP_2026_07_08.adoc[V1_RETIREMENT_ROADMAP]
+Tier 3; the v1-proto ratchet (`scripts/check_v1_proto_usage.py`).
+| Depends-on | The existing bidirectional conversion bridge (present — verified). The durable *write*
+convergence to `ProximaRecord`-native PAX (ADR-049 M1-3, landed). Does **not** depend on the REST/gRPC
+sunset (that is the sibling link:TD-V1SUNSET-1-rest-grpc-sunset-cutover.adoc[TD-V1SUNSET-1]); the two
+are complementary, not sequenced.
+|===
+
+== Why this exists
+
+`VectorRecord` is the **single largest remaining v1-proto slice** and the Tier-3 long pole the
+retirement roadmap defers to ADR-024. The roadmap classifies it "deeply embedded … NOT disable-able"
+and points here for the *first* migration step. This TD scopes that step: it classifies every
+`VectorRecord` caller into internal-only (safe to migrate first) vs wire-format/persistent (needs the
+mixed-read-safe gating), names a recommended first slice, and lands the reusable test harness — without
+migrating any production code.
+
+Measured on `develop` (2026-07-09):
+
+[cols="1,2,2", options="header"]
+|===
+| Root | VectorRecord refs | Files
+
+| `src`     | ~900 | 150 (~129 prod, ~21 test/bench)
+| `tests`   | ~269 | 57
+| `crates`  | ~59  | 14
+| `clients` | Python v1 SDK + tests (Bucket F) | ~109
+|===
+
+`VectorRecord` is ~900 of the ~2248 `src` v1-proto ratchet references — roughly **40%** of the
+remaining v1 metric, and the dominant lever for lowering TD-123's count.
+
+`VectorRecord` is a `prost` v1 message (`id`, `vector: Vec<f32>`, flat
+`metadata: HashMap<String, SqlValue>`, ms-granularity timestamps, `version`, `source`): **FP32-only**
+(no quantization), flat metadata (no NF² property tree). The target `ProximaRecord` is richer — ns
+timestamps, multi-tenancy/RLS, `ProximaTree` properties, multi-precision `EmbeddingCell`
+(`Fp32`/`Fp16`/`Bf16`/`Int8Scalar`/`UInt8Scalar`), graph `edge`/`refs`. Because it is both a wire type
+and a serialized durable form, it cannot be a big-bang edit.
+
+== Current state (verified on `develop`, 2026-07-09)
+
+The decisive finding — it reshapes the risk of the whole effort:
+
+[cols="1,4", options="header"]
+|===
+| Layer | Status
+
+| **WAL** | Already `ProximaRecord`-native (`wal_operations.rs`: `record: ProximaRecord` in
+`VectorOperation`/`DocumentOperation`/`TimeSeriesOperation`). **Zero** `VectorRecord` in the WAL.
+
+| **PAX durable format** (live flush default, ADR-049 M1-3) | **Already `ProximaRecord`-native.**
+`crates/storage/proximadb-block-format/src/record.rs` is "ProximaRecord ↔ PAX column projection";
+`writer.rs:305 write_pax_segment<I: Iterator<Item = ProximaRecord>>`; `flush/mod.rs` is entirely
+`ProximaRecord`. New writes never serialize `VectorRecord`.
+
+| **Legacy SST1 row format** (`SstEntry`, `.sst`) | Carries **prost-serialized `VectorRecord`**.
+`mod.rs:481 pub struct SstEntry { record: VectorRecord, … }`; `serialize()` prost-encodes it
+(`mod.rs:551 self.record.encode`); `deserialize()` decodes it (`mod.rs:582`); compaction re-reads legacy
+segments (`compaction.rs:1804`) and compacts them forward into PAX. This is the **only durable
+`VectorRecord` write/read surface.**
+
+| **Conversion bridge** | **Bidirectional and complete**, in
+`crates/foundation/proximadb-records/src/conversions.rs`: `From<&VectorRecord>`/`From<VectorRecord>` for
+`ProximaRecord`; `From<&ProximaRecord>`/`From<ProximaRecord>` for `VectorRecord`; plus
+`proxima_record_to_vector`. Lossy edges exist by design (see Constraints).
+
+| **v2 proto** | Replaces `VectorRecord` with `ProximaRecord` (`proto/proximadb/v2/record.proto:385`). The
+v2 wire is already `VectorRecord`-free.
+
+| **Network exposure** | Per link:TD-V1SUNSET-1-rest-grpc-sunset-cutover.adoc[TD-V1SUNSET-1]: gRPC v1
+services deleted; REST v1 gate (`PROXIMADB_REST_V1_COMPAT`) **default ON** on `develop`. The
+**deprecated** v1 surface is the *api-crate* `crates/platform/proximadb-api/src/{rest,grpc}/v1/`
+(TD-V1SUNSET-1 owns its deletion); the root-crate `src/network/rest/v1/` is **live** `/api/v2` code.
+v2/blended surfaces use the v1 `SearchVectorRecord` wrapper, not bare `VectorRecord`.
+|===
+
+**Implication:** the durable *write* side is already converged to `ProximaRecord`, and the
+mixed-read-safe *read* mechanism already exists (legacy `.sst` decode → bridge → `ProximaRecord` on the
+PAX/compaction path). What remains is **(a)** the in-memory domain model still threading `VectorRecord`
+through ~129 prod files (pure ratchet debt, zero disk risk), and **(b)** a bounded legacy-read path
+that must keep decoding `VectorRecord` until no legacy `.sst` segments remain.
+
+== Classification — internal-only (migrate first) vs wire-format/persistent (gated)
+
+[cols="2,4,1,3", options="header"]
+|===
+| Bucket | What | ~Refs | Gating / risk
+
+| **A. Legacy durable** | `SstEntry` SST1 row encode/decode
+(`sst/mod.rs:481/551/582`, caller `:924`) + compaction re-read (`compaction.rs:1804`). On-disk bytes
+*are* prost `VectorRecord`.
+| 3 prod sites | **Mixed-read-safe READ path.** No new write format. Retires as compaction ages legacy
+`.sst` → PAX. Liveness of the `:924` serialize caller post M1-3 9b is open (OQ-1).
+
+| **B. In-memory plumbing** | Engines/analytics using `VectorRecord` purely as a transient working type:
+`viper/pipeline.rs` (51), `sst/compaction.rs` (46), `axis/hmgi/detection.rs` (27), `nova/*`, `helix/*`,
+`raptor/*`, `swift/*`, `tst/*`, `core/search`, `core/pca`, `record_store.rs`,
+`services/operations/vectors/legacy.rs`, and ~115 more.
+| ~900 `src` / 150 files | **SAFE to migrate FIRST.** No disk touched; convert via the bridge; each
+slice drops the TD-123 ratchet. Default-OFF flag **not** required (internal).
+
+| **C. Already migrated** | PAX format, WAL, and `ObjectStoreVectorRecordStore` (returns `ProximaRecord`;
+only the *name* + doc-comments still say "VectorRecord").
+| — | Verify; rename/doc-debt only. Not a format change.
+
+| **D. v2-network shims** | `rest/v2/records.rs`, `grpc/v2/record_service.rs`, `arrow_ipc/codec.rs` (uses
+`SearchVectorRecord`), `hybrid_search.rs`, and live root-crate `rest/v1/handlers.rs` / `rank_backend.rs`.
+Convert at the boundary.
+| handful | Boundary conversion; retires with the v1 proto. `SearchVectorRecord` is a sibling v1 type
+(see roadmap §"not all v1-proto names are deprecated").
+
+| **E. Deprecated v1 wire** | api-crate `proximadb-api/src/{rest,grpc}/v1/`.
+| the v1 surface | **Owned by link:TD-V1SUNSET-1-rest-grpc-sunset-cutover.adoc[TD-V1SUNSET-1]** (REST
+default-off flip + hard-delete). Not duplicated here; this migration *enables* the v1 proto retirement
+that follows it.
+
+| **F. SDK / clients** | Python v1 client + tests referencing `proximadb.v1`.
+| ~109 py | Separate — spec-driven SDK codegen (TD-126). Not this migration.
+|===
+
+== The first slice (recommended)
+
+**Goal:** prove the migration mechanism on the **smallest safe internal-only cluster** *and* land the
+**round-trip + recall test harness** that every later slice reuses. **No durable-path change in S1.**
+
+*Recommended cluster:* **`src/storage/engines/core/pca`** (`pipeline.rs` + `manager.rs`, ~19 refs). A
+self-contained analytics subsystem whose API is `&[VectorRecord]` params/returns (`from_records`,
+`train_model`, `cluster_vectors`, `check_drift`, `needs_retraining`) and which consumes **only the float
+vectors** — it does not need the record envelope. Migration is clean: change the param/return to
+`&[ProximaRecord]` (or directly `&[EmbeddingCell]` / `&[Vec<f32>]`), bridging at the call boundary.
+
+*Alternatives:* if a coupling probe shows `core/pca` more entangled than it appears, pick another leaf.
+`core/search/search_common.rs` (central, high blast radius) and `viper/pipeline.rs` (large) are
+explicitly **not** slice-1 candidates.
+
+**Deliverables:**
+
+. **Round-trip + recall test (mandate #8 — the reusable harness).** In `proximadb-records`, round-trip
+  `VectorRecord → ProximaRecord → VectorRecord` across the **lossy edges**: non-Fp32 embeddings
+  (`Fp16`/`Bf16`/`Int8Scalar` → `Fp32` on the v1 side), ms↔ns timestamp conversion, and
+  flat-`HashMap`↔`ProximaTree` metadata. Assert the `VectorRecord`-representable subset round-trips
+  losslessly, and that a search over converted records holds **recall@k within tolerance of the f32
+  baseline** (Quality-Ratchet mandate #10). This test is the gate every later slice re-runs.
+. **Migrate `core/pca`** to `ProximaRecord` (or `EmbeddingCell`) params/returns, bridging at callers.
+. **Measure** the TD-123 ratchet delta (`scripts/check_v1_proto_usage.py`) — expect a net decrease.
+. **Ship S1 default-ON** (no flag — it touches no durable format); the round-trip/recall test *is* the
+  safety gate.
+. **Refresh the v1-proto baseline** (`--write docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json`)
+  only if the decrease is committed intentionally.
+
+== Why internal-first (not the durable path first)
+
+The durable *write* side is **already** `ProximaRecord` (PAX default-on); the mixed-read-safe *read*
+path already decodes legacy `VectorRecord` and compaction bridges it forward. The gating infrastructure
+**already exists**. The remaining debt is the in-memory domain model still carrying `VectorRecord`.
+Retiring that first is **zero disk risk**, lowers the ratchet immediately, and is the prerequisite for
+durable-path retirement (which can only complete once legacy `.sst` segments are aged out by
+compaction). Migrating the durable read seam first would touch the highest-risk path for no ratchet gain.
+
+== Phased roadmap (this TD = Slice 1)
+
+. **S1 (this TD):** internal-only cluster (`core/pca`) + reusable round-trip/recall harness.
+. **S2–Sn:** fan internal migration out per engine/subsystem (viper pipeline, sst compaction, nova,
+  helix, …), each landing green and lowering the ratchet. Independent, parallelizable across worktrees
+  (disjoint files).
+. **S-durable:** convert the legacy SST1 **read seam** to return `ProximaRecord` at the boundary
+  (decode `VectorRecord` → `From` → `ProximaRecord`), mixed-read-safe; resolve OQ-1 and retire
+  `SstEntry::serialize` (`mod.rs:551`/`:924`) if dead.
+. **S-net:** migrate the v2-network shims (Bucket D) off `VectorRecord`/`SearchVectorRecord`.
+. **Sunset:** after TD-V1SUNSET-1's REST/gRPC hard-delete, retire the v1 proto `VectorRecord` message
+  (with TD-121/TD-123), once no legacy `.sst` segment and no live v1 caller remains.
+
+== Open questions (resolve at slice execution — probe, don't assume)
+
+* **OQ-1:** Is `SstEntry::serialize` (`sst/mod.rs:924`) reachable from the **default flush path**, or
+  legacy/compaction-only post M1-3 9b (which deleted the streaming-writer tree)? Resolve with a
+  throwaway delete-and-see probe (`cargo check --workspace`); never merge the probe.
+* **OQ-2:** Confirm `core/pca` is the lowest-coupling leaf (vs. another candidate) via the same probe.
+* **OQ-3:** Does any live READ path surface **raw** `VectorRecord` to the compute layer
+  (SQL/pgwire/DataFusion), or is it always bridged to `ProximaRecord` before compute? If always bridged,
+  S-durable is cheap; if not, it must precede the v1 proto retirement.
+
+== Risks
+
+* **Lossy conversion silently dropping data.** `ProximaRecord` → `VectorRecord` collapses non-Fp32
+  embeddings to `Fp32` and NF² properties to a flat map. Mitigation: the S1 round-trip/recall harness
+  asserts the round-tripable subset and fails loud on loss outside tolerance (mandate #8/#10).
+* **Touching the durable path by mistake.** S1 must stay out of `SstEntry`/`compaction.rs` decode. The
+  classification table is the safeguard; the durable seam is S-durable, gated default-OFF.
+* **Ratchet regression.** A slice that *adds* `VectorRecord` refs fails TD-123. Each slice refreshes
+  the baseline only on an intentional, measured decrease.
+
+== References
+
+* link:../../12-design/adr/ADR-024-single-canonical-data-type-and-schema.adoc[ADR-024] — the canonical
+type/schema decision this migrates toward.
+* link:../../12-design/V1_RETIREMENT_ROADMAP_2026_07_08.adoc[V1_RETIREMENT_ROADMAP_2026_07_08] — Tier 3
+names `VectorRecord` as the ADR-024 long pole.
+* link:TD-V1SUNSET-1-rest-grpc-sunset-cutover.adoc[TD-V1SUNSET-1] — sibling: the REST/gRPC v1 sunset
+cutover (Bucket E owner).
+* `scripts/check_v1_proto_usage.py` + `docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json` — the
+downward-only v1-proto ratchet (CI-blocking).

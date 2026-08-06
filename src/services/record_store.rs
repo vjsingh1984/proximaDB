@@ -16,7 +16,16 @@ use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 use arrow_schema::Schema as ArrowSchema;
 use async_trait::async_trait;
+// FA-b (Phase 4): the required read context. Only referenced on read
+// primitives' `#[cfg(feature = "abac-policy")]` trailing parameter, so the
+// import is gated to match — the default build never touches the type.
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::ReadContext;
+// `SystemReadReason` is constructed at internal call sites (index-build scans)
+// and record-store test call sites; feature-gated like `ReadContext`.
 use futures::StreamExt;
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::SystemReadReason;
 use proximadb_block_format::{BlockCompression, BlockMode};
 use proximadb_catalog::{
     CatalogPhysicalFormat, CatalogStorageLayout, CatalogStorageSpecialization, CatalogTableSchema,
@@ -142,6 +151,19 @@ pub trait TableWalAppender: Send + Sync {
     /// appender overrides it. Used by the CDC change-feed to surface row-level changes.
     async fn read_all_entries(&self) -> Result<Vec<CanonicalWalEntry>> {
         Ok(Vec::new())
+    }
+
+    /// Highest sequence_number assigned to an entry for `collection_id`, when the
+    /// appender tracks per-collection watermarks. `None` (default) = unknown ⇒ the
+    /// caller must scan. Used by the TD-OLAP-17 fast-path in `read_changes_since`:
+    /// if the collection's high-water has not advanced past a reader's `since_lsn`,
+    /// no entry can satisfy `sequence_number > since_lsn` ⇒ empty, skipping the
+    /// O(WAL-size) `read_all_entries` materialization that the OLAP delta merge
+    /// otherwise pays per table, per query (the measured DF table-OPEN floor —
+    /// TD-OLAP-17). The shared canonical WAL is tagged per entry, so the watermark
+    /// is per-collection, not global.
+    fn collection_max_sequence_for(&self, _collection_id: &str) -> Option<u64> {
+        None
     }
 }
 
@@ -274,7 +296,7 @@ fn sanitize_object_path_segment(value: &str) -> String {
 }
 
 #[allow(clippy::expect_used)] // DrPathBuilder::build is infallible for this internally-constructed namespace
-fn object_store_write_base_path(
+pub(crate) fn object_store_write_base_path(
     schema: &CatalogTableSchema,
     tenant_context: Option<&TenantContext>,
 ) -> String {
@@ -287,9 +309,20 @@ fn object_store_write_base_path(
     let tenant_id = tenant_context
         .map(|tc| tc.tenant_id.as_str())
         .unwrap_or("default_tenant");
+    // ADR-074 S1 (C.2): source the namespace id from the identity context
+    // (threaded via the `From<&MiddlewareTenantContext>` bridge), not a hardcoded
+    // storage-layer constant. `None` (single-tenant / not yet threaded) falls
+    // back to the path contract's DEFAULT_NAMESPACE_ID — byte-identical to the
+    // prior "ns_default", so paths are unchanged (mixed-read-safe).
+    let namespace_id = tenant_context
+        .and_then(|tc| tc.namespace_id.clone())
+        .unwrap_or_else(|| {
+            crate::storage::trait_components::path_resolver::DrPathBuilder::DEFAULT_NAMESPACE_ID
+                .to_string()
+        });
     let mock_namespace = proximadb_catalog::CatalogNamespace::new(vec!["default".into()])
         .with_tenant(tenant_id)
-        .with_namespace_id("ns_default");
+        .with_namespace_id(namespace_id);
 
     let dr_path = crate::storage::trait_components::path_resolver::DrPathBuilder::build(
         &mock_namespace,
@@ -483,6 +516,29 @@ fn change_row_from_entry(
     }
 }
 
+#[cfg(feature = "abac-policy")]
+pub mod fa_b_bypass_does_not_compile {
+    //! FA-b compile-time guard (Phase 4).
+    //!
+    //! Asserts that a client read which omits the required `ReadContext`
+    //! argument does not compile. The carrier module is cfg-gated, so the
+    //! `compile_fail` doctest runs **only** when the `read_context` parameter
+    //! exists; under the default (feature-off) build the parameter is absent and
+    //! a 3-argument call would compile, which would make a bare `compile_fail`
+    //! doctest pass *vacuously*. Gating the carrier makes the assertion
+    //! meaningful.
+    //!
+    //! ```compile_fail
+    //! use proximadb::services::record_store::TableRecordStore;
+    //!
+    //! // FA-b: omitting the 4th `read_context` argument → E0061. Bypass is a
+    //! // compile error, not a code-review convention.
+    //! fn no_read_context<S: TableRecordStore>(store: &S) {
+    //!     let _ = store.get_by_key(todo!(), todo!(), todo!());
+    //! }
+    //! ```
+}
+
 #[async_trait]
 pub trait TableRecordStore: Send + Sync {
     /// Write catalog-validated record mutations.
@@ -494,11 +550,18 @@ pub trait TableRecordStore: Send + Sync {
     ) -> Result<TableRecordWriteResult>;
 
     /// Get the current visible record for a key.
+    ///
+    /// `read_context` (present only under `abac-policy`) is the FA-b required
+    /// authorization context: a client read resolves `AuthorizedReadContext`;
+    /// an internal read (FK resolution, index build, recovery) supplies
+    /// `ReadContext::system(reason, origin)`. A call that omits it does not
+    /// compile when the feature is on — ABAC bypass is a compile error.
     async fn get_by_key(
         &self,
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse>;
 
     /// Scan current visible records for a cataloged table.
@@ -511,7 +574,10 @@ pub trait TableRecordStore: Send + Sync {
         table_schema: &CatalogTableSchema,
         request: TableRecordScanRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
+        #[cfg(feature = "abac-policy")]
+        let _ = read_context;
         let _ = (request, tenant_context);
         Err(anyhow!(
             "TableRecordStore for '{}' does not support catalog-table scans yet",
@@ -533,11 +599,20 @@ pub trait TableRecordStore: Send + Sync {
         request: TableRecordScanRequest,
         predicate: Option<&RecordScanPredicate<'_>>,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         let limit = request.limit.unwrap_or(usize::MAX);
         let mut req = request;
         req.limit = None;
-        let mut all = self.scan_records(table_schema, req, tenant_context).await?;
+        let mut all = self
+            .scan_records(
+                table_schema,
+                req,
+                tenant_context,
+                #[cfg(feature = "abac-policy")]
+                read_context,
+            )
+            .await?;
         let mut kept = 0usize;
         all.retain(|record| {
             if kept >= limit {
@@ -596,6 +671,11 @@ pub trait TableRecordStore: Send + Sync {
                     },
                     predicate,
                     tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::ForeignKeyResolution,
+                        "check_unique_conflict",
+                    ),
                 )
                 .await?;
             if let Some(existing) = hits.first() {
@@ -1026,9 +1106,16 @@ impl TableRecordStore for CatalogRoutingTableRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         self.store_for_schema(table_schema)
-            .get_by_key(table_schema, request, tenant_context)
+            .get_by_key(
+                table_schema,
+                request,
+                tenant_context,
+                #[cfg(feature = "abac-policy")]
+                read_context,
+            )
             .await
     }
 
@@ -1037,9 +1124,16 @@ impl TableRecordStore for CatalogRoutingTableRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordScanRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         self.store_for_schema(table_schema)
-            .scan_records(table_schema, request, tenant_context)
+            .scan_records(
+                table_schema,
+                request,
+                tenant_context,
+                #[cfg(feature = "abac-policy")]
+                _read_context,
+            )
             .await
     }
 
@@ -1049,9 +1143,17 @@ impl TableRecordStore for CatalogRoutingTableRecordStore {
         request: TableRecordScanRequest,
         predicate: Option<&RecordScanPredicate<'_>>,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         self.store_for_schema(table_schema)
-            .scan_records_filtered(table_schema, request, predicate, tenant_context)
+            .scan_records_filtered(
+                table_schema,
+                request,
+                predicate,
+                tenant_context,
+                #[cfg(feature = "abac-policy")]
+                _read_context,
+            )
             .await
     }
 
@@ -1125,6 +1227,7 @@ impl TableRecordStore for VectorOpsTableRecordStore {
         _table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         self.vector_ops
             .get_record_with_tenant_context(
@@ -1135,6 +1238,7 @@ impl TableRecordStore for VectorOpsTableRecordStore {
                     include_props: request.include_props,
                 },
                 tenant_context,
+                proximadb_runtime::PortIdentity::anonymous(),
             )
             .await
     }
@@ -1144,6 +1248,7 @@ impl TableRecordStore for VectorOpsTableRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordScanRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         self.vector_ops
             .scan_records_with_tenant_context(
@@ -1233,6 +1338,7 @@ impl TableRecordStore for RecordStorageTableRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         _tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         let record = self
             .storage
@@ -1253,6 +1359,7 @@ impl TableRecordStore for RecordStorageTableRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordScanRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         let mut options = request
             .limit
@@ -1289,6 +1396,7 @@ impl TableRecordStore for RecordStorageTableRecordStore {
         request: TableRecordScanRequest,
         predicate: Option<&RecordScanPredicate<'_>>,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         let mut options = request
             .limit
@@ -1702,13 +1810,28 @@ impl DirectWalTableRecordStore {
         };
         let mut existing =
             RecordStorageTableRecordStore::new(self.partition(tenant_id, &collection_id))
-                .scan_records(table_schema, scan_request.clone(), None)
+                .scan_records(
+                    table_schema,
+                    scan_request.clone(),
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::IndexBuild,
+                        "record_store::build_unique_index",
+                    ),
+                )
                 .await?;
         // O3: include any pre-flip records still in the legacy name-keyed partition
         // so the index reflects current visible state across the cutover window.
         if let Some(legacy) = &legacy_key {
             let legacy_recs = RecordStorageTableRecordStore::new(self.partition(tenant_id, legacy))
-                .scan_records(table_schema, scan_request, None)
+                .scan_records(
+                    table_schema,
+                    scan_request,
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::IndexBuild, "record_store::build_index"),
+                )
                 .await?;
             existing = merge_scan_primary_wins(existing, legacy_recs, None);
         }
@@ -1751,12 +1874,27 @@ impl DirectWalTableRecordStore {
         };
         let mut existing =
             RecordStorageTableRecordStore::new(self.partition(tenant_id, &collection_id))
-                .scan_records(table_schema, scan_request.clone(), None)
+                .scan_records(
+                    table_schema,
+                    scan_request.clone(),
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(
+                        SystemReadReason::IndexBuild,
+                        "record_store::build_unique_index",
+                    ),
+                )
                 .await?;
         // O3: include any pre-flip records still in the legacy name-keyed partition.
         if let Some(legacy) = &legacy_key {
             let legacy_recs = RecordStorageTableRecordStore::new(self.partition(tenant_id, legacy))
-                .scan_records(table_schema, scan_request, None)
+                .scan_records(
+                    table_schema,
+                    scan_request,
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::IndexBuild, "record_store::build_index"),
+                )
                 .await?;
             existing = merge_scan_primary_wins(existing, legacy_recs, None);
         }
@@ -1784,6 +1922,14 @@ impl TableRecordStore for DirectWalTableRecordStore {
         collection_id: &str,
         since_lsn: u64,
     ) -> Result<Vec<ChangeRow>> {
+        // TD-OLAP-17 fast-path: skip the O(WAL) scan when the collection's
+        // high-water hasn't advanced past `since_lsn` (no entry can satisfy
+        // `sequence_number > since_lsn`). `None` ⇒ appender doesn't track ⇒ scan.
+        if let Some(max) = self.wal_appender.collection_max_sequence_for(collection_id)
+            && max <= since_lsn
+        {
+            return Ok(Vec::new());
+        }
         let entries = self.wal_appender.read_all_entries().await?;
         let mut out: Vec<ChangeRow> = entries
             .iter()
@@ -1804,6 +1950,14 @@ impl TableRecordStore for DirectWalTableRecordStore {
         tenant: Option<&str>,
         since_lsn: u64,
     ) -> Result<Vec<ChangeRow>> {
+        // TD-OLAP-17 fast-path (tenant-agnostic): the collection high-water is a
+        // sufficient condition for emptiness across ALL tenants — if no entry for
+        // this collection exceeds `since_lsn`, the tenant filter cannot add any.
+        if let Some(max) = self.wal_appender.collection_max_sequence_for(collection_id)
+            && max <= since_lsn
+        {
+            return Ok(Vec::new());
+        }
         let entries = self.wal_appender.read_all_entries().await?;
         let want = tenant.filter(|t| !t.is_empty());
         let mut out: Vec<ChangeRow> = entries
@@ -2006,6 +2160,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         // Pass `None`: the partition already scopes the tenant structurally, so
         // no per-record tenant filter is needed (TD-064).
@@ -2013,19 +2168,37 @@ impl TableRecordStore for DirectWalTableRecordStore {
         let (primary, legacy) = self.partitions_for(&tenant, table_schema);
         let Some(legacy) = legacy else {
             return RecordStorageTableRecordStore::new(primary)
-                .get_by_key(table_schema, request, None)
+                .get_by_key(
+                    table_schema,
+                    request,
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    read_context,
+                )
                 .await;
         };
         // O3 cutover window: the primary (post-flip) partition wins; fall back to
         // the legacy name-keyed partition for records not yet migrated-on-write.
         let primary_res = RecordStorageTableRecordStore::new(primary)
-            .get_by_key(table_schema, request.clone(), None)
+            .get_by_key(
+                table_schema,
+                request.clone(),
+                None,
+                #[cfg(feature = "abac-policy")]
+                read_context,
+            )
             .await?;
         if primary_res.is_some() {
             return Ok(primary_res);
         }
         RecordStorageTableRecordStore::new(legacy)
-            .get_by_key(table_schema, request, None)
+            .get_by_key(
+                table_schema,
+                request,
+                None,
+                #[cfg(feature = "abac-policy")]
+                read_context,
+            )
             .await
     }
 
@@ -2034,20 +2207,39 @@ impl TableRecordStore for DirectWalTableRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordScanRequest,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         let tenant = Self::tenant_key(tenant_context);
         let (primary, legacy) = self.partitions_for(&tenant, table_schema);
         let Some(legacy) = legacy else {
             return RecordStorageTableRecordStore::new(primary)
-                .scan_records(table_schema, request, None)
+                .scan_records(
+                    table_schema,
+                    request,
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    _read_context,
+                )
                 .await;
         };
         let limit = request.limit;
         let primary_recs = RecordStorageTableRecordStore::new(primary)
-            .scan_records(table_schema, request.clone(), None)
+            .scan_records(
+                table_schema,
+                request.clone(),
+                None,
+                #[cfg(feature = "abac-policy")]
+                _read_context,
+            )
             .await?;
         let legacy_recs = RecordStorageTableRecordStore::new(legacy)
-            .scan_records(table_schema, request, None)
+            .scan_records(
+                table_schema,
+                request,
+                None,
+                #[cfg(feature = "abac-policy")]
+                _read_context,
+            )
             .await?;
         Ok(merge_scan_primary_wins(primary_recs, legacy_recs, limit))
     }
@@ -2058,20 +2250,42 @@ impl TableRecordStore for DirectWalTableRecordStore {
         request: TableRecordScanRequest,
         predicate: Option<&RecordScanPredicate<'_>>,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         let tenant = Self::tenant_key(tenant_context);
         let (primary, legacy) = self.partitions_for(&tenant, table_schema);
         let Some(legacy) = legacy else {
             return RecordStorageTableRecordStore::new(primary)
-                .scan_records_filtered(table_schema, request, predicate, None)
+                .scan_records_filtered(
+                    table_schema,
+                    request,
+                    predicate,
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    _read_context,
+                )
                 .await;
         };
         let limit = request.limit;
         let primary_recs = RecordStorageTableRecordStore::new(primary)
-            .scan_records_filtered(table_schema, request.clone(), predicate, None)
+            .scan_records_filtered(
+                table_schema,
+                request.clone(),
+                predicate,
+                None,
+                #[cfg(feature = "abac-policy")]
+                _read_context,
+            )
             .await?;
         let legacy_recs = RecordStorageTableRecordStore::new(legacy)
-            .scan_records_filtered(table_schema, request, predicate, None)
+            .scan_records_filtered(
+                table_schema,
+                request,
+                predicate,
+                None,
+                #[cfg(feature = "abac-policy")]
+                _read_context,
+            )
             .await?;
         Ok(merge_scan_primary_wins(primary_recs, legacy_recs, limit))
     }
@@ -2360,7 +2574,13 @@ mod tests {
         // Dual-read: under the oid gate, get + scan still see the legacy record.
         assert!(
             store
-                .get_by_key(&schema, get("r1"), None)
+                .get_by_key(
+                    &schema,
+                    get("r1"),
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
+                )
                 .await
                 .unwrap()
                 .is_some(),
@@ -2368,7 +2588,13 @@ mod tests {
         );
         assert_eq!(
             store
-                .scan_records(&schema, scan(), None)
+                .scan_records(
+                    &schema,
+                    scan(),
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "record_store::tests",),
+                )
                 .await
                 .unwrap()
                 .len(),
@@ -2394,7 +2620,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let after = store.scan_records(&schema, scan(), None).await.unwrap();
+        let after = store
+            .scan_records(
+                &schema,
+                scan(),
+                None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
+            )
+            .await
+            .unwrap();
         assert_eq!(
             after.len(),
             1,
@@ -2416,7 +2651,13 @@ mod tests {
             .unwrap();
         assert!(
             store
-                .get_by_key(&schema, get("r1"), None)
+                .get_by_key(
+                    &schema,
+                    get("r1"),
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
+                )
                 .await
                 .unwrap()
                 .is_none(),
@@ -2690,6 +2931,8 @@ mod tests {
                 },
                 Some(&pred),
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap();
@@ -2753,6 +2996,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -2770,6 +3015,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap();
@@ -2798,6 +3045,8 @@ mod tests {
                         include_props: true,
                     },
                     None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
                 )
                 .await
                 .unwrap()
@@ -2868,6 +3117,52 @@ mod tests {
             }
             other => panic!("expected upsert WAL entry, got {other:?}"),
         }
+    }
+
+    /// TD-OLAP-17: `read_changes_since` skips the O(WAL) `read_all_entries` scan
+    /// when the appender's per-collection high-water has not advanced past
+    /// `since_lsn`. This is the fast-path that removes the DF table-OPEN floor
+    /// (the per-table-per-query `changed_oids_since` scan). `MemoryTableWalAppender`
+    /// tracks the high-water on append; `RecordingWalAppender` inherits the default
+    /// (`None` ⇒ scan), so this test uses the memory appender.
+    #[tokio::test]
+    async fn read_changes_since_skips_scan_via_collection_high_water() {
+        use crate::services::canonical_wal::MemoryTableWalAppender;
+
+        let wal = Arc::new(MemoryTableWalAppender::new());
+        let upsert = |coll: &str| CanonicalOperation::RecordUpsert {
+            collection_id: coll.to_string(),
+            record: Box::new(ProximaRecord::default()),
+            projections: vec![],
+        };
+        // t1 → seq 1, 2 (high-water 2); t2 → seq 3 (high-water 3).
+        wal.append_operations(vec![upsert("t1")], None)
+            .await
+            .unwrap();
+        wal.append_operations(vec![upsert("t1")], None)
+            .await
+            .unwrap();
+        wal.append_operations(vec![upsert("t2")], None)
+            .await
+            .unwrap();
+
+        let store = DirectWalTableRecordStore::new_partitioned(wal);
+
+        // Fast-path: high-water (2) <= since_lsn 2 ⇒ empty, no scan.
+        assert!(store.read_changes_since("t1", 2).await.unwrap().is_empty());
+        // Scan: high-water (2) > since_lsn 1 ⇒ the seq-2 entry.
+        assert_eq!(store.read_changes_since("t1", 1).await.unwrap().len(), 1);
+        // Fast-path for t2.
+        assert!(store.read_changes_since("t2", 3).await.unwrap().is_empty());
+        assert_eq!(store.read_changes_since("t2", 2).await.unwrap().len(), 1);
+        // Unknown collection ⇒ no high-water ⇒ scan ⇒ empty.
+        assert!(
+            store
+                .read_changes_since("never-written", 0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -3175,6 +3470,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap();
@@ -3254,6 +3551,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -3347,6 +3646,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -3434,6 +3735,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -3666,6 +3969,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap();
@@ -3696,6 +4001,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -3762,6 +4069,8 @@ mod tests {
                     include_props: true,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap();
@@ -3803,6 +4112,8 @@ mod tests {
                     include_props: false,
                 },
                 None,
+                #[cfg(feature = "abac-policy")]
+                &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
             )
             .await
             .unwrap()
@@ -3821,6 +4132,162 @@ mod tests {
                 fetched.vector
             );
         }
+    }
+
+    /// P-Trace (TD-DOC-CONV-2 / ADR-054): MEASURE the pre-shred document I/O baseline. A
+    /// representative document corpus (rich, varied `props` — the metadata a hybrid-shred format
+    /// would promote to typed columns) is persisted as ONE PAX segment, then each read op runs
+    /// inside an `io_trace::scope` so the task-local trace is captured. This records the co-design
+    /// baseline the shredding + pushdown work (ADR-054 P-Shred/P-Pushdown) will improve: TODAY every
+    /// document read — point-get AND filtered scan alike — FETCHES THE WHOLE SEGMENT (no pushdown,
+    /// no ranged reads), and the write records its segment bytes (the new `put_pax` hook).
+    /// `range_gets` is gated behind the `io-trace` feature; `bytes_read`/`bytes_written` are always-on.
+    #[tokio::test]
+    async fn doc_iotrace_baseline_preshred() {
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let bridge: Arc<dyn ObjectStoreBridge> =
+            Arc::new(IcebergObjectStoreBridge::from_url("memory://").unwrap());
+        let store = ObjectStoreVectorRecordStore::new(bridge);
+        let schema = CatalogTableSchema::new("docs")
+            .with_workload_profile(CatalogWorkloadProfile::Vector)
+            .with_storage_specialization(CatalogStorageSpecialization::VectorAnn);
+
+        const N: usize = 500;
+        let mut muts = Vec::with_capacity(N);
+        for i in 0..N {
+            let mut props = HashMap::new();
+            props.insert(
+                "title".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String(format!(
+                    "Document number {i} — a representative title with several words"
+                ))),
+            );
+            props.insert(
+                "status".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String(
+                    if i % 3 == 0 { "active" } else { "archived" }.to_string(),
+                )),
+            );
+            props.insert(
+                "day".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Int64((i % 365) as i64)),
+            );
+            props.insert(
+                "author".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String(format!("author_{}", i % 50))),
+            );
+            props.insert(
+                "body".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String("lorem ipsum dolor sit ".repeat(16))),
+            );
+            let record = ProximaRecord {
+                oid: format!("doc-{i}"),
+                variation_id: Some("docs".to_string()),
+                created_at_ns: 1_700_000_000_000_000_000 + i as i64,
+                props,
+                embeddings: vec![EmbeddingCell {
+                    modality: "dense".into(),
+                    dim: 8,
+                    values: EmbeddingValues::Fp32((0..8).map(|d| ((i + d) as f32).sin()).collect()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            muts.push(TableRecordMutation::new(
+                TableRecordMutationKind::Upsert,
+                record,
+            ));
+        }
+
+        // WRITE — the whole-segment flush; captures bytes_written (the new put_pax hook).
+        let write_snap = io_trace::scope(async {
+            let w = store
+                .write_mutations(&schema, muts, None)
+                .await
+                .expect("write_mutations");
+            assert!(w.success);
+            io_trace::snapshot().expect("snapshot in scope")
+        })
+        .await;
+
+        // POINT-GET — one record, but the WHOLE segment is fetched (fetch_pax).
+        let get_snap = io_trace::scope(async {
+            let got = store
+                .get_by_key(
+                    &schema,
+                    TableRecordGetRequest {
+                        table_id: "docs".to_string(),
+                        key: "doc-250".to_string(),
+                        include_vector: false,
+                        include_props: true,
+                    },
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
+                )
+                .await
+                .expect("get_by_key");
+            assert!(got.is_some(), "point-get must find the record");
+            io_trace::snapshot().expect("snapshot in scope")
+        })
+        .await;
+
+        // FILTERED SCAN — the query_documents baseline; filter is NOT pushed down, so the whole
+        // segment is fetched and filtered in memory.
+        let scan_snap = io_trace::scope(async {
+            let scanned = store
+                .scan_records(
+                    &schema,
+                    TableRecordScanRequest {
+                        table_id: "docs".to_string(),
+                        limit: None,
+                        include_vector: false,
+                        include_props: true,
+                        filter: None,
+                    },
+                    None,
+                    #[cfg(feature = "abac-policy")]
+                    &ReadContext::system(SystemReadReason::Statistics, "record_store::tests"),
+                )
+                .await
+                .expect("scan_records");
+            assert_eq!(scanned.len(), N, "all docs read back");
+            io_trace::snapshot().expect("snapshot in scope")
+        })
+        .await;
+
+        eprintln!("BAKE_METRIC doc_trace.corpus_docs={N}");
+        eprintln!(
+            "BAKE_METRIC doc_trace.write.bytes_written={} put_ops={}",
+            write_snap.bytes_written, write_snap.put_ops
+        );
+        eprintln!(
+            "BAKE_METRIC doc_trace.point_get.bytes_read={} get_ops={} range_gets={}",
+            get_snap.bytes_read, get_snap.get_ops, get_snap.range_gets
+        );
+        eprintln!(
+            "BAKE_METRIC doc_trace.filtered_scan.bytes_read={} get_ops={} range_gets={}",
+            scan_snap.bytes_read, scan_snap.get_ops, scan_snap.range_gets
+        );
+        // The pre-shred baseline: a point-get fetches the SAME whole segment a full scan does.
+        eprintln!(
+            "BAKE_METRIC doc_trace.point_get_reads_whole_segment={}",
+            get_snap.bytes_read == scan_snap.bytes_read && get_snap.bytes_read > 0
+        );
+
+        assert!(
+            write_snap.bytes_written > 0,
+            "flush must record bytes_written (the new put_pax hook)"
+        );
+        assert!(
+            get_snap.bytes_read > 0,
+            "point-get must record bytes_read (fetch_pax)"
+        );
+        assert!(
+            scan_snap.bytes_read > 0,
+            "filtered scan must record bytes_read (fetch_pax)"
+        );
     }
 
     /// Phase D: the recovered `oid` byte-matches the catalog's canonical
@@ -3985,6 +4452,7 @@ impl TableRecordStore for ObjectStoreIcebergRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         _tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         let records = self.read_all_records(table_schema, _tenant_context).await?;
         let found = records.into_iter().find(|record| record.oid == request.key);
@@ -4003,6 +4471,7 @@ impl TableRecordStore for ObjectStoreIcebergRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordScanRequest,
         _tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         let mut records = self.read_all_records(table_schema, _tenant_context).await?;
         if let Some(limit) = request.limit {
@@ -4236,6 +4705,23 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             .unwrap_or(TableRecordMutationKind::Insert);
         let object_path = object_store_pax_segment_path(schema, kind, _tenant_context);
         let local_path = temp_pax_segment_path(schema, kind);
+        // P-Shred (ADR-055): resolve the shred-list from the catalog's props-auto-promotion
+        // policy — each promoted prop key maps to a typed user-column (by name → id). Sorted by
+        // column id for deterministic stripe layout. Empty ⇒ no shredding (byte-for-byte today's
+        // output). The msgpack PROPS tail stays authoritative; these columns are a pruning index.
+        let mut shred_spec: Vec<(String, i32)> = schema
+            .props_auto_promotion
+            .promoted_keys
+            .iter()
+            .filter_map(|(prop_key, col_name)| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|c| &c.name == col_name)
+                    .map(|c| (prop_key.clone(), c.id))
+            })
+            .collect();
+        shred_spec.sort_by_key(|(_, id)| *id);
         let mut writer = PaxSegmentWriter::new(
             &local_path,
             BlockMode::Pax,
@@ -4244,7 +4730,8 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             0,
             embedding_count_for_records(&records),
             None,
-        );
+        )
+        .with_shred_spec(shred_spec);
         for record in &records {
             writer.add_record(record).map_err(|err| {
                 anyhow!(
@@ -4268,6 +4755,11 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         let remove_result = std::fs::remove_file(&segment_meta.path);
 
         let tenant_id = _tenant_context.map(|tc| tc.tenant_id.as_str());
+        // Per-query WRITE trace: the PAX segment PUT is the object-store write boundary. Mirrors the
+        // read side's `record_bytes_read` in `read_all_records`, so a flush's bytes are observable
+        // to the co-design cost model (no-op outside an `io_trace::scope`).
+        io_trace::record_op_str("put_pax");
+        io_trace::record_bytes_written(bytes.len() as u64);
         self.bridge
             .persist_vector_segment(&object_path, &bytes, tenant_id)
             .await
@@ -4300,6 +4792,7 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordGetRequest,
         _tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordGetResponse> {
         let records = self.read_all_records(table_schema, _tenant_context).await?;
         let found = records.into_iter().find(|record| record.oid == request.key);
@@ -4318,6 +4811,7 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         table_schema: &CatalogTableSchema,
         request: TableRecordScanRequest,
         _tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         let mut records = self.read_all_records(table_schema, _tenant_context).await?;
         if let Some(limit) = request.limit {
@@ -4347,12 +4841,21 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         request: TableRecordScanRequest,
         predicate: Option<&RecordScanPredicate<'_>>,
         tenant_context: Option<&TenantContext>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<TableRecordScanResponse> {
         let Some(filter) = request.filter.clone() else {
             let limit = request.limit.unwrap_or(usize::MAX);
             let mut req = request;
             req.limit = None;
-            let mut all = self.scan_records(table_schema, req, tenant_context).await?;
+            let mut all = self
+                .scan_records(
+                    table_schema,
+                    req,
+                    tenant_context,
+                    #[cfg(feature = "abac-policy")]
+                    _read_context,
+                )
+                .await?;
             let mut kept = 0usize;
             all.retain(|record| {
                 if kept >= limit {

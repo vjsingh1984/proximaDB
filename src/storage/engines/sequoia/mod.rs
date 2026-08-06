@@ -613,23 +613,6 @@ impl UnifiedStorageFormat for SequoiaEngine {
         StorageFormatStrategy::Sst
     }
 
-    fn get_filesystem_factory(&self) -> &FilesystemFactory {
-        use std::sync::OnceLock;
-        static FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
-        FACTORY.get_or_init(|| {
-            futures::executor::block_on(async {
-                FilesystemFactory::create(FilesystemConfig::default())
-                    .await
-                    .unwrap_or_else(|_| {
-                        #[allow(clippy::panic)]
-                        {
-                            panic!("Failed to create filesystem factory for SEQUOIA engine")
-                        }
-                    })
-            })
-        })
-    }
-
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         RelationalStorageEngine::collect_metrics(self).await
     }
@@ -656,6 +639,25 @@ impl UnifiedStorageFormat for SequoiaEngine {
 
     async fn do_compact(&self, _params: &CompactionParameters) -> Result<CompactionResult> {
         Ok(CompactionResult::default())
+    }
+}
+
+impl crate::storage::traits::EngineFilesystemAccess for SequoiaEngine {
+    fn get_filesystem_factory(&self) -> &FilesystemFactory {
+        use std::sync::OnceLock;
+        static FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
+        FACTORY.get_or_init(|| {
+            futures::executor::block_on(async {
+                FilesystemFactory::create(FilesystemConfig::default())
+                    .await
+                    .unwrap_or_else(|_| {
+                        #[allow(clippy::panic)]
+                        {
+                            panic!("Failed to create filesystem factory for SEQUOIA engine")
+                        }
+                    })
+            })
+        })
     }
 }
 

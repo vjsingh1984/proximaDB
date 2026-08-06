@@ -26,8 +26,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::decompression::DecompressionLayer;
 use tower_http::trace::TraceLayer;
 
-use super::v1::handlers::{AppState, create_router};
-use crate::api_handlers::UnifiedHandlers;
+use super::canonical::handlers::{AppState, RestCoreServices, create_router};
 use crate::monitoring::MetricsCollector;
 use crate::network::middleware::backpressure::{
     BackpressureConfig, create_concurrency_limit_layer,
@@ -261,7 +260,7 @@ impl RestServer {
     /// - Compression: Optional based on parameter
     pub fn new(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -269,7 +268,7 @@ impl RestServer {
     ) -> Self {
         Self::with_security(
             bind_addr,
-            request_handlers,
+            core,
             max_request_size_mb,
             compression,
             metrics_collector,
@@ -284,7 +283,7 @@ impl RestServer {
     /// **WARNING**: Only use for local development and testing!
     pub fn new_development(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -293,7 +292,7 @@ impl RestServer {
         tracing::warn!("🚨 Starting REST server in DEVELOPMENT mode - security is relaxed!");
         Self::with_security(
             bind_addr,
-            request_handlers,
+            core,
             max_request_size_mb,
             compression,
             metrics_collector,
@@ -306,7 +305,7 @@ impl RestServer {
     /// Create new REST server with custom security configuration.
     pub fn with_security(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -314,10 +313,11 @@ impl RestServer {
         security_config: RestServerSecurityConfig,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
-        let graph_execution_service = request_handlers.graph_execution_service.clone();
+        let graph_execution_service: Arc<dyn GraphExecutionService> =
+            core.graph_operations_service.clone();
         Self::with_security_and_config(
             bind_addr,
-            request_handlers,
+            core,
             graph_execution_service,
             max_request_size_mb,
             compression,
@@ -333,7 +333,7 @@ impl RestServer {
     /// Create new REST server with custom security configuration and data directory from config.
     pub fn with_security_and_config(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         max_request_size_mb: Option<u64>,
         compression: bool,
@@ -346,7 +346,7 @@ impl RestServer {
     ) -> Self {
         Self::with_security_and_config_and_ports(
             bind_addr,
-            request_handlers,
+            core,
             graph_execution_service,
             max_request_size_mb,
             compression,
@@ -373,7 +373,7 @@ impl RestServer {
     /// routes through `producer.send`; otherwise it falls back to inline embed.
     pub fn with_security_and_config_and_ports(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         max_request_size_mb: Option<u64>,
         compression: bool,
@@ -386,7 +386,7 @@ impl RestServer {
         ports: Option<RestServerPorts>,
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
-        fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
+        fulltext_indexes: Option<crate::network::rest::canonical::handlers::FullTextIndexMap>,
         discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
         external_collection_service: Option<
             Arc<crate::services::external_collection::ExternalCollectionService>,
@@ -415,13 +415,21 @@ impl RestServer {
         }
 
         let mut base_state = AppState::new(
-            request_handlers,
+            core,
             graph_execution_service,
             security_coordinator.clone(),
             data_dir,
             query_adapter.clone(),
             llm_engine,
         );
+        // TD-TENANT-1 item 3: build the tenant-stable-id resolver from the
+        // catalog handle before it's moved into base_state below, so the tenant
+        // middleware can stamp tenant_stable_id for ABAC enforcement.
+        let tenant_stable_id_resolver = catalog_manager.as_ref().map(|cm| {
+            Arc::new(crate::security::CatalogTenantStableIdResolver::new(
+                cm.clone(),
+            )) as Arc<dyn proximadb_tenant::TenantStableIdResolver>
+        });
         if let Some(manager) = catalog_manager {
             base_state = base_state.with_catalog_manager(manager);
         }
@@ -487,6 +495,17 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
+        // ADR-049 M0-c / TD-V1SUNSET-1 step 1: the deprecated /api/v1/*
+        // surface is gated behind PROXIMADB_REST_V1_COMPAT (now OFF by default).
+        // /api/v1/* is answered with 410 Gone + RFC 8594 deprecation headers;
+        // /api/v2/* is never affected. Set PROXIMADB_REST_V1_COMPAT=1 to
+        // temporarily re-enable v1 during migration.
+        let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
+        base_router = base_router.layer(middleware::from_fn_with_state(
+            rest_v1_compat,
+            crate::network::middleware::v1_sunset::v1_sunset_middleware,
+        ));
+
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
             base_router = base_router.nest("/metrics", metrics);
@@ -521,7 +540,12 @@ impl RestServer {
         // Create concurrency limit layer for backpressure (if enabled)
         let concurrency_layer = create_concurrency_limit_layer(&security_config.backpressure);
 
-        // Authentication layer (unified): prefer SecurityCoordinator if available
+        // Authentication layer (unified): prefer SecurityCoordinator if available.
+        // Auth ENABLED with NO coordinator is a security misconfiguration: rather
+        // than serving every request unauthenticated (failing open), we fail
+        // CLOSED — the deny layer applied after the router is built rejects the
+        // data plane with 503. (Computed before the coordinator is moved below.)
+        let auth_misconfigured = security_config.auth.enabled && security_coordinator.is_none();
         let auth_layer = if security_config.auth.enabled {
             if let Some(coordinator) = security_coordinator {
                 Some(middleware::from_fn_with_state(
@@ -529,8 +553,10 @@ impl RestServer {
                     crate::network::auth::middleware::auth_middleware_unified,
                 ))
             } else {
-                tracing::warn!(
-                    "Security enabled but no coordinator available; auth layer disabled"
+                tracing::error!(
+                    "REST auth is enabled but no SecurityCoordinator is configured — \
+                     failing CLOSED: data-plane (/api/*) requests are rejected with 503. \
+                     Wire a SecurityCoordinator or set auth.enabled=false."
                 );
                 None
             }
@@ -538,8 +564,14 @@ impl RestServer {
             None
         };
 
-        // Tenant extraction layer for multi-tenant isolation
-        let tenant_extractor = TenantExtractor::with_config(security_config.tenant.clone());
+        // Tenant extraction layer for multi-tenant isolation.
+        // Env overrides (PROXIMADB_TENANT_HEADER_TRUST) are applied here — at
+        // server construction, never inside constructors — so tests stay hermetic.
+        let mut tenant_extractor =
+            TenantExtractor::with_config(security_config.tenant.clone().apply_env_overrides());
+        if let Some(resolver) = &tenant_stable_id_resolver {
+            tenant_extractor = tenant_extractor.with_stable_id_resolver(resolver.clone());
+        }
         let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
 
         // Log security configuration
@@ -641,6 +673,13 @@ impl RestServer {
         if let Some(auth) = auth_layer {
             router = router.layer(auth);
         }
+        // Fail closed on an auth misconfiguration (enabled but no coordinator):
+        // deny the data plane with 503 rather than serving it unauthenticated.
+        if auth_misconfigured {
+            router = router.layer(middleware::from_fn(
+                crate::network::middleware::auth_failclosed::auth_misconfigured_deny_data_plane,
+            ));
+        }
 
         // Build TLS config if specified
         let tls_config = security_config.tls.as_ref().map(|tls| {
@@ -680,7 +719,7 @@ impl RestServer {
     /// graph, and observability routes. When `None`, the legacy root-crate
     /// handlers are used.
     pub fn build_router_for_unified(
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         metrics_collector: Option<Arc<MetricsCollector>>,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
@@ -691,19 +730,25 @@ impl RestServer {
         segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
-        fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
+        fulltext_indexes: Option<crate::network::rest::canonical::handlers::FullTextIndexMap>,
         recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
-        rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+        rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
         rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
         discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
         external_collection_service: Option<
             Arc<crate::services::external_collection::ExternalCollectionService>,
         >,
+        tenant_config: TenantExtractorConfig,
         // Mount the read-only `/admin` dashboard (from `[server.admin_ui] enabled`).
         admin_ui_enabled: bool,
+        // Dashboard auto-refresh (from `[server.admin_ui] auto_refresh`).
+        admin_ui_auto_refresh: bool,
+        // Dashboard auto-refresh interval seconds (from
+        // `[server.admin_ui] refresh_interval_seconds`).
+        admin_ui_refresh_interval_seconds: u32,
     ) -> Router {
         let mut base_state = AppState::new(
-            request_handlers,
+            core,
             graph_execution_service,
             security_coordinator.clone(),
             data_dir,
@@ -713,6 +758,13 @@ impl RestServer {
         if let Some(reg) = segment_registry {
             base_state = base_state.with_segment_registry(reg);
         }
+        // TD-TENANT-1 item 3: build the tenant-stable-id resolver from the
+        // catalog handle before it's moved into base_state below.
+        let tenant_stable_id_resolver = catalog_manager.as_ref().map(|cm| {
+            Arc::new(crate::security::CatalogTenantStableIdResolver::new(
+                cm.clone(),
+            )) as Arc<dyn proximadb_tenant::TenantStableIdResolver>
+        });
         if let Some(manager) = catalog_manager {
             base_state = base_state.with_catalog_manager(manager);
         }
@@ -789,6 +841,17 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
+        // ADR-049 M0-c / TD-V1SUNSET-1 step 1: the deprecated /api/v1/*
+        // surface is gated behind PROXIMADB_REST_V1_COMPAT (now OFF by default).
+        // /api/v1/* is answered with 410 Gone + RFC 8594 deprecation headers;
+        // /api/v2/* is never affected. Set PROXIMADB_REST_V1_COMPAT=1 to
+        // temporarily re-enable v1 during migration.
+        let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
+        base_router = base_router.layer(middleware::from_fn_with_state(
+            rest_v1_compat,
+            crate::network::middleware::v1_sunset::v1_sunset_middleware,
+        ));
+
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
             base_router = base_router.nest("/metrics", metrics);
@@ -798,7 +861,15 @@ impl RestServer {
         // Read-only admin dashboard at /admin (+ back-compat /dashboard alias),
         // gated by `[server.admin_ui] enabled` (off by default — empty router when
         // disabled). Mounted from the self-contained `proximadb-admin-ui` crate.
-        base_router = base_router.merge(proximadb_admin_ui::admin_router_if(admin_ui_enabled));
+        // The auto-refresh fields are server-injected into the page so the toggle
+        // reflects the operator's `[server.admin_ui]` default.
+        base_router = base_router.merge(proximadb_admin_ui::admin_router_if(
+            proximadb_admin_ui::AdminUiOptions {
+                enabled: admin_ui_enabled,
+                auto_refresh: admin_ui_auto_refresh,
+                refresh_interval_seconds: admin_ui_refresh_interval_seconds,
+            },
+        ));
         if admin_ui_enabled {
             tracing::info!("🖥️  Read-only admin dashboard enabled at /admin (+ /dashboard)");
         }
@@ -822,8 +893,13 @@ impl RestServer {
         // `/api/v2` request 500s with "missing request extension". The
         // multi-port path applies the same layer in `create_router`; the
         // unified path must apply it too (it is NOT wrapped by the caller).
-        // Default config resolves to the single "default" tenant in dev.
-        let tenant_extractor = TenantExtractor::with_config(TenantExtractorConfig::default());
+        // The caller supplies the same deployment-derived policy used by the
+        // multi-port path. Environment overrides are applied once here.
+        let mut tenant_extractor =
+            TenantExtractor::with_config(tenant_config.apply_env_overrides());
+        if let Some(resolver) = &tenant_stable_id_resolver {
+            tenant_extractor = tenant_extractor.with_stable_id_resolver(resolver.clone());
+        }
         let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
 
         // Auth layer — convergent with the multi-port `start_with_security`
@@ -1071,11 +1147,16 @@ impl RestServer {
     }
 }
 
-/// Dashboard handler - serves a comprehensive professional dashboard
-/// Router fallback for unmatched paths. Returns the canonical error envelope
+/// 404 fallback handler for unmatched paths. Returns the canonical error envelope
 /// and, for paths under the removed `/api/v1/*` surfaces, a migration hint
 /// pointing at the v2 replacement.
-async fn not_found_fallback(uri: axum::http::Uri) -> axum::response::Response {
+///
+/// `pub(crate)` so the router-level spec-path drift smoke test
+/// (`canonical::handlers::all_openapi_spec_paths_resolve_to_a_route`) can mount
+/// the SAME fallback the production routers use, and distinguish a genuine
+/// routing-404 (`"No route for ..."`) from a handler-level 404 (e.g. collection
+/// not found) — the distinction the drift gate hinges on.
+pub(crate) async fn not_found_fallback(uri: axum::http::Uri) -> axum::response::Response {
     use axum::response::IntoResponse;
     let path = uri.path();
 
@@ -1207,6 +1288,7 @@ mod tests {
             },
             encryption: crate::security::EncryptionConfig::default(),
             key_store: crate::security::KeyStoreConfig::default(),
+            tenant: Default::default(),
         }
     }
 

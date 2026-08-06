@@ -16,7 +16,7 @@
 #   │  1. PREPARE          Extract version, validate Cargo.toml              │
 #   ├─────────────────────────────────────────────────────────────────────────┤
 #   │  2. BUILD (parallel)                                                   │
-#   │     ├── build-binaries    6 platform targets (Linux/macOS/Windows)     │
+#   │     ├── build-binaries    2 platform targets (Linux/Windows)           │
 #   │     ├── (build-wheels disabled - pure Python package)              │
 #   │     ├── build-embedded    5 embedded wheel variants                    │
 #   │     └── build-sdist       Source distributions                         │
@@ -36,23 +36,15 @@
 #   └─────────────────────────────────────────────────────────────────────────┘
 #
 # EXPECTED ARTIFACTS:
-#   Binaries (6 targets):
+#   Binaries (2 targets for the v0.2 MVP trust corridor):
 #     - proximadb-{version}-x86_64-unknown-linux-gnu.tar.gz
-#     - proximadb-{version}-x86_64-unknown-linux-musl.tar.gz
-#     - proximadb-{version}-aarch64-unknown-linux-gnu.tar.gz
-#     - proximadb-{version}-x86_64-apple-darwin.tar.gz
-#     - proximadb-{version}-aarch64-apple-darwin.tar.gz
 #     - proximadb-{version}-x86_64-pc-windows-msvc.zip
 #
-#   Python Wheels (per platform/Python version):
-#     - Linux x86_64: Python 3.8, 3.9, 3.10, 3.11, 3.12
-#     - Linux aarch64: Python 3.9, 3.10, 3.11, 3.12
-#     - macOS x86_64: Python 3.9, 3.10, 3.11, 3.12
-#     - macOS aarch64: Python 3.9, 3.10, 3.11, 3.12
-#     - Windows x64: Python 3.9, 3.10, 3.11, 3.12
-#
-#   Embedded Wheels (5 targets):
-#     - Linux x86_64, Linux aarch64, macOS x86_64, macOS aarch64, Windows x64
+#   Python Wheels are NOT built here. The pure-Python SDK (`proximadb`) and the
+#   native embedded engine (`proximadb_embedded`, one abi3 wheel per platform,
+#   CPython 3.10+) are built and published by `release-python.yml` on `python-v*`
+#   tags — decoupled from this binary/OS-package release. This workflow (`v*`)
+#   only builds the server binaries, the sdist, and the OS packages below.
 #
 # SAFEGUARDS:
 #   - dry_run: Builds all artifacts but skips publishing (test the pipeline)
@@ -358,84 +350,12 @@ jobs:
             proximadb-*.${{ matrix.archive }}.sha256
           retention-days: 7
 
-  # ============================================================================
-  # BUILD PYTHON EMBEDDED WHEELS - Lightweight embedded package
-  # DISABLED for v0.2.0: clients/python-embedded is pure Python (setuptools), not Rust
-  # Re-enable in v0.2.1 after adding proper setuptools build or PyO3 bindings
-  # ============================================================================
-  # build-embedded-wheels:
-  #   name: Build Embedded Wheels (${{ matrix.os }}, ${{ matrix.target }})
-  #   needs: prepare
-  #   runs-on: ${{ matrix.os }}
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       include:
-  #         - os: ubuntu-22.04
-  #           target: x86_64
-  #         - os: ubuntu-22.04
-  #           target: aarch64
-  #         - os: macos-latest
-  #           target: aarch64
-  #         - os: windows-2022
-  #           target: x64
-  #
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #
-  #     - name: Setup Python
-  #       uses: actions/setup-python@v5
-  #       with:
-  #         python-version: "3.11"
-  #
-  #     - name: Install Rust Toolchain
-  #       uses: dtolnay/rust-toolchain@1.95.0
-  #       with:
-  #         toolchain: stable
-  #
-  #     - name: Install Maturin
-  #       run: pip install maturin
-  #
-  #     - name: Build Embedded Wheels (Linux x86_64)
-  #       if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64'
-  #       uses: PyO3/maturin-action@v1
-  #       with:
-  #         working-directory: clients/python-embedded
-  #         target: x86_64
-  #         manylinux: auto
-  #         args: --release --out dist --features python
-  #
-  #     - name: Build Embedded Wheels (Linux aarch64)
-  #       if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64'
-  #       uses: PyO3/maturin-action@v1
-  #       with:
-  #         working-directory: clients/python-embedded
-  #         target: aarch64
-  #         manylinux: auto
-  #         args: --release --out dist --features python
-  #
-  #     - name: Build Embedded Wheels (macOS/Windows)
-  #       if: runner.os != 'Linux'
-  #       working-directory: clients/python-embedded
-  #       run: |
-  #         if [ "${{ runner.os }}" = "macOS" ]; then
-  #           if [ "${{ matrix.target }}" = "aarch64" ]; then
-  #             maturin build --release --out dist --features python --target aarch64-apple-darwin
-  #           else
-  #             maturin build --release --out dist --features python --target x86_64-apple-darwin
-  #           fi
-  #         else
-  #           maturin build --release --out dist --features python
-  #         fi
-  #       shell: bash
-  #
-  #     - name: Upload Embedded Wheel Artifact
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: embedded-wheel-${{ matrix.os }}-${{ matrix.target }}
-  #         path: clients/python-embedded/dist/*.whl
-  #         retention-days: 7
+  # NOTE: Python embedded wheels are built by `release-python.yml` (native
+  # `proximadb_embedded`, one abi3 wheel per platform, CPython 3.10+), NOT here.
+  # A previously commented-out `build-embedded-wheels` job lived here; it was
+  # removed as dead — its premise ("clients/python-embedded is pure Python, not
+  # Rust") is also wrong now that the embedded engine is the root PyO3/maturin
+  # package.
 
   # ============================================================================
   # BUILD SOURCE DISTRIBUTION - Python sdist
@@ -521,7 +441,7 @@ jobs:
             -v "$VERSION" \
             --epoch 1 \
             --description "ProximaDB - Cloud-native vector database" \
-            --url "https://github.com/vjsingh1984/proximadb" \
+            --url "https://github.com/anvai-labs/proximaDB" \
             --license "Apache-2.0" \
             --vendor "ProximaDB" \
             --rpm-dist "el8" \
@@ -578,7 +498,7 @@ jobs:
             -n proximadb \
             -v "$VERSION" \
             --description "ProximaDB - Cloud-native vector database" \
-            --url "https://github.com/vjsingh1984/proximadb" \
+            --url "https://github.com/anvai-labs/proximaDB" \
             --license "Apache-2.0" \
             --vendor "ProximaDB" \
             --deb-priority "optional" \
@@ -721,58 +641,16 @@ jobs:
           echo ""
 
           # ----------------------------------------
-          # Expected Python Wheels
+          # Python Wheels — validated & published by release-python.yml, not here
           # ----------------------------------------
+          # This `v*` workflow builds no Python wheels (SDK + embedded abi3 wheels
+          # ship from release-python.yml on `python-v*` tags), so there is nothing
+          # to validate here. The prior per-Python-version count checks (expecting
+          # 5 wheels for 3.8-3.12) were orphaned when the wheel-build jobs moved
+          # out — they force-failed VALIDATION_PASSED against wheels this run never
+          # produces, blocking the publish gate. Removed.
           echo "## Python Wheel Artifacts"
-          echo ""
-
-          # Count wheels by platform pattern
-          LINUX_X64_WHEELS=$(find artifacts -name "*manylinux*x86_64*.whl" -type f 2>/dev/null | wc -l)
-          LINUX_ARM64_WHEELS=$(find artifacts -name "*manylinux*aarch64*.whl" -type f 2>/dev/null | wc -l)
-          MACOS_X64_WHEELS=$(find artifacts -name "*macosx*x86_64*.whl" -type f 2>/dev/null | wc -l)
-          MACOS_ARM64_WHEELS=$(find artifacts -name "*macosx*arm64*.whl" -type f 2>/dev/null | wc -l)
-          WINDOWS_WHEELS=$(find artifacts -name "*win_amd64*.whl" -type f 2>/dev/null | wc -l)
-
-          # Expected minimums (main wheels, not embedded)
-          # Linux x86_64: 5 Python versions (3.8-3.12)
-          # Others: 4 Python versions (3.9-3.12)
-          echo "  Linux x86_64 wheels: $LINUX_X64_WHEELS (informational)"
-          echo "  Linux aarch64 wheels: $LINUX_ARM64_WHEELS (informational)"
-          echo "  macOS x86_64 wheels: $MACOS_X64_WHEELS (informational)"
-          echo "  macOS arm64 wheels: $MACOS_ARM64_WHEELS (informational)"
-          echo "  Windows x64 wheels: $WINDOWS_WHEELS (informational)"
-          echo ""
-
-          # Wheel counts are informational only: this workflow's build-wheels
-          # matrix is disabled (the main package is pure Python and its wheels
-          # publish via release-python.yml), so per-platform compiled-wheel
-          # minimums are unsatisfiable here and must not block the release.
-          if [ "$LINUX_X64_WHEELS" -lt 5 ]; then
-            echo "  [INFO] No/few Linux x86_64 wheels (expected: wheels ship via release-python.yml)"
-          fi
-
-          TOTAL_WHEELS=$((LINUX_X64_WHEELS + LINUX_ARM64_WHEELS + MACOS_X64_WHEELS + MACOS_ARM64_WHEELS + WINDOWS_WHEELS))
-          echo ""
-          echo "  Total wheels found: $TOTAL_WHEELS"
-          echo ""
-
-          # ----------------------------------------
-          # Expected Embedded Wheels (5 platforms)
-          # ----------------------------------------
-          echo "## Embedded Wheel Artifacts"
-          echo ""
-
-          EMBEDDED_LINUX_X64=$(find artifacts -name "embedded-wheel-ubuntu*x86_64*" -type d 2>/dev/null | wc -l)
-          EMBEDDED_LINUX_ARM=$(find artifacts -name "embedded-wheel-ubuntu*aarch64*" -type d 2>/dev/null | wc -l)
-          EMBEDDED_MACOS_X64=$(find artifacts -name "embedded-wheel-macos*x86_64*" -type d 2>/dev/null | wc -l)
-          EMBEDDED_MACOS_ARM=$(find artifacts -name "embedded-wheel-macos*aarch64*" -type d 2>/dev/null | wc -l)
-          EMBEDDED_WINDOWS=$(find artifacts -name "embedded-wheel-windows*" -type d 2>/dev/null | wc -l)
-
-          echo "  Embedded Linux x86_64: $EMBEDDED_LINUX_X64"
-          echo "  Embedded Linux aarch64: $EMBEDDED_LINUX_ARM"
-          echo "  Embedded macOS x86_64: $EMBEDDED_MACOS_X64"
-          echo "  Embedded macOS aarch64: $EMBEDDED_MACOS_ARM"
-          echo "  Embedded Windows: $EMBEDDED_WINDOWS"
+          echo "  (built & published by release-python.yml on python-v* tags — not validated here)"
           echo ""
 
           # ----------------------------------------
@@ -865,7 +743,6 @@ jobs:
           echo "report<<EOF" >> $GITHUB_OUTPUT
           echo "Version: $VERSION" >> $GITHUB_OUTPUT
           echo "Binaries: $BINARY_COUNT/${#EXPECTED_BINARIES[@]}" >> $GITHUB_OUTPUT
-          echo "Wheels: $TOTAL_WHEELS" >> $GITHUB_OUTPUT
           echo "SDists: $SDIST_COUNT" >> $GITHUB_OUTPUT
           echo "Status: $VALIDATION_PASSED" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -950,11 +827,10 @@ jobs:
           | Platform | Architecture | Archive |
           |----------|--------------|---------|
           | Linux | x86_64 (glibc) | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz` |
-          | Linux | x86_64 (musl/static) | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-musl.tar.gz` |
-          | Linux | aarch64 | `proximadb-${{ needs.prepare.outputs.version }}-aarch64-unknown-linux-gnu.tar.gz` |
-          | macOS | x86_64 | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-apple-darwin.tar.gz` |
-          | macOS | Apple Silicon | `proximadb-${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.tar.gz` |
           | Windows | x86_64 | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc.zip` |
+
+          Linux musl, Linux aarch64, and macOS archives are not built by this
+          workflow and are therefore not advertised in this release.
 
           #### Python Installation
 
@@ -966,10 +842,12 @@ jobs:
           pip install proximadb-embedded
           ```
 
-          #### Cargo Installation
+          #### Build From Source
 
           ```bash
-          cargo install proximadb
+          git clone https://github.com/anvai-labs/proximaDB
+          cd proximaDB
+          cargo build --release --bin proximadb-server
           ```
 
           #### Platform Packages (RPM/DEB/MSI)

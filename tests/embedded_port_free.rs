@@ -13,7 +13,7 @@
 //! (e.g. a real server from a concurrent session) are skipped, so the test is
 //! robust against external contention rather than flaky.
 
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 use std::net::TcpListener;
 use tempfile::TempDir;
 

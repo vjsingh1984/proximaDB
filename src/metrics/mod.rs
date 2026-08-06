@@ -3,256 +3,56 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! # Metrics Module - Observability and Performance Monitoring
+//! Metrics module — thin re-export shim.
 //!
-//! This module provides ProximaDB's comprehensive metrics and monitoring system for
-//! production observability. It tracks performance metrics, resource usage, and provides
-//! optimization hints based on real-time data characteristics.
-//!
-//! ## Role in ProximaDB Architecture
-//!
-//! The metrics system provides full observability:
-//! ```text
-//! System Components → Metrics Collectors → Aggregation Engine
-//!                            ↓                    ↓
-//!                    Persistent Storage    In-Memory Cache
-//!                            ↓                    ↓
-//!                    ┌────────────────────────────┐
-//!                    │    Query Service API        │
-//!                    ├────────────────────────────┤
-//!                    │ REST │ Prometheus │ JSON   │
-//!                    └────────────────────────────┘
-//!                            ↓
-//!                    Dashboards & Alerts
-//! ```
-//!
-//! ## Key Features
-//!
-//! ### 1. **Comprehensive Metric Collection**
-//! Track all aspects of system performance:
-//! - **Operation Metrics**: Latency, throughput, error rates
-//! - **Resource Metrics**: CPU, memory, disk, network usage
-//! - **Storage Metrics**: Compression ratios, file counts, sizes
-//! - **Index Metrics**: Build times, search efficiency, accuracy
-//! - **Cache Metrics**: Hit rates, evictions, memory usage
-//!
-//! ### 2. **Multi-Level Aggregation**
-//! Flexible time-based aggregations:
-//! - **Real-time**: Last 1 minute with 1-second resolution
-//! - **Recent**: Last hour with 1-minute resolution
-//! - **Daily**: Last 7 days with hourly resolution
-//! - **Historical**: Up to 30 days with daily resolution
-//!
-//! ### 3. **Query Optimization Hints**
-//! Data-driven recommendations:
-//! - Index selection based on query patterns
-//! - Storage engine recommendations
-//! - Compression algorithm suggestions
-//! - Cache sizing optimization
-//! - Parallelism tuning
-//!
-//! ### 4. **Non-Critical Path Design**
-//! Metrics never block operations:
-//! - Asynchronous collection and updates
-//! - Graceful degradation on failures
-//! - Bounded memory usage
-//! - Automatic old data pruning
-//!
-//! ## Performance Characteristics
-//!
-//! - **Collection Overhead**: < 0.1% CPU usage
-//! - **Memory Usage**: 512MB max (configurable)
-//! - **Storage Overhead**: < 1% of data size
-//! - **Query Latency**: < 10ms for recent metrics
-//! - **Aggregation Speed**: 1M metrics/sec
-//!
-//! ## Module Organization
-//!
-//! - **`collectors/`**: Metric collection from components
-//!   - `engine.rs`: Storage engine metrics
-//!   - `access_pattern.rs`: Query pattern analysis
-//!   - `filesystem.rs`: I/O and storage metrics
-//!
-//! - **`store.rs`**: Persistent metrics storage
-//!   - Partitioned by collection for O(1) lookups
-//!   - Cloud storage support (S3/GCS/Azure)
-//!   - Automatic retention management
-//!
-//! - **`updater.rs`**: Internal metrics update API
-//!   - Thread-safe metric updates
-//!   - Batch processing for efficiency
-//!   - Lock-free data structures
-//!
-//! - **`query_service.rs`**: Metrics query API
-//!   - REST endpoints for dashboards
-//!   - Time-range queries
-//!   - Aggregation support
-//!
-//! - **`exporters/`**: Export formats
-//!   - `prometheus.rs`: Prometheus format
-//!   - `json.rs`: JSON export
-//!   - `graphite.rs`: Graphite/Carbon
-//!
-//! ## Metric Types
-//!
-//! | Category | Metrics | Use Case |
-//! |----------|---------|----------|
-//! | **Latency** | p50, p95, p99, max | Performance monitoring |
-//! | **Throughput** | ops/sec, bytes/sec | Capacity planning |
-//! | **Errors** | Error rate, error types | Reliability tracking |
-//! | **Resources** | CPU, memory, disk | Resource optimization |
-//! | **Cache** | Hit rate, size, evictions | Cache tuning |
-//! | **Storage** | Compression, file counts | Storage optimization |
-//!
-//! ## Configuration
-//!
-//! ```toml
-//! [metrics]
-//! enabled = true
-//!
-//! # Storage configuration
-//! storage_path = "s3://bucket/metrics"
-//! collection_partitions = 16
-//! retention_days = 7
-//!
-//! # Update intervals
-//! flush_interval_seconds = 30
-//! snapshot_interval_seconds = 60
-//!
-//! # Resource limits
-//! max_memory_mb = 512
-//!
-//! # Optimization thresholds
-//! parallel_scan_threshold = 10
-//! sparsity_threshold = 0.3
-//! quantization_size_threshold = 104857600  # 100MB
-//! ```
-//!
-//! ## REST API Endpoints
-//!
-//! - `GET /metrics` - Prometheus format metrics
-//! - `GET /metrics/json` - JSON format metrics
-//! - `GET /metrics/collections/{name}` - Per-collection metrics
-//! - `GET /metrics/hints` - Optimization recommendations
-//! - `GET /metrics/health` - Metrics system health
-//!
-//! ## Usage Example
-//!
-//! ```rust,ignore
-//! use proximadb::metrics::{MetricsConfig, MetricsQueryService};
-//!
-//! // Initialize metrics system
-//! let config = MetricsConfig::default();
-//! let metrics = MetricsQueryService::new(config)?;
-//!
-//! // Query recent metrics
-//! let recent = metrics.query_recent(
-//!     "collection_name",
-//!     Duration::from_secs(300)  // Last 5 minutes
-//! ).await?;
-//!
-//! // Get optimization hints
-//! let hints = metrics.get_optimization_hints("collection_name").await?;
-//! if hints.recommend_index_rebuild {
-//!     println!("Consider rebuilding index for better performance");
-//! }
-//! ```
-//!
-//! ## Prometheus Integration
-//!
-//! ```yaml
-//! # prometheus.yml
-//! scrape_configs:
-//!   - job_name: 'proximadb'
-//!     static_configs:
-//!       - targets: ['localhost:5678']
-//!     metrics_path: '/metrics'
-//!     scrape_interval: 30s
-//! ```
-//!
-//! ## Dashboard Support
-//!
-//! Pre-built dashboards available for:
-//! - Grafana (JSON templates)
-//! - DataDog (monitors and dashboards)
-//! - CloudWatch (metric filters)
-//! - Custom web UI at `/dashboard`
+//! The foundation-pure metrics surface (collectors, aggregators, exporters,
+//! schema, `*_metrics` types) lives in `proximadb-metrics`; the storage-coupled
+//! collectors (`engine`, `graph`), the persistence layer (`store`), the updater,
+//! and the consumption/metering/cache/pinning/tier-migration metrics stay here
+//! in the root behind a future `MetricsStoragePort`. All `crate::metrics::*`
+//! import paths are unchanged.
 
-/// AXIS ANN advisor observability — captures (predicted_recall,
-/// observed_recall, observed_latency) residuals per search to
-/// validate the advisor's closed-form formulas against real
-/// workloads (P4 of the recall-aware AXIS stack).
-pub mod advisor_observations_metrics;
-pub mod aggregator;
+// Moved (foundation-pure) modules — re-exported from the crate.
+pub use proximadb_metrics::{
+    Alert, SystemMetrics, advisor_observations_metrics, aggregator, compression, dml_lock_metrics,
+    dr_metrics, exporters, fusion, primary_pod_metrics, recall_drift_metrics, route_metrics,
+    schema, td064_metrics, td066_metrics, turboquant_metrics, wal_flush_metrics, wal_scan_metrics,
+};
+
+// Deferred (storage-coupled / orchestration) modules stay root.
 pub mod cache;
-/// Collection pin-registry observability — currently-pinned gauge per
-/// target tier + pin/unpin operation counters.
 pub mod collection_pin_metrics;
 pub mod collectors;
-pub mod compression;
 pub mod consumption_metrics;
-/// DML lock-manager observability — acquisition outcome counter + duration
-/// histogram + held-current gauge + renewal-failure counter.
-pub mod dml_lock_metrics;
-/// Prometheus bridge for `proximadb_catalog::dr_reconciler::DrMetrics`.
-pub mod dr_metrics;
-pub mod exporters;
-/// Cross-modal fusion metrics — T1.1 (fusion_latency_seconds, sources_count,
-/// calibrated_sources). Tracks vector→graph→document fusion operations for
-/// observability and cost model calibration.
-pub mod fusion;
-/// TD-161 durable per-tenant `_metering` writer — persists the KSU storage
-/// snapshot to the tenant's object-store `_metering/` subtree (ADR-027 dual-sink).
+pub mod io_trace_sink_metrics;
 pub mod metering_writer;
-/// Primary-pod write-router observability — counters for the
-/// gateway gate's allow/misroute decisions per tenant.
-pub mod primary_pod_metrics;
+pub mod operational_metrics;
 pub mod query_service;
-/// AXIS HNSW recall-target drift observability — one-hot status
-/// gauge + observation / hot-swap counters for /route-health +
-/// /recall-tune.
-pub mod recall_drift_metrics;
-/// Read-route decision observability (co-design C4 operator surface).
-pub mod route_metrics;
-pub mod schema;
 pub mod store;
-/// TD-064 predicate-aware vector search shortfall counters.
-pub mod td064_metrics;
-/// TD-066 canonical-WAL-authority recovery observability (Option E from
-/// `docs/12-design/TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc`).
-pub mod td066_metrics;
-/// Tier-migration pipeline observability — counters + bytes + duration
-/// histogram + in-flight gauge for `TierMigrationExecutor` operations.
-pub mod tier_migration_metrics;
-/// TurboQuant scoring-kernel metrics (P8.A — ADR-021). Counts blocks
-/// skipped by the in-kernel allowlist mask. Gated by feature flag.
-#[cfg(feature = "experimental-turboquant")]
-pub mod turboquant_metrics;
-pub mod updater;
-/// TD-099(3d) WAL scan-index observability — distinct-indexed-oid gauge per
-/// collection, for sizing the per-collection scan-index memory.
-pub mod wal_scan_metrics;
-
 #[cfg(test)]
 mod tests;
+pub mod tier_migration_metrics;
+pub mod updater;
+pub mod usage_event;
 
-pub use aggregator::{AggregationWindow, MetricsAggregationEngine};
+// Top-level type re-exports (preserve `crate::metrics::X` paths).
 pub use cache::{CacheMetricsCollector, CacheMetricsSnapshot, CacheOptimizationHints};
 pub use collectors::{
     EngineComparison, EngineMetricsCollector, EngineStatistics, UnifiedMetricsCollector,
 };
-pub use compression::{
+pub use proximadb_metrics::aggregator::{AggregationWindow, MetricsAggregationEngine};
+pub use proximadb_metrics::compression::{
     CompressionMetrics, CompressionMetricsTracker, CompressionResult, DecompressionResult,
 };
-pub use exporters::{ExportFormat, JsonExporter, MetricsExporter, PrometheusExporter};
+pub use proximadb_metrics::exporters::{
+    ExportFormat, JsonExporter, MetricsExporter, PrometheusExporter,
+};
+pub use proximadb_metrics::schema::{CollectionMetrics, GlobalMetrics, QueryOptimizationHints};
 pub use query_service::{MetricsQueryOptions, MetricsQueryService};
-pub use schema::{CollectionMetrics, GlobalMetrics, QueryOptimizationHints};
 pub use store::MetricsPersistenceLayer;
 pub use updater::{
     CompactionMetricsUpdate, FlushMetricsUpdate, InternalMetricsUpdater, MetricsUpdate,
 };
 
-// Re-export common types for compatibility
-pub use self::schema::Alert;
-pub use exporters::{MetricsExportSnapshot, SystemMetrics};
 pub use proximadb_config::MetricsConfig;
+pub use proximadb_metrics::exporters::MetricsExportSnapshot;

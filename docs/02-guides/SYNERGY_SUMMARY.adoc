@@ -228,7 +228,7 @@ LIMIT 5;
 
 ```bash
 # Clone and build
-git clone https://github.com/vjsingh1984/proximadb
+git clone https://github.com/anvai-labs/proximaDB
 cd proximaDB
 cargo build --release
 
@@ -332,7 +332,7 @@ correlation_threshold = 0.7
 
 ## Contact & Resources
 
-**ProximaDB**: https://github.com/vjsingh1984/proximadb
+**ProximaDB**: https://github.com/anvai-labs/proximaDB
 **Victor**: https://github.com/[victor-repo]
 **ibkrtrading**: (private repo)
 
@@ -342,4 +342,4 @@ correlation_threshold = 0.7
 - link:../11-usecases/IBKRTRADING_DOGFOOD.adoc[ibkrtrading Dogfood]
 
 **Discord**: (to be created)
-**Email**: singhvjd@gmail.com
+**Email**: vijay@anvaiops.com

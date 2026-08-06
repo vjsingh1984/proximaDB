@@ -105,13 +105,13 @@ impl SearchContextImpl {
 
         Some(Self {
             query_vector,
-            top_k: params.top_k.unwrap_or(10),
+            top_k: params.top_k.unwrap_or(10) as usize,
             distance_metric: params.distance_metric.unwrap_or(DistanceMetric::Cosine),
             filter_expression: params.filter_expression.clone(),
             search_mode: params.search_mode.clone(),
             block_prune_config: params.block_prune.clone(),
             accuracy_threshold: params.accuracy_threshold.unwrap_or(0.95),
-            timeout_ms: params.timeout_ms,
+            timeout_ms: params.timeout_ms.map(|t| t as u64),
             enable_two_stage: params.enable_two_stage.unwrap_or(true),
             enable_progressive_search: params.enable_progressive_search.unwrap_or(false),
             optimization_hints: params.custom_hints.clone(),

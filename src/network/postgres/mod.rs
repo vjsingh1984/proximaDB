@@ -13,7 +13,7 @@ pub mod pgvector_params;
 /// PostgreSQL Protocol v3.0 message parsing and encoding
 pub mod protocol;
 /// Bridge to the new relational pipeline (algebra → planner →
-/// executor → engine). Opt-in via PROXIMADB_NEW_RELATIONAL_PIPELINE.
+/// executor → engine). Opt-in via PROXIMADB_PGWIRE_RELATIONAL_PIPELINE.
 pub mod relational_pipeline;
 /// Session management for PostgreSQL client connections
 pub mod session;
@@ -49,6 +49,12 @@ pub struct DirectPgwireWriteServices {
     /// pgwire connections so their in-memory partitions hold one authoritative
     /// state.
     canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
+
+    /// F5 / TD-OLTP-WIRING-1: the SAME process-shared fenced `ConditionalKeyStore`
+    /// held by `SharedServices` (set via [`Self::with_conditional_key_store`]).
+    /// Threaded into the pgwire `DmlService` so PK/FK uniqueness is fenced
+    /// identically across pgwire and gRPC/REST. `None` ⇒ unfenced legacy probe.
+    conditional_key_store: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
 }
 
 impl DirectPgwireWriteServices {
@@ -56,7 +62,21 @@ impl DirectPgwireWriteServices {
     pub fn new(
         canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
     ) -> Self {
-        Self { canonical_store }
+        Self {
+            canonical_store,
+            conditional_key_store: None,
+        }
+    }
+
+    /// Attach the process-shared fenced `ConditionalKeyStore` (the ONE instance
+    /// from `SharedServices`), so pgwire writes fence PK/FK uniqueness on the same
+    /// store as gRPC/REST.
+    pub fn with_conditional_key_store(
+        mut self,
+        cks: Option<Arc<dyn proximadb_storage_ports::ConditionalKeyStore>>,
+    ) -> Self {
+        self.conditional_key_store = cks;
+        self
     }
 }
 
@@ -93,6 +113,7 @@ pub struct PostgresServer {
     /// can decide once whether to wire the gate.
     primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
     self_pod_id: Option<String>,
+    partition_lease_manager: Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
     /// Object-store root URL the warehouse materializer publishes Parquet snapshots
     /// under (the same URL the OLAP reader reopens the store from). When `Some`,
     /// every per-connection `DdlService` is wired with a `DmlTableMaterializer` so
@@ -102,6 +123,15 @@ pub struct PostgresServer {
     /// E0: shared per-IP rate limiter applied to the pgwire query path,
     /// consistent with REST. `None` (default) = no pgwire rate-limiting.
     rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
+    /// TD-TENANT-1: the deployment's bare tenant-assertion trust policy,
+    /// threaded into every per-connection `PostgresProtocol`. Default `Open`.
+    tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// Whether startup may omit the tenant/catalog and use a default.
+    tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
+    /// The exact composition-root enforcer used by REST/gRPC and mutated by the
+    /// live ABAC admin API. Cloned into each pgwire DML façade at accept time.
+    #[cfg(feature = "abac-policy")]
+    abac_enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -110,7 +140,7 @@ pub struct PostgresServer {
 /// every `DdlService` it constructs. Cloning is cheap (three `Arc`s).
 #[derive(Clone)]
 pub struct PgwireRankPipeline {
-    pub services: Arc<crate::network::rest::v1::rank::RankServices>,
+    pub services: Arc<crate::network::rest::canonical::rank::RankServices>,
     pub store: Arc<dyn crate::services::RankProfileStore>,
     /// Durable SQL user-function catalog (UDF F5) so `CREATE FUNCTION` over
     /// pgwire persists into the same store boot recovery replays.
@@ -141,10 +171,30 @@ impl PostgresServer {
             rank_pipeline: None,
             primary_pod_registry: None,
             self_pod_id: None,
+            partition_lease_manager: None,
             warehouse_root_url: None,
             rate_limiter: None,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
+            #[cfg(feature = "abac-policy")]
+            abac_enforcer: None,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// TD-TENANT-1: set the deployment's bare tenant-assertion trust policy —
+    /// the same `HeaderTrustPolicy` the REST/gRPC/Arrow Flight surfaces hold.
+    pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tenant_header_trust = policy;
+        self
+    }
+
+    pub fn with_tenant_deployment_mode(
+        mut self,
+        mode: proximadb_tenant::TenantDeploymentMode,
+    ) -> Self {
+        self.tenant_deployment_mode = mode;
+        self
     }
 
     /// E0: attach a shared per-IP rate limiter so each per-connection
@@ -172,13 +222,23 @@ impl PostgresServer {
         self
     }
 
+    /// Attach the same durable lease manager used by the REST/DML write gates
+    /// so per-connection pgwire DDL does not degrade to registry-only checks.
+    pub fn with_partition_lease_manager(
+        mut self,
+        manager: Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
+    ) -> Self {
+        self.partition_lease_manager = manager;
+        self
+    }
+
     /// Attach the process-wide rank-pipeline so each per-connection
     /// `DdlService` is built with the rank-profile catalog + live
     /// registry wired in. Production callers pass
     /// `SharedServices.rank_services` + `SharedServices.rank_profile_store`.
     pub fn with_rank_pipeline(
         mut self,
-        services: Arc<crate::network::rest::v1::rank::RankServices>,
+        services: Arc<crate::network::rest::canonical::rank::RankServices>,
         store: Arc<dyn crate::services::RankProfileStore>,
         function_store: Arc<dyn crate::services::FunctionStore>,
     ) -> Self {
@@ -216,6 +276,18 @@ impl PostgresServer {
         self
     }
 
+    /// Wire the process-shared live ABAC enforcer into every accepted pgwire
+    /// connection. This is independent of the direct-record-write option: reads
+    /// must remain governed under either storage configuration.
+    #[cfg(feature = "abac-policy")]
+    pub fn with_abac_enforcer(
+        mut self,
+        enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
+    ) -> Self {
+        self.abac_enforcer = enforcer;
+        self
+    }
+
     /// Start the PostgreSQL server
     pub async fn start(&self) -> Result<()> {
         let listener = TcpListener::bind(self.bind_address).await?;
@@ -228,6 +300,18 @@ impl PostgresServer {
             match listener.accept().await {
                 Ok((stream, addr)) => {
                     info!("New PostgreSQL connection from {}", addr);
+                    // Disable Nagle's algorithm on the pgwire socket (as libpq's
+                    // server does): a SELECT response is written as several small
+                    // segments (RowDescription, DataRow(s), CommandComplete), and
+                    // with Nagle on, the second segment waits for the first to be
+                    // ACKed while the client delays its ACK — a ~40 ms delayed-ACK
+                    // stall PER QUERY, even on loopback. Measured as the dominant
+                    // per-query wall floor (TD-OLAP-4 floor decomposition: setup/
+                    // open/plan/compute/emit all ~0, ~46 ms unattributed). Best-
+                    // effort: a failure here only forfeits the latency win.
+                    if let Err(e) = stream.set_nodelay(true) {
+                        warn!("pgwire: failed to set TCP_NODELAY on {}: {}", addr, e);
+                    }
                     let session_manager = self.session_manager.clone();
                     let collection_port = self.collection_port.clone();
                     let vector_ops = self.vector_ops.clone();
@@ -243,8 +327,13 @@ impl PostgresServer {
                     // routing decisions.
                     let primary_pod_registry = self.primary_pod_registry.clone();
                     let self_pod_id = self.self_pod_id.clone();
+                    let partition_lease_manager = self.partition_lease_manager.clone();
                     let warehouse_root_url = self.warehouse_root_url.clone();
                     let rate_limiter = self.rate_limiter.clone();
+                    let tenant_header_trust = self.tenant_header_trust;
+                    let tenant_deployment_mode = self.tenant_deployment_mode.clone();
+                    #[cfg(feature = "abac-policy")]
+                    let abac_enforcer = self.abac_enforcer.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
@@ -261,8 +350,13 @@ impl PostgresServer {
                             rank_pipeline,
                             primary_pod_registry,
                             self_pod_id,
+                            partition_lease_manager,
                             warehouse_root_url,
                             rate_limiter,
+                            tenant_header_trust,
+                            tenant_deployment_mode,
+                            #[cfg(feature = "abac-policy")]
+                            abac_enforcer,
                         )
                         .await
                         {
@@ -301,8 +395,16 @@ impl PostgresServer {
         rank_pipeline: Option<PgwireRankPipeline>,
         primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
         self_pod_id: Option<String>,
+        partition_lease_manager: Option<
+            Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+        >,
         warehouse_root_url: Option<String>,
         rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
+        tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+        tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
+        #[cfg(feature = "abac-policy")] abac_enforcer: Option<
+            Arc<crate::security::rls::AbacEnforcer>,
+        >,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
@@ -317,13 +419,27 @@ impl PostgresServer {
             document_service,
             graph_service,
             observability_service,
-        );
+        )
+        .with_session_manager(session_manager.clone());
+        // TD-ABAC-10 (ADR-087): the same catalog-backed stable-id resolver
+        // REST/gRPC/Arrow wire — stamps the session identity's ABAC policy key
+        // ONCE at the startup handshake. catalog_manager already reaches
+        // pgwire, so this is zero new plumbing.
+        let protocol = protocol.with_stable_id_resolver(Some(Arc::new(
+            crate::security::CatalogTenantStableIdResolver::new(catalog_manager.clone()),
+        )));
+        #[allow(unused_mut)] // feature build rebinds after attaching ABAC below
         let mut protocol = if let Some(direct_write_services) = direct_write_services {
-            protocol
-                .with_direct_catalog_manager(catalog_manager, direct_write_services.canonical_store)
+            protocol.with_direct_catalog_manager(
+                catalog_manager,
+                direct_write_services.canonical_store,
+                direct_write_services.conditional_key_store,
+            )
         } else {
             protocol.with_catalog_manager(catalog_manager)
         };
+        #[cfg(feature = "abac-policy")]
+        let mut protocol = protocol.with_abac_enforcer(abac_enforcer);
         if let Some(pipeline) = rank_pipeline {
             protocol = protocol.with_rank_pipeline(
                 pipeline.services,
@@ -340,13 +456,20 @@ impl PostgresServer {
         // sides are present so a partial wiring fails closed (no
         // gate, legacy behavior) rather than silently misconfigured.
         if let (Some(registry), Some(pod_id)) = (primary_pod_registry, self_pod_id) {
-            protocol = protocol.with_primary_pod_gate(registry, pod_id);
+            protocol = protocol.with_primary_pod_gate(registry.clone(), pod_id.clone());
+            if let Some(manager) = partition_lease_manager {
+                protocol = protocol.with_ddl_lease_manager(manager, registry, pod_id);
+            }
         }
         // E0: apply the shared per-IP rate limiter (subject = this peer's IP) so
         // the pgwire query path is rate-limited consistently with REST.
         if let Some(limiter) = rate_limiter {
             protocol = protocol.with_rate_limiter(limiter, addr.ip());
         }
+        // TD-TENANT-1: same bare-assertion trust policy as REST/gRPC/Flight,
+        // enforced at the startup handshake and the tenant session vars.
+        protocol = protocol.with_tenant_header_trust(tenant_header_trust);
+        protocol = protocol.with_tenant_deployment_mode(tenant_deployment_mode);
 
         // Run protocol loop
         match protocol.run().await {

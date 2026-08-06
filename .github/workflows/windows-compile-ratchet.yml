@@ -1,12 +1,17 @@
-# Windows (MSVC) compile-only ratchet — TD-EMBED-1.
+# Windows (MSVC) compile ratchet — TD-EMBED-1.
 #
-# proximadb_embedded currently ships Linux + macOS wheels; Windows is blocked
-# only by the Rust engine not yet compiling for x86_64-pc-windows-msvc. This is
-# a COMPILE-ONLY ratchet (no wheel, no C-deps yet): each rung is a crate that
-# now compiles on Windows and MUST stay green. As blockers are fixed the gating
-# scope expands one rung at a time (ratchet only goes up). A separate,
-# non-gating "measure tail" step surfaces the NEXT blocker so the effort is
-# evidence-driven, not speculative.
+# proximadb_embedded now ships Linux + macOS + Windows wheels (release-python.yml
+# builds the x86_64-pc-windows-msvc wheel on every python-v* tag). This ratchet is
+# the FAST, PATH-GATED MSVC regression guard: each rung is a compile scope that
+# now works on Windows and MUST stay green. It fires on develop PRs so an MSVC
+# regression surfaces on the INTRODUCING PR (Mandate #9), not only at release-tag
+# time when the full wheel build runs. The ratchet only goes up.
+#
+# All three rungs are now GATING and the ratchet has reached compile parity with
+# the release wheel (root lib + `python` feature + C-deps all build on MSVC). The
+# end-to-end guard beyond compile — the actual wheel build/link + PyPI publish —
+# lives in release-python.yml; there is no non-gating "measure tail" left because
+# there is no next blocker to reveal.
 #
 # Path-gated + dispatch-only so it costs a Windows runner only when
 # Windows-relevant code changes.
@@ -47,19 +52,35 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
+      # Deterministic interpreter for the `python`-feature rung (PyO3 needs one at
+      # build time). Pin 3.12 to match release-python.yml's proven env rather than
+      # relying on whatever Python the runner image happens to ship.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       # ---- GATING RUNGS (must stay green; expand as blockers are fixed) --------
-      # Rung 1: proximadb-storage-common compiles on Windows (the memmap2::Advice
-      # madvise gating landed in this PR). Add the next crate here once it's green.
+      # Rung 1: proximadb-storage-common compiles on Windows (memmap2::Advice
+      # madvise gating, #800).
       - name: Rung 1 — proximadb-storage-common
         run: cargo check -p proximadb-storage-common
 
-      # ---- MEASURE THE TAIL (non-gating; reveals the next blocker) -------------
-      # The root `proximadb` lib (default features, no `python`) is the engine the
-      # embedded wheel builds minus the PyO3/C-deps. Checking it here surfaces the
-      # next batch of Windows errors without blocking the ratchet. When this goes
-      # green, promote it to a gating rung above; the C-dep (aws-lc-sys/OpenSSL)
-      # story for the actual wheel is a later phase.
-      - name: Measure tail — root proximadb lib (informational)
-        continue-on-error: true
+      # Rung 2: the ENTIRE root `proximadb` lib (default features, no `python`) —
+      # i.e. the pure-Rust engine — compiles on Windows. Reached after two small
+      # cfg(unix) gates (memmap2::Advice #800, Unix-domain sockets #808); the
+      # earlier "multi-file port" fear was a misdiagnosis. Promoted from the
+      # measure-tail step to GATING here so Windows compilation can't regress.
+      - name: Rung 2 — root proximadb lib (pure-Rust engine)
         run: cargo check -p proximadb --lib
+
+      # Rung 3: the root lib WITH the `python` feature — PyO3/numpy plus the C-deps
+      # (openssl/vendored -> openssl-src builds VC-WIN64A via NASM + Strawberry
+      # Perl, both preinstalled on windows-2022; aws-lc-sys already builds on the
+      # runner). This is the exact compile the release wheel (release-python.yml,
+      # windows-2022 row) exercises, minus the link/package step — so once the
+      # wheel builds, this stays green. Promoted from the former non-gating measure
+      # tail to GATING (windows-2022 pinned to match the wheel's proven env) so an
+      # MSVC C-dep/PyO3 regression is caught on the introducing develop PR, not
+      # deferred to the next release tag.
+      - name: Rung 3 — root proximadb lib with python feature (PyO3 + C-deps)
+        run: cargo check -p proximadb --lib --features python

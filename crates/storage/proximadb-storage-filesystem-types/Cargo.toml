@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage = "https://github.com/vjsingh1984/proximadb"
+homepage = "https://github.com/anvai-labs/proximaDB"
 description = "Pure filesystem abstraction (FileSystem/FilesystemFile traits + value types) for ProximaDB storage"
 
 [dependencies]
@@ -17,3 +17,4 @@ serde.workspace = true
 thiserror.workspace = true
 url = "2.4"
 memmap2 = "0.9"
+futures.workspace = true

@@ -17,6 +17,7 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
+proximadb-clustering-kernel = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -25,7 +26,11 @@ tracing = { workspace = true }
 proximadb-hardware = { workspace = true }
 proximadb-vector = { workspace = true }
 proximadb-quantization-types = { workspace = true }
+proximadb-quantization-model = { workspace = true }
 proximadb-distance-kernel = { workspace = true }
+# Downward dep (modality→storage-ports): the kernel impls QuantizationEnginePort
+# so storage can depend on the port trait, not on this concrete modality crate.
+proximadb-storage-ports = { workspace = true }
 
 [features]
 # Mirrors the root crate's TurboQuant gate (ADR-021). The SIMD/store kernels live

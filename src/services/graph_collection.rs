@@ -130,6 +130,13 @@ pub struct GraphCollectionService {
     /// Path to persistence file
     persistence_path: PathBuf,
 
+    /// Object-store filesystem for URL-backed metadata. `None` preserves the
+    /// local temp-file + rename implementation used by embedded/local mode.
+    persistence_filesystem: Option<Arc<dyn crate::storage::persistence::filesystem::FileSystem>>,
+
+    /// Scheme-qualified object path when `persistence_filesystem` is set.
+    persistence_url: Option<String>,
+
     /// Lock for persistence operations
     persistence_lock: Arc<RwLock<()>>,
 
@@ -154,6 +161,8 @@ impl GraphCollectionService {
         Self {
             collections: Arc::new(DashMap::new()),
             persistence_path,
+            persistence_filesystem: None,
+            persistence_url: None,
             persistence_lock: Arc::new(RwLock::new(())),
             max_graphs: 1000,
             metadata_cache_size: 100,
@@ -204,9 +213,52 @@ impl GraphCollectionService {
         Ok(service)
     }
 
+    /// Create a graph collection service whose sidecar lives under an object-
+    /// store metadata URL. All reads/writes go through the unified filesystem;
+    /// no URL-shaped path reaches `std::fs`/`tokio::fs`.
+    pub async fn new_with_recovery_at_url(
+        persistence_url: String,
+        filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+    ) -> Result<Self> {
+        let filesystem = filesystem_factory
+            .get_filesystem(&persistence_url)
+            .map_err(|e| {
+                ProximaDBError::Internal(format!(
+                    "Failed to open graph metadata filesystem at {persistence_url}: {e}"
+                ))
+            })?;
+        let service = Self {
+            collections: Arc::new(DashMap::new()),
+            // Never used by the URL-backed branch; retained to keep the local
+            // constructor and its tests byte-identical.
+            persistence_path: PathBuf::new(),
+            persistence_filesystem: Some(filesystem),
+            persistence_url: Some(persistence_url),
+            persistence_lock: Arc::new(RwLock::new(())),
+            max_graphs: 1000,
+            metadata_cache_size: 100,
+        };
+        service.load_from_disk().await?;
+        Ok(service)
+    }
+
     /// Load graph collections from persistent storage
     pub async fn load_from_disk(&self) -> Result<usize> {
         let _lock = self.persistence_lock.read().await;
+
+        if let (Some(filesystem), Some(url)) = (&self.persistence_filesystem, &self.persistence_url)
+        {
+            if !filesystem.exists(url).await.map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to probe graph metadata at {url}: {e}"))
+            })? {
+                debug!("Graph metadata object does not exist yet: {}", url);
+                return Ok(0);
+            }
+            let contents = filesystem.read(url).await.map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to read graph metadata object {url}: {e}"))
+            })?;
+            return self.load_serialized_store(&contents);
+        }
 
         if !self.persistence_path.exists() {
             debug!(
@@ -222,10 +274,13 @@ impl GraphCollectionService {
                 ProximaDBError::Internal(format!("Failed to read graph metadata file: {}", e))
             })?;
 
-        let store: GraphMetadataStore = serde_json::from_str(&contents).map_err(|e| {
+        self.load_serialized_store(contents.as_bytes())
+    }
+
+    fn load_serialized_store(&self, contents: &[u8]) -> Result<usize> {
+        let store: GraphMetadataStore = serde_json::from_slice(contents).map_err(|e| {
             ProximaDBError::Internal(format!("Failed to parse graph metadata: {}", e))
         })?;
-
         let count = store.collections.len();
         for (graph_id, metadata) in store.collections {
             let collection = Arc::new(metadata.to_collection());
@@ -267,6 +322,24 @@ impl GraphCollectionService {
         let contents = serde_json::to_string_pretty(&store).map_err(|e| {
             ProximaDBError::Internal(format!("Failed to serialize graph metadata: {}", e))
         })?;
+
+        if let (Some(filesystem), Some(url)) = (&self.persistence_filesystem, &self.persistence_url)
+        {
+            filesystem
+                .write_atomic(url, contents.as_bytes(), None)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Internal(format!(
+                        "Failed to persist graph metadata object {url}: {e}"
+                    ))
+                })?;
+            debug!(
+                "Saved {} graph collections to object storage at {}",
+                store.collections.len(),
+                url
+            );
+            return Ok(());
+        }
 
         fs::write(&temp_path, &contents).await.map_err(|e| {
             ProximaDBError::Internal(format!("Failed to write graph metadata: {}", e))
@@ -405,6 +478,33 @@ impl GraphCollectionService {
         self.get_graph(graph_id).await?.ok_or_else(|| {
             ProximaDBError::InvalidInput(format!("Graph collection '{}' does not exist", graph_id))
         })
+    }
+
+    /// Get the graph collection for `graph_id`, lazily provisioning it with defaults (ORION
+    /// engine, the service's default storage root) if it does not yet exist — the get-or-create
+    /// counterpart of [`ensure_graph_exists`].
+    ///
+    /// This lets a tenant-scoped first write auto-register its collection under the SCOPED key
+    /// (`{tenant}/{graph_id}`), so named-tenant graph create→use works without an out-of-band bare
+    /// create (the v2 gRPC surface has no create RPC, and the REST v1 / pgwire create paths are not
+    /// tenant-scoped — TD-GRAPH-TENANT-1). The default tenant stays bare, so its existing
+    /// explicitly-created collections are found on the first branch and never double-provisioned.
+    /// Idempotent and race-safe: if a concurrent caller wins the insert, we pick it up on re-fetch.
+    pub async fn ensure_or_create_graph(&self, graph_id: &str) -> Result<Arc<GraphCollection>> {
+        if let Some(existing) = self.get_graph(graph_id).await? {
+            return Ok(existing);
+        }
+        match self
+            .create_graph(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(created) => Ok(created),
+            // Lost a create race (another task registered it first) — re-fetch the winner.
+            Err(_) => self.ensure_graph_exists(graph_id).await,
+        }
     }
 
     /// Get graph statistics

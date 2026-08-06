@@ -214,7 +214,7 @@ impl Default for EmbeddedBuilder {
 /// ```
 pub struct ProximaDB {
     #[cfg(feature = "embedded")]
-    inner: proximadb::embedded::EmbeddedProximaDB,
+    inner: proximadb_embedded::EmbeddedProximaDB,
     config: EmbeddedConfig,
 }
 
@@ -228,12 +228,12 @@ impl ProximaDB {
     #[cfg(feature = "embedded")]
     pub fn with_config(config: EmbeddedConfig) -> Result<Self> {
         // Convert SDK config to internal EmbeddedConfig
-        let mut storage_locations = vec![proximadb::embedded::StorageLocationConfig::new(
+        let mut storage_locations = vec![proximadb_embedded::StorageLocationConfig::new(
             &config.data_dir,
         )];
 
         for loc in &config.storage_locations {
-            let mut storage_loc = proximadb::embedded::StorageLocationConfig::new(&loc.path);
+            let mut storage_loc = proximadb_embedded::StorageLocationConfig::new(&loc.path);
             storage_loc = storage_loc.with_weight(loc.weight);
             for tag in &loc.tags {
                 storage_loc = storage_loc.with_tag(tag);
@@ -241,7 +241,7 @@ impl ProximaDB {
             storage_locations.push(storage_loc);
         }
 
-        let internal_config = proximadb::embedded::EmbeddedConfig {
+        let internal_config = proximadb_embedded::EmbeddedConfig {
             storage_locations,
             metadata_path: format!("{}/metadata", config.data_dir),
             cache_size_mb: config.cache_size_mb,
@@ -254,12 +254,12 @@ impl ProximaDB {
             block_prune_max_keep: 0,
             enable_rl_planner: config.enable_rl_planner,
             rl_policy_path: Some(format!("{}/rl_policy.json", config.data_dir)),
-            access_mode: proximadb::embedded::AccessMode::Exclusive,
+            access_mode: proximadb_embedded::AccessMode::Exclusive,
             node_id: None,
             tenant_id: None,
         };
 
-        let inner = proximadb::embedded::EmbeddedProximaDB::new(internal_config).map_err(|e| {
+        let inner = proximadb_embedded::EmbeddedProximaDB::new(internal_config).map_err(|e| {
             ProximaError::Embedded(EmbeddedError::InitializationFailed {
                 reason: e.to_string(),
             })

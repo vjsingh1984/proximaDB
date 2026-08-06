@@ -25,6 +25,21 @@ tokio_postgres::connect(
 The pgwire impl accepts any user name in the v0.2 permissive default; mTLS and
 SCRAM-SHA-256 authentication are tracked separately under TD-077.
 
+=== Tenant selection
+
+The connection **`dbname` selects the tenant** — a connection to `dbname=acme`
+scopes every read and write to tenant `acme`; the default `dbname=proximadb`
+resolves to the default tenant. This mirrors the tenant identity carried by the
+other transports (REST `X-Tenant-ID` header, gRPC `x-tenant-id` metadata) — all
+four resolve through the single request-tenant resolver, so a bare/default
+request maps to the same `default` tenant everywhere. A session may also override
+the write tenant with `SET proximadb.write.tenant_id = '<tenant>'`. Tenant
+isolation is *structural* — the tenant is composed into the storage key at the
+service boundary, never applied as a per-query predicate — so a row written under
+one tenant is invisible to another even under an identical logical
+collection/table name. See link:./client-surface-map.adoc[Client Surface Map]
+for the tenant-identity-per-transport table.
+
 == Supported in v0.2
 
 * `CREATE TABLE` with typed columns (BIGINT, VARCHAR, FLOAT, BOOLEAN, JSON,
@@ -90,6 +105,9 @@ the items below; they will return SQL-conformant errors if you try them:
 * Joins.
 * System tables (`pg_class`, `xcatalog.namespaces`).
 * Prepared statements / Bind / Execute pipelining for parameterised queries.
+* Transactions. pgwire is autocommit-only; `BEGIN`, `COMMIT`, `ROLLBACK`, and
+  savepoint control return SQLSTATE `0A000`. A simple-query batch containing
+  transaction control is rejected before any statement in that batch executes.
 * PostgreSQL-style OLTP parity: full MVCC transactions, foreign-key enforcement, unique/check
   constraint enforcement, trigger/stored-procedure behavior, and cross-shard consistency. These
   require the TD-110 storage/constraint foundation.

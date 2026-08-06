@@ -9,8 +9,10 @@ pub mod auth_service;
 pub mod encryption;
 pub mod monitoring;
 pub mod rbac_service;
+pub mod request_identity;
 pub mod rls;
 pub mod security_coordinator;
+pub mod tenant_stable_id;
 pub mod validation;
 
 pub use rbac_service::{
@@ -33,6 +35,8 @@ pub use advanced_features::{
     MFAService, MFAVerificationResult, RateLimitConfig, RateLimitResult, RateLimitingService,
 };
 
+pub use tenant_stable_id::CatalogTenantStableIdResolver;
+
 pub use rls::{
     CollectionRLS, Operation as RLSOperation, RLSConfig, RLSFilterResult, RLSPolicy,
     RLSPolicyBuilder, SecurityPredicate, SecurityPredicateBuilder,
@@ -43,9 +47,6 @@ pub use encryption::{
     KeyInfo, KeyStore, KeyStoreConfig, KeyStoreError,
 };
 
-#[allow(deprecated)]
-#[deprecated(note = "Use TypeValidationResult instead.")]
-pub use validation::ValidationResult;
 pub use validation::{
     BinaryValidator, CollectionNameValidator, DecimalValidator, FieldValidationConfig,
     JsonValidator, MetadataValidationConfig, MetadataValidator, TimestampValidator,

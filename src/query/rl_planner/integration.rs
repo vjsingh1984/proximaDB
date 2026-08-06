@@ -99,6 +99,9 @@ impl RLPlannerIntegration {
             StorageEngineType::SWIFT => StorageEngine::Swift,
             StorageEngineType::NOVA => StorageEngine::Nova,
             StorageEngineType::RAPTOR => StorageEngine::Raptor,
+            // TST (and any unmapped engine) maps to SST capabilities as the
+            // safest baseline, consistent with the planner's SST default.
+            _ => StorageEngine::Sst,
         }
     }
 
@@ -384,6 +387,11 @@ impl RLPlannerIntegration {
         planner.load_policy(path).await
     }
 
+    /// Total reward updates observed (passthrough for the checkpoint dirty-flag).
+    pub async fn total_updates(&self) -> u64 {
+        self.planner.read().await.total_updates().await
+    }
+
     /// Check if RL planning is enabled
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
@@ -429,6 +437,9 @@ impl RLPlannerIntegration {
             StorageEngineType::SWIFT => ProgressiveEngineType::SWIFT,
             StorageEngineType::NOVA => ProgressiveEngineType::NOVA,
             StorageEngineType::RAPTOR => ProgressiveEngineType::RAPTOR,
+            // TST (and any engine without a progressive-quantization path)
+            // falls back to SST, the planner's default.
+            _ => ProgressiveEngineType::SST,
         }
     }
 }

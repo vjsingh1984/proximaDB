@@ -32,9 +32,79 @@ use super::smart_rowgroup_sizing::SmartRowGroupSizer;
 
 // Deep integration with AXIS clustering
 use crate::index::axis::clustering::{
-    ClusterManager, ClusteringAlgorithm, ClusteringConfig, KMeansConfig,
+    AxisClusteringEngine, ClusterManager, ClusteringAlgorithm, ClusteringConfig, KMeansConfig,
+    KMeansInit,
 };
 use proximadb_index_types::ClusterAssignment;
+
+/// Build the AXIS clustering engine for RAPTOR with the standard config,
+/// returned behind the `AxisClusteringPort` DI port. Injected into RaptorWriter
+/// (which no longer constructs it internally — Slice D port-inversion).
+fn make_raptor_axis_clustering(
+    config: &super::config::RaptorConfig,
+) -> std::sync::Arc<dyn proximadb_storage_ports::AxisClusteringPort> {
+    let axis_clustering_config = ClusteringConfig {
+        algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
+            k: super::constants::clustering::DEFAULT_CLUSTER_COUNT,
+            max_iterations: super::constants::clustering::KMEANS_MAX_ITERATIONS,
+            tolerance: super::constants::clustering::KMEANS_TOLERANCE as f32,
+            n_init: super::constants::clustering::KMEANS_INIT_ATTEMPTS,
+            init_method: KMeansInit::KMeansPlusPlus,
+        }),
+        min_vectors_for_clustering: config.rowgroup_size,
+        max_clusters: super::constants::clustering::MAX_CLUSTER_COUNT,
+        distance_metric: proximadb_distance_kernel::DistanceMetric::Euclidean,
+        adaptive_cluster_count: true,
+        recompute_threshold: 10000,
+        enable_incremental: false,
+    };
+    std::sync::Arc::new(AxisClusteringEngine::new(axis_clustering_config))
+}
+
+/// Build the local filesystem for RAPTOR behind the `FileSystem` trait. Injected
+/// into RaptorWriter (which no longer constructs `LocalFileSystem` internally).
+async fn make_raptor_filesystem()
+-> anyhow::Result<std::sync::Arc<dyn crate::storage::persistence::filesystem::FileSystem>> {
+    use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+    Ok(std::sync::Arc::new(
+        LocalFileSystem::new(LocalConfig::default()).await?,
+    ))
+}
+
+/// Build the storage-quantization chain for RAPTOR (codebook store -> unified
+/// quant -> storage quant) behind the `StorageQuantizationEnginePort` DI port.
+/// Injected into RaptorWriter (which no longer constructs it internally).
+async fn make_raptor_quantization_engine(
+    config: &super::config::RaptorConfig,
+) -> anyhow::Result<std::sync::Arc<dyn proximadb_storage_ports::StorageQuantizationEnginePort>> {
+    use crate::compute::quantization::quantization_engine::{
+        CodebookStore, InMemoryCodebookStore, UnifiedQuantizationEngine,
+    };
+    use crate::compute::quantization::storage_engine::{
+        StorageQuantizationConfig, StorageQuantizationEngine,
+    };
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
+
+    let distance_compute = std::sync::Arc::new(UnifiedDistanceCompute::new(
+        proximadb_distance_kernel::DistanceMetric::Cosine,
+    ));
+    let codebook_store: std::sync::Arc<dyn CodebookStore> =
+        std::sync::Arc::new(InMemoryCodebookStore::new());
+    let unified_quantization = std::sync::Arc::new(UnifiedQuantizationEngine::new(
+        distance_compute.clone(),
+        codebook_store,
+    ));
+    let quant_config = StorageQuantizationConfig {
+        enable_hardware_acceleration: config.enable_simd,
+        distance_metric: proximadb_distance_kernel::DistanceMetric::Cosine,
+        ..Default::default()
+    };
+    Ok(std::sync::Arc::new(StorageQuantizationEngine::new(
+        unified_quantization,
+        distance_compute,
+        quant_config,
+    )))
+}
 
 // Deep integration with filesystem API for cloud-aware I/O
 use crate::storage::persistence::filesystem::TierConfig;
@@ -365,7 +435,7 @@ impl RaptorEngine {
         operation_context: &str,
         collection_size: Option<usize>,
     ) -> bool {
-        crate::compute::quantization::selection::QuantizationSelector::should_use_persistent_quantization_simple(
+        crate::storage::compute_bridge::selection::QuantizationSelector::should_use_persistent_quantization_simple(
             operation_context,
             collection_size,
         )
@@ -380,7 +450,7 @@ impl RaptorEngine {
         if self.should_use_persistent_quantization(operation_context, collection_size) {
             // Use global quantization cache for persistent operations
             if let Some(global_cache) =
-                crate::compute::quantization::global_cache::GlobalQuantizationCache::instance()
+                crate::storage::compute_bridge::global_cache::GlobalQuantizationCache::instance()
             {
                 global_cache
                     .get_or_create_engine("default_collection".to_string())
@@ -517,6 +587,9 @@ impl RaptorEngine {
                 config.clone(),
                 "placeholder".to_string(),
                 config.dimension, // dimension from config
+                make_raptor_filesystem().await?,
+                make_raptor_quantization_engine(&config).await?,
+                make_raptor_axis_clustering(&config),
             )
             .await?,
         ));
@@ -620,7 +693,6 @@ impl RaptorEngine {
             config.clone(),
             cache, // Tier 1: Shared metadata cache (CrossCacheOrchestrator)
             zero_copy_filesystem.clone(), // Tier 2: Disk cache wrapper
-            transaction_coordinator.clone(),
         ));
 
         let compactor = Arc::new(RaptorCompactor::new(
@@ -1059,7 +1131,6 @@ impl RaptorEngine {
                 self.config.clone(),
                 cache.clone(),
                 self.filesystem.clone(),
-                self.transaction_coordinator.clone(),
             );
 
             // STEP 1: Use hierarchical_search to find top-k rowgroups by centroid distance
@@ -1200,7 +1271,6 @@ impl RaptorEngine {
             self.config.clone(),
             cache,
             self.filesystem.clone(),
-            self.transaction_coordinator.clone(),
         );
 
         // Use scan_vectors_with_strategy for full scan
@@ -2230,6 +2300,9 @@ impl UnifiedStorageFormat for RaptorEngine {
             self.config.clone(),
             collection_id.to_string(),
             collection_dimension as usize,
+            self.filesystem.clone(),
+            make_raptor_quantization_engine(&self.config).await?,
+            make_raptor_axis_clustering(&self.config),
         )
         .await?;
 
@@ -2344,7 +2417,16 @@ impl UnifiedStorageFormat for RaptorEngine {
         });
 
         let params = FlushParameters {
-            collection_id: Some(collection_id.to_string()),
+            collection_id: Some(
+                collection_id
+                    .parse::<u64>()
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "RAPTOR bulk ingest requires a numeric catalog object id, got {collection_id:?}: {error}"
+                        )
+                    })?
+                    .to_string(),
+            ),
             force: true,
             synchronous: true,
             hints: std::collections::HashMap::new(),
@@ -2602,7 +2684,6 @@ impl UnifiedStorageFormat for RaptorEngine {
                 self.config.clone(),
                 cache_orchestrator,
                 self.filesystem.clone(),
-                self.transaction_coordinator.clone(),
             ));
 
             // Try to get metadata for this file
@@ -2867,7 +2948,10 @@ impl UnifiedStorageFormat for RaptorEngine {
         // Return OptimizedSearchRecord directly
         Ok(results)
     }
+}
 
+#[allow(deprecated)] // RaptorEngine is #[deprecated] (experimental); accessing its own field is intentional
+impl crate::storage::traits::EngineFilesystemAccess for RaptorEngine {
     fn get_filesystem_factory(
         &self,
     ) -> &crate::storage::persistence::filesystem::FilesystemFactory {

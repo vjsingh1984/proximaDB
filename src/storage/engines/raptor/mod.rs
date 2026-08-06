@@ -122,7 +122,7 @@ pub mod consolidated_compactor;
 pub mod consolidated_reader;
 pub mod engine;
 pub mod extraction;
-pub mod matrix_builder;
+// matrix_builder hoisted to the proximadb-raptor-engine crate (writer-only dep).
 // metadata_serializer removed - functionality consolidated into unified_metadata_serializer
 pub mod unified_metadata_serializer {
     pub use crate::storage::engines::core::matrix_trinity_serializer::*;

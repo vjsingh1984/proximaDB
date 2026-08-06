@@ -5,8 +5,10 @@
 //! optional relations; the orchestration (and fusion-delegating search) lives in
 //! the orchestrator, shared with the gRPC facade. Per
 //! `SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`: retrieval delegates to the fusion
-//! seam; this facade owns no ranking. Tenant isolation is structural — the
-//! `TenantContext` tenant is folded into the backing collection key.
+//! seam; this facade owns no ranking. Tenant isolation is structural — the request
+//! tenant is threaded to the orchestrator, which scopes each leg (graph via
+//! `for_tenant`, vector via `TenantContext`, document via the scoped collection key);
+//! collection names stay tenant-clean (never a `{tenant}::name` fold).
 
 use std::collections::HashMap;
 
@@ -21,8 +23,8 @@ use utoipa::ToSchema;
 use crate::errors::{ApiError, ApiResult};
 use crate::graph::{PropertyValue, property_value::Value as GraphValue};
 use crate::network::middleware::tenant::TenantContext;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::network::rest::openapi::ErrorResponse;
-use crate::network::rest::v1::handlers::AppState;
 use crate::services::entity_orchestrator::{
     EntityEmbedding, EntityOrchestrator, EntityProvenance, EntityRelation, EntityUpsert,
 };
@@ -163,14 +165,6 @@ fn orchestrator(state: &AppState) -> EntityOrchestrator {
     )
 }
 
-fn effective_collection(tenant: &TenantContext, collection_id: &str) -> String {
-    if !tenant.tenant_id.is_empty() {
-        format!("{}::{}", tenant.tenant_id, collection_id)
-    } else {
-        collection_id.to_string()
-    }
-}
-
 fn node_to_dto(node: &crate::graph::Node, collection: &str) -> EntityDto {
     let mut flexible_metadata = HashMap::new();
     for (k, v) in &node.properties {
@@ -227,7 +221,7 @@ pub async fn upsert_entity_v2(
     Extension(tenant): Extension<TenantContext>,
     Json(request): Json<UpsertEntityRequest>,
 ) -> ApiResult<Json<UpsertEntityResponse>> {
-    let collection = effective_collection(&tenant, &collection_id);
+    // Tenant-CLEAN collection name; the orchestrator scopes each leg structurally by the tenant.
     let mut metadata = HashMap::new();
     for (k, v) in &request.flexible_metadata {
         if let Some(pv) = json_to_property_value(v) {
@@ -272,7 +266,7 @@ pub async fn upsert_entity_v2(
     };
 
     let entity_id = orchestrator(&state)
-        .upsert(&collection, &tenant.tenant_id, input)
+        .upsert(&collection_id, &tenant.tenant_id, input)
         .await
         .map_err(|e| err_internal("upsert entity", e))?;
 
@@ -302,13 +296,12 @@ pub async fn get_entity_v2(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
 ) -> ApiResult<Json<EntityDto>> {
-    let collection = effective_collection(&tenant, &collection_id);
     let node = orchestrator(&state)
-        .get(&collection, &entity_id)
+        .get(&collection_id, &tenant.tenant_id, &entity_id)
         .await
         .map_err(|e| err_internal("get entity", e))?
         .ok_or_else(|| ApiError::NotFound(format!("Entity '{entity_id}' not found")))?;
-    Ok(Json(node_to_dto(&node, &collection)))
+    Ok(Json(node_to_dto(&node, &collection_id)))
 }
 
 #[utoipa::path(
@@ -330,9 +323,8 @@ pub async fn delete_entity_v2(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
 ) -> ApiResult<Json<UpsertEntityResponse>> {
-    let collection = effective_collection(&tenant, &collection_id);
     let deleted = orchestrator(&state)
-        .delete(&collection, &entity_id)
+        .delete(&collection_id, &tenant.tenant_id, &entity_id)
         .await
         .map_err(|e| err_internal("delete entity", e))?;
     Ok(Json(UpsertEntityResponse {
@@ -366,8 +358,6 @@ pub async fn search_entities_v2(
     Extension(tenant): Extension<TenantContext>,
     Json(request): Json<SearchEntitiesRequest>,
 ) -> ApiResult<Json<SearchEntitiesResponse>> {
-    let collection = effective_collection(&tenant, &collection_id);
-
     let query_vector = if request.query_vector.is_empty() {
         None
     } else {
@@ -387,14 +377,20 @@ pub async fn search_entities_v2(
         .collect::<Vec<_>>();
 
     let hits = orchestrator(&state)
-        .search(&collection, query_vector, filters, request.top_k as usize)
+        .search(
+            &collection_id,
+            &tenant.tenant_id,
+            query_vector,
+            filters,
+            request.top_k as usize,
+        )
         .await
         .map_err(|e| err_internal("search entities", e))?;
 
     let results = hits
         .into_iter()
         .map(|hit| EntitySearchResult {
-            entity: node_to_dto(&hit.node, &collection),
+            entity: node_to_dto(&hit.node, &collection_id),
             score: hit.score,
         })
         .collect::<Vec<_>>();

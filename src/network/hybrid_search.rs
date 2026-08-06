@@ -101,6 +101,7 @@ impl HybridPort for RestHybridPortImpl {
     async fn hybrid_search(
         &self,
         request: HybridFusionSearchRequest,
+        tenant_id: Option<String>,
     ) -> Result<HybridFusionSearchResponse> {
         let start = std::time::Instant::now();
         let top_k = normalize_top_k(request.top_k as usize);
@@ -127,7 +128,7 @@ impl HybridPort for RestHybridPortImpl {
             };
             let resp = self
                 .vector_ops
-                .search(search_request, None)
+                .search(search_request, proximadb_runtime::PortIdentity::anonymous())
                 .await
                 .map_err(|e| anyhow!("Vector search failed: {}", e))?;
             resp.results
@@ -194,6 +195,12 @@ impl HybridPort for RestHybridPortImpl {
         // Fail-closed: any error resolving the filtered id set drops every BM25
         // candidate rather than risk surfacing a record the filter excludes —
         // the safe direction, never a cross-account disclosure.
+        //
+        // The caller's tenant identity (extracted by the REST tenant middleware
+        // and threaded through `HybridPort`) is passed down so the id-set
+        // resolves under the request tenant. Without it, multi-tenant
+        // deployments fail the tenant-context precondition and the fail-closed
+        // arm silently empties every filtered hybrid query (#949).
         let bm25_results: Vec<BM25Result> = if request.filters.is_empty() || bm25_results.is_empty()
         {
             bm25_results
@@ -205,7 +212,11 @@ impl HybridPort for RestHybridPortImpl {
                 .collect();
             let allowed = self
                 .vector_ops
-                .record_ids_matching_filter(&request.collection, &proto_filters, None)
+                .record_ids_matching_filter(
+                    &request.collection,
+                    &proto_filters,
+                    tenant_id.as_deref(),
+                )
                 .await
                 .unwrap_or_else(|error| {
                     debug!(%error, "hybrid filter id resolution failed; dropping BM25 candidates (fail-closed)");
@@ -518,7 +529,7 @@ mod tests {
         async fn search(
             &self,
             request: proximadb_v1::VectorSearchRequest,
-            _tenant_id: Option<&str>,
+            _identity: proximadb_runtime::PortIdentity<'_>,
         ) -> Result<proximadb_v1::VectorOperationResponse> {
             *self.last_request.lock().unwrap() = Some(request);
             Ok(proximadb_v1::VectorOperationResponse {
@@ -580,13 +591,16 @@ mod tests {
         );
 
         let response = port
-            .hybrid_search(HybridFusionSearchRequest {
-                collection: "test".to_string(),
-                query_vector: vec![0.1, 0.2],
-                top_k: 3,
-                filters,
-                ..Default::default()
-            })
+            .hybrid_search(
+                HybridFusionSearchRequest {
+                    collection: "test".to_string(),
+                    query_vector: vec![0.1, 0.2],
+                    top_k: 3,
+                    filters,
+                    ..Default::default()
+                },
+                Some("acme".to_string()),
+            )
             .await
             .unwrap();
 

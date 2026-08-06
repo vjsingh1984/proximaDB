@@ -14,9 +14,10 @@
 //!
 //! This avoids redundant storage: an "entity" is just a graph node with associated
 //! vectors and optional document chunks. Tenant isolation is structural — the
-//! request tenant (`x-tenant-id`) is folded into the backing collection key via
-//! [`grpc_auth::tenant_id`], never a per-query predicate (mirrors the v2 document
-//! service).
+//! request tenant (`x-tenant-id`, resolved via [`grpc_auth::resolved_tenant_id`]) is
+//! applied per-leg with a tenant-CLEAN collection name: graph via `for_tenant`,
+//! vector via `TenantContext`, provenance document via the scoped collection key.
+//! Never a `{tenant}::collection` name fold, never a per-query predicate.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -80,16 +81,6 @@ impl ProximaEntityServiceImpl {
     /// Convert to a tonic server.
     pub fn into_server(self) -> ProximaEntityServiceServer<Self> {
         ProximaEntityServiceServer::new(self)
-    }
-
-    /// Derive the effective backing collection namespace from the request tenant.
-    /// Isolation is structural: the tenant is folded into the storage key, never
-    /// a per-query predicate.
-    fn effective_collection_id<T>(request: &Request<T>, collection_id: &str) -> String {
-        match grpc_auth::tenant_id(request) {
-            Some(tenant) if !tenant.is_empty() => format!("{tenant}::{collection_id}"),
-            _ => collection_id.to_string(),
-        }
     }
 
     /// Generate a unique node ID for this entity in the graph.
@@ -173,8 +164,9 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         &self,
         request: Request<pv2::UpsertEntityRequest>,
     ) -> Result<Response<pv2::UpsertEntityResponse>, Status> {
-        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
-        let tenant_id = grpc_auth::tenant_id(&request).unwrap_or_default();
+        // Tenant-CLEAN collection name; each leg is scoped structurally by the resolved tenant.
+        let collection = request.get_ref().collection_id.clone();
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
         let entity = req
             .entity
@@ -211,12 +203,18 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         // Upsert semantics: try create, fall back to update if the node exists.
         match self
             .graph_service
+            .for_tenant(&tenant)
             .create_node(&collection, node.clone())
             .await
         {
             Ok(_) => debug!("Created graph node {node_id}"),
             Err(create_err) => {
-                if let Err(update_err) = self.graph_service.update_node(&collection, node).await {
+                if let Err(update_err) = self
+                    .graph_service
+                    .for_tenant(&tenant)
+                    .update_node(&collection, node)
+                    .await
+                {
                     error!("Entity node upsert failed: create={create_err}; update={update_err}");
                     return Err(entity_status("upsert entity", update_err));
                 }
@@ -243,7 +241,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
 
             let record = ProximaRecord {
                 oid: vector_id.clone(),
-                tenant_id: tenant_id.clone(),
+                tenant_id: tenant.clone(),
                 local_id: Some(format!("{entity_id}:{}", embedding.model_id)),
                 embeddings: vec![EmbeddingCell {
                     model_id: embedding.model_id.clone(),
@@ -265,7 +263,11 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
 
             match self
                 .vector_service
-                .insert_batch(&collection, vec![record])
+                .insert_batch_with_tenant_context(
+                    &collection,
+                    vec![record],
+                    Some(&crate::storage::tenant::context::TenantContext::for_tenant_id(&tenant)),
+                )
                 .await
             {
                 Ok(result) => {
@@ -319,10 +321,16 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 ProximaTreeNode::Value(ProximaValue::String(collection.clone())),
             );
 
+            // Scope the provenance doc collection to the tenant (both storage key and
+            // record.collection_id key the same OID), matching the document fix. The tenant is
+            // already validated (the graph create above would have failed otherwise).
+            let scoped_doc_collection =
+                crate::storage::document::service::scoped_document_collection(&tenant, &collection)
+                    .map_err(|e| entity_status("scope provenance collection", e))?;
             let doc_record = DocumentRecord::from_tree(
                 doc_id.clone(),
                 tree,
-                collection.clone(),
+                scoped_doc_collection.clone(),
                 None,
                 Some("entity_provenance".to_string()),
             );
@@ -330,7 +338,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
             debug!("Insert provenance document doc_id={doc_id}");
             match self
                 .document_service
-                .insert_document_record(&collection, doc_record)
+                .insert_document_record(&scoped_doc_collection, doc_record)
                 .await
             {
                 Ok(_) => debug!("Provenance document inserted"),
@@ -361,7 +369,12 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 updated_at_ms: now_ms,
             };
 
-            match self.graph_service.create_edge(&collection, edge).await {
+            match self
+                .graph_service
+                .for_tenant(&tenant)
+                .create_edge(&collection, edge)
+                .await
+            {
                 Ok(_) => debug!("Created edge {edge_id}"),
                 Err(e) => warn!("Edge create failed (non-fatal) for {edge_id}: {e}"),
             }
@@ -378,7 +391,8 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         &self,
         request: Request<pv2::GetEntityRequest>,
     ) -> Result<Response<pv2::GetEntityResponse>, Status> {
-        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let collection = request.get_ref().collection_id.clone();
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
 
         debug!(
@@ -389,6 +403,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         let node_id = Self::entity_node_id(&collection, &req.entity_id);
         let node = self
             .graph_service
+            .for_tenant(&tenant)
             .get_node(&collection, &node_id)
             .await
             .map_err(|e| entity_status("get entity", e))?
@@ -403,7 +418,8 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         &self,
         request: Request<pv2::DeleteEntityRequest>,
     ) -> Result<Response<pv2::DeleteEntityResponse>, Status> {
-        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let collection = request.get_ref().collection_id.clone();
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let req = request.into_inner();
 
         debug!(
@@ -414,6 +430,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         let node_id = Self::entity_node_id(&collection, &req.entity_id);
         let deleted = self
             .graph_service
+            .for_tenant(&tenant)
             .delete_node(&collection, &node_id)
             .await
             .map_err(|e| entity_status("delete entity", e))?
@@ -436,8 +453,8 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         &self,
         request: Request<pv2::SearchEntitiesRequest>,
     ) -> Result<Response<pv2::SearchEntitiesResponse>, Status> {
-        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
-        let tenant_id = grpc_auth::tenant_id(&request).unwrap_or_default();
+        let collection = request.get_ref().collection_id.clone();
+        let tenant = grpc_auth::resolved_tenant_id(&request)?;
         let principal = grpc_auth::user_id(&request);
         let req = request.into_inner();
 
@@ -457,9 +474,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         if let Some(similar) = req.similar.as_ref() {
             let query_vector = match similar.query.as_ref() {
                 Some(pv2::similar_query::Query::Vector(v)) => v.values.clone(),
-                Some(pv2::similar_query::Query::Text(t)) => {
-                    Self::embed_query(t, &tenant_id).await?
-                }
+                Some(pv2::similar_query::Query::Text(t)) => Self::embed_query(t, &tenant).await?,
                 Some(pv2::similar_query::Query::RawData(bytes)) => {
                     // Treat raw_data as UTF-8 text to embed.
                     let text = String::from_utf8(bytes.clone()).map_err(|_| {
@@ -467,7 +482,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                             "similar.raw_data must be valid UTF-8 text to embed",
                         )
                     })?;
-                    Self::embed_query(&text, &tenant_id).await?
+                    Self::embed_query(&text, &tenant).await?
                 }
                 None => {
                     return Err(Status::invalid_argument(
@@ -491,6 +506,9 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 route_policy: None,
                 graph_id: collection.clone(),
                 vector_collection: collection.clone(),
+                // Structural tenant boundary — scopes BOTH fusion legs (clean names in, TD-ENTITY-TENANT-1).
+                tenant: Some(tenant.clone()),
+                tenant_stable_id: None, // FA-2 PR-D3: gRPC resolver wiring deferred
                 query_vector,
                 // TD-146 scope B: graph-augmented entity fusion. Entity vectors live under the
                 // auxiliary `{node_id}/{model_id}` oid; `EntityNode` keying normalizes both the
@@ -529,6 +547,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 .collect();
             let nodes = self
                 .graph_service
+                .for_tenant(&tenant)
                 .get_nodes(&collection, &node_ids)
                 .await
                 .map_err(|e| entity_status("materialize search entities", e))?;
@@ -577,6 +596,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
 
         let nodes = self
             .graph_service
+            .for_tenant(&tenant)
             .query_nodes(&collection, query)
             .await
             .map_err(|e| entity_status("search entities", e))?;

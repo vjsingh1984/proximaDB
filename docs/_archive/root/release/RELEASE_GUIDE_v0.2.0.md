@@ -14,7 +14,7 @@ git tag -a v0.2.0 -m "Release v0.2.0 - Platform Packages"
 git push origin v0.2.0
 
 # 4. Monitor the release at:
-# https://github.com/vjsingh1984/proximadb/actions
+# https://github.com/anvai-labs/proximaDB/actions
 ```
 
 ## What Happens Automatically
@@ -66,9 +66,9 @@ curl -s https://crates.io/api/v1/crates/proximadb | jq .crate.versions[-1].num
 
 ## Key Links
 
-- **Release Workflow:** https://github.com/vjsingh1984/proximDB/actions/workflows/release.yml
-- **Pre-Release CI:** https://github.com/vjsingh1984/proximDB/actions/workflows/prerelease-ci.yml
-- **Releases Page:** https://github.com/vjsingh1984/proximDB/releases
+- **Release Workflow:** https://github.com/anvai-labs/proximaDB/actions/workflows/release.yml
+- **Pre-Release CI:** https://github.com/anvai-labs/proximaDB/actions/workflows/prerelease-ci.yml
+- **Releases Page:** https://github.com/anvai-labs/proximaDB/releases
 
 ## Troubleshooting
 

@@ -46,7 +46,7 @@ use dashmap::DashMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
@@ -54,7 +54,7 @@ use async_trait::async_trait;
 use proximadb_storage_filesystem_types::{FileOptions, FileSystem, FilesystemError};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::cache::CatalogCache;
@@ -147,7 +147,11 @@ pub struct NativeCatalog {
     /// Phase 4b makes it durable (for path stability); in 4a it only keys
     /// in-memory minting.
     account_registry: DashMap<String, u32>,
-    account_floor: AtomicU32,
+    /// Serializes mint + sidecar persistence. Without this, concurrent mints
+    /// can publish whole-map snapshots out of order and lose the later tenant.
+    account_registry_write_lock: Mutex<()>,
+    /// u64 lets the allocator report u32 exhaustion instead of wrapping.
+    account_floor: AtomicU64,
     /// ADR-031 Phase 4a: transient namespace-key → u16 map, so every collection
     /// in the same namespace gets the SAME `stable_namespace_id` (per-account,
     /// compact). Keyed by the namespace levels joined (`a.b`). Rebuilt from
@@ -262,25 +266,43 @@ impl NativeCatalog {
     /// registry-derived value, numeric in-memory). Returns `None` for an
     /// empty/absent account string (legacy/anonymous namespaces get no typed
     /// identity — mixed-read-safe).
-    async fn account_u32(&self, account_str: &str) -> Option<u32> {
+    async fn ensure_account_u32(&self, account_str: &str) -> Result<Option<u32>> {
+        let account_str = account_str.trim();
         if account_str.is_empty() {
-            return None;
+            return Ok(None);
         }
+
+        // Existing values are checked under the same lock as first mint. A
+        // concurrent waiter must not observe success until the first caller's
+        // durable sidecar write has completed.
+        let _guard = self.account_registry_write_lock.lock().await;
         if let Some(entry) = self.account_registry.get(account_str) {
-            return Some(*entry.value());
+            return Ok(Some(*entry.value()));
         }
-        let next = self
-            .account_floor
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.account_registry.insert(account_str.to_string(), next);
-        // ADR-031 Phase 4b: persist the new account-string→u32 mapping so the
-        // typed object-store path is stable across restarts (best-effort,
-        // mirrors `object_name_index`). The lookup path above is read-only → no
-        // save; only the mint branch writes.
-        if let Err(e) = self.save_account_registry().await {
-            warn!("account-registry persist failed (continuing in-memory): {e}");
+        let next = self.account_floor.fetch_add(1, Ordering::SeqCst);
+        let stable_id = u32::try_from(next)
+            .map_err(|_| anyhow!("tenant stable-id space exhausted at {next}"))?;
+        self.account_registry
+            .insert(account_str.to_string(), stable_id);
+
+        // Persist before reporting success. Roll the in-memory entry back on a
+        // write failure so a later retry cannot mistake an uncommitted id for a
+        // durable policy key. The consumed numeric id may remain skipped.
+        if let Err(error) = self.save_account_registry().await {
+            self.account_registry.remove(account_str);
+            return Err(error);
         }
-        Some(next)
+        Ok(Some(stable_id))
+    }
+
+    async fn account_u32(&self, account_str: &str) -> Option<u32> {
+        match self.ensure_account_u32(account_str).await {
+            Ok(account) => account,
+            Err(error) => {
+                warn!("account-registry persist failed; stable identity not minted: {error}");
+                None
+            }
+        }
     }
 
     /// ADR-031 Phase 4a: mint the per-scope typed identity (`stable_namespace_id`
@@ -424,7 +446,8 @@ impl NativeCatalog {
             oid_paths: std::sync::atomic::AtomicBool::new(Self::object_id_paths_enabled()),
             stable_ids: crate::id_allocator::CatalogIdService::new(),
             account_registry: DashMap::new(),
-            account_floor: AtomicU32::new(1),
+            account_registry_write_lock: Mutex::new(()),
+            account_floor: AtomicU64::new(1),
             namespace_registry: DashMap::new(),
             namespace_floor: AtomicU32::new(1),
         };
@@ -648,7 +671,7 @@ impl NativeCatalog {
         // Raise the floor above the max persisted u32 so the next mint is new.
         if let Some(max) = file.entries.iter().map(|(_, u)| *u).max() {
             self.account_floor
-                .fetch_max(max + 1, std::sync::atomic::Ordering::Relaxed);
+                .fetch_max(u64::from(max) + 1, Ordering::SeqCst);
         }
         debug!("Loaded {} account-registry entries", file.entries.len());
         Ok(())
@@ -1394,7 +1417,17 @@ impl Catalog for NativeCatalog {
     async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
         // Thin public wrapper over the private registry lookup-or-mint. The
         // root path-resolver calls this to compose a `CollectionIdentity`.
-        Ok(self.account_u32(account).await)
+        self.ensure_account_u32(account).await
+    }
+
+    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
+        // TD-TENANT-1 item 3: sync read-only lookup (no mint, no persist) for the
+        // request-hot TenantStableIdResolver. None when unminted/empty.
+        let account = account.trim();
+        if account.is_empty() {
+            return None;
+        }
+        self.account_registry.get(account).map(|v| *v.value())
     }
 
     async fn max_object_id(&self) -> Result<Option<u64>> {
@@ -1458,13 +1491,19 @@ impl Catalog for NativeCatalog {
         schema: CatalogTableSchema,
     ) -> Result<CatalogTableSchema> {
         // Validate schema
+        // ADR-077 M1: normalize BEFORE validating. A creation path may legitimately
+        // hand us a UNIQUE recorded only in the projection — `CREATE TABLE … UNIQUE(x)`
+        // lowers to `relational_capabilities.unique_indexes` — and rejecting that would
+        // break table creation. Folding it into the canonical field first is what makes
+        // the invariant hold by construction rather than by rejecting real schemas.
+        let mut schema = schema;
+        crate::schema::normalize_identity(&mut schema);
         validate_schema(&schema)?;
 
         // ADR-031 / TD-181: mint stable object_ids for the table and every
         // catalog object carried in its schema — columns and indexes — from the
         // one system-wide sequence. `mint_object_id` allocates when unset and
         // adopts-without-reuse a caller-supplied id (import/migration/CTAS).
-        let mut schema = schema;
         schema.object_id = Some(self.mint_object_id(schema.object_id));
         for column in &mut schema.columns {
             column.object_id = Some(self.mint_object_id(column.object_id));
@@ -2068,6 +2107,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_first_account_mint_returns_one_id() {
+        let (cat, _d) = catalog_in_tempdir().await;
+        let (left, right) = tokio::join!(cat.account_u32("acct"), cat.account_u32("acct"));
+        assert_eq!(left, right, "one account string must never receive two ids");
+        assert_eq!(cat.account_id_u32_lookup("acct"), left);
+    }
+
+    #[tokio::test]
     async fn account_registry_survives_restart() {
         // ADR-031 Phase 4b: the account-string → u32 mapping MUST persist across
         // restarts, else the typed object-store path drifts → silent data loss.
@@ -2104,6 +2151,14 @@ mod tests {
         // A genuinely new account mints above the recovered floor (2, not 1).
         let new_acct = cat2.account_u32("other").await.expect("mint new");
         assert_eq!(new_acct, 2, "new account mints above recovered floor");
+
+        // TD-TENANT-1 item 3: the SYNC account_id_u32_lookup returns the minted
+        // u32 (no mint, no I/O) — the TenantStableIdResolver contract. None for
+        // unknown/empty (fail-closed deny).
+        assert_eq!(cat2.account_id_u32_lookup("acct"), Some(1));
+        assert_eq!(cat2.account_id_u32_lookup("other"), Some(2));
+        assert_eq!(cat2.account_id_u32_lookup("never"), None);
+        assert_eq!(cat2.account_id_u32_lookup(""), None);
     }
 
     #[tokio::test]
@@ -2284,126 +2339,7 @@ mod tests {
         }
     }
 
-    // ── Injected object-store backend (TD-CAT-1) ────────────────────
-    //
-    // An in-memory `FileSystem` standing in for an object store (keyed by
-    // full URL). Only the methods the catalog actually exercises via the
-    // injected path are implemented (read/write/exists/list/delete/
-    // create_dir_all); the rest are unused here.
-    #[derive(Debug, Default)]
-    struct MemFs {
-        files: std::sync::Mutex<HashMap<String, Vec<u8>>>,
-    }
-
-    #[async_trait]
-    impl FileSystem for MemFs {
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-        fn filesystem_type(&self) -> &'static str {
-            "memfs"
-        }
-        async fn read(&self, path: &str) -> proximadb_storage_filesystem_types::FsResult<Vec<u8>> {
-            self.files
-                .lock()
-                .unwrap()
-                .get(path)
-                .cloned()
-                .ok_or_else(|| FilesystemError::NotFound(path.to_string()))
-        }
-        async fn write(
-            &self,
-            path: &str,
-            data: &[u8],
-            _options: Option<FileOptions>,
-        ) -> proximadb_storage_filesystem_types::FsResult<()> {
-            self.files
-                .lock()
-                .unwrap()
-                .insert(path.to_string(), data.to_vec());
-            Ok(())
-        }
-        async fn delete(&self, path: &str) -> proximadb_storage_filesystem_types::FsResult<()> {
-            self.files.lock().unwrap().remove(path);
-            Ok(())
-        }
-        async fn exists(&self, path: &str) -> proximadb_storage_filesystem_types::FsResult<bool> {
-            Ok(self.files.lock().unwrap().contains_key(path))
-        }
-        async fn create_dir_all(
-            &self,
-            _path: &str,
-        ) -> proximadb_storage_filesystem_types::FsResult<()> {
-            Ok(()) // object stores have no directories
-        }
-        async fn list(
-            &self,
-            path: &str,
-        ) -> proximadb_storage_filesystem_types::FsResult<
-            Vec<proximadb_storage_filesystem_types::DirEntry>,
-        > {
-            let prefix = path.trim_end_matches('/');
-            let mut entries = Vec::new();
-            for key in self.files.lock().unwrap().keys() {
-                if let Some(rest) = key.strip_prefix(prefix) {
-                    let rest = rest.trim_start_matches('/');
-                    if !rest.is_empty() && !rest.contains('/') {
-                        entries.push(proximadb_storage_filesystem_types::DirEntry {
-                            name: rest.to_string(),
-                            url: key.clone(),
-                            metadata: proximadb_storage_filesystem_types::FsFileMetadata::default(),
-                        });
-                    }
-                }
-            }
-            Ok(entries)
-        }
-        // Unused by the catalog's injected path.
-        async fn append(
-            &self,
-            _p: &str,
-            _d: &[u8],
-        ) -> proximadb_storage_filesystem_types::FsResult<()> {
-            unimplemented!()
-        }
-        async fn metadata(
-            &self,
-            _p: &str,
-        ) -> proximadb_storage_filesystem_types::FsResult<
-            proximadb_storage_filesystem_types::FsFileMetadata,
-        > {
-            unimplemented!()
-        }
-        async fn create_dir(&self, _p: &str) -> proximadb_storage_filesystem_types::FsResult<()> {
-            unimplemented!()
-        }
-        async fn copy(
-            &self,
-            _f: &str,
-            _t: &str,
-        ) -> proximadb_storage_filesystem_types::FsResult<()> {
-            unimplemented!()
-        }
-        async fn move_file(
-            &self,
-            _f: &str,
-            _t: &str,
-        ) -> proximadb_storage_filesystem_types::FsResult<()> {
-            unimplemented!()
-        }
-        async fn open_file(
-            &self,
-            _p: &str,
-            _c: bool,
-        ) -> proximadb_storage_filesystem_types::FsResult<
-            Box<dyn proximadb_storage_filesystem_types::FilesystemFile>,
-        > {
-            unimplemented!()
-        }
-        async fn sync(&self) -> proximadb_storage_filesystem_types::FsResult<()> {
-            Ok(())
-        }
-    }
+    use crate::testfs::MemFs;
 
     /// TD-CAT-1: an injected object-store backend persists the catalog durably
     /// (proven by reading back through a FRESH catalog instance over the same

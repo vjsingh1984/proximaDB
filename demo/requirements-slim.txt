@@ -7,7 +7,12 @@ requests>=2.28.0
 
 # BERT embeddings - smallest model only
 sentence-transformers>=2.2.0
-torch>=2.0.0,<2.1.0  # CPU-only version
+# CPU-only version. Floor is >=2.13.0 for CVE-2025-3000 (memory corruption via
+# torch.jit.script): the previous `>=2.0.0,<2.1.0` capped BELOW the fix, so the
+# range could only ever resolve to a vulnerable build. The demo uses only
+# manual_seed / cuda.manual_seed_all / no_grad, which are stable across 2.x, and
+# never calls torch.jit.script, so raising the floor is behaviour-preserving here.
+torch>=2.13.0
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Essential for demos

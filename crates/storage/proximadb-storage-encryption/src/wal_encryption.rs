@@ -9,12 +9,15 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::key_manager::{KeyVersionId, KeyVersionManager};
-use super::{decrypt_data, encrypt_data};
+use super::{
+    decrypt_data, decrypt_data_with_aad, decrypt_data_with_nonce_and_aad, encrypt_data,
+    encrypt_data_with_nonce_and_aad, generate_aes_gcm_nonce,
+};
 
 /// WAL segment metadata with encryption info
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +32,10 @@ pub struct WalSegmentMetadata {
     pub encrypted: bool,
     /// Segment size in bytes
     pub size_bytes: u64,
+    /// AES-GCM nonce for self-describing WAL envelopes. Legacy segments keep
+    /// the nonce prefixed to the ciphertext and deserialize this as `None`.
+    #[serde(default)]
+    pub nonce: Option<Vec<u8>>,
 }
 
 /// WAL encryption layer
@@ -63,6 +70,7 @@ impl WALEncryptionLayer {
                 key_version: self.key_manager.current_version(),
                 encrypted: false,
                 size_bytes: plaintext.len() as u64,
+                nonce: None,
             };
             return Ok((plaintext.to_vec(), metadata));
         }
@@ -78,6 +86,7 @@ impl WALEncryptionLayer {
             key_version,
             encrypted: true,
             size_bytes: ciphertext.len() as u64,
+            nonce: None,
         };
 
         debug!(
@@ -89,6 +98,71 @@ impl WALEncryptionLayer {
         );
 
         Ok((ciphertext, metadata))
+    }
+
+    pub fn prepare_segment_metadata(
+        &self,
+        segment_name: &str,
+        segment_id: u64,
+        plaintext_len: usize,
+    ) -> WalSegmentMetadata {
+        WalSegmentMetadata {
+            segment_name: segment_name.to_string(),
+            segment_id,
+            key_version: self.key_manager.current_version(),
+            encrypted: self.encryption_enabled,
+            size_bytes: if self.encryption_enabled {
+                plaintext_len.saturating_add(16) as u64
+            } else {
+                plaintext_len as u64
+            },
+            nonce: self
+                .encryption_enabled
+                .then(|| generate_aes_gcm_nonce().to_vec()),
+        }
+    }
+
+    pub fn encrypt_segment_with_metadata_and_aad(
+        &self,
+        metadata: &WalSegmentMetadata,
+        plaintext: &[u8],
+        aad: &[u8],
+    ) -> Result<Vec<u8>> {
+        if !metadata.encrypted {
+            return Ok(plaintext.to_vec());
+        }
+        let key = self
+            .key_manager
+            .derive_wal_key(&metadata.segment_name, metadata.segment_id);
+        let nonce: [u8; 12] = metadata
+            .nonce
+            .as_deref()
+            .context("WAL envelope encryption metadata has no nonce")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("WAL envelope nonce must be 12 bytes"))?;
+        encrypt_data_with_nonce_and_aad(&key, plaintext, &nonce, aad)
+    }
+
+    pub fn decrypt_segment_with_aad(
+        &self,
+        metadata: &WalSegmentMetadata,
+        ciphertext: &[u8],
+        aad: &[u8],
+    ) -> Result<Vec<u8>> {
+        if !metadata.encrypted {
+            return Ok(ciphertext.to_vec());
+        }
+        let key = self
+            .key_manager
+            .derive_wal_key(&metadata.segment_name, metadata.segment_id);
+        if let Some(nonce) = metadata.nonce.as_deref() {
+            let nonce: [u8; 12] = nonce
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("WAL envelope nonce must be 12 bytes"))?;
+            decrypt_data_with_nonce_and_aad(&key, ciphertext, &nonce, aad)
+        } else {
+            decrypt_data_with_aad(&key, ciphertext, aad)
+        }
     }
 
     /// Decrypt WAL segment after reading
@@ -178,13 +252,13 @@ mod tests {
         // Set test master key
         unsafe {
             std::env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
         let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY")
+            KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY")
                 .expect("failed to create key manager from env"),
         );
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
@@ -214,13 +288,13 @@ mod tests {
     fn test_wal_encryption_disabled() {
         unsafe {
             std::env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
         let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY")
+            KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY")
                 .expect("failed to create key manager from env"),
         );
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
@@ -247,16 +321,50 @@ mod tests {
     }
 
     #[test]
+    fn envelope_nonce_and_aad_are_authenticated() {
+        unsafe {
+            std::env::set_var(
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
+                "test-master-key-32-bytes-long-here!!",
+            );
+        }
+        let key_manager = std::sync::Arc::new(
+            KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY")
+                .expect("failed to create key manager"),
+        );
+        let layer = WALEncryptionLayer::new(
+            std::sync::Arc::new(KeyVersionManager::new(key_manager)),
+            true,
+        );
+        let metadata = layer.prepare_segment_metadata("wal", 7, 7);
+        assert_eq!(metadata.nonce.as_deref().map(<[u8]>::len), Some(12));
+        let ciphertext = layer
+            .encrypt_segment_with_metadata_and_aad(&metadata, b"payload", b"header")
+            .unwrap();
+        assert_eq!(
+            layer
+                .decrypt_segment_with_aad(&metadata, &ciphertext, b"header")
+                .unwrap(),
+            b"payload"
+        );
+        assert!(
+            layer
+                .decrypt_segment_with_aad(&metadata, &ciphertext, b"tampered")
+                .is_err()
+        );
+    }
+
+    #[test]
     fn test_reencryption_needed() {
         unsafe {
             std::env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
         let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY")
+            KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY")
                 .expect("failed to create key manager from env"),
         );
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));

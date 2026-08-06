@@ -1,3 +1,4 @@
+#![cfg(feature = "experimental-engines")] // RAPTOR needs the `experimental-engines` feature.
 //! Integration tests for the Raptor storage engine.
 
 use std::sync::Arc;

@@ -266,15 +266,9 @@ impl NovaEngine {
         // Configure storage quantization for NOVA (columnar engine)
         let storage_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
-                primary_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Pq8,
-                ),
-                filter_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Binary,
-                ),
-                fast_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Int8,
-                ),
+                primary_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::Pq8),
+                filter_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::Binary),
+                fast_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::Int8),
                 distance_metric: DistanceMetric::Cosine,
                 enable_progressive: true,
                 filter_threshold: 100.0,
@@ -1203,7 +1197,7 @@ impl NovaEngine {
 
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector.to_vec()),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             ..SearchParams::default()
         });
 
@@ -1386,16 +1380,26 @@ impl UnifiedStorageFormat for NovaEngine {
         reader.read_all_records(0, None).await
     }
 
-    fn get_filesystem_factory(
-        &self,
-    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        &self.filesystem
-    }
-
     // CORE OPERATIONS
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         // Delegate to modularized flush operations
-        self.flush_ops.flush(params).await
+        let result = self.flush_ops.flush(params).await?;
+
+        // Index the just-flushed vectors into AXIS directly (ADR-078). This lives
+        // in each engine's `do_flush` (not the trait default) so the traits layer
+        // stays a pure consumer with no root-service dependency (root-crate
+        // decomposition gap 4). Best-effort: errors are logged inside the hook,
+        // never propagated — the flush itself already succeeded.
+        if result.success {
+            crate::storage::common::axis_flush_hook::index_flushed_into_axis(
+                self.axis_manager().cloned(),
+                params,
+                result.file_paths.clone(),
+            )
+            .await;
+        }
+
+        Ok(result)
     }
 
     /// NOVA's LSM bulk-load override (Phase 2F-b).
@@ -1452,7 +1456,16 @@ impl UnifiedStorageFormat for NovaEngine {
         });
 
         let params = FlushParameters {
-            collection_id: Some(collection_id.to_string()),
+            collection_id: Some(
+                collection_id
+                    .parse::<u64>()
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "NOVA bulk ingest requires a numeric catalog object id, got {collection_id:?}: {error}"
+                        )
+                    })?
+                    .to_string(),
+            ),
             force: true,
             synchronous: true,
             hints: std::collections::HashMap::new(),
@@ -1779,6 +1792,14 @@ impl UnifiedStorageFormat for NovaEngine {
             required_tenant_id: tenant_id.map(str::to_string),
             required_principal: principal.map(str::to_string),
         })
+    }
+}
+
+impl crate::storage::traits::EngineFilesystemAccess for NovaEngine {
+    fn get_filesystem_factory(
+        &self,
+    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+        &self.filesystem
     }
 }
 

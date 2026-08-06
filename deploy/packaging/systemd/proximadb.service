@@ -1,6 +1,6 @@
 [Unit]
 Description=ProximaDB - Cloud-native vector database engineered for AI-first applications
-Documentation=https://github.com/vjsingh1984/proximadb
+Documentation=https://github.com/anvai-labs/proximaDB
 After=network.target
 Wants=network-online.target
 

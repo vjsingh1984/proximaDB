@@ -1,7 +1,7 @@
 ProximaDB
 Copyright 2025 Vijaykumar Singh
 
-This product includes software developed by Vijaykumar Singh (singhvjd@gmail.com).
+This product includes software developed by Vijaykumar Singh (vijay@anvaiops.com).
 
 This software contains the following components:
 
@@ -33,7 +33,7 @@ This software may include third-party dependencies with their own licenses.
 See Cargo.toml and package.json files for complete dependency information.
 
 For questions, contributions, or support:
-- GitHub: https://github.com/vjsingh1984/proximadb
-- Email: singhvjd@gmail.com
+- GitHub: https://github.com/anvai-labs/proximaDB
+- Email: vijay@anvaiops.com
 
 Built with Rust for the AI revolution.

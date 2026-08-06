@@ -119,9 +119,9 @@ flowchart TB
   style NOVA fill:#9b59b6,color:#fff
 ```
 
-4 supported storage engines for different workloads (SWIFT and RAPTOR also exist
-but are **experimental**, off by default behind the `experimental-engines` cargo
-feature — not part of the supported surface):
+SST is the Supported storage engine. VIPER, HELIX, and NOVA are Beta options for
+different workloads. SWIFT and RAPTOR are **experimental**, off by default behind
+the `experimental-engines` cargo feature and not part of the supported surface:
 
 | Engine | Best For | Performance |
 |--------|----------|-------------|
@@ -360,4 +360,4 @@ flowchart TB
 
 ---
 
-*Need help?* [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues)
+*Need help?* [GitHub Issues](https://github.com/anvai-labs/proximaDB/issues)

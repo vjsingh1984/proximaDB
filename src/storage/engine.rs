@@ -1,4 +1,5 @@
 use crate::core::{StorageConfig, String, VectorId};
+#[cfg(feature = "axis")]
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
@@ -22,10 +23,14 @@ use tracing::{debug, error, info, warn};
 pub struct StorageEngine {
     config: StorageConfig,
     sst_storages: Arc<DashMap<String, Arc<SstEngine>>>,
+    canonical_sst_storage: Arc<SstEngine>,
     #[allow(dead_code)]
     disk_manager: Arc<DiskManager>,
     write_ahead_log_manager: Arc<WriteAheadLogManager>,
+    #[cfg(feature = "axis")]
     axis_index_manager: Arc<AxisManager>,
+    #[cfg(feature = "axis")]
+    axis_runtime_enabled: bool,
     compaction_manager: Arc<Compaction>,
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 
@@ -131,38 +136,62 @@ impl StorageEngine {
             .first()
             .cloned()
             .unwrap_or_else(|| PathBuf::from("./data"));
+        #[cfg(feature = "axis")]
+        let axis_runtime_enabled = config.optimization.enable_axis_indexes;
         // Initialize AXIS index manager with default configuration
-        let axis_config = AxisConfig::default();
-        let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
+        #[cfg(feature = "axis")]
+        let axis_index_manager = {
+            let axis_config = AxisConfig::default();
+            let m = Arc::new(AxisManager::new(axis_config).await?);
+            if axis_runtime_enabled {
+                // Make AXIS available only after both the compile capability
+                // and process runtime policy are enabled.
+                crate::storage::engines::sst::core::set_sst_axis_manager(m.clone());
+                crate::index::set_global_axis_manager(m.clone());
+                info!("✅ AXIS runtime enabled and registered with storage serving");
+            }
+            m
+        };
 
-        // Make AXIS manager available to SST engine for HNSW/IVF search
-        crate::storage::engines::sst::core::set_sst_axis_manager(axis_index_manager.clone());
-        info!("✅ AXIS manager registered with SST engine for HNSW/IVF search");
-
-        // Initialize compaction manager with default config if not provided
-        let sst_config = config.sst_config.clone().unwrap_or_default();
-        let compaction_manager = Arc::new(Compaction::new(sst_config).await?);
-
-        // Create singleton SST storage instance
-        let _sst_config_for_storage = config.sst_config.clone().unwrap_or_default();
-        let _sst_storage = Arc::new(SstEngine::new().await.map_err(|e| {
-            proximadb_kernel::error::StorageError::SstEngine(format!(
-                "Failed to create SST storage: {}",
-                e
-            ))
-        })?);
+        // Build the one configured SST instance used by every flush and its
+        // background compaction. Keeping this Arc prevents the worker-owning
+        // instance from being discarded and a second default engine from being
+        // constructed by the materializer.
+        let sst_config = config.effective_sst_config();
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
+        let canonical_sst_storage = Arc::new(
+            SstEngine::new_with_config(sst_config, filesystem.clone(), distance_compute.clone())
+                .await
+                .map_err(|e| {
+                    proximadb_kernel::error::StorageError::SstEngine(format!(
+                        "Failed to create SST storage: {}",
+                        e
+                    ))
+                })?,
+        );
+        let compaction_manager = canonical_sst_storage
+            .compaction_manager()
+            .cloned()
+            .ok_or_else(|| {
+                proximadb_kernel::error::StorageError::SstEngine(
+                    "canonical SST storage did not initialize compaction".to_string(),
+                )
+            })?;
 
         Ok(Self {
             config,
             sst_storages: Arc::new(DashMap::new()), // Now uses DashMap for per-collection storages
+            canonical_sst_storage,
             disk_manager,
             write_ahead_log_manager,
+            #[cfg(feature = "axis")]
             axis_index_manager,
+            #[cfg(feature = "axis")]
+            axis_runtime_enabled,
             compaction_manager,
             filesystem,
-            distance_compute: Arc::new(
-                proximadb_distance_kernel::engine::UnifiedDistanceCompute::default(),
-            ),
+            distance_compute,
             storage_write_fence: None,
         })
     }
@@ -185,22 +214,63 @@ impl StorageEngine {
     pub async fn start(&mut self) -> crate::storage::Result<()> {
         tracing::info!("🚀 STORAGE_ENGINE: Starting storage engine");
 
-        // Replay WAL to recover state
-        tracing::info!("📊 STORAGE_ENGINE: About to call recover_from_wal()");
-        self.recover_from_wal().await?;
-        tracing::info!("✅ STORAGE_ENGINE: WAL recovery completed, moving to load_collections()");
+        // ADR-081: establish the one process-wide flush admission domain before
+        // recovery or any live trigger can resolve a materializer.
+        crate::storage::flush_materializer::configure_flush_admission(
+            self.config
+                .sst_config
+                .as_ref()
+                .map(|config| config.background_thread_count as usize)
+                .unwrap_or_else(crate::storage::flush_materializer::default_parallel_flushes),
+        );
+        crate::storage::flush_materializer::register_flush_engine(
+            crate::proto::proximadb_v1::StorageEngine::Sst,
+            self.canonical_sst_storage.clone(),
+        )
+        .await;
 
-        // Initialize existing collections
+        // Load the durable catalog before WAL replay. Recovery flushes each WAL
+        // batch through the collection's assigned storage engine, so those
+        // engines must be registered first (especially after a cold restart,
+        // when the catalog itself has just been restored from object storage).
         tracing::info!("📊 STORAGE_ENGINE: About to call load_collections()");
         self.load_collections().await?;
-        tracing::info!("✅ STORAGE_ENGINE: Collections loaded, starting compaction workers");
+        tracing::info!("✅ STORAGE_ENGINE: Collections loaded");
 
-        // Start compaction workers
-        // We need to replace the compaction manager to start workers
-        let sst_config = self.config.sst_config.clone().unwrap_or_default();
-        let mut temp_manager = Compaction::new(sst_config).await?;
-        temp_manager.start_workers(2).await?; // Start 2 worker threads
-        self.compaction_manager = Arc::new(temp_manager);
+        tracing::info!("📊 STORAGE_ENGINE: About to call register_collections_for_recovery()");
+        self.register_collections_for_recovery().await?;
+        tracing::info!("✅ STORAGE_ENGINE: Recovery engines registered");
+
+        tracing::info!("📊 STORAGE_ENGINE: About to call recover_from_wal()");
+        self.recover_from_wal().await?;
+        tracing::info!("✅ STORAGE_ENGINE: WAL recovery completed, starting compaction workers");
+
+        // `compaction_manager` is the handle owned by canonical_sst_storage.
+        // Flush scheduling and bootstrap resolver wiring therefore target the
+        // same queue/workers rather than an idle look-alike instance.
+
+        // ADR-069/TD-WAL-1: spawn the live auto-flush driver. The default config arms the
+        // 300s time floor so the driver spawns and segments materialize while the server
+        // runs (no shutdown needed); setting both flush_interval_secs=0 and wal_max_bytes=0
+        // opts out. The driver mirrors flush_memtable_to_storage's recipe, policy-gated +
+        // metered. (Fence is injected post-construction, so it may be None here —
+        // acceptable at MVP: the A6 fence is default-OFF.)
+        let flush_policy =
+            crate::storage::persistence::write_ahead_log::flush_policy::FlushPolicy::from_performance(
+                &self.config.wal_config.to_engine_config().performance,
+            );
+        #[cfg(feature = "axis")]
+        crate::storage::auto_flush_driver::AutoFlushDriver::spawn(
+            flush_policy,
+            self.axis_runtime_enabled
+                .then(|| self.axis_index_manager.clone()),
+            self.storage_write_fence.clone(),
+        );
+        #[cfg(not(feature = "axis"))]
+        crate::storage::auto_flush_driver::AutoFlushDriver::spawn(
+            flush_policy,
+            self.storage_write_fence.clone(),
+        );
 
         tracing::info!("✅ STORAGE_ENGINE: Storage engine started successfully");
         Ok(())
@@ -234,10 +304,9 @@ impl StorageEngine {
             }
         }
 
-        // STEP 2: Stop compaction manager
-        if let Some(manager) = Arc::get_mut(&mut self.compaction_manager) {
-            manager.stop().await?;
-        }
+        // STEP 2: Stop compaction manager (stop() is &self; no Arc::get_mut
+        // needed — the workers hold clones but stop signals via shutdown_signal).
+        self.compaction_manager.stop().await?;
 
         // STEP 3: Force WAL flush during shutdown (for any remaining entries)
         tracing::debug!("🧹 Forcing WAL flush during storage engine shutdown");
@@ -258,7 +327,9 @@ impl StorageEngine {
     ) -> crate::storage::Result<
         crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult,
     > {
-        use crate::storage::flush_materializer::{CollectionFlushPlan, materialize_collection};
+        use crate::storage::flush_materializer::{
+            flush_plan_from_collection_meta, materialize_collection,
+        };
         use crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult;
         use crate::storage::persistence::write_ahead_log::{
             get_global_write_buffer_behavior, list_collections_from_catalog,
@@ -307,7 +378,7 @@ impl StorageEngine {
         let mut failed_collections: Vec<(String, String)> = Vec::new();
 
         for collection_id in &collections_to_flush {
-            // The server keys the write buffer by canonical UUID, so resolve by id.
+            // The server keys the write buffer by the catalog L1 object id.
             let Some(meta) = catalog.iter().find(|c| &c.id == collection_id) else {
                 tracing::warn!(
                     "⚠️ STORAGE_ENGINE: No catalog metadata for collection '{}'; cannot resolve engine, skipping",
@@ -317,25 +388,16 @@ impl StorageEngine {
                 continue;
             };
 
-            let config = meta.config.as_ref();
-            let assignment = meta.storage_assignment.as_ref();
-            let engine_type = assignment
-                .map(|a| a.engine)
-                .or_else(|| config.and_then(|c| c.storage_engine))
-                .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
-            let dimension = config.map(|c| c.dimension).unwrap_or(0);
-            let base_location = assignment
-                .map(|a| a.base_location.clone())
-                .unwrap_or_default();
-            let tenant_id = proximadb_tenant::tenant_id_of(meta);
-
-            let plan = CollectionFlushPlan {
-                wal_key: collection_id.clone(),
-                canonical_id: collection_id.clone(),
-                base_location,
-                engine_type,
-                dimension,
-                tenant_id,
+            let plan = match flush_plan_from_collection_meta(meta) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    tracing::warn!(
+                        collection_id,
+                        "STORAGE_ENGINE: catalog identity resolution failed: {error}"
+                    );
+                    failed_collections.push((collection_id.clone(), error.to_string()));
+                    continue;
+                }
             };
 
             // A6 fence is applied inside `materialize_collection` (default-OFF), so a
@@ -348,13 +410,19 @@ impl StorageEngine {
             // SST route honors SearchMode); gated by the insert→SIGINT→restart→search
             // round-trip in runtime-evidence/TD163_SERVER_FLUSH_MATERIALIZATION_2026_06_26.md.
             // Shutdown is terminal, so the freed batches are never re-flushed.
+            #[cfg(feature = "axis")]
+            let axis_arg: Option<&AxisManager> = self
+                .axis_runtime_enabled
+                .then_some(self.axis_index_manager.as_ref());
+            #[cfg(not(feature = "axis"))]
+            let axis_arg: Option<&()> = None;
             match materialize_collection(
                 &write_buffer,
                 &plan,
                 self.storage_write_fence.as_ref(),
                 None,
                 true,
-                Some(&self.axis_index_manager),
+                axis_arg,
             )
             .await
             {
@@ -442,6 +510,7 @@ impl StorageEngine {
 
         // Recover each collection
         let mut total_vectors_recovered = 0u64;
+        let mut recovery_failures = Vec::new();
         for collection in collections {
             tracing::debug!("Recovering collection: {}", collection.id);
 
@@ -454,13 +523,24 @@ impl StorageEngine {
                     );
                 }
                 Err(e) => {
+                    // `{:#}` prints the FULL anyhow context chain — recovery fails
+                    // closed (ADR-063 D3), so the root cause must be diagnosable
+                    // from this line, not just the outermost context.
                     warn!(
-                        "⚠️  STORAGE_ENGINE: Failed to recover collection {}: {}",
+                        "⚠️  STORAGE_ENGINE: Failed to recover collection {}: {:#}",
                         collection.id, e
                     );
-                    // Continue with other collections even if one fails
+                    recovery_failures.push(format!("{}: {:#}", collection.id, e));
                 }
             }
+        }
+
+        if !recovery_failures.is_empty() {
+            return Err(crate::storage::StorageError::WalError(format!(
+                "WAL recovery failed for {} collection(s): {}",
+                recovery_failures.len(),
+                recovery_failures.join("; ")
+            )));
         }
 
         info!(
@@ -490,16 +570,20 @@ impl StorageEngine {
         info!("📋 Found {} collections to register", collections.len());
 
         // Get recovery manager from WAL
-        let recovery_manager = match self.write_ahead_log_manager.get_recovery_manager().await {
-            Ok(rm) => rm,
-            Err(e) => {
-                warn!("⚠️ Failed to get recovery manager: {}", e);
-                return Ok(()); // Continue even if we can't get recovery manager
-            }
-        };
+        let recovery_manager = self
+            .write_ahead_log_manager
+            .get_recovery_manager()
+            .await
+            .map_err(|e| {
+                crate::storage::StorageError::WalError(format!(
+                    "Failed to get recovery manager before registration: {}",
+                    e
+                ))
+            })?;
 
         // Store collection count before iterating
         let collection_count = collections.len();
+        let mut registration_failures = Vec::new();
 
         // Register each collection's storage engine
         for collection in &collections {
@@ -535,6 +619,7 @@ impl StorageEngine {
                             "⚠️ Failed to register engine for collection {}: {}",
                             collection.id, e
                         );
+                        registration_failures.push(format!("{}: {}", collection.id, e));
                     } else {
                         info!(
                             "✅ Registered {} engine for collection {} (from {})",
@@ -553,8 +638,17 @@ impl StorageEngine {
                         "⚠️ Failed to create engine for collection {}: {}",
                         collection.id, e
                     );
+                    registration_failures.push(format!("{}: {}", collection.id, e));
                 }
             }
+        }
+
+        if !registration_failures.is_empty() {
+            return Err(crate::storage::StorageError::WalError(format!(
+                "Storage-engine registration failed for {} collection(s): {}",
+                registration_failures.len(),
+                registration_failures.join("; ")
+            )));
         }
 
         info!(
@@ -705,13 +799,16 @@ impl StorageEngine {
         let exists = self.exists(collection_id, id).await?;
 
         // Remove from search index
-        if exists {
+        #[cfg(feature = "axis")]
+        if exists && self.axis_runtime_enabled {
             self.axis_index_manager
                 .delete(collection_id, id.clone())
                 .await?;
 
             // Deferred: collection stats are now maintained through the catalog.
         }
+        // With AXIS compiled out there is no in-memory index to mutate; the record
+        // is tombstoned in the SST path below and filtered on read (canonical predicate).
 
         // Mark as deleted in SST storage using tombstone
         if exists {
@@ -779,7 +876,9 @@ impl StorageEngine {
         // `None` branch is byte-identical to the legacy `StoragePath::collection_*_path`.
         use crate::storage::trait_components::path_resolver::{
             collection_data_path_typed, collection_index_path_typed, collection_wal_path_typed,
+            typed_path_identity,
         };
+        let typed_identity = typed_path_identity(typed_identity);
         let data_url = collection_data_path_typed(&base_location, &collection_id, typed_identity);
         let write_buffer_url =
             collection_wal_path_typed(&base_location, &collection_id, typed_identity);
@@ -813,12 +912,6 @@ impl StorageEngine {
         tracing::debug!(
             "📁 Collection directories created, SST tree will be initialized on first access"
         );
-
-        // Ensure search index strategy exists for the collection
-        self.axis_index_manager
-            .ensure_collection_strategy(&collection_id)
-            .await
-            .map_err(|e| crate::core::StorageError::IndexError(e.to_string()))?;
 
         tracing::info!(
             "✅ Created collection: {} with directories at {}",
@@ -1034,9 +1127,12 @@ impl StorageEngine {
             }
 
             // Remove AXIS indexes for collection
-            self.axis_index_manager
-                .drop_collection(collection_id)
-                .await?;
+            #[cfg(feature = "axis")]
+            if self.axis_runtime_enabled {
+                self.axis_index_manager
+                    .drop_collection(collection_id)
+                    .await?;
+            }
 
             // Clean up SST files for the dropped collection
             if let Some(sst_storage) = self.sst_storages.get(collection_id) {
@@ -1101,10 +1197,14 @@ impl StorageEngine {
     // Use VectorOperationsService::search_vectors() with metadata filters instead
 
     /// Get search index statistics
+    #[cfg(feature = "axis")]
     pub async fn index_stats(
         &self,
         collection_id: &str,
     ) -> crate::storage::Result<Option<HashMap<String, serde_json::Value>>> {
+        if !self.axis_runtime_enabled {
+            return Ok(None);
+        }
         // Get AXIS index statistics
         match self
             .axis_index_manager
@@ -1127,13 +1227,32 @@ impl StorageEngine {
         }
     }
 
+    /// Get search index statistics — AXIS compiled out: no index stats available.
+    #[cfg(not(feature = "axis"))]
+    pub async fn index_stats(
+        &self,
+        _collection_id: &str,
+    ) -> crate::storage::Result<Option<HashMap<String, serde_json::Value>>> {
+        Ok(None)
+    }
+
     /// Optimize search index
+    #[cfg(feature = "axis")]
     pub async fn optimize_index(&self, collection_id: &str) -> crate::storage::Result<()> {
+        if !self.axis_runtime_enabled {
+            return Ok(());
+        }
         // Trigger AXIS analysis and optimization
         self.axis_index_manager
             .analyze_and_optimize(collection_id)
             .await
             .map_err(|e| crate::core::StorageError::IndexError(e.to_string()))
+    }
+
+    /// Optimize search index — AXIS compiled out: exact scan needs no optimization.
+    #[cfg(not(feature = "axis"))]
+    pub async fn optimize_index(&self, _collection_id: &str) -> crate::storage::Result<()> {
+        Ok(())
     }
 
     /// Batch insert multiple vectors into a collection

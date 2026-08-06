@@ -574,6 +574,7 @@ mod tests {
             _table_schema: &CatalogTableSchema,
             _request: TableRecordGetRequest,
             _tenant_context: Option<&TenantContext>,
+            #[cfg(feature = "abac-policy")] _read_context: &proximadb_abac::ReadContext,
         ) -> Result<TableRecordGetResponse> {
             Ok(None)
         }

@@ -65,7 +65,7 @@ DRIFT_RULES = {
             # multi-graph canonical-route requirement is covered by the graph.adoc rule
             # above and the source-comment rule below.
             {
-                "path": "src/network/rest/v1/graph.rs",
+                "path": "src/network/rest/canonical/graph.rs",
                 "required_substrings": [
                     "Legacy compatibility routes (`/api/v1/graph/nodes`, `/api/v1/graph/edges`, etc.)",
                     "return `308 Permanent Redirect`",
@@ -160,32 +160,10 @@ MATURITY_CONTRACT_RULES = [
             "/api/v3",
         ],
     },
-    # gRPC v1 compatibility services must remain OFF by default and must carry
-    # Sunset documentation noting post-sunset hard-deletion (see TD-121).
-    {
-        "path": "crates/platform/proximadb-runtime/src/bootstrap_config.rs",
-        "required_substrings": [
-            # Default value of the env-var helper must be false (opt-in, not opt-out).
-            "unwrap_or(false)",
-            # Env-var override name is documented in the field comment.
-            "PROXIMADB_GRPC_V1_COMPAT",
-            # Hard-deletion intent after Sunset must be stated in the struct field doc.
-            "Post-sunset these v1 services are removed entirely",
-        ],
-        "forbidden_substrings": [
-            # v1 compat must not default to enabled.
-            "unwrap_or(true)",
-        ],
-    },
-    {
-        "path": "src/network/multi_server.rs",
-        "required_substrings": [
-            # Runtime registration comment must note post-sunset removal.
-            "Post-sunset these service impls are removed entirely",
-            # v1 services must be behind the flag check, not unconditionally registered.
-            "enable_grpc_v1_compat",
-        ],
-    },
+    # gRPC v1 maturity contracts removed in TD-V1SUNSET-1 step 4: the v1 gRPC
+    # service set was hard-deleted, so the "must stay default-off + carry sunset
+    # docs" contracts no longer apply (there is no v1 surface left to gate).
+
 ]
 
 

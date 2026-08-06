@@ -295,7 +295,7 @@ async fn measure_cold(cfg: &BenchConfig) -> LatencyDist {
         let query_vector = synthetic_query(cfg.dimension);
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector),
-            top_k: Some(cfg.top_k),
+            top_k: Some(cfg.top_k as u16),
             ..Default::default()
         });
         let ctx = StorageQueryContext::new(search_params, Arc::new(collection));
@@ -337,7 +337,7 @@ async fn measure_warm(cfg: &BenchConfig, setup: &SetupResult) -> LatencyDist {
         let query_vector = synthetic_query(cfg.dimension);
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector),
-            top_k: Some(cfg.top_k),
+            top_k: Some(cfg.top_k as u16),
             ..Default::default()
         });
         let ctx = StorageQueryContext::new(search_params, Arc::clone(&setup.warm_collection));
@@ -348,7 +348,7 @@ async fn measure_warm(cfg: &BenchConfig, setup: &SetupResult) -> LatencyDist {
         let query_vector = synthetic_query(cfg.dimension);
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector),
-            top_k: Some(cfg.top_k),
+            top_k: Some(cfg.top_k as u16),
             ..Default::default()
         });
         let ctx = StorageQueryContext::new(search_params, Arc::clone(&setup.warm_collection));

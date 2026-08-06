@@ -78,6 +78,8 @@ jobs:
       # 8MB worker stack: correlated subqueries + recall ratchets produce
       # deep-but-finite async call chains that overflow the default ~2MB.
       RUST_MIN_STACK: "8388608"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -88,6 +90,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-qa-integration"
+      # sccache complements rust-cache: content-addressed per-rustc-invocation, so
+      # it hits even when the target/ artifact cache misses (Cargo.lock churn).
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
       - name: Build all integration test binaries (once)
         env:
           CARGO_BUILD_JOBS: "4"
@@ -116,6 +126,16 @@ jobs:
         # sst_block_serialization_roundtrip missed (why TD-165 was marked Resolved
         # prematurely). Well-separated seeded vectors → recall@10 = 1.0 on both paths.
         run: cargo test --test embedded_flush_recovery recall -- --nocapture
+      - name: Run deletion-vector ratchet (TD-DELVEC-1 F3v)
+        # F3v cold-tier deletion vectors — gates the develop→qa→main promotion.
+        # Currently runs the OID→position resolver substrate (ORP1+CRC32 format,
+        # footer-region round-trip, add_record capture-order, end-to-end
+        # "writer→footer→fetch region→deserialize"). WI-3 extends this with the
+        # delete→scan-survivors scenarios (the actual deletion correctness) — add
+        # them here as they land.
+        run: |
+          cargo test -p proximadb-storage-common --lib oid_position_resolver -- --nocapture
+          cargo test -p proximadb-storage-common --lib oid_resolver -- --nocapture
       # TD-182 P0b: vector-recall ratchets that previously ran in NO CI tier
       # (orphaned). Each asserts recall@k / exact-match vs an f32 baseline. The
       # td112 suite runs only its `recall` test here; its `axis_index_rebuilt_*`
@@ -131,18 +151,17 @@ jobs:
       - name: Run TD-112 post-flush recall ratchet (TD-182 P0b)
         run: cargo test --test td112_postflush_recall_e2e recall -- --nocapture
 
-  # WS8: real-dataset PAX RaBitQ→SQ8 recall artifact. MANUAL ONLY
-  # (workflow_dispatch) — it downloads the SIFT1M corpus (~160 MB) and runs a
-  # heavy recall bench, so it is deliberately NOT in the always-on
-  # `pgwire-recall-tests` job (avoids 160 MB-download flakiness on every qa PR).
+  # WS8: real-dataset PAX RaBitQ→SQ8 recall artifact. Runs on promotion PRs and
+  # workflow_dispatch. It downloads the SIFT1M corpus (~525 MB) and runs a heavy
+  # release-mode recall gate, so it remains separate from normal PR CI.
   # Produces the dated recall@10 ≥ 0.90 artifact that GATES the PAX default-on
   # flip (Phase F): the existing `pax-recall-ratchet` is a synthetic DIM=64 CI
   # floor only (representativeness caveat in BENCHMARK_EVIDENCE.toml WS8). The
-  # ratchet self-skips when the corpus is absent, so a non-manual trigger would
-  # just skip — the `if:` keeps it from scheduling at all.
+  # Local runs may skip when the corpus is absent. This QA job sets
+  # PROXIMADB_RECALL_DATASET_REQUIRED=1, so a missing/corrupt corpus fails loud.
   sift-pax-recall:
     name: SIFT1M PAX RaBitQ recall ratchet (WS8)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -176,13 +195,15 @@ jobs:
       - name: Build ratchet binary
         env:
           CARGO_BUILD_JOBS: "4"
-        run: cargo test --test sift_pax_recall_ratchet_test --no-run
+        run: cargo test --release --test sift_pax_recall_ratchet_test --no-run
       - name: Run SIFT PAX recall ratchet (N=${{ inputs.sift_n || '100000' }})
         env:
           PROXIMADB_SIFT_DATASET_DIR: /home/runner/sift1m
           PROXIMADB_SIFT_N: ${{ inputs.sift_n || '100000' }}
           PROXIMADB_SIFT_QUERIES: "1000"
-        run: cargo test --test sift_pax_recall_ratchet_test -- --nocapture
+          PROXIMADB_RECALL_DATASET_REQUIRED: "1"
+          PROXIMADB_SIFT_CENTROID_MAX_RECALL_DROP: "0"
+        run: cargo test --release --test sift_pax_recall_ratchet_test -- --nocapture
 
   # Validate the object-store access-tier cost lever (TD-168/TD-173) against REAL
   # cloud APIs via emulators — Azurite (Azure), MinIO (S3), fake-gcs (GCP) — the
@@ -193,10 +214,72 @@ jobs:
   # (PUT-with-tier accepted + round-trip); GCS is best-effort (the test self-skips
   # on a fake-gcs/object_store incompatibility). All orchestration lives in
   # scripts/run_cloud_emulator_tests.sh so the CI path == `make cloud-emulator-test`.
+  # TD-OBJSTORE-5 S3 (ADR-063 D8 QA tier): full-server restart proofs per strict
+  # store (Azure then S3, Azurite stopped before the S3 group so cross-store
+  # leakage fails loudly) + the cold recall ratchet on Azure. One cloud-full
+  # server build (jobs=1, 16GB OOM ceiling) — separate runner from the
+  # cloud-emulator job so neither compile budget starves the other. The 90m cap
+  # is a measured ratchet: record the first cold-cache wall time in
+  # TD-OBJSTORE-5 and tighten.
+  objstore-restart-qa-tier:
+    name: Object-store QA tier (restart Azure+S3 + recall)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
+    steps:
+      - name: Reclaim disk space
+        run: |
+          echo "Disk before reclaim:"; df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/boost || true
+          echo "Disk after reclaim:"; df -h /
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-objstore-qa-tier"
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-qa-tier-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-qa-tier-${{ runner.os }}-
+      - name: Restart proofs (Azure strict, S3 strict) + recall ratchet (Azure)
+        run: bash scripts/run_cloud_emulator_tests.sh --qa
+
   cloud-emulator-object-store:
     name: Cloud object-store emulators (Azurite/MinIO/fake-gcs)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The --all scope compiles the full main crate under CARGO_BUILD_JOBS=2 (see
+    # scripts/run_cloud_emulator_tests.sh) — a middle ground that stays off the 16GB
+    # runner's OOM cliff while halving the old jobs=1 ~35-40m serialized compile that
+    # grew past this budget and got cancelled mid-build (#882). sccache (below)
+    # covers the COLD compile that rust-cache misses when Cargo.lock churns (e.g. a
+    # promotion merge) — that cold ~35-40m compile + emulator round-trips pushed this
+    # job past the old 60m cap on #980. 90m leaves headroom for the first (cold) run
+    # while sccache warms; subsequent runs compile far less.
+    timeout-minutes: 90
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
+      # #941-class OOM mitigations, applied here after the 2026-08-01 promotion
+      # (#1378) had this job runner-shutdown-killed TWICE mid-compile: the
+      # workspace outgrew the jobs=2 middle ground (#882) on the 16GB runner.
+      # Dropping debuginfo halves rustc peak memory and target size; the swap
+      # step below turns any residual spike into a slowdown, not a dead runner.
+      # Scoped to this job only — the other qa-gate jobs pass within budget.
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -207,49 +290,28 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-qa-cloud-emulator"
+      # sccache complements rust-cache: content-addressed per-rustc-invocation, so
+      # it hits even when the target/ artifact cache misses (Cargo.lock churn).
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
+      - name: Add swap headroom
+        run: |
+          sudo fallocate -l 12G /mnt/swapfile-ci
+          sudo chmod 600 /mnt/swapfile-ci
+          sudo mkswap /mnt/swapfile-ci
+          sudo swapon /mnt/swapfile-ci
+          free -h
       - name: Validate Cool tier against Azure/S3/GCS emulators
         # docker + aws/az CLIs are preinstalled on ubuntu-latest runners.
         run: bash scripts/run_cloud_emulator_tests.sh
 
-  sdk-coverage-ratchet:
-    name: SDK Coverage Ratchet
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: clients/python/pyproject.toml
-      - name: Install SDK + coverage deps
-        working-directory: clients/python
-        run: pip install -e ".[dev]" pytest-cov pyarrow pandas jsonschema psutil
-      - name: Run SDK tests with coverage
-        working-directory: clients/python
-        env:
-          PROXIMADB_EMBEDDED: "0"
-          HF_HUB_DOWNLOAD_TIMEOUT: "30"
-          PROXIMADB_TEST_FORCE_FALLBACK_EMBEDDINGS: "1"
-        run: |
-          # Coverage needs a single aggregating process; tolerate the known
-          # _cov sys.modules-leak failures (the ratchet measures coverage, not
-          # pass/fail — the per-file isolation gate in ci.yml owns correctness).
-          # Run OFFLINE unit tests only: filter out `integration` (needs a running
-          # server) and `live` (needs an external dependency / network, e.g. the
-          # `victor` package). The victor test self-skips via importorskip + `live`.
-          pytest tests/unit/ -q -p no:cacheprovider --timeout=120 \
-            --cov=proximadb_sdk --cov-report=json:/tmp/sdk-cov.json \
-            -m "not integration and not live" \
-            --ignore=tests/unit/test_chunking_code_cov.py \
-            --continue-on-collection-errors || true
-          test -f /tmp/sdk-cov.json
-      - name: Ratchet check
-        run: |
-          python3 scripts/coverage_ratchet.py normalize --sdk /tmp/sdk-cov.json -o /tmp/sdk-current.json
-          python3 scripts/coverage_ratchet.py check \
-            --baseline docs/_internal/roadmap/COVERAGE_BASELINE.json \
-            --current /tmp/sdk-current.json
+  # SDK Coverage Ratchet moved to ci.yml (develop early-detection, path-gated on
+  # clients/python/**) — see ci.yml `sdk-coverage-ratchet`. Catches an SDK coverage
+  # regression on the introducing feat→develop PR instead of only at develop→qa.
 
   rust-coverage-ratchet:
     name: Rust Coverage Ratchet
@@ -268,11 +330,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: llvm-tools-preview
-      - name: Install system deps + cargo-llvm-cov
+      - name: Install system deps + cargo-llvm-cov + cargo-nextest
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
           cargo install cargo-llvm-cov --locked
+          cargo install cargo-nextest --locked
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-qa-llvmcov"
@@ -280,7 +343,16 @@ jobs:
         env:
           CARGO_BUILD_JOBS: "1"
         run: |
-          cargo llvm-cov --lib --no-report -p proximadb
+          # Run under nextest (process-per-test isolation), NOT libtest's shared
+          # process. Four lib tests that touch process-global singletons
+          # (axis_flush_hook boot-global, eventlog restart/recovery, datafusion
+          # document-pax ranged-pushdown) flake under shared-process
+          # `cargo test --lib` — verified locally: 7424 pass / 4 fail under
+          # `cargo test --lib`; the SAME 4 PASS under `cargo nextest`. Matching
+          # every other CI job (which already uses nextest, mandate #11) removes
+          # the intermittent gate failure and is the prerequisite to flipping
+          # this job from continue-on-error to required.
+          cargo llvm-cov nextest --lib --no-report -p proximadb
           cargo llvm-cov report --json --output-path /tmp/llvm-cov.json
           python3 scripts/coverage_ratchet.py normalize --rust /tmp/llvm-cov.json -o /tmp/rust-current.json
           # Seed the baseline if absent (first run), else ratchet-check.

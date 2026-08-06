@@ -50,84 +50,23 @@ use proximadb_catalog::{
 use proximadb_storage_common::StoragePath;
 use std::sync::Arc;
 
-/// Storage location assignment for a collection
-#[derive(Debug, Clone)]
-pub struct StorageAssignment {
-    /// Primary storage URL (e.g., "file:///data/proximadb/d1")
-    pub primary_url: String,
-    /// Weight for load balancing (1-100)
-    pub weight: u32,
-    /// Whether this location is available
-    pub available: bool,
-    /// Optional: Replica URLs for high availability
-    pub replica_urls: Vec<String>,
-}
-
-impl Default for StorageAssignment {
-    fn default() -> Self {
-        Self {
-            primary_url: "file:///tmp/proximadb/data".to_string(),
-            weight: 1,
-            available: true,
-            replica_urls: Vec::new(),
-        }
-    }
-}
-
-/// Collection path resolver trait (DIP-compliant interface)
-///
-/// Abstracts the resolution of storage paths for collections,
-/// replacing global singletons with dependency injection.
-#[async_trait]
-pub trait CollectionPathResolver: Send + Sync {
-    /// Resolver name for logging/debugging
-    fn name(&self) -> &'static str;
-
-    /// Resolve the base storage location for a collection
-    ///
-    /// # Arguments
-    /// * `collection_id` - The collection identifier
-    ///
-    /// # Returns
-    /// The base URL for the collection's storage (e.g., "file:///data/proximadb/collections/my_collection")
-    async fn resolve_base_location(&self, collection_id: &str) -> Result<String>;
-
-    /// Resolve the storage assignment for a collection
-    ///
-    /// # Arguments
-    /// * `collection_id` - The collection identifier
-    ///
-    /// # Returns
-    /// Storage assignment details including primary URL and replicas
-    async fn resolve_storage_assignment(&self, collection_id: &str) -> Result<StorageAssignment>;
-
-    /// Resolve the WAL directory for a collection
-    ///
-    /// # Arguments
-    /// * `collection_id` - The collection identifier
-    ///
-    /// # Returns
-    /// The WAL directory URL (e.g., "file:///data/proximadb/collections/my_collection/wal")
-    async fn resolve_wal_location(&self, collection_id: &str) -> Result<String> {
-        let base = self.resolve_base_location(collection_id).await?;
-        Ok(format!("{}/wal", base))
-    }
-
-    /// Resolve the SST directory for a collection
-    ///
-    /// # Arguments
-    /// * `collection_id` - The collection identifier
-    ///
-    /// # Returns
-    /// The SST files directory URL
-    async fn resolve_sst_location(&self, collection_id: &str) -> Result<String> {
-        let base = self.resolve_base_location(collection_id).await?;
-        Ok(format!("{}/sst", base))
-    }
-
-    /// Check if a collection exists
-    async fn collection_exists(&self, collection_id: &str) -> Result<bool>;
-}
+// ─── Port re-exports (Slice D hoist) ───────────────────────────────────────
+// The `CollectionPathResolver` trait + `StorageAssignment` value type now live
+// in `proximadb_storage_ports` (a clean, facade-free port — primitive-typed
+// signatures only). The root-catalog-coupled concrete impls below stay here
+// and `impl` the crate trait. Re-exported so existing callers
+// (`crate::storage::trait_components::path_resolver::*`) keep compiling.
+//
+// `collection_data_path_typed` + `typed_identity_from_storage_assignment` were
+// also hoisted (their only deps are foundation types `CollectionIdentity`
+// [kernel] + `StoragePath` [storage-common] + proto `StorageAssignment`), so
+// they are re-exported here too — the wal/index typed helpers stay root because
+// nothing outside the root calls them yet (no benefit to the move).
+pub use proximadb_storage_ports::{
+    CollectionPathResolver, StorageAssignment, collection_data_path_typed,
+    typed_identity_from_storage_assignment, typed_path_identity, typed_path_identity_when,
+    typed_paths_enabled,
+};
 
 // ============================================================================
 // Standard Implementations
@@ -187,6 +126,80 @@ impl CollectionPathResolver for ConfigFallbackResolver {
     async fn collection_exists(&self, _collection_id: &str) -> Result<bool> {
         // Config fallback cannot check existence
         Ok(true)
+    }
+}
+
+/// Catalog-backed resolver: resolves a collection's base storage location from
+/// the **catalog** (the metadata authority), reusing the storage-layer
+/// `resolve_collection_from_catalog` (UUID→catalog scan) the WAL already uses.
+/// Returns `Err` when the collection isn't in the catalog or has no
+/// `storage_assignment`, so a `CompositeResolver` chain can fall through to a
+/// config default. This is the resolver that retires the `SstEngine`
+/// `get_collection_storage_url` placeholder — the catalog as the single source
+/// of truth for storage location. (No `CollectionService` dependency: the
+/// schema→assignment mapping `collection_from_catalog_schema` is storage-layer.)
+pub struct CatalogResolver;
+
+impl CatalogResolver {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for CatalogResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl CollectionPathResolver for CatalogResolver {
+    fn name(&self) -> &'static str {
+        "Catalog"
+    }
+
+    async fn resolve_base_location(&self, collection_id: &str) -> Result<String> {
+        let collection =
+            crate::storage::persistence::write_ahead_log::resolve_collection_from_catalog(
+                collection_id,
+            )
+            .await
+            .ok_or_else(|| {
+                anyhow::anyhow!("CatalogResolver: collection {collection_id} not found in catalog")
+            })?;
+        let base = collection
+            .storage_assignment
+            .as_ref()
+            .map(|a| a.base_location.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "CatalogResolver: collection {collection_id} has no storage_assignment"
+                )
+            })?;
+        // The catalog stores the base-location PREFIX (no collection_id); return
+        // the collection ROOT (prefix + collection_id), matching
+        // `ConfigFallbackResolver`'s contract — callers append `/data`, `/wal`, …
+        Ok(format!("{base}/{collection_id}"))
+    }
+
+    async fn resolve_storage_assignment(&self, collection_id: &str) -> Result<StorageAssignment> {
+        let base = self.resolve_base_location(collection_id).await?;
+        Ok(StorageAssignment {
+            primary_url: base,
+            weight: 1,
+            available: true,
+            replica_urls: Vec::new(),
+        })
+    }
+
+    async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
+        Ok(
+            crate::storage::persistence::write_ahead_log::resolve_collection_from_catalog(
+                collection_id,
+            )
+            .await
+            .is_some(),
+        )
     }
 }
 
@@ -355,7 +368,7 @@ impl CollectionPathResolver for CompositeResolver {
 /// See `docs/12-design/COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` "LLD: Physical
 /// Path Contract".
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DrResolvedPath {
+pub struct DrCollectionPath {
     /// Owning customer account — the billing/isolation boundary above
     /// `tenant_id`. `None` keeps the legacy flat `data/...` render.
     pub account_id: Option<String>,
@@ -372,7 +385,7 @@ pub struct DrResolvedPath {
     pub typed_identity: Option<CollectionIdentity>,
 }
 
-impl DrResolvedPath {
+impl DrCollectionPath {
     /// Root prefix. Account-rooted
     /// (`accounts/<account_id>/<tenant_id>/<namespace_id>/<collection_id>/`)
     /// when an account is set, else the legacy flat
@@ -481,19 +494,31 @@ impl DrResolvedPath {
     pub fn branches_subprefix(&self) -> String {
         format!("{}_branches/", self.root_prefix())
     }
+}
 
+/// A **per-tenant system path** — resolved *independent of any namespace or
+/// collection* (TD-CACHE-5 / ADR-074 S1 type split). Carries only the identity
+/// tiers the tenant-system subtrees render: `account_id` + `tenant_id` +
+/// `storage_pool_class`. The collection-scoped accessors (`root_prefix`,
+/// `segments_subprefix`, …) are deliberately ABSENT here — they require a
+/// namespace and collection, so the type system forbids the misuse that rendered
+/// the malformed `data/default///manifests/warm_cache.json` (a collection-scoped
+/// `manifests_subprefix()` called on a tenant-system path). Tenant-system
+/// objects hang off [`tenant_root`](Self::tenant_root) under reserved
+/// `_`-prefixed subtrees (`_metering/`, `_trace/`, `_cache/`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrTenantSystemPath {
+    pub account_id: Option<String>,
+    pub tenant_id: String,
+    pub storage_pool_class: StoragePoolClass,
+}
+
+impl DrTenantSystemPath {
     /// Per-**tenant** root prefix (account/legacy split) — `accounts/{account}/
     /// {tenant}/` or legacy `data/{tenant}/`. Stops *above* the namespace and
-    /// collection so per-tenant system subtrees (`_metering`, `_trace`) hang off
-    /// the tenant, not off a single collection. (TD-164)
-    ///
-    /// For an ADR-031 typed path the tenant tier is collapsed into the account,
-    /// so this returns the typed account root `accounts/{base62(account)}/`.
+    /// collection so per-tenant system subtrees (`_metering`, `_trace`, `_cache`)
+    /// hang off the tenant, not off a single collection. (TD-164)
     pub fn tenant_root(&self) -> String {
-        if let Some(id) = self.typed_identity {
-            let (acct, _, _) = id.path_segments();
-            return format!("accounts/{}/", acct);
-        }
         match &self.account_id {
             Some(account_id) => format!("accounts/{}/{}/", account_id, self.tenant_id),
             None => format!("data/{}/", self.tenant_id),
@@ -501,10 +526,9 @@ impl DrResolvedPath {
     }
 
     /// Per-tenant **metering** subtree `<tenant_root>_metering/` — the durable,
-    /// tenant-owned billing-meter sink (ADR-027 dual-sink; the differentiator;
-    /// written by TD-161's coalesced writer). The leading underscore keeps it
-    /// lexically separate from namespace/collection ids, which `validate_id`
-    /// reserves so a user object can never collide (structural isolation #3).
+    /// tenant-owned billing-meter sink (ADR-027 dual-sink; written by TD-161's
+    /// coalesced writer). The leading underscore is reserved by `validate_id`
+    /// so a user object can never collide (structural isolation).
     pub fn metering_subprefix(&self) -> String {
         format!("{}_metering/", self.tenant_root())
     }
@@ -514,95 +538,15 @@ impl DrResolvedPath {
     pub fn trace_subprefix(&self) -> String {
         format!("{}_trace/", self.tenant_root())
     }
-}
 
-/// ADR-031 Phase 4b: whether the typed object-store path
-/// (`accounts/{base62}/{base62}/{base62}/`, no tenant slot) is enabled. Read
-/// **once per process** (cached in a `OnceLock`, mirroring the `oid_paths`
-/// pattern) to avoid env races across the multi-threaded runtime. Default OFF
-/// → legacy string-resolved `data/…` / `accounts/{str}/…` paths (mixed-read-safe).
-pub fn typed_paths_enabled() -> bool {
-    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| match std::env::var("PROXIMADB_TYPED_PATHS") {
-        Ok(v) => v == "1" || v.eq_ignore_ascii_case("true"),
-        Err(_) => false,
-    })
-}
-
-/// ADR-031 Phase 4d: recover a [`CollectionIdentity`] from a proto
-/// [`StorageAssignment`](crate::proto::proximadb_v1::StorageAssignment)'s typed
-/// triple, for the **catalog-free engine read paths**.
-///
-/// Engines resolve data/wal/index paths deep in the search/flush stack with no
-/// catalog/schema access — the typed identity cannot be re-minted at read time,
-/// so it is carried on the proto collection (set at create by the manager when
-/// `PROXIMADB_TYPED_PATHS=1`) and reconstituted here. All three fields are `Some`
-/// together (the manager sets them atomically) or all `None` (env OFF / legacy
-/// collection created before 4d) → `None` → the typed path helpers fall back to
-/// the byte-identical legacy path (mixed-read-safe per-collection).
-///
-/// `namespace_id` is a `u16` in the typed identity but stored as `uint32` in
-/// proto (proto has no `uint16`); it is narrowed here. Values > `u16::MAX` are
-/// impossible by construction (the catalog mints `NamespaceId = u16`), so the
-/// narrowing is infallible in practice — `None` is returned defensively if a
-/// future caller somehow stored an out-of-range value.
-pub fn typed_identity_from_storage_assignment(
-    storage_assignment: Option<&crate::proto::proximadb_v1::StorageAssignment>,
-) -> Option<CollectionIdentity> {
-    let sa = storage_assignment?;
-    let account_id = sa.typed_account_id?;
-    let namespace_id = sa.typed_namespace_id?;
-    let collection_id = sa.typed_collection_id?;
-    // Proto has no uint16; narrow back to the typed NamespaceId (u16).
-    let namespace_id = if namespace_id <= u32::from(u16::MAX) {
-        namespace_id as u16
-    } else {
-        // Defensive: out-of-range means the triple wasn't minted by the catalog
-        // — treat as legacy rather than truncate silently.
-        return None;
-    };
-    Some(CollectionIdentity {
-        account_id,
-        namespace_id,
-        collection_id,
-    })
-}
-
-// ---------------------------------------------------------------------------
-// ADR-031 Phase 4c: typed collection DATA subpaths.
-// ---------------------------------------------------------------------------
-//
-// `CollectionIdentity` is a ROOT type (`crate::core::stable_id`); `StoragePath`
-// lives in `proximadb-storage-common`, which CANNOT import root types (workspace
-// boundary). So the typed variants live HERE — a root helper that wraps the
-// legacy `StoragePath` calls for the `None` (legacy) branch and composes the
-// account-rooted zero-padded base62 path for the `Some(identity)` branch.
-//
-// Both branches share the SAME trailing subpath suffix as the legacy
-// `StoragePath::collection_*_path` (`/data`, `/wal`, `/indexes` — NO trailing
-// slash), so the `None` branch is **byte-identical** to the pre-4c path and the
-// `Some` branch differs only in the prefix (mixed-read-safe per-collection).
-
-/// ADR-031 Phase 4c: typed collection **data** directory path.
-///
-/// * `Some(identity)` → `{base}/accounts/{acct}/{ns}/{coll}/data`
-///   (zero-padded base62, no tenant slot — Phase 4 hierarchy collapse).
-/// * `None`           → byte-identical legacy
-///   [`StoragePath::collection_data_path`] (`{base}/{collection_id}/data`).
-///
-/// The trailing suffix (`/data`, no slash) matches the legacy contract exactly
-/// so reads/writes against a legacy collection (`None`) resolve unchanged.
-pub fn collection_data_path_typed(
-    base: &str,
-    collection_id: &str,
-    identity: Option<CollectionIdentity>,
-) -> String {
-    match identity {
-        Some(id) => {
-            let (acct, ns, coll) = id.path_segments();
-            format!("{base}/accounts/{acct}/{ns}/{coll}/data")
-        }
-        None => StoragePath::collection_data_path(base, collection_id),
+    /// Per-tenant **warm-cache** subtree `<tenant_root>_cache/` — the warm-restart
+    /// manifest is a tenant-system object, NOT collection-scoped (TD-CACHE-5). The
+    /// prior code rendered `data/default///manifests/warm_cache.json` by calling
+    /// the collection-scoped `manifests_subprefix()` on a tenant-system path; this
+    /// accessor is the tenant-system home for that object, alongside `_metering/`
+    /// and `_trace/`.
+    pub fn cache_subprefix(&self) -> String {
+        format!("{}_cache/", self.tenant_root())
     }
 }
 
@@ -735,7 +679,7 @@ pub enum PathResolverError {
 }
 
 /// Builder that turns a (namespace, collection_id) pair into a fully
-/// validated [`DrResolvedPath`].
+/// validated [`DrCollectionPath`].
 ///
 /// Pure construction — no I/O, no catalog calls. Callers fetch the
 /// owning `CatalogNamespace` themselves (cache, store, or test fixture)
@@ -745,13 +689,13 @@ pub struct DrPathBuilder;
 
 /// T2.3: Version-aware cache for `DrPathBuilder` results.
 ///
-/// Caches `DrResolvedPath` by `(tenant_id, namespace_id, collection_id, pool_class)`
+/// Caches `DrCollectionPath` by `(tenant_id, namespace_id, collection_id, pool_class)`
 /// with corpus version tracking for automatic invalidation on catalog changes.
 /// When the corpus version bumps, cached entries are considered stale and
 /// re-resolved on next access.
 pub struct DrPathCache {
     /// Cache entries: key → (version, path)
-    cache: DashMap<CacheKey, (u64, DrResolvedPath)>,
+    cache: DashMap<CacheKey, (u64, DrCollectionPath)>,
 }
 
 /// Cache key for path resolution results.
@@ -782,11 +726,11 @@ impl DrPathCache {
         collection_id: &str,
         pool_class: StoragePoolClass,
         resolve_fn: F,
-    ) -> Result<DrResolvedPath, PathResolverError>
+    ) -> Result<DrCollectionPath, PathResolverError>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<R, PathResolverError>>,
-        R: std::borrow::Borrow<DrResolvedPath>,
+        R: std::borrow::Borrow<DrCollectionPath>,
     {
         let key = CacheKey {
             tenant_id: tenant_id.to_string(),
@@ -873,7 +817,7 @@ impl DrPathBuilder {
     pub fn build(
         namespace: &CatalogNamespace,
         collection_id: &str,
-    ) -> Result<DrResolvedPath, PathResolverError> {
+    ) -> Result<DrCollectionPath, PathResolverError> {
         let tenant_id =
             namespace
                 .tenant_id
@@ -901,7 +845,7 @@ impl DrPathBuilder {
             None => None,
         };
 
-        Ok(DrResolvedPath {
+        Ok(DrCollectionPath {
             account_id,
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.to_string(),
@@ -919,7 +863,7 @@ impl DrPathBuilder {
         namespace: &CatalogNamespace,
         collection_id: &str,
         destination_pool_class: StoragePoolClass,
-    ) -> Result<DrResolvedPath, PathResolverError> {
+    ) -> Result<DrCollectionPath, PathResolverError> {
         let resolved = Self::build(namespace, collection_id)?;
         if resolved.storage_pool_class != destination_pool_class {
             return Err(PathResolverError::PoolClassMismatch {
@@ -930,7 +874,7 @@ impl DrPathBuilder {
         Ok(resolved)
     }
 
-    /// Build a validated [`DrResolvedPath`] from already-resolved parts, rather
+    /// Build a validated [`DrCollectionPath`] from already-resolved parts, rather
     /// than from a `CatalogNamespace`.
     ///
     /// Use this when the authoritative `tenant_id` comes from the request/connection
@@ -944,7 +888,7 @@ impl DrPathBuilder {
         namespace_id: &str,
         collection_id: &str,
         storage_pool_class: StoragePoolClass,
-    ) -> Result<DrResolvedPath, PathResolverError> {
+    ) -> Result<DrCollectionPath, PathResolverError> {
         Self::build_from_parts_with_account(
             None,
             tenant_id,
@@ -966,7 +910,7 @@ impl DrPathBuilder {
         namespace_id: &str,
         collection_id: &str,
         storage_pool_class: StoragePoolClass,
-    ) -> Result<DrResolvedPath, PathResolverError> {
+    ) -> Result<DrCollectionPath, PathResolverError> {
         let account_id = match account_id {
             Some(account_id) => {
                 Self::validate_id("account_id", account_id)?;
@@ -977,7 +921,7 @@ impl DrPathBuilder {
         Self::validate_id("tenant_id", tenant_id)?;
         Self::validate_id("namespace_id", namespace_id)?;
         Self::validate_id("collection_id", collection_id)?;
-        Ok(DrResolvedPath {
+        Ok(DrCollectionPath {
             account_id,
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.to_string(),
@@ -987,14 +931,14 @@ impl DrPathBuilder {
         })
     }
 
-    /// Build a [`DrResolvedPath`] from an ADR-031 typed
+    /// Build a [`DrCollectionPath`] from an ADR-031 typed
     /// [`CollectionIdentity`] — the compact-numeric identity (account u32 /
     /// namespace u16 / collection u32) that retires UUID collection IDs.
     ///
     /// The string mirror fields (`account_id`/`namespace_id`/`collection_id`)
     /// are populated from the base62 segment encodings so that the **legacy**
-    /// [`root_prefix`](DrResolvedPath::root_prefix) still resolves a valid path,
-    /// and [`typed_root_prefix`](DrResolvedPath::typed_root_prefix) emits the
+    /// [`root_prefix`](DrCollectionPath::root_prefix) still resolves a valid path,
+    /// and [`typed_root_prefix`](DrCollectionPath::typed_root_prefix) emits the
     /// canonical zero-padded base62 prefix (no `tenant_id` — Phase 4 hierarchy
     /// collapse). `tenant_id` is left empty: the typed model has no tenant tier.
     ///
@@ -1004,9 +948,9 @@ impl DrPathBuilder {
     pub fn build_from_identity(
         identity: CollectionIdentity,
         storage_pool_class: StoragePoolClass,
-    ) -> DrResolvedPath {
+    ) -> DrCollectionPath {
         let (acct_seg, ns_seg, coll_seg) = identity.path_segments();
-        DrResolvedPath {
+        DrCollectionPath {
             // String mirror populated from the base62 segments so legacy
             // root_prefix() stays valid for mixed reads.
             account_id: Some(acct_seg),
@@ -1018,21 +962,23 @@ impl DrPathBuilder {
         }
     }
 
-    /// Resolve a **per-tenant system path** — the `_metering/` and `_trace/`
-    /// subtrees that hang off the tenant root, *independent of any namespace or
-    /// collection* (TD-161 / TD-164). Unlike [`build_from_parts`], it validates
-    /// only `account_id` + `tenant_id` (the only ids `tenant_root()` renders) and
-    /// leaves `namespace_id`/`collection_id` empty, so callers that hold just a
-    /// tenant — e.g. the storage-snapshot metering daemon, which keys off
-    /// `Collection.config.owner` — can build the durable sink path without
-    /// fabricating placeholder ids (which `validate_id` would reject for the
-    /// reserved `_`-prefixed system segments). Only `tenant_root()` /
-    /// `metering_subprefix()` / `trace_subprefix()` are meaningful on the result;
-    /// `root_prefix()` and the collection-scoped subprefixes are not.
+    /// Resolve a **per-tenant system path** — the `_metering/`, `_trace/`, and
+    /// `_cache/` subtrees that hang off the tenant root, *independent of any
+    /// namespace or collection* (TD-161 / TD-164 / TD-CACHE-5). Returns a
+    /// [`DrTenantSystemPath`], which validates only `account_id` + `tenant_id`
+    /// (the only ids `tenant_root()` renders) and structurally LACKS the
+    /// `namespace_id`/`collection_id` tiers — so callers that hold just a tenant
+    /// (e.g. the storage-snapshot metering daemon, keying off
+    /// `Collection.config.owner`) build the durable sink path without fabricating
+    /// placeholder ids, and the collection-scoped accessors (`root_prefix`,
+    /// `segments_subprefix`, …) cannot be called on the result. This is the class
+    /// fix for TD-CACHE-5: previously this returned a collection path with empty
+    /// namespace/collection, which let `warming.rs` compile a collection-scoped
+    /// `manifests_subprefix()` on it and render `data/default///manifests/…`.
     pub fn build_tenant_system(
         account_id: Option<&str>,
         tenant_id: &str,
-    ) -> Result<DrResolvedPath, PathResolverError> {
+    ) -> Result<DrTenantSystemPath, PathResolverError> {
         let account_id = match account_id {
             Some(account_id) => {
                 Self::validate_id("account_id", account_id)?;
@@ -1041,13 +987,10 @@ impl DrPathBuilder {
             None => None,
         };
         Self::validate_id("tenant_id", tenant_id)?;
-        Ok(DrResolvedPath {
+        Ok(DrTenantSystemPath {
             account_id,
             tenant_id: tenant_id.to_string(),
-            namespace_id: String::new(),
-            collection_id: String::new(),
             storage_pool_class: StoragePoolClass::default(),
-            typed_identity: None,
         })
     }
 
@@ -1118,7 +1061,7 @@ impl DrPathBuilder {
 /// isolation model (Phase 5). The **operator** (control) plane lives under
 /// [`OPERATOR_ROOT`](Self::OPERATOR_ROOT) and holds the SaaS provider's
 /// registry of accounts; the **account** (data) plane lives under
-/// `accounts/{account_id}/…` (rendered by [`DrResolvedPath::root_prefix`]).
+/// `accounts/{account_id}/…` (rendered by [`DrCollectionPath::root_prefix`]).
 impl DrPathBuilder {
     /// Control-plane root prefix for the **operator** catalog — the SaaS
     /// provider's registry of all accounts (entitlements, storage bindings,
@@ -1139,6 +1082,10 @@ impl DrPathBuilder {
         "_metering",
         "_trace",
         "_manifests",
+        // TD-CACHE-5: per-tenant warm-cache subtree (`_cache/warm_cache.json`) —
+        // the warm-restart manifest is a tenant-system object, not
+        // collection-scoped; reserved so a user object can never shadow it.
+        "_cache",
         // TD-181 P3 (S2a): per-tenant system catalog subtree holding the
         // object_id-keyed metadata (`_syscat/objects/{oid}.json`) + index +
         // migration marker. Reserved before anything is written under it so a
@@ -1152,6 +1099,15 @@ impl DrPathBuilder {
     /// account-rooted layout for the default account pass this explicitly; a
     /// `None` account keeps the legacy flat `data/…` render instead.
     pub const DEFAULT_ACCOUNT_ID: &'static str = "default";
+
+    /// Default `namespace_id` for single-tenant / OSS deployments that have
+    /// not provisioned an explicit namespace (ADR-074 S1). The canonical,
+    /// rename-stable id mirroring [`DEFAULT_ACCOUNT_ID`]; resolved at the
+    /// identity boundary via
+    /// [`MiddlewareTenantContext::namespace_or_default`](crate::network::middleware::tenant::MiddlewareTenantContext::namespace_or_default).
+    /// Paths stay byte-identical to the prior storage-layer constant
+    /// (`DEFAULT_NAMESPACE_ID = "ns_default"` in `services/dml`).
+    pub const DEFAULT_NAMESPACE_ID: &'static str = "ns_default";
 
     /// Reserved subpath under [`OPERATOR_ROOT`](Self::OPERATOR_ROOT) that holds
     /// the deployment's system catalog (WAL + snapshot). Single canonical
@@ -1192,7 +1148,7 @@ impl DrPathBuilder {
     /// authority). Structural base; the `PartitionLeaseStore` nests per-partition
     /// manifest logs beneath it. Used at boot by `SharedServices` to construct the
     /// lease store. NOTE: exact co-location (vs the system catalog) is a design
-    /// TBD when `PROXIMADB_PARTITION_LEASE_ON` ships default-on.
+    /// TBD when the partition-lease gate ships default-on (no env gate exists yet).
     pub fn partition_lease_prefix() -> String {
         "_catalog/leases/".to_string()
     }
@@ -1309,7 +1265,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // DrPathBuilder / DrResolvedPath
+    // DrPathBuilder / DrCollectionPath
     // ------------------------------------------------------------------
 
     fn dr_addressable_namespace() -> CatalogNamespace {
@@ -1358,18 +1314,21 @@ mod tests {
 
     #[test]
     fn per_tenant_metering_and_trace_subprefixes_hang_off_tenant_root() {
-        // TD-164: _metering / _trace are per-TENANT (above namespace/collection),
-        // unlike the per-collection data subprefixes (segments/, wal/, …).
-        let ns = dr_addressable_namespace();
-        let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
+        // TD-164 / TD-CACHE-5: _metering / _trace / _cache are per-TENANT (above
+        // namespace/collection), so they live on DrTenantSystemPath; the per-
+        // collection data subprefixes (segments/, wal/, …) live on DrCollectionPath.
+        let sys = DrPathBuilder::build_tenant_system(None, "tnt_acme").unwrap();
+        assert_eq!(sys.tenant_root(), "data/tnt_acme/");
+        assert_eq!(sys.metering_subprefix(), "data/tnt_acme/_metering/");
+        assert_eq!(sys.trace_subprefix(), "data/tnt_acme/_trace/");
+        assert_eq!(sys.cache_subprefix(), "data/tnt_acme/_cache/");
+        // The tenant-system subprefixes never carry a collection id.
+        assert!(!sys.metering_subprefix().contains("col_orders"));
 
-        assert_eq!(path.tenant_root(), "data/tnt_acme/");
-        assert_eq!(path.metering_subprefix(), "data/tnt_acme/_metering/");
-        assert_eq!(path.trace_subprefix(), "data/tnt_acme/_trace/");
-        // Lexically separate from (and a strict prefix-parent of) the collection
-        // tree, never nested under a single collection.
-        assert!(path.root_prefix().starts_with(&path.tenant_root()));
-        assert!(!path.metering_subprefix().contains("col_orders"));
+        // The collection tree is a strict prefix-child of the tenant root.
+        let ns = dr_addressable_namespace();
+        let coll = DrPathBuilder::build(&ns, "col_orders").unwrap();
+        assert!(coll.root_prefix().starts_with(&sys.tenant_root()));
     }
 
     #[test]
@@ -1948,6 +1907,18 @@ mod tests {
         );
         // And it has the legacy shape {base}/{cid}/data (no trailing slash).
         assert_eq!(typed_none, "/data/store/my_collection/data");
+    }
+
+    #[test]
+    fn persisted_identity_does_not_bypass_typed_path_gate() {
+        let identity = Some(CollectionIdentity {
+            account_id: 7,
+            namespace_id: 5,
+            collection_id: 9,
+        });
+
+        assert_eq!(typed_path_identity_when(identity, false), None);
+        assert_eq!(typed_path_identity_when(identity, true), identity);
     }
 
     #[test]

@@ -26,7 +26,7 @@ pub mod wal_encryption;
 
 use aes_gcm::{
     Aes256Gcm, Nonce,
-    aead::{Aead, AeadCore, KeyInit, OsRng},
+    aead::{Aead, AeadCore, KeyInit, OsRng, Payload},
 };
 use anyhow::Result;
 use sha2::{Digest, Sha256};
@@ -66,7 +66,7 @@ impl Default for StorageEncryptionConfig {
         Self {
             enabled: true,
             algorithm: EncryptionAlgorithm::Aes256Gcm,
-            master_key_env_var: "PROXIMADB_MASTER_KEY".to_string(),
+            master_key_env_var: "PROXIMADB_CRYPTO_MASTER_KEY".to_string(),
             key_rotation_interval_secs: 30 * 24 * 3600, // 30 days
             chunk_size: 4096,                           // 4KB
         }
@@ -105,6 +105,83 @@ pub fn decrypt_data(key: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>> {
     cipher
         .decrypt(nonce, encrypted_data)
         .map_err(|e| anyhow::anyhow!("Decryption failed: {}", e))
+}
+
+/// AES-GCM encryption with authenticated-but-plaintext associated data.
+pub fn encrypt_data_with_aad(key: &[u8; 32], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+    let cipher = Aes256Gcm::new(key.into());
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let mut ciphertext = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("Encryption failed: {e}"))?;
+    let mut result = Vec::with_capacity(nonce.len() + ciphertext.len());
+    result.extend_from_slice(&nonce);
+    result.append(&mut ciphertext);
+    Ok(result)
+}
+
+pub fn decrypt_data_with_aad(key: &[u8; 32], ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+    if ciphertext.len() < 12 {
+        return Err(anyhow::anyhow!("Ciphertext too short"));
+    }
+    let cipher = Aes256Gcm::new(key.into());
+    let (nonce, encrypted_data) = ciphertext.split_at(12);
+    cipher
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: encrypted_data,
+                aad,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("Decryption failed: {e}"))
+}
+
+pub fn generate_aes_gcm_nonce() -> [u8; 12] {
+    let generated = Aes256Gcm::generate_nonce(&mut OsRng);
+    let mut nonce = [0u8; 12];
+    nonce.copy_from_slice(&generated);
+    nonce
+}
+
+pub fn encrypt_data_with_nonce_and_aad(
+    key: &[u8; 32],
+    plaintext: &[u8],
+    nonce: &[u8; 12],
+    aad: &[u8],
+) -> Result<Vec<u8>> {
+    Aes256Gcm::new(key.into())
+        .encrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("Encryption failed: {e}"))
+}
+
+pub fn decrypt_data_with_nonce_and_aad(
+    key: &[u8; 32],
+    ciphertext: &[u8],
+    nonce: &[u8; 12],
+    aad: &[u8],
+) -> Result<Vec<u8>> {
+    Aes256Gcm::new(key.into())
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("Decryption failed: {e}"))
 }
 
 /// Derive encryption key from master password using HKDF

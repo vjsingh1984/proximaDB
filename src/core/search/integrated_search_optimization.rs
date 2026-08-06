@@ -28,8 +28,16 @@ use crate::core::search::{
     query_preprocessing::QueryPreprocessor, results::OptimizedSearchRecord,
     smart_execution_strategy::SmartExecutionStrategy,
 };
+#[cfg(feature = "axis")]
 use crate::index::axis::management::manager::AxisManager;
+#[cfg(feature = "axis")]
 use crate::index::axis::storage::serialization::Index;
+// `axis_manager` is never `Some` in production (only the storage engine sets it, and
+// the viper orchestrator doesn't). Aliased so the field compiles with `axis` off.
+#[cfg(feature = "axis")]
+type AxisManagerField = Option<Arc<AxisManager>>;
+#[cfg(not(feature = "axis"))]
+type AxisManagerField = Option<()>;
 use crate::storage::cache::{
     MetadataStore, QueryCache,
     orchestrator::{CacheType, CrossCacheOrchestrator},
@@ -85,7 +93,7 @@ pub struct AdvancedSearchOptimizer {
     cost_estimator: Arc<SearchCostEstimator>,
 
     /// AXIS index integration
-    axis_manager: Option<Arc<AxisManager>>,
+    axis_manager: AxisManagerField,
 
     /// Routing engine for intelligent path selection
     #[allow(dead_code)]
@@ -196,6 +204,7 @@ pub struct PerformanceTracker {
 /// Search cost estimator (from IntegratedSearchOptimizer)
 pub struct SearchCostEstimator {
     /// Average search times per index type
+    #[cfg(feature = "axis")]
     pub index_search_times: HashMap<Index, IntegratedSearchPerformanceStats>,
     /// Average search times per quantization level
     pub progressive_search_times:
@@ -288,6 +297,7 @@ impl AdvancedSearchOptimizer {
                 last_update: RwLock::new(Instant::now()),
             }),
             cost_estimator: Arc::new(SearchCostEstimator {
+                #[cfg(feature = "axis")]
                 index_search_times: HashMap::new(),
                 progressive_search_times: HashMap::new(),
                 direct_search_times: HashMap::new(),
@@ -304,6 +314,7 @@ impl AdvancedSearchOptimizer {
     }
 
     /// Set AXIS manager for index integration
+    #[cfg(feature = "axis")]
     pub fn set_axis_manager(&mut self, axis_manager: Arc<AxisManager>) {
         self.axis_manager = Some(axis_manager);
     }
@@ -493,7 +504,7 @@ impl AdvancedSearchOptimizer {
             .first_query_vector()
             .context("No query vector provided")?;
 
-        let top_k = search_params.top_k.unwrap_or(10);
+        let top_k = search_params.top_k.unwrap_or(10) as usize;
         let distance_metric = search_params
             .distance_metric
             .unwrap_or(DistanceMetric::Cosine);
@@ -1086,7 +1097,7 @@ impl AdvancedSearchOptimizer {
         }
 
         let batch_size = self.config.streaming_batch_size;
-        let total_results = search_params.top_k.unwrap_or(10);
+        let total_results = search_params.top_k.unwrap_or(10) as usize;
 
         // Create a stream that processes batches lazily
         // Convert records into owned chunks to avoid lifetime issues
@@ -1128,6 +1139,7 @@ pub trait SearchOptimizer: Send + Sync {
     ) -> Result<Vec<OptimizedSearchRecord>>;
 
     /// Inject an AXIS index manager for index-accelerated search
+    #[cfg(feature = "axis")]
     fn set_axis_manager(&self, _axis: Arc<AxisManager>) {
         // Default no-op
     }

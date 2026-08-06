@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check release-smoke cloud-emulator-test
+.PHONY: env-gate-check all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check mvp-contract-check mvp-smoke-test context-benchmark-check workspace-boundaries-check tenant-path-check tenant-ingress-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check query-conformance-check docs-claim-check design-status-check status-asof-check release-smoke cloud-emulator-test
 
 # Default target
 all: build test
@@ -95,9 +95,13 @@ clippy:
 	@echo "📎 Running clippy..."
 	cargo clippy -- -D warnings
 
+env-gate-check:
+	@echo "🚪 Validating env-gate registry..."
+	python3 scripts/check_env_gates.py
+
 hygiene-check:
 	@echo "🧹 Running tracked artifact hygiene check..."
-	@bad_files=$$(git ls-files | rg '(^|/)\\.victor($|/)|\\.bak[0-9]*$|\\.disabled$'); \
+	@bad_files=$$(git ls-files | rg '(^|/)\.victor($$|/)|\.bak[0-9]*$$|\.disabled$$'); \
 	if [ -n "$$bad_files" ]; then \
 		echo "❌ Forbidden tracked artifacts detected:"; \
 		echo "$$bad_files"; \
@@ -111,6 +115,19 @@ check: fmt clippy test hygiene-check
 capability-matrix-check:
 	@echo "🧭 Validating capability matrix..."
 	python3 scripts/validate_capability_matrix.py
+
+mvp-contract-check:
+	@echo "🎯 Validating the MVP trust corridor..."
+	python3 scripts/check_mvp_trust_corridor.py
+
+mvp-smoke-test:
+	@echo "🧪 Testing the canonical v2 MVP smoke client..."
+	python3 -m unittest discover -s tests/scripts -p 'test_mvp_smoke.py'
+
+context-benchmark-check:
+	@echo "📐 Validating the context-corridor benchmark contract..."
+	python3 scripts/validate_context_benchmark.py
+	python3 -m unittest discover -s tests/scripts -p 'test_context_corridor.py'
 
 deterministic-commit-contract-check:
 	@echo "🧷 Validating deterministic commit contract..."
@@ -185,7 +202,11 @@ tenant-path-check:
 	@echo "🏢 Validating tenant path isolation guard..."
 	python3 scripts/check_tenant_path_guard.py
 
-work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check capability-matrix-check workspace-boundaries-check tenant-path-check panic-policy-module-guard hygiene-check
+tenant-ingress-check:
+	@echo "Validating deployment-aware tenant ingress..."
+	python3 scripts/check_tenant_ingress_contract.py
+
+work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check design-status-check status-asof-check capability-matrix-check mvp-contract-check mvp-smoke-test context-benchmark-check workspace-boundaries-check tenant-path-check tenant-ingress-check panic-policy-module-guard hygiene-check env-gate-check
 	@echo "✅ work-commit-check: deterministic architecture and commit guardrails passed"
 
 validated-commit-check: work-commit-check
@@ -214,6 +235,41 @@ panic-policy-baseline:
 	@echo "🧯 Refreshing WS-2 panic policy baseline..."
 	bash scripts/count_panic_patterns.sh --mode report --format json --write $(PANIC_POLICY_BASELINE)
 	@echo "Updated baseline: $(PANIC_POLICY_BASELINE)"
+	@$(MAKE) --no-print-directory baseline-merge-skew-warning ARTIFACT="$(PANIC_POLICY_BASELINE)" REVERIFY="make panic-policy-no-regression"
+
+# Shared post-refresh warning for every COMPUTED WHOLE-TREE SNAPSHOT baseline
+# (v1-proto usage, panic policy, coverage). Not a gate — a reminder printed at the
+# one moment it is actionable.
+#
+# WHY (real incident, 2026-08-05, PR #1431 -> #1436): #1431 refreshed the v1-proto
+# floor 2913 -> 2770, a number computed on the tree at that moment. While it sat in
+# review, #1424 merged and added one v1 reference. #1431 then merged carrying the
+# now-stale 2770 while develop's truth was 2771, so every later src/-touching PR
+# failed `2771 > 2770` — a false-positive red that blocked the queue until #1436
+# regenerated the number. Both PRs were individually GREEN: CI validates a PR's own
+# tree, and `required_status_checks.strict` is false on develop, so a green tick is
+# a claim about the branch, not about the merge result.
+#
+# The trap is that these artifacts are snapshots of a GLOBAL property, so they are
+# coupled to EVERY file. The usual rebase test — "does develop conflict with the
+# files I touched?" — always answers "no" for a one-line JSON edit and is the wrong
+# question. The right one: "did anything land under me that changes the number I
+# froze?" Regenerate immediately before merge; do not trust a number computed hours
+# earlier.
+.PHONY: baseline-merge-skew-warning
+baseline-merge-skew-warning:
+	@echo ""
+	@echo "⚠️  $(ARTIFACT) is a snapshot of a GLOBAL property of the whole tree."
+	@echo "    It goes stale the moment ANY other PR lands a change to what it counts,"
+	@echo "    and CI will NOT catch that: it validates your branch, not the merge result"
+	@echo "    (develop does not require branches to be up to date)."
+	@echo ""
+	@echo "    Before merging, rebase on the latest develop, re-run this refresh, and verify:"
+	@echo "        git fetch origin && git rebase origin/develop"
+	@echo "        $(REVERIFY)"
+	@echo ""
+	@echo "    A floor left one below reality turns EVERY subsequent PR red (see #1431 -> #1436)."
+	@echo ""
 
 # TD-123: ratchet proximadb.v1 proto usage downward as the v1->v2 message-type
 # migration proceeds. v1 proto is the legacy internal domain model; this gate
@@ -235,6 +291,7 @@ v1-proto-usage-baseline:
 	@echo "🧹 Refreshing TD-123 v1 proto usage baseline..."
 	python3 scripts/check_v1_proto_usage.py --mode report --format json --write $(V1_PROTO_USAGE_BASELINE)
 	@echo "Updated baseline: $(V1_PROTO_USAGE_BASELINE)"
+	@$(MAKE) --no-print-directory baseline-merge-skew-warning ARTIFACT="$(V1_PROTO_USAGE_BASELINE)" REVERIFY="make v1-proto-usage-no-regression"
 
 # Release targets
 release: clean build-server test benchmark
@@ -245,8 +302,16 @@ release: clean build-server test benchmark
 
 # Release-cut gate: one command that must be green before the v0.2 release tag.
 # Sequence is fail-fast — early steps (fmt, doc-claim, proto) are cheap.
-release-check: work-commit-check proto-check release-smoke build-server
+release-check: work-commit-check proto-check release-smoke query-conformance-check build-server
 	@echo "✅ release-check: all gates passed"
+
+# Supported pgwire SQL must pass through the real wire protocol and router at
+# release cut. QA runs the same ratchets on protected-branch promotion.
+query-conformance-check:
+	@echo "🔎 Running pgwire SQL conformance ratchets..."
+	cargo test --test tpch_pgwire_e2e -- --nocapture --test-threads=1
+	cargo test --test tpcds_pgwire_e2e -- --nocapture --test-threads=1
+	@echo "✅ query-conformance-check green"
 
 fmt-check:
 	@echo "🎨 Checking formatting (cargo fmt --check)..."
@@ -283,6 +348,22 @@ docs-claim-check:
 		exit 1; \
 	fi; \
 	echo "✅ No public-doc references to internal marketing copy."
+
+# Fails if the complete ADR/TD corpus cannot be structurally audited: every file
+# has a parseable status, legacy TD rows use the controlled vocabulary, every ADR
+# is indexed once, and the index/file lifecycle classes agree. Claim truth is
+# covered by the freshness check below.
+design-status-check:
+	@echo "📚 Checking ADR/TD status coverage and index agreement..."
+	@python3 scripts/check_design_status_index.py
+
+# Fails if a status-of-record doc (SYSTEM_MAP, ADR index, SUPPORTED_SURFACE) is missing its
+# `// status-as-of:` tag or the tag is stale (default 60 days). The tag asserts the
+# doc's current-state sections were re-verified against HEAD on that date — bump it
+# only after re-verifying, never mechanically. Allowlist lives in the script (TD-DOCS-2).
+status-asof-check:
+	@echo "📅 Checking status-of-record docs for stale status-as-of tags..."
+	@python3 scripts/check_status_as_of.py
 
 # Minimum smoke battery for the release cut. Each entry must be a non-ignored test
 # that exercises the canonical v2 record path or one of the diagnostic blocks
@@ -397,6 +478,7 @@ help:
 	@echo "  capability-matrix-check - Validate docs/_internal/roadmap/CAPABILITY_MATRIX.toml"
 	@echo "  deterministic-commit-contract-check - Validate zero-retry/test/docs guard wiring"
 	@echo "  tenant-path-check  - Enforce DrPathBuilder tenant path guard"
+	@echo "  tenant-ingress-check - Enforce deployment-aware tenant resolution at ingress"
 	@echo "  work-commit-check  - Fast deterministic architecture guard before commit/push"
 	@echo "  proto-check        - Validate generated proto crate and Python/OpenAPI contract drift"
 	@echo "  verify-openapi-spec - Regenerate OpenAPI spec from handlers; fail on drift (TD-126)"

@@ -36,6 +36,7 @@ use proximadb_relational_planner::{
 use proximadb_relational_reader::{ReadSnapshot, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{BinaryOp, Expr, ExprError, RelationalRow, RelationalSchema};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use thiserror::Error;
@@ -67,6 +68,9 @@ pub enum ExecError {
     #[error("scalar subquery returned more than one row")]
     ScalarSubqueryCardinality,
 
+    #[error("query execution was cancelled")]
+    Cancelled,
+
     #[error("internal executor error: {0}")]
     Internal(String),
 }
@@ -85,6 +89,9 @@ pub struct ExecutionContext {
     /// [`MeteredExec`] that records actual rows + inclusive time. `None` on the
     /// normal execution path → no wrapping, zero overhead.
     pub metrics: Option<Arc<ExecMetrics>>,
+    /// Cooperative request cancellation, checked by executor wrappers at a
+    /// bounded stride inside operator pull loops.
+    pub cancellation_flag: Option<Arc<AtomicBool>>,
 }
 
 impl ExecutionContext {
@@ -92,6 +99,7 @@ impl ExecutionContext {
         Self {
             snapshot,
             metrics: None,
+            cancellation_flag: None,
         }
     }
 
@@ -100,7 +108,13 @@ impl ExecutionContext {
         Self {
             snapshot: ReadSnapshot::latest(),
             metrics: Some(metrics),
+            cancellation_flag: None,
         }
+    }
+
+    pub fn with_cancellation_flag(mut self, flag: Option<Arc<AtomicBool>>) -> Self {
+        self.cancellation_flag = flag;
+        self
     }
 }
 
@@ -199,6 +213,36 @@ pub fn self_times(metrics: &[NodeMetric]) -> Vec<u128> {
     out
 }
 
+/// Direct-children input rows per operator = the sum of the operator's DIRECT
+/// children's emitted rows (their `rows_out`), index-aligned with `metrics`
+/// (pre-order). A leaf (arity 0) has `rows_in = 0`; a single-child operator's
+/// `rows_in` equals that child's `rows_out`. Reconstructs the tree from each node's
+/// [`NodeMetric::arity`] exactly like [`self_times`] (a node's `arity` subtrees
+/// follow it in pre-order). `saturating_add` guards overflow; malformed arity leaves
+/// the affected node at 0 (no panic, no OOB). This is the `rows_in` half of the
+/// TD-TRACE-1 per-operator `exec[]` vector (rows_out is `NodeMetric::rows`).
+pub fn child_input_rows(metrics: &[NodeMetric]) -> Vec<u64> {
+    let mut out: Vec<u64> = vec![0; metrics.len()];
+    // Returns the index just past the subtree rooted at `pos`.
+    fn walk(metrics: &[NodeMetric], pos: usize, out: &mut [u64]) -> usize {
+        let mut child = pos + 1;
+        let mut children_rows = 0u64;
+        for _ in 0..metrics[pos].arity {
+            if child >= metrics.len() {
+                break; // malformed arity → don't index OOB
+            }
+            children_rows = children_rows.saturating_add(metrics[child].rows);
+            child = walk(metrics, child, out);
+        }
+        out[pos] = children_rows;
+        child
+    }
+    if !metrics.is_empty() {
+        walk(metrics, 0, &mut out);
+    }
+    out
+}
+
 /// Source for relational readers. The executor calls
 /// [`open_reader`] once per `Scan` in the plan; the returned
 /// reader is owned by the resulting [`ScanExec`].
@@ -236,7 +280,33 @@ pub async fn collect<E: ExecNode + ?Sized>(node: &mut E) -> Result<Vec<Relationa
 
 /// Build an executor tree from a physical plan. Construction is
 /// sync; reader I/O happens later inside `open`.
+/// Stack red-zone / growth for the executor-build recursion (TD-EXEC-2 §1.a); it
+/// mirrors the plan depth exactly like the planner's lowering. Generous pending
+/// Slice-1 calibration — the check is ~ns, growth fires only when near the limit.
+const BUILD_RED_ZONE: usize = 256 * 1024;
+const BUILD_STACK_GROW: usize = 4 * 1024 * 1024;
+
+/// Build an executor tree from a physical plan.
+///
+/// Guards every recursion level with [`stacker::maybe_grow`] so a deeply nested
+/// plan grows the stack on demand rather than overflowing the worker thread
+/// (TD-EXEC-2 §1.a). The recursive descent goes back through this public entry, so
+/// each level checks its own headroom.
 pub fn build_executor<F: ReaderFactory>(
+    plan: PhysicalPlan,
+    factory: &F,
+    ctx: &ExecutionContext,
+) -> Result<Box<dyn ExecNode>, ExecError> {
+    stacker::maybe_grow(BUILD_RED_ZONE, BUILD_STACK_GROW, || {
+        // TD-EXEC-2 Slice 1: sample the recursion's stack low-water mark when a
+        // probe is armed (a TLS read + branch otherwise — same order as the
+        // maybe_grow check above).
+        proximadb_relational_planner::stack_probe::note();
+        build_executor_inner(plan, factory, ctx)
+    })
+}
+
+fn build_executor_inner<F: ReaderFactory>(
     plan: PhysicalPlan,
     factory: &F,
     ctx: &ExecutionContext,
@@ -351,10 +421,102 @@ pub fn build_executor<F: ReaderFactory>(
         }
     };
     let _ = (DistinctStrategy::Hash, SortStrategy::InMemory); // silence "imported but only matched in path"
-    Ok(match metric {
+    let node: Box<dyn ExecNode> = match metric {
         Some((metrics, idx)) => Box::new(MeteredExec::new(node, idx, metrics)),
         None => node,
+    };
+    Ok(match &ctx.cancellation_flag {
+        Some(flag) => Box::new(CancellationExec::new(node, flag.clone())),
+        None => node,
     })
+}
+
+/// Runtime-agnostic single yield: returns `Pending` once (waking itself so it
+/// is re-polled immediately) then `Ready`, handing control back to the async
+/// scheduler exactly like `tokio::task::yield_now` — without coupling this leaf
+/// executor crate to a specific runtime (tokio is only a dev-dependency here).
+struct YieldOnce(bool);
+
+impl std::future::Future for YieldOnce {
+    type Output = ();
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
+}
+
+/// Cooperative cancellation wrapper installed around every operator. The
+/// stride bounds atomic overhead while ensuring loops inside a parent operator
+/// re-enter a wrapped child and observe cancellation promptly.
+struct CancellationExec {
+    child: Box<dyn ExecNode>,
+    flag: Arc<AtomicBool>,
+    pulls: u32,
+}
+
+impl CancellationExec {
+    const CHECK_MASK: u32 = 4095;
+
+    fn new(child: Box<dyn ExecNode>, flag: Arc<AtomicBool>) -> Self {
+        Self {
+            child,
+            flag,
+            pulls: 0,
+        }
+    }
+
+    /// Poll the cancellation flag on a stride boundary. Returns `Ok(true)` when
+    /// this call landed on the stride (the caller then yields — see `next_row`),
+    /// `Ok(false)` off-stride, `Err(Cancelled)` when the flag is set on-stride.
+    fn check(&mut self) -> Result<bool, ExecError> {
+        let on_stride = self.pulls & Self::CHECK_MASK == 0;
+        self.pulls = self.pulls.wrapping_add(1);
+        if on_stride && self.flag.load(Ordering::Relaxed) {
+            Err(ExecError::Cancelled)
+        } else {
+            Ok(on_stride)
+        }
+    }
+}
+
+#[async_trait]
+impl ExecNode for CancellationExec {
+    fn schema(&self) -> &RelationalSchema {
+        self.child.schema()
+    }
+
+    async fn open(&mut self) -> Result<(), ExecError> {
+        self.pulls = 0;
+        self.check()?;
+        self.child.open().await
+    }
+
+    async fn next_row(&mut self) -> Result<Option<RelationalRow>, ExecError> {
+        if self.check()? {
+            // On the stride: yield so the scheduler can run the task that SETS
+            // the flag. The native operators are synchronous CPU with no real
+            // `.await` points, so a grinding query holds its worker thread and
+            // the out-of-band cancel handler never runs — then the poll above
+            // could never observe a cancellation. Yielding makes long native
+            // scans cooperative; without it, cancellation is inert end-to-end
+            // (measured: an equi-join blow-up is never cancelled). This is the
+            // load-bearing half of TD-EXEC-CANCEL-1.
+            YieldOnce(false).await;
+        }
+        self.child.next_row().await
+    }
+
+    async fn close(&mut self) -> Result<(), ExecError> {
+        self.child.close().await
+    }
 }
 
 /// Operator keyword for a physical-plan node — matches the planner's
@@ -2608,6 +2770,66 @@ mod tests {
         assert_eq!(rows.len(), 3);
     }
 
+    /// Executor-build stack high-water for a `depth`-level filter chain, measured
+    /// on a dedicated large-stack thread so `maybe_grow` never switches segments
+    /// and the probe reading is exact (see the planner's `stack_probe` docs).
+    fn build_stack_hwm(depth: usize) -> u64 {
+        use proximadb_relational_planner::stack_probe;
+        std::thread::Builder::new()
+            // Large enough that even TD-EXEC-1's 200 KB/frame upper guess for
+            // ~1.1k frames fits without segment growth.
+            .stack_size(256 * 1024 * 1024)
+            .spawn(move || {
+                let mut plan = scan_users();
+                for _ in 0..depth {
+                    plan = PhysicalPlan::Filter {
+                        input: Box::new(plan),
+                        predicate: Expr::literal(ProximaValue::Boolean(true)),
+                    };
+                }
+                let f = factory_with_users();
+                let ctx = ExecutionContext::default();
+                let (exec, hwm) = stack_probe::probe(|| build_executor(plan, &f, &ctx));
+                // Avoid a deep recursive Drop of the executor tree; only the
+                // measurement matters here.
+                std::mem::forget(exec.expect("deep build must succeed"));
+                hwm
+            })
+            .expect("spawn large-stack calibration thread")
+            .join()
+            .expect("calibration build must not fail")
+    }
+
+    /// TD-EXEC-2 Slice 1 calibration: measure the real per-frame stack cost of
+    /// the executor-build recursion — the second of the three depth-proportional
+    /// recursions (planner lowering, executor build, native walk) — resolving
+    /// the ~100× `frame_bytes` unknown for this crate. The delta between two
+    /// chain depths divides out fixed overhead; the upper bound is a regression
+    /// ratchet against frame bloat.
+    #[test]
+    fn calibrate_build_frame_cost() {
+        let shallow = build_stack_hwm(100);
+        let deep = build_stack_hwm(1100);
+        if shallow == 0 && deep == 0 {
+            // Platform cannot report remaining stack; nothing to calibrate.
+            return;
+        }
+        assert!(
+            deep > shallow,
+            "1100-deep build must consume more stack than 100-deep: \
+             shallow={shallow} deep={deep}"
+        );
+        let per_frame = (deep - shallow) / 1000;
+        eprintln!(
+            "TD-EXEC-2 Slice-1 calibration: executor-build frame cost ≈ {per_frame} B/frame \
+             (hwm {shallow} B @ depth 100 → {deep} B @ depth 1100)"
+        );
+        assert!(
+            per_frame <= 32 * 1024,
+            "executor-build frame cost regressed past 32 KiB/frame: measured {per_frame} B/frame"
+        );
+    }
+
     #[tokio::test]
     async fn filter_uses_three_valued_logic() {
         // age > 26 — bob(25) excluded; alice(30), carol(40) kept.
@@ -3098,6 +3320,39 @@ mod tests {
         let noisy = vec![nm("Filter", 1, 5), nm("Scan", 0, 9)];
         assert_eq!(self_times(&noisy), vec![0, 9]);
         assert_eq!(self_times(&[]), Vec::<u128>::new());
+    }
+
+    fn nm_rows(label: &str, arity: usize, rows: u64) -> NodeMetric {
+        NodeMetric {
+            label: label.into(),
+            arity,
+            rows,
+            elapsed_ns: 0,
+        }
+    }
+
+    #[test]
+    fn child_input_rows_sums_direct_children() {
+        // Filter(1) over Join(2) over Scan(30), Scan(20):
+        //   rows_in(Filter) = rows_out(Join)          = 45
+        //   rows_in(Join)   = 30 + 20                  = 50
+        //   rows_in(Scan*)  = leaves → 0
+        let metrics = vec![
+            nm_rows("Filter", 1, 12),
+            nm_rows("Join", 2, 45),
+            nm_rows("Scan", 0, 30),
+            nm_rows("Scan", 0, 20),
+        ];
+        assert_eq!(child_input_rows(&metrics), vec![45, 50, 0, 0]);
+    }
+
+    #[test]
+    fn child_input_rows_tolerates_malformed_arity_and_empty() {
+        // A node claims 2 children but only 1 subtree follows → no panic / no OOB;
+        // it sums what is actually present.
+        let malformed = vec![nm_rows("Join", 2, 7), nm_rows("Scan", 0, 4)];
+        assert_eq!(child_input_rows(&malformed), vec![4, 0]);
+        assert_eq!(child_input_rows(&[]), Vec::<u64>::new());
     }
 
     async fn run_setop(op: SetOpKind, all: bool, left: &[i64], right: &[i64]) -> Vec<i64> {
@@ -3708,6 +3963,41 @@ mod tests {
         exec.open().await.unwrap();
         let rows = collect(&mut *exec).await.unwrap();
         assert_eq!(rows.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn executor_wrapper_observes_mid_scan_cancellation() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("x", ProximaType::Int64, false)]);
+        let rows = (0..5000)
+            .map(|value| vec![Expr::literal(ProximaValue::Int64(value))])
+            .collect();
+        let plan = PhysicalPlan::Values {
+            rows,
+            output_schema: schema,
+        };
+        let f = factory_with_users();
+        let ctx = ExecutionContext::default().with_cancellation_flag(Some(flag.clone()));
+        let mut exec = build_executor(plan, &f, &ctx).unwrap();
+        exec.open().await.unwrap();
+        assert!(exec.next_row().await.unwrap().is_some());
+
+        flag.store(true, Ordering::Relaxed);
+        let mut cancelled = false;
+        for _ in 0..5000 {
+            match exec.next_row().await {
+                Err(ExecError::Cancelled) => {
+                    cancelled = true;
+                    break;
+                }
+                Ok(Some(_)) => {}
+                other => panic!("expected cancellation before exhaustion, got {other:?}"),
+            }
+        }
+        assert!(
+            cancelled,
+            "cancellation must be observed within the pull stride"
+        );
     }
 
     // ----- Aggregate accumulators (direct unit) -----------------------

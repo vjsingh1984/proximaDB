@@ -18,6 +18,7 @@ use tracing::info;
 const RL_CHECKPOINT_INTERVAL_SECS: u64 = 300;
 
 use crate::{core, graph, network, proto, query, security, storage};
+use proximadb_config::ServerTenantMode;
 
 /// Main ProximaDB database instance
 pub struct ProximaDB {
@@ -48,6 +49,48 @@ pub struct ProximaDB {
         tokio::task::JoinHandle<()>,
         tokio::sync::oneshot::Sender<()>,
     )>,
+}
+
+async fn initialize_configured_security(
+    config: Option<security::SecurityConfig>,
+) -> anyhow::Result<Option<Arc<security::SecurityCoordinator>>> {
+    let Some(config) = config.filter(|config| config.enabled) else {
+        return Ok(None);
+    };
+
+    let coordinator = security::initialize_security(config)
+        .await
+        .map_err(|error| anyhow::anyhow!("enabled security initialization failed: {error:#}"))?;
+    Ok(Some(Arc::new(coordinator)))
+}
+
+fn resolve_server_tenant_mode(
+    server_tenant: &proximadb_config::ServerTenantConfig,
+    security_config: Option<&security::SecurityConfig>,
+) -> anyhow::Result<proximadb_tenant::TenantDeploymentMode> {
+    let legacy_multi_tenant_required = security_config.is_some_and(|s| {
+        s.authentication.require_authentication && s.mode != security::SecurityMode::Development
+    });
+
+    let mode = match server_tenant.mode {
+        ServerTenantMode::Auto if legacy_multi_tenant_required => {
+            proximadb_tenant::TenantDeploymentMode::MultiTenant
+        }
+        ServerTenantMode::Auto | ServerTenantMode::SingleTenant => {
+            proximadb_tenant::TenantDeploymentMode::single_tenant(
+                server_tenant.default_tenant.clone(),
+            )
+        }
+        ServerTenantMode::MultiTenant => proximadb_tenant::TenantDeploymentMode::MultiTenant,
+    };
+
+    if let proximadb_tenant::TenantDeploymentMode::SingleTenant { default_tenant } = &mode {
+        proximadb_tenant::validate_request_tenant(default_tenant).map_err(|err| {
+            anyhow::anyhow!("invalid [server.tenant] default_tenant '{default_tenant}': {err}")
+        })?;
+    }
+
+    Ok(mode)
 }
 
 impl ProximaDB {
@@ -125,9 +168,14 @@ impl ProximaDB {
 
         // Co-design C4: wire the io_trace flush to feed the trace-driven route
         // cost model, so completed routed queries teach the ComputeScheduler the
-        // measured cost of each (shape-class, backend). Observe-mode today —
-        // routing is unchanged until a later flag-gated slice.
+        // measured cost of each (shape-class, backend). Observe-mode by default —
+        // the live-override slice is landed but flag-gated
+        // (PROXIMADB_ROUTE_COST_OVERRIDE, default OFF; enablement gated by
+        // TD-ROUTE-1's capability-aware candidate fix).
         crate::query::route_cost_model::install_route_cost_observer();
+        // Warm the cost model from persisted cells so the measured routing
+        // history survives restarts (behavior unchanged while override is off).
+        crate::query::route_cost_model::load_persisted_cost_model(&config.server.data_dir);
         // ADR-030: wire the io_trace flush to the always-on per-tenant billing
         // meters (KRU read-compute from the snapshot's per-engine compute_ms).
         // Same snapshot as the route observer above — billed bytes/ms cannot
@@ -138,6 +186,31 @@ impl ProximaDB {
         // `otlp-metering` feature is compiled out). Must run inside the runtime —
         // the grpc-tonic exporter's reader is driven on it.
         crate::observability::metering_otlp::init_from_env();
+        // TD-TRACE-2 / ADR-066: durable io_trace ETL sink. A SEPARATE, default-OFF
+        // observer (the billing observer above stays always-on/never-gated, ADR-027).
+        // Installed only when `[observability.io_trace_sink]` resolves enabled (env
+        // `PROXIMADB_IO_TRACE_SINK` or TOML); `resolve` returns None otherwise.
+        if let Some(sink_cfg) = crate::core::config::IoTraceSinkConfig::try_resolve(
+            config
+                .observability
+                .as_ref()
+                .and_then(|o| o.io_trace_sink.as_ref()),
+        )
+        .map_err(anyhow::Error::msg)?
+        {
+            // S4b: run the background warehouse compactor when both an object-store
+            // dispatch target and a compaction interval are configured (the compactor
+            // reads the object-store segments). Capture before `sink_cfg` is moved.
+            let warehouse_trigger = sink_cfg
+                .object_store_uri
+                .clone()
+                .zip(sink_cfg.warehouse_compaction_interval_s);
+            crate::observability::io_trace_sink::install(sink_cfg).map_err(anyhow::Error::msg)?;
+            if let Some((uri, interval_s)) = warehouse_trigger {
+                crate::observability::io_trace_warehouse::install(uri, interval_s)
+                    .map_err(anyhow::Error::msg)?;
+            }
+        }
         // Co-design C5 (integration): register the tenant→tier Port to read the
         // header-fed tier registry (`X-Tenant-Tier` → `record_store::TENANT_TIERS`),
         // so the per-tenant tier the cache LimitsResolver already sees also drives
@@ -193,11 +266,11 @@ impl ProximaDB {
         //
         //   1. **Prometheus level gauge** — in-memory `.set()` of the resident level
         //      that Prometheus integrates downstream. Default 5min (env
-        //      `PROXIMADB_KSU_GAUGE_INTERVAL_SECS`); storage doesn't move faster, so
+        //      `PROXIMADB_METERING_KSU_GAUGE_INTERVAL_SECS`); storage doesn't move faster, so
         //      a per-minute poll only multiplied the list-collections work.
         {
             let cs = collection_service.clone();
-            let interval_secs = std::env::var("PROXIMADB_KSU_GAUGE_INTERVAL_SECS")
+            let interval_secs = std::env::var("PROXIMADB_METERING_KSU_GAUGE_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .filter(|s| *s > 0)
@@ -317,23 +390,22 @@ impl ProximaDB {
                         resolver_cache,
                     ),
                 );
-                if storage_engine
-                    .compaction_manager()
-                    .set_precision_resolver(resolver.clone())
-                    .is_ok()
-                {
-                    tracing::info!(
-                        "✅ Compaction wired with CanonicalPrecisionResolver — \
-                         fp16 collections will preserve precision through compaction"
-                    );
-                }
+                // TD-PRECISE-GLOBAL: arm the process-global resolver so EVERY
+                // Compaction stamps precision_hint — including the per-collection
+                // SstEngines the boot path can't individually wire. The former
+                // `storage_engine.compaction_manager().set_precision_resolver(..)`
+                // targeted the StorageEngine's idle instance, so fp16/bf16/int8
+                // collections silently degraded to fp32 at compaction.
+                crate::storage::engines::sst::set_global_precision_resolver(resolver.clone());
+                tracing::info!(
+                    "✅ Global compaction precision resolver armed — fp16/bf16/int8 \
+                     collections preserve precision through compaction"
+                );
                 // Also wire the resolver into the REST/gRPC vector
                 // batch path so direct inserts coerce to the
                 // collection's canonical precision (matches what the
                 // queue drainer does via BulkLoadDrainerSink).
-                shared_services
-                    .request_handlers
-                    .set_precision_resolver(resolver);
+                shared_services.record_ops.set_precision_resolver(resolver);
             }
             Err(e) => {
                 tracing::warn!(
@@ -386,7 +458,11 @@ impl ProximaDB {
             .grpc(|g| g.bind_address(grpc_addr))
             .with_api_config(config.api.clone())
             .with_data_dir(config.server.data_dir.clone())
-            .with_admin_ui_enabled(config.server.admin_ui.enabled);
+            .with_admin_ui_enabled(config.server.admin_ui.enabled)
+            .with_admin_ui_refresh(
+                config.server.admin_ui.auto_refresh,
+                config.server.admin_ui.refresh_interval_seconds,
+            );
 
         // Add TLS configuration if enabled
         if config.api.enable_tls.unwrap_or(false) {
@@ -457,26 +533,8 @@ impl ProximaDB {
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
-        let security_config = config
-            .security
-            .clone()
-            .filter(|sec_cfg| sec_cfg.enabled && sec_cfg.authentication.enabled);
-        let security: Option<Arc<security::SecurityCoordinator>> = if let Some(sec_cfg) =
-            security_config.clone()
-        {
-            match security::initialize_security(sec_cfg).await {
-                Ok(coordinator) => Some(Arc::new(coordinator)),
-                Err(err) => {
-                    tracing::warn!(
-                        "Security initialization failed, continuing with security disabled: {:?}",
-                        err
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let security_config = config.security.clone().filter(|sec_cfg| sec_cfg.enabled);
+        let security = initialize_configured_security(config.security.clone()).await?;
 
         // Initialize LLM engine if configured
         let llm_engine = if let Some(llm_cfg) = config.llm.clone() {
@@ -493,15 +551,17 @@ impl ProximaDB {
 
         // Create MultiServer with SharedServices (network orchestrator)
         tracing::debug!("🔧 ProximaDB::new - Creating MultiServer...");
-        let rest_auth_enabled = security_config.is_some();
-        let rest_multi_tenant_required = security_config.as_ref().is_some_and(|s| {
-            s.authentication.require_authentication && s.mode != security::SecurityMode::Development
-        });
-        // Capture an Arc to the request handlers BEFORE shared_services
-        // is moved into MultiServer below. The async-ingest drainer
-        // needs it as the production DrainerInsertSink target via the
-        // BulkLoadDrainerSink wrapper.
-        let handlers_for_drainer = shared_services.request_handlers.clone();
+        let rest_auth_enabled = security_config
+            .as_ref()
+            .is_some_and(|sec_cfg| sec_cfg.authentication.enabled);
+        let tenant_deployment_mode =
+            resolve_server_tenant_mode(&config.server.tenant, security_config.as_ref())?;
+        // Capture the drainer's record + vector services BEFORE shared_services
+        // is moved into MultiServer below. The async-ingest drainer needs them
+        // as the production DrainerInsertSink target via the BulkLoadDrainerSink
+        // wrapper (TD-104 S3-e: passed directly, no root UnifiedHandlers handle).
+        let record_ops_for_drainer = shared_services.record_ops.clone();
+        let vector_ops_for_drainer = shared_services.vector_operations_service.clone();
         // Capture the catalog_manager Arc the same way — the drainer
         // needs it to construct CanonicalPrecisionResolver so per-payload
         // canonical_embedding_precision lookup populates
@@ -575,15 +635,38 @@ impl ProximaDB {
             );
         }
 
+        // TD-TENANT-1: resolve the deployment-effective bare tenant-assertion
+        // trust policy ONCE (env > [security.tenant] header_trust > deployment-
+        // mode preset) and thread it into every network surface via MultiServer.
+        let (tenant_header_trust, trust_warning) = proximadb_tenant::HeaderTrustPolicy::effective(
+            match &tenant_deployment_mode {
+                proximadb_tenant::TenantDeploymentMode::MultiTenant => {
+                    proximadb_tenant::HeaderTrustPolicy::AuthenticatedOnly
+                }
+                proximadb_tenant::TenantDeploymentMode::SingleTenant { .. } => {
+                    proximadb_tenant::HeaderTrustPolicy::Open
+                }
+            },
+            config
+                .security
+                .as_ref()
+                .and_then(|security| security.tenant.header_trust),
+        );
+        if let Some(warning) = trust_warning {
+            tracing::warn!("{warning}");
+        }
+        tracing::info!(policy = %tenant_header_trust, "🔐 tenant header-trust policy (TD-TENANT-1)");
+
         let multi_server = network::MultiServer::new_with_queue_client(
             multi_config,
             shared_services,
             security.clone(),
             rest_auth_enabled,
-            rest_multi_tenant_required,
+            tenant_deployment_mode,
             llm_engine,
             queue_client.clone(),
-        );
+        )
+        .with_tenant_header_trust(tenant_header_trust);
         tracing::debug!("✅ ProximaDB::new - MultiServer created");
 
         // Phase 2H wiring (drainer half): spawn the drainer only when
@@ -617,7 +700,8 @@ impl ProximaDB {
             Some(
                 spawn_embedding_drainer_from_resolved(
                     qc.clone(),
-                    handlers_for_drainer,
+                    record_ops_for_drainer,
+                    vector_ops_for_drainer,
                     catalog_manager_for_drainer,
                     rq,
                     default_storage_root,
@@ -665,9 +749,25 @@ impl ProximaDB {
     pub async fn start(&mut self) -> anyhow::Result<()> {
         tracing::info!("🚀 ProximaDB::start - Starting database services...");
 
-        // Step 1: Start storage engine (recovers collections from metadata)
+        // TD-COMPACT-9: seed the coarse-probe (IVF) settings AUTHORITATIVELY from
+        // the loaded server config. Production `SstEngine::new()` uses
+        // `SstConfig::default()` (coarse_probe = None), so without this the
+        // `[storage.sst_config.coarse_probe]` TOML surface (nprobe_multiplier,
+        // enable_read_probe/write_train) was silently ignored. The overwritable
+        // seed (a `Some` config always wins) makes the TOML effective regardless
+        // of engine-construction order; env vars still override at call time.
+        crate::storage::engines::sst::segment_format::init_coarse_probe_settings(
+            self._config
+                .storage
+                .sst_config
+                .as_ref()
+                .and_then(|sst| sst.coarse_probe.as_ref()),
+        );
+
+        // Step 1: Start the storage engine. It restores the catalog, registers
+        // collection storage engines, and replays WAL in that dependency order.
         tracing::info!(
-            "📦 ProximaDB::start - Step 1: Starting storage engine for collection recovery..."
+            "📦 ProximaDB::start - Step 1: Starting storage engine and durable recovery..."
         );
         {
             let mut storage = self.storage.write().await;
@@ -676,32 +776,11 @@ impl ProximaDB {
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to start storage engine: {}", e))?;
         }
-        tracing::info!(
-            "✅ ProximaDB::start - Storage engine started, collections recovered from metadata_info"
-        );
+        tracing::info!("✅ ProximaDB::start - Storage engine started, catalog and WAL recovered");
 
-        // Step 2: Recover vectors from WAL (persisted data)
+        // Step 2: Recover graphs from snapshots + WAL
         tracing::info!(
-            "📦 ProximaDB::start - Step 2: Recovering vectors from WAL (persisted data)..."
-        );
-        {
-            let storage = self.storage.read().await;
-            match storage.recover_from_wal().await {
-                Ok(()) => {
-                    tracing::info!("✅ ProximaDB::start - Vectors recovered from WAL successfully");
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "⚠️  ProximaDB::start - WAL recovery failed (continuing anyway): {}",
-                        e
-                    );
-                }
-            }
-        }
-
-        // Step 3: Recover graphs from snapshots + WAL
-        tracing::info!(
-            "🌳 ProximaDB::start - Step 3: Recovering graphs from persistent storage..."
+            "🌳 ProximaDB::start - Step 2: Recovering graphs from persistent storage..."
         );
         if let Some(ref multi_server) = self.multi_server {
             match multi_server
@@ -722,16 +801,16 @@ impl ProximaDB {
             }
         }
 
-        // Step 4: Recover assignments from collection metadata
+        // Step 3: Recover assignments from collection metadata
         tracing::info!(
-            "🗺️ ProximaDB::start - Step 4: Recovering assignments from collection metadata..."
+            "🗺️ ProximaDB::start - Step 3: Recovering assignments from collection metadata..."
         );
         tracing::info!(
             "✅ ProximaDB::start - Assignment recovery completed (or skipped if no service)"
         );
 
-        // Step 5: Recover vectors from write buffer (in-memory data)
-        tracing::info!("🔄 ProximaDB::start - Step 5: Recovering vectors from write buffer...");
+        // Step 4: Recover vectors from write buffer (in-memory data)
+        tracing::info!("🔄 ProximaDB::start - Step 4: Recovering vectors from write buffer...");
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
@@ -742,13 +821,94 @@ impl ProximaDB {
                 })?;
         }
 
-        // Step 6: Initialize RL Query Planner (if enabled)
-        tracing::info!("🎯 ProximaDB::start - Step 6: Initializing RL Query Planner...");
+        // TD-CACHE-1 S2: background restart warming — replay per-tenant
+        // warm-set manifests (demand-proven hot ranges from the previous
+        // instance) + control-invariants prefill for the referenced segments.
+        // Background task: boot latency unaffected; tenants without manifests
+        // cost one negative read each. Gated by PROXIMADB_CACHE_PREFILL.
+        {
+            let base_url = self._config.storage.storage_urls().into_iter().next();
+            if let Some(base_url) = base_url {
+                tokio::spawn(async move {
+                    let factory = match crate::storage::persistence::filesystem::FilesystemFactory::create_default().await {
+                        Ok(f) => std::sync::Arc::new(f),
+                        Err(e) => {
+                            tracing::warn!("cache warming skipped (fs init): {e}");
+                            return;
+                        }
+                    };
+                    // Small grace so engine arming (which registers the cache
+                    // handles) has completed before replay looks them up.
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    // Tenants = catalog-tagged tenant ids ∪ the single-tenant
+                    // default — manifests are keyed by the REQUEST tenant, which
+                    // is "default" for untagged/single-tenant deployments.
+                    let mut tenant_set: std::collections::HashSet<String> =
+                        crate::storage::persistence::write_ahead_log::list_collections_from_catalog()
+                            .await
+                            .iter()
+                            .filter_map(proximadb_tenant::tenant_id_of)
+                            .collect();
+                    tenant_set.insert("default".to_string());
+                    let tenants: Vec<String> = tenant_set.into_iter().collect();
+                    crate::storage::engines::sst::warming::boot_warm(factory, base_url, tenants)
+                        .await;
+                });
+            }
+        }
+
+        // TD-CACHE-1 S4: eviction-notice fast-drain — opt-in IMDS watch
+        // (`PROXIMADB_EVICTION_WATCH=azure|aws|gcp`). On the Spot notice
+        // (which precedes SIGTERM and may be followed by a hard kill),
+        // persist the warm manifests and flush the memtable early.
+        if let Ok(provider) = std::env::var("PROXIMADB_EVICTION_WATCH") {
+            let provider = provider.trim().to_ascii_lowercase();
+            if !provider.is_empty() && provider != "0" && provider != "off" {
+                let base_url = self._config.storage.storage_urls().into_iter().next();
+                if let Some(base_url) = base_url {
+                    let storage = self.storage.clone();
+                    tokio::spawn(async move {
+                        let factory = match crate::storage::persistence::filesystem::FilesystemFactory::create_default().await {
+                            Ok(f) => std::sync::Arc::new(f),
+                            Err(e) => {
+                                tracing::warn!("eviction watch skipped (fs init): {e}");
+                                return;
+                            }
+                        };
+                        let flush: std::sync::Arc<
+                            dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync,
+                        > = std::sync::Arc::new(move || {
+                            let storage = storage.clone();
+                            Box::pin(async move {
+                                let engine = storage.read().await;
+                                match engine.flush_memtable_to_storage().await {
+                                    Ok(r) => tracing::info!(
+                                        collections = r.collections_flushed,
+                                        vectors = r.total_vectors_flushed,
+                                        "fast-drain memtable flush complete"
+                                    ),
+                                    Err(e) => {
+                                        tracing::warn!("fast-drain memtable flush failed: {e}")
+                                    }
+                                }
+                            })
+                        });
+                        crate::storage::engines::sst::warming::eviction_watch(
+                            provider, factory, base_url, flush,
+                        )
+                        .await;
+                    });
+                }
+            }
+        }
+
+        // Step 5: Initialize RL Query Planner (if enabled)
+        tracing::info!("🎯 ProximaDB::start - Step 5: Initializing RL Query Planner...");
         self.init_rl_planner().await?;
 
-        // Step 7: Start multi-server (HTTP and gRPC on separate ports)
+        // Step 6: Start multi-server (HTTP and gRPC on separate ports)
         tracing::info!(
-            "🌐 ProximaDB::start - Step 7: Starting multi-server (gRPC:5679 + REST:5678)..."
+            "🌐 ProximaDB::start - Step 6: Starting multi-server (gRPC:5679 + REST:5678)..."
         );
         if let Some(ref mut multi_server) = self.multi_server {
             multi_server
@@ -767,6 +927,23 @@ impl ProximaDB {
     /// Shutdown the database instance gracefully.
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
         info!("Graceful shutdown requested");
+
+        // TD-LIFECYCLE-1: signal every registered background loop FIRST so
+        // cooperative exits overlap the rest of the shutdown sequence (no
+        // in-flight discovery/observer pass outlives the runtime).
+        let fired = crate::services::shutdown_registry::fire_all();
+        if fired > 0 {
+            tracing::info!(loops = fired, "background loops signaled to stop");
+        }
+
+        // Persist the learned route cost model so measured history survives the
+        // restart (best-effort; off the hot path, on graceful shutdown only).
+        crate::query::route_cost_model::persist_cost_model(&self._config.server.data_dir);
+
+        // TD-TRACE-2: flush + stop the durable io_trace sink so buffered trace
+        // segments are sealed to disk (no-op if the sink was not installed).
+        crate::observability::io_trace_sink::shutdown().await;
+        crate::observability::io_trace_warehouse::shutdown().await;
 
         // 1a. Stop the async-ingest drainer first so it stops consuming
         //     before we shut down the storage layer it inserts into.
@@ -819,6 +996,53 @@ impl ProximaDB {
                 Ok(Ok(())) => tracing::debug!("Graph WAL flush complete"),
                 Ok(Err(e)) => tracing::warn!("Graph WAL flush error: {}", e),
                 Err(_) => tracing::warn!("Graph WAL flush timeout - forcing continuation"),
+            }
+        }
+
+        // TD-FLUSH-4: await in-flight inline size-flushes FIRST — a triggered
+        // materialize takes tens of seconds (measured 43.9s at 884k entries)
+        // and must complete + rename into place before teardown; killing it
+        // strands a __flush/ staging file that startup cleanup deletes.
+        let stragglers = crate::storage::persistence::write_ahead_log::drain_inline_flushes(
+            std::time::Duration::from_secs(90),
+        )
+        .await;
+        if stragglers > 0 {
+            tracing::warn!(
+                stragglers,
+                "in-flight flush(es) did not finish before shutdown"
+            );
+        }
+
+        // TD-CACHE-1 S2: persist per-tenant warm-set manifests so the next
+        // boot (Spot replacement) replays the measured hot set instead of
+        // paying the cold herd. Best-effort with a hard timeout — shutdown
+        // never blocks on the object store.
+        {
+            let base_url = self._config.storage.storage_urls().into_iter().next();
+            if let Some(base_url) = base_url {
+                match crate::storage::persistence::filesystem::FilesystemFactory::create_default()
+                    .await
+                {
+                    Ok(factory) => {
+                        let factory = std::sync::Arc::new(factory);
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(10),
+                            crate::storage::engines::sst::warming::emit_warm_manifests(
+                                &factory, &base_url,
+                            ),
+                        )
+                        .await
+                        {
+                            Ok(n) if n > 0 => {
+                                tracing::info!("🔥 {n} warm manifest(s) persisted for next boot")
+                            }
+                            Ok(_) => {}
+                            Err(_) => tracing::warn!("warm manifest emit timed out (skipped)"),
+                        }
+                    }
+                    Err(e) => tracing::warn!("warm manifest emit skipped (fs init): {e}"),
+                }
             }
         }
 
@@ -915,12 +1139,22 @@ impl ProximaDB {
                 let interval = std::time::Duration::from_secs(RL_CHECKPOINT_INTERVAL_SECS);
                 let mut ticker = tokio::time::interval(interval);
                 ticker.tick().await;
+                // Dirty-flag: only rewrite the policy when learning actually
+                // advanced since the last checkpoint. A long-running idle server
+                // otherwise rewrites an identical multi-KB file every tick.
+                let mut last_saved_updates: Option<u64> = None;
 
                 loop {
                     ticker.tick().await;
                     if let Some(planner) = query::rl_planner::get_rl_planner() {
+                        let updates = planner.total_updates().await;
+                        if last_saved_updates == Some(updates) {
+                            continue;
+                        }
                         if let Err(e) = planner.save_policy(&checkpoint_path).await {
                             tracing::warn!("Failed to save RL policy checkpoint: {}", e);
+                        } else {
+                            last_saved_updates = Some(updates);
                         }
                     } else {
                         break;
@@ -1150,8 +1384,8 @@ impl ProximaDB {
     pub async fn force_flush_collection(&self, collection: &str) -> anyhow::Result<()> {
         if let Some(ref multi_server) = self.multi_server {
             let vops = &multi_server.shared_services.vector_operations_service;
-            let id = vops.resolve_collection_id(collection).await;
-            vops.force_flush_collection(&id)
+            let object_id = vops.resolve_collection_object_id(collection).await?;
+            vops.force_flush_collection(&object_id.to_string())
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to force-flush collection: {}", e))?;
             Ok(())
@@ -1236,7 +1470,8 @@ async fn open_queue_client_from_resolved(
             .await
             .map_err(|e| anyhow::anyhow!("FilesystemFactory init: {}", e))?,
     );
-    let fs_adapter = crate::services::queue_fs_adapter::FactoryQueueFs::new(factory, &rq.root);
+    let fs_adapter = crate::services::queue_fs_adapter::FactoryQueueFs::new(factory, &rq.root)
+        .map_err(|e| anyhow::anyhow!("queue filesystem capability check: {}", e))?;
 
     let queue = proximadb_queue::QueueClient::open_with_fs(queue_cfg, Some(fs_adapter))
         .await
@@ -1251,7 +1486,8 @@ async fn open_queue_client_from_resolved(
 /// into a `Vec<u32>`.
 async fn spawn_embedding_drainer_from_resolved(
     queue: Arc<proximadb_queue::QueueClient>,
-    handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
+    record_ops: Arc<dyn proximadb_runtime::RecordOpsPort>,
+    vector_operations_service: Arc<crate::services::VectorOperationsService>,
     catalog_manager: Arc<crate::catalog::CatalogManager>,
     rq: &core::config::ResolvedQueueConfig,
     default_storage_root: String,
@@ -1260,8 +1496,8 @@ async fn spawn_embedding_drainer_from_resolved(
     tokio::sync::oneshot::Sender<()>,
 )> {
     let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(
-        handlers.record_ops() as Arc<dyn proximadb_runtime::RecordOpsPort>,
-        handlers.vector_operations_service.clone(),
+        record_ops,
+        vector_operations_service,
         default_storage_root,
     ));
     let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
@@ -1362,7 +1598,8 @@ async fn open_queue_client_if_configured()
 #[allow(dead_code)]
 async fn spawn_embedding_drainer(
     queue: Arc<proximadb_queue::QueueClient>,
-    handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
+    record_ops: Arc<dyn proximadb_runtime::RecordOpsPort>,
+    vector_operations_service: Arc<crate::services::VectorOperationsService>,
 ) -> anyhow::Result<(
     tokio::task::JoinHandle<()>,
     tokio::sync::oneshot::Sender<()>,
@@ -1371,8 +1608,8 @@ async fn spawn_embedding_drainer(
     // the canonical storage_locations URL instead of this hard default.
     let default_storage_root = "file:///tmp/proximadb".to_string();
     let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(
-        handlers.record_ops() as Arc<dyn proximadb_runtime::RecordOpsPort>,
-        handlers.vector_operations_service.clone(),
+        record_ops,
+        vector_operations_service,
         default_storage_root,
     ));
     let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
@@ -1428,5 +1665,91 @@ mod async_ingest_wiring_tests {
     fn parse_partition_list_rejects_garbage() {
         assert_eq!(parse_partition_list("abc"), None);
         assert_eq!(parse_partition_list("0..abc"), None);
+    }
+}
+
+#[cfg(test)]
+mod security_initialization_tests {
+    use super::initialize_configured_security;
+    use crate::security::auth_service::{JwtConfig, SSOConfig};
+    use crate::security::security_coordinator::{ComplianceConfig, TenantTrustConfig, TlsConfig};
+    use crate::security::{
+        AuthenticationConfig, AuthenticationMethod, EncryptionConfig, KeyStoreConfig, MtlsConfig,
+        RBACConfig, SecurityConfig, SecurityMode,
+    };
+    use proximadb_security::AuditConfig;
+    use std::collections::HashMap;
+
+    fn security_config(enabled: bool) -> SecurityConfig {
+        SecurityConfig {
+            enabled,
+            mode: SecurityMode::Production,
+            authentication: AuthenticationConfig {
+                enabled: true,
+                methods: vec![AuthenticationMethod::ClientCertificate],
+                require_authentication: true,
+                default_session_timeout_minutes: 60,
+                api_keys: HashMap::new(),
+                jwt: JwtConfig {
+                    enabled: false,
+                    secret: String::new(),
+                    access_token_expiration_minutes: 15,
+                    refresh_token_expiration_days: 7,
+                    issuer: String::new(),
+                    audience: String::new(),
+                    algorithm: "HS256".to_string(),
+                },
+                sso: SSOConfig {
+                    enabled: false,
+                    providers: Vec::new(),
+                    token_cache_ttl_minutes: 5,
+                    aws_iam: None,
+                    azure_ad: None,
+                },
+                mtls: MtlsConfig {
+                    enabled: true,
+                    ca_cert_path: None,
+                    require_client_cert: true,
+                    cn_role_mapping: HashMap::new(),
+                },
+            },
+            rbac: RBACConfig::default(),
+            audit: AuditConfig::default(),
+            tls: TlsConfig {
+                enabled: false,
+                require_client_certificates: false,
+                cert_file: None,
+                key_file: None,
+                ca_file: None,
+            },
+            compliance: ComplianceConfig {
+                frameworks: Vec::new(),
+                data_residency: None,
+                encryption_at_rest: false,
+                encryption_in_transit: false,
+            },
+            encryption: EncryptionConfig::default(),
+            key_store: KeyStoreConfig::default(),
+            tenant: TenantTrustConfig::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn enabled_security_initialization_failure_is_fatal() {
+        let error = match initialize_configured_security(Some(security_config(true))).await {
+            Ok(_) => panic!("enabled invalid security must fail startup"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("mTLS"));
+    }
+
+    #[tokio::test]
+    async fn disabled_security_remains_an_explicit_oss_posture() {
+        let security = initialize_configured_security(Some(security_config(false)))
+            .await
+            .expect("disabled security must not initialize its invalid providers");
+
+        assert!(security.is_none());
     }
 }

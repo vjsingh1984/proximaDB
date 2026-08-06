@@ -163,6 +163,24 @@ with header `X-Embed-Source: native` (omit `vector` to let the server embed).
 | `Deprecation` / `X-ProximaDB-API-Status` | Set on deprecated v1 responses
 |====
 
+=== Tenant identity per transport
+
+Every transport carries the tenant a different way, but all resolve through the
+single request-tenant resolver — a bare/absent selector maps to the same
+`default` tenant everywhere, and isolation is *structural* (the tenant is composed
+into the storage key at the service boundary, never a per-query predicate). The
+`X-Tenant-ID` REST header is a formal optional parameter on every operation in the
+generated OpenAPI spec (`docs/openapi/proximadb-openapi.yaml`).
+
+[cols="1,2,3", options="header"]
+|====
+| Transport | Tenant carrier | Notes
+| REST v2 | `X-Tenant-ID` header (optional) | Applied only when there is no authenticated context; a JWT tenant claim takes precedence, and a header disagreeing with the authenticated tenant is rejected.
+| gRPC | `x-tenant-id` metadata | Ambient identity (not a per-message field).
+| Arrow Flight | `x-proximadb-tenant-id` metadata | NOTE: key differs from gRPC/REST (`x-tenant-id`) — a naming inconsistency tracked for unification.
+| pgwire | `dbname` (fallback `SET proximadb.write.tenant_id`) | Connection-level; `dbname=proximadb` ⇒ default tenant. See link:./postgres.adoc[Postgres Wire Reference].
+|====
+
 == SDK lowering (Python)
 
 Entry point: `from proximadb_sdk import ProximaDBClient` (the unified client,

@@ -49,6 +49,13 @@ mod tests {
             write_buffer_directory: "/custom/path".to_string(),
             enable_wal: false,
             global_manifest_url: None,
+            wal_local_dir: None,
+            // ADR-069 tiered-flush knobs.
+            flush_interval_secs: 300,
+            flush_floor_predicted_mb: 128,
+            wal_max_bytes: 25 * 1024 * 1024 * 1024,
+            high_watermark_pct: 0.75,
+            critical_watermark_pct: 0.9,
         };
 
         assert_eq!(config.write_buffer_size_mb, 16384);
@@ -57,6 +64,51 @@ mod tests {
         assert_eq!(config.memtable_type, "SkipList");
         assert_eq!(config.sync_mode, "Periodic");
         assert!(!config.enable_wal);
+        assert_eq!(config.flush_interval_secs, 300);
+        assert_eq!(config.wal_max_bytes, 25 * 1024 * 1024 * 1024);
+        assert_eq!(config.high_watermark_pct, 0.75);
+        assert_eq!(config.critical_watermark_pct, 0.9);
+    }
+
+    #[test]
+    fn test_wal_config_defaults_arm_time_floor() {
+        // ADR-069 D2: the time floor defaults to 300s (RPO safety net) so the
+        // auto-flush driver spawns by default and segments materialize while the
+        // server runs. The inline size trigger handles throughput; wal_max_bytes
+        // stays 0 so S4 write-shedding stays OFF.
+        let config = WriteBufferUserConfig::default();
+        assert_eq!(config.flush_interval_secs, 300);
+        assert_eq!(config.wal_max_bytes, 0);
+        assert_eq!(config.high_watermark_pct, 0.80);
+        assert_eq!(config.critical_watermark_pct, 0.95);
+    }
+
+    #[test]
+    fn test_flush_knobs_propagate_through_to_engine_config() {
+        // The LIVE wiring: user TOML knobs must reach WalPerformanceConfig via
+        // to_engine_config() (the database.rs path), and reconcile into a FlushPolicy
+        // with the periodic scheduler armed.
+        use crate::storage::persistence::write_ahead_log::flush_policy::FlushPolicy;
+
+        let user = WriteBufferUserConfig {
+            memory_flush_size_bytes: 8 * 1024 * 1024,
+            flush_interval_secs: 120,
+            wal_max_bytes: 1000,
+            high_watermark_pct: 0.80,
+            critical_watermark_pct: 0.95,
+            ..Default::default()
+        };
+        let wal = user.to_engine_config();
+        assert_eq!(wal.performance.memory_flush_size_bytes, 8 * 1024 * 1024);
+        assert_eq!(wal.performance.flush_interval_secs, 120);
+        assert_eq!(wal.performance.wal_max_bytes, 1000);
+        assert_eq!(wal.performance.high_watermark_pct, 0.80);
+        assert_eq!(wal.performance.critical_watermark_pct, 0.95);
+
+        let policy = FlushPolicy::from_performance(&wal.performance);
+        assert!(policy.needs_scheduler(), "time+capacity armed ⇒ scheduler");
+        assert_eq!(policy.high_watermark_bytes, 800);
+        assert_eq!(policy.critical_watermark_bytes, 950);
     }
 
     #[test]
@@ -71,6 +123,7 @@ mod tests {
             write_buffer_directory: "./test_data/write_buffer".to_string(),
             enable_wal: true,
             global_manifest_url: None,
+            ..Default::default()
         };
 
         // Verify values are as expected

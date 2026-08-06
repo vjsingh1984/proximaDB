@@ -39,15 +39,30 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
     };
     // Resolve the user-facing name to the canonical internal id the write path
     // keys WAL + storage under (same as the dedup pass).
-    let collection_id = vector_ops
-        .resolve_collection_id(ctx.collection_id.as_str())
-        .await;
-    let collection_id = collection_id.as_str();
+    let collection_object_id = vector_ops
+        .resolve_collection_object_id(ctx.collection_id.as_str())
+        .await?;
+    let collection_id = collection_object_id.to_string();
+
+    // Fail before the storage-inclusive corpus read. AXIS being compiled is
+    // only a capability; runtime policy, collection index intent, and an
+    // already-published served index must all be present. Recluster is
+    // maintenance, not an implicit full-corpus bootstrap path.
+    if !vector_ops
+        .has_reclusterable_axis_index(&collection_id)
+        .await?
+    {
+        let mut result = DiscoveryJobResult::default();
+        result
+            .quality_metrics
+            .insert("recluster_skipped_no_served_index".to_string(), 1.0);
+        return Ok(result);
+    }
 
     // Storage-inclusive read of the snapshot (WAL/memtable + flushed storage),
     // merged by oid (freshest wins) — same read path the dedup pass uses.
     let records = vector_ops
-        .list_all_records_with_tenant_context(collection_id, None)
+        .list_all_records_with_tenant_context(&collection_id, None)
         .await?;
     let input = records.len() as u64;
 
@@ -100,7 +115,7 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
     };
 
     let engine = AxisClusteringEngine::new(config);
-    let model = engine.train_model(collection_id, vectors).await?;
+    let model = engine.train_model(&collection_id, vectors).await?;
     let m = &model.metrics;
 
     result.quality_metrics.insert(
@@ -130,7 +145,7 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
     // job (the metrics pass already succeeded).
     let axis = vector_ops.axis_index_manager();
     let swapped = match axis
-        .rebuild_and_swap_served_index(collection_id, &records)
+        .rebuild_and_swap_served_index(&collection_id, &records)
         .await
     {
         Ok(applied) => applied,
@@ -146,7 +161,7 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
     if swapped {
         result.quality_metrics.insert(
             "recluster_index_generation".to_string(),
-            axis.index_generation(collection_id).await as f64,
+            axis.index_generation(&collection_id).await as f64,
         );
     }
     Ok(result)

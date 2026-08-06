@@ -12,7 +12,7 @@ use super::QueryRow;
 #[cfg(feature = "datafusion-integration")]
 use super::window_executor::WindowFunction;
 use super::window_executor::{
-    FrameBound, FrameDefinition, SortDirection, WindowFunctionCall, WindowSpec,
+    FrameBound, FrameDefinition, FrameUnit, SortDirection, WindowFunctionCall, WindowSpec,
 };
 use anyhow::Result;
 #[cfg(feature = "datafusion-integration")]
@@ -111,8 +111,17 @@ fn map_frame_bound(
 fn map_window_frame(frame: &FrameDefinition) -> datafusion::logical_expr::WindowFrame {
     use datafusion::logical_expr::{WindowFrame, WindowFrameUnits};
 
+    // Thread the declared frame unit through instead of hardcoding `Rows` — a
+    // RANGE/GROUPS frame must execute as declared, otherwise ties produce
+    // silently wrong results.
+    let units = match frame.unit {
+        FrameUnit::Rows => WindowFrameUnits::Rows,
+        FrameUnit::Range => WindowFrameUnits::Range,
+        FrameUnit::Groups => WindowFrameUnits::Groups,
+    };
+
     WindowFrame::new_bounds(
-        WindowFrameUnits::Rows,
+        units,
         map_frame_bound(&frame.start, true),
         map_frame_bound(&frame.end, false),
     )
@@ -315,9 +324,14 @@ pub struct WindowSpecDescription {
 
 /// Describe a frame definition as a human-readable string.
 fn describe_frame(frame: &FrameDefinition) -> String {
+    let unit = match frame.unit {
+        FrameUnit::Rows => "ROWS",
+        FrameUnit::Range => "RANGE",
+        FrameUnit::Groups => "GROUPS",
+    };
     let start = describe_bound(&frame.start, "PRECEDING");
     let end = describe_bound(&frame.end, "FOLLOWING");
-    format!("ROWS BETWEEN {} AND {}", start, end)
+    format!("{} BETWEEN {} AND {}", unit, start, end)
 }
 
 /// Describe a single frame bound.
@@ -404,6 +418,7 @@ mod tests {
                     direction: SortDirection::Asc,
                 }],
                 frame: FrameDefinition {
+                    unit: FrameUnit::Rows,
                     start: FrameBound::Unbounded,
                     end: FrameBound::Unbounded,
                 },
@@ -433,6 +448,7 @@ mod tests {
                 },
             ],
             frame: FrameDefinition {
+                unit: FrameUnit::Rows,
                 start: FrameBound::Offset(3),
                 end: FrameBound::CurrentRow,
             },
@@ -455,6 +471,7 @@ mod tests {
 
         // Full frame
         let full_frame = FrameDefinition {
+            unit: FrameUnit::Rows,
             start: FrameBound::Unbounded,
             end: FrameBound::Unbounded,
         };
@@ -466,11 +483,55 @@ mod tests {
 
         // Offset frame
         let offset_frame = FrameDefinition {
+            unit: FrameUnit::Rows,
             start: FrameBound::Offset(2),
             end: FrameBound::Offset(1),
         };
         let desc = describe_frame(&offset_frame);
         assert_eq!(desc, "ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING");
+
+        // RANGE / GROUPS units must be reflected, not collapsed to ROWS.
+        let range_frame = FrameDefinition {
+            unit: FrameUnit::Range,
+            start: FrameBound::Offset(1),
+            end: FrameBound::CurrentRow,
+        };
+        assert_eq!(
+            describe_frame(&range_frame),
+            "RANGE BETWEEN 1 PRECEDING AND CURRENT ROW"
+        );
+        let groups_frame = FrameDefinition {
+            unit: FrameUnit::Groups,
+            start: FrameBound::Unbounded,
+            end: FrameBound::CurrentRow,
+        };
+        assert_eq!(
+            describe_frame(&groups_frame),
+            "GROUPS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+        );
+    }
+
+    /// The DataFusion route must carry the declared frame unit through to the
+    /// DataFusion `WindowFrame` — the bug was hardcoding `Rows` regardless.
+    #[cfg(feature = "datafusion-integration")]
+    #[test]
+    fn map_window_frame_threads_declared_unit() {
+        use datafusion::logical_expr::WindowFrameUnits;
+
+        let cases = [
+            (FrameUnit::Rows, WindowFrameUnits::Rows),
+            (FrameUnit::Range, WindowFrameUnits::Range),
+            (FrameUnit::Groups, WindowFrameUnits::Groups),
+        ];
+        for (unit, expected) in cases {
+            let frame = FrameDefinition {
+                unit,
+                start: FrameBound::Offset(1),
+                end: FrameBound::CurrentRow,
+            };
+            let df_frame = map_window_frame(&frame);
+            assert_eq!(df_frame.units, expected, "unit {unit:?} must map through");
+        }
     }
 
     #[test]

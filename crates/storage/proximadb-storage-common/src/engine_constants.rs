@@ -38,3 +38,12 @@ pub const DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES: usize = 200;
 pub const DEFAULT_TARGET_BLOCK_SIZE_BYTES: usize = 3 * 1024 * 1024;
 pub const MIN_TARGET_BLOCK_SIZE_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_TARGET_BLOCK_SIZE_BYTES: usize = 4 * 1024 * 1024;
+/// Hard per-block ROW bound for the PAX segment writer. The normal block cut is
+/// byte-driven off a *modeled* per-row estimate; this cap bounds the per-block
+/// stripe-assembly transient (row buffers + per-column stripes materialized at
+/// cut time) even when the model under-counts — e.g. the coalesced layout hoists
+/// vectors out of blocks, so a two-level (IVF-probe) compaction cell can
+/// otherwise grow a block far past the intended geometry. Slightly above the
+/// largest byte-derived rows-per-block (4 MiB / 200 B ≈ 21k target-capped at
+/// ~15.7k for the 3 MiB default), so healthy paths are unchanged.
+pub const MAX_BLOCK_ROWS: usize = 16 * 1024;

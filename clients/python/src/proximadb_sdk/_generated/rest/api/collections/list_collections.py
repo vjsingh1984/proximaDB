@@ -19,7 +19,11 @@ def _get_kwargs(
     limit: Union[Unset, int] = UNSET,
     offset: Union[Unset, int] = UNSET,
     include_stats: Union[Unset, bool] = UNSET,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     params: dict[str, Any] = {}
 
@@ -37,6 +41,7 @@ def _get_kwargs(
         "params": params,
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -70,6 +75,7 @@ def sync_detailed(
     limit: Union[Unset, int] = UNSET,
     offset: Union[Unset, int] = UNSET,
     include_stats: Union[Unset, bool] = UNSET,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[ListCollectionsV2Response]:
     """List collections.
 
@@ -93,6 +99,7 @@ def sync_detailed(
         limit (Union[Unset, int]):
         offset (Union[Unset, int]):
         include_stats (Union[Unset, bool]):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -106,6 +113,7 @@ def sync_detailed(
         limit=limit,
         offset=offset,
         include_stats=include_stats,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -121,6 +129,7 @@ def sync(
     limit: Union[Unset, int] = UNSET,
     offset: Union[Unset, int] = UNSET,
     include_stats: Union[Unset, bool] = UNSET,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[ListCollectionsV2Response]:
     """List collections.
 
@@ -144,6 +153,7 @@ def sync(
         limit (Union[Unset, int]):
         offset (Union[Unset, int]):
         include_stats (Union[Unset, bool]):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,6 +168,7 @@ def sync(
         limit=limit,
         offset=offset,
         include_stats=include_stats,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -167,6 +178,7 @@ async def asyncio_detailed(
     limit: Union[Unset, int] = UNSET,
     offset: Union[Unset, int] = UNSET,
     include_stats: Union[Unset, bool] = UNSET,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[ListCollectionsV2Response]:
     """List collections.
 
@@ -190,6 +202,7 @@ async def asyncio_detailed(
         limit (Union[Unset, int]):
         offset (Union[Unset, int]):
         include_stats (Union[Unset, bool]):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,6 +216,7 @@ async def asyncio_detailed(
         limit=limit,
         offset=offset,
         include_stats=include_stats,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -216,6 +230,7 @@ async def asyncio(
     limit: Union[Unset, int] = UNSET,
     offset: Union[Unset, int] = UNSET,
     include_stats: Union[Unset, bool] = UNSET,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[ListCollectionsV2Response]:
     """List collections.
 
@@ -239,6 +254,7 @@ async def asyncio(
         limit (Union[Unset, int]):
         offset (Union[Unset, int]):
         include_stats (Union[Unset, bool]):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -254,5 +270,6 @@ async def asyncio(
             limit=limit,
             offset=offset,
             include_stats=include_stats,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

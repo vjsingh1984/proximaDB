@@ -60,6 +60,76 @@ pub fn get_sst_axis_manager() -> Option<Arc<dyn IndexEngine>> {
     GLOBAL_SST_AXIS_MANAGER.get().cloned()
 }
 
+/// TD-CACHE-1: process-global handles to the warm-tier caches, registered at
+/// engine arming so the boot warm task and the shutdown manifest emitter
+/// (database.rs) can reach them without threading engine handles. Same
+/// OnceLock pattern as the AXIS registry above; None until an engine arms.
+static GLOBAL_WARM_TIER_CACHES: std::sync::OnceLock<(
+    Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+)> = std::sync::OnceLock::new();
+
+/// Register the armed warm-tier caches (first engine wins — the server builds
+/// one SST engine; tests building more are no-ops here).
+pub fn set_warm_tier_caches(
+    invariants: Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    survivor: Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+) {
+    let _ = GLOBAL_WARM_TIER_CACHES.set((invariants, survivor));
+}
+
+/// The registered warm-tier caches, if any engine has armed them.
+pub fn get_warm_tier_caches() -> Option<(
+    Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+)> {
+    GLOBAL_WARM_TIER_CACHES.get().cloned()
+}
+
+/// Reclaim all immutable PAX acceleration bytes below a successfully retired
+/// collection directory. No cache is a valid no-op (env-unset behavior).
+pub async fn purge_warm_tier_prefix(path_prefix: &str) -> usize {
+    // TD-DELVEC-1 C3: invalidate the OID resolver cache entries under this prefix
+    // (collection-drop) — BEFORE the warm_caches guard (the resolver cache is
+    // independent of the warm-tier pair). Mirrors C2's compaction-retire placement.
+    #[cfg(feature = "cold-deletion-vectors")]
+    if let Some(cache) = get_global_oid_resolver_cache() {
+        cache.invalidate_prefix(path_prefix);
+    }
+    let Some((invariants, survivor)) = get_warm_tier_caches() else {
+        return 0;
+    };
+    let invariant_entries = invariants.invalidate_prefix_all(path_prefix).await;
+    invariant_entries + survivor.purge_prefix(path_prefix).await
+}
+
+/// TD-DELVEC-1 WI-3c / C2: process-global OID resolver cache (sibling to
+/// `GLOBAL_WARM_TIER_CACHES`). Hoisted to module scope so compaction's retire
+/// path (`purge_retired_segment_cache_entries`) can invalidate entries for
+/// compacted-away segments via `get_global_oid_resolver_cache()`. `None` inner =
+/// cache disabled (`PROXIMADB_OID_RESOLVER_CACHE_MB == 0`).
+#[cfg(feature = "cold-deletion-vectors")]
+static GLOBAL_OID_RESOLVER_CACHE: std::sync::OnceLock<
+    Option<Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>>,
+> = std::sync::OnceLock::new();
+
+/// The process-global OID resolver cache, if an engine armed one (mb > 0).
+/// Borrowed (not cloned) — `invalidate` only needs `&self`.
+#[cfg(feature = "cold-deletion-vectors")]
+pub fn get_global_oid_resolver_cache()
+-> Option<&'static Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>> {
+    GLOBAL_OID_RESOLVER_CACHE.get().and_then(Option::as_ref)
+}
+
+/// Test-only setter (the production path uses the constructor's `get_or_init`).
+/// Set-once; benign across tests (invalidate is miss-safe on unique paths).
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+pub fn set_global_oid_resolver_cache_for_tests(
+    cache: Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>,
+) {
+    let _ = GLOBAL_OID_RESOLVER_CACHE.set(Some(cache));
+}
+
 // Global PCA model cache for Z-Order spatial encoding
 // Uses lazy_static for thread-safe initialization
 lazy_static::lazy_static! {
@@ -141,6 +211,17 @@ pub struct SstEngine {
     ///
     /// None during initialization, Some after start_compaction() called
     compaction_manager: Option<Arc<Compaction>>,
+
+    /// TD-COMPACT-8: per-collection `training_in_flight` guard. When a TD-COMPACT-5
+    /// training compaction is running for a collection, its `storage_url` is inserted
+    /// here. `should_trigger_compaction` arm 2 checks this set and skips re-arming
+    /// while a training pass is in-flight — eliminating the redundant re-training loop
+    /// (up to N-1 wasted cycles per ingest batch, each costing N GETs + PCA + PUT +
+    /// DELETEs on object storage). The flag is set by the flush caller before
+    /// `enqueue_due_compaction` and cleared by the background worker once the
+    /// compaction completes (the flush caller also clears it on the no-worker
+    /// paths: nothing-due `Ok(false)`, or enqueue `Err`).
+    pub(crate) training_in_flight: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 
     /// **Filesystem Factory**
     ///
@@ -296,6 +377,33 @@ pub struct SstEngine {
             crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache,
         >,
     >,
+    /// PR2: per-segment invariants cache (header+region+footer). Hot queries
+    /// skip the 3 read_range calls → 3 GETs → 0.
+    pub(crate) segment_invariants_cache:
+        Option<Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>>,
+
+    /// TD-DELVEC-1 WI-3c: per-segment OID→position resolver cache. Feature-gated
+    /// `cold-deletion-vectors`. Empty on boot; lazy-filled by the resolve path
+    /// (`read_resolver` on cache miss). Compaction invalidates on retire.
+    #[cfg(feature = "cold-deletion-vectors")]
+    pub(crate) oid_resolver_cache:
+        Option<Arc<crate::storage::engines::sst::oid_resolver_cache::OidResolverCache>>,
+
+    /// TD-DELVEC-1 WI-3a-remaining-A: durable, CAS'd per-segment deletion-vector
+    /// store. Feature-gated `cold-deletion-vectors`. Per-engine (authoritative
+    /// owned state, not a shared cache), keyed by segment path; lazy-filled on
+    /// first touch + reload. Wired end-to-end (WI-3b delete, WI-4 merge-on-read,
+    /// WI-5 recovery reconcile, WI-6 compaction).
+    #[cfg(feature = "cold-deletion-vectors")]
+    pub(crate) deletion_vector_store:
+        Option<Arc<crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore>>,
+
+    /// ADR-065 Q3: ranged RAM cache for survivor (Region B SQ8) + OID (Region D)
+    /// byte ranges. Hot repeat queries skip the per-range `fs.read_range` GETs.
+    /// Default `None` (read path byte-for-byte unchanged); opt in via
+    /// [`Self::with_survivor_cache`].
+    pub(crate) survivor_cache:
+        Option<Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>>,
 
     /// **Tiering Integration** (Optional)
     ///
@@ -326,6 +434,19 @@ pub struct SstEngine {
     freshness_lsn_source: Option<
         Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
     >,
+
+    /// DIP storage-URL resolver (optional). When set, `get_collection_storage_url`
+    /// resolves the collection's real `base_location` through it (catalog → config
+    /// fallback chain); the `/data/collections/{id}` placeholder is retired.
+    /// Mirrors the WAL's `path_resolver` + this struct's `freshness_lsn_source`.
+    /// Wired by `SharedServices::new`.
+    pub(crate) path_resolver:
+        Option<Arc<dyn crate::storage::trait_components::path_resolver::CollectionPathResolver>>,
+
+    /// ADR-081 regression hook: rejected preflights must not reach the
+    /// vector-proportional sort boundary.
+    #[cfg(test)]
+    pub(crate) flush_sort_invocations: std::sync::atomic::AtomicU64,
 }
 
 impl SstEngine {
@@ -392,10 +513,48 @@ impl SstEngine {
         // Register cache providers with orchestrator
         let orchestrator = Self::register_cache_providers(decompression_cache.clone()).await?;
 
-        // Initialize compaction manager (always enabled)
-        let compaction_manager = Some(Arc::new(Compaction::new(config.clone()).await.map_err(
-            |e| SstError::Internal(format!("Failed to create compaction manager: {}", e)),
-        )?));
+        // Initialize compaction manager (always enabled) — TD-COMPACT-6 D0: start
+        // background workers on THIS instance (the one the flush path uses via
+        // self.compaction_manager()). Without this, schedule_compaction enqueues to
+        // a workerless queue — the 2 workers at engine.rs:212 run on a DIFFERENT
+        // Compaction instance (the StorageEngine's), leaving the SstEngine's
+        // task_queue with zero consumers. Wire the worker count to the existing
+        // SstConfig.background_thread_count (was hardcoded 2 at engine.rs:212;
+        // the config field existed but was unused at the spawn site).
+        //
+        // TD-COMPACT-6 D1: the training_in_flight guard is created HERE and
+        // shared (same Arc) between this SstEngine and its Compaction, so the
+        // background workers can clear a collection's entry once the async
+        // compaction completes (re-arming the flush path's training trigger).
+        // It MUST be linked before start_workers, which clones the handle into
+        // each worker task.
+        let training_in_flight: Arc<std::sync::Mutex<std::collections::HashSet<String>>> =
+            Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        // TD-COMPACT-6 D1: construct via with_atomic_coordinator so the
+        // background workers carry the SAME atomic coordinator the flush path
+        // uses — preserving the ADR-046 LSN-coherent atomic-swap publish.
+        let mut compaction =
+            Compaction::with_atomic_coordinator(config.clone(), Some(atomic_coordinator.clone()))
+                .await
+                .map_err(|e| {
+                    SstError::Internal(format!("Failed to create compaction manager: {}", e))
+                })?;
+        compaction.set_training_in_flight(training_in_flight.clone());
+        // Wrap in Arc BEFORE start_workers: start_workers takes `self: &Arc<Self>`
+        // so each worker can clone the Arc and reuse THIS persistent instance
+        // (warmed reader/compactor/factory) instead of building a cold
+        // `temp_manager` per task.
+        let compaction: Arc<Compaction> = Arc::new(compaction);
+        compaction
+            .start_workers(config.background_thread_count as usize)
+            .await
+            .map_err(|e| {
+                SstError::Internal(format!(
+                    "Failed to start {} compaction workers: {}",
+                    config.background_thread_count, e
+                ))
+            })?;
+        let compaction_manager = Some(compaction);
 
         // Initialize universal performance optimization
         let universal_optimizer =
@@ -414,9 +573,181 @@ impl SstEngine {
             info!("🔗 SST Engine: AXIS manager integration enabled (HNSW/IVF indexes available)");
         }
 
+        // TD-CACHE-4: ARM the warm-tier caches at construction. The builder
+        // setters below (`with_segment_invariants_cache` / `with_survivor_cache`)
+        // had ZERO production callers, so both caches stayed `None` on the live
+        // serving path and every novel query re-paid the full GET chain (the
+        // ADR-065 #32-35 warm tier was dead code; found when the TD-METRICS-1
+        // hit/miss counters scraped 0 across a 920-query 1M run).
+        //
+        // Budgets are config-first (`SstConfig.segment_invariants_cache_mb` =
+        // 256 MB / `survivor_cache_mb` = 1024 MB — the 2026-07-24 sizing
+        // decision that also updated ADR-065's survivor default-OFF), env
+        // override wins, 0 disables either.
+        // PROCESS-GLOBAL singletons: the engine is constructed once per
+        // collection/location, but the warm tier is one budget pool per
+        // process — N instances would multiply the configured budget by N and
+        // leave the boot-warm/shutdown-emit hooks (which see one registered
+        // pair) pointed at a cache no query ever touches.
+
+        // TD-RDSTRAT-8 / COGS: initialize the coarse-probe (IVF) settings ONCE
+        // from the TOML config (`SstConfig.coarse_probe` →
+        // `[storage.sst_config.coarse_probe]`). Env overrides apply at the call
+        // sites in segment_format.rs (probe/nprobe) + block_cluster.rs (write-train).
+        crate::storage::engines::sst::segment_format::init_coarse_probe_settings(
+            config.coarse_probe.as_ref(),
+        );
+
+        static SHARED_LOCAL_DISK_STORE: std::sync::OnceLock<
+            Option<Arc<proximadb_cache::PersistentByteStore>>,
+        > = std::sync::OnceLock::new();
+        let local_disk_store = SHARED_LOCAL_DISK_STORE
+            .get_or_init(|| {
+                let path = std::env::var("PROXIMADB_CACHE_LOCAL_DISK_PATH")
+                    .ok()
+                    .filter(|path| !path.trim().is_empty())
+                    .or_else(|| config.cache_local_disk_path.clone());
+                let max_gb = std::env::var("PROXIMADB_CACHE_LOCAL_DISK_MAX_GB")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(config.cache_local_disk_max_gb);
+                path.and_then(|path| {
+                    if path.contains("://") {
+                        tracing::warn!(
+                            "persistent PAX cache disabled: local-disk path must be a filesystem path"
+                        );
+                        return None;
+                    }
+                    if max_gb == 0 {
+                        tracing::warn!(
+                            "persistent PAX cache disabled: local-disk budget is zero GiB"
+                        );
+                        return None;
+                    }
+                    let root = std::path::PathBuf::from(path).join("pax-warm-tier-v1");
+                    let max_bytes = max_gb.saturating_mul(1024 * 1024 * 1024);
+                    match proximadb_cache::PersistentByteStore::open(root, max_bytes) {
+                        Ok(store) => Some(Arc::new(store)),
+                        Err(error) => {
+                            tracing::warn!(
+                                "persistent PAX cache disabled: unable to open local-disk tier: {error}"
+                            );
+                            None
+                        }
+                    }
+                })
+            })
+            .clone();
+
+        static SHARED_INVARIANTS_CACHE: std::sync::OnceLock<
+            Option<Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>>,
+        > = std::sync::OnceLock::new();
+        let segment_invariants_cache = SHARED_INVARIANTS_CACHE
+            .get_or_init(|| {
+                let mb = std::env::var("PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(config.segment_invariants_cache_mb);
+                (mb > 0).then(|| {
+                    Arc::new(if let Some(store) = &local_disk_store {
+                        crate::storage::engines::sst::segment_format::SegmentInvariantsCache::with_l2(
+                            (mb as usize) * 1024 * 1024,
+                            store.clone(),
+                        )
+                    } else {
+                        crate::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
+                            (mb as usize) * 1024 * 1024,
+                        )
+                    })
+                })
+            })
+            .clone();
+        static SHARED_SURVIVOR_CACHE: std::sync::OnceLock<
+            Option<Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>>,
+        > = std::sync::OnceLock::new();
+        let survivor_cache = SHARED_SURVIVOR_CACHE.get_or_init(|| {
+            let mb = std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(config.survivor_cache_mb);
+            (mb > 0).then(|| {
+                // TD-CACHE-3 S1: per-tenant tier floors/weights via the same
+                // PROXIMADB_CACHE_TIERS_PATH policy the footer/index caches use
+                // (tenant→tier resolved live through the auth-stamped registry).
+                let budget_bytes = mb * 1024 * 1024;
+                let resolver = std::env::var("PROXIMADB_CACHE_TIERS_PATH")
+                    .ok()
+                    .and_then(|path| std::fs::read_to_string(&path).ok())
+                    .and_then(|json| proximadb_cache::TierPolicy::from_json(&json).ok())
+                    .map(|policy| {
+                        let policy = std::sync::Arc::new(policy);
+                        let default_tier = policy.default_tier.clone();
+                        let tenant_to_tier: std::sync::Arc<
+                            dyn Fn(&str) -> String + Send + Sync,
+                        > = std::sync::Arc::new(move |t: &str| {
+                            crate::services::record_store::tenant_tier(t)
+                                .unwrap_or_else(|| default_tier.clone())
+                        });
+                        policy.resolver(budget_bytes, tenant_to_tier)
+                    });
+                Arc::new(
+                    crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::with_resolver_and_l2(
+                        budget_bytes,
+                        resolver,
+                        local_disk_store.clone(),
+                    ),
+                )
+            })
+        }).clone();
+        if segment_invariants_cache.is_some() || survivor_cache.is_some() {
+            info!(
+                "🧠 SST warm-tier caches armed: invariants={} survivor={}",
+                segment_invariants_cache.is_some(),
+                survivor_cache.is_some()
+            );
+            // TD-CACHE-1: publish the handles for the boot warm task + the
+            // shutdown manifest emitter.
+            if let (Some(inv), Some(surv)) = (&segment_invariants_cache, &survivor_cache) {
+                set_warm_tier_caches(inv.clone(), surv.clone());
+            }
+        }
+
+        // TD-DELVEC-1 WI-3c: process-global OID resolver cache (sibling to the
+        // invariants cache). Feature-gated; 0 disables (lazy-load on each delete).
+        #[cfg(feature = "cold-deletion-vectors")]
+        let oid_resolver_cache = GLOBAL_OID_RESOLVER_CACHE
+            .get_or_init(|| {
+                let mb = std::env::var("PROXIMADB_OID_RESOLVER_CACHE_MB")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(config.oid_resolver_cache_mb);
+                (mb > 0).then(|| {
+                    Arc::new(
+                        crate::storage::engines::sst::oid_resolver_cache::OidResolverCache::new(
+                            (mb as usize) * 1024 * 1024,
+                        ),
+                    )
+                })
+            })
+            .clone();
+
+        // TD-DELVEC-1 WI-3a-remaining-A: per-engine deletion-vector store. Not a
+        // process-global singleton (unlike the resolver cache): the DV store is
+        // authoritative owned state for this engine's segments, so per-engine
+        // ownership is the natural model + avoids the OnceLock test hazard.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let deletion_vector_store = Some(std::sync::Arc::new(
+            crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore::new(
+                filesystem.clone(),
+            ),
+        ));
+
         Ok(Self {
             config,
             compaction_manager,
+            // TD-COMPACT-6 D1: the same Arc linked into the Compaction above —
+            // the flush path sets/reads it, the workers clear it on completion.
+            training_in_flight,
             filesystem,
             unified_fs: None, // Created per collection
             atomic_coordinator,
@@ -430,8 +761,17 @@ impl SstEngine {
             axis_manager,
             pca_model_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             directory_cache: None,
+            segment_invariants_cache,
+            survivor_cache,
+            #[cfg(feature = "cold-deletion-vectors")]
+            oid_resolver_cache,
+            #[cfg(feature = "cold-deletion-vectors")]
+            deletion_vector_store,
             tiering_integration: None,
             freshness_lsn_source: None,
+            path_resolver: None,
+            #[cfg(test)]
+            flush_sort_invocations: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -475,6 +815,26 @@ impl SstEngine {
         self
     }
 
+    /// PR2: supply a per-segment invariants cache. Hot queries skip the 3
+    /// header+region+footer read_range calls → 3 GETs → 0.
+    pub fn with_segment_invariants_cache(
+        mut self,
+        cache: Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+    ) -> Self {
+        self.segment_invariants_cache = Some(cache);
+        self
+    }
+
+    /// ADR-065 Q3: supply a ranged survivor/OID cache. Hot repeat queries skip
+    /// the per-range `fs.read_range` GETs for survivors + OIDs → billed GETs → 0.
+    pub fn with_survivor_cache(
+        mut self,
+        cache: Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+    ) -> Self {
+        self.survivor_cache = Some(cache);
+        self
+    }
+
     /// True when [`Self::with_directory_cache`] has supplied a cache.
     /// Regression-tested so the default (no emission) cannot silently
     /// flip to "always emit."
@@ -503,6 +863,18 @@ impl SstEngine {
         source: Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
     ) -> Self {
         self.freshness_lsn_source = Some(source);
+        self
+    }
+
+    /// Attach the catalog/config storage-URL resolver. When set,
+    /// `get_collection_storage_url` resolves the real `base_location` through it
+    /// (retiring the `/data/collections/{id}` placeholder). When unset, the
+    /// method default-constructs a `ConfigFallbackResolver`.
+    pub fn with_path_resolver(
+        mut self,
+        resolver: Arc<dyn crate::storage::trait_components::path_resolver::CollectionPathResolver>,
+    ) -> Self {
+        self.path_resolver = Some(resolver);
         self
     }
 

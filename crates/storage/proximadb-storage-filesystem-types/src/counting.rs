@@ -2,7 +2,8 @@
 //!
 //! `CountingFileSystem` is a pass-through wrapper around `Arc<dyn FileSystem>` that
 //! tallies the read operations (the object-store GET surface) — `read` (full
-//! object), `read_range` (ranged GET), `read_ranges` (batched), and `get_mmap`
+//! object), `read_range` (ranged GET), `read_ranges` (a logical batch whose
+//! constituent ranges are physical GETs), and `get_mmap`
 //! (whole-file map) — plus total bytes returned. It is wired in by
 //! `FilesystemFactory::get_filesystem` only when `PROXIMADB_COUNT_FS_IO=1`
 //! (default OFF → zero behavior change), so a bench can measure the per-search
@@ -35,7 +36,11 @@ pub struct GetCounters {
     pub full_reads: AtomicU64,
     /// Single ranged reads (`read_range`).
     pub range_reads: AtomicU64,
-    /// Batched ranged reads (`read_ranges` — one call = one GET operation).
+    /// Physical ranged reads issued by logical `read_ranges` calls.
+    ///
+    /// The current [`FileSystem::read_ranges`] contract delegates to one
+    /// `read_range` per constituent range. Concurrency reduces elapsed rounds;
+    /// it does not turn them into one cloud transaction.
     pub batched_range_reads: AtomicU64,
     /// Total bytes returned across all counted reads.
     pub bytes_read: AtomicU64,
@@ -55,6 +60,22 @@ impl GetCounters {
         self.range_reads.store(0, RELAXED);
         self.batched_range_reads.store(0, RELAXED);
         self.bytes_read.store(0, RELAXED);
+    }
+}
+
+#[cfg(test)]
+mod physical_get_meter_tests {
+    use super::{GetCounters, RELAXED};
+
+    #[test]
+    fn batched_ranges_are_metered_as_constituent_physical_gets() {
+        let counters = GetCounters::default();
+
+        // FileSystem::read_ranges currently delegates to one read_range call
+        // per range. A logical batch is not a multipart cloud GET.
+        counters.batched_range_reads.fetch_add(3, RELAXED);
+
+        assert_eq!(counters.total_gets(), 3);
     }
 }
 
@@ -82,8 +103,8 @@ pub trait IoRecorder: Send + Sync + std::fmt::Debug {
     fn record_full_read(&self, bytes: u64);
     /// A single ranged read (`read_range`).
     fn record_range_read(&self, bytes: u64);
-    /// A batched ranged read (`read_ranges` — one op, possibly many ranges).
-    fn record_batched_ranges(&self, bytes: u64);
+    /// A logical `read_ranges` call and its physical constituent GET count.
+    fn record_batched_ranges(&self, physical_gets: u64, bytes: u64);
 }
 
 /// Pass-through `FileSystem` wrapper that counts read operations. See module
@@ -165,12 +186,15 @@ impl FileSystem for CountingFileSystem {
         path: &str,
         ranges: Vec<std::ops::Range<u64>>,
     ) -> FsResult<Vec<Vec<u8>>> {
+        let physical_gets = ranges.len() as u64;
         let bufs = self.inner.read_ranges(path, ranges).await?;
         let bytes: u64 = bufs.iter().map(Vec::len).sum::<usize>() as u64;
-        self.counters.batched_range_reads.fetch_add(1, RELAXED);
+        self.counters
+            .batched_range_reads
+            .fetch_add(physical_gets, RELAXED);
         self.counters.bytes_read.fetch_add(bytes, RELAXED);
         if let Some(recorder) = &self.recorder {
-            recorder.record_batched_ranges(bytes);
+            recorder.record_batched_ranges(physical_gets, bytes);
         }
         Ok(bufs)
     }
@@ -195,8 +219,30 @@ impl FileSystem for CountingFileSystem {
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
         self.inner.write(path, data, options).await
     }
+    fn supports_bounded_local_file_write(&self) -> bool {
+        self.inner.supports_bounded_local_file_write()
+    }
+    async fn write_local_file(
+        &self,
+        path: &str,
+        local_path: &std::path::Path,
+        options: Option<FileOptions>,
+    ) -> FsResult<u64> {
+        self.inner.write_local_file(path, local_path, options).await
+    }
+    async fn write_if_absent(
+        &self,
+        path: &str,
+        data: &[u8],
+        options: Option<FileOptions>,
+    ) -> FsResult<()> {
+        self.inner.write_if_absent(path, data, options).await
+    }
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()> {
         self.inner.append(path, data).await
+    }
+    fn supports_append(&self) -> bool {
+        self.inner.supports_append()
     }
     async fn delete(&self, path: &str) -> FsResult<()> {
         self.inner.delete(path).await

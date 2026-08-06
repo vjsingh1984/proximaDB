@@ -223,11 +223,14 @@
 // bloom_filter now in core module for unified implementation
 use crate::core::bloom as bloom_filter;
 pub mod compaction;
+pub(crate) mod compaction_spill;
 pub mod decompression_cache;
 pub mod error;
 pub mod extraction;
 pub mod filter_methods;
 pub mod flush_eventlog_integration;
+pub mod metrics; // TD-RDSTRAT-8: IVF coarse-probe operator metrics
+pub(crate) mod staged_write;
 // Quantization now handled by unified compute module
 pub mod compactor_impl;
 pub mod indexed_reader;
@@ -243,27 +246,69 @@ pub mod sst_reader;
 pub mod writer;
 
 // New modular structure
+pub mod block_cluster; // TD-RDSTRAT-5 S1: sort-by-code block clustering at PAX write
 pub mod block_format;
 pub mod blocks;
 pub mod codebook_integration;
 pub mod collections;
 pub mod core;
+#[cfg(feature = "cold-deletion-vectors")]
+pub mod deletion_vector_store; // TD-DELVEC-1 WI-3a-remaining-A: CAS'd per-segment DV store
+// TD-DELVEC-1 WI-3b: cold-delete → DV-bit integration test (in-crate, to read
+// the pub(crate) DV store). The `tests/` dir isn't a compiled module, so the
+// test is wired in via #[path] under test + the feature.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_delete_dv_test.rs"]
+mod cold_delete_dv_test;
+// TD-DELVEC-1 WI-4 (slice 1): merge-on-read integration test — a cold delete is
+// invisible on the exact `.pax` scan path (`search_pax_file_exact`). In-crate
+// (#[path], like cold_delete_dv_test) to read the pub(crate) DV store + discovery.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_read_merge_test.rs"]
+mod cold_read_merge_test;
+// TD-DELVEC-1 WI-4 (slice 2): merge-on-read on the RaBitQ ANN cascade path — a
+// cold delete is invisible in an unfiltered Cosine scan over a coalesced RaBitQ
+// segment (`try_pax_cascade` filters hits by `CascadeHit::position`).
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_cascade_merge_test.rs"]
+mod cold_cascade_merge_test;
+// TD-DELVEC-1 WI-5 P1: post-recovery DV-bit reconciliation —
+// `reconcile_deletion_vectors` re-marks a tombstone's bit (the crash-strand
+// resurface fix). In-crate (#[path]) to call the feature-gated trait override
+// + read the pub(crate) DV store/discovery.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_recovery_reconcile_test.rs"]
+mod cold_recovery_reconcile_test;
+// TD-DELVEC-1 WI-6: compaction DV-awareness — `build_deleted_oids` collects the
+// DV-deleted oids so the merge drops them. In-crate (#[path]) to call the
+// pub(crate) feature-gated associated fn + segment helpers.
+#[cfg(all(test, feature = "cold-deletion-vectors"))]
+#[path = "tests/cold_compaction_dv_test.rs"]
+mod cold_compaction_dv_test;
 pub mod flush;
 pub mod manifest;
+#[cfg(feature = "cold-deletion-vectors")]
+pub mod oid_resolve; // TD-DELVEC-1 WI-3c-1c: resolve_oid_positions + read_resolver lazy-load
+#[cfg(feature = "cold-deletion-vectors")]
+pub mod oid_resolver_cache; // TD-DELVEC-1 WI-3c: per-segment OID→position resolver cache
 pub mod pca_manager; // PCA caching for Z-Order spatial encoding
 pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod search;
 pub mod segment_format; // P3 Phase A: mixed-format (ProximaBlocks/PAX) read primitives
+pub mod survivor_range_cache;
 pub mod text_column_support; // TEXT column storage integration
 pub mod tiering_integration;
 pub mod trait_impl;
-pub mod utils; // Tiered storage integration (opt-in)
+pub mod utils;
+pub mod warming; // ADR-065 Q3: ranged RAM cache for survivor/OID byte ranges // Tiered storage integration (opt-in)
 
 // Re-export main types
 pub use bloom_filter::{
     BloomFilterStats, HierarchicalBloomConfig, SerializedSstableBloomFilter, SstableBloomFilter,
 };
-pub use compaction::{Compaction, CompactionPriority, CompactionStats, CompactionTask};
+pub use compaction::{
+    Compaction, CompactionPriority, CompactionStats, CompactionTask, set_global_precision_resolver,
+};
 pub use compactor_impl::{CompactionSortStrategy, SstCompactor, ZeroCopyCompactionStats};
 pub use readers::UnifiedSstableReader;
 
@@ -731,6 +776,12 @@ pub struct IndexEntry {
     /// FP16 quantized centroid (50% storage reduction, <0.1% distance error)
     /// When present, this is used for block selection; block_centroid is kept for backward compatibility
     pub block_centroid_fp16: Option<Vec<u16>>,
+    /// TD-RDSTRAT-5 lever-3: block RMS radius (spread). Enables the distance
+    /// lower-bound prune score `d(q,centroid) − k·radius`. `#[serde(default)]` →
+    /// legacy entries (no radius) deserialize to `0.0` = today's centroid-only
+    /// ranking (mixed-read-safe).
+    #[serde(default)]
+    pub block_radius: f32,
 
     /// Minimum values for each metadata column in this block
     pub metadata_min_values: HashMap<String, serde_json::Value>,
@@ -1382,6 +1433,7 @@ impl IndexEntry {
             compressed,
             block_centroid,
             block_centroid_fp16,
+            block_radius: 0.0, // legacy SSTable header carries no radius (lever-3 is PAX-only)
             metadata_min_values,
             metadata_max_values,
             metadata_null_counts,
@@ -2064,6 +2116,7 @@ mod bplustree_tests {
     fn create_test_entries(count: usize) -> Vec<IndexEntry> {
         (0..count)
             .map(|i| IndexEntry {
+                block_radius: 0.0,
                 key: format!("key_{:05}", i),
                 last_key: None,
                 offset: i as u64 * 1000,

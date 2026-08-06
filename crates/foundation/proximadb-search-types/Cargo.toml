@@ -23,6 +23,9 @@ proximadb-records.workspace = true
 proximadb-data-model.workspace = true
 proximadb-filter-expression.workspace = true
 proximadb-distance-kernel.workspace = true
+# Foundation-tier: UnifiedQuantizationLevel (UnifiedSearchParams::quantization_hint
+# field). Foundation→foundation is layering-allowed.
+proximadb-quantization-model.workspace = true
 
 [lints]
 workspace = true

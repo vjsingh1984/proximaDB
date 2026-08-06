@@ -37,10 +37,11 @@ use common::{EmbeddingGenerator, EmbeddingModel};
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::{
     compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute},
-    graph::{Edge, Node, PropertyValue, service::GraphOperationsService},
-    proto::proximadb_v1::{
-        CreateGraphRequest, TraversalAlgorithm, TraversalRequest, property_value::Value,
+    graph::{
+        Edge, Node, PropertyValue, TraversalRequest, property_value::Value,
+        service::GraphOperationsService,
     },
+    proto::proximadb_v1::{CreateGraphRequest, TraversalAlgorithm},
     query::federated::FederatedParser,
     query::unified::{
         DataModel, FusionStrategy, ResultFuser, UnifiedRecord, fusion::SubQueryResult,

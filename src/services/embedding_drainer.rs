@@ -55,7 +55,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use proximadb_embedding::EmbeddingService;
-use proximadb_embedding::config::EmbedRoute;
+use proximadb_embedding::config::{EmbedRoute, EmbedRouteIdentity};
 use proximadb_embedding::scheduler::IngestMode;
 use proximadb_embedding::service::{EmbedBatch, EmbedRecord};
 use proximadb_queue::QueueClient;
@@ -85,7 +85,17 @@ pub struct EmbedIngestRecord {
 pub struct EmbedIngestPayload {
     pub target_collection: String,
     pub tenant_id: String,
+    /// Credential-free route identity admitted by the producer. The drainer
+    /// resolves fresh credentials but rejects model or geometry drift.
+    pub embedding_route_identity: EmbedRouteIdentity,
+    /// Collection geometry observed during admission.
+    pub expected_dimension: u32,
     pub records: Vec<EmbedIngestRecord>,
+}
+
+struct ReadyEmbedIngestPayload {
+    payload: EmbedIngestPayload,
+    route: EmbedRoute,
 }
 
 /// Insert path the drainer calls once embedding has populated vectors.
@@ -273,181 +283,270 @@ impl EmbeddingDrainer {
     async fn process_batch(
         &self,
         consumer: &proximadb_queue::Consumer,
-        messages: Vec<proximadb_queue::Message>,
+        deliveries: Vec<proximadb_queue::Delivery>,
     ) -> anyhow::Result<()> {
-        let mut acked: Vec<proximadb_queue::MessageId> = Vec::with_capacity(messages.len());
+        let delivery_ids: Vec<proximadb_queue::MessageId> = deliveries
+            .iter()
+            .map(|delivery| delivery.message_id.clone())
+            .collect();
+        let mut partition_queues: std::collections::BTreeMap<
+            proximadb_queue::PartitionId,
+            std::collections::VecDeque<ReadyEmbedIngestPayload>,
+        > = std::collections::BTreeMap::new();
 
-        // Parse + flatten — group records across messages so one
-        // embed_sync call serves the whole batch.
-        let mut batch_records: Vec<EmbedRecord> = Vec::new();
-        let mut payload_indices: Vec<(EmbedIngestPayload, std::ops::Range<usize>)> = Vec::new();
-        for msg in &messages {
-            let payload: EmbedIngestPayload = match serde_json::from_slice(&msg.payload) {
+        for delivery in &deliveries {
+            let payload: EmbedIngestPayload = match serde_json::from_slice(&delivery.payload) {
                 Ok(p) => p,
                 Err(e) => {
                     warn!(error = %e, "drainer: malformed payload; acking to avoid hot-looping");
-                    // Compute the message_id from partition/offset
-                    // exposed via the Message envelope. proximadb_queue
-                    // doesn't surface the MessageId back to Consumer
-                    // callers directly; ack uses the partition/offset
-                    // derived id mirrored by the in_flight tracker.
                     continue;
                 }
             };
-            let start = batch_records.len();
-            for rec in &payload.records {
-                batch_records.push(EmbedRecord {
-                    id: rec.oid.clone(),
-                    text: rec.text.clone(),
-                    tenant_id: payload.tenant_id.clone(),
-                });
+            if payload.tenant_id != delivery.tenant_id {
+                anyhow::bail!(
+                    "drainer: envelope tenant '{}' does not match payload tenant '{}'",
+                    delivery.tenant_id,
+                    payload.tenant_id
+                );
             }
-            let end = batch_records.len();
-            payload_indices.push((payload, start..end));
+            if payload.records.is_empty() {
+                anyhow::bail!("drainer: payload contains no records");
+            }
+            if let Some(record) = payload
+                .records
+                .iter()
+                .find(|record| record.text.trim().is_empty())
+            {
+                anyhow::bail!("drainer: record '{}' contains no text", record.oid);
+            }
+            let route = self
+                .embed_service
+                .resolve_admitted_route(&payload.tenant_id, &payload.embedding_route_identity)
+                .ok_or_else(|| {
+                    let current = self.embed_service.resolve_route(&payload.tenant_id);
+                    anyhow::anyhow!(
+                        "drainer: tenant route identity changed after admission: expected {:?}, got {:?}",
+                        payload.embedding_route_identity,
+                        EmbedRouteIdentity::from(&current)
+                    )
+                })?;
+            let route_dimension = u32::try_from(route.dimension())
+                .map_err(|_| anyhow::anyhow!("drainer: route dimension exceeds u32"))?;
+            if route_dimension != payload.expected_dimension {
+                anyhow::bail!(
+                    "drainer: admitted dimension {} does not match route dimension {}",
+                    payload.expected_dimension,
+                    route_dimension
+                );
+            }
+            let partition = delivery
+                .message_id
+                .partition()
+                .ok_or_else(|| anyhow::anyhow!("drainer: malformed delivery id"))?;
+            partition_queues
+                .entry(partition)
+                .or_default()
+                .push_back(ReadyEmbedIngestPayload { payload, route });
         }
 
-        if batch_records.is_empty() {
-            return Ok(());
+        // Preserve FIFO within each queue partition. At each step, batch all
+        // compatible jobs currently at independent partition heads; consume
+        // consecutive same-route jobs from each selected partition.
+        while let Some(route) = partition_queues
+            .values()
+            .find_map(|queue| queue.front().map(|ready| ready.route.clone()))
+        {
+            let mut payloads = Vec::new();
+            for queue in partition_queues.values_mut() {
+                while queue.front().is_some_and(|ready| ready.route == route) {
+                    let Some(ready) = queue.pop_front() else {
+                        break;
+                    };
+                    payloads.push(ready.payload);
+                }
+            }
+            self.process_route_group(route, payloads).await?;
+        }
+
+        if !delivery_ids.is_empty() {
+            consumer
+                .ack(&delivery_ids)
+                .await
+                .map_err(|e| anyhow::anyhow!("drainer ack failed: {e}"))?;
+            debug!(count = delivery_ids.len(), "drainer batch ack'd");
+        }
+        Ok(())
+    }
+
+    async fn process_route_group(
+        &self,
+        route: EmbedRoute,
+        payloads: Vec<EmbedIngestPayload>,
+    ) -> anyhow::Result<()> {
+        let mut batch_records = Vec::new();
+        let mut payload_ranges = Vec::with_capacity(payloads.len());
+        for payload in &payloads {
+            let start = batch_records.len();
+            batch_records.extend(payload.records.iter().map(|record| EmbedRecord {
+                id: record.oid.clone(),
+                text: record.text.clone(),
+                tenant_id: payload.tenant_id.clone(),
+            }));
+            payload_ranges.push(start..batch_records.len());
         }
 
         let result = self
             .embed_service
-            .embed_sync(EmbedBatch {
-                records: batch_records,
-                mode: IngestMode::Async,
-            })
+            .embed_sync_with_route(
+                EmbedBatch {
+                    records: batch_records,
+                    mode: IngestMode::Async,
+                },
+                route.clone(),
+            )
             .await
             .map_err(|e| anyhow::anyhow!("drainer embed failed: {e}"))?;
-
-        // Record KEU metering for embedding operations (TD-134)
-        // We record after the embedding call to capture the actual work done
-        let embedding_count = result.vectors.len() as u64;
-        // Estimate token counts (this would be more accurate with actual tokenization)
-        let estimated_input_tokens = embedding_count.saturating_mul(512); // ~512 tokens per record average
-        let estimated_output_tokens =
-            embedding_count.saturating_mul(result.route.dimension() as u64);
-
-        // Record KEU for the tenant (use the first payload's tenant_id)
-        if !payload_indices.is_empty() {
-            let tenant_id = &payload_indices[0].0.tenant_id;
-            // Simple provider/model name extraction from route
-            let (provider, model): (&'static str, String) = match &result.route {
-                proximadb_embedding::config::EmbedRoute::BgeSmall => {
-                    ("victor", "bge-small-en-v1.5".to_string())
-                }
-                proximadb_embedding::config::EmbedRoute::BgeLarge => {
-                    ("victor", "bge-large-en-v1.5".to_string())
-                }
-                proximadb_embedding::config::EmbedRoute::BgeM3 => ("victor", "bge-m3".to_string()),
-                proximadb_embedding::config::EmbedRoute::AzureOpenAi { model } => {
-                    ("azure_openai", std::format!("azure_{:?}", model))
-                }
-                proximadb_embedding::config::EmbedRoute::OpenAi { model } => {
-                    ("openai", std::format!("openai_{:?}", model))
-                }
-                proximadb_embedding::config::EmbedRoute::Cohere { model } => {
-                    ("cohere", std::format!("cohere_{:?}", model))
-                }
-                proximadb_embedding::config::EmbedRoute::Byo { url, .. } => ("byo", url.clone()),
-            };
-            crate::metrics::consumption_metrics::record_keu_units(
-                Some(tenant_id),
-                provider,
-                &model,
-                "embed_batch",
-                estimated_input_tokens,
-                estimated_output_tokens,
+        let batch_records_total = batch_record_count(&payload_ranges);
+        if result.vectors.len() != batch_records_total {
+            anyhow::bail!(
+                "drainer: provider returned {} vectors for {} records",
+                result.vectors.len(),
+                batch_records_total
             );
         }
+        let dimension = u32::try_from(route.dimension())
+            .map_err(|_| anyhow::anyhow!("drainer: route dimension exceeds u32"))?;
+        // TD-SANDHI-1: the provider's real token usage is batch-level (all payloads in this
+        // route group). Split it across payloads proportionally by record count so each tenant
+        // is metered its share of the measured tokens.
+        let batch_usage = result.usage;
+        let total_records = batch_records_total as u64;
 
-        // Re-split the result back to per-payload + insert.
-        let dim = result.route.dimension() as u32;
-        for ((payload, range), msg) in payload_indices.iter().zip(messages.iter()) {
-            // Resolve per-payload canonical precision once (so all records
-            // in this payload — which belong to the same collection —
-            // share the same target). When no resolver is wired or the
-            // lookup fails, the records ship with `target_precision: None`
-            // and the sink keeps the legacy fp32 path.
-            let target_precision = match &self.precision_resolver {
-                None => None,
-                Some(resolver) => {
-                    let table_id = Self::collection_to_table_identifier(&payload.target_collection);
-                    match resolver.resolve(&table_id).await {
-                        Ok(precision) => Some(precision),
-                        Err(e) => {
-                            warn!(
-                                collection = %payload.target_collection,
-                                tenant = %payload.tenant_id,
-                                error = %e,
-                                "drainer: precision resolver failed; falling back to fp32"
-                            );
-                            None
-                        }
-                    }
-                }
-            };
-
-            let mut embedded: Vec<EmbeddedRecord> = Vec::with_capacity(range.end - range.start);
-            for (i, rec) in payload.records.iter().enumerate() {
-                let vector = result
-                    .vectors
-                    .get(range.start + i)
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("drainer: embed result shape mismatch"))?;
-                embedded.push(EmbeddedRecord {
-                    oid: rec.oid.clone(),
-                    text: rec.text.clone(),
-                    vector,
-                    vector_dim: dim,
-                    metadata: rec.metadata.clone(),
-                    target_precision,
-                });
+        for (payload, range) in payloads.iter().zip(payload_ranges) {
+            let vectors = result
+                .vectors
+                .get(range)
+                .ok_or_else(|| anyhow::anyhow!("drainer: embed result shape mismatch"))?;
+            if let Some(vector) = vectors
+                .iter()
+                .find(|vector| vector.len() != payload.expected_dimension as usize)
+            {
+                anyhow::bail!(
+                    "drainer: provider returned dimension {} for admitted dimension {}",
+                    vector.len(),
+                    payload.expected_dimension
+                );
             }
+
+            let payload_records = payload.records.len() as u64;
+            let real_input_tokens = batch_usage.map(|usage| {
+                split_input_tokens(usage.input_tokens, payload_records, total_records)
+            });
+            record_embedding_consumption(payload, &route, real_input_tokens);
+            let target_precision = self.resolve_target_precision(payload).await;
+            let embedded = payload
+                .records
+                .iter()
+                .zip(vectors.iter())
+                .map(|(record, vector)| EmbeddedRecord {
+                    oid: record.oid.clone(),
+                    text: record.text.clone(),
+                    vector: vector.clone(),
+                    vector_dim: dimension,
+                    metadata: record.metadata.clone(),
+                    target_precision,
+                })
+                .collect();
             self.sink
                 .insert(&payload.target_collection, &payload.tenant_id, embedded)
                 .await
                 .map_err(|e| anyhow::anyhow!("drainer sink insert failed: {e}"))?;
-
-            // Reconstruct MessageId from the polled message. The
-            // queue's Message envelope doesn't carry MessageId so we
-            // derive it from the in-flight tracker via consumer's
-            // ack-by-id. For now we use the offset / partition derivable
-            // from the tracker — Phase 2G follow-up exposes
-            // MessageId on Message.
-            let id = derive_message_id(msg);
-            acked.push(id);
-        }
-
-        if !acked.is_empty() {
-            consumer
-                .ack(&acked)
-                .await
-                .map_err(|e| anyhow::anyhow!("drainer ack failed: {e}"))?;
-            debug!(count = acked.len(), "drainer batch ack'd");
         }
         Ok(())
     }
+
+    async fn resolve_target_precision(
+        &self,
+        payload: &EmbedIngestPayload,
+    ) -> Option<proximadb_records::EmbeddingScalarType> {
+        let resolver = self.precision_resolver.as_ref()?;
+        let table_id = Self::collection_to_table_identifier(&payload.target_collection);
+        match resolver.resolve(&table_id).await {
+            Ok(precision) => Some(precision),
+            Err(e) => {
+                warn!(
+                    collection = %payload.target_collection,
+                    tenant = %payload.tenant_id,
+                    error = %e,
+                    "drainer: precision resolver failed; falling back to fp32"
+                );
+                None
+            }
+        }
+    }
 }
 
-/// Derive a `MessageId` from a polled `Message`. The queue's Message
-/// type doesn't currently expose its MessageId back to consumers; we
-/// reconstruct it from the partition_for(tenant_id) hash + a sentinel
-/// segment id. This is the most fragile part of the drainer and is the
-/// first target of the Phase 2G follow-up that surfaces MessageId on
-/// Message directly.
-fn derive_message_id(msg: &proximadb_queue::Message) -> proximadb_queue::MessageId {
-    // The consumer's in_flight tracker holds the actual MessageIds.
-    // Until the queue exposes them on Message, we use the partition +
-    // a synthetic offset that the tracker will retain-match against
-    // (which is permissive because ack() retains pending entries on
-    // matched ids and silently no-ops unknown ones).
-    let partition = proximadb_queue::partition_for(&msg.tenant_id, 16);
-    proximadb_queue::MessageId::new(partition, 0, 0)
+fn batch_record_count(ranges: &[std::ops::Range<usize>]) -> usize {
+    ranges.last().map_or(0, |range| range.end)
 }
 
-#[allow(unused_variables)]
-fn _route_dim(route: EmbedRoute) -> u32 {
-    route.dimension() as u32
+/// Split a batch's total input-token count across one payload, proportionally by its record
+/// share (TD-SANDHI-1). A route group can batch several tenants' payloads into one provider
+/// call, whose usage is reported batch-wide; this attributes each tenant its slice. Returns 0
+/// for an empty batch (guards div-by-zero).
+fn split_input_tokens(batch_input_tokens: u64, payload_records: u64, total_records: u64) -> u64 {
+    if total_records == 0 {
+        return 0;
+    }
+    ((u128::from(batch_input_tokens) * u128::from(payload_records)) / u128::from(total_records))
+        as u64
+}
+
+/// Meter one payload's embedding consumption (TD-SANDHI-1 / ADR-067).
+///
+/// `real_input_tokens` carries the provider's **measured** input-token count for this payload
+/// (external providers that report `usage`); when `None` the count*512 heuristic is used (local
+/// BGE, or BYO whose contract has no usage). For external routes, also emits the neutral
+/// usage event at the egress boundary (default-inert unless `PROXIMADB_EMIT_USAGE_EVENTS`).
+fn record_embedding_consumption(
+    payload: &EmbedIngestPayload,
+    route: &EmbedRoute,
+    real_input_tokens: Option<u64>,
+) {
+    let embedding_count = payload.records.len() as u64;
+    let input_tokens = real_input_tokens.unwrap_or_else(|| embedding_count.saturating_mul(512));
+    // Output tokens stay a compute proxy (count × dimension) — embeddings emit no completion
+    // tokens, so no provider reports them; this is ProximaDB's own KEU storage unit.
+    let output_tokens = embedding_count.saturating_mul(route.dimension() as u64);
+    let (provider, model, external): (&'static str, String, bool) = match route {
+        EmbedRoute::BgeSmall => ("victor", "bge-small-en-v1.5".to_string(), false),
+        EmbedRoute::BgeLarge => ("victor", "bge-large-en-v1.5".to_string(), false),
+        EmbedRoute::BgeM3 => ("victor", "bge-m3".to_string(), false),
+        EmbedRoute::AzureOpenAi { model } => ("azure_openai", format!("azure_{model:?}"), true),
+        EmbedRoute::OpenAi { model } => ("openai", format!("openai_{model:?}"), true),
+        EmbedRoute::Cohere { model } => ("cohere", format!("cohere_{model:?}"), true),
+        EmbedRoute::Byo { url, .. } => ("byo", url.clone(), true),
+    };
+    crate::metrics::consumption_metrics::record_keu_units(
+        Some(&payload.tenant_id),
+        provider,
+        &model,
+        "embed_batch",
+        input_tokens,
+        output_tokens,
+    );
+    // ADR-067 Fix 2: emit the shared neutral usage event at the external-provider boundary.
+    // Local BGE is self-hosted (no external egress) → no event.
+    if external {
+        crate::metrics::usage_event::UsageEvent::external_embedding(
+            provider,
+            model.as_str(),
+            Some(payload.tenant_id.as_str()),
+            input_tokens,
+            "embed_batch",
+        )
+        .emit();
+    }
 }
 
 // ── tests ───────────────────────────────────────────────────────────
@@ -515,7 +614,7 @@ mod tests {
         }
     }
 
-    fn start_byo_test_endpoint() -> String {
+    fn start_byo_test_endpoint(vectors: Vec<Vec<f32>>) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind BYO test server");
         let addr = listener.local_addr().expect("local addr");
         std::thread::spawn(move || {
@@ -524,7 +623,11 @@ mod tests {
             };
             let mut buf = [0u8; 4096];
             let _ = stream.read(&mut buf);
-            let body = r#"{"embeddings":[[0.1,0.2,0.3],[0.4,0.5,0.6]],"model_version":"test"}"#;
+            let body = serde_json::json!({
+                "embeddings": vectors,
+                "model_version": "test",
+            })
+            .to_string();
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
@@ -533,6 +636,28 @@ mod tests {
             let _ = stream.write_all(response.as_bytes());
         });
         format!("http://{}", addr)
+    }
+
+    fn with_byo_auth(route: &EmbedRoute, auth: ByoAuth) -> EmbedRoute {
+        let EmbedRoute::Byo {
+            url,
+            declared_dim,
+            declared_precision,
+            batch_size,
+            timeout_ms,
+            ..
+        } = route
+        else {
+            panic!("test helper requires a BYO route");
+        };
+        EmbedRoute::Byo {
+            url: url.clone(),
+            auth,
+            declared_dim: *declared_dim,
+            declared_precision: *declared_precision,
+            batch_size: *batch_size,
+            timeout_ms: *timeout_ms,
+        }
     }
 
     /// Producer sends one well-formed payload; drainer embeds + the
@@ -545,23 +670,23 @@ mod tests {
             .await
             .expect("queue open");
         let embed_service = proximadb_embedding::EmbeddingService::global();
-        embed_service.update_tenant_route(
-            "tenant-a",
-            EmbedRoute::Byo {
-                url: start_byo_test_endpoint(),
-                auth: ByoAuth::None,
-                declared_dim: 3,
-                declared_precision: proximadb_records::EmbeddingScalarType::Fp32,
-                batch_size: 8,
-                timeout_ms: 1_000,
-            },
-        );
+        let route = EmbedRoute::Byo {
+            url: start_byo_test_endpoint(vec![vec![0.1, 0.2, 0.3], vec![0.4, 0.5, 0.6]]),
+            auth: ByoAuth::None,
+            declared_dim: 3,
+            declared_precision: proximadb_records::EmbeddingScalarType::Fp32,
+            batch_size: 8,
+            timeout_ms: 1_000,
+        };
+        embed_service.update_tenant_route("tenant-a", route.clone());
         let sink = Arc::new(RecordingSink::default());
 
         let producer = queue.producer();
         let payload = EmbedIngestPayload {
             target_collection: "knowledge".to_string(),
             tenant_id: "tenant-a".to_string(),
+            embedding_route_identity: (&route).into(),
+            expected_dimension: 3,
             records: vec![
                 EmbedIngestRecord {
                     oid: "doc-1".to_string(),
@@ -673,6 +798,165 @@ mod tests {
         queue.shutdown().await.expect("shutdown");
     }
 
+    #[test]
+    fn split_input_tokens_attributes_by_record_share() {
+        // 300 real batch tokens across 30 records → a 10-record payload gets 100.
+        assert_eq!(split_input_tokens(300, 10, 30), 100);
+        // Single-tenant batch keeps the whole count.
+        assert_eq!(split_input_tokens(1234, 5, 5), 1234);
+        // Integer division floors (no panic, no over-attribution).
+        assert_eq!(split_input_tokens(100, 1, 3), 33);
+        // Empty batch → 0, never a div-by-zero.
+        assert_eq!(split_input_tokens(100, 0, 0), 0);
+        // Large counts do not overflow (u128 intermediate).
+        assert_eq!(split_input_tokens(u64::MAX, 1, 1), u64::MAX);
+    }
+
+    #[test]
+    fn payload_requires_canonical_admission_facts() {
+        let legacy = serde_json::json!({
+            "target_collection": "docs",
+            "tenant_id": "tenant-a",
+            "records": [{"oid": "doc-1", "text": "body"}],
+        });
+
+        assert!(
+            serde_json::from_value::<EmbedIngestPayload>(legacy).is_err(),
+            "route and admitted dimension are required queue contract fields"
+        );
+    }
+
+    /// One poll may contain unrelated tenants and model geometries. Each
+    /// payload must execute only when its credential-free route identity still
+    /// matches, while using freshly resolved credentials and committing every
+    /// real delivery id.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn drainer_groups_by_admitted_route_and_commits_delivery_ids() {
+        ensure_embedding_singleton();
+        let tmp = TempDir::new().expect("tempdir");
+        let queue = QueueClient::open(queue_cfg(tmp.path()))
+            .await
+            .expect("queue open");
+        let embed_service = proximadb_embedding::EmbeddingService::global();
+        let route_a = EmbedRoute::Byo {
+            url: start_byo_test_endpoint(vec![vec![0.1, 0.2]]),
+            auth: ByoAuth::Bearer {
+                secret_ref: "admission-secret-a".to_string(),
+            },
+            declared_dim: 2,
+            declared_precision: proximadb_records::EmbeddingScalarType::Fp32,
+            batch_size: 8,
+            timeout_ms: 1_000,
+        };
+        let route_b = EmbedRoute::Byo {
+            url: start_byo_test_endpoint(vec![vec![0.3, 0.4, 0.5]]),
+            auth: ByoAuth::Bearer {
+                secret_ref: "admission-secret-b".to_string(),
+            },
+            declared_dim: 3,
+            declared_precision: proximadb_records::EmbeddingScalarType::Fp32,
+            batch_size: 8,
+            timeout_ms: 1_000,
+        };
+        let producer = queue.producer();
+        let mut partitions = Vec::new();
+        for (tenant, collection, route, dimension) in [
+            ("tenant-route-a", "docs-a", &route_a, 2),
+            ("tenant-route-b", "docs-b", &route_b, 3),
+        ] {
+            let payload = EmbedIngestPayload {
+                target_collection: collection.to_string(),
+                tenant_id: tenant.to_string(),
+                embedding_route_identity: route.into(),
+                expected_dimension: dimension,
+                records: vec![EmbedIngestRecord {
+                    oid: format!("{tenant}-doc"),
+                    text: format!("text for {tenant}"),
+                    metadata: HashMap::new(),
+                }],
+            };
+            let payload_bytes = serde_json::to_vec(&payload).unwrap();
+            assert!(
+                !String::from_utf8_lossy(&payload_bytes).contains("admission-secret"),
+                "durable queue payload must not contain BYO credentials"
+            );
+            let receipt = producer
+                .send(Message::new(EMBED_INGEST_TOPIC, tenant, payload_bytes))
+                .await
+                .expect("send");
+            partitions.push(receipt.partition);
+        }
+
+        embed_service.update_tenant_route(
+            "tenant-route-a",
+            with_byo_auth(
+                &route_a,
+                ByoAuth::Bearer {
+                    secret_ref: "rotated-secret-a".to_string(),
+                },
+            ),
+        );
+        embed_service.update_tenant_route(
+            "tenant-route-b",
+            with_byo_auth(
+                &route_b,
+                ByoAuth::Bearer {
+                    secret_ref: "rotated-secret-b".to_string(),
+                },
+            ),
+        );
+
+        let sink = Arc::new(RecordingSink::default());
+        let sink_for_drainer: Arc<dyn DrainerInsertSink> = sink.clone();
+        let drainer = EmbeddingDrainer::new(
+            queue.clone(),
+            embed_service,
+            sink_for_drainer,
+            EmbeddingDrainerConfig {
+                batch_size: 8,
+                poll_wait: Duration::from_millis(50),
+                ..Default::default()
+            },
+        );
+        let (handle, shutdown) = drainer.start(vec![0, 1]);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let inserts_complete = sink.calls.lock().await.len() == 2;
+            let commits_complete = partitions.iter().all(|partition| {
+                tmp.path()
+                    .join(EMBED_INGEST_TOPIC)
+                    .join(partition.to_string())
+                    // Q1 (ADR-079): committed offsets are per consumer group —
+                    // {partition}/{group}/offset.meta. The drainer's default
+                    // group is "embed-drainer" (EmbeddingDrainerConfig::default).
+                    .join("embed-drainer")
+                    .join("offset.meta")
+                    .exists()
+            });
+            if inserts_complete && commits_complete {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                panic!("drainer did not insert and commit all admitted jobs");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        let calls = sink.calls.lock().await;
+        let mut dimensions: HashMap<&str, u32> = HashMap::new();
+        for (_, tenant, records) in calls.iter() {
+            dimensions.insert(tenant.as_str(), records[0].vector_dim);
+        }
+        assert_eq!(dimensions.get("tenant-route-a"), Some(&2));
+        assert_eq!(dimensions.get("tenant-route-b"), Some(&3));
+        drop(calls);
+
+        let _ = shutdown.send(());
+        let _ = handle.await;
+        queue.shutdown().await.expect("queue shutdown");
+    }
+
     /// With a resolver attached and a fp16 collection in the catalog,
     /// the drainer must stamp `EmbeddedRecord.target_precision = Some(Fp16)`
     /// on every record routed to that collection. The sink (in
@@ -692,17 +976,15 @@ mod tests {
             .await
             .expect("queue open");
         let embed_service = proximadb_embedding::EmbeddingService::global();
-        embed_service.update_tenant_route(
-            "tenant-fp16",
-            EmbedRoute::Byo {
-                url: start_byo_test_endpoint(),
-                auth: ByoAuth::None,
-                declared_dim: 3,
-                declared_precision: proximadb_records::EmbeddingScalarType::Fp32,
-                batch_size: 8,
-                timeout_ms: 1_000,
-            },
-        );
+        let route = EmbedRoute::Byo {
+            url: start_byo_test_endpoint(vec![vec![0.1, 0.2, 0.3]]),
+            auth: ByoAuth::None,
+            declared_dim: 3,
+            declared_precision: proximadb_records::EmbeddingScalarType::Fp32,
+            batch_size: 8,
+            timeout_ms: 1_000,
+        };
+        embed_service.update_tenant_route("tenant-fp16", route.clone());
 
         // Stand up an in-memory catalog with one fp16 collection.
         let cache = Arc::new(CatalogCache::new(1000, 60));
@@ -736,6 +1018,8 @@ mod tests {
         let payload = EmbedIngestPayload {
             target_collection: "fp16_docs".to_string(), // unqualified → default namespace
             tenant_id: "tenant-fp16".to_string(),
+            embedding_route_identity: (&route).into(),
+            expected_dimension: 3,
             records: vec![EmbedIngestRecord {
                 oid: "doc-1".to_string(),
                 text: "fp16 collection ingest".to_string(),

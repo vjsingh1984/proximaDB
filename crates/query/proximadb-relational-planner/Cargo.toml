@@ -19,4 +19,5 @@ proximadb-relational-types = { workspace = true }
 proximadb-relational-algebra = { workspace = true }
 proximadb-relational-reader = { workspace = true }
 serde.workspace = true
+stacker.workspace = true
 thiserror.workspace = true

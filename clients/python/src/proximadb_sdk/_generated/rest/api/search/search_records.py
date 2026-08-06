@@ -13,15 +13,18 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_response import ErrorResponse
 from ...models.typed_search_request import TypedSearchRequest
 from ...models.typed_search_response import TypedSearchResponse
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     collection_id: str,
     *,
     body: TypedSearchRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -72,6 +75,7 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: TypedSearchRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, TypedSearchResponse]]:
     """Search records with vector similarity and typed filters.
 
@@ -93,6 +97,7 @@ def sync_detailed(
 
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (TypedSearchRequest): Search request with typed filters
 
             ## Example JSON
@@ -121,6 +126,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         collection_id=collection_id,
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -135,6 +141,7 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: TypedSearchRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, TypedSearchResponse]]:
     """Search records with vector similarity and typed filters.
 
@@ -156,6 +163,7 @@ def sync(
 
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (TypedSearchRequest): Search request with typed filters
 
             ## Example JSON
@@ -185,6 +193,7 @@ def sync(
         collection_id=collection_id,
         client=client,
         body=body,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -193,6 +202,7 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: TypedSearchRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, TypedSearchResponse]]:
     """Search records with vector similarity and typed filters.
 
@@ -214,6 +224,7 @@ async def asyncio_detailed(
 
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (TypedSearchRequest): Search request with typed filters
 
             ## Example JSON
@@ -242,6 +253,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         collection_id=collection_id,
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -254,6 +266,7 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: TypedSearchRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, TypedSearchResponse]]:
     """Search records with vector similarity and typed filters.
 
@@ -275,6 +288,7 @@ async def asyncio(
 
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (TypedSearchRequest): Search request with typed filters
 
             ## Example JSON
@@ -305,5 +319,6 @@ async def asyncio(
             collection_id=collection_id,
             client=client,
             body=body,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

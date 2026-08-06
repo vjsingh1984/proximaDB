@@ -340,6 +340,43 @@ impl FileSystem for UnifiedCachingFilesystem {
         Ok(())
     }
 
+    fn supports_bounded_local_file_write(&self) -> bool {
+        self.underlying_fs.supports_bounded_local_file_write()
+    }
+
+    async fn write_local_file(
+        &self,
+        path: &str,
+        local_path: &std::path::Path,
+        options: Option<FileOptions>,
+    ) -> FsResult<u64> {
+        let cache_key = self.cache_key(path);
+        self.record_access(path, AccessOperation::Write).await;
+        self.metadata_cache.invalidate(&cache_key).await;
+        self.disk_cache.invalidate(path).await;
+        self.underlying_fs
+            .write_local_file(path, local_path, options)
+            .await
+    }
+
+    async fn write_if_absent(
+        &self,
+        path: &str,
+        data: &[u8],
+        options: Option<FileOptions>,
+    ) -> FsResult<()> {
+        let cache_key = self.cache_key(path);
+        self.metadata_cache.invalidate(&cache_key).await;
+        self.disk_cache.invalidate(path).await;
+        self.underlying_fs
+            .write_if_absent(path, data, options)
+            .await?;
+        if self.should_cache_locally(path, data.len()) {
+            self.disk_cache.put(path, data).await;
+        }
+        Ok(())
+    }
+
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()> {
         let cache_key = self.cache_key(path);
 
@@ -349,6 +386,10 @@ impl FileSystem for UnifiedCachingFilesystem {
 
         // Append through to underlying filesystem
         self.underlying_fs.append(path, data).await
+    }
+
+    fn supports_append(&self) -> bool {
+        self.underlying_fs.supports_append()
     }
 
     async fn delete(&self, path: &str) -> FsResult<()> {
@@ -684,6 +725,36 @@ mod tests {
             ),
             temp_dir,
         )
+    }
+
+    /// TD-OBJSTORE-4 S2/S3: the caching decorator MUST delegate `write_if_absent`
+    /// to the underlying backend's atomic conditional-create, not emulate it with an
+    /// overwriting `write` — the crash-window recovery commit primitive rests on it.
+    #[tokio::test]
+    async fn write_if_absent_delegates_through_caching_wrapper() {
+        let (fs, _temp_dir) = test_caching_fs().await;
+
+        fs.write_if_absent("commit.pax", b"first", None)
+            .await
+            .expect("first conditional create succeeds");
+
+        let err = fs
+            .write_if_absent("commit.pax", b"second", None)
+            .await
+            .expect_err("second conditional create on the same key must fail");
+        assert!(
+            matches!(
+                err,
+                crate::storage::persistence::filesystem::FilesystemError::AlreadyExists(_)
+            ),
+            "caching wrapper must surface the backend's AlreadyExists; got {err:?}"
+        );
+
+        assert_eq!(
+            fs.read("commit.pax").await.expect("read back"),
+            b"first",
+            "first value must be preserved (no clobber) through the caching wrapper"
+        );
     }
 
     #[tokio::test]

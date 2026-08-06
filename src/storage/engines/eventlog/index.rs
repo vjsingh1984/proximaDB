@@ -23,7 +23,6 @@ use crate::storage::engines::eventlog::{EntityId, Event, EventSequence, EventTyp
 use chrono::{DateTime, Utc};
 use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::debug;
@@ -33,8 +32,9 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 /// Event index for fast lookups
 #[allow(dead_code)]
 pub struct EventIndex {
-    /// Base directory for index storage
-    base_dir: PathBuf,
+    /// Base location for index storage (local path or object-store URL).
+    /// The index itself is purely in-memory; this is retained for diagnostics.
+    base_dir: String,
 
     /// Entity index: entity_id -> Vec<sequence>
     entity_index: Arc<RwLock<HashMap<EntityId, Vec<EventSequence>>>>,
@@ -47,16 +47,28 @@ pub struct EventIndex {
 
     /// Reverse index: sequence -> (entity_id, event_type, timestamp)
     reverse_index: Arc<RwLock<HashMap<EventSequence, (EntityId, EventType, DateTime<Utc>)>>>,
+
+    /// sequence -> on-disk storage path. Populated for EVERY indexed event
+    /// (append + both recovery layouts) so reads GET the right path without
+    /// reconstructing it — essential for the entity-keyed layout
+    /// (`{entity}/event_{seq}.bin`, ADR: TD-EVENTLOG-1 §3), where the path
+    /// can't be derived from `seq` alone.
+    event_paths: Arc<RwLock<HashMap<EventSequence, String>>>,
 }
 
 impl EventIndex {
     /// Create a new event index
-    pub fn new(base_dir: PathBuf) -> Result<Self> {
-        debug!("Creating event index at {:?}", base_dir);
+    pub fn new(base_dir: String) -> Result<Self> {
+        debug!("Creating event index at {}", base_dir);
 
-        // Create index directory
-        std::fs::create_dir_all(&base_dir)
-            .map_err(|e| ProximaDBError::Internal(format!("Failed to create index dir: {}", e)))?;
+        // The index is in-memory; only create a directory for local bases.
+        // Object-store URLs (s3://, adls://, …) need no directory and must
+        // never reach std::fs (TD-OBJSTORE-1, #960).
+        if !base_dir.contains("://") {
+            std::fs::create_dir_all(&base_dir).map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to create index dir: {}", e))
+            })?;
+        }
 
         Ok(Self {
             base_dir,
@@ -64,6 +76,7 @@ impl EventIndex {
             type_index: Arc::new(RwLock::new(HashMap::new())),
             timestamp_index: Arc::new(RwLock::new(HashMap::new())),
             reverse_index: Arc::new(RwLock::new(HashMap::new())),
+            event_paths: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -110,6 +123,43 @@ impl EventIndex {
 
         debug!("Indexed event {} for entity {}", seq, entity_id);
         Ok(())
+    }
+
+    /// Record an event's storage path (sequence -> path). Called alongside
+    /// `index_event` on append + legacy recovery so reads can GET the right
+    /// path without reconstructing it.
+    pub async fn record_path(&self, sequence: EventSequence, path: String) {
+        self.event_paths.write().await.insert(sequence, path);
+    }
+
+    /// The entity-keyed recovery fast path (ADR: TD-EVENTLOG-1 §3): index an
+    /// event's `(entity, sequence, path)` from the **path alone** — NO payload
+    /// GET. Only `entity_index` + `event_paths` are populated (the production
+    /// read path, `read_events_by_entity_prefix`, needs just those); the
+    /// type/timestamp/reverse indexes (unused in production) stay empty until a
+    /// payload is read. This is what drops recovery from O(N) GETs to O(LIST).
+    pub async fn index_entity_sequence(
+        &self,
+        entity_id: EntityId,
+        sequence: EventSequence,
+        path: String,
+    ) -> Result<()> {
+        {
+            let mut index = self.entity_index.write().await;
+            index
+                .entry(entity_id.clone())
+                .or_insert_with(Vec::new)
+                .push(sequence);
+        }
+        self.event_paths.write().await.insert(sequence, path);
+        Ok(())
+    }
+
+    /// The storage path for `sequence`, if recorded. Reads use this to GET the
+    /// payload; falls back to path reconstruction only when no path is recorded
+    /// (legacy data not seen by this engine's recovery/append).
+    pub async fn path_for(&self, sequence: EventSequence) -> Option<String> {
+        self.event_paths.read().await.get(&sequence).cloned()
     }
 
     /// Get event sequences for an entity (sorted)
@@ -291,14 +341,23 @@ mod tests {
 
     #[test]
     fn test_index_creation() {
-        let base_dir = PathBuf::from("/tmp/test_event_index");
+        let base_dir = "/tmp/test_event_index".to_string();
         let index = EventIndex::new(base_dir.clone()).unwrap();
         assert_eq!(index.base_dir, base_dir);
     }
 
+    #[test]
+    fn test_index_creation_object_store_url_skips_local_mkdir() {
+        // An object-store base must never hit std::fs — creation succeeds
+        // without touching the local filesystem (TD-OBJSTORE-1, #960).
+        let index = EventIndex::new("adls://container/data/auditlog".to_string()).unwrap();
+        assert_eq!(index.base_dir, "adls://container/data/auditlog");
+        assert!(!std::path::Path::new("adls:").exists());
+    }
+
     #[tokio::test]
     async fn test_index_event() {
-        let base_dir = PathBuf::from("/tmp/test_index_event");
+        let base_dir = "/tmp/test_index_event".to_string();
         let index = EventIndex::new(base_dir.clone()).unwrap();
 
         let event = Event {
@@ -327,7 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_entity_events() {
-        let base_dir = PathBuf::from("/tmp/test_get_entity");
+        let base_dir = "/tmp/test_get_entity".to_string();
         let index = EventIndex::new(base_dir.clone()).unwrap();
 
         // Index multiple events
@@ -365,7 +424,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_stats() {
-        let base_dir = PathBuf::from("/tmp/test_index_stats");
+        let base_dir = "/tmp/test_index_stats".to_string();
         let index = EventIndex::new(base_dir.clone()).unwrap();
 
         let event = Event {

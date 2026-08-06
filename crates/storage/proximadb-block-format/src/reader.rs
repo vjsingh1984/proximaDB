@@ -15,8 +15,11 @@
 //! locate a row by its id_hash and retrieve its row_index; then all column
 //! stripes are read at that index position.
 
+use std::borrow::Cow;
+
 use anyhow::{Result, bail};
-use proximadb_codec::{ProximaScheme, functions};
+use crc32fast::Hasher as Crc32;
+use proximadb_codec::{ProximaScheme, TypeId, functions};
 
 use crate::{
     header::{BlockHeader, HEADER_SIZE, fnv1a_hash},
@@ -24,7 +27,8 @@ use crate::{
     rowgroup::RowGroupBlock,
     stripe::{COLUMN_META_SIZE, ColumnMeta},
     vparam::{
-        QUANT_FP16, QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
+        QUANT_FP16, QUANT_RABITQ, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn,
+        TRANSFORM_CLUSTERED_FOR_U8, VectorParamBlock, VectorTransformColumn,
     },
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
@@ -58,6 +62,137 @@ pub enum RankMetric {
     /// Cosine: stage-1 ranks by inner product (`ip_rank_score`), stage-2 computes
     /// the exact cosine distance `1 − cos_sim` on SQ8-decoded vectors.
     Cosine,
+    /// DotProduct (max inner product): stage-1 uses the same IP proxy as Cosine
+    /// (`ip_rank_score`); stage-2 scores negated inner product (lower = nearer).
+    DotProduct,
+}
+
+/// Decode one rerank-column row (SQ8 or FP16) into `scratch` and score it against
+/// `query` under `metric` — the per-row core of [`PaxBlockReader::rerank_rows`],
+/// extracted so the **ranged** Stage-2 reader (ADR-057 / TD-RDSTRAT-3) can score
+/// only the candidate rows it fetches via `BlockLayout::vector_row_range`, using
+/// the SAME math (byte-identical results). `row_bytes` is the row's stripe slice
+/// (SQ8: `dim` bytes; FP16: `2·dim`). Returns the metric distance (lower = nearer).
+pub fn score_rerank_row(
+    quant_kind: u8,
+    params: &proximadb_codec::Sq8Params,
+    row_bytes: &[u8],
+    query: &[f32],
+    metric: RankMetric,
+    scratch: &mut Vec<f32>,
+) -> f32 {
+    scratch.clear();
+    if quant_kind == QUANT_FP16 {
+        for chunk in row_bytes.chunks_exact(2) {
+            scratch.push(half::f16::from_le_bytes([chunk[0], chunk[1]]).to_f32());
+        }
+    } else {
+        sq8::decode_into(row_bytes, params, scratch);
+    }
+    match metric {
+        // Squared L2 (lower = nearer).
+        RankMetric::L2 => scratch
+            .iter()
+            .zip(query)
+            .map(|(x, q)| (x - q) * (x - q))
+            .sum::<f32>(),
+        // Cosine distance 1 − cos_sim (∈ [0, 2]; lower = nearer).
+        RankMetric::Cosine => {
+            let dot = scratch.iter().zip(query).map(|(x, q)| x * q).sum::<f32>();
+            let norm_x = scratch.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let norm_q = query.iter().map(|q| q * q).sum::<f32>().sqrt();
+            if norm_x > 0.0 && norm_q > 0.0 {
+                1.0 - (dot / (norm_x * norm_q))
+            } else {
+                1.0 // zero vector: maximally dissimilar
+            }
+        }
+        // DotProduct (max inner product): negated inner product (lower = nearer).
+        // Handles non-normalized vectors — no write-time normalization needed.
+        RankMetric::DotProduct => -scratch.iter().zip(query).map(|(x, q)| x * q).sum::<f32>(),
+    }
+}
+
+pub(crate) fn score_rerank_rows_from_stripe(
+    entry: &crate::vparam::VectorParamEntry,
+    transform: Option<&VectorTransformColumn>,
+    stripe: &[u8],
+    row_count: usize,
+    query: &[f32],
+    rows: &[usize],
+    metric: RankMetric,
+) -> Result<Vec<(usize, f32)>> {
+    if entry.quant_kind != QUANT_SQ8 && entry.quant_kind != QUANT_FP16 {
+        bail!("rerank stripe is neither SQ8 nor FP16");
+    }
+    let bitmap_len = row_count.div_ceil(8);
+    if stripe.len() < bitmap_len {
+        bail!("rerank stripe shorter than validity bitmap");
+    }
+    let bitmap = &stripe[..bitmap_len];
+    let stored_payload = &stripe[bitmap_len..];
+    let valid_rows: Vec<usize> = rows
+        .iter()
+        .copied()
+        .filter(|&row| row < row_count && bitmap[row / 8] & (1u8 << (row % 8)) != 0)
+        .collect();
+    let transformed_rows = match transform {
+        None => None,
+        Some(transform) if transform.transform_kind == TRANSFORM_CLUSTERED_FOR_U8 => {
+            if entry.quant_kind != QUANT_SQ8 {
+                bail!("clustered u8 transform declared for non-SQ8 rerank stripe");
+            }
+            Some(functions::clustered_for_bitpack::decode_u8_rows_selected(
+                stored_payload,
+                &valid_rows,
+            )?)
+        }
+        Some(transform) => bail!(
+            "unknown vector transform kind 0x{:02x}",
+            transform.transform_kind
+        ),
+    };
+
+    let dim = entry.dim as usize;
+    let stride = if entry.quant_kind == QUANT_FP16 {
+        dim * 2
+    } else {
+        dim
+    };
+    let mut scored = Vec::with_capacity(valid_rows.len());
+    let mut scratch = Vec::with_capacity(dim);
+    for (selected_index, &row) in valid_rows.iter().enumerate() {
+        let row_bytes = if let Some(decoded) = &transformed_rows {
+            decoded
+                .get(selected_index)
+                .map(Vec::as_slice)
+                .ok_or_else(|| anyhow::anyhow!("decoded rerank row missing"))?
+        } else {
+            let start = row
+                .checked_mul(stride)
+                .ok_or_else(|| anyhow::anyhow!("rerank row offset overflow"))?;
+            let end = start
+                .checked_add(stride)
+                .ok_or_else(|| anyhow::anyhow!("rerank row end overflow"))?;
+            stored_payload
+                .get(start..end)
+                .ok_or_else(|| anyhow::anyhow!("rerank row exceeds stripe payload"))?
+        };
+        if row_bytes.len() != stride {
+            bail!("rerank row has wrong decoded stride");
+        }
+        let distance = score_rerank_row(
+            entry.quant_kind,
+            &entry.params,
+            row_bytes,
+            query,
+            metric,
+            &mut scratch,
+        );
+        scored.push((row, distance));
+    }
+    scored.sort_by(|a, b| a.1.total_cmp(&b.1));
+    Ok(scored)
 }
 
 impl<'a> PaxBlockReader<'a> {
@@ -69,6 +204,17 @@ impl<'a> PaxBlockReader<'a> {
             bail!("block too small: {} bytes", data.len());
         }
         let header = BlockHeader::from_bytes(&data[..HEADER_SIZE])?;
+
+        // Verify block integrity before interpreting any footer offsets. The
+        // writer stamps crc32(body) where body = bytes [HEADER_SIZE..block_size]
+        // (everything after the 64-byte header); a mismatch means the block was
+        // silently corrupted on disk or in flight, so we fail closed rather than
+        // decode garbage. This guards the whole-block read path (compaction,
+        // local reads, OLTP full-row reads); the footer-first ranged path
+        // (`ranged.rs`) fetches partial byte ranges and cannot run this
+        // whole-block check — extending integrity to per-stripe/per-range CRCs
+        // for the ranged reader is a known follow-up.
+        verify_block_checksum(data, &header)?;
 
         // Read block footer (last BLOCK_FOOTER_SIZE bytes)
         let footer_start = data.len() - BLOCK_FOOTER_SIZE;
@@ -253,7 +399,11 @@ impl<'a> PaxBlockReader<'a> {
         let raw = self.read_stripe_raw(column_id)?;
         let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
         let n = self.row_count() as usize;
-        let decoded = decode_i64_with_encoding(raw, meta.encoding_id, n).ok()?;
+        if meta.stripe_len == 0 && meta.null_count as usize == n {
+            return Some(vec![None; n]);
+        }
+        let payload = decode_scalar_payload(meta, raw).ok()?;
+        let decoded = decode_i64_with_encoding(&payload, meta.encoding_id, n).ok()?;
         Some(
             decoded
                 .into_iter()
@@ -262,12 +412,54 @@ impl<'a> PaxBlockReader<'a> {
         )
     }
 
+    /// Decode a non-null, fixed-width `u64` stripe.
+    ///
+    /// An absent column returns `Ok(None)` for mixed-read compatibility. A
+    /// present but malformed column fails closed: MVCC authority must never be
+    /// silently downgraded to a legacy version because bytes are corrupt.
+    pub fn decode_u64_stripe(&self, column_id: i32) -> Result<Option<Vec<u64>>> {
+        let Some(meta) = self.columns.iter().find(|m| m.column_id == column_id) else {
+            return Ok(None);
+        };
+        let raw = self
+            .read_stripe_raw(column_id)
+            .ok_or_else(|| anyhow::anyhow!("PAX u64 column {column_id} has no stripe payload"))?;
+        if meta.data_type_id != TypeId::U64.to_u8()
+            || scheme_from_encoding_id(meta.encoding_id) != Some(ProximaScheme::Raw)
+        {
+            bail!(
+                "PAX u64 column {column_id} has type {} and encoding {}",
+                meta.data_type_id,
+                meta.encoding_id
+            );
+        }
+        let payload = decode_scalar_payload(meta, raw)?;
+        let expected = (self.row_count() as usize)
+            .checked_mul(std::mem::size_of::<u64>())
+            .ok_or_else(|| anyhow::anyhow!("PAX u64 column {column_id} size overflow"))?;
+        if payload.len() != expected {
+            bail!(
+                "PAX u64 column {column_id} has {} payload bytes, expected {expected}",
+                payload.len()
+            );
+        }
+        let mut values = Vec::with_capacity(self.row_count() as usize);
+        for chunk in payload.chunks_exact(std::mem::size_of::<u64>()) {
+            values.push(u64::from_le_bytes(chunk.try_into()?));
+        }
+        Ok(Some(values))
+    }
+
     /// Decode all string values from a variable-length string column stripe.
     pub fn decode_str_stripe(&self, column_id: i32) -> Option<Vec<Option<String>>> {
         let raw = self.read_stripe_raw(column_id)?;
         let n = self.row_count() as usize;
         let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
-        decode_str_with_encoding(raw, meta.encoding_id, n).ok()
+        if meta.stripe_len == 0 && meta.null_count as usize == n {
+            return Some(vec![None; n]);
+        }
+        let payload = decode_scalar_payload(meta, raw).ok()?;
+        decode_str_with_encoding(&payload, meta.encoding_id, n).ok()
     }
 
     /// Decode all f64 values from a scalar double column stripe.
@@ -275,7 +467,11 @@ impl<'a> PaxBlockReader<'a> {
         let raw = self.read_stripe_raw(column_id)?;
         let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
         let n = self.row_count() as usize;
-        let decoded = decode_f64_with_encoding(raw, meta.encoding_id, n).ok()?;
+        if meta.stripe_len == 0 && meta.null_count as usize == n {
+            return Some(vec![None; n]);
+        }
+        let payload = decode_scalar_payload(meta, raw).ok()?;
+        let decoded = decode_f64_with_encoding(&payload, meta.encoding_id, n).ok()?;
         Some(
             decoded
                 .into_iter()
@@ -303,13 +499,13 @@ impl<'a> PaxBlockReader<'a> {
         let raw = self.read_stripe_raw(column_id)?;
         let n = self.row_count() as usize;
         let entry = self.vparams.get(column_id)?;
-        if entry.quant_kind == QUANT_RABITQ_RESERVED {
+        if entry.quant_kind == QUANT_RABITQ {
             // RaBitQ is a search representation; reconstruction is coarse (direction
             // preserved, magnitude approximate). Exact rerank uses a full-f32 tier.
             let col = self.vparams.rabitq_column(column_id)?;
             return decode_rabitq_reconstruct(raw, n, entry, col).ok();
         }
-        decode_f32_vec_v2(raw, n, entry).ok()
+        decode_f32_vec_v2(raw, n, entry, self.vparams.transform(column_id)).ok()
     }
 
     /// Return the per-row RaBitQ codes for a binary-quantized vector column,
@@ -321,7 +517,7 @@ impl<'a> PaxBlockReader<'a> {
         column_id: i32,
     ) -> Option<(RaBitQParams, Vec<Option<RaBitQCode>>)> {
         let entry = self.vparams.get(column_id)?;
-        if entry.quant_kind != QUANT_RABITQ_RESERVED {
+        if entry.quant_kind != QUANT_RABITQ {
             return None;
         }
         let col = self.vparams.rabitq_column(column_id)?;
@@ -353,7 +549,9 @@ impl<'a> PaxBlockReader<'a> {
         let q_rotated = rabitq::rotate_query(query, &params, &rotation);
         Some(match metric {
             RankMetric::L2 => rabitq::rank_candidates(&q_rotated, &codes, pool),
-            RankMetric::Cosine => rabitq::rank_candidates_ip(&q_rotated, &codes, pool),
+            RankMetric::Cosine | RankMetric::DotProduct => {
+                rabitq::rank_candidates_ip(&q_rotated, &codes, pool)
+            }
         })
     }
 
@@ -378,67 +576,16 @@ impl<'a> PaxBlockReader<'a> {
         if entry.quant_kind != QUANT_SQ8 && entry.quant_kind != QUANT_FP16 {
             return None;
         }
-        let raw = self.read_stripe_raw(column_id)?;
-        let n = self.row_count() as usize;
-        let dim = entry.dim as usize;
-        let bm_len = n.div_ceil(8);
-        if raw.len() < bm_len {
-            return None;
-        }
-        let bitmap = &raw[..bm_len];
-        let payload = &raw[bm_len..];
-        let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
-        // FP16: 2 bytes/value; SQ8: 1 byte/value.
-        let stride = if entry.quant_kind == QUANT_FP16 {
-            dim * 2
-        } else {
-            dim
-        };
-
-        let mut scored: Vec<(usize, f32)> = Vec::with_capacity(rows.len());
-        let mut decoded: Vec<f32> = Vec::with_capacity(dim);
-        for &row in rows {
-            if row >= n || !is_present(row) {
-                continue;
-            }
-            let off = row * stride;
-            let end = off + stride;
-            if end > payload.len() {
-                continue;
-            }
-            decoded.clear();
-            if entry.quant_kind == QUANT_FP16 {
-                use half::f16;
-                for chunk in payload[off..end].chunks_exact(2) {
-                    decoded.push(f16::from_le_bytes([chunk[0], chunk[1]]).to_f32());
-                }
-            } else {
-                sq8::decode_into(&payload[off..end], &entry.params, &mut decoded);
-            }
-            let dist = match metric {
-                // Squared L2 (lower = nearer).
-                RankMetric::L2 => decoded
-                    .iter()
-                    .zip(query)
-                    .map(|(x, q)| (x - q) * (x - q))
-                    .sum::<f32>(),
-                // Cosine distance 1 − cos_sim (∈ [0, 2]; lower = nearer). Exact on
-                // the SQ8-decoded vector + query (handles non-normalized data).
-                RankMetric::Cosine => {
-                    let dot = decoded.iter().zip(query).map(|(x, q)| x * q).sum::<f32>();
-                    let norm_x = decoded.iter().map(|x| x * x).sum::<f32>().sqrt();
-                    let norm_q = query.iter().map(|q| q * q).sum::<f32>().sqrt();
-                    if norm_x > 0.0 && norm_q > 0.0 {
-                        1.0 - (dot / (norm_x * norm_q))
-                    } else {
-                        1.0 // zero vector: maximally dissimilar
-                    }
-                }
-            };
-            scored.push((row, dist));
-        }
-        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        Some(scored)
+        score_rerank_rows_from_stripe(
+            entry,
+            self.vparams.transform(column_id),
+            self.read_stripe_raw(column_id)?,
+            self.row_count() as usize,
+            query,
+            rows,
+            metric,
+        )
+        .ok()
     }
 
     /// Stage-2.5 EXACT rerank: like [`rerank_rows`] but reads the OPTIONAL exact-f32
@@ -506,6 +653,10 @@ impl<'a> PaxBlockReader<'a> {
                         1.0 // zero vector: maximally dissimilar
                     }
                 }
+                // DotProduct (max inner product): negated inner product (lower = nearer).
+                RankMetric::DotProduct => {
+                    -decoded.iter().zip(query).map(|(x, q)| x * q).sum::<f32>()
+                }
             };
             scored.push((row, dist));
         }
@@ -560,6 +711,52 @@ impl<'a> PaxBlockReader<'a> {
         Some(out)
     }
 
+    /// Whether every non-null logical embedding row in this block has an
+    /// authoritative f32 representation. Raw `EMBED_BASE` is exact itself;
+    /// lossy base encodings require a matching raw `F32_TIER_BASE` row.
+    /// Decode/shape failures fail closed.
+    pub fn has_exact_vector_authority(&self) -> bool {
+        let base_entries: Vec<_> = self
+            .vparams
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.column_id >= crate::col_id::EMBED_BASE
+                    && entry.column_id < crate::col_id::USER_BASE
+            })
+            .copied()
+            .collect();
+        for base_entry in base_entries {
+            let Some(base_rows) = self.decode_f32_vec_stripe(base_entry.column_id) else {
+                return false;
+            };
+            if base_entry.quant_kind == QUANT_RAW_F32 {
+                continue;
+            }
+            let embedding_index = base_entry.column_id - crate::col_id::EMBED_BASE;
+            let exact_column = crate::col_id::F32_TIER_BASE + embedding_index;
+            if self
+                .vparams
+                .get(exact_column)
+                .is_none_or(|entry| entry.quant_kind != QUANT_RAW_F32)
+            {
+                return false;
+            }
+            let Some(exact_rows) = self.decode_f32_vec_stripe(exact_column) else {
+                return false;
+            };
+            if exact_rows.len() != base_rows.len()
+                || base_rows
+                    .iter()
+                    .zip(&exact_rows)
+                    .any(|(base, exact)| base.is_some() && exact.is_none())
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Decode opaque byte blobs from a raw length-prefixed binary stripe — the
     /// inverse of the writer's `build_bytes_stripe` (used for the msgpack `PROPS`
     /// and `LABELS` columns). Each value is a 4-byte little-endian length prefix
@@ -569,6 +766,12 @@ impl<'a> PaxBlockReader<'a> {
     pub fn decode_bytes_stripe(&self, column_id: i32) -> Option<Vec<Option<Vec<u8>>>> {
         let raw = self.read_stripe_raw(column_id)?;
         let n = self.row_count() as usize;
+        let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
+        if meta.stripe_len == 0 && meta.null_count as usize == n {
+            return Some(vec![None; n]);
+        }
+        let payload = decode_scalar_payload(meta, raw).ok()?;
+        let raw = payload.as_ref();
         let mut out = Vec::with_capacity(n);
         let mut pos = 0usize;
         for _ in 0..n {
@@ -591,6 +794,42 @@ impl<'a> PaxBlockReader<'a> {
         }
         Some(out)
     }
+}
+
+fn decode_scalar_payload<'a>(meta: &ColumnMeta, raw: &'a [u8]) -> Result<Cow<'a, [u8]>> {
+    if meta.is_lz4_compressed {
+        Ok(Cow::Owned(functions::lossless_compression::decompress_lz4(
+            raw,
+        )?))
+    } else {
+        Ok(Cow::Borrowed(raw))
+    }
+}
+
+/// Recompute and check the block's CRC32 against the value stamped in its
+/// header. `body` is `data[HEADER_SIZE..block_size]` — exactly the bytes the
+/// writer hashed (see `PaxBlockWriter::flush`). Returns an error on a truncated
+/// buffer or a checksum mismatch (silent corruption), so the reader never
+/// decodes bytes it cannot vouch for.
+fn verify_block_checksum(data: &[u8], header: &BlockHeader) -> Result<()> {
+    let block_size = header.block_size as usize;
+    if block_size < HEADER_SIZE || block_size > data.len() {
+        bail!(
+            "block size {block_size} inconsistent with buffer {} bytes (truncated or corrupt)",
+            data.len()
+        );
+    }
+    let mut hasher = Crc32::new();
+    hasher.update(&data[HEADER_SIZE..block_size]);
+    let actual = hasher.finalize();
+    if actual != header.checksum {
+        bail!(
+            "block checksum mismatch: header {:#010x} != computed {:#010x} (corruption)",
+            header.checksum,
+            actual
+        );
+    }
+    Ok(())
 }
 
 fn scheme_from_encoding_id(encoding_id: u8) -> Option<ProximaScheme> {
@@ -661,7 +900,7 @@ fn decode_f64_with_encoding(data: &[u8], encoding_id: u8, count: usize) -> Resul
     }
 }
 
-fn decode_str_with_encoding(
+pub(crate) fn decode_str_with_encoding(
     data: &[u8],
     encoding_id: u8,
     count: usize,
@@ -749,7 +988,11 @@ fn decode_dictionary_str_col(data: &[u8], count: usize) -> Result<Vec<Option<Str
 /// (validity bit clear) are returned as `None` regardless of their zeroed slot.
 /// Parse the per-row RaBitQ codes from a stripe (validity bitmap + per row
 /// `[dist f32][inv_factor f32][bits ceil(dim/8)]`). Absent rows → `None`.
-fn parse_rabitq_codes(data: &[u8], count: usize, dim: usize) -> Result<Vec<Option<RaBitQCode>>> {
+pub(crate) fn parse_rabitq_codes(
+    data: &[u8],
+    count: usize,
+    dim: usize,
+) -> Result<Vec<Option<RaBitQCode>>> {
     let bits_len = dim.div_ceil(8);
     let stride = 8 + bits_len;
     let bm_len = count.div_ceil(8);
@@ -806,14 +1049,10 @@ pub(crate) fn decode_f32_vec_v2(
     data: &[u8],
     count: usize,
     entry: &crate::vparam::VectorParamEntry,
+    transform: Option<&VectorTransformColumn>,
 ) -> Result<Vec<Option<Vec<f32>>>> {
     let dim = entry.dim as usize;
-    let bm_len = count.div_ceil(8);
-    if data.len() < bm_len {
-        bail!("vector stripe shorter than validity bitmap");
-    }
-    let bitmap = &data[..bm_len];
-    let payload = &data[bm_len..];
+    let (bitmap, payload) = decode_vector_payload(data, count, transform)?;
     let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
 
     let mut out = Vec::with_capacity(count);
@@ -855,6 +1094,30 @@ pub(crate) fn decode_f32_vec_v2(
         other => bail!("unknown vector quant_kind: {other}"),
     }
     Ok(out)
+}
+
+pub(crate) fn decode_vector_payload<'a>(
+    data: &'a [u8],
+    count: usize,
+    transform: Option<&VectorTransformColumn>,
+) -> Result<(&'a [u8], Cow<'a, [u8]>)> {
+    let bitmap_len = count.div_ceil(8);
+    if data.len() < bitmap_len {
+        bail!("vector stripe shorter than validity bitmap");
+    }
+    let bitmap = &data[..bitmap_len];
+    let stored_payload = &data[bitmap_len..];
+    let payload = match transform {
+        None => Cow::Borrowed(stored_payload),
+        Some(transform) if transform.transform_kind == TRANSFORM_CLUSTERED_FOR_U8 => Cow::Owned(
+            functions::clustered_for_bitpack::decode_u8_rows(stored_payload)?,
+        ),
+        Some(transform) => bail!(
+            "unknown vector transform kind 0x{:02x}",
+            transform.transform_kind
+        ),
+    };
+    Ok((bitmap, payload))
 }
 
 const PAX_BLOOM_SALTS: [u64; 3] = [
@@ -941,6 +1204,65 @@ mod tests {
     }
 
     #[test]
+    fn lossless_scalar_pages_compress_in_place_and_round_trip() -> Result<()> {
+        const ROWS: usize = 1024;
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0)
+            .with_lossless_scalar(true);
+        for row in 0..ROWS {
+            writer.add_record(&make_record(
+                &format!("record-{row:08}"),
+                "tenant",
+                1_000 + row as i64,
+            ))?;
+        }
+        let block = writer.flush()?;
+        let reader = PaxBlockReader::open(&block)?;
+
+        let oid_meta = reader
+            .column_metas()
+            .iter()
+            .find(|meta| meta.column_id == col_id::OID)
+            .ok_or_else(|| anyhow::anyhow!("OID metadata missing"))?;
+        assert!(oid_meta.is_lz4_compressed);
+        let actor_meta = reader
+            .column_metas()
+            .iter()
+            .find(|meta| meta.column_id == col_id::ACTOR)
+            .ok_or_else(|| anyhow::anyhow!("actor metadata missing"))?;
+        assert_eq!(actor_meta.null_count as usize, ROWS);
+        assert_eq!(actor_meta.stripe_len, 0);
+
+        let oids = reader
+            .decode_str_stripe(col_id::OID)
+            .ok_or_else(|| anyhow::anyhow!("compressed OID decode failed"))?;
+        assert_eq!(
+            oids.first().and_then(Option::as_deref),
+            Some("record-00000000")
+        );
+        assert_eq!(
+            oids.last().and_then(Option::as_deref),
+            Some("record-00001023")
+        );
+        assert_eq!(
+            reader.decode_str_stripe(col_id::ACTOR),
+            Some(vec![None; ROWS])
+        );
+        assert_eq!(
+            reader.decode_i64_stripe(col_id::VALID_FROM),
+            Some(vec![None; ROWS])
+        );
+        assert_eq!(
+            reader.decode_f64_stripe(col_id::EDGE_WEIGHT),
+            Some(vec![None; ROWS])
+        );
+        assert_eq!(
+            reader.decode_bytes_stripe(col_id::PROPS),
+            Some(vec![None; ROWS])
+        );
+        Ok(())
+    }
+
+    #[test]
     fn reader_pruning() {
         let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0);
         writer
@@ -1007,6 +1329,46 @@ mod tests {
         assert_eq!(stats.upper_bounds.get(&col_id::CREATED_AT), Some(&3000));
         assert!(stats.hash_lower_bounds.contains_key(&col_id::TENANT_ID));
         assert!(stats.bloom_filter_bytes.contains_key(&col_id::TENANT_ID));
+    }
+
+    #[test]
+    fn open_rejects_corrupted_block() {
+        // A block whose body is mutated after the writer stamped its CRC must be
+        // rejected by `open` — silent corruption is caught, not decoded.
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0);
+        writer.add_record(&make_record("r1", "t", 1000)).unwrap();
+        writer.add_record(&make_record("r2", "t", 2000)).unwrap();
+        let block = writer.flush().unwrap();
+
+        // Sanity: the pristine block opens.
+        assert!(PaxBlockReader::open(&block).is_ok());
+
+        // Flip one body byte (past the 64-byte header) → checksum must fail.
+        // (`PaxBlockReader` has no Debug impl, so we can't use `unwrap_err`.)
+        let mut corrupt = block.clone();
+        corrupt[HEADER_SIZE + 1] ^= 0xff;
+        let err = match PaxBlockReader::open(&corrupt) {
+            Ok(_) => panic!("expected corrupted block to be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("checksum mismatch"),
+            "expected checksum rejection, got: {err}"
+        );
+
+        // A buffer whose declared block_size exceeds its length is rejected as
+        // truncated before any offset is interpreted.
+        let truncated = &block[..block.len() - 1];
+        let err = match PaxBlockReader::open(truncated) {
+            Ok(_) => panic!("expected truncated block to be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("truncated")
+                || err.to_string().contains("checksum")
+                || err.to_string().contains("too small"),
+            "expected truncation/checksum rejection, got: {err}"
+        );
     }
 
     #[test]
@@ -1142,6 +1504,160 @@ mod tests {
                 assert!((g - o).abs() <= bound + 1e-6, "got {g}, orig {o}");
             }
         }
+    }
+
+    #[test]
+    fn clustered_sq8_transform_is_exact_smaller_and_metadata_driven() -> Result<()> {
+        const ROWS_PER_CLUSTER: usize = 256;
+        const DIM: usize = 32;
+
+        let mut flat = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::Sq8);
+        let mut clustered =
+            PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+                .with_quant(crate::writer::VectorQuant::Sq8)
+                .with_clustered_sq8_lossless(true);
+
+        for row in 0..(ROWS_PER_CLUSTER * 2) {
+            if row == ROWS_PER_CLUSTER {
+                clustered.start_cluster_run();
+            }
+            let center = if row < ROWS_PER_CLUSTER { -10.0 } else { 10.0 };
+            let embedding: Vec<f32> = (0..DIM)
+                .map(|lane| center + ((row + lane) % 3) as f32 * 0.01)
+                .collect();
+            let record =
+                make_record_with_embedding(&format!("r{row}"), "t", 1_000 + row as i64, embedding);
+            flat.add_record(&record)?;
+            clustered.add_record(&record)?;
+        }
+
+        let flat_block = flat.flush()?;
+        let clustered_block = clustered.flush()?;
+        let flat_reader = PaxBlockReader::open(&flat_block)?;
+        let clustered_reader = PaxBlockReader::open(&clustered_block)?;
+        let flat_meta = flat_reader
+            .column_metas()
+            .iter()
+            .find(|meta| meta.column_id == col_id::EMBED_BASE)
+            .ok_or_else(|| anyhow::anyhow!("flat SQ8 stripe metadata missing"))?;
+        let clustered_meta = clustered_reader
+            .column_metas()
+            .iter()
+            .find(|meta| meta.column_id == col_id::EMBED_BASE)
+            .ok_or_else(|| anyhow::anyhow!("clustered SQ8 stripe metadata missing"))?;
+
+        assert!(
+            clustered_meta.stripe_len < flat_meta.stripe_len,
+            "clustered {} bytes is not smaller than flat {} bytes",
+            clustered_meta.stripe_len,
+            flat_meta.stripe_len
+        );
+        assert!(
+            flat_reader
+                .vector_params()
+                .transform(col_id::EMBED_BASE)
+                .is_none()
+        );
+        assert_eq!(
+            clustered_reader
+                .vector_params()
+                .transform(col_id::EMBED_BASE)
+                .map(|transform| transform.transform_kind),
+            Some(crate::vparam::TRANSFORM_CLUSTERED_FOR_U8)
+        );
+        assert_eq!(
+            clustered_reader.decode_f32_vec_stripe(col_id::EMBED_BASE),
+            flat_reader.decode_f32_vec_stripe(col_id::EMBED_BASE)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn clustered_sq8_transform_falls_back_when_not_smaller() -> Result<()> {
+        const DIM: usize = 16;
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::Sq8)
+            .with_clustered_sq8_lossless(true);
+        let mut state = 0x9e37_79b9u32;
+        for row in 0..8usize {
+            let embedding: Vec<f32> = (0..DIM)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    (state & 0xff) as f32
+                })
+                .collect();
+            writer.add_record(&make_record_with_embedding(
+                &format!("r{row}"),
+                "t",
+                1_000 + row as i64,
+                embedding,
+            ))?;
+        }
+
+        let block = writer.flush()?;
+        let reader = PaxBlockReader::open(&block)?;
+        assert!(
+            reader
+                .vector_params()
+                .transform(col_id::EMBED_BASE)
+                .is_none()
+        );
+        let meta = reader
+            .column_metas()
+            .iter()
+            .find(|meta| meta.column_id == col_id::EMBED_BASE)
+            .ok_or_else(|| anyhow::anyhow!("SQ8 stripe metadata missing"))?;
+        assert_eq!(meta.stripe_len as usize, 1 + 8 * DIM);
+        Ok(())
+    }
+
+    #[test]
+    fn clustered_sq8_rerank_is_metric_neutral() -> Result<()> {
+        const ROWS_PER_CLUSTER: usize = 128;
+        const DIM: usize = 32;
+        let mut flat = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ);
+        let mut clustered =
+            PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+                .with_quant(crate::writer::VectorQuant::RaBitQ)
+                .with_clustered_sq8_lossless(true);
+        for row in 0..(ROWS_PER_CLUSTER * 2) {
+            if row == ROWS_PER_CLUSTER {
+                clustered.start_cluster_run();
+            }
+            let center = if row < ROWS_PER_CLUSTER { -4.0 } else { 7.0 };
+            let embedding: Vec<f32> = (0..DIM)
+                .map(|lane| center + ((row + lane) % 4) as f32 * 0.01)
+                .collect();
+            let record =
+                make_record_with_embedding(&format!("r{row}"), "t", 1_000 + row as i64, embedding);
+            flat.add_record(&record)?;
+            clustered.add_record(&record)?;
+        }
+        let flat_block = flat.flush()?;
+        let clustered_block = clustered.flush()?;
+        let flat_reader = PaxBlockReader::open(&flat_block)?;
+        let clustered_reader = PaxBlockReader::open(&clustered_block)?;
+        assert!(
+            clustered_reader
+                .vector_params()
+                .transform(col_id::RERANK_BASE)
+                .is_some()
+        );
+
+        let rows: Vec<usize> = (0..ROWS_PER_CLUSTER * 2).collect();
+        let query: Vec<f32> = (0..DIM).map(|lane| 7.0 + lane as f32 * 0.001).collect();
+        for metric in [RankMetric::L2, RankMetric::Cosine, RankMetric::DotProduct] {
+            assert_eq!(
+                clustered_reader.rerank_rows(0, &query, &rows, metric),
+                flat_reader.rerank_rows(0, &query, &rows, metric),
+                "lossless transform changed {metric:?} rerank"
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -1394,7 +1910,7 @@ mod tests {
                 .get(col_id::EMBED_BASE)
                 .unwrap()
                 .quant_kind,
-            crate::vparam::QUANT_RABITQ_RESERVED
+            crate::vparam::QUANT_RABITQ
         );
         assert_eq!(
             reader
@@ -1462,7 +1978,7 @@ mod tests {
                 .get(crate::col_id::EMBED_BASE)
                 .unwrap()
                 .quant_kind,
-            crate::vparam::QUANT_RABITQ_RESERVED
+            crate::vparam::QUANT_RABITQ
         );
 
         // Rerank the full candidate set against a query; FP16 distances must
@@ -1718,6 +2234,69 @@ mod tests {
         recalls.iter().sum::<f32>() / recalls.len() as f32
     }
 
+    /// TD-RDSTRAT-3 S1b parity: the ranged Stage-2 scorer (`score_rerank_row`, which
+    /// the ranged reader calls on `vector_row_range`-fetched candidate rows) must
+    /// produce BYTE-IDENTICAL `(row, distance)` to the whole-block `rerank_rows` —
+    /// so the selective striped read returns the same top-k as the whole-segment
+    /// read (the S1b parity gate; the SIFT1M recall ratchet is the CI-time gate).
+    #[test]
+    fn ranged_rerank_scorer_matches_whole_rerank_rows() {
+        const N: usize = 512;
+        let (_corpus, block) = build_cold_recall_corpus_and_block(N);
+        let reader = PaxBlockReader::open(&block).unwrap();
+        let dim = reader.vector_params().get(col_id::EMBED_BASE).unwrap().dim as usize;
+
+        for metric in [RankMetric::L2, RankMetric::Cosine] {
+            let query = lcg_vec(42, dim);
+            let cand = reader.rabitq_rank(&query, 64, metric).unwrap();
+            let whole = reader.rerank_rows(0, &query, &cand, metric).unwrap();
+
+            // Replicate Stage 2 as the ranged reader will: read the rerank stripe,
+            // then decode+score ONLY the candidate rows via the shared primitive.
+            let rer = reader
+                .vector_params()
+                .get(crate::col_id::RERANK_BASE)
+                .unwrap();
+            let raw = reader.read_stripe_raw(crate::col_id::RERANK_BASE).unwrap();
+            let n = reader.row_count() as usize;
+            let bm_len = n.div_ceil(8);
+            let bitmap = &raw[..bm_len];
+            let payload = &raw[bm_len..];
+            let stride = if rer.quant_kind == QUANT_FP16 {
+                rer.dim as usize * 2
+            } else {
+                rer.dim as usize
+            };
+            let present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
+            let mut scratch: Vec<f32> = Vec::new();
+            let mut ranged: Vec<(usize, f32)> = Vec::new();
+            for &row in &cand {
+                if row >= n || !present(row) {
+                    continue;
+                }
+                let off = row * stride;
+                if off + stride > payload.len() {
+                    continue;
+                }
+                let d = score_rerank_row(
+                    rer.quant_kind,
+                    &rer.params,
+                    &payload[off..off + stride],
+                    &query,
+                    metric,
+                    &mut scratch,
+                );
+                ranged.push((row, d));
+            }
+            ranged.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            assert_eq!(
+                ranged, whole,
+                "ranged Stage-2 scorer diverged from whole rerank_rows ({metric:?})"
+            );
+        }
+    }
+
     /// P3 Phase G — cold-recall ratchet at N=1000 over a REAL two-column PAX block.
     /// Storage-format mandate (#8): the RaBitQ→SQ8 cascade (stage-1 `rabitq_rank`
     /// prefilter → stage-2 `rerank_rows` SQ8 rerank) must hold recall@10 within
@@ -1737,7 +2316,7 @@ mod tests {
 
         // Both vector columns present and correctly quantized.
         let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
-        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
+        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ);
         let rer = reader
             .vector_params()
             .get(crate::col_id::RERANK_BASE)
@@ -1792,7 +2371,7 @@ mod tests {
 
         // The cosine path uses the same RaBitQ + SQ8 columns as L2.
         let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
-        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
+        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ);
         assert_eq!(
             reader
                 .vector_params()
@@ -1860,7 +2439,7 @@ mod tests {
                 vmax: 0.4,
             },
         };
-        let decoded = decode_f32_vec_v2(&data, rows.len(), &entry).unwrap();
+        let decoded = decode_f32_vec_v2(&data, rows.len(), &entry, None).unwrap();
         assert_eq!(decoded[0], Some(vec![0.1, 0.2]));
         assert_eq!(decoded[1], None);
         assert_eq!(decoded[2], Some(vec![0.3, 0.4]));

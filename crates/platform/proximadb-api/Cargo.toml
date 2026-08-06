@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage = "https://github.com/vjsingh1984/proximadb"
+homepage = "https://github.com/anvai-labs/proximaDB"
 description = "ProximaDB API handlers - REST, gRPC, pgwire, and Arrow Flight"
 
 [dependencies]
@@ -19,6 +19,7 @@ hyper.workspace = true
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
+proximadb-tenant = { path = "../../foundation/proximadb-tenant" }
 proximadb-query = { path = "../../query/proximadb-query" }
 proximadb-query-filter = { path = "../../query/proximadb-query-filter" }
 proximadb-records = { path = "../../foundation/proximadb-records" }

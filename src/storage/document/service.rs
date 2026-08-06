@@ -36,7 +36,6 @@ use proximadb_records::{
 
 use super::DocumentStorageEngine;
 use super::aggregation_extensions::LookupFetcher;
-#[cfg(feature = "canonical-document-store")]
 use super::canonical_adapter::legacy_document_to_proxima_record;
 use super::canonical_adapter::proxima_record_to_legacy_document;
 use super::canonical_adapter::{proxima_tree_to_sql_object, sql_value_to_tree_node};
@@ -49,6 +48,40 @@ use super::{
 use proximadb_data_model::ProximaValue;
 use proximadb_records::conversions::sql_value_to_proxima;
 use proximadb_records::{ProximaTree, ProximaTreeNode, tree_get};
+
+/// Compose the structural per-tenant document collection key `{tenant}/{collection}` — the
+/// document counterpart of graph's `scoped_graph_id`.
+///
+/// The DEFAULT tenant stays UNSCOPED (bare `collection`), matching the bare collections the
+/// pgwire / REST v1 create paths register; named tenants scope. Validates the tenant as a path
+/// segment (fail-closed) before it becomes part of a storage key. BOTH the storage-key parameter
+/// AND the record's `collection_id` must be composed from this — they key the same canonical OID
+/// (`document/{collection_id}/{doc_id}`), so a scoped write and its recovery/read agree
+/// (TD-DOC-TENANT-1); scoping only one side mis-keys the live read immediately.
+pub fn scoped_document_collection(tenant: &str, collection: &str) -> anyhow::Result<String> {
+    proximadb_tenant::validate_request_tenant(tenant)
+        .map_err(|e| anyhow::anyhow!("invalid tenant '{tenant}': {e}"))?;
+    if tenant == proximadb_tenant::DEFAULT_TENANT {
+        return Ok(collection.to_string());
+    }
+    Ok(format!("{tenant}/{collection}"))
+}
+
+/// Inverse of [`scoped_document_collection`]: recover `(tenant, clean_collection)` from a
+/// scoped storage key.
+///
+/// The ADR-009 canonical-vector route needs the CLEAN collection name (the shared
+/// record/vector catalog registers bare names, resolved per-tenant via `TenantContext`)
+/// plus the tenant as a separate value — NOT the folded `{tenant}/{collection}` key.
+/// Well-defined because a tenant is a validated path segment (no `/`) and collection
+/// names match `^[a-z][a-z0-9_]*$` (no `/`): the first `/` is unambiguously the fold
+/// separator, and a bare key (DEFAULT tenant) has none ⇒ `(None, key)`.
+pub fn unscope_document_collection(scoped: &str) -> (Option<&str>, &str) {
+    match scoped.split_once('/') {
+        Some((tenant, collection)) => (Some(tenant), collection),
+        None => (None, scoped),
+    }
+}
 
 /// Document service for CRUD operations
 pub struct DocumentService {
@@ -81,6 +114,61 @@ pub struct DocumentService {
     wal_path: String,
     /// Optional metrics collector for observability
     metrics_collector: Option<Arc<DocumentMetricsCollector>>,
+    /// ADR-009 convergence route onto the shared record/vector store. When wired
+    /// AND the runtime gate is ON for a collection (default-OFF), document
+    /// writes/reads flow through the same tenant-scoped record surface REST v2 uses
+    /// — so a document is visible cross-surface, metered, and stored once. When the
+    /// gate is OFF the legacy `document_wal`/`documents` path is used unchanged,
+    /// and pre-cutover docs remain reachable via the legacy read-fallback
+    /// (mixed-read-safe). See `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`.
+    ///
+    /// A `OnceLock` because `RecordOpsService` is constructed *after* this service (it takes
+    /// the shared `document_service` handle), so the route is injected once, post-construction,
+    /// through the already-`Arc`-shared facade — never mutated again.
+    record_route: std::sync::OnceLock<Arc<dyn proximadb_runtime::RecordRoutePort>>,
+}
+
+/// Bound on the canonical-vector read scan for document point/query reads. The point-get
+/// is currently satisfied by a bounded scan (the shared record surface exposes scan, not a
+/// labelled point-get); a follow-up can push an `oid`/`local_id` predicate into the scan for
+/// O(1) point reads. Documents are a beta surface behind a default-OFF gate, so the bound is
+/// generous but finite — a silent truncation past it would drop reads, so it is logged.
+const CANONICAL_DOC_SCAN_LIMIT: usize = 100_000;
+
+/// Runtime gate for the canonical-vector document route (ADR-009), **DEFAULT-ON**
+/// (post-bake cutover, TD-DOC-CONV-2). The bake proved recall / single-store /
+/// restart-recovery, and the write path now meters per-tenant; the default is flipped ON
+/// and shipped default-reversible via a global kill-switch.
+///
+/// `PROXIMADB_DOC_CANONICAL_VECTOR`:
+/// * unset / empty / `1` / `true` / `on` / `all` / `*` ⇒ **ON** (default)
+/// * `0` / `false` / `off` / `none` ⇒ **OFF** for every collection — the global
+///   **kill-switch** (force back to the legacy path, e.g. to roll the cutover back)
+/// * a comma-separated list ⇒ ON **only** for the named collections (a partial-rollback
+///   scoping: unlisted collections are OFF)
+///
+/// NB this is only HALF the routing decision: the canonical route additionally requires
+/// the collection to actually exist as a canonical/vector collection (see
+/// [`DocumentService::canonical_route`]), so a pure-document (non-vector) collection stays
+/// on the legacy path even with the gate ON — the flip is mixed-read/write-safe, no
+/// flag-day. Legacy pre-cutover docs remain reachable via the read-fallback.
+pub fn doc_canonical_vector_enabled(collection: &str) -> bool {
+    match std::env::var("PROXIMADB_DOC_CANONICAL_VECTOR") {
+        // Unset ⇒ ON (default-ON post-cutover).
+        Err(_) => true,
+        Ok(raw) => {
+            let raw = raw.trim();
+            match raw.to_ascii_lowercase().as_str() {
+                // Empty ⇒ treat as unset ⇒ ON.
+                "" | "1" | "true" | "on" | "all" | "*" => true,
+                // Global kill-switch ⇒ OFF for every collection (default-reversible).
+                "0" | "false" | "off" | "none" => false,
+                // Explicit allowlist ⇒ ON only for the listed collections; an explicit
+                // list is a deliberate scoping, so it overrides default-ON for the rest.
+                _ => raw.split(',').map(str::trim).any(|c| c == collection),
+            }
+        }
+    }
 }
 
 impl DocumentService {
@@ -98,6 +186,7 @@ impl DocumentService {
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
             metrics_collector: None,
+            record_route: std::sync::OnceLock::new(),
         }
     }
 
@@ -121,6 +210,7 @@ impl DocumentService {
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
             metrics_collector: None,
+            record_route: std::sync::OnceLock::new(),
         }
     }
 
@@ -141,6 +231,7 @@ impl DocumentService {
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
             metrics_collector: Some(metrics_collector),
+            record_route: std::sync::OnceLock::new(),
         }
     }
 
@@ -166,6 +257,7 @@ impl DocumentService {
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
             metrics_collector: None,
+            record_route: std::sync::OnceLock::new(),
         }
     }
 
@@ -196,6 +288,7 @@ impl DocumentService {
             wal_writer: Arc::new(Mutex::new(Some(wal_writer))),
             wal_path,
             metrics_collector: None,
+            record_route: std::sync::OnceLock::new(),
         };
 
         service.recover_from_wal().await?;
@@ -203,20 +296,36 @@ impl DocumentService {
         Ok(service)
     }
 
-    /// Create a new document service with WAL support
+    /// Create a new document service with WAL support.
+    #[deprecated(
+        since = "0.2.3",
+        note = "legacy document_wal path is fallback-only after the ADR-055 default-ON cutover; use with_canonical_record_store_and_wal. Retirement: TD-DOC-RETIRE-1."
+    )]
     pub async fn new_with_wal(
         storage_engine: Arc<dyn UnifiedStorageFormat>,
         wal_base_path: &str,
     ) -> Result<Self> {
+        // TD-DOC-RETIRE-1 P2 rewires this to the canonical constructor; the deprecated
+        // delegate is intentional until then (the runtime warn fires in the leaf below).
+        #[allow(deprecated)]
         Self::new_with_wal_and_metrics(storage_engine, wal_base_path, None).await
     }
 
-    /// Create a new document service with WAL support and optional metrics
+    /// Create a new document service with WAL support and optional metrics.
+    #[deprecated(
+        since = "0.2.3",
+        note = "legacy document_wal path is fallback-only after the ADR-055 default-ON cutover; use with_canonical_record_store_and_wal. Retirement: TD-DOC-RETIRE-1."
+    )]
     pub async fn new_with_wal_and_metrics(
         storage_engine: Arc<dyn UnifiedStorageFormat>,
         wal_base_path: &str,
         metrics_collector: Option<Arc<DocumentMetricsCollector>>,
     ) -> Result<Self> {
+        tracing::warn!(
+            "DocumentService::new_with_wal[_and_metrics] is deprecated: the legacy document_wal \
+             path is fallback-only after the ADR-055 default-ON cutover. Migrate to \
+             with_canonical_record_store_and_wal (retirement tracked by TD-DOC-RETIRE-1)."
+        );
         let wal_path = format!("{}/document_wal", wal_base_path);
         let wal_writer = UnifiedWALWriter::new(wal_path.clone())
             .await
@@ -234,12 +343,81 @@ impl DocumentService {
             wal_writer: Arc::new(Mutex::new(Some(wal_writer))),
             wal_path,
             metrics_collector,
+            record_route: std::sync::OnceLock::new(),
         };
 
         // Recover from WAL on startup
         service.recover_from_wal().await?;
 
         Ok(service)
+    }
+
+    /// Wire the ADR-009 convergence route onto the shared record/vector store, once.
+    ///
+    /// Called post-construction (the `RecordOpsService` that backs the route is built after
+    /// this service and takes its shared handle), through the already-`Arc`-shared facade.
+    /// Idempotent-safe: a second call is ignored. The legacy `document_wal`/`documents` path
+    /// is retained for the default-OFF gate and as the mixed-read-safe fallback for
+    /// pre-cutover documents.
+    pub fn set_record_route(&self, record_route: Arc<dyn proximadb_runtime::RecordRoutePort>) {
+        let _ = self.record_route.set(record_route);
+    }
+
+    /// The canonical record route port, if registered (ungated) — the DataFusion
+    /// `documents()` UDTF uses it to resolve PAX scan inputs for predicate pushdown
+    /// (TD-DOC-PUSHDOWN-1). Unlike [`Self::canonical_route`], this is not gated on the
+    /// per-collection canonical-vector flag: pushdown-eligibility is decided by whether
+    /// `pax_scan_inputs` resolves, and the caller falls back to the in-memory scan.
+    pub fn record_route_port(&self) -> Option<Arc<dyn proximadb_runtime::RecordRoutePort>> {
+        self.record_route.get().cloned()
+    }
+
+    /// Select the canonical-vector route for `collection`, else `None` ⇒ legacy path. The single
+    /// decision point for the store-split cutover — every write/read branches on this. Three
+    /// conditions, all required (mixed-safe under the DEFAULT-ON gate, TD-DOC-CONV-2):
+    ///
+    /// 1. a canonical route is wired,
+    /// 2. the runtime gate is ON for `collection` (default-ON; kill-switch / allowlist honored),
+    /// 3. `collection` actually EXISTS as a canonical/vector collection.
+    ///
+    /// (3) is what makes default-ON safe: a pure-document (non-vector) collection — one never
+    /// created via REST v2 / DDL — is not resolvable canonically, so it stays on the legacy path
+    /// instead of hard-failing the canonical write (`insert_records` errors on an unresolvable
+    /// collection). Legacy pre-cutover docs stay reachable via the read-fallback.
+    async fn canonical_route(
+        &self,
+        collection: &str,
+    ) -> Option<&Arc<dyn proximadb_runtime::RecordRoutePort>> {
+        let route = self.record_route.get()?;
+        if !doc_canonical_vector_enabled(collection) {
+            return None;
+        }
+        let (tenant, clean_collection) = unscope_document_collection(collection);
+        if route.collection_exists(clean_collection, tenant).await {
+            Some(route)
+        } else {
+            None
+        }
+    }
+
+    /// Build the durable canonical envelope for a document on the ADR-009 vector route.
+    ///
+    /// Stamps the CLEAN collection into the label prop (the catalog resolves it per-tenant),
+    /// a raw-id OID (reconstruction reads the id from `local_id`/props, not the OID), and the
+    /// tenant onto the record as structural-isolation defense-in-depth for the scan filter.
+    fn canonical_document_record(
+        record: &DocumentRecord,
+        clean_collection: &str,
+        tenant: Option<&str>,
+    ) -> proximadb_records::ProximaRecord {
+        let mut for_store = record.clone();
+        for_store.collection_id = clean_collection.to_string();
+        let mut proxima = legacy_document_to_proxima_record(&for_store);
+        proxima.oid = record.id.clone();
+        proxima.tenant_id = tenant
+            .unwrap_or(proximadb_tenant::DEFAULT_TENANT)
+            .to_string();
+        proxima
     }
 
     /// Record insert metrics if collector is configured
@@ -808,6 +986,43 @@ impl DocumentService {
             collections.insert(name.to_string(), collection);
         }
 
+        // P-Provision (ADR-055): also provision the canonical (record/vector) collection so this
+        // document collection CONVERGES on the shared store instead of the legacy path — even for
+        // pure-document (vectorless) use. Uses the CLEAN name (the catalog registers bare names,
+        // resolved per-tenant); dimension 0 = vectorless (documents that carry vectors are inserted
+        // through the metered /documents path). Best-effort + mixed-safe: on failure we warn and
+        // keep the legacy path (the canonical route's capability check just stays false).
+        // `ensure_or_create_collection` funnels through here too, so first-write auto-create is
+        // covered without a second hook.
+        if let Some(route) = self.record_route.get() {
+            let (tenant, clean_collection) = unscope_document_collection(name);
+            // P-Shred follow-up (ADR-055): seed props-auto-promotion from the collection's declared
+            // indexes so those hot fields shred into typed columns at flush. Only simple top-level
+            // SCALAR keys shred usefully (a nested `$.user.email` top-level is a Map, not a scalar);
+            // skip nested/array paths rather than promoting a column that would never populate.
+            let promote_keys: Vec<String> = config
+                .indexes
+                .iter()
+                .filter_map(|idx| {
+                    let key = idx.path.trim_start_matches('$').trim_start_matches('.');
+                    if key.is_empty() || key.contains('.') || key.contains('[') {
+                        None
+                    } else {
+                        Some(key.to_string())
+                    }
+                })
+                .collect();
+            if let Err(e) = route
+                .ensure_collection(clean_collection, 0, tenant, &promote_keys)
+                .await
+            {
+                warn!(
+                    "P-Provision: canonical collection provision for '{}' failed (staying on legacy path): {}",
+                    name, e
+                );
+            }
+        }
+
         info!("Created document collection: {}", name);
         Ok(name.to_string())
     }
@@ -816,6 +1031,31 @@ impl DocumentService {
     pub async fn get_collection(&self, name: &str) -> Result<Option<DocumentCollection>> {
         let collections = self.collections.read().await;
         Ok(collections.get(name).cloned())
+    }
+
+    /// Get the collection metadata for `name`, lazily provisioning it with defaults if absent —
+    /// the get-or-create counterpart of [`get_collection`].
+    ///
+    /// This lets a tenant-scoped first write auto-register its collection under the SCOPED key
+    /// (`{tenant}/{collection}`): the v2 document gRPC path scopes reads/writes, but there is no
+    /// scoped create path (pgwire/REST-v1 create bare), so without this the scoped collection has
+    /// no metadata and the existence gate rejects the insert (TD-DOC-TENANT-1). Provisioning goes
+    /// through [`create_collection`] so the `CreateCollection` WAL op is logged and the collection
+    /// metadata is rebuilt on restart (recovery replays collections only from that op). Idempotent
+    /// and race-safe: a lost create race is resolved by re-fetch.
+    pub async fn ensure_or_create_collection(&self, name: &str) -> Result<DocumentCollection> {
+        if let Some(existing) = self.get_collection(name).await? {
+            return Ok(existing);
+        }
+        let config = DocumentCollectionConfig {
+            name: name.to_string(),
+            ..Default::default()
+        };
+        // On success OR a lost create race, re-fetch the now-registered metadata.
+        let _ = self.create_collection(name, config).await;
+        self.get_collection(name)
+            .await?
+            .ok_or_else(|| anyhow!("Collection '{}' missing after provision", name))
     }
 
     /// List all collections
@@ -895,18 +1135,44 @@ impl DocumentService {
             doc_id, collection
         );
 
-        // Verify collection exists
-        let _collection_meta = match self
-            .get_collection(collection)
-            .await?
-            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))
-        {
+        // Get — or lazily provision — the collection (get-or-create). A tenant-scoped first write
+        // auto-registers its collection under the scoped key, so named-tenant document create→use
+        // works without an out-of-band scoped create (TD-DOC-TENANT-1). The default tenant's
+        // collections are bare and already exist, so they are found, not recreated.
+        let _collection_meta = match self.ensure_or_create_collection(collection).await {
             Ok(meta) => meta,
             Err(e) => {
                 self.record_insert_metrics(start, true).await;
                 return Err(e);
             }
         };
+
+        // ADR-009 canonical-vector route (gate ON, per-collection opt-in): persist to the
+        // shared record/vector store — the exact path REST v2 uses — so the document is
+        // visible cross-surface, metered, and stored once. The legacy `document_wal`/DashMap
+        // is skipped on this path (the vector WAL owns recovery); pre-cutover docs stay
+        // reachable via the read-fallback in `get_document`/`query_documents`.
+        if let Some(route) = self.canonical_route(collection).await {
+            let (tenant, clean_collection) = unscope_document_collection(collection);
+            let proxima = Self::canonical_document_record(&record, clean_collection, tenant);
+            match route
+                .insert_records(clean_collection, vec![proxima], tenant)
+                .await
+            {
+                Ok(_) => {
+                    debug!(
+                        "Inserted document {} into {} via canonical-vector route",
+                        doc_id, clean_collection
+                    );
+                    self.record_insert_metrics(start, false).await;
+                    return Ok(record);
+                }
+                Err(e) => {
+                    self.record_insert_metrics(start, true).await;
+                    return Err(e.context("canonical-vector document insert failed"));
+                }
+            }
+        }
 
         // Write to WAL first (durability before in-memory update)
         if let Err(e) = self.write_document_upsert_to_wal(collection, &record).await {
@@ -992,6 +1258,29 @@ impl DocumentService {
     ) -> Result<Option<DocumentRecord>> {
         debug!("Getting document {} from {}", id, collection);
 
+        // ADR-009 canonical-vector route: the shared vector store is authoritative. Point-get it
+        // by id (O(log n) bloom + B+ tree — TD-DOC-CONV-1, no full-collection scan), rebuild the
+        // doc, return on hit. On miss, fall back to the legacy in-memory map for pre-cutover docs
+        // (mixed-read-safe). Note: no `get_collection` existence gate here — a canonical
+        // collection may live only in the record/vector catalog (e.g. created + written via
+        // REST v2), never in this facade's own map.
+        if let Some(route) = self.canonical_route(collection).await {
+            let (tenant, clean_collection) = unscope_document_collection(collection);
+            if let Some(mut doc) = route
+                .get_record(clean_collection, id, tenant)
+                .await
+                .context("canonical-vector document get failed")?
+                .as_ref()
+                .and_then(proxima_record_to_legacy_document)
+            {
+                if let Some(fields) = projection.as_ref().filter(|f| !f.is_empty()) {
+                    doc.props = self.apply_projection(&doc.props, fields);
+                }
+                return Ok(Some(doc));
+            }
+            return Ok(self.legacy_dashmap_get(collection, id, projection));
+        }
+
         // Verify collection exists
         self.get_collection(collection)
             .await?
@@ -1045,6 +1334,25 @@ impl DocumentService {
         }
 
         Ok(None)
+    }
+
+    /// Legacy in-memory (DashMap) point lookup — the mixed-read-safe fallback for
+    /// pre-cutover documents still keyed under the scoped `collection`. Used only from
+    /// the canonical-vector read path after a store miss; the gate-OFF path keeps its
+    /// own inline lookup unchanged.
+    fn legacy_dashmap_get(
+        &self,
+        collection: &str,
+        id: &str,
+        projection: Option<Vec<String>>,
+    ) -> Option<DocumentRecord> {
+        let documents = &*self.documents;
+        let collection_docs = documents.get(collection)?;
+        let mut result = collection_docs.get(id)?.clone();
+        if let Some(fields) = projection.as_ref().filter(|f| !f.is_empty()) {
+            result.props = self.apply_projection(&result.props, fields);
+        }
+        Some(result)
     }
 
     /// Apply field projection over the canonical props tree (TD-106 Slice 7e).
@@ -1115,6 +1423,30 @@ impl DocumentService {
         let new_version = record.version + 1;
         record.version = new_version;
         record.updated_at_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+
+        // ADR-009 canonical-vector route: write the updated document back to the shared
+        // vector store (upsert on the raw-id OID) so the update is visible cross-surface.
+        if let Some(route) = self.canonical_route(collection).await {
+            let (tenant, clean_collection) = unscope_document_collection(collection);
+            let proxima = Self::canonical_document_record(&record, clean_collection, tenant);
+            match route
+                .insert_records(clean_collection, vec![proxima], tenant)
+                .await
+            {
+                Ok(_) => {
+                    debug!(
+                        "Updated document {} in {} via canonical-vector route",
+                        id, clean_collection
+                    );
+                    self.record_update_metrics(start, false).await;
+                    return Ok(record);
+                }
+                Err(e) => {
+                    self.record_update_metrics(start, true).await;
+                    return Err(e.context("canonical-vector document update failed"));
+                }
+            }
+        }
 
         // Write to WAL first (durability before in-memory update)
         // Store full updated document for proper recovery replay
@@ -1421,6 +1753,33 @@ impl DocumentService {
         let start = std::time::Instant::now();
         debug!("Deleting document {} from {}", id, collection);
 
+        // ADR-009 canonical-vector route: tombstone in the shared vector store (visible
+        // cross-surface), and also drop any pre-cutover legacy copy under the scoped key so
+        // it cannot resurface (mixed-read-safe). Returns true if either store held the doc.
+        if let Some(route) = self.canonical_route(collection).await {
+            let (tenant, clean_collection) = unscope_document_collection(collection);
+            let deleted = route
+                .delete_records(clean_collection, vec![id.to_string()], tenant)
+                .await
+                .context("canonical-vector document delete failed")?;
+            let legacy_present = self
+                .documents
+                .get(collection)
+                .is_some_and(|docs| docs.contains_key(id));
+            if legacy_present {
+                if let Err(e) = self.write_document_delete_to_wal(collection, id).await {
+                    self.record_delete_metrics(start, true).await;
+                    return Err(e);
+                }
+                let _ = self.remove_document_projection(collection, id).await;
+                if let Some(mut docs) = self.documents.get_mut(collection) {
+                    docs.remove(id);
+                }
+            }
+            self.record_delete_metrics(start, false).await;
+            return Ok(deleted > 0 || legacy_present);
+        }
+
         // Verify collection exists
         if let Err(e) = self
             .get_collection(collection)
@@ -1517,6 +1876,50 @@ impl DocumentService {
     ) -> Result<DocumentQueryResult> {
         let start = std::time::Instant::now();
         debug!("Querying documents in {}", collection);
+
+        // ADR-009 canonical-vector route: source documents from the shared vector store
+        // (cross-surface visibility), then run the same in-memory query executor. A queried
+        // collection is either opted-in (canonical) or not; pre-cutover point reads stay
+        // served by `get_document`'s legacy fallback.
+        if let Some(route) = self.canonical_route(collection).await {
+            let (tenant, clean_collection) = unscope_document_collection(collection);
+            let records = route
+                .scan_records(clean_collection, CANONICAL_DOC_SCAN_LIMIT, tenant)
+                .await
+                .context("canonical-vector document scan failed")?;
+            if records.len() == CANONICAL_DOC_SCAN_LIMIT {
+                warn!(
+                    "canonical-vector query scan hit the {} cap for collection {}; results may be incomplete",
+                    CANONICAL_DOC_SCAN_LIMIT, clean_collection
+                );
+            }
+            let documents: Vec<DocumentRecord> = records
+                .iter()
+                .filter_map(proxima_record_to_legacy_document)
+                .collect();
+            let (documents, total_count) = match self
+                .query_executor
+                .execute(collection, &documents, &params, &self.index_manager)
+                .await
+            {
+                Ok(result) => result,
+                Err(e) => {
+                    self.record_query_metrics(start, true).await;
+                    return Err(e);
+                }
+            };
+            let query_time_ms = start.elapsed().as_millis() as u64;
+            self.record_query_metrics(start, false).await;
+            return Ok(DocumentQueryResult {
+                documents,
+                total_count: if params.include_count {
+                    Some(total_count)
+                } else {
+                    None
+                },
+                query_time_ms,
+            });
+        }
 
         // Verify collection exists
         let _collection_meta = match self
@@ -1615,13 +2018,31 @@ impl DocumentService {
         let start = std::time::Instant::now();
         debug!("Aggregating documents in {}", collection);
 
-        // Verify collection exists
-        self.get_collection(collection)
-            .await?
-            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
-
-        // Get all documents from the collection
-        let documents: Vec<DocumentRecord> = {
+        // Get all documents from the collection — the shared vector store when routed
+        // (ADR-009 cross-surface visibility), else the legacy in-memory map.
+        let documents: Vec<DocumentRecord> = if let Some(route) =
+            self.canonical_route(collection).await
+        {
+            let (tenant, clean_collection) = unscope_document_collection(collection);
+            let records = route
+                .scan_records(clean_collection, CANONICAL_DOC_SCAN_LIMIT, tenant)
+                .await
+                .context("canonical-vector document scan failed")?;
+            if records.len() == CANONICAL_DOC_SCAN_LIMIT {
+                warn!(
+                    "canonical-vector aggregate scan hit the {} cap for collection {}; results may be incomplete",
+                    CANONICAL_DOC_SCAN_LIMIT, clean_collection
+                );
+            }
+            records
+                .iter()
+                .filter_map(proxima_record_to_legacy_document)
+                .collect()
+        } else {
+            // Verify collection exists (legacy path only)
+            self.get_collection(collection)
+                .await?
+                .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
             let docs = &*self.documents;
             match docs.get(collection) {
                 Some(collection_docs) => collection_docs.values().cloned().collect(),
@@ -2325,1162 +2746,5 @@ impl proximadb_runtime::DocumentPort for DocumentService {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::proto::proximadb_v1::{
-        DocFilterCondition, DocFilterOperator, DocIndexType, DocumentCollectionConfig,
-        DocumentFilter, DocumentUpdate, IndexDefinition, SqlObject, SqlValue, UpdateOperation,
-        sql_value,
-    };
-    use crate::storage::traits::{
-        CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-        StorageFormatStrategy, UnifiedStorageFormat,
-    };
-    use async_trait::async_trait;
-    use std::collections::HashMap;
-    use std::sync::Arc;
-
-    // =========================================================================
-    // Mock storage engine for document service tests
-    // =========================================================================
-
-    struct MockStorageEngine;
-
-    #[async_trait]
-    impl UnifiedStorageFormat for MockStorageEngine {
-        fn engine_name(&self) -> &'static str {
-            "MockEngine"
-        }
-
-        fn engine_version(&self) -> &'static str {
-            "1.0.0"
-        }
-
-        fn strategy(&self) -> StorageFormatStrategy {
-            StorageFormatStrategy::Sst
-        }
-
-        async fn do_flush(&self, _params: &FlushParameters) -> Result<FlushResult> {
-            Ok(FlushResult {
-                success: true,
-                collections_affected: Vec::new(),
-                entries_flushed: Some(0),
-                bytes_written: Some(0),
-                files_created: Some(0),
-                file_paths: Vec::new(),
-                duration_ms: Some(0),
-                completed_at: chrono::Utc::now(),
-                engine_metrics: HashMap::new(),
-                compaction_triggered: false,
-                compaction_error: None,
-                flushed_batch_ids: Vec::new(),
-            })
-        }
-
-        async fn do_compact(&self, _params: &CompactionParameters) -> Result<CompactionResult> {
-            Ok(CompactionResult {
-                success: true,
-                collections_affected: Vec::new(),
-                entries_processed: Some(0),
-                entries_removed: Some(0),
-                bytes_read: Some(0),
-                bytes_written: Some(0),
-                input_files: Some(0),
-                output_files: Some(0),
-                duration_ms: Some(0),
-                completed_at: chrono::Utc::now(),
-                engine_metrics: HashMap::new(),
-            })
-        }
-
-        async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
-            Ok(HashMap::new())
-        }
-
-        async fn vector_by_id(
-            &self,
-            _collection_id: &str,
-            _base_path: &str,
-            _vector_id: &str,
-        ) -> Result<Option<proximadb_records::ProximaRecord>> {
-            Ok(None)
-        }
-
-        async fn search_vectors_unified(
-            &self,
-            _ctx: &crate::storage::traits::StorageQueryContext,
-        ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-            Ok(Vec::new())
-        }
-
-        fn get_filesystem_factory(
-            &self,
-        ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-            unimplemented!("MockEngine does not provide a filesystem factory")
-        }
-    }
-
-    // =========================================================================
-    // Helpers
-    // =========================================================================
-
-    /// Create a DocumentService backed by the mock storage engine (no WAL)
-    fn create_test_service() -> DocumentService {
-        let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(MockStorageEngine);
-        DocumentService::new(engine)
-    }
-
-    /// Build an SqlObject from key-value pairs (string values)
-    fn make_document(fields: Vec<(&str, SqlValue)>) -> SqlObject {
-        SqlObject {
-            fields: fields
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect(),
-        }
-    }
-
-    /// Convenience: create a string SqlValue
-    fn sql_string(s: &str) -> SqlValue {
-        SqlValue {
-            value: Some(sql_value::Value::StringValue(s.to_string())),
-        }
-    }
-
-    /// Convenience: create an i64 SqlValue
-    fn sql_int(n: i64) -> SqlValue {
-        SqlValue {
-            value: Some(sql_value::Value::Int64Value(n)),
-        }
-    }
-
-    /// Convenience: create a numeric (f64) SqlValue
-    #[allow(dead_code)]
-    fn sql_number(n: f64) -> SqlValue {
-        SqlValue {
-            value: Some(sql_value::Value::NumberValue(n)),
-        }
-    }
-
-    /// Create a default collection config for testing
-    fn test_collection_config() -> DocumentCollectionConfig {
-        DocumentCollectionConfig {
-            name: "test_collection".to_string(),
-            ..Default::default()
-        }
-    }
-
-    /// Set up a service with a pre-created collection, ready for document operations
-    async fn service_with_collection(collection_name: &str) -> DocumentService {
-        let svc = create_test_service();
-        svc.create_collection(
-            collection_name,
-            DocumentCollectionConfig {
-                name: collection_name.to_string(),
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("collection creation should succeed");
-        svc
-    }
-
-    /// Set up a canonical-record-backed service with a pre-created collection.
-    #[cfg(feature = "canonical-document-store")]
-    async fn canonical_service_with_collection(collection_name: &str) -> DocumentService {
-        use crate::storage::engines::cedar::CedarEngine;
-        use proximadb_records::RecordStorage;
-
-        let cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
-        let storage_engine: Arc<dyn UnifiedStorageFormat> = cedar.clone();
-        let record_store: Arc<dyn RecordStorage> = cedar;
-        let svc = DocumentService::with_canonical_record_store(storage_engine, record_store);
-
-        svc.create_collection(
-            collection_name,
-            DocumentCollectionConfig {
-                name: collection_name.to_string(),
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("collection creation should succeed");
-        svc
-    }
-
-    #[allow(dead_code)]
-    fn assert_same_document_shape(left: &DocumentRecord, right: &DocumentRecord) {
-        assert_eq!(left.id, right.id);
-        assert_eq!(left.collection_id, right.collection_id);
-        assert_eq!(left.version, right.version);
-        assert_eq!(left.schema_id, right.schema_id);
-        assert_eq!(left.document_type, right.document_type);
-        assert_eq!(left.props, right.props);
-    }
-
-    /// Read a top-level field from a record's canonical props as a legacy
-    /// `SqlValue` (test convenience after TD-106 Slice 7e removed `document`).
-    fn field(rec: &DocumentRecord, key: &str) -> SqlValue {
-        proxima_tree_to_sql_object(&rec.props)
-            .fields
-            .get(key)
-            .cloned()
-            .unwrap_or_else(|| panic!("{key} field"))
-    }
-
-    // =========================================================================
-    // Document CRUD lifecycle tests
-    // =========================================================================
-
-    #[tokio::test]
-    async fn test_insert_and_get_document() {
-        let svc = service_with_collection("books").await;
-
-        let doc = make_document(vec![
-            ("title", sql_string("Rust Programming")),
-            ("year", sql_int(2024)),
-        ]);
-
-        let inserted = svc
-            .insert_document("books", Some("book-1"), doc)
-            .await
-            .expect("insert should succeed");
-
-        assert_eq!(inserted.id, "book-1");
-        assert_eq!(inserted.version, 1);
-        assert_eq!(inserted.collection_id, "books");
-
-        // Retrieve and verify
-        let fetched = svc
-            .get_document("books", "book-1", None)
-            .await
-            .expect("get should succeed")
-            .expect("document should exist");
-
-        assert_eq!(fetched.id, "book-1");
-        assert_eq!(fetched.version, 1);
-
-        // Verify field contents
-        let title_val = field(&fetched, "title");
-        assert_eq!(
-            title_val.value,
-            Some(sql_value::Value::StringValue(
-                "Rust Programming".to_string()
-            ))
-        );
-
-        let year_val = field(&fetched, "year");
-        assert_eq!(year_val.value, Some(sql_value::Value::Int64Value(2024)));
-    }
-
-    #[tokio::test]
-    async fn test_update_document() {
-        let svc = service_with_collection("users").await;
-
-        let doc = make_document(vec![
-            ("name", sql_string("Alice")),
-            ("email", sql_string("alice@example.com")),
-        ]);
-        svc.insert_document("users", Some("user-1"), doc)
-            .await
-            .expect("insert should succeed");
-
-        // Update the email field
-        let updates = vec![DocumentUpdate {
-            operation: UpdateOperation::Set as i32,
-            path: "email".to_string(),
-            value: Some(sql_string("alice@newdomain.com")),
-        }];
-
-        let updated = svc
-            .update_document("users", "user-1", updates, None)
-            .await
-            .expect("update should succeed");
-
-        assert_eq!(updated.version, 2, "version should be incremented");
-
-        // Verify the update persisted
-        let fetched = svc
-            .get_document("users", "user-1", None)
-            .await
-            .expect("get should succeed")
-            .expect("document should exist");
-
-        let email = field(&fetched, "email");
-        assert_eq!(
-            email.value,
-            Some(sql_value::Value::StringValue(
-                "alice@newdomain.com".to_string()
-            ))
-        );
-
-        // Original field should still be present
-        let name = field(&fetched, "name");
-        assert_eq!(
-            name.value,
-            Some(sql_value::Value::StringValue("Alice".to_string()))
-        );
-
-        // TD-106 Slice 7: the update mutates the canonical props tree directly.
-        match fetched.props.get("email") {
-            Some(proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::String(s),
-            )) => assert_eq!(
-                s, "alice@newdomain.com",
-                "props must carry the updated value"
-            ),
-            other => panic!("expected updated email in props, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_delete_document() {
-        let svc = service_with_collection("items").await;
-
-        let doc = make_document(vec![("product", sql_string("Widget"))]);
-        svc.insert_document("items", Some("item-1"), doc)
-            .await
-            .expect("insert should succeed");
-
-        // Confirm it exists
-        let before = svc
-            .get_document("items", "item-1", None)
-            .await
-            .expect("get should succeed");
-        assert!(before.is_some(), "document should exist before delete");
-
-        // Delete
-        let deleted = svc
-            .delete_document("items", "item-1")
-            .await
-            .expect("delete should succeed");
-        assert!(deleted, "delete should return true for existing doc");
-
-        // Confirm it is gone
-        let after = svc
-            .get_document("items", "item-1", None)
-            .await
-            .expect("get should succeed");
-        assert!(after.is_none(), "document should be gone after delete");
-    }
-
-    #[tokio::test]
-    async fn test_insert_duplicate_id() {
-        let svc = service_with_collection("dup").await;
-
-        let doc1 = make_document(vec![("val", sql_string("first"))]);
-        svc.insert_document("dup", Some("same-id"), doc1)
-            .await
-            .expect("first insert should succeed");
-
-        // Inserting with the same ID acts as an upsert in the in-memory store
-        // because insert_document unconditionally inserts into the HashMap.
-        let doc2 = make_document(vec![("val", sql_string("second"))]);
-        svc.insert_document("dup", Some("same-id"), doc2)
-            .await
-            .expect("second insert (upsert) should succeed");
-
-        let fetched = svc
-            .get_document("dup", "same-id", None)
-            .await
-            .expect("get should succeed")
-            .expect("document should exist");
-
-        // The second insert should have overwritten the first
-        let val = field(&fetched, "val");
-        assert_eq!(
-            val.value,
-            Some(sql_value::Value::StringValue("second".to_string())),
-            "second insert should overwrite the first"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_get_nonexistent_document() {
-        let svc = service_with_collection("empty_coll").await;
-
-        let result = svc
-            .get_document("empty_coll", "does-not-exist", None)
-            .await
-            .expect("get should not error");
-
-        assert!(result.is_none(), "nonexistent ID should return None");
-    }
-
-    #[tokio::test]
-    async fn test_insert_batch_documents() {
-        let svc = service_with_collection("batch").await;
-
-        let batch: Vec<(Option<String>, SqlObject)> = (0..5)
-            .map(|i| {
-                (
-                    Some(format!("doc-{}", i)),
-                    make_document(vec![("index", sql_int(i))]),
-                )
-            })
-            .collect();
-
-        let result = svc
-            .insert_documents("batch", batch)
-            .await
-            .expect("batch insert should succeed");
-
-        assert_eq!(result.ingested, 5);
-        assert_eq!(result.failed, 0);
-        assert!(result.errors.is_empty());
-
-        // Verify each document is retrievable
-        for i in 0..5 {
-            let doc = svc
-                .get_document("batch", &format!("doc-{}", i), None)
-                .await
-                .expect("get should succeed")
-                .expect("document should exist");
-            let idx_val = field(&doc, "index");
-            assert_eq!(idx_val.value, Some(sql_value::Value::Int64Value(i)));
-        }
-    }
-
-    // =========================================================================
-    // Query tests
-    // =========================================================================
-
-    #[tokio::test]
-    async fn test_query_with_filter() {
-        let svc = service_with_collection("products").await;
-
-        // Insert 3 documents with different categories
-        svc.insert_document(
-            "products",
-            Some("p1"),
-            make_document(vec![
-                ("name", sql_string("Laptop")),
-                ("category", sql_string("electronics")),
-            ]),
-        )
-        .await
-        .expect("insert p1");
-
-        svc.insert_document(
-            "products",
-            Some("p2"),
-            make_document(vec![
-                ("name", sql_string("Shirt")),
-                ("category", sql_string("clothing")),
-            ]),
-        )
-        .await
-        .expect("insert p2");
-
-        svc.insert_document(
-            "products",
-            Some("p3"),
-            make_document(vec![
-                ("name", sql_string("Phone")),
-                ("category", sql_string("electronics")),
-            ]),
-        )
-        .await
-        .expect("insert p3");
-
-        // Query with filter: category == "electronics"
-        let filter = DocumentFilter {
-            conditions: vec![DocFilterCondition {
-                path: "category".to_string(),
-                operator: DocFilterOperator::Eq as i32,
-                value: Some(sql_string("electronics")),
-                values: Vec::new(),
-            }],
-            ..Default::default()
-        };
-
-        let result = svc
-            .query_documents(
-                "products",
-                DocumentQueryParams {
-                    filter: Some(filter),
-                    limit: 100,
-                    include_count: true,
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("query should succeed");
-
-        assert_eq!(
-            result.documents.len(),
-            2,
-            "should return only electronics items"
-        );
-        assert_eq!(result.total_count, Some(2));
-
-        // Verify all returned docs are in the electronics category
-        for doc in &result.documents {
-            let cat = field(doc, "category");
-            assert_eq!(
-                cat.value,
-                Some(sql_value::Value::StringValue("electronics".to_string()))
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn test_query_with_pagination() {
-        let svc = service_with_collection("paginated").await;
-
-        // Insert 10 documents
-        for i in 0..10 {
-            svc.insert_document(
-                "paginated",
-                Some(&format!("item-{:02}", i)),
-                make_document(vec![("seq", sql_int(i))]),
-            )
-            .await
-            .expect("insert should succeed");
-        }
-
-        // Query with limit=3, offset=2
-        let result = svc
-            .query_documents(
-                "paginated",
-                DocumentQueryParams {
-                    limit: 3,
-                    offset: 2,
-                    include_count: true,
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("query should succeed");
-
-        assert_eq!(
-            result.documents.len(),
-            3,
-            "should return exactly 3 documents"
-        );
-        assert_eq!(
-            result.total_count,
-            Some(10),
-            "total count should be 10 (before pagination)"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_query_all_documents() {
-        let svc = service_with_collection("all_docs").await;
-
-        // Insert 4 documents
-        for i in 0..4 {
-            svc.insert_document(
-                "all_docs",
-                Some(&format!("d{}", i)),
-                make_document(vec![("n", sql_int(i))]),
-            )
-            .await
-            .expect("insert should succeed");
-        }
-
-        // Query with no filter (limit=0 means "all")
-        let result = svc
-            .query_documents(
-                "all_docs",
-                DocumentQueryParams {
-                    include_count: true,
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("query should succeed");
-
-        assert_eq!(result.documents.len(), 4, "should return all 4 documents");
-        assert_eq!(result.total_count, Some(4));
-    }
-
-    #[cfg(feature = "canonical-document-store")]
-    #[tokio::test]
-    async fn test_canonical_document_service_parity_with_legacy_path() {
-        let legacy = service_with_collection("parity").await;
-        let canonical = canonical_service_with_collection("parity").await;
-
-        let doc = make_document(vec![
-            ("title", sql_string("Record Spine")),
-            ("category", sql_string("architecture")),
-            ("revision", sql_int(1)),
-        ]);
-
-        let legacy_inserted = legacy
-            .insert_document("parity", Some("doc-1"), doc.clone())
-            .await
-            .expect("legacy insert");
-        let canonical_inserted = canonical
-            .insert_document("parity", Some("doc-1"), doc)
-            .await
-            .expect("canonical insert");
-        assert_same_document_shape(&legacy_inserted, &canonical_inserted);
-
-        let legacy_fetched = legacy
-            .get_document("parity", "doc-1", None)
-            .await
-            .expect("legacy get")
-            .expect("legacy document");
-        let canonical_fetched = canonical
-            .get_document("parity", "doc-1", None)
-            .await
-            .expect("canonical get")
-            .expect("canonical document");
-        assert_same_document_shape(&legacy_fetched, &canonical_fetched);
-
-        let updates = vec![DocumentUpdate {
-            operation: UpdateOperation::Set as i32,
-            path: "revision".to_string(),
-            value: Some(sql_int(2)),
-        }];
-        let legacy_updated = legacy
-            .update_document("parity", "doc-1", updates.clone(), None)
-            .await
-            .expect("legacy update");
-        let canonical_updated = canonical
-            .update_document("parity", "doc-1", updates, None)
-            .await
-            .expect("canonical update");
-        assert_same_document_shape(&legacy_updated, &canonical_updated);
-
-        legacy
-            .insert_document(
-                "parity",
-                Some("doc-2"),
-                make_document(vec![
-                    ("title", sql_string("Projection")),
-                    ("category", sql_string("architecture")),
-                    ("revision", sql_int(1)),
-                ]),
-            )
-            .await
-            .expect("legacy insert second");
-        canonical
-            .insert_document(
-                "parity",
-                Some("doc-2"),
-                make_document(vec![
-                    ("title", sql_string("Projection")),
-                    ("category", sql_string("architecture")),
-                    ("revision", sql_int(1)),
-                ]),
-            )
-            .await
-            .expect("canonical insert second");
-
-        let filter = DocumentFilter {
-            conditions: vec![DocFilterCondition {
-                path: "category".to_string(),
-                operator: DocFilterOperator::Eq as i32,
-                value: Some(sql_string("architecture")),
-                values: Vec::new(),
-            }],
-            ..Default::default()
-        };
-        let query_params = DocumentQueryParams {
-            filter: Some(filter),
-            include_count: true,
-            limit: 100,
-            ..Default::default()
-        };
-        let legacy_query = legacy
-            .query_documents("parity", query_params.clone())
-            .await
-            .expect("legacy query");
-        let canonical_query = canonical
-            .query_documents("parity", query_params)
-            .await
-            .expect("canonical query");
-        assert_eq!(legacy_query.total_count, canonical_query.total_count);
-
-        let mut legacy_ids: Vec<_> = legacy_query
-            .documents
-            .iter()
-            .map(|document| document.id.as_str())
-            .collect();
-        let mut canonical_ids: Vec<_> = canonical_query
-            .documents
-            .iter()
-            .map(|document| document.id.as_str())
-            .collect();
-        legacy_ids.sort_unstable();
-        canonical_ids.sort_unstable();
-        assert_eq!(legacy_ids, canonical_ids);
-
-        assert!(legacy.delete_document("parity", "doc-1").await.unwrap());
-        assert!(canonical.delete_document("parity", "doc-1").await.unwrap());
-        assert!(
-            legacy
-                .get_document("parity", "doc-1", None)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            canonical
-                .get_document("parity", "doc-1", None)
-                .await
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[cfg(feature = "canonical-document-store")]
-    #[tokio::test]
-    async fn test_canonical_document_query_uses_record_oid_projection_keys() {
-        use crate::storage::engines::cedar::CedarEngine;
-        use proximadb_records::RecordStorage;
-
-        let cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
-        let storage_engine: Arc<dyn UnifiedStorageFormat> = cedar.clone();
-        let record_store: Arc<dyn RecordStorage> = cedar;
-        let svc = DocumentService::with_canonical_record_store(storage_engine, record_store);
-
-        svc.create_collection(
-            "indexed",
-            DocumentCollectionConfig {
-                name: "indexed".to_string(),
-                indexes: vec![IndexDefinition {
-                    path: "category".to_string(),
-                    index_type: DocIndexType::Btree as i32,
-                    unique: false,
-                    sparse: false,
-                    name: Some("category_idx".to_string()),
-                }],
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("collection creation should succeed");
-
-        svc.insert_document(
-            "indexed",
-            Some("doc-1"),
-            make_document(vec![
-                ("title", sql_string("Canonical Index")),
-                ("category", sql_string("architecture")),
-            ]),
-        )
-        .await
-        .expect("insert should succeed");
-
-        let query_params = DocumentQueryParams {
-            filter: Some(DocumentFilter {
-                conditions: vec![DocFilterCondition {
-                    path: "category".to_string(),
-                    operator: DocFilterOperator::Eq as i32,
-                    value: Some(sql_string("architecture")),
-                    values: Vec::new(),
-                }],
-                ..Default::default()
-            }),
-            include_count: true,
-            ..Default::default()
-        };
-
-        let query_result = svc
-            .query_documents("indexed", query_params.clone())
-            .await
-            .expect("indexed canonical query should succeed");
-        assert_eq!(query_result.total_count, Some(1));
-        assert_eq!(query_result.documents[0].id, "doc-1");
-
-        assert!(
-            svc.delete_document("indexed", "doc-1")
-                .await
-                .expect("delete should succeed")
-        );
-
-        let query_after_delete = svc
-            .query_documents("indexed", query_params)
-            .await
-            .expect("indexed canonical query after delete should succeed");
-        assert_eq!(query_after_delete.total_count, Some(0));
-        assert!(query_after_delete.documents.is_empty());
-    }
-
-    #[cfg(feature = "canonical-document-store")]
-    #[tokio::test]
-    async fn test_canonical_document_wal_recovery_replays_into_record_store() {
-        use crate::storage::engines::cedar::CedarEngine;
-        use proximadb_records::RecordStorage;
-
-        let temp_dir = tempfile::tempdir().expect("temp wal dir");
-        let wal_base_path = temp_dir.path().to_str().expect("utf-8 temp path");
-        let collection_id = "wal_docs_upsert";
-        let document_id = "doc-upsert";
-
-        let first_cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
-        let first_storage_engine: Arc<dyn UnifiedStorageFormat> = first_cedar.clone();
-        let first_record_store: Arc<dyn RecordStorage> = first_cedar;
-        let first = DocumentService::with_canonical_record_store_and_wal(
-            first_storage_engine,
-            first_record_store,
-            wal_base_path,
-        )
-        .await
-        .expect("canonical wal service");
-
-        first
-            .create_collection(
-                collection_id,
-                DocumentCollectionConfig {
-                    name: collection_id.to_string(),
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("create collection");
-        first
-            .insert_document(
-                collection_id,
-                Some(document_id),
-                make_document(vec![("title", sql_string("Recovered"))]),
-            )
-            .await
-            .expect("insert");
-        first.flush_wal().await.expect("flush wal");
-        let wal_dir = format!("{}/document_wal", wal_base_path);
-        let wal_files = std::fs::read_dir(&wal_dir)
-            .expect("list document wal dir")
-            .map(|entry| {
-                let entry = entry.expect("wal dir entry");
-                let len = entry.metadata().expect("wal entry metadata").len();
-                format!("{}:{}", entry.file_name().to_string_lossy(), len)
-            })
-            .collect::<Vec<_>>();
-        let durable_entries =
-            crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALReader::new(
-                wal_dir,
-            )
-            .await
-            .expect("open wal reader")
-            .read_all()
-            .await
-            .expect("read flushed wal");
-        assert!(
-            durable_entries.iter().any(|entry| matches!(
-                &entry.operation,
-                UnifiedWALOperation::DocumentOp(
-                    DocumentOperation::UpsertCanonicalDocumentRecord {
-                        collection_id: wal_collection,
-                        ..
-                    }
-                ) if wal_collection == collection_id
-            )),
-            "flushed WAL should contain canonical document upsert; files {:?}; got {:?}",
-            wal_files,
-            durable_entries
-                .iter()
-                .map(|entry| &entry.operation)
-                .collect::<Vec<_>>()
-        );
-        drop(first);
-
-        let restarted_cedar = Arc::new(CedarEngine::new().expect("restarted cedar engine"));
-        let restarted_storage_engine: Arc<dyn UnifiedStorageFormat> = restarted_cedar.clone();
-        let restarted_record_store: Arc<dyn RecordStorage> = restarted_cedar;
-        let restarted_record_probe = restarted_record_store.clone();
-        let restarted = DocumentService::with_canonical_record_store_and_wal(
-            restarted_storage_engine,
-            restarted_record_store,
-            wal_base_path,
-        )
-        .await
-        .expect("restart from wal");
-
-        let recovered_scan = restarted_record_probe
-            .scan_records(10)
-            .await
-            .expect("scan recovered records");
-        assert_eq!(
-            recovered_scan.len(),
-            1,
-            "canonical WAL recovery should replay one record; got {:?}",
-            recovered_scan
-                .iter()
-                .map(|record| record.oid.as_str())
-                .collect::<Vec<_>>()
-        );
-
-        let recovered_key = DocumentRecordKey::new(collection_id, document_id);
-        let recovered_record = restarted_record_probe
-            .get_record(&RecordKey::new(recovered_key.canonical_oid()))
-            .await
-            .expect("get recovered canonical record")
-            .unwrap_or_else(|| {
-                panic!(
-                    "canonical record recovered at {}; scanned {:?}",
-                    recovered_key.canonical_oid(),
-                    recovered_scan
-                        .iter()
-                        .map(|record| record.oid.as_str())
-                        .collect::<Vec<_>>()
-                )
-            });
-        assert_eq!(recovered_record.oid, recovered_key.canonical_oid());
-
-        let recovered = restarted
-            .get_document(collection_id, document_id, None)
-            .await
-            .expect("get recovered")
-            .expect("document recovered through canonical store");
-        assert_eq!(
-            field(&recovered, "title").value,
-            Some(sql_value::Value::StringValue("Recovered".to_string()))
-        );
-    }
-
-    #[cfg(feature = "canonical-document-store")]
-    #[tokio::test]
-    async fn test_canonical_document_wal_recovery_replays_deletes_into_record_store() {
-        use crate::storage::engines::cedar::CedarEngine;
-        use proximadb_records::RecordStorage;
-
-        let temp_dir = tempfile::tempdir().expect("temp wal dir");
-        let wal_base_path = temp_dir.path().to_str().expect("utf-8 temp path");
-        let collection_id = "wal_docs_delete";
-        let document_id = "doc-delete";
-
-        let first_cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
-        let first_storage_engine: Arc<dyn UnifiedStorageFormat> = first_cedar.clone();
-        let first_record_store: Arc<dyn RecordStorage> = first_cedar;
-        let first = DocumentService::with_canonical_record_store_and_wal(
-            first_storage_engine,
-            first_record_store,
-            wal_base_path,
-        )
-        .await
-        .expect("canonical wal service");
-
-        first
-            .create_collection(
-                collection_id,
-                DocumentCollectionConfig {
-                    name: collection_id.to_string(),
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("create collection");
-        first
-            .insert_document(
-                collection_id,
-                Some(document_id),
-                make_document(vec![("title", sql_string("Deleted"))]),
-            )
-            .await
-            .expect("insert");
-        assert!(
-            first
-                .delete_document(collection_id, document_id)
-                .await
-                .expect("delete")
-        );
-        first.flush_wal().await.expect("flush wal");
-        drop(first);
-
-        let restarted_cedar = Arc::new(CedarEngine::new().expect("restarted cedar engine"));
-        let restarted_storage_engine: Arc<dyn UnifiedStorageFormat> = restarted_cedar.clone();
-        let restarted_record_store: Arc<dyn RecordStorage> = restarted_cedar;
-        let restarted_record_probe = restarted_record_store.clone();
-        let restarted = DocumentService::with_canonical_record_store_and_wal(
-            restarted_storage_engine,
-            restarted_record_store,
-            wal_base_path,
-        )
-        .await
-        .expect("restart from wal");
-
-        let recovered_records = restarted_record_probe
-            .scan_records(10)
-            .await
-            .expect("scan recovered records");
-        assert!(
-            recovered_records.is_empty(),
-            "delete replay should remove canonical records"
-        );
-
-        assert!(
-            restarted
-                .get_document(collection_id, document_id, None)
-                .await
-                .expect("get after delete replay")
-                .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_query_empty_collection() {
-        let svc = service_with_collection("empty").await;
-
-        let result = svc
-            .query_documents(
-                "empty",
-                DocumentQueryParams {
-                    include_count: true,
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("query on empty collection should succeed");
-
-        assert!(result.documents.is_empty(), "should return no documents");
-        assert_eq!(result.total_count, Some(0));
-    }
-
-    #[tokio::test]
-    async fn document_query_service_searches_via_contract() {
-        use proximadb_document_query::{
-            DocumentQueryService, DocumentSearchRequest, DocumentSortOrder, SortDirection,
-        };
-
-        let svc = service_with_collection("contract_docs").await;
-
-        for i in 0..3 {
-            svc.insert_document(
-                "contract_docs",
-                Some(&format!("doc-{i}")),
-                make_document(vec![("seq", sql_int(i))]),
-            )
-            .await
-            .expect("insert should succeed");
-        }
-
-        let result = DocumentQueryService::document_search(
-            &svc,
-            DocumentSearchRequest {
-                collection_id: "contract_docs".to_string(),
-                filter: None,
-                limit: 2,
-                offset: 1,
-                projection: None,
-                sort: Some(DocumentSortOrder {
-                    field: "seq".to_string(),
-                    direction: SortDirection::Ascending,
-                }),
-            },
-        )
-        .await
-        .expect("contract search should succeed");
-
-        assert_eq!(result.total_count, 3);
-        assert_eq!(result.results.len(), 2);
-        assert_eq!(result.results[0].id, "doc-1");
-        assert_eq!(result.results[1].id, "doc-2");
-    }
-
-    #[tokio::test]
-    async fn document_query_service_gets_document_via_contract() {
-        use proximadb_document_query::DocumentQueryService;
-
-        let svc = service_with_collection("contract_get").await;
-        svc.insert_document(
-            "contract_get",
-            Some("doc-1"),
-            make_document(vec![("title", sql_string("Contract"))]),
-        )
-        .await
-        .expect("insert should succeed");
-
-        let result = DocumentQueryService::get_document(
-            &svc,
-            "contract_get".to_string(),
-            "doc-1".to_string(),
-        )
-        .await
-        .expect("contract get should succeed")
-        .expect("document should exist");
-
-        assert_eq!(result.id, "doc-1");
-        assert_eq!(result.version, 1);
-    }
-
-    // =========================================================================
-    // Collection management tests
-    // =========================================================================
-
-    #[tokio::test]
-    async fn test_create_and_list_collections() {
-        let svc = create_test_service();
-
-        // No collections initially
-        let before = svc.list_collections().await.expect("list should succeed");
-        assert!(before.is_empty(), "should start with no collections");
-
-        // Create two collections
-        svc.create_collection("alpha", test_collection_config())
-            .await
-            .expect("create alpha should succeed");
-        svc.create_collection(
-            "beta",
-            DocumentCollectionConfig {
-                name: "beta".to_string(),
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("create beta should succeed");
-
-        let after = svc.list_collections().await.expect("list should succeed");
-        assert_eq!(after.len(), 2, "should have 2 collections");
-
-        let names: Vec<&str> = after.iter().map(|c| c.name.as_str()).collect();
-        assert!(names.contains(&"alpha"));
-        assert!(names.contains(&"beta"));
-
-        // Verify get_collection returns metadata
-        let alpha = svc
-            .get_collection("alpha")
-            .await
-            .expect("get should succeed")
-            .expect("alpha should exist");
-        assert_eq!(alpha.name, "alpha");
-        assert_eq!(alpha.document_count, 0);
-    }
-
-    #[tokio::test]
-    async fn test_delete_collection() {
-        let svc = create_test_service();
-
-        svc.create_collection("ephemeral", test_collection_config())
-            .await
-            .expect("create should succeed");
-
-        // Insert a document so we can verify data is also removed
-        svc.insert_document(
-            "ephemeral",
-            Some("d1"),
-            make_document(vec![("x", sql_int(1))]),
-        )
-        .await
-        .expect("insert should succeed");
-
-        // Delete the collection
-        let deleted = svc
-            .delete_collection("ephemeral")
-            .await
-            .expect("delete should succeed");
-        assert!(deleted, "delete should return true for existing collection");
-
-        // Verify it is gone
-        let after = svc
-            .get_collection("ephemeral")
-            .await
-            .expect("get should succeed");
-        assert!(after.is_none(), "collection should be gone after delete");
-
-        // Listing should not include it
-        let list = svc.list_collections().await.expect("list should succeed");
-        assert!(list.is_empty(), "no collections should remain");
-
-        // Deleting again should return false
-        let again = svc
-            .delete_collection("ephemeral")
-            .await
-            .expect("delete should succeed");
-        assert!(!again, "deleting non-existent collection returns false");
-    }
-}
+#[path = "service_tests.rs"]
+mod tests;

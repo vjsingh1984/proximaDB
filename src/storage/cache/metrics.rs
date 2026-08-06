@@ -3,6 +3,88 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tracing::debug;
+use tracing::error;
+
+// --- Prometheus exposure (TD-cache-metrics / Phase-1 observability gap) -----
+// StorageCacheMetrics keeps in-process atomics for the health monitor / sizing
+// optimizer. These statics mirror the `consumption_metrics` pattern so the same
+// counters/gauges ALSO land in the default Prometheus registry and are scraped
+// at `/metrics/prometheus` (and shipped via OTLP). Registration is infallible:
+// the fallback returns a fresh (unregistered) metric so a duplicate-registration
+// error never panics at startup — matches the single sanctioned fallback site
+// in `crate::metrics::consumption_metrics`.
+use lazy_static::lazy_static;
+use prometheus::{
+    IntCounter, IntCounterVec, IntGauge, Opts, register_int_counter, register_int_counter_vec,
+    register_int_gauge,
+};
+
+// Static metric registration is infallible / fail-fast at startup (mirrors
+// `crate::metrics::consumption_metrics`); the fallback `.unwrap()` constructs a
+// fresh metric from always-valid Opts, so it cannot panic.
+#[allow(clippy::unwrap_used)]
+fn registered_int_counter_vec(
+    name: &'static str,
+    help: &'static str,
+    labels: &[&str],
+) -> IntCounterVec {
+    register_int_counter_vec!(Opts::new(name, help), labels).unwrap_or_else(|err| {
+        error!("failed to register {}: {}", name, err);
+        IntCounterVec::new(Opts::new(name, ""), labels).unwrap()
+    })
+}
+
+#[allow(clippy::unwrap_used)]
+fn registered_int_counter(name: &'static str, help: &'static str) -> IntCounter {
+    register_int_counter!(Opts::new(name, help)).unwrap_or_else(|err| {
+        error!("failed to register {}: {}", name, err);
+        IntCounter::with_opts(Opts::new(name, "")).unwrap()
+    })
+}
+
+#[allow(clippy::unwrap_used)]
+fn registered_int_gauge(name: &'static str, help: &'static str) -> IntGauge {
+    register_int_gauge!(Opts::new(name, help)).unwrap_or_else(|err| {
+        error!("failed to register {}: {}", name, err);
+        IntGauge::with_opts(Opts::new(name, "")).unwrap()
+    })
+}
+
+lazy_static! {
+    /// Cache hits by tier (L1 = hot in-mem, L2 = warm, L3 = cold/disk). The
+    /// `hits / (hits + misses)` ratio is the operator's cache-effectiveness
+    /// signal — the thing the SIFT1M hot-vs-cold re-run (TD-cache Phase 2)
+    /// needs to be measurable instead of inferred from latency alone.
+    pub static ref CACHE_HITS_TOTAL: IntCounterVec = registered_int_counter_vec(
+        "proximadb_cache_hits_total",
+        "Cache hits by tier (l1/l2/l3)",
+        &["tier"],
+    );
+    pub static ref CACHE_MISSES_TOTAL: IntCounter = registered_int_counter(
+        "proximadb_cache_misses_total",
+        "Cache misses (no tier hit) — drives the hit-ratio denominator",
+    );
+    pub static ref CACHE_EVICTIONS_TOTAL: IntCounter = registered_int_counter(
+        "proximadb_cache_evictions_total",
+        "Cache evictions (capacity pressure / churn)",
+    );
+    pub static ref CACHE_ENTRIES: IntGauge = registered_int_gauge(
+        "proximadb_cache_entries",
+        "Current cache entry count",
+    );
+    pub static ref CACHE_BYTES: IntGauge = registered_int_gauge(
+        "proximadb_cache_bytes",
+        "Current cache size in bytes",
+    );
+}
+
+fn cache_tier_str(tier: CacheTier) -> &'static str {
+    match tier {
+        CacheTier::L1 => "l1",
+        CacheTier::L2 => "l2",
+        CacheTier::L3 => "l3",
+    }
+}
 
 /// Backwards-compat alias for [`StorageCacheMetrics`].
 pub type CacheMetrics = StorageCacheMetrics;
@@ -68,11 +150,15 @@ impl StorageCacheMetrics {
             CacheTier::L3 => self.l3_hits.fetch_add(1, Ordering::Relaxed),
         };
         self.gets.fetch_add(1, Ordering::Relaxed);
+        CACHE_HITS_TOTAL
+            .with_label_values(&[cache_tier_str(tier)])
+            .inc();
     }
 
     pub fn record_miss(&self) {
         self.misses.fetch_add(1, Ordering::Relaxed);
         self.gets.fetch_add(1, Ordering::Relaxed);
+        CACHE_MISSES_TOTAL.inc();
     }
 
     pub fn record_put(&self) {
@@ -85,6 +171,7 @@ impl StorageCacheMetrics {
 
     pub fn record_eviction(&self) {
         self.evictions.fetch_add(1, Ordering::Relaxed);
+        CACHE_EVICTIONS_TOTAL.inc();
     }
 
     pub fn record_get_latency(&self, duration: Duration) {
@@ -102,6 +189,8 @@ impl StorageCacheMetrics {
     pub fn update_size(&self, entries: usize, bytes: usize) {
         self.total_entries.store(entries, Ordering::Relaxed);
         self.total_bytes.store(bytes, Ordering::Relaxed);
+        CACHE_ENTRIES.set(entries as i64);
+        CACHE_BYTES.set(bytes as i64);
     }
 
     pub fn size_bytes(&self) -> usize {
@@ -404,5 +493,53 @@ impl StorageCacheMetricsSnapshot {
         debug!("Avg Put Latency: {} μs", self.avg_put_latency_us);
         debug!("Gets/sec: {:.1}", self.gets_per_sec);
         debug!("Uptime: {} seconds", self.uptime_secs);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prometheus::Encoder;
+
+    /// The cache counters/gauges must land in the default Prometheus registry
+    /// (scraped at `/metrics/prometheus` + shipped via OTLP) — the Phase-1
+    /// observability gap. This exercises the record_* path and asserts the
+    /// metric families are gathered (no server boot required).
+    #[test]
+    fn cache_metrics_exposed_in_prometheus_registry() {
+        let m = StorageCacheMetrics::new();
+        m.record_hit(CacheTier::L1);
+        m.record_hit(CacheTier::L2);
+        m.record_hit(CacheTier::L3);
+        m.record_miss();
+        m.record_miss();
+        m.record_eviction();
+        m.update_size(42, 4096);
+
+        let families = prometheus::gather();
+        let mut buf = Vec::new();
+        let encoder = prometheus::TextEncoder::new();
+        encoder.encode(&families, &mut buf).expect("encode");
+        let out = String::from_utf8(buf).expect("utf8");
+
+        // The five cache metrics must be exposed ...
+        assert!(
+            out.contains("proximadb_cache_hits_total"),
+            "hits_total missing"
+        );
+        assert!(
+            out.contains("proximadb_cache_misses_total"),
+            "misses_total missing"
+        );
+        assert!(
+            out.contains("proximadb_cache_evictions_total"),
+            "evictions_total missing"
+        );
+        assert!(out.contains("proximadb_cache_entries"), "entries missing");
+        assert!(out.contains("proximadb_cache_bytes"), "bytes missing");
+        // ... with the per-tier labels on hits.
+        assert!(out.contains("tier=\"l1\""), "tier=l1 label missing");
+        assert!(out.contains("tier=\"l2\""), "tier=l2 label missing");
+        assert!(out.contains("tier=\"l3\""), "tier=l3 label missing");
     }
 }

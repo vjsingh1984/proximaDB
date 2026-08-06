@@ -85,6 +85,66 @@ impl EmbedRoute {
     }
 }
 
+/// Credential-free identity of an embedding route. Durable work may persist
+/// this shape to pin model, endpoint, geometry, precision, and batching
+/// semantics without copying tenant credentials into a queue or WAL.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum EmbedRouteIdentity {
+    BgeSmall,
+    BgeLarge,
+    BgeM3,
+    AzureOpenAi {
+        model: AzureModel,
+    },
+    OpenAi {
+        model: OpenAiModel,
+    },
+    Cohere {
+        model: CohereModel,
+    },
+    Byo {
+        url: String,
+        declared_dim: usize,
+        declared_precision: EmbeddingScalarType,
+        batch_size: usize,
+        timeout_ms: u64,
+    },
+}
+
+impl From<&EmbedRoute> for EmbedRouteIdentity {
+    fn from(route: &EmbedRoute) -> Self {
+        match route {
+            EmbedRoute::BgeSmall => Self::BgeSmall,
+            EmbedRoute::BgeLarge => Self::BgeLarge,
+            EmbedRoute::BgeM3 => Self::BgeM3,
+            EmbedRoute::AzureOpenAi { model } => Self::AzureOpenAi {
+                model: model.clone(),
+            },
+            EmbedRoute::OpenAi { model } => Self::OpenAi {
+                model: model.clone(),
+            },
+            EmbedRoute::Cohere { model } => Self::Cohere {
+                model: model.clone(),
+            },
+            EmbedRoute::Byo {
+                url,
+                declared_dim,
+                declared_precision,
+                batch_size,
+                timeout_ms,
+                ..
+            } => Self::Byo {
+                url: url.clone(),
+                declared_dim: *declared_dim,
+                declared_precision: *declared_precision,
+                batch_size: *batch_size,
+                timeout_ms: *timeout_ms,
+            },
+        }
+    }
+}
+
 /// OpenAI embedding model selection.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -103,6 +163,15 @@ impl OpenAiModel {
             Self::TextEmbed3Large => 3072,
             Self::TextEmbed3Small => 1536,
             Self::Ada002 => 1536,
+        }
+    }
+
+    /// The model id as sent to the OpenAI `/embeddings` API.
+    pub fn api_name(&self) -> &'static str {
+        match self {
+            Self::TextEmbed3Large => "text-embedding-3-large",
+            Self::TextEmbed3Small => "text-embedding-3-small",
+            Self::Ada002 => "text-embedding-ada-002",
         }
     }
 }
@@ -124,6 +193,15 @@ impl CohereModel {
         match self {
             Self::EmbedEnglishV3 | Self::EmbedMultilingualV3 => 1024,
             Self::EmbedEnglishLightV3 => 384,
+        }
+    }
+
+    /// The model id as sent to the Cohere `/v2/embed` API.
+    pub fn api_name(&self) -> &'static str {
+        match self {
+            Self::EmbedEnglishV3 => "embed-english-v3.0",
+            Self::EmbedMultilingualV3 => "embed-multilingual-v3.0",
+            Self::EmbedEnglishLightV3 => "embed-english-light-v3.0",
         }
     }
 }
@@ -889,5 +967,36 @@ mod collection_route_tests {
         };
         let route = choice.route();
         assert_eq!(route.native_precision(), EmbeddingScalarType::Fp16);
+    }
+
+    #[test]
+    fn durable_route_identity_excludes_credentials_but_detects_route_drift() {
+        let route = EmbedRoute::Byo {
+            url: "https://embed.example.com".into(),
+            auth: ByoAuth::Bearer {
+                secret_ref: "tenant-secret".into(),
+            },
+            declared_dim: 768,
+            declared_precision: EmbeddingScalarType::Fp16,
+            batch_size: 16,
+            timeout_ms: 5000,
+        };
+        let mut rotated = route.clone();
+        let EmbedRoute::Byo { auth, .. } = &mut rotated else {
+            unreachable!()
+        };
+        *auth = ByoAuth::Bearer {
+            secret_ref: "rotated-secret".into(),
+        };
+        let mut changed_endpoint = route.clone();
+        let EmbedRoute::Byo { url, .. } = &mut changed_endpoint else {
+            unreachable!()
+        };
+        *url = "https://other.example.com".into();
+
+        let identity = EmbedRouteIdentity::from(&route);
+        assert_eq!(identity, EmbedRouteIdentity::from(&rotated));
+        assert_ne!(identity, EmbedRouteIdentity::from(&changed_endpoint));
+        assert!(!serde_json::to_string(&identity).unwrap().contains("secret"));
     }
 }

@@ -45,6 +45,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::{OnceLock, RwLock as StdRwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -2049,6 +2050,47 @@ impl PartitionLeaseStore {
         }
     }
 
+    /// Begin a new writer process incarnation. Unlike lease renewal, this always
+    /// advances the durable generation, including when the same pod id held the
+    /// previous lease. That makes `{generation, process-local sequence}` a total
+    /// order across process restarts without adding I/O per WAL batch.
+    pub async fn begin_writer_incarnation_with_key(
+        &self,
+        key: &ResourceKey,
+        holder_pod: &str,
+        now_ms: i64,
+        lease_ms: i64,
+    ) -> Result<LeaseOutcome> {
+        let committer = self.committer_for_key(key)?;
+        let (parent, generation) = match self.read_key(key).await? {
+            None => (None, 1),
+            Some((version, lease)) => {
+                if !lease.released && !lease.is_expired(now_ms) && lease.holder_pod != holder_pod {
+                    return Ok(LeaseOutcome::Held { by: lease });
+                }
+                (Some(version), lease.generation.saturating_add(1))
+            }
+        };
+        let lease = PartitionLease::with_key(
+            key.clone(),
+            holder_pod,
+            generation,
+            now_ms,
+            now_ms.saturating_add(lease_ms),
+        );
+        let payload = serde_json::to_vec(&lease).context("encoding writer incarnation lease")?;
+        match committer
+            .commit_fenced(parent, generation, bytes::Bytes::from(payload))
+            .await?
+        {
+            CommitOutcome::Committed(_) => Ok(LeaseOutcome::Acquired(lease)),
+            CommitOutcome::Conflict { .. } => match self.read_key(key).await? {
+                Some((_, latest)) => Ok(LeaseOutcome::Fenced { latest }),
+                None => Ok(LeaseOutcome::Fenced { latest: lease }),
+            },
+        }
+    }
+
     /// Legacy compatibility: convert (tenant_id, collection_id) to ResourceKey
     /// and delegate to acquire_with_key.
     async fn acquire_via_key(
@@ -2167,6 +2209,27 @@ pub struct PartitionLeaseManager {
     /// Full-key leases held by this pod that are not represented in the legacy
     /// `(tenant, collection)` primary-pod registry.
     held_resource_keys: DashMap<String, ResourceKey>,
+    /// Incarnation bumps already performed by this process. A new manager on
+    /// restart starts empty and therefore performs a fresh durable CAS bump.
+    writer_incarnations: DashMap<String, (u64, i64)>,
+}
+
+fn global_manager_slot() -> &'static StdRwLock<Option<Arc<PartitionLeaseManager>>> {
+    static SLOT: OnceLock<StdRwLock<Option<Arc<PartitionLeaseManager>>>> = OnceLock::new();
+    SLOT.get_or_init(|| StdRwLock::new(None))
+}
+
+pub fn install_global_partition_lease_manager(manager: Arc<PartitionLeaseManager>) {
+    if let Ok(mut slot) = global_manager_slot().write() {
+        *slot = Some(manager);
+    }
+}
+
+pub fn global_partition_lease_manager() -> Option<Arc<PartitionLeaseManager>> {
+    global_manager_slot()
+        .read()
+        .ok()
+        .and_then(|slot| slot.clone())
 }
 
 impl PartitionLeaseManager {
@@ -2184,6 +2247,7 @@ impl PartitionLeaseManager {
             lease_ms,
             strategies: DashMap::new(),
             held_resource_keys: DashMap::new(),
+            writer_incarnations: DashMap::new(),
         }
     }
 
@@ -2258,6 +2322,45 @@ impl PartitionLeaseManager {
             return Ok(true);
         }
         self.acquire(tenant_id, collection_id, now_ms).await
+    }
+
+    /// Ensure this process has a durable, incarnation-unique epoch for the
+    /// canonical collection UUID and publish it to the WAL token provider.
+    pub async fn begin_writer_incarnation(
+        &self,
+        tenant_id: &str,
+        canonical_collection_id: &str,
+        now_ms: i64,
+    ) -> Result<bool> {
+        let cache_key = format!("{tenant_id}/{canonical_collection_id}");
+        if let Some(state) = self.writer_incarnations.get(&cache_key)
+            && now_ms < state.1
+        {
+            crate::storage::persistence::write_ahead_log::RecoveryTokenProvider::global()
+                .register_incarnation(tenant_id, canonical_collection_id, state.0, state.1);
+            return Ok(true);
+        }
+
+        let key = ResourceKey::legacy_collection(tenant_id, canonical_collection_id);
+        let outcome = self
+            .store
+            .begin_writer_incarnation_with_key(&key, &self.self_pod_id, now_ms, self.lease_ms)
+            .await?;
+        match outcome {
+            LeaseOutcome::Acquired(lease) => {
+                self.writer_incarnations
+                    .insert(cache_key, (lease.generation, lease.expires_at_ms));
+                crate::storage::persistence::write_ahead_log::RecoveryTokenProvider::global()
+                    .register_incarnation(
+                        tenant_id,
+                        canonical_collection_id,
+                        lease.generation,
+                        lease.expires_at_ms,
+                    );
+                Ok(true)
+            }
+            LeaseOutcome::Held { .. } | LeaseOutcome::Fenced { .. } => Ok(false),
+        }
     }
 
     /// Read the current durable leaseholder for `(tenant, collection)` — the
@@ -2405,6 +2508,46 @@ impl PartitionLeaseManager {
                     );
                     crate::metrics::dml_lock_metrics::record_renewal_failure("collection");
                     still_owned += 1;
+                }
+            }
+        }
+
+        let incarnations = self
+            .writer_incarnations
+            .iter()
+            .map(|entry| (entry.key().clone(), *entry.value()))
+            .collect::<Vec<_>>();
+        for (identity, (_epoch, _expiry)) in incarnations {
+            let Some((tenant_id, collection_id)) = identity.split_once('/') else {
+                continue;
+            };
+            let key = ResourceKey::legacy_collection(tenant_id, collection_id);
+            match self
+                .store
+                .acquire_with_key(&key, &self.self_pod_id, now_ms, self.lease_ms)
+                .await
+            {
+                Ok(LeaseOutcome::Acquired(lease)) => {
+                    self.writer_incarnations
+                        .insert(identity.clone(), (lease.generation, lease.expires_at_ms));
+                    crate::storage::persistence::write_ahead_log::RecoveryTokenProvider::global()
+                        .register_incarnation(
+                            tenant_id,
+                            collection_id,
+                            lease.generation,
+                            lease.expires_at_ms,
+                        );
+                    still_owned += 1;
+                }
+                Ok(LeaseOutcome::Held { .. } | LeaseOutcome::Fenced { .. }) => {
+                    self.writer_incarnations.remove(&identity);
+                    let _ = crate::storage::persistence::write_ahead_log::RecoveryTokenProvider::global()
+                        .expire(collection_id);
+                }
+                Err(error) => {
+                    // Keep the last durable expiry. Allocation fails closed once
+                    // it passes, even if renewal keeps returning transient errors.
+                    tracing::warn!(resource = %identity, %error, "writer incarnation renewal failed");
                 }
             }
         }
@@ -3129,6 +3272,36 @@ mod tests {
             pod,
             LEASE_MS,
         )
+    }
+
+    #[tokio::test]
+    async fn writer_incarnation_bumps_epoch_after_same_pod_restart() -> Result<()> {
+        let backing = shared_backing();
+        let first_process = test_manager(&backing, "stable-pod-id");
+        assert!(
+            first_process
+                .begin_writer_incarnation("tenant", "canonical-uuid", 1)
+                .await?
+        );
+        let (_, first) = store(&backing)
+            .read("tenant", "canonical-uuid")
+            .await?
+            .expect("first incarnation lease");
+
+        // A fresh manager represents a process restart but deliberately keeps
+        // the pod identity. It must bump, not renew/reuse, the generation.
+        let restarted_process = test_manager(&backing, "stable-pod-id");
+        assert!(
+            restarted_process
+                .begin_writer_incarnation("tenant", "canonical-uuid", 2)
+                .await?
+        );
+        let (_, second) = store(&backing)
+            .read("tenant", "canonical-uuid")
+            .await?
+            .expect("second incarnation lease");
+        assert!(second.generation > first.generation);
+        Ok(())
     }
 
     /// `validate_fencing` is the storage-boundary contract (A6). None =

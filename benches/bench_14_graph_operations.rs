@@ -21,11 +21,15 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::{
-    graph::{Edge, Node, PropertyValue, service::GraphOperationsService},
-    proto::proximadb_v1::{
-        CreateGraphRequest, NodeQuery, PropertyFilter, PropertyFilterOperator, TraversalAlgorithm,
-        TraversalRequest, property_value::Value,
+    graph::{
+        Edge, Node, NodeQuery, PropertyFilter, PropertyFilterOperator, PropertyValue,
+        TraversalAlgorithm, TraversalRequest, property_value::Value,
+        service::GraphOperationsService,
     },
+    // CreateGraphRequest is still served from the v1 proto surface (graph creation
+    // has not been migrated to the neutral domain model yet); the query/traversal
+    // request types above were moved to `graph::*` by TD-123 Step 1 (#177).
+    proto::proximadb_v1::CreateGraphRequest,
     services::graph_collection::GraphCollectionService,
 };
 use std::collections::HashMap;

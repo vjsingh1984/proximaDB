@@ -42,11 +42,6 @@ use std::collections::HashMap;
 /// Canonical validation result type for security field validators.
 pub type TypeValidationResult = Result<(), ValidationError>;
 
-/// Compatibility alias retained for existing imports; prefer `TypeValidationResult` for
-/// explicit type-surface locality.
-#[deprecated(note = "Use TypeValidationResult instead.")]
-pub type ValidationResult = TypeValidationResult;
-
 /// Validation error with details
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ValidationError {

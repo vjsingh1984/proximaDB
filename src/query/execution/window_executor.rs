@@ -99,13 +99,34 @@ pub enum FrameBound {
     Unbounded,
     /// CURRENT ROW
     CurrentRow,
-    /// N PRECEDING / N FOLLOWING
+    /// N PRECEDING / N FOLLOWING. Interpreted per the frame's [`FrameUnit`]:
+    /// a physical row count for `Rows`, a logical value offset on the ORDER BY
+    /// key for `Range`, and a peer-group count for `Groups`.
     Offset(u64),
 }
 
-/// Window frame definition (ROWS-based).
+/// How a window frame's bounds are interpreted.
+///
+/// This mirrors the SQL `ROWS | RANGE | GROUPS` frame units and the AST
+/// `WindowFrameUnit`. It is threaded through so a `RANGE`/`GROUPS` frame that
+/// parses and lowers correctly also *executes* as declared instead of silently
+/// collapsing to `ROWS` (which produces wrong results in the presence of ties).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrameUnit {
+    /// Bounds count physical rows (ROWS).
+    #[default]
+    Rows,
+    /// Bounds are logical value offsets on the single ORDER BY key (RANGE).
+    Range,
+    /// Bounds count peer groups — maximal runs of rows equal on ORDER BY (GROUPS).
+    Groups,
+}
+
+/// Window frame definition.
 #[derive(Debug, Clone)]
 pub struct FrameDefinition {
+    /// How the bounds are interpreted (ROWS / RANGE / GROUPS).
+    pub unit: FrameUnit,
     pub start: FrameBound,
     pub end: FrameBound,
 }
@@ -114,6 +135,7 @@ impl Default for FrameDefinition {
     /// Default frame: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
     fn default() -> Self {
         Self {
+            unit: FrameUnit::Rows,
             start: FrameBound::Unbounded,
             end: FrameBound::CurrentRow,
         }
@@ -395,7 +417,12 @@ impl WindowExecutor {
         let len = partition.len();
 
         for current_pos in 0..len {
-            let (start, end) = Self::resolve_frame(&call.spec.frame, current_pos, len);
+            let (start, end) = Self::resolve_frame(
+                &call.spec.frame,
+                partition,
+                &call.spec.order_by,
+                current_pos,
+            )?;
 
             let frame_values: Vec<f64> = (start..=end)
                 .filter_map(|i| {
@@ -456,8 +483,32 @@ impl WindowExecutor {
         Ok(())
     }
 
-    /// Resolve a `FrameDefinition` into concrete start/end indices.
-    fn resolve_frame(frame: &FrameDefinition, current: usize, len: usize) -> (usize, usize) {
+    /// Resolve a `FrameDefinition` into concrete inclusive start/end indices
+    /// within the (already sorted) `partition`, honouring the frame unit.
+    ///
+    /// The three units differ precisely on rows that are *peers* (equal on the
+    /// ORDER BY key), which is why `ROWS` alone is a correctness bug:
+    ///
+    /// - `ROWS` — bounds count physical rows.
+    /// - `RANGE` — bounds are value offsets on the single ORDER BY key; the frame
+    ///   spans every row whose key is within the value window.
+    /// - `GROUPS` — bounds count peer groups; the frame spans whole groups.
+    fn resolve_frame(
+        frame: &FrameDefinition,
+        partition: &[(usize, QueryRow)],
+        order_by: &[WindowOrderBy],
+        current: usize,
+    ) -> Result<(usize, usize)> {
+        let len = partition.len();
+        match frame.unit {
+            FrameUnit::Rows => Ok(Self::resolve_rows_frame(frame, current, len)),
+            FrameUnit::Groups => Self::resolve_groups_frame(frame, partition, order_by, current),
+            FrameUnit::Range => Self::resolve_range_frame(frame, partition, order_by, current),
+        }
+    }
+
+    /// ROWS: bounds are physical row offsets from the current row.
+    fn resolve_rows_frame(frame: &FrameDefinition, current: usize, len: usize) -> (usize, usize) {
         let start = match &frame.start {
             FrameBound::Unbounded => 0,
             FrameBound::CurrentRow => current,
@@ -469,6 +520,184 @@ impl WindowExecutor {
             FrameBound::Offset(n) => (current + *n as usize).min(len.saturating_sub(1)),
         };
         (start, end)
+    }
+
+    /// GROUPS: bounds count peer groups (maximal runs of rows equal on ORDER BY).
+    /// The partition is pre-sorted in ORDER BY direction, so "preceding" groups
+    /// are simply lower-indexed groups regardless of ASC/DESC.
+    fn resolve_groups_frame(
+        frame: &FrameDefinition,
+        partition: &[(usize, QueryRow)],
+        order_by: &[WindowOrderBy],
+        current: usize,
+    ) -> Result<(usize, usize)> {
+        let len = partition.len();
+        if len == 0 {
+            return Ok((0, 0));
+        }
+        // Assign each row a peer-group id and record each group's first row index.
+        let mut group_id = vec![0usize; len];
+        let mut group_starts: Vec<usize> = vec![0];
+        for i in 1..len {
+            if Self::rows_equal_on_order_by(&partition[i - 1].1, &partition[i].1, order_by) {
+                group_id[i] = group_id[i - 1];
+            } else {
+                group_id[i] = group_id[i - 1] + 1;
+                group_starts.push(i);
+            }
+        }
+        let n_groups = group_starts.len();
+        // Last row index of group `g` (groups are contiguous).
+        let group_last = |g: usize| -> usize {
+            if g + 1 < n_groups {
+                group_starts[g + 1] - 1
+            } else {
+                len - 1
+            }
+        };
+        let cur = group_id[current];
+        let start_g = match &frame.start {
+            FrameBound::Unbounded => 0,
+            FrameBound::CurrentRow => cur,
+            FrameBound::Offset(n) => cur.saturating_sub(*n as usize),
+        };
+        let end_g = match &frame.end {
+            FrameBound::Unbounded => n_groups - 1,
+            FrameBound::CurrentRow => cur,
+            FrameBound::Offset(n) => (cur + *n as usize).min(n_groups - 1),
+        };
+        Ok((group_starts[start_g], group_last(end_g)))
+    }
+
+    /// RANGE: bounds are logical value offsets on the ORDER BY key. With an
+    /// explicit numeric offset the frame spans every row whose key is within the
+    /// value window; with only UNBOUNDED/CURRENT ROW bounds it spans whole peer
+    /// groups (which needs no numeric key).
+    fn resolve_range_frame(
+        frame: &FrameDefinition,
+        partition: &[(usize, QueryRow)],
+        order_by: &[WindowOrderBy],
+        current: usize,
+    ) -> Result<(usize, usize)> {
+        let len = partition.len();
+        if len == 0 {
+            return Ok((0, 0));
+        }
+        // No ORDER BY: the whole partition is a single peer group.
+        if order_by.is_empty() {
+            return Ok((0, len - 1));
+        }
+
+        let has_offset = matches!(frame.start, FrameBound::Offset(_))
+            || matches!(frame.end, FrameBound::Offset(_));
+
+        if !has_offset {
+            // Peer-based RANGE (only UNBOUNDED / CURRENT ROW bounds): CURRENT ROW
+            // means the current peer group, not the current physical row.
+            let mut group_start = current;
+            while group_start > 0
+                && Self::rows_equal_on_order_by(
+                    &partition[group_start - 1].1,
+                    &partition[current].1,
+                    order_by,
+                )
+            {
+                group_start -= 1;
+            }
+            let mut group_end = current;
+            while group_end + 1 < len
+                && Self::rows_equal_on_order_by(
+                    &partition[group_end + 1].1,
+                    &partition[current].1,
+                    order_by,
+                )
+            {
+                group_end += 1;
+            }
+            // Only UNBOUNDED / CURRENT ROW reach here (Offset ⇒ the value path
+            // below). Map defensively rather than assuming, so an unexpected
+            // bound fails loud instead of silently mis-framing.
+            let peer_bound = |bound: &FrameBound, unbounded_idx: usize, peer_idx: usize| match bound
+            {
+                FrameBound::Unbounded => Ok(unbounded_idx),
+                FrameBound::CurrentRow => Ok(peer_idx),
+                FrameBound::Offset(_) => Err(anyhow!(
+                    "internal error: value-offset RANGE bound reached the peer-based path"
+                )),
+            };
+            let start = peer_bound(&frame.start, 0, group_start)?;
+            let end = peer_bound(&frame.end, len - 1, group_end)?;
+            return Ok((start, end));
+        }
+
+        // Value-based RANGE requires exactly one numeric ORDER BY key.
+        if order_by.len() != 1 {
+            return Err(anyhow!(
+                "RANGE frame with a value offset requires exactly one ORDER BY column (got {})",
+                order_by.len()
+            ));
+        }
+        let ob = &order_by[0];
+        let asc = matches!(ob.direction, SortDirection::Asc);
+        let value_at = |i: usize| -> Result<f64> {
+            partition
+                .get(i)
+                .and_then(|(_, row)| row.fields.get(&ob.field))
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "RANGE frame with a value offset requires a numeric ORDER BY key; \
+                         column '{}' is null or non-numeric",
+                        ob.field
+                    )
+                })
+        };
+        let cur_val = value_at(current)?;
+
+        // Inclusive value window [lo, hi]. For ASC the start bound is the low
+        // side and the end bound the high side; for DESC the roles flip because
+        // preceding rows carry larger keys.
+        let (lo, hi) = if asc {
+            let lo = match &frame.start {
+                FrameBound::Unbounded => f64::NEG_INFINITY,
+                FrameBound::CurrentRow => cur_val,
+                FrameBound::Offset(n) => cur_val - *n as f64,
+            };
+            let hi = match &frame.end {
+                FrameBound::Unbounded => f64::INFINITY,
+                FrameBound::CurrentRow => cur_val,
+                FrameBound::Offset(n) => cur_val + *n as f64,
+            };
+            (lo, hi)
+        } else {
+            let hi = match &frame.start {
+                FrameBound::Unbounded => f64::INFINITY,
+                FrameBound::CurrentRow => cur_val,
+                FrameBound::Offset(n) => cur_val + *n as f64,
+            };
+            let lo = match &frame.end {
+                FrameBound::Unbounded => f64::NEG_INFINITY,
+                FrameBound::CurrentRow => cur_val,
+                FrameBound::Offset(n) => cur_val - *n as f64,
+            };
+            (lo, hi)
+        };
+
+        // The partition is sorted on the key, so the in-window rows are
+        // contiguous; scan for the first and last that fall inside [lo, hi].
+        let mut start = None;
+        let mut end = current;
+        for i in 0..len {
+            let v = value_at(i)?;
+            if v >= lo && v <= hi {
+                if start.is_none() {
+                    start = Some(i);
+                }
+                end = i;
+            }
+        }
+        // The current row always satisfies its own window, so `start` is set.
+        Ok((start.unwrap_or(current), end))
     }
 
     // -- Navigation helpers -------------------------------------------------
@@ -540,7 +769,12 @@ impl WindowExecutor {
         let len = partition.len();
 
         for current_pos in 0..len {
-            let (start, end) = Self::resolve_frame(&call.spec.frame, current_pos, len);
+            let (start, end) = Self::resolve_frame(
+                &call.spec.frame,
+                partition,
+                &call.spec.order_by,
+                current_pos,
+            )?;
             let target = if is_first { start } else { end };
 
             let val = partition
@@ -747,6 +981,7 @@ mod tests {
                     direction: SortDirection::Asc,
                 }],
                 frame: FrameDefinition {
+                    unit: FrameUnit::Rows,
                     start: FrameBound::Unbounded,
                     end: FrameBound::Unbounded,
                 },
@@ -807,6 +1042,7 @@ mod tests {
                     direction: SortDirection::Asc,
                 }],
                 frame: FrameDefinition {
+                    unit: FrameUnit::Rows,
                     start: FrameBound::Unbounded,
                     end: FrameBound::Unbounded,
                 },
@@ -824,6 +1060,7 @@ mod tests {
                     direction: SortDirection::Asc,
                 }],
                 frame: FrameDefinition {
+                    unit: FrameUnit::Rows,
                     start: FrameBound::Unbounded,
                     end: FrameBound::Unbounded,
                 },
@@ -863,6 +1100,7 @@ mod tests {
                     direction: SortDirection::Asc,
                 }],
                 frame: FrameDefinition {
+                    unit: FrameUnit::Rows,
                     start: FrameBound::Offset(1),
                     end: FrameBound::Offset(1),
                 },
@@ -997,6 +1235,7 @@ mod tests {
                     direction: SortDirection::Asc,
                 }],
                 frame: FrameDefinition {
+                    unit: FrameUnit::Rows,
                     start: FrameBound::Unbounded,
                     end: FrameBound::Unbounded,
                 },
@@ -1125,5 +1364,257 @@ mod tests {
         assert!(WindowFunction::FirstValue.is_navigation());
         assert!(WindowFunction::LastValue.is_navigation());
         assert!(!WindowFunction::Count.is_navigation());
+    }
+
+    // -- Frame unit tests (ROWS vs RANGE vs GROUPS) -------------------------
+    //
+    // Ties on the ORDER BY key are exactly what distinguishes the three frame
+    // units, so every case here is built on an ORDERED dataset WITH TIES and
+    // the expected sums are hand-verified. These guard the correctness bug
+    // where a RANGE/GROUPS frame silently executed as ROWS.
+
+    fn frame(unit: FrameUnit, start: FrameBound, end: FrameBound) -> FrameDefinition {
+        FrameDefinition { unit, start, end }
+    }
+
+    /// Run `SUM(x) OVER (ORDER BY x <dir> <frame>)` over `x` (already in the
+    /// given sort direction) and return the per-row result in input order.
+    fn run_sum(x: &[f64], dir: SortDirection, frame: FrameDefinition) -> Result<Vec<f64>> {
+        let rows: Vec<QueryRow> = x.iter().map(|&v| make_row(vec![("x", json!(v))])).collect();
+        let call = WindowFunctionCall {
+            function: WindowFunction::Sum,
+            args: vec!["x".to_string()],
+            spec: WindowSpec {
+                partition_by: vec![],
+                order_by: vec![WindowOrderBy {
+                    field: "x".to_string(),
+                    direction: dir,
+                }],
+                frame,
+            },
+            output_field: "s".to_string(),
+        };
+        let out = WindowExecutor::new().execute_window_functions(rows, &[call])?;
+        Ok(out
+            .iter()
+            .map(|r| {
+                r.fields
+                    .get("s")
+                    .and_then(|v| v.as_f64())
+                    .expect("sum present")
+            })
+            .collect())
+    }
+
+    #[test]
+    fn frame_units_diverge_with_value_offset_and_ties() {
+        // x = [1, 3, 3, 4]; SUM(x) OVER (ORDER BY x <unit> BETWEEN 1 PRECEDING
+        // AND CURRENT ROW). Hand-verified, all three distinct at the tie rows:
+        //   ROWS   — physical rows:  [1], [1,3], [3,3], [3,4]           = 1, 4, 6, 7
+        //   RANGE  — value in [x-1,x]: [1], [3,3], [3,3], [3,3,4]       = 1, 6, 6, 10
+        //   GROUPS — whole peer groups: [1], [1,3,3], [1,3,3], [3,3,4]  = 1, 7, 7, 10
+        let x = [1.0, 3.0, 3.0, 4.0];
+        let asc = SortDirection::Asc;
+
+        let rows = run_sum(
+            &x,
+            asc.clone(),
+            frame(
+                FrameUnit::Rows,
+                FrameBound::Offset(1),
+                FrameBound::CurrentRow,
+            ),
+        )
+        .unwrap();
+        assert_eq!(rows, vec![1.0, 4.0, 6.0, 7.0], "ROWS");
+
+        let range = run_sum(
+            &x,
+            asc.clone(),
+            frame(
+                FrameUnit::Range,
+                FrameBound::Offset(1),
+                FrameBound::CurrentRow,
+            ),
+        )
+        .unwrap();
+        assert_eq!(range, vec![1.0, 6.0, 6.0, 10.0], "RANGE");
+
+        let groups = run_sum(
+            &x,
+            asc,
+            frame(
+                FrameUnit::Groups,
+                FrameBound::Offset(1),
+                FrameBound::CurrentRow,
+            ),
+        )
+        .unwrap();
+        assert_eq!(groups, vec![1.0, 7.0, 7.0, 10.0], "GROUPS");
+
+        // The whole point of the fix: the three are NOT equal.
+        assert_ne!(rows, range);
+        assert_ne!(range, groups);
+    }
+
+    #[test]
+    fn range_and_groups_current_row_span_peers_not_the_single_row() {
+        // x = [1, 2, 2, 3]; UNBOUNDED PRECEDING AND CURRENT ROW.
+        //   ROWS   running total per row:      1, 3, 5, 8
+        //   RANGE  through current peer group: 1, 5, 5, 8
+        //   GROUPS through current peer group: 1, 5, 5, 8
+        let x = [1.0, 2.0, 2.0, 3.0];
+        let asc = SortDirection::Asc;
+
+        let rows = run_sum(
+            &x,
+            asc.clone(),
+            frame(
+                FrameUnit::Rows,
+                FrameBound::Unbounded,
+                FrameBound::CurrentRow,
+            ),
+        )
+        .unwrap();
+        assert_eq!(rows, vec![1.0, 3.0, 5.0, 8.0], "ROWS running total");
+
+        let range = run_sum(
+            &x,
+            asc.clone(),
+            frame(
+                FrameUnit::Range,
+                FrameBound::Unbounded,
+                FrameBound::CurrentRow,
+            ),
+        )
+        .unwrap();
+        assert_eq!(range, vec![1.0, 5.0, 5.0, 8.0], "RANGE peers");
+
+        let groups = run_sum(
+            &x,
+            asc,
+            frame(
+                FrameUnit::Groups,
+                FrameBound::Unbounded,
+                FrameBound::CurrentRow,
+            ),
+        )
+        .unwrap();
+        assert_eq!(groups, vec![1.0, 5.0, 5.0, 8.0], "GROUPS peers");
+    }
+
+    #[test]
+    fn range_offset_respects_desc_ordering() {
+        // ORDER BY x DESC, sorted input [4, 3, 3, 1].
+        // RANGE BETWEEN 1 PRECEDING AND CURRENT ROW: preceding = higher value,
+        // so the window is [x, x+1].
+        //   x=4 -> [4]        = 4
+        //   x=3 -> [4,3,3]    = 10
+        //   x=3 -> [4,3,3]    = 10
+        //   x=1 -> [1]        = 1
+        let x = [4.0, 3.0, 3.0, 1.0];
+        let range = run_sum(
+            &x,
+            SortDirection::Desc,
+            frame(
+                FrameUnit::Range,
+                FrameBound::Offset(1),
+                FrameBound::CurrentRow,
+            ),
+        )
+        .unwrap();
+        assert_eq!(range, vec![4.0, 10.0, 10.0, 1.0]);
+    }
+
+    #[test]
+    fn groups_following_spans_following_peer_groups() {
+        // x = [1, 3, 3, 4]; GROUPS BETWEEN CURRENT ROW AND 1 FOLLOWING.
+        //   g0={1}, g1={3,3}, g2={4}
+        //   pos0 -> g0..g1 = [1,3,3] = 7
+        //   pos1 -> g1..g2 = [3,3,4] = 10
+        //   pos2 -> g1..g2 = [3,3,4] = 10
+        //   pos3 -> g2..g2 = [4]     = 4
+        let x = [1.0, 3.0, 3.0, 4.0];
+        let groups = run_sum(
+            &x,
+            SortDirection::Asc,
+            frame(
+                FrameUnit::Groups,
+                FrameBound::CurrentRow,
+                FrameBound::Offset(1),
+            ),
+        )
+        .unwrap();
+        assert_eq!(groups, vec![7.0, 10.0, 10.0, 4.0]);
+    }
+
+    #[test]
+    fn range_value_offset_fails_loud_on_non_numeric_key() {
+        // A value-based RANGE offset needs a numeric ORDER BY key; a text key
+        // must fail loudly rather than silently returning a wrong number.
+        let rows = vec![
+            make_row(vec![("x", json!("a"))]),
+            make_row(vec![("x", json!("b"))]),
+        ];
+        let call = WindowFunctionCall {
+            function: WindowFunction::Sum,
+            args: vec!["x".to_string()],
+            spec: WindowSpec {
+                partition_by: vec![],
+                order_by: vec![WindowOrderBy {
+                    field: "x".to_string(),
+                    direction: SortDirection::Asc,
+                }],
+                frame: frame(
+                    FrameUnit::Range,
+                    FrameBound::Offset(1),
+                    FrameBound::CurrentRow,
+                ),
+            },
+            output_field: "s".to_string(),
+        };
+        let err = WindowExecutor::new()
+            .execute_window_functions(rows, &[call])
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("numeric ORDER BY"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn range_value_offset_fails_loud_on_multiple_order_by_keys() {
+        // SQL forbids a value-offset RANGE with more than one ORDER BY column.
+        let rows = vec![make_row(vec![("x", json!(1.0)), ("y", json!(2.0))])];
+        let call = WindowFunctionCall {
+            function: WindowFunction::Sum,
+            args: vec!["x".to_string()],
+            spec: WindowSpec {
+                partition_by: vec![],
+                order_by: vec![
+                    WindowOrderBy {
+                        field: "x".to_string(),
+                        direction: SortDirection::Asc,
+                    },
+                    WindowOrderBy {
+                        field: "y".to_string(),
+                        direction: SortDirection::Asc,
+                    },
+                ],
+                frame: frame(
+                    FrameUnit::Range,
+                    FrameBound::Offset(1),
+                    FrameBound::CurrentRow,
+                ),
+            },
+            output_field: "s".to_string(),
+        };
+        let err = WindowExecutor::new()
+            .execute_window_functions(rows, &[call])
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("exactly one ORDER BY"),
+            "unexpected error: {err}"
+        );
     }
 }

@@ -42,6 +42,8 @@
 // These are declared in the parent module's mod.rs
 
 use anyhow::Result;
+#[cfg(feature = "abac-policy")]
+use proximadb_abac::ReadContext;
 use proximadb_records::ProximaRecord;
 use proximadb_records::conversions::sql_value_to_proxima;
 // PR 3b follow-up: ingest-edge guard so non-Fp32 records can't sneak
@@ -66,6 +68,7 @@ use crate::query::query_optimizer::{
 
 // Import from sibling submodules
 use super::config::{SearchPlanHints, UnifiedSearchConfig};
+#[cfg(feature = "axis")]
 use super::hybrid::{build_axis_hybrid_query, build_axis_hybrid_query_with_policy};
 use super::search::executor::proto_results_to_vector_records;
 use super::search::pipeline::default_progressive_stages;
@@ -77,6 +80,16 @@ use super::write::{
     insert_existing_record_conflict_result, insert_only_lock_key, tombstone_records_for_ids,
 };
 
+/// ADR-070 / ADR-081: AXIS is a configured projection, not an automatic cost
+/// paid by every vector collection. PAX-only collections carry no index config.
+/// Encoding/layout tags are not index declarations and therefore cannot enable
+/// AXIS by themselves.
+#[cfg_attr(not(feature = "axis"), allow(dead_code))]
+fn collection_uses_axis_indexes(axis_runtime_enabled: bool, collection: &Collection) -> bool {
+    axis_runtime_enabled
+        && crate::storage::traits::collection_declares_axis_index(collection.config.as_ref())
+}
+
 // Import vector query service contract (Phase 2.1)
 use proximadb_vector_query::{VectorQueryRequest, VectorQueryService, VectorSearchResult};
 
@@ -84,92 +97,139 @@ use crate::services::operations::{BatchOperationResult, BulkWriteRouter, Operati
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
 use crate::storage::engines::sst::SstEngine;
 
-/// Canonical rich record batch request for internal callers.
-#[derive(Debug, Clone)]
-pub struct RichRecordBatchRequest {
-    pub collection_id: String,
-    pub records: Vec<ProximaRecord>,
+const FILTER_FAIL_LOUD_ENV: &str = "PROXIMADB_FILTER_FAIL_LOUD";
+
+/// TD-WLP-5 (ADR-061 D4): the effective read freshness for a collection,
+/// applying the `Churn` Strong-override on top of the request's hint. `Churn`
+/// collections always delta-merge the unflushed WAL (a re-embedded symbol must
+/// be immediately visible), overriding any `StaleOk`/`BoundedStale` hint;
+/// `AppendBulk` honors the request (unset ⇒ Strong default), so this is a no-op
+/// there. Profile is resolved from the collection's `workload_profile:` tag.
+fn churn_effective_freshness(
+    collection: &crate::proto::proximadb_v1::Collection,
+    config: Option<&UnifiedSearchConfig>,
+) -> crate::core::search::VectorFreshnessMode {
+    use crate::core::search::VectorFreshnessMode;
+    let tags = collection
+        .config
+        .as_ref()
+        .map(|c| c.tags.as_slice())
+        .unwrap_or(&[]);
+    if proximadb_storage_common::resolve_storage_profile(tags).forces_strong_reads() {
+        return VectorFreshnessMode::Strong;
+    }
+    config
+        .and_then(|c| c.freshness_mode.clone())
+        .unwrap_or_default()
 }
 
-/// Canonical rich record delete request for v2 and internal callers.
-#[derive(Debug, Clone)]
-pub struct RichRecordDeleteBatchRequest {
-    pub collection_id: String,
-    pub record_ids: Vec<String>,
+/// TD-WLP-8 (ADR-061 D4): sample a `Churn` collection's resident working-set
+/// bytes (the unflushed WAL/memtable delta) onto the per-collection gauge and
+/// edge-trigger a `warn!` when it crosses the soft ceiling
+/// (`PROXIMADB_CHURN_WORKING_SET_MB`). Best-effort observability: a sampling
+/// error is swallowed (it must never fail a search), and the warn is deduped
+/// per collection so a hot over-budget collection doesn't spam the log — it
+/// fires once on breach and re-arms only after the working set drops back under
+/// the ceiling. `AppendBulk` never calls this (gated at the call site).
+async fn sample_churn_working_set(
+    wal_manager: &crate::storage::persistence::write_ahead_log::WriteAheadLogManager,
+    tenant_id: Option<&str>,
+    collection_id: &str,
+) {
+    let bytes = match wal_manager
+        .get_collection_working_set_bytes(collection_id)
+        .await
+    {
+        Ok(b) => b,
+        Err(_) => return, // observability must never fail the read
+    };
+    crate::metrics::consumption_metrics::record_churn_working_set_bytes(
+        tenant_id,
+        collection_id,
+        bytes,
+    );
+    let Some(ceiling) = proximadb_storage_common::churn_working_set_ceiling_bytes() else {
+        return; // unbounded (default) — gauge only, no ceiling to breach
+    };
+    static WARNED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let warned = WARNED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    if let Ok(mut set) = warned.lock() {
+        if bytes > ceiling {
+            if set.insert(collection_id.to_string()) {
+                warn!(
+                    "Churn collection '{}' working set {} B exceeds soft ceiling {} B \
+                     (PROXIMADB_CHURN_WORKING_SET_MB): reads stay correct but the in-memory \
+                     working set is unbounded — flush/compact or raise the ceiling",
+                    collection_id, bytes, ceiling
+                );
+            }
+        } else {
+            set.remove(collection_id); // dropped back under → re-arm the warn
+        }
+    }
 }
 
-/// Canonical rich record get request for v2 and internal callers.
-#[derive(Debug, Clone)]
-pub struct RichRecordGetRequest {
-    pub collection_id: String,
-    pub record_id: String,
-    pub include_vector: bool,
-    pub include_props: bool,
+fn filter_fail_loud_enabled() -> bool {
+    let value = std::env::var(FILTER_FAIL_LOUD_ENV).ok();
+    filter_fail_loud_for_value(value.as_deref())
 }
 
-/// Canonical rich search request for v2 and internal callers.
-#[derive(Debug, Clone)]
-pub struct RichSearchRequest {
-    pub collection_id: String,
-    pub query_vector: Vec<f32>,
-    pub top_k: u32,
-    pub filters: Vec<RichFilterCondition>,
+fn filter_fail_loud_for_value(value: Option<&str>) -> bool {
+    !matches!(
+        value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("0" | "false" | "off" | "no")
+    )
 }
 
-/// Canonical rich search response for v2 and internal callers.
-#[derive(Debug, Clone, Default)]
-pub struct RichSearchResponse {
-    pub results: Vec<RichSearchResult>,
-    pub total_found: i64,
-    pub collection_id: Option<String>,
-    /// TD-064(a): predicate-aware shortfall — `Some(...)` when a filtered
-    /// search returned fewer than the requested `top_k` after the
-    /// WAL+AXIS+storage merge. First-class and always-on (NOT debug-gated):
-    /// a silent `<top_k` under a tenant/RLS filter is fail-open, so the
-    /// client must be able to tell "fewer than k match my filter" from "the
-    /// engine returned my full top-k". Recomputed authoritatively against
-    /// the final merged result so an AXIS-stage false positive is cleared.
-    pub predicate_shortfall: Option<crate::observability::search_plan_trace::PredicateShortfall>,
+fn evaluate_v2_filter_for_record(
+    filter: &FilterExpression,
+    record: &ProximaRecord,
+) -> Result<bool> {
+    evaluate_v2_filter_for_record_with_mode(filter, record, filter_fail_loud_enabled())
 }
 
-#[derive(Debug, Clone)]
-pub struct RichSearchResult {
-    pub id: String,
-    pub score: f64,
-    pub similarity: Option<f32>,
-    pub vector: Vec<f32>,
-    pub props: HashMap<String, proximadb_data_model::ProximaValue>,
-    pub version: Option<u32>,
-    pub timestamp: Option<i64>,
-    pub source: Option<String>,
+fn evaluate_v2_filter_for_record_with_mode(
+    filter: &FilterExpression,
+    record: &ProximaRecord,
+    fail_loud: bool,
+) -> Result<bool> {
+    if fail_loud {
+        crate::core::search::sql_value_filter::evaluate_filter_proxima_strict(filter, &record.props)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "metadata filter evaluation failed for record '{}': {e}",
+                    if record.oid.is_empty() {
+                        record.local_id.as_deref().unwrap_or("<unknown>")
+                    } else {
+                        record.oid.as_str()
+                    }
+                )
+            })
+    } else {
+        Ok(crate::core::search::sql_value_filter::evaluate_filter_proxima(filter, &record.props))
+    }
 }
+
+// TD-104 Phase 0: these types now live in `proximadb-runtime` (so the
+// `RecordOpsPort` contract is self-contained). Re-exported here so existing
+// `crate::services::operations::vectors::legacy::RichRecord*` callers are
+// unaffected (mirrors the S3a `BatchOperationResult` relocation pattern).
+pub use proximadb_runtime::rich_record::{
+    RichRecordBatchRequest, RichRecordDeleteBatchRequest, RichRecordGetRequest,
+};
+
+/// Canonical rich search request/response/filter DTOs now live in
+/// `proximadb-runtime` (TD-FLIGHT-1) so the `RecordSearchPort` contract is
+/// self-contained — mirroring the `RichRecord*` relocation above. Re-exported
+/// here so existing `crate::services::operations::vectors::legacy::RichSearch*`
+/// / `RichFilter*` callers are unaffected.
+pub use proximadb_runtime::rich_search::{
+    RichFilterCondition, RichFilterOperator, RichSearchRequest, RichSearchResponse,
+    RichSearchResult,
+};
 
 pub type RichRecordGetResponse = Option<RichSearchResult>;
-
-#[derive(Debug, Clone)]
-pub struct RichFilterCondition {
-    pub field: String,
-    pub operator: RichFilterOperator,
-    pub value: proximadb_data_model::ProximaValue,
-    pub value_upper: Option<proximadb_data_model::ProximaValue>,
-    pub value_list: Vec<proximadb_data_model::ProximaValue>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RichFilterOperator {
-    Eq,
-    Ne,
-    Gt,
-    Gte,
-    Lt,
-    Lte,
-    Between,
-    In,
-    NotIn,
-    Contains,
-    StartsWith,
-    EndsWith,
-}
 
 /// Lower rich `ProximaValue` predicates straight to the canonical
 /// [`FilterExpression`] consumed by the unified search path.
@@ -428,9 +488,14 @@ pub struct VectorOperationsService {
     /// Default storage engine (SST) - used for fallback and WAL coordination
     storage_engine: Arc<SstEngine>,
 
-    /// Dynamic engine cache - maps collection_id to the correct storage engine
+    /// Dynamic engine cache keyed by the catalog's globally unique object id.
     /// This enables each collection to use its configured engine (SST, HELIX, VIPER, etc.)
-    engine_cache: Arc<dashmap::DashMap<String, Arc<dyn UnifiedStorageFormat>>>,
+    engine_cache: Arc<
+        dashmap::DashMap<
+            crate::core::stable_id::CollectionObjectId,
+            Arc<dyn UnifiedStorageFormat>,
+        >,
+    >,
 
     /// WAL/Memtable for unflushed vectors (required for two-stage search)
     wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
@@ -438,14 +503,24 @@ pub struct VectorOperationsService {
     /// SINGLE query optimizer (replaced two separate optimizers)
     query_optimizer: Arc<UnifiedQueryOptimizer>,
 
-    /// Collection cache (unchanged)
-    collection_cache: Arc<dashmap::DashMap<String, Arc<Collection>>>,
+    /// Collection metadata cache keyed by catalog object id. Names/aliases are
+    /// resolved before this cache boundary.
+    collection_cache: Arc<
+        dashmap::DashMap<crate::core::stable_id::CollectionObjectId, Arc<Collection>>,
+    >,
 
     /// Query result cache - unified for all query sources (SQL, REST API, gRPC)
     query_cache: Arc<QueryCache>,
 
     /// AXIS index manager for index lookups
+    #[cfg(feature = "axis")]
     axis_index_manager: Arc<crate::index::AxisManager>,
+
+    /// Runtime AXIS master switch. The compile feature only makes the
+    /// capability available; no collection may feed, query, or maintain AXIS
+    /// while this process-level policy is false.
+    #[cfg(feature = "axis")]
+    axis_runtime_enabled: bool,
 
     /// Collection port for metadata and configuration (Phase 9 / Task #76)
     collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
@@ -456,6 +531,15 @@ pub struct VectorOperationsService {
     tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
     /// Optional RBAC enforcer for role-based access control
     rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
+
+    /// FA-2 vector ABAC enforcer (default-OFF behind `abac-policy`). When
+    /// present, `unified_search_native` pushes the subject's accessibility
+    /// predicate into the search — ACORN traversal for conjunctive policies
+    /// (recall-preserving), exact-scan or result post-filter otherwise. `None`
+    /// ⇒ no per-record enforcement (fail-open for unwired/test, mirroring the
+    /// relational `DmlService` when no enforcer is installed).
+    #[cfg(feature = "abac-policy")]
+    abac_enforcer: Option<Arc<crate::security::rls::AbacEnforcer>>,
 
     /// Bulk write router for intelligent write path selection.
     /// Routes large batches to the WAL-backed bulk lane until direct
@@ -497,21 +581,55 @@ pub struct VectorOperationsService {
         Option<Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>>,
 }
 
+/// FA-2 (abac-policy): a `FilterExpression` is AXIS push-down-compatible iff it
+/// is a conjunction of comparisons — the only shape `flatten_filter_expression`
+/// (`hybrid/axis_builder.rs`) accepts; Or/Not cause that builder to error out.
+#[cfg(feature = "abac-policy")]
+fn abac_filter_is_conjunctive(expr: &crate::core::search::FilterExpression) -> bool {
+    use crate::core::search::FilterExpression;
+    match expr {
+        FilterExpression::Comparison { .. } => true,
+        FilterExpression::And(parts) => parts.iter().all(abac_filter_is_conjunctive),
+        FilterExpression::Or(_) | FilterExpression::Not(_) => false,
+    }
+}
+
+/// FA-2 (abac-policy): push the security predicate DOWN into the ANN search iff
+/// BOTH the security expression and the user filter are conjunctive — so the
+/// ANDed combined filter still flattens into the AXIS query. Otherwise the
+/// caller post-filters the results (the non-conjunctive fallback).
+#[cfg(feature = "abac-policy")]
+fn abac_security_is_pushdown(
+    security: &crate::core::search::FilterExpression,
+    user_filter: Option<&crate::core::search::FilterExpression>,
+) -> bool {
+    abac_filter_is_conjunctive(security) && user_filter.is_none_or(abac_filter_is_conjunctive)
+}
+
 impl VectorOperationsService {
     /// Create service with a shared context for cross-cutting concerns
     pub fn new_with_context(
         storage_engine: Arc<SstEngine>,
         wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
-        axis_index_manager: Arc<crate::index::AxisManager>,
+        #[cfg(feature = "axis")] axis_index_manager: Arc<crate::index::AxisManager>,
         collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         ctx: &crate::core::context::SharedContext,
     ) -> Self {
-        let mut svc = Self::new(
-            storage_engine,
-            wal_manager,
-            axis_index_manager,
-            collection_port,
-        );
+        let mut svc = {
+            #[cfg(feature = "axis")]
+            {
+                Self::new(
+                    storage_engine,
+                    wal_manager,
+                    axis_index_manager,
+                    collection_port,
+                )
+            }
+            #[cfg(not(feature = "axis"))]
+            {
+                Self::new(storage_engine, wal_manager, collection_port)
+            }
+        };
         svc.orchestrator = ctx.orchestrator.clone();
         // Tenant integration from shared context
         if let Some(ref tenant_manager) = ctx.tenant_manager {
@@ -522,6 +640,135 @@ impl VectorOperationsService {
         }
         svc
     }
+
+    /// Install the FA-2 vector ABAC enforcer (default-OFF behind `abac-policy`).
+    /// When set, `unified_search_native` enforces the subject's accessibility
+    /// predicate on every vector search (push-down for conjunctive policies,
+    /// post-filter fallback otherwise). Mirrors `DmlService::with_abac_enforcer`.
+    #[cfg(feature = "abac-policy")]
+    pub fn with_abac_enforcer(mut self, enforcer: Arc<crate::security::rls::AbacEnforcer>) -> Self {
+        self.abac_enforcer = Some(enforcer);
+        self
+    }
+
+    /// FA-2 PR-D3 (abac-policy): resolve `subject`'s read authorization for a
+    /// vector `collection_id` into the [`AuthorizedReadContext`] the push-down
+    /// path consumes. The fusion seam calls this to build a `ReadContext::Client`
+    /// from the request subject + tenant.
+    ///
+    /// Returns:
+    /// - `None` ⇒ no enforcer wired (or the collection can't be resolved — the
+    ///   search itself then fails with that error, so no unfiltered data is
+    ///   served); the caller uses a `System` (passthrough) context.
+    /// - `Some(Ok(ctx))` ⇒ admitted; wrap as `ReadContext::Client(ctx)`.
+    /// - `Some(Err(reason))` ⇒ DENY; the caller MUST fail closed (return empty).
+    ///
+    /// `Target.table` is the collection's catalog object id (resolved the same
+    /// way `unified_search_native` does, ADR-0083 D5). Table-scoped policies
+    /// match on it alone (`scope_covers` for `Scope::Table` checks `target.table`
+    /// only); `namespace` is irrelevant for the common per-collection RLS case.
+    #[cfg(feature = "abac-policy")]
+    pub async fn resolve_vector_read_context(
+        &self,
+        subject: &proximadb_catalog::fc_metamodel::SubjectId,
+        tenant_stable_id: u64,
+        collection_id: &str,
+    ) -> Option<Result<proximadb_abac::AuthorizedReadContext, proximadb_abac::DenyReason>> {
+        let enforcer = self.abac_enforcer.as_ref()?;
+        let collection = self.get_or_load_collection(collection_id).await.ok()?;
+        let object_id: crate::core::stable_id::CollectionObjectId = collection.id.parse().ok()?;
+        Some(enforcer.resolve_read_context(
+            subject,
+            tenant_stable_id,
+            proximadb_catalog::fc_metamodel::Target {
+                namespace: 0,
+                table: object_id as u32,
+                column: None,
+            },
+        ))
+    }
+
+    /// **The ONE read-context composition rule** (ADR-087): resolve
+    /// `(subject, tenant_stable_id)` into the read context every client-serving
+    /// vector read must carry. Every surface calls THIS — never a copy — so the
+    /// enforcement truth table has exactly one reviewable definition.
+    ///
+    /// Returns:
+    /// - `Some(ReadContext::Client(ctx))` — admitted; the caller ANDs the
+    ///   subject's security filter into the search (pushdown) / post-filters.
+    /// - `Some(ReadContext::System(_))` — no enforcer wired, or no client
+    ///   subject on the request (the `None`-subject callers) ⇒ passthrough
+    ///   (the pre-feature behavior — structural isolation only).
+    /// - `None` — the subject was **denied**; the caller MUST fail closed
+    ///   (return empty results). Mirrors the fusion contract
+    ///   (`fusion_service.rs:529-554`).
+    ///
+    /// TD-ABAC-11: when an enforcer and subject are present, an absent stable id
+    /// DENIES. The policy key is required to consult the authority; inability to
+    /// consult cannot mean allow. Default-tenant bootstrap and provisioning mint
+    /// the key before this strictness rule is reached.
+    #[cfg(feature = "abac-policy")]
+    pub async fn records_read_context(
+        &self,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
+        collection_id: &str,
+    ) -> Option<proximadb_abac::ReadContext> {
+        use proximadb_catalog::fc_metamodel::SubjectId;
+        match proximadb_tenant::read_enforcement_composition(
+            self.abac_enforcer.is_some(),
+            subject.is_some(),
+            tenant_stable_id.is_some(),
+            auth_class,
+        ) {
+            proximadb_tenant::ReadEnforcementComposition::ResolvePolicy => {
+                let (Some(subject), Some(tenant_stable_id)) = (subject, tenant_stable_id) else {
+                    tracing::error!(
+                        target: "proximadb::tenant_audit",
+                        "ABAC composition invariant violated; denying"
+                    );
+                    return None;
+                };
+                match self
+                    .resolve_vector_read_context(
+                        &SubjectId(subject.to_string()),
+                        tenant_stable_id,
+                        collection_id,
+                    )
+                    .await
+                {
+                    Some(Ok(ctx)) => Some(proximadb_abac::ReadContext::Client(ctx)),
+                    Some(Err(_)) => None, // deny ⇒ fail-closed
+                    None => Some(proximadb_abac::ReadContext::system(
+                        proximadb_abac::SystemReadReason::Statistics,
+                        "records_search (no abac enforcer)",
+                    )),
+                }
+            }
+            proximadb_tenant::ReadEnforcementComposition::DenyMissingStableId => {
+                tracing::warn!(
+                    target: "proximadb::tenant_audit",
+                    subject = subject,
+                    auth_class = %auth_class,
+                    collection = collection_id,
+                    "ABAC denied a subject whose tenant has no stable policy key"
+                );
+                None
+            }
+            proximadb_tenant::ReadEnforcementComposition::Passthrough => {
+                Some(proximadb_abac::ReadContext::system(
+                    proximadb_abac::SystemReadReason::Statistics,
+                    if self.abac_enforcer.is_none() {
+                        "records_search (no abac enforcer)"
+                    } else {
+                        "records_search (no client subject)"
+                    },
+                ))
+            }
+        }
+    }
+
     /// Expose the unified storage engine as a trait object for integration points
     pub fn unified_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageFormat> {
         self.storage_engine.clone() as Arc<dyn crate::storage::traits::UnifiedStorageFormat>
@@ -529,6 +776,7 @@ impl VectorOperationsService {
 
     /// Expose the AXIS index manager for direct index operations
     /// Used by embedded mode to build indexes synchronously after flush
+    #[cfg(feature = "axis")]
     pub fn axis_index_manager(&self) -> Arc<crate::index::AxisManager> {
         self.axis_index_manager.clone()
     }
@@ -559,55 +807,68 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-    ) -> Result<()> {
-        if self.tenant_manager.is_none() {
-            return Ok(());
-        }
+    ) -> Result<crate::core::stable_id::CollectionObjectId> {
+        let collection = if self.tenant_manager.is_some() {
+            let tenant_ctx = tenant_context.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Tenant context is required for collection '{}' in multi-tenant mode",
+                    collection_id
+                )
+            })?;
+            let collection = self
+                .collection_port
+                .get_collection(collection_id, Some(&tenant_ctx.tenant_id))
+                .await?;
+            let Some(collection) = collection else {
+                warn!(
+                    "🚨 Tenant '{}' attempted to access collection '{}' without authorization",
+                    tenant_ctx.tenant_id, collection_id
+                );
+                return Err(anyhow::anyhow!(
+                    "Collection '{}' is not accessible for tenant '{}'",
+                    collection_id,
+                    tenant_ctx.tenant_id
+                ));
+            };
+            collection
+        } else {
+            (*self.get_or_load_collection(collection_id).await?).clone()
+        };
 
-        let tenant_ctx = tenant_context.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Tenant context is required for collection '{}' in multi-tenant mode",
-                collection_id
-            )
-        })?;
-
-        let collection = self
-            .collection_port
-            .get_collection(collection_id, Some(&tenant_ctx.tenant_id))
-            .await?;
-
-        if collection.is_none() {
-            warn!(
-                "🚨 Tenant '{}' attempted to access collection '{}' without authorization",
-                tenant_ctx.tenant_id, collection_id
-            );
-            return Err(anyhow::anyhow!(
-                "Collection '{}' is not accessible for tenant '{}'",
-                collection_id,
-                tenant_ctx.tenant_id
-            ));
-        }
-
-        if self.rbac_enforcer.is_some() {
+        if self.rbac_enforcer.is_some()
+            && let Some(tenant_ctx) = tenant_context
+        {
             debug!(
                 "RBAC enforcer configured for tenant '{}', but vector operations still need user context wiring for collection-level authorization",
                 tenant_ctx.tenant_id
             );
         }
 
-        Ok(())
+        let object_id = collection.id.parse().map_err(|error| {
+            anyhow::anyhow!(
+                "catalog collection '{}' has invalid object identity {:?}: {error}",
+                collection_id,
+                collection.id
+            )
+        })?;
+        self.collection_cache
+            .insert(object_id, Arc::new(collection));
+        Ok(object_id)
     }
 
     /// Execute a v1 vector search after validating that the caller has access to the collection
     /// under the provided tenant context.
     pub async fn search_v1_with_tenant_context(
         &self,
-        req: crate::proto::proximadb_v1::VectorSearchRequest,
+        mut req: crate::proto::proximadb_v1::VectorSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
-        self.validate_tenant_collection_access(&req.collection_id, tenant_context)
-            .await?;
-        self.search_v1(req).await
+        req.collection_id = self
+            .validate_tenant_collection_access(&req.collection_id, tenant_context)
+            .await?
+            .to_string();
+        self.search_v1(req, proximadb_runtime::PortIdentity::anonymous())
+            .await
     }
 
     /// Execute canonical rich-record vector search.
@@ -619,12 +880,45 @@ impl VectorOperationsService {
         &self,
         request: RichSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichSearchResponse> {
-        let collection_id = request.collection_id.clone();
+        // TD-METRICS-1: this — not the query-facade adapter — is the entry the
+        // canonical REST v2 record search actually traverses (verified live:
+        // the adapter-side counters never moved during the SIFT ratchet run).
+        // Count + time here; the adapter keeps its own increments for the
+        // facade surfaces, which do not route through this method.
+        let om_start = std::time::Instant::now();
+        crate::metrics::operational_metrics::QUERIES_TOTAL.inc();
+        let result = self
+            .search_records_with_tenant_context_inner(
+                request,
+                tenant_context,
+                identity.subject,
+                identity.tenant_stable_id,
+                identity.auth_class,
+            )
+            .await;
+        if result.is_err() {
+            crate::metrics::operational_metrics::QUERIES_FAILED_TOTAL.inc();
+        }
+        crate::metrics::operational_metrics::SEARCH_LATENCY_SECONDS
+            .observe(om_start.elapsed().as_secs_f64());
+        result
+    }
 
+    async fn search_records_with_tenant_context_inner(
+        &self,
+        request: RichSearchRequest,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
+    ) -> Result<RichSearchResponse> {
         // Authorize before touching data, matching `search_v1_with_tenant_context`.
-        self.validate_tenant_collection_access(&collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(&request.collection_id, tenant_context)
+            .await?
+            .to_string();
 
         // Build the canonical filter directly from the rich predicates — no v1
         // proto round-trip, so `starts_with`/`ends_with` and the full op set
@@ -632,7 +926,10 @@ impl VectorOperationsService {
         let filter = rich_filters_to_filter_expression(&request.filters);
 
         // The rich path mirrors the previous `include_fields: None` defaults:
-        // metadata included, vectors excluded.
+        // metadata included, vectors excluded. ABAC enforcement is applied at the
+        // shared `unified_search_v1_inner` seam (TD-ABAC-5/6) via the threaded
+        // subject + tenant_stable_id — no per-endpoint ABAC here (the previous
+        // block was retired once the seam covered the records path).
         let response = self
             .run_unified_search_v1(
                 collection_id.clone(),
@@ -641,6 +938,9 @@ impl VectorOperationsService {
                 false,
                 true,
                 filter,
+                subject,
+                tenant_stable_id,
+                auth_class,
             )
             .await?;
         let Some(search_result) = response.results else {
@@ -677,33 +977,124 @@ impl VectorOperationsService {
         Ok(resp)
     }
 
-    /// Execute canonical rich-record get.
+    /// Execute canonical rich-record get: fetches the record, then admit-checks
+    /// the single result against `identity.subject`'s security predicate
+    /// (fail-closed on deny); a subject-less identity is a pass-through
+    /// (gRPC/internal callers). Enforcement is `abac-policy`-gated; default
+    /// builds pass the identity through ignored. (TD-ABAC-7: one method,
+    /// identity decides — no `_abac` twin.)
     pub async fn get_record_with_tenant_context(
         &self,
         request: RichRecordGetRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<RichRecordGetResponse> {
-        self.validate_tenant_collection_access(&request.collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(&request.collection_id, tenant_context)
+            .await?
+            .to_string();
 
-        self.vector(
-            &request.collection_id,
-            &request.record_id,
-            request.include_vector,
-            request.include_props,
-        )
-        .await
-        .map(|record| {
-            // Defense-in-depth: never return a dead (tombstone / TTL-expired)
-            // record from get-by-id, regardless of which backing store (WAL
-            // or SST point-lookup) produced it. The WAL memtable filters on
-            // its own, but the SST point-lookup path does not. Use the
-            // canonical is_visible_at(now_ns) on valid_to_ns.
-            let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-            record
-                .filter(|r| r.is_visible_at(now_ns))
-                .map(vector_record_to_rich_result)
-        })
+        let record = self
+            .vector(
+                &collection_id,
+                &request.record_id,
+                request.include_vector,
+                request.include_props,
+            )
+            .await
+            .map(|record| {
+                // Defense-in-depth: never return a dead (tombstone / TTL-expired)
+                // record from get-by-id, regardless of which backing store (WAL
+                // or SST point-lookup) produced it. The WAL memtable filters on
+                // its own, but the SST point-lookup path does not. Use the
+                // canonical is_visible_at(now_ns) on valid_to_ns.
+                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                record
+                    .filter(|r| r.is_visible_at(now_ns))
+                    .map(vector_record_to_rich_result)
+            })?;
+
+        #[cfg(feature = "abac-policy")]
+        let record = self
+            .admit_record_abac(
+                record,
+                identity.subject,
+                identity.tenant_stable_id,
+                identity.auth_class,
+                &collection_id,
+            )
+            .await;
+        #[cfg(not(feature = "abac-policy"))]
+        let _ = identity;
+
+        Ok(record)
+    }
+
+    /// Admit-check a single fetched record against the subject's read context:
+    /// `None` (denied) ⇒ `None` (fail-closed); `System` ⇒ passthrough;
+    /// `Client(ctx)` ⇒ drop the record if it fails the ctx's security predicate.
+    /// (Point lookups have no filter slot to push into, so this is a post-check
+    /// on the one returned record.)
+    #[cfg(feature = "abac-policy")]
+    async fn admit_record_abac(
+        &self,
+        record: Option<RichSearchResult>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
+        collection_id: &str,
+    ) -> Option<RichSearchResult> {
+        use crate::core::search::sql_value_filter::proxima_value_to_json;
+        use crate::security::rls::filter_lattice::admits_with_security;
+
+        match self
+            .records_read_context(subject, tenant_stable_id, auth_class, collection_id)
+            .await
+        {
+            // Denied ⇒ fail-closed: the record is not returned.
+            None => None,
+            // No client subject / no enforcer ⇒ structural isolation only.
+            Some(proximadb_abac::ReadContext::System(_)) => record,
+            Some(proximadb_abac::ReadContext::Client(ctx)) => {
+                let security = self
+                    .abac_enforcer
+                    .as_ref()
+                    .and_then(|enforcer| enforcer.security_filter_for_context(&ctx));
+                record.filter(|r| match &security {
+                    Some(security) => admits_with_security(None, Some(security), &|field: &str| {
+                        r.props.get(field).map(proxima_value_to_json)
+                    }),
+                    // Admitted with no row predicate ⇒ the record is visible.
+                    None => true,
+                })
+            }
+        }
+    }
+
+    /// Point-get a single FULL record by id, tenant-scoped (TD-DOC-CONV-1).
+    ///
+    /// Unlike [`Self::get_record_with_tenant_context`] (which returns the search-shaped,
+    /// label-less `RichSearchResult`), this returns the whole [`ProximaRecord`] — `labels` +
+    /// `variation_id` intact — so the document facade can be rebuilt from an O(log n) bloom +
+    /// B+ tree point lookup instead of a bounded collection scan. Dead (tombstone / TTL-expired)
+    /// and cross-tenant records are filtered, matching the get/scan surfaces.
+    pub async fn get_full_record_with_tenant_context(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<Option<ProximaRecord>> {
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
+        let record = self.vector(&collection_id, record_id, false, true).await?;
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        Ok(record.filter(|r| {
+            r.is_visible_at(now_ns)
+                && tenant_context
+                    .is_none_or(|ctx| r.tenant_id.is_empty() || r.tenant_id == ctx.tenant_id)
+        }))
     }
 
     /// Scan current visible canonical records from the VectorOps-backed WAL/memtable path.
@@ -718,12 +1109,14 @@ impl VectorOperationsService {
         include_props: bool,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<Vec<ProximaRecord>> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         let mut records = self
             .wal_manager
-            .get_collection_vectors(collection_id)
+            .get_collection_vectors_raw(&collection_id)
             .await?;
         if let Some(tenant_context) = tenant_context {
             records.retain(|record| {
@@ -756,18 +1149,45 @@ impl VectorOperationsService {
         Ok(records)
     }
 
-    /// Paginated record scan (TD-099(3d) push-down). Returns up to `limit`
-    /// records with canonical key `(updated_at_ns, oid)` strictly greater than
-    /// `cursor`, in ascending order, plus the next cursor (when the page is
-    /// full). Byte-identical to `scan_records_with_tenant_context` + sort +
-    /// cursor-filter + take, but O(log d + limit) per page once the per-collection
-    /// scan index is warm.
+    /// Raw unflushed (WAL/memtable) records for `collection_id`, tenant-filtered but
+    /// **NOT** dead-filtered — tombstones and TTL-expired rows are RETAINED. This is the
+    /// unflushed half of the storage-inclusive document PAX scan (TD-DOC-PUSHDOWN-1): the
+    /// caller merges these with the flushed PAX scan by `oid` (freshest wins, WAL priority)
+    /// and applies the canonical `is_record_dead` pass on the merged set. Retaining
+    /// tombstones here is what lets an unflushed delete suppress a still-flushed live copy
+    /// (invariant #16d) — `stream_unflushed_records` drops tombstones internally and so
+    /// cannot express that cross-source suppression.
+    pub async fn list_unflushed_raw_with_tenant_context(
+        &self,
+        collection_id: &str,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<Vec<ProximaRecord>> {
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
+        let mut records = self
+            .wal_manager
+            .get_collection_vectors(&collection_id)
+            .await?;
+        if let Some(tenant_context) = tenant_context {
+            records.retain(|record| {
+                record.tenant_id.is_empty() || record.tenant_id == tenant_context.tenant_id
+            });
+        }
+        Ok(records)
+    }
+
+    /// Paginated storage-inclusive record scan. Returns up to `limit` records
+    /// with canonical key `(updated_at_ns, oid)` strictly greater than `cursor`,
+    /// in ascending order, plus the next cursor (when the page is full).
     ///
-    /// Tenant filtering — and an optional pushed-down `filter` (e.g. a Spark
-    /// predicate) — is pushed INTO the storage range-scan as a predicate so it is
-    /// applied before the limit; otherwise a filtered/multi-tenant collection
-    /// would return short pages and stop pagination prematurely. The `filter` is
-    /// evaluated against each record's property tree.
+    /// The WAL has an ordered push-down index, but immutable engines currently
+    /// expose only `read_all_records` through `UnifiedStorageFormat`. Therefore
+    /// correctness requires merging storage + WAL before filtering and paging;
+    /// using the WAL-only push-down after a flush silently returned an empty
+    /// collection. A future storage range-scan trait can replace this
+    /// materialization without changing the API semantics pinned here.
     #[allow(clippy::too_many_arguments)]
     pub async fn scan_records_paginated(
         &self,
@@ -783,36 +1203,30 @@ impl VectorOperationsService {
         Vec<ProximaRecord>,
         Option<crate::services::scan_cursor::ScanCursor>,
     )> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
+
+        let mut records = self
+            .list_all_records_with_tenant_context(&collection_id, tenant_context)
             .await?;
-
-        // Combined page predicate = tenant rule AND the optional pushed filter,
-        // applied inside the storage scan BEFORE the limit. Owns its captures
-        // (tenant id + cloned filter) so the closure is 'static + Send + Sync.
-        let tenant_id = tenant_context.map(|tc| tc.tenant_id.clone());
-        let owned_filter = filter.cloned();
-        let pred: Option<Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>> =
-            if tenant_id.is_some() || owned_filter.is_some() {
-                Some(Box::new(move |r: &ProximaRecord| {
-                    let tenant_ok = tenant_id
-                        .as_ref()
-                        .is_none_or(|tid| r.tenant_id.is_empty() || &r.tenant_id == tid);
-                    let filter_ok = owned_filter.as_ref().is_none_or(|f| {
-                        crate::core::search::sql_value_filter::evaluate_filter_proxima(f, &r.props)
-                    });
-                    tenant_ok && filter_ok
-                }))
-            } else {
-                None
-            };
-        let pred_ref = pred.as_deref();
-
-        let after = cursor.map(|c| (c.last_updated_at_ns, c.last_oid.as_str()));
-
-        let mut page = self
-            .wal_manager
-            .stream_unflushed_records(collection_id, after, limit, pred_ref, now_ns)
-            .await?;
+        records.retain(|record| {
+            record.is_visible_at(now_ns)
+                && filter.as_ref().is_none_or(|filter| {
+                    crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                        filter,
+                        &record.props,
+                    )
+                })
+        });
+        let (mut page, next) = crate::services::scan_cursor::apply_scan_cursor(
+            records,
+            cursor,
+            limit,
+            &collection_id,
+            now_ns,
+        );
 
         if !include_vector {
             for record in &mut page {
@@ -825,22 +1239,22 @@ impl VectorOperationsService {
             }
         }
 
-        let next =
-            crate::services::scan_cursor::derive_next_cursor(&page, limit, collection_id, now_ns);
         Ok((page, next))
     }
 
-    /// Resolve a user-facing collection identifier (name) to the canonical
-    /// internal id that the write path keys WAL + storage under. Idempotent for
-    /// already-canonical ids; falls back to the input if resolution fails.
-    pub async fn resolve_collection_id(&self, identifier: &str) -> String {
+    /// Resolve a user-facing collection name/alias to the catalog's globally
+    /// unique native object identity. Unknown aliases and malformed catalog
+    /// metadata fail closed.
+    pub async fn resolve_collection_object_id(
+        &self,
+        identifier: &str,
+    ) -> Result<crate::core::stable_id::CollectionObjectId> {
         self.collection_resolver()
-            .resolve_collection_id(identifier)
+            .resolve_collection_object_id(identifier)
             .await
     }
 
-    /// Reverse of [`resolve_collection_id`](Self::resolve_collection_id): resolve
-    /// an internal id (or name) to the user-facing collection **name**. Used by
+    /// Resolve an internal id or name to the user-facing collection **name**. Used by
     /// the recall observer, which holds AxisManager index keys (uuids) but must
     /// signal discovery by name (the discovery pipeline keys jobs/pins by name).
     /// Returns `None` if the collection can't be loaded or carries no config.
@@ -860,35 +1274,44 @@ impl VectorOperationsService {
         collection_id: &str,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<Vec<ProximaRecord>> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         // WAL/memtable (unflushed) + flushed storage. Storage is best-effort:
         // an engine that doesn't implement read_all_records returns empty.
         let wal_records = self
             .wal_manager
-            .get_collection_vectors(collection_id)
+            .get_collection_vectors(&collection_id)
             .await?;
-        // Resolve the collection's data location from metadata and pass it to
-        // the engine, which stays a pure format reader (it does not resolve
-        // paths itself). Mirrors ViperEngine::parquet_files_for_collection.
-        let storage_url = self
-            .get_or_load_collection(collection_id)
-            .await
-            .ok()
-            .and_then(|collection| {
-                collection
-                    .storage_assignment
-                    .as_ref()
-                    .map(|sa| format!("{}/{}/data", sa.base_location, collection_id))
-            });
-        let storage_records = match self.get_engine_for_collection(collection_id).await {
-            Ok(engine) => engine
-                .read_all_records(collection_id, storage_url.as_deref())
-                .await
-                .unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
+        // Resolve the collection's data location from the same catalog-carried
+        // typed identity used by flush and point lookup. Manually composing
+        // `base/{object_id}/data` here orphaned every account-rooted segment
+        // from scans after a real flush.
+        let collection = self.get_or_load_collection(&collection_id).await?;
+        let assignment = collection.storage_assignment.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "collection '{}' has no catalog storage assignment",
+                collection_id
+            )
+        })?;
+        let typed_identity =
+            crate::storage::trait_components::path_resolver::typed_identity_from_storage_assignment(
+                Some(assignment),
+            );
+        let typed_identity =
+            crate::storage::trait_components::path_resolver::typed_path_identity(typed_identity);
+        let storage_url =
+            crate::storage::trait_components::path_resolver::collection_data_path_typed(
+                &assignment.base_location,
+                &collection_id,
+                typed_identity,
+            );
+        let engine = self.get_engine_for_collection(&collection_id).await?;
+        let storage_records = engine
+            .read_all_records(&collection_id, Some(&storage_url))
+            .await?;
 
         // Merge by oid: storage baseline, then WAL overrides on >= updated_at_ns
         // so the freshest version (WAL) wins ties.
@@ -922,8 +1345,10 @@ impl VectorOperationsService {
         record_ids: Vec<String>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<BatchOperationResult> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         if record_ids.is_empty() {
             return Ok(BatchOperationResult::success(
@@ -939,15 +1364,60 @@ impl VectorOperationsService {
             ensure_tenant_on_records(&mut tombstones, &tenant_context.tenant_id)?;
         }
 
+        // TD-DELVEC-1 WI-3b / WI-5 P0: under `cold-deletion-vectors`, a delete that
+        // lands on a row already in an immutable cold segment sets a deletion-vector
+        // bit keyed by the delete's durable per-batch WAL `global_lsn` (returned by
+        // `insert_vectors_via_wal_returning_lsns`), in addition to the tombstone.
+        // The durable keying (WI-5 P0) puts the generation in the read side's
+        // `snapshot_lsn` number space for correct MVCC; WI-4 wires merge-on-read to
+        // consult the DV. The tombstone still provides read-after-write coherence.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let (result, lsns) = self
+            .insert_vectors_via_wal_returning_lsns(&collection_id, tombstones)
+            .await?;
+        #[cfg(not(feature = "cold-deletion-vectors"))]
         let result = self
-            .insert_vectors_via_wal(collection_id, tombstones)
+            .insert_vectors_via_wal(&collection_id, tombstones)
             .await?;
         if !result.success {
             return Ok(result);
         }
+
+        #[cfg(feature = "cold-deletion-vectors")]
+        {
+            // Best-effort: a resolve / mark_deleted failure logs + continues — the
+            // tombstone already made the delete effective; the DV bit is for WI-4's
+            // merge-on-read. Failure policy hardens when the DV becomes load-bearing.
+            if let Some(dv_store) = self.storage_engine.deletion_vector_store.as_ref() {
+                for (oid, lsn) in record_ids.iter().zip(lsns.iter().copied()) {
+                    let hits = match self
+                        .storage_engine
+                        .resolve_oid_positions(&collection_id, oid)
+                        .await
+                    {
+                        Ok(h) => h,
+                        Err(e) => {
+                            warn!(
+                                "resolve_oid_positions failed for {}: {:?} (no DV bits set)",
+                                oid, e
+                            );
+                            continue;
+                        }
+                    };
+                    for (seg, pos) in hits {
+                        if let Err(e) = dv_store.mark_deleted(&seg, pos, lsn).await {
+                            warn!(
+                                "DV mark_deleted failed for {} @ {}:{} (gen {}): {:?} (tombstone still coherent)",
+                                oid, seg, pos, lsn, e
+                            );
+                        }
+                    }
+                }
+            }
+        }
         // Read-after-write coherence: a deleted record must not resurface
         // from a stale cached query result. Await so the next search sees it.
-        self.invalidate_query_cache(collection_id).await;
+        self.invalidate_query_cache(&collection_id).await;
         let total_processed = result.metrics.total_processed.max(0);
         let processing_time_us = start.elapsed().as_micros() as i64;
 
@@ -969,6 +1439,7 @@ impl VectorOperationsService {
     pub async fn search_v1(
         &self,
         req: crate::proto::proximadb_v1::VectorSearchRequest,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let collection_id = req.collection_id.clone();
         let top_k = req.top_k as usize;
@@ -988,6 +1459,9 @@ impl VectorOperationsService {
             include_vectors,
             include_metadata,
             filter,
+            identity.subject,
+            identity.tenant_stable_id,
+            identity.auth_class,
         )
         .await
     }
@@ -1000,6 +1474,7 @@ impl VectorOperationsService {
     /// builds the filter directly from rich `ProximaValue` predicates, bypassing
     /// the lossy v1 `ComparisonOp` round-trip). Keeping one core means both
     /// entry points share the advisor-observability wrap and response assembly.
+    #[cfg_attr(not(feature = "axis"), allow(unused_variables))]
     async fn run_unified_search_v1(
         &self,
         collection_id: String,
@@ -1008,6 +1483,9 @@ impl VectorOperationsService {
         include_vectors: bool,
         include_metadata: bool,
         filter: Option<FilterExpression>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         // P4 advisor observability: capture per-search latency so
         // the post-search hook can populate the recall-residual /
@@ -1029,7 +1507,16 @@ impl VectorOperationsService {
         });
 
         let results = self
-            .unified_search_v1(&collection_id, query_vector, top_k, filter, cfg)
+            .unified_search_v1(
+                &collection_id,
+                query_vector,
+                top_k,
+                filter,
+                cfg,
+                subject,
+                tenant_stable_id,
+                auth_class,
+            )
             .await?;
 
         let (results, total_count) = if let Some(r) = results.into_iter().next() {
@@ -1051,6 +1538,7 @@ impl VectorOperationsService {
         // any lookup failure short-circuits silently to avoid
         // touching the search path's success contract.
         let elapsed_us = search_started_at.elapsed().as_micros() as u64;
+        #[cfg(feature = "axis")]
         observe_advisor_for_search(&collection_id, top_k as u32, elapsed_us).await;
 
         Ok(crate::proto::proximadb_v1::VectorOperationResponse {
@@ -1308,7 +1796,7 @@ impl VectorOperationsService {
     pub fn new(
         storage_engine: Arc<SstEngine>,
         wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
-        axis_index_manager: Arc<crate::index::AxisManager>,
+        #[cfg(feature = "axis")] axis_index_manager: Arc<crate::index::AxisManager>,
         collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     ) -> Self {
         info!(
@@ -1331,13 +1819,20 @@ impl VectorOperationsService {
             query_optimizer: Arc::new(UnifiedQueryOptimizer::new(optimizer_config)),
             collection_cache: Arc::new(dashmap::DashMap::new()),
             query_cache,
+            #[cfg(feature = "axis")]
             axis_index_manager,
+            #[cfg(feature = "axis")]
+            // Fail closed for direct/internal construction. Production boot
+            // applies the configured runtime policy through the builder below.
+            axis_runtime_enabled: false,
             collection_port,
             orchestrator: None,
 
             // NEW: Multi-tenant integration (initially None, set via builder methods)
             tenant_manager: None,
             rbac_enforcer: None,
+            #[cfg(feature = "abac-policy")]
+            abac_enforcer: None,
 
             // Bulk write router for intelligent write path selection
             bulk_write_router: BulkWriteRouter::new(),
@@ -1349,6 +1844,35 @@ impl VectorOperationsService {
             directory_cache: None,
             affinity_registry: None,
         }
+    }
+
+    /// Apply the process-level AXIS policy resolved from
+    /// `storage.optimization.enable_axis_indexes`.
+    #[cfg(feature = "axis")]
+    pub fn with_axis_runtime_enabled(mut self, enabled: bool) -> Self {
+        self.axis_runtime_enabled = enabled;
+        self
+    }
+
+    /// Whether continuous reclustering may touch this collection.
+    ///
+    /// This intentionally checks all runtime gates before the discovery pass
+    /// reads any records: process policy, collection index intent, and an
+    /// already-published served index. Recluster maintains an index; it does
+    /// not bootstrap one by cloning the whole corpus.
+    #[cfg(feature = "axis")]
+    pub async fn has_reclusterable_axis_index(&self, collection_id: &str) -> Result<bool> {
+        if !self.axis_runtime_enabled {
+            return Ok(false);
+        }
+        let collection = self.get_or_load_collection(collection_id).await?;
+        if !collection_uses_axis_indexes(true, &collection) {
+            return Ok(false);
+        }
+        Ok(self
+            .axis_index_manager
+            .has_served_index(&collection.id)
+            .await)
     }
 
     /// Set tenant manager for multi-tenant support (builder-style)
@@ -1561,7 +2085,14 @@ impl VectorOperationsService {
             return Ok((optimized_results, None));
         }
 
-        let distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
+        // Use the COLLECTION's configured metric for the WAL delta re-score.
+        // This was hardcoded Cosine, which put delta scores on a different
+        // scale than the directory/storage results (Euclidean = 1/(1+L2) ≈
+        // 0.005 vs cosine ≈ 0.9 on SIFT-like data) — so ANY unflushed record
+        // displaced EVERY flushed result in the merged top-k and recall
+        // collapsed to the memtable fraction of the corpus (TD-RECALL-1).
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let distance_metric = Self::collection_distance_metric(&collection);
         // Slice 5.10: fetch both LSN and ns watermarks so BoundedStale
         // can apply its time-bound check. When unavailable, fall back
         // to (0, 0) — the scan helper treats ns=0 as "time unknown"
@@ -1812,12 +2343,22 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.write_coordinator()
-            .bulk_write(collection_id, vectors)
-            .await
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
+        let result = self
+            .write_coordinator()
+            .bulk_write(&collection_id, vectors)
+            .await?;
+        if result.success {
+            self.invalidate_query_cache(&collection_id).await;
+        }
+        Ok(result)
     }
 
     /// Internal helper: insert records via standard WAL path
+    #[cfg(not(feature = "cold-deletion-vectors"))]
     async fn insert_vectors_via_wal(
         &self,
         collection_id: &str,
@@ -1838,14 +2379,37 @@ impl VectorOperationsService {
             .await
     }
 
+    /// Internal helper: insert records via the standard WAL path, returning the
+    /// per-record WAL/MVCC LSNs. TD-DELVEC-1 WI-3b: the cold-delete DV-bit path
+    /// keys the bit on the real delete LSN instead of wall-clock time.
+    #[cfg(feature = "cold-deletion-vectors")]
+    async fn insert_vectors_via_wal_returning_lsns(
+        &self,
+        collection_id: &str,
+        vectors: Vec<ProximaRecord>,
+    ) -> Result<(BatchOperationResult, Vec<u64>)> {
+        self.write_coordinator()
+            .insert_vectors_via_wal_returning_lsns(collection_id, vectors)
+            .await
+    }
+
     /// Insert a batch of canonical records with smart routing.
     pub async fn insert_batch(
         &self,
         collection_id: &str,
         records: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.insert_vectors_via_wal_insert_only(collection_id, records)
-            .await
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
+        let result = self
+            .insert_vectors_via_wal_insert_only(&collection_id, records)
+            .await?;
+        if result.success {
+            self.invalidate_query_cache(&collection_id).await;
+        }
+        Ok(result)
     }
 
     /// Insert canonical records after validating tenant access and injecting tenant_id.
@@ -1855,8 +2419,10 @@ impl VectorOperationsService {
         mut records: Vec<ProximaRecord>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<BatchOperationResult> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         if let Some(tenant_ctx) = tenant_context {
             ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
@@ -1876,12 +2442,12 @@ impl VectorOperationsService {
 
         let result = self
             .write_coordinator()
-            .insert_batch_internal(collection_id, records)
+            .insert_batch_internal(&collection_id, records)
             .await?;
         // Read-after-write coherence: a freshly inserted record must be
         // visible to the next search, not hidden behind a stale cached result.
         if result.success {
-            self.invalidate_query_cache(collection_id).await;
+            self.invalidate_query_cache(&collection_id).await;
         }
         Ok(result)
     }
@@ -1904,19 +2470,21 @@ impl VectorOperationsService {
         mut records: Vec<ProximaRecord>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<BatchOperationResult> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
-            .await?;
+        let collection_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?
+            .to_string();
 
         if let Some(tenant_ctx) = tenant_context {
             ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
         }
 
-        if let Some(conflict) = duplicate_insert_conflict_result(collection_id, &records) {
+        if let Some(conflict) = duplicate_insert_conflict_result(&collection_id, &records) {
             return Ok(conflict);
         }
 
         let tenant_id = tenant_context.map(|t| t.tenant_id.as_str());
-        let lock_key = insert_only_lock_key(collection_id, tenant_id);
+        let lock_key = insert_only_lock_key(&collection_id, tenant_id);
         let lock = self
             .insert_only_locks
             .entry(lock_key)
@@ -1926,18 +2494,18 @@ impl VectorOperationsService {
 
         for record in &records {
             if self
-                .record_exists_unchecked(collection_id, &record.oid)
+                .record_exists_unchecked(&collection_id, &record.oid)
                 .await?
             {
                 return Ok(insert_existing_record_conflict_result(
-                    collection_id,
+                    &collection_id,
                     &record.oid,
                 ));
             }
         }
 
         self.write_coordinator()
-            .insert_batch_internal(collection_id, records)
+            .insert_batch_internal(&collection_id, records)
             .await
     }
 
@@ -1949,34 +2517,18 @@ impl VectorOperationsService {
         record_id: &str,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<bool> {
-        self.validate_tenant_collection_access(collection_id, tenant_context)
+        let collection_object_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
             .await?;
 
-        self.record_exists_unchecked(collection_id, record_id).await
+        self.record_exists_unchecked(&collection_object_id.to_string(), record_id)
+            .await
     }
 
     async fn record_exists_unchecked(&self, collection_id: &str, record_id: &str) -> Result<bool> {
-        if self
-            .wal_manager
-            .search_vector_by_id(collection_id, &record_id.to_string())
-            .await?
-            .is_some()
-        {
-            return Ok(true);
-        }
-
-        let collection = self.get_or_load_collection(collection_id).await?;
-        let base_path = collection
-            .storage_assignment
-            .as_ref()
-            .map(|assignment| assignment.base_location.as_str())
-            .unwrap_or("");
-        let engine = self.get_engine_for_collection(collection_id).await?;
-
-        Ok(engine
-            .vector_by_id(collection_id, base_path, record_id)
-            .await?
-            .is_some())
+        self.read_coordinator()
+            .contains(collection_id, record_id)
+            .await
     }
 
     /// Return lightweight, default planning/pruning hints without executing search.
@@ -2031,22 +2583,21 @@ impl VectorOperationsService {
         config: Option<UnifiedSearchConfig>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
+        let collection_object_id = self
+            .validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+        let collection_id_text = collection_object_id.to_string();
+        let collection_id = collection_id_text.as_str();
+
         debug!(
             "🔍 Executing unified search: collection={}, k={}",
             collection_id, k
         );
 
         if let Some(tenant_ctx) = tenant_context {
-            self.validate_tenant_collection_access(collection_id, Some(tenant_ctx))
-                .await?;
             debug!(
                 "✅ Tenant validation passed for search: tenant={}, collection={}",
                 tenant_ctx.tenant_id, collection_id
-            );
-        } else if self.tenant_manager.is_some() {
-            debug!(
-                "Vector search executed without tenant context for collection '{}'; caller must provide explicit tenant scoping in multi-tenant deployments",
-                collection_id
             );
         }
 
@@ -2057,6 +2608,52 @@ impl VectorOperationsService {
             &collection,
             &query_vector,
         )?;
+
+        // TD-WLP-6 (ADR-061 D6): stamp the resolved storage profile onto the
+        // active per-query io_trace so a query's projection strategy is
+        // observable per-tenant. No-ops outside an io_trace scope; neutral
+        // label only (io_trace never depends on `StorageProfile`).
+        {
+            let tags = collection
+                .config
+                .as_ref()
+                .map(|c| c.tags.as_slice())
+                .unwrap_or(&[]);
+            crate::observability::io_trace::record_storage_profile(
+                proximadb_storage_common::resolve_storage_profile(tags).label(),
+            );
+        }
+
+        // TD-WLP-5 (ADR-061 D4): resolve the collection's storage profile and
+        // force Strong (delta-merged) reads for `Churn`. Churn is the agent
+        // code-RAG shape — a symbol is re-embedded and immediately re-queried
+        // on a bounded, hot working set, so a `StaleOk`/`BoundedStale` hint
+        // must not serve the pre-edit neighbours. `AppendBulk` honors the
+        // request's hint (Strong is already the unset default), so this is a
+        // no-op there. Computed once and reused at the cache gate and the
+        // execute path below so both honor the override.
+        let freshness_mode = churn_effective_freshness(&collection, config.as_ref());
+
+        // TD-WLP-8 (ADR-061 D4): for `Churn` collections, sample the resident
+        // in-memory working-set bytes onto the per-collection gauge and warn if
+        // it crosses the soft ceiling. Gated on the profile (not the effective
+        // freshness — an `AppendBulk` request may also ask Strong). Best-effort;
+        // never fails the search. `AppendBulk` is skipped entirely.
+        {
+            let tags = collection
+                .config
+                .as_ref()
+                .map(|c| c.tags.as_slice())
+                .unwrap_or(&[]);
+            if proximadb_storage_common::resolve_storage_profile(tags).forces_strong_reads() {
+                sample_churn_working_set(
+                    &self.wal_manager,
+                    tenant_context.map(|t| t.tenant_id.as_str()),
+                    collection_id,
+                )
+                .await;
+            }
+        }
 
         // Create cache key for unified result caching
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
@@ -2071,10 +2668,6 @@ impl VectorOperationsService {
         // cache — a Strong read could be served an entry that predates a
         // concurrent write, violating read-after-write. Gate the cache read on
         // freshness (mirrors unified_search_v1_inner); Strong reads recompute.
-        let freshness_mode = config
-            .as_ref()
-            .and_then(|c| c.freshness_mode.clone())
-            .unwrap_or_default();
         if !matches!(
             freshness_mode,
             crate::core::search::VectorFreshnessMode::Strong
@@ -2107,11 +2700,9 @@ impl VectorOperationsService {
             )
             .await?
         } else {
-            // Direct search without progressive stages
-            let freshness_mode = config
-                .as_ref()
-                .and_then(|c| c.freshness_mode.clone())
-                .unwrap_or_default();
+            // Direct search without progressive stages. Reuse the
+            // profile-resolved freshness (TD-WLP-5) so Churn's Strong override
+            // reaches the delta-merge decision, not just the cache gate.
             self.execute_search_internal(
                 collection_id,
                 query_vector,
@@ -2121,7 +2712,7 @@ impl VectorOperationsService {
                     .as_ref()
                     .map(|c| c.optimization_goal)
                     .unwrap_or_default(),
-                freshness_mode,
+                freshness_mode.clone(),
             )
             .await?
         };
@@ -2255,9 +2846,21 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
     ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
         let (results, _explain) = self
-            .unified_search_v1_inner(collection_id, query_vector, k, filter, config)
+            .unified_search_v1_inner(
+                collection_id,
+                query_vector,
+                k,
+                filter,
+                config,
+                subject,
+                tenant_stable_id,
+                auth_class,
+            )
             .await?;
         Ok(results)
     }
@@ -2274,10 +2877,53 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
+        subject: Option<&str>,
+        tenant_stable_id: Option<u64>,
+        auth_class: proximadb_tenant::AuthClass,
     ) -> Result<(
         Vec<crate::proto::proximadb_v1::SearchResult>,
         Option<crate::query::explain::VectorObjectEconomyExplain>,
     )> {
+        // ABAC seam (cache-safe — TD-ABAC-5/6): fold the subject's security
+        // predicate into `filter` BEFORE the cache key is derived below. The
+        // augmented filter becomes part of the cache key, so two subjects with
+        // different (conjunctive) policies never share an entry. The rare
+        // non-conjunctive case returns a `post_filter` AND makes us bypass the
+        // cache (re-bind `cache_hit` to None + skip the cache write), since its
+        // key can't distinguish subjects — see below. Denied ⇒ fail-closed empty.
+        #[cfg(feature = "abac-policy")]
+        let (filter, post_filter) = match self
+            .records_read_context(subject, tenant_stable_id, auth_class, collection_id)
+            .await
+        {
+            None => return Ok((Vec::new(), None)),
+            Some(read_ctx) => self.apply_abac_vector_filter(filter, &read_ctx),
+        };
+        #[cfg(not(feature = "abac-policy"))]
+        let _ = (subject, tenant_stable_id, auth_class);
+        #[cfg(not(feature = "abac-policy"))]
+        let post_filter: Option<FilterExpression> = None;
+
+        // ADR-0083 D5: resolve the mutable name/alias once at the catalog
+        // boundary. Every cache, WAL, AXIS, and storage lookup below is keyed
+        // by the immutable numeric L1 identity.
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let collection_object_id: crate::core::stable_id::CollectionObjectId =
+            collection.id.parse().map_err(|error| {
+                anyhow::anyhow!(
+                    "catalog collection '{}' has invalid object identity {:?}: {error}",
+                    collection_id,
+                    collection.id
+                )
+            })?;
+        let collection_id_text = collection_object_id.to_string();
+        let collection_id = collection_id_text.as_str();
+        let response_collection_name = collection
+            .config
+            .as_ref()
+            .map(|config| config.name.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(collection_id);
         let config = config.clone();
 
         // Reuse the same cache key as legacy and convert on hit
@@ -2321,6 +2967,16 @@ impl VectorOperationsService {
         } else {
             self.query_cache.get_if_fresh_v1(&cache_key, 300).await
         };
+        // ABAC: a non-conjunctive post-filter can't be cached safely (its key
+        // can't distinguish subjects), so bypass the cache and recompute each
+        // time. Conjunctive security is already baked into the augmented cache
+        // key above, so a hit there is subject-specific and safe.
+        #[cfg(feature = "abac-policy")]
+        let cache_hit = if post_filter.is_some() {
+            None
+        } else {
+            cache_hit
+        };
         if let Some(cached_v1) = cache_hit {
             // Phase 7.2: a process-local cache hit is the strongest
             // possible signal that this node owns the warm path for
@@ -2335,13 +2991,11 @@ impl VectorOperationsService {
             collection_id, progressive_enabled
         );
 
-        // Get collection configuration
-        let collection = self.get_or_load_collection(collection_id).await?;
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             ..Default::default()
         };
         let optimization_goal = config
@@ -2402,18 +3056,45 @@ impl VectorOperationsService {
             )
             .await?;
 
+        // ABAC post-filter (non-conjunctive security predicates that couldn't be
+        // pushed into the ANN search): drop inadmissible rows from the merged
+        // result before conversion. Conjunctive security was already AND'd into
+        // the search filter above.
+        #[cfg(feature = "abac-policy")]
+        let merged_results = match &post_filter {
+            Some(security) => {
+                crate::security::rls::post_filter_search_results(merged_results, security)
+            }
+            None => merged_results,
+        };
+
         // Build v1 results from the merged records
-        let v1_results =
-            vec![self.optimized_results_to_proto_v1(merged_results, collection_id, true)];
+        let v1_results = vec![self.optimized_results_to_proto_v1(
+            merged_results,
+            response_collection_name,
+            true,
+        )];
 
         // Cache v1 (via legacy conversion) for reuse, stamped with the LSN this
         // result was computed at so a later Strong read can validate it. If a
         // write raced in during the search, the LSN has advanced past query_lsn,
         // so this entry simply won't be served to a later Strong read (it will
         // recompute) — conservative, never a stale hit.
-        self.query_cache
-            .cache_with_dependencies_v1_at_lsn(cache_key, v1_results.clone(), Vec::new(), query_lsn)
-            .await;
+        //
+        // ABAC: skip caching when a non-conjunctive post-filter applied — that
+        // entry's key (user filter only) can't distinguish subjects, so caching
+        // it would leak across subjects. Conjunctive security is already in the
+        // augmented cache key, so caching there is subject-specific and safe.
+        if post_filter.is_none() {
+            self.query_cache
+                .cache_with_dependencies_v1_at_lsn(
+                    cache_key,
+                    v1_results.clone(),
+                    Vec::new(),
+                    query_lsn,
+                )
+                .await;
+        }
 
         // Phase 7.2: record affinity on a successful v1 search.
         self.record_search_affinity(collection_id);
@@ -2421,8 +3102,92 @@ impl VectorOperationsService {
         Ok((v1_results, explain))
     }
 
+    /// Tenant-aware wrapper over [`unified_search_native`]: validates the tenant's access to the
+    /// collection and resolves it to the tenant's storage lookup key (mirroring
+    /// `VectorOpsPort::search`), then delegates the actual search.
+    /// Isolation is clean-name + `TenantContext` (catalog-resolve and record-stamp), never a name
+    /// fold. The catalog object handle is used for in-memory indexing and admission, not as a
+    /// substitute for the collection key used by WAL/memtable/SST reads.
+    /// Lets the fusion vector leg read only the tenant's vectors (TD-ENTITY-TENANT-1) without
+    /// touching the existing `unified_search_native` call sites.
+    pub async fn unified_search_native_with_tenant_context(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        #[cfg(feature = "abac-policy")] read_context: &ReadContext,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        let resolved = match tenant_context {
+            Some(context) if !context.tenant_id.is_empty() => {
+                self.validate_tenant_collection_access(collection_id, tenant_context)
+                    .await?;
+                self.collection_port
+                    .get_collection(collection_id, Some(&context.tenant_id))
+                    .await?
+                    .map(|collection| collection.id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Collection '{}' is not accessible for tenant '{}'",
+                            collection_id,
+                            context.tenant_id
+                        )
+                    })?
+            }
+            _ => collection_id.to_string(),
+        };
+        self.unified_search_native(
+            &resolved,
+            query_vector,
+            k,
+            filter,
+            config,
+            #[cfg(feature = "abac-policy")]
+            read_context,
+        )
+        .await
+    }
+
     /// Native variant: returns optimized native records for internal callers.
     /// Callers at API boundaries should use v1 adapters.
+    /// FA-2 (abac-policy): plan how to apply the subject's accessibility
+    /// predicate on the vector search path. Returns `(filter_for_search,
+    /// post_security)`: a conjunctive policy ANDs into the search filter
+    /// (push-down into ACORN / exact-scan — recall-preserving); a non-
+    /// conjunctive policy (Or/Not, which `flatten_filter_expression` rejects)
+    /// leaves the user filter for the search and returns the security
+    /// expression to post-filter the results. `None` enforcer or a `System`
+    /// context ⇒ passthrough (fail-open for unwired/trusted-internal, mirroring
+    /// `DmlService` when no enforcer is installed).
+    #[cfg(feature = "abac-policy")]
+    fn apply_abac_vector_filter(
+        &self,
+        user_filter: Option<FilterExpression>,
+        read_context: &ReadContext,
+    ) -> (Option<FilterExpression>, Option<FilterExpression>) {
+        use crate::services::operations::secure_operations::combine_filters;
+        let enforcer = match self.abac_enforcer.as_ref() {
+            Some(enforcer) => enforcer,
+            None => return (user_filter, None),
+        };
+        let security = match read_context {
+            ReadContext::Client(ctx) => enforcer.security_filter_for_context(ctx),
+            ReadContext::System(_) => return (user_filter, None),
+        };
+        match security {
+            None => (user_filter, None),
+            Some(security) => {
+                if abac_security_is_pushdown(&security, user_filter.as_ref()) {
+                    (combine_filters(user_filter, Some(security)), None)
+                } else {
+                    (user_filter, Some(security))
+                }
+            }
+        }
+    }
+
     pub async fn unified_search_native(
         &self,
         collection_id: &str,
@@ -2430,10 +3195,29 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
+        #[cfg(feature = "abac-policy")] _read_context: &ReadContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         use std::time::Instant;
         let total_start = Instant::now();
+        // FA-2 (abac-policy): push the subject's accessibility predicate into
+        // the search — conjunctive ⇒ AND into `filter` (push-down into the ANN
+        // traversal); non-conjunctive ⇒ defer to post-filter the results.
+        #[cfg(feature = "abac-policy")]
+        let (filter, abac_post_filter) = self.apply_abac_vector_filter(filter, _read_context);
 
+        // ADR-0083 D5: internal search state is keyed by the catalog's native
+        // L1 object id. Names and aliases terminate at this boundary.
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let collection_object_id: crate::core::stable_id::CollectionObjectId =
+            collection.id.parse().map_err(|error| {
+                anyhow::anyhow!(
+                    "catalog collection '{}' has invalid object identity {:?}: {error}",
+                    collection_id,
+                    collection.id
+                )
+            })?;
+        let collection_id_text = collection_object_id.to_string();
+        let collection_id = collection_id_text.as_str();
         let config = config.clone();
 
         // Extract search_mode from config (defaults to Exact for 100% recall)
@@ -2444,12 +3228,11 @@ impl VectorOperationsService {
 
         // Plan context
         let context_start = Instant::now();
-        let collection = self.get_or_load_collection(collection_id).await?;
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             ..Default::default()
         };
         let optimization_goal = config
@@ -2485,6 +3268,16 @@ impl VectorOperationsService {
                 search_mode.clone(),
             )
             .await?;
+        // FA-2 (abac-policy): a non-conjunctive security predicate (Or/Not) can't
+        // flatten into the AXIS query, so post-filter the results instead. The
+        // conjunctive case already pushed down into the search above.
+        #[cfg(feature = "abac-policy")]
+        let optimized_results = match abac_post_filter {
+            Some(security) => {
+                crate::security::rls::post_filter_search_results(optimized_results, &security)
+            }
+            None => optimized_results,
+        };
         let execute_time_us = execute_start.elapsed().as_micros();
 
         let total_time_us = total_start.elapsed().as_micros();
@@ -2626,7 +3419,18 @@ impl VectorOperationsService {
         config: Option<UnifiedSearchConfig>,
     ) -> Result<Vec<crate::core::service_types::DomainSearchResult>> {
         let natives = self
-            .unified_search_native(collection_id, query_vector, k, filter, config)
+            .unified_search_native(
+                collection_id,
+                query_vector,
+                k,
+                filter,
+                config,
+                #[cfg(feature = "abac-policy")]
+                &proximadb_abac::ReadContext::system(
+                    proximadb_abac::SystemReadReason::Statistics,
+                    "legacy::search [CLIENT-PLACEHOLDER]",
+                ),
+            )
             .await?;
         // Group into a single DomainSearchResult (consistent with previous behavior)
         let mut hits = Vec::with_capacity(natives.len());
@@ -2702,7 +3506,7 @@ impl VectorOperationsService {
         // Run the optimizer on the EXPLAIN path (non-hot) to surface ADR-011 filtering mode.
         let collection = self.get_or_load_collection(collection_id).await?;
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             filter_expression: filter.clone(),
             ..Default::default()
         };
@@ -2760,9 +3564,7 @@ impl VectorOperationsService {
             filter_expression: filter.clone(),
             requires_ordering: Some(true),
             enable_progressive_search: Some(true),
-            progressive_scenario: config.scenario.clone(),
             progressive_recalls: config.progressive_recalls.clone(),
-            optimization_hint: config.scenario.clone(),
             ..Default::default()
         };
 
@@ -2830,9 +3632,8 @@ impl VectorOperationsService {
         // Create unified context (combines what used to be two separate contexts)
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            top_k: Some(top_k),
+            top_k: Some(top_k as u16),
             filter_expression: filter.clone(),
-            optimization_hint: Some(optimization_goal.to_string()),
             enable_progressive_search: Some(true), // Enable by default if quantization available
             ..Default::default()
         };
@@ -2954,7 +3755,7 @@ impl VectorOperationsService {
         // Run the optimizer on the EXPLAIN path (non-hot) to surface ADR-011 filtering mode.
         let collection = self.get_or_load_collection(collection_id).await?;
         let search_params = crate::query::query_optimizer::SearchParams {
-            top_k: Some(k),
+            top_k: Some(k as u16),
             filter_expression: filter.clone(),
             ..Default::default()
         };
@@ -2980,7 +3781,16 @@ impl VectorOperationsService {
         // For StaleOk requests and cache hits the explain is None,
         // matching the helper's documented contract.
         let (results, explain) = self
-            .unified_search_v1_inner(collection_id, query_vector, k, filter, config)
+            .unified_search_v1_inner(
+                collection_id,
+                query_vector,
+                k,
+                filter,
+                config,
+                None,
+                None,
+                proximadb_tenant::AuthClass::Anonymous,
+            )
             .await?;
         hints.vector_object_economy = explain;
         Ok((results, hints))
@@ -3001,14 +3811,10 @@ impl VectorOperationsService {
             filter.as_ref().map(|f| format!("{:?}", f))
         );
 
-        // Resolve ADR-011 filtering mode from the plan's ann_filtering_mode string.
-        let ann_mode = match plan.ann_filtering_mode.as_deref() {
-            Some("Inline") => crate::index::axis::management::manager::AnnFilteringMode::Inline,
-            Some("PreFilter") => {
-                crate::index::axis::management::manager::AnnFilteringMode::PreFilter
-            }
-            _ => crate::index::axis::management::manager::AnnFilteringMode::PostFilter,
-        };
+        // ADR-011 filtering mode, threaded as the raw plan string. The AXIS enum
+        // is resolved inside the (cfg-gated) Stage-2 block below, so this signature
+        // stays AXIS-free and compiles with the `axis` feature off.
+        let ann_filtering_mode = plan.ann_filtering_mode.clone();
         let ann_filtering_selectivity = plan.ann_filtering_selectivity;
 
         let mut results: Vec<crate::core::search::results::OptimizedSearchRecord> = Vec::new();
@@ -3047,7 +3853,7 @@ impl VectorOperationsService {
                     // Execute search with ADR-011 filtering mode threaded through.
                     tracing::debug!(
                         "🔍 About to call execute_two_stage_search_with_mode (mode={:?}) with filter: {:?}",
-                        ann_mode,
+                        ann_filtering_mode,
                         filter.as_ref().map(|f| format!("{:?}", f))
                     );
                     results = self
@@ -3059,7 +3865,7 @@ impl VectorOperationsService {
                             query_vector.clone(),
                             filter.clone(),
                             search_mode.clone(),
-                            ann_mode,
+                            &ann_filtering_mode,
                             ann_filtering_selectivity,
                         )
                         .await?;
@@ -3110,7 +3916,7 @@ impl VectorOperationsService {
                             query_vector.clone(),
                             filter.clone(),
                             search_mode.clone(),
-                            ann_mode,
+                            &ann_filtering_mode,
                             ann_filtering_selectivity,
                         )
                         .await?;
@@ -3119,6 +3925,10 @@ impl VectorOperationsService {
                 }
 
                 // Index lookup optimization
+                // Index lookup optimization (AXIS only — the optimizer never emits
+                // IndexLookup without index_configs, which can't exist with the
+                // `axis` feature off; the `_` arm below is the off-path no-op).
+                #[cfg(feature = "axis")]
                 ExecutionStep::IndexLookup {
                     index_type,
                     mut lookup_params,
@@ -3238,6 +4048,28 @@ impl VectorOperationsService {
         Ok(())
     }
 
+    /// Resolve a collection's configured distance metric (Cosine when unset /
+    /// Unspecified). Single source of truth for every internal search stage —
+    /// Stage-1 WAL, Stage-2 AXIS, Stage-3 storage, and the freshness delta
+    /// re-score MUST all rank on this same metric, or their normalized scores
+    /// land on incomparable scales and the cross-stage merge is garbage.
+    fn collection_distance_metric(
+        collection: &Collection,
+    ) -> crate::proto::proximadb_v1::DistanceMetric {
+        match collection.config.as_ref() {
+            Some(cfg) => match cfg.distance_metric.and_then(|metric| {
+                crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
+            }) {
+                Some(crate::proto::proximadb_v1::DistanceMetric::Unspecified) | None => {
+                    crate::proto::proximadb_v1::DistanceMetric::Cosine
+                }
+                Some(metric) => metric,
+            },
+            None => crate::proto::proximadb_v1::DistanceMetric::Cosine,
+        }
+    }
+
+    #[cfg_attr(not(feature = "axis"), allow(unused_variables))]
     async fn execute_two_stage_search_with_mode(
         &self,
         collection_id: &str,
@@ -3247,7 +4079,7 @@ impl VectorOperationsService {
         query_vector: Vec<f32>,
         filter: Option<FilterExpression>,
         search_mode: crate::core::search::SearchMode,
-        ann_filtering_mode: crate::index::axis::management::manager::AnnFilteringMode,
+        ann_filtering_mode: &Option<String>,
         ann_filtering_selectivity: Option<f64>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
@@ -3259,17 +4091,7 @@ impl VectorOperationsService {
 
         // Get collection for distance metric
         let collection = self.get_or_load_collection(collection_id).await?;
-        let distance_metric = match collection.config.as_ref() {
-            Some(cfg) => match cfg.distance_metric.and_then(|metric| {
-                crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
-            }) {
-                Some(crate::proto::proximadb_v1::DistanceMetric::Unspecified) | None => {
-                    crate::proto::proximadb_v1::DistanceMetric::Cosine
-                }
-                Some(metric) => metric,
-            },
-            None => crate::proto::proximadb_v1::DistanceMetric::Cosine,
-        };
+        let distance_metric = Self::collection_distance_metric(&collection);
 
         // Execute Stage 1 and Stage 2 in PARALLEL for maximum performance
         debug!(
@@ -3281,7 +4103,7 @@ impl VectorOperationsService {
         // Prepare storage search context first
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            top_k: Some(candidates),
+            top_k: Some(candidates as u16),
             distance_metric: Some(distance_metric),
             filter_expression: filter.clone(), // Pass the same FilterExpression to storage engine
             include_expired: Some(false),
@@ -3334,66 +4156,108 @@ impl VectorOperationsService {
             "🔍 Stage 2: Searching AXIS HNSW index for {}",
             collection_id
         );
-        let axis_optimized_results = match build_axis_hybrid_query_with_policy(
-            // TD-AXIS-1: use the collection's canonical id (UUID) — NOT the
-            // caller's collection_id (which may be the human-readable NAME).
-            // enable_hmgi registered the UUID in hmgi_enabled_collections;
-            // passing the name caused is_hmgi_enabled to return false → HMGI
-            // skipped → IVF fallback → 0 results (ANN index not serving).
-            // ADR-031 follow-up: migrate hmgi_enabled_collections to the stable
-            // object_id (base62) and use that here instead of the UUID.
-            &collection.id,
-            &axis_search_params,
-            ann_filtering_mode,
-            ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
-            ann_filtering_selectivity,
-        ) {
-            Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
-                Ok(result) => {
-                    // TD-064(a): stop dropping `predicate_shortfall` /
-                    // `selected_filtering_mode`. Carry the AXIS-stage shortfall
-                    // onto the per-request diagnostics bus here (explicit
-                    // carrier — the value is then recomputed against the FINAL
-                    // WAL+AXIS+storage merge at the response boundary in
-                    // `search_records_with_tenant_context`, which clears any
-                    // post-merge false positive). `selected_filtering_mode` is
-                    // already reflected in the shortfall's `ann_filtering_mode`
-                    // label, so bind it to document it is captured, not
-                    // silently discarded.
-                    let axis_shortfall = result.predicate_shortfall;
-                    let _selected_filtering_mode = result.selected_filtering_mode;
-                    crate::observability::predicate_diagnostics::set_shortfall(axis_shortfall);
-                    let records: Vec<crate::core::search::results::OptimizedSearchRecord> = result
-                        .results
-                        .into_iter()
-                        .map(|r| {
-                            crate::core::search::results::OptimizedSearchRecord::new(
-                                r.vector_id,
-                                r.similarity,
-                            )
-                        })
-                        .collect();
-                    debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
-                    records
+        // Co-design: skip the in-memory AXIS (HNSW/IVF) query entirely for
+        // collections that have no index_configs. The PAX scan (RaBitQ + SQ8 +
+        // A0 coarse-probe) in the SST engine handles the search — the segment IS
+        // the index. This avoids the 8.6GB RSS + minutes of IVF training for
+        // cost-optimized, object-storage-backed collections.
+        #[cfg(feature = "axis")]
+        let collection_has_axis_indexes =
+            collection_uses_axis_indexes(self.axis_runtime_enabled, &collection);
+        #[cfg(not(feature = "axis"))]
+        let collection_has_axis_indexes = false;
+
+        #[cfg(feature = "axis")]
+        let axis_optimized_results = if !collection_has_axis_indexes {
+            info!(
+                "🔍 Co-design: skipping AXIS for collection {} (no index_configs) — \
+                 using PAX scan path",
+                collection_id
+            );
+            Vec::new()
+        } else {
+            // Resolve the ADR-011 filtering enum from the threaded plan string
+            // (kept as a string across the signature so the `axis` feature is optional).
+            let ann_mode_enum = match ann_filtering_mode.as_deref() {
+                Some("Inline") => crate::index::axis::management::manager::AnnFilteringMode::Inline,
+                Some("PreFilter") => {
+                    crate::index::axis::management::manager::AnnFilteringMode::PreFilter
                 }
+                _ => crate::index::axis::management::manager::AnnFilteringMode::PostFilter,
+            };
+            match build_axis_hybrid_query_with_policy(
+                // TD-AXIS-1: use the collection's canonical id (UUID) — NOT the
+                // caller's collection_id (which may be the human-readable NAME).
+                // enable_hmgi_enabled registered the UUID in hmgi_enabled_collections;
+                // passing the name caused is_hmgi_enabled to return false → HMGI
+                // skipped → IVF fallback → 0 results (ANN index not serving).
+                // ADR-031 follow-up: migrate hmgi_enabled_collections to the stable
+                // object_id (base62) and use that here instead of the UUID.
+                &collection.id,
+                &axis_search_params,
+                ann_mode_enum,
+                ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
+                ann_filtering_selectivity,
+            ) {
+                Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
+                    Ok(result) => {
+                        // TD-064(a): stop dropping `predicate_shortfall` /
+                        // `selected_filtering_mode`. Carry the AXIS-stage shortfall
+                        // onto the per-request diagnostics bus here (explicit
+                        // carrier — the value is then recomputed against the FINAL
+                        // WAL+AXIS+storage merge at the response boundary in
+                        // `search_records_with_tenant_context`, which clears any
+                        // post-merge false positive). `selected_filtering_mode` is
+                        // already reflected in the shortfall's `ann_filtering_mode`
+                        // label, so bind it to document it is captured, not
+                        // silently discarded.
+                        let axis_shortfall = result.predicate_shortfall;
+                        let _selected_filtering_mode = result.selected_filtering_mode;
+                        crate::observability::predicate_diagnostics::set_shortfall(axis_shortfall);
+                        let records: Vec<crate::core::search::results::OptimizedSearchRecord> =
+                            result
+                                .results
+                                .into_iter()
+                                .map(|r| {
+                                    crate::core::search::results::OptimizedSearchRecord::new(
+                                        r.vector_id,
+                                        r.similarity,
+                                    )
+                                })
+                                .collect();
+                        debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
+                        records
+                    }
+                    Err(e) => {
+                        debug!("Stage 2 AXIS search failed: {}", e);
+                        Vec::new()
+                    }
+                },
                 Err(e) => {
-                    debug!("Stage 2 AXIS search failed: {}", e);
+                    warn!(
+                        "Stage 2 AXIS search skipped for collection {}: {}",
+                        collection_id, e
+                    );
                     Vec::new()
                 }
-            },
-            Err(e) => {
-                warn!(
-                    "Stage 2 AXIS search skipped for collection {}: {}",
-                    collection_id, e
-                );
-                Vec::new()
             }
         };
+        // AXIS compiled out: no in-memory ANN stage — flushed vectors are served by
+        // the PAX exact scan in Stage 3 below.
+        #[cfg(not(feature = "axis"))]
+        let axis_optimized_results: Vec<
+            crate::core::search::results::OptimizedSearchRecord,
+        > = Vec::new();
 
-        // Stage 3: Storage engine search - ONLY if we need more results
-        // Skip if WAL + AXIS already have enough high-quality results
+        // Stage 3: Storage engine search - ONLY if we need more results.
+        // Skip when WAL + AXIS already cover the candidate pool -- but that's only true
+        // when the collection USES AXIS (AXIS indexes the flushed vectors). For co-design
+        // collections (no index_configs) the flushed data lives ONLY in storage segments,
+        // so WAL alone is insufficient and storage must always be searched; otherwise the
+        // entire flushed set is never seen and recall collapses to the tiny WAL window.
         let total_indexed_results = wal_optimized_results.len() + axis_optimized_results.len();
-        let storage_results = if total_indexed_results >= candidates {
+        let storage_results = if collection_has_axis_indexes && total_indexed_results >= candidates
+        {
             debug!(
                 "Stage 3: Skipping storage search (have {} results from WAL+AXIS)",
                 total_indexed_results
@@ -3659,6 +4523,7 @@ impl VectorOperationsService {
     }
 
     /// Perform a vector or metadata index lookup via the AXIS index manager.
+    #[cfg(feature = "axis")]
     async fn execute_index_lookup(
         &self,
         collection_id: &str,
@@ -3673,10 +4538,9 @@ impl VectorOperationsService {
         // Convert IndexLookupParams to SearchParams
         let search_params = crate::core::search::SearchParams {
             query_vectors: params.query_vector.map(|v| vec![v]),
-            top_k: Some(params.top_k),
+            top_k: Some(params.top_k as u16),
             filter_expression: params.filter,
             include_expired: Some(false),
-            optimization_hint: Some(format!("IndexLookup:{:?}", index_type)),
             ..Default::default()
         };
 
@@ -3794,10 +4658,14 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<crate::storage::engines::InsertResult> {
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
         let mut vectors = vectors;
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        self.validate_records_for_insert(collection_id, &vectors)
+        self.validate_records_for_insert(&collection_id, &vectors)
             .await?;
 
         let start = std::time::Instant::now();
@@ -3815,8 +4683,9 @@ impl VectorOperationsService {
             .sum::<usize>() as i64;
 
         self.wal_manager
-            .write_vector_batch_native_arc(collection_id, Arc::new(vectors))
+            .write_vector_batch_native_arc(&collection_id, Arc::new(vectors))
             .await?;
+        self.invalidate_query_cache(&collection_id).await;
 
         Ok(crate::storage::engines::InsertResult {
             entries_written,
@@ -3831,40 +4700,62 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Arc<Vec<ProximaRecord>>,
     ) -> Result<crate::storage::engines::InsertResult> {
+        let collection_id = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
         let mut vectors: Vec<ProximaRecord> = (*vectors).clone();
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        self.validate_records_for_insert(collection_id, &vectors)
+        self.validate_records_for_insert(&collection_id, &vectors)
             .await?;
 
         let start = std::time::Instant::now();
         let _batch_result = self
             .wal_manager
-            .write_vector_batch_native_arc(collection_id, Arc::new(vectors.clone()))
+            .write_vector_batch_native_arc(&collection_id, Arc::new(vectors.clone()))
             .await?;
 
-        let axis_start = std::time::Instant::now();
-        for record in vectors.iter() {
-            if let Err(e) = self
-                .axis_index_manager
-                .insert_record(collection_id, record)
-                .await
-            {
-                tracing::warn!(
-                    "Failed to index vector {} in AXIS: {} (search will use linear scan)",
-                    record.oid,
-                    e
+        #[cfg(feature = "axis")]
+        let collection = self.get_or_load_collection(&collection_id).await?;
+        #[cfg(feature = "axis")]
+        let axis_duration = if collection_uses_axis_indexes(self.axis_runtime_enabled, &collection)
+        {
+            let axis_start = std::time::Instant::now();
+            for record in vectors.iter() {
+                if let Err(e) = self
+                    .axis_index_manager
+                    .insert_record(&collection_id, record)
+                    .await
+                {
+                    tracing::warn!(
+                        "Failed to index vector {} in AXIS: {} (search will use storage)",
+                        record.oid,
+                        e
+                    );
+                }
+            }
+            let axis_duration = axis_start.elapsed();
+            if axis_duration.as_millis() > 10 {
+                tracing::debug!(
+                    "AXIS indexing for {} vectors took {:?}",
+                    vectors.len(),
+                    axis_duration
                 );
             }
-        }
-        let axis_duration = axis_start.elapsed();
-        if axis_duration.as_millis() > 10 {
+            axis_duration
+        } else {
             tracing::debug!(
-                "AXIS indexing for {} vectors took {:?}",
-                vectors.len(),
-                axis_duration
+                collection_id,
+                records = vectors.len(),
+                "ADR-081: skipping AXIS insert feed because collection has no index_configs"
             );
-        }
+            std::time::Duration::ZERO
+        };
+        // AXIS compiled out: no in-memory index feed — flushed records are served
+        // via the PAX exact scan.
+        #[cfg(not(feature = "axis"))]
+        let axis_duration = std::time::Duration::ZERO;
 
         let duration_micros = start.elapsed().as_micros() as i64;
         let bytes_written = vectors
@@ -3886,6 +4777,7 @@ impl VectorOperationsService {
             duration_micros,
             axis_duration
         );
+        self.invalidate_query_cache(&collection_id).await;
 
         Ok(crate::storage::engines::InsertResult {
             entries_written: vectors.len() as i64,
@@ -3921,68 +4813,9 @@ impl VectorOperationsService {
         include_vector: bool,
         include_metadata: bool,
     ) -> Result<Option<ProximaRecord>> {
-        // First check WAL for unflushed vectors
-        if let Some(record) = self
-            .wal_manager
-            .search_vector_by_id(collection_id, &vector_id.to_string())
-            .await?
-        {
-            let mut result = record;
-            if !include_vector {
-                result.embeddings.clear();
-            }
-            if !include_metadata {
-                result.props.clear();
-            }
-            return Ok(Some(result));
-        }
-
-        // WAL miss → scan SST files via bloom-filter-accelerated point lookup
-        let file_paths = self
-            .storage_engine
-            .list_collection_files(collection_id)
+        self.read_coordinator()
+            .vector(collection_id, vector_id, include_vector, include_metadata)
             .await
-            .unwrap_or_default();
-
-        if !file_paths.is_empty() {
-            let search_ops = crate::storage::engines::sst::search::SearchOperations::new(
-                self.storage_engine.clone(),
-            );
-            if let Ok(Some(hit)) = search_ops.point_lookup(&file_paths, vector_id).await {
-                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-                let vector_values = hit.vector.as_deref().cloned().unwrap_or_default();
-                let dim = vector_values.len() as u32;
-                let mut props = proximadb_records::ProximaTree::new();
-                if include_metadata {
-                    for (k, v) in hit.metadata {
-                        props.insert(k, proximadb_records::ProximaTreeNode::Value(v));
-                    }
-                }
-                let embeddings = if include_vector && !vector_values.is_empty() {
-                    vec![proximadb_records::EmbeddingCell {
-                        model_id: "default".to_string(),
-                        modality: "vector".to_string(),
-                        values: proximadb_records::EmbeddingValues::Fp32(vector_values),
-                        dim,
-                        ..Default::default()
-                    }]
-                } else {
-                    vec![]
-                };
-                return Ok(Some(ProximaRecord {
-                    oid: hit.id,
-                    record_version: hit.version.map(|v| v as u64).unwrap_or(1),
-                    created_at_ns: hit.timestamp.unwrap_or(now_ns),
-                    updated_at_ns: hit.updated_at.unwrap_or(now_ns),
-                    valid_to_ns: hit.expires_at,
-                    props,
-                    embeddings,
-                    ..Default::default()
-                }));
-            }
-        }
-
-        Ok(None)
     }
 
     /// Unified search by ID for embedded API
@@ -4040,6 +4873,16 @@ impl VectorOperationsService {
             self.wal_manager.clone(),
             self.bulk_write_router.clone(),
             self.pseudo_query_generator.clone(),
+            self.collection_resolver(),
+        )
+    }
+
+    /// Build the canonical point-read coordinator on demand. The collaborator
+    /// owns the WAL-first → configured-engine boundary; this service retains the
+    /// stable public API while the original god object is decomposed.
+    fn read_coordinator(&self) -> super::read::VectorReadCoordinator {
+        super::read::VectorReadCoordinator::new(
+            self.wal_manager.clone(),
             self.collection_resolver(),
         )
     }
@@ -4208,9 +5051,11 @@ impl VectorOperationsService {
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
         let metadata = crate::core::search::results::proxima_map_to_sql(result.metadata.clone());
 
-        // Use normalized similarity score for user-facing display (0-1 range, higher = better)
-        // Internal sorting uses result.score (raw distance), but users should see normalized values
-        let display_score = result.similarity.unwrap_or(0.0) as f64;
+        // Use normalized similarity score for user-facing display (0-1 range, higher = better).
+        // Fall back to `score` (the cross-engine normalized similarity used for ranking) when
+        // a producer didn't populate the optional `similarity` field — a 0.0 fallback rendered
+        // every such hit as "no match" at the API boundary.
+        let display_score = result.similarity.unwrap_or(result.score) as f64;
 
         // DEBUG: Log the values to understand what's happening
         tracing::debug!(
@@ -4295,6 +5140,77 @@ impl VectorOperationsService {
 }
 
 #[cfg(test)]
+mod wlp5_freshness_tests {
+    use super::*;
+    use crate::core::search::VectorFreshnessMode;
+    use crate::proto::proximadb_v1::{Collection, CollectionConfig};
+
+    fn collection_with_tags(tags: &[&str]) -> Collection {
+        Collection {
+            config: Some(CollectionConfig {
+                tags: tags.iter().map(|s| s.to_string()).collect(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn config_with_freshness(mode: VectorFreshnessMode) -> UnifiedSearchConfig {
+        UnifiedSearchConfig {
+            freshness_mode: Some(mode),
+            ..Default::default()
+        }
+    }
+
+    /// TD-WLP-5 (ADR-061 D4): a `Churn` collection forces Strong reads even when
+    /// the request explicitly asked for `StaleOk` — a re-embedded symbol must
+    /// never be served stale.
+    #[test]
+    fn churn_overrides_stale_request_to_strong() {
+        let churn = collection_with_tags(&["workload_profile:churn"]);
+        let stale_cfg = config_with_freshness(VectorFreshnessMode::StaleOk);
+        assert_eq!(
+            churn_effective_freshness(&churn, Some(&stale_cfg)),
+            VectorFreshnessMode::Strong,
+            "Churn must override StaleOk to Strong"
+        );
+        // Also overrides BoundedStale.
+        let bounded = config_with_freshness(VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 60_000,
+        });
+        assert_eq!(
+            churn_effective_freshness(&churn, Some(&bounded)),
+            VectorFreshnessMode::Strong
+        );
+    }
+
+    /// An `AppendBulk` (or untagged) collection honors the request's freshness
+    /// hint — the override is a no-op there (mixed-read-safe default path).
+    #[test]
+    fn append_bulk_honors_request_freshness() {
+        let append = collection_with_tags(&["workload_profile:append"]);
+        let stale_cfg = config_with_freshness(VectorFreshnessMode::StaleOk);
+        assert_eq!(
+            churn_effective_freshness(&append, Some(&stale_cfg)),
+            VectorFreshnessMode::StaleOk,
+            "AppendBulk must honor an explicit StaleOk request"
+        );
+        // Untagged collection = AppendBulk default; no config → Strong default.
+        let untagged = collection_with_tags(&[]);
+        assert_eq!(
+            churn_effective_freshness(&untagged, None),
+            VectorFreshnessMode::Strong,
+            "unset freshness defaults to Strong"
+        );
+        // Untagged + explicit StaleOk is honored.
+        assert_eq!(
+            churn_effective_freshness(&untagged, Some(&stale_cfg)),
+            VectorFreshnessMode::StaleOk
+        );
+    }
+}
+
+#[cfg(test)]
 mod tenant_tests {
     use super::*;
     use proximadb_data_model::ProximaValue;
@@ -4340,6 +5256,44 @@ mod tenant_tests {
             .expect("matching tenant_id should succeed");
 
         assert_eq!(records[0].tenant_id, "tenant_a");
+    }
+
+    #[test]
+    fn filter_fail_loud_mode_errors_on_unresolved_fields() {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
+        let filter = FilterExpression::Comparison {
+            field: "missing".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!("books"),
+        };
+        let record = ProximaRecord {
+            oid: "rec-1".to_string(),
+            ..Default::default()
+        };
+
+        assert!(
+            !evaluate_v2_filter_for_record_with_mode(&filter, &record, false)
+                .expect("legacy evaluator returns bool")
+        );
+
+        let err = evaluate_v2_filter_for_record_with_mode(&filter, &record, true).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("metadata filter evaluation failed")
+        );
+        assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn v2_filter_fail_loud_is_default_with_explicit_rollback_values() {
+        assert!(filter_fail_loud_for_value(None));
+        assert!(filter_fail_loud_for_value(Some("true")));
+        assert!(filter_fail_loud_for_value(Some("unexpected")));
+        for value in ["0", "false", "OFF", " no "] {
+            assert!(!filter_fail_loud_for_value(Some(value)), "value={value}");
+        }
     }
 
     #[test]
@@ -4689,7 +5643,7 @@ mod migration_example {
 //    - Consistent optimization logic
 //    - Easier to test and debug
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod index_first_search_tests {
     use super::*;
     use crate::compute::distance_computation::DistanceMetric;
@@ -4722,18 +5676,9 @@ mod index_first_search_tests {
         let sst_engine = Arc::new(crate::storage::engines::sst::SstEngine::new().await?);
 
         let wal_config = crate::storage::persistence::write_ahead_log::WALConfig::default();
-        let strategy_type =
-            crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
-        let strategy = crate::storage::persistence::write_ahead_log::WALBatchFactory::create_batch_serialization_strategy(
-            strategy_type,
-            &wal_config,
-            filesystem.clone()
-        ).await?;
         let wal_manager = Arc::new(
-            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(
-                strategy, wal_config,
-            )
-            .await?,
+            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(wal_config)
+                .await?,
         );
 
         let axis_manager = Arc::new(
@@ -4766,15 +5711,15 @@ mod index_first_search_tests {
 
     fn cache_test_collection(
         service: &VectorOperationsService,
-        collection_id: &str,
+        collection_object_id: crate::core::stable_id::CollectionObjectId,
         dimension: u32,
     ) {
         service.collection_cache.insert(
-            collection_id.to_string(),
+            collection_object_id,
             Arc::new(crate::proto::proximadb_v1::Collection {
-                id: collection_id.to_string(),
+                id: collection_object_id.to_string(),
                 config: Some(crate::proto::proximadb_v1::CollectionConfig {
-                    name: collection_id.to_string(),
+                    name: format!("collection-{collection_object_id}"),
                     dimension,
                     ..Default::default()
                 }),
@@ -4800,11 +5745,11 @@ mod index_first_search_tests {
     #[tokio::test]
     async fn insert_batch_rejects_non_finite_embedding_before_wal() {
         let (service, _temp_dir) = create_test_service().await.unwrap();
-        cache_test_collection(&service, "validation-collection", 3);
+        cache_test_collection(&service, 1001, 3);
 
         let err = service
             .insert_records_with_tenant_context(
-                "validation-collection",
+                "1001",
                 vec![record_with_vector("bad", vec![1.0, f32::NAN, 3.0])],
                 None,
             )
@@ -4817,30 +5762,31 @@ mod index_first_search_tests {
     #[tokio::test]
     async fn insert_batch_rejects_wrong_dimension_before_wal() {
         let (service, _temp_dir) = create_test_service().await.unwrap();
-        cache_test_collection(&service, "validation-collection", 3);
+        cache_test_collection(&service, 1001, 3);
 
         let err = service
             .insert_records_with_tenant_context(
-                "validation-collection",
+                "1001",
                 vec![record_with_vector("bad", vec![1.0, 2.0])],
                 None,
             )
             .await
             .unwrap_err();
 
-        assert!(err.to_string().contains(
-            "has dimension 2 but collection 'validation-collection' expects dimension 3"
-        ));
+        assert!(
+            err.to_string()
+                .contains("has dimension 2 but collection '1001' expects dimension 3")
+        );
     }
 
     #[tokio::test]
     async fn search_rejects_non_finite_query_vector_before_execution() {
         let (service, _temp_dir) = create_test_service().await.unwrap();
-        cache_test_collection(&service, "validation-collection", 3);
+        cache_test_collection(&service, 1001, 3);
 
         let err = service
             .unified_search_with_tenant_context(
-                "validation-collection",
+                "1001",
                 vec![1.0, f32::INFINITY, 3.0],
                 10,
                 None,
@@ -4856,23 +5802,16 @@ mod index_first_search_tests {
     #[tokio::test]
     async fn search_rejects_wrong_dimension_before_execution() {
         let (service, _temp_dir) = create_test_service().await.unwrap();
-        cache_test_collection(&service, "validation-collection", 3);
+        cache_test_collection(&service, 1001, 3);
 
         let err = service
-            .unified_search_with_tenant_context(
-                "validation-collection",
-                vec![1.0, 2.0],
-                10,
-                None,
-                None,
-                None,
-            )
+            .unified_search_with_tenant_context("1001", vec![1.0, 2.0], 10, None, None, None)
             .await
             .unwrap_err();
 
         assert!(
             err.to_string()
-                .contains("Query vector has dimension 2 but collection 'validation-collection' expects dimension 3")
+                .contains("Query vector has dimension 2 but collection '1001' expects dimension 3")
         );
     }
 
@@ -4885,10 +5824,10 @@ mod index_first_search_tests {
     #[tokio::test]
     async fn strong_read_bypasses_query_cache_on_tenant_context_path() {
         let (service, _temp_dir) = create_test_service().await.unwrap();
-        cache_test_collection(&service, "freshness-coll", 3);
+        cache_test_collection(&service, 1002, 3);
         service
             .insert_records_with_tenant_context(
-                "freshness-coll",
+                "1002",
                 vec![record_with_vector("real-1", vec![1.0, 2.0, 3.0])],
                 None,
             )
@@ -4898,7 +5837,7 @@ mod index_first_search_tests {
         let qv = vec![1.0f32, 2.0, 3.0];
         let k = 5usize;
         let cache_key = crate::storage::cache::specialized::query_cache::QueryKey::new(
-            "freshness-coll".to_string(),
+            "1002".to_string(),
             &qv,
             k as u32,
             None,
@@ -4925,14 +5864,7 @@ mod index_first_search_tests {
 
         // StaleOk is served the seeded (stale) cache entry.
         let served = service
-            .unified_search_with_tenant_context(
-                "freshness-coll",
-                qv.clone(),
-                k,
-                None,
-                Some(stale_ok),
-                None,
-            )
+            .unified_search_with_tenant_context("1002", qv.clone(), k, None, Some(stale_ok), None)
             .await
             .unwrap();
         assert!(
@@ -4948,14 +5880,7 @@ mod index_first_search_tests {
         // broken, `fresh` would be Ok([sentinel]); a bypass yields either Err or
         // Ok(real-results-without-sentinel).
         let fresh = service
-            .unified_search_with_tenant_context(
-                "freshness-coll",
-                qv.clone(),
-                k,
-                None,
-                Some(strong),
-                None,
-            )
+            .unified_search_with_tenant_context("1002", qv.clone(), k, None, Some(strong), None)
             .await;
         let served_stale = matches!(
             &fresh,
@@ -5140,6 +6065,7 @@ mod index_first_search_tests {
         Ok(())
     }
 
+    #[cfg(feature = "axis")]
     #[tokio::test]
     async fn test_metadata_filter_pushdown_to_indexes() -> Result<()> {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
@@ -5484,6 +6410,9 @@ impl VectorQueryService for VectorOperationsService {
                 request.top_k,
                 filter,
                 None, // Use default config
+                None,
+                None,
+                proximadb_tenant::AuthClass::Anonymous,
             )
             .await
             .map_err(|e| proximadb_kernel::error::QueryError::VectorSearch(e.to_string()))?;
@@ -5533,10 +6462,60 @@ impl VectorQueryService for VectorOperationsService {
 impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     async fn search(
         &self,
-        request: crate::proto::proximadb_v1::VectorSearchRequest,
-        _tenant_id: Option<&str>,
+        mut request: crate::proto::proximadb_v1::VectorSearchRequest,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
-        self.search_v1(request).await
+        let tenant_id = identity.tenant_id;
+        // TD-XMODAL-8: the cross-modal `vector_search` UDTF reaches this port carrying the pgwire
+        // connection tenant. Resolve the collection UNDER that tenant — the same tenant-scoped
+        // name→canonical-id resolution the REST record path does via
+        // `RecordOpsService::resolve_collection_id_internal` (`collection_port.get_collection`,
+        // TD-XMODAL-6). Without it a tenant-scoped collection name resolves against the unscoped
+        // registry, misses, and the search returns 0 rows even though the data exists. The
+        // resolved id is idempotent for `search_v1`'s own resolution, so tenant-less callers
+        // (`None`) are unaffected.
+        if let Some(tid) = tenant_id.filter(|t| !t.is_empty())
+            && let Ok(Some(collection)) = self
+                .collection_port
+                .get_collection(&request.collection_id, Some(tid))
+                .await
+        {
+            request.collection_id = collection.id;
+        }
+        self.search_v1(request, identity).await
+    }
+
+    /// TD-XMODAL-4 S2: the single canonical native kernel for both the pgvector
+    /// `<->` operator and the `vector_search(...)` UDTF. **Fail-closed** tenant
+    /// scoping via the same `for_tenant_id` → `unified_search_native_with_tenant_context`
+    /// path (`validate_tenant_collection_access` + tenant-scoped `get_collection`)
+    /// the existing tenant-context callers use — so promoting this to the port does
+    /// NOT weaken isolation. `None`/empty tenant ⇒ single-tenant, no scoping change.
+    async fn unified_search_native(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<proximadb_filter_expression::FilterExpression>,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        let tenant_ctx = tenant_id
+            .filter(|t| !t.is_empty())
+            .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
+        self.unified_search_native_with_tenant_context(
+            collection_id,
+            query_vector,
+            k,
+            filter,
+            None,
+            tenant_ctx.as_ref(),
+            #[cfg(feature = "abac-policy")]
+            &proximadb_abac::ReadContext::system(
+                proximadb_abac::SystemReadReason::Statistics,
+                "legacy::tests",
+            ),
+        )
+        .await
     }
 
     async fn batch_upsert(
@@ -5576,7 +6555,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         &self,
         collection_id: &str,
         filters: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
-        _tenant_id: Option<&str>,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<std::collections::HashSet<String>> {
         use std::collections::HashSet;
 
@@ -5592,35 +6571,54 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
 
         // Resolve name → canonical internal id (identity for v2 where id == name,
         // and for already-canonical ids) before touching the record store.
-        let resolved = self.resolve_collection_id(collection_id).await;
+        let resolved = self
+            .resolve_collection_object_id(collection_id)
+            .await?
+            .to_string();
 
         // Read the authoritative record set — WAL memtable plus flushed storage —
         // and keep the ids whose property tree satisfies the filter under the
-        // single canonical evaluator. Tenant scope is not threaded here (the
-        // hybrid boundary carries no `TenantContext`, mirroring the vector leg's
-        // `search(req, None)`); correctness holds because this set only ever
-        // *narrows* the BM25 candidates and never widens them.
+        // single canonical evaluator. The caller's tenant identity (threaded
+        // from the REST boundary through `HybridPort`, #949) scopes the
+        // listing: in multi-tenant mode the record listing REQUIRES a tenant
+        // context, so the former `None` made every filtered hybrid query fail
+        // closed to an empty allowed-set and drop all BM25 candidates. The
+        // fail-closed direction is preserved (errors still empty the set at
+        // the caller); this set only ever *narrows* the BM25 candidates.
+        let tenant_ctx = tenant_id
+            .filter(|t| !t.is_empty())
+            .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
         let records = self
-            .list_all_records_with_tenant_context(&resolved, None)
+            .list_all_records_with_tenant_context(&resolved, tenant_ctx.as_ref())
             .await?;
 
         let matching = records
             .into_iter()
-            .filter(|record| {
-                crate::core::search::sql_value_filter::evaluate_filter_proxima(&expr, &record.props)
-            })
+            .filter_map(
+                |record| match evaluate_v2_filter_for_record(&expr, &record) {
+                    Ok(true) => Some(Ok(record)),
+                    Ok(false) => None,
+                    Err(e) => Some(Err(e)),
+                },
+            )
             .map(|record| {
+                let record = record?;
                 // Mirror the v2 scan serializer's id selection (oid, then the
                 // caller-supplied local id) so the ids line up with the BM25
                 // document ids and the vector leg's result ids.
-                if record.oid.is_empty() {
+                let id = if record.oid.is_empty() {
                     record.local_id.unwrap_or_default()
                 } else {
                     record.oid
-                }
+                };
+                Ok(id)
             })
-            .filter(|id| !id.is_empty())
-            .collect();
+            .filter_map(|id| match id {
+                Ok(id) if !id.is_empty() => Some(Ok(id)),
+                Ok(_) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect::<Result<_>>()?;
 
         Ok(matching)
     }
@@ -5641,6 +6639,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
 /// predicted recall + work, and record the observation.
 /// Best-effort — any lookup miss short-circuits silently. The
 /// search path's success contract is unaffected.
+#[cfg(feature = "axis")]
 async fn observe_advisor_for_search(collection_id: &str, top_k: u32, observed_latency_us: u64) {
     // (1) Reach the live AXIS manager to read the active strategy.
     // Absent on HELIX-only deployments — short-circuit gracefully.
@@ -5817,5 +6816,111 @@ mod recompute_merged_shortfall_tests {
         assert!(recompute_merged_shortfall(10, 10, true, Some(&ctx)).is_none());
         // also: more than requested (cap) is not a shortfall
         assert!(recompute_merged_shortfall(10, 12, true, Some(&ctx)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod axis_insert_gate_tests {
+    use super::collection_uses_axis_indexes;
+    use crate::proto::proximadb_v1::{Collection, CollectionConfig, IndexConfig};
+
+    #[test]
+    fn empty_index_configs_do_not_feed_axis() {
+        let collection = Collection {
+            config: Some(CollectionConfig {
+                index_configs: Vec::new(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!collection_uses_axis_indexes(true, &collection));
+    }
+
+    #[test]
+    fn configured_index_feeds_axis() {
+        let collection = Collection {
+            config: Some(CollectionConfig {
+                index_configs: vec![IndexConfig::default()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(collection_uses_axis_indexes(true, &collection));
+
+        assert!(
+            !collection_uses_axis_indexes(false, &collection),
+            "the runtime master switch must win over collection index intent"
+        );
+    }
+
+    #[test]
+    fn format_tag_without_index_config_does_not_feed_axis() {
+        let collection = Collection {
+            config: Some(CollectionConfig {
+                tags: vec!["pax_vector_format:off".to_string()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!collection_uses_axis_indexes(true, &collection));
+    }
+
+    #[test]
+    fn absent_collection_config_does_not_feed_axis() {
+        assert!(!collection_uses_axis_indexes(true, &Collection::default()));
+    }
+}
+
+#[cfg(all(test, feature = "abac-policy"))]
+mod abac_vector_pushdown_tests {
+    use super::{abac_filter_is_conjunctive, abac_security_is_pushdown};
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+
+    fn eq(field: &str, val: &str) -> FilterExpression {
+        FilterExpression::Comparison {
+            field: field.to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!(val),
+        }
+    }
+
+    #[test]
+    fn conjunctive_classifies_comparison_and_and_but_not_or_not() {
+        // Comparison + And-of-comparisons are AXIS push-down-compatible.
+        assert!(abac_filter_is_conjunctive(&eq("dept", "eng")));
+        assert!(abac_filter_is_conjunctive(&FilterExpression::And(vec![
+            eq("dept", "eng"),
+            eq("level", "5"),
+        ])));
+        // Or/Not are NOT — `flatten_filter_expression` rejects them, so they
+        // must take the post-filter fallback path.
+        assert!(!abac_filter_is_conjunctive(&FilterExpression::Or(vec![
+            eq("dept", "eng"),
+            eq("dept", "sales"),
+        ])));
+        assert!(!abac_filter_is_conjunctive(&FilterExpression::Not(
+            Box::new(eq("dept", "eng",))
+        )));
+        // An And containing an Or is non-conjunctive (the Or would not flatten).
+        assert!(!abac_filter_is_conjunctive(&FilterExpression::And(vec![
+            eq("dept", "eng"),
+            FilterExpression::Or(vec![eq("a", "1"), eq("b", "2")]),
+        ])));
+    }
+
+    #[test]
+    fn pushdown_requires_both_security_and_user_conjunctive() {
+        let sec = eq("dept", "eng");
+        let user = eq("color", "red");
+        let or = FilterExpression::Or(vec![eq("a", "1"), eq("b", "2")]);
+        // Conjunctive security + (no user | conjunctive user) ⇒ push-down.
+        assert!(abac_security_is_pushdown(&sec, None));
+        assert!(abac_security_is_pushdown(&sec, Some(&user)));
+        // Non-conjunctive security ⇒ post-filter, regardless of user.
+        assert!(!abac_security_is_pushdown(&or, None));
+        assert!(!abac_security_is_pushdown(&or, Some(&user)));
+        // Conjunctive security + non-conjunctive user ⇒ post-filter (the ANDed
+        // combined filter would not flatten into the AXIS query either).
+        assert!(!abac_security_is_pushdown(&sec, Some(&or)));
     }
 }

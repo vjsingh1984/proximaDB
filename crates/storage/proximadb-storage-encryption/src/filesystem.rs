@@ -195,6 +195,22 @@ impl FileSystem for EncryptedFilesystem {
         self.write_encrypted(path, data, options).await
     }
 
+    async fn write_if_absent(
+        &self,
+        path: &str,
+        data: &[u8],
+        options: Option<FileOptions>,
+    ) -> FsResult<()> {
+        let actual_path = self.actual_path(path);
+        let encrypted = self
+            .encryption
+            .encrypt_file(path, data)
+            .map_err(|e| Self::crypto_error("encryption", path, e))?;
+        self.underlying
+            .write_if_absent(&actual_path, &encrypted, options)
+            .await
+    }
+
     async fn sync_file(&self, path: &str) -> FsResult<()> {
         if self.encrypted_exists(path).await? {
             let actual_path = self.actual_path(path);
@@ -212,6 +228,10 @@ impl FileSystem for EncryptedFilesystem {
         };
         existing.extend_from_slice(data);
         self.write(path, &existing, None).await
+    }
+
+    fn supports_append(&self) -> bool {
+        self.underlying.supports_append()
     }
 
     async fn delete(&self, path: &str) -> FsResult<()> {

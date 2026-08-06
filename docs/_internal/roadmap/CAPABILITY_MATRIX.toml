@@ -21,7 +21,7 @@ controlling_td = ["TD-008", "TD-092"]
 evidence = [
   "src/core/search/hybrid/fusion.rs:1",
   "src/network/hybrid_search.rs:40",
-  "src/network/rest/v1/hybrid.rs:1",
+  "src/network/rest/canonical/hybrid.rs:1",
 ]
 
 [[capabilities]]
@@ -30,7 +30,7 @@ status = "partial"
 notes = "One calibrated fuse-by-oid seam for all modalities (CROSS_MODAL_FUSION_SEAM_2026_06_22). Neutral Fuser core + PIT calibration (TD-136) and GraphExpander + REST v2 fusion-search (TD-137) In Progress; document/relational/edge expanders, cost-routed fusion, alias resolution (TD-138..143) and the EntityService typed-facade delegation (TD-146) open."
 controlling_td = ["TD-136", "TD-137", "TD-138", "TD-143", "TD-146"]
 evidence = [
-  "src/core/search/cross_modal_fusion.rs:1",
+  "crates/horizontal/proximadb-cross-modal-fusion/src/cross_modal_fusion.rs:1",
   "docs/12-design/CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc:1",
   "docs/12-design/SEARCH_SURFACE_CONTRACT_2026_06_24.adoc:1",
 ]
@@ -81,7 +81,7 @@ notes = "Trino Arrow-Flight wire layer complete (TD-098, all 7 flight_* methods)
 controlling_td = ["TD-097", "TD-098", "TD-099"]
 evidence = [
   "src/connectors/trino.rs:1",
-  "src/connectors/spark.rs:1",
+  "crates/binding/proximadb-embedded/src/spark.rs:1",
   "tests/connectors_flight_contract.rs:1",
 ]
 
@@ -137,8 +137,8 @@ id = "graph_legacy_route_deprecation"
 status = "complete"
 notes = "Legacy graph compatibility routes issue 308 redirects with deprecation/sunset metadata; docs include explicit migration mappings to canonical multi-graph paths."
 evidence = [
-  "src/network/rest/v1/graph.rs:1610",
-  "src/network/rest/v1/handlers.rs:1958",
+  "src/network/rest/canonical/graph.rs:1610",
+  "src/network/rest/canonical/handlers.rs:1958",
   "docs/03-api-reference/graph.adoc:32",
 ]
 
@@ -237,7 +237,7 @@ notes = "TD-119 Phase 1 (2026-06-18): persisted versioned metadata.json + manife
 controlling_td = ["TD-119"]
 evidence = [
   "crates/storage/proximadb-iceberg-engine/src/metadata.rs:1",
-  "src/catalog/iceberg_rest_service.rs:1",
+  "crates/control/proximadb-catalog/src/iceberg_rest_service.rs:1",
 ]
 
 [[capabilities]]
@@ -312,7 +312,7 @@ status = "partial"
 notes = "Raft internals, shard planning, snapshot/restore, routing foundations exist (~5,491 LOC, src/cluster/, behind the `cluster` flag). RPC transport + remote execution + failover are placeholder/partial (TD-077, support tier Experimental). PULSAR/QUASAR engines retired."
 controlling_td = ["TD-077"]
 evidence = [
-  "src/cluster/consensus.rs:17",
+  "crates/platform/proximadb-runtime/src/cluster/consensus.rs:17",
   "src/cluster/mod.rs:1",
 ]
 

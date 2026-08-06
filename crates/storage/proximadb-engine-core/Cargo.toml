@@ -1,0 +1,37 @@
+[package]
+name = "proximadb-engine-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared engine-core ops + formats hoisted out of the root crate (root-crate decomposition, engines extraction). Occupants: simd_decode ops + hermetic proximablocks sub-leaves."
+
+[lib]
+name = "proximadb_engine_core"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+proximadb-storage-common.workspace = true
+# proximablocks hermetic sub-leaves (header_metadata + per_column_alignment).
+proximadb-compression.workspace = true
+proximadb-distance-kernel.workspace = true
+proximadb-kernel.workspace = true
+proximadb-records.workspace = true
+# spatial_* cohort (spatial_clustering k-means + hilbert_curve via storage_common).
+proximadb-clustering-kernel.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# uuid is not in workspace.dependencies (root-package-only) — inline spec.
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+[dev-dependencies]
+# `half` (f16/bf16) used only in per_column_alignment unit tests.
+half = "2.4"
+
+[lints]
+workspace = true

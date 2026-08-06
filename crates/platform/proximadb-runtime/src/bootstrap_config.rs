@@ -116,6 +116,13 @@ pub struct MultiServerConfig {
     /// operator explicitly opts in for a standalone instance.
     pub admin_ui_enabled: bool,
 
+    /// Sourced from `[server.admin_ui] auto_refresh` (default `false`). When
+    /// `false`, the dashboard's auto-refresh toggle is rendered disabled.
+    pub admin_ui_auto_refresh: bool,
+
+    /// Sourced from `[server.admin_ui] refresh_interval_seconds` (default 30).
+    pub admin_ui_refresh_interval_seconds: u32,
+
     /// Cluster mode configuration (consensus, replication, health services)
     /// Only used when `cluster` feature is enabled
     #[cfg(feature = "cluster")]
@@ -425,17 +432,6 @@ pub struct GrpcHttpServerConfig {
     /// Allows dynamic service discovery (grpcurl, etc)
     pub enable_reflection: bool,
 
-    /// Enable deprecated gRPC v1 compatibility services.
-    ///
-    /// When `false` (default) only the canonical `proximadb.v2.ProximaRecordService`,
-    /// `grpc.health.v1.Health`, and reflection are registered. When `true`, the
-    /// deprecated v1 compatibility adapter services (vector/sql/collection/graph/
-    /// hybrid-search/security/document/entity/observability/streaming) are also
-    /// registered. Post-sunset these v1 services are removed entirely.
-    ///
-    /// Env override: `PROXIMADB_GRPC_V1_COMPAT` (set to `1`/`true` to enable).
-    pub enable_grpc_v1_compat: bool,
-
     /// Enable gRPC compression for Avro payloads
     /// Further reduces already-compact protobuf
     pub compression: bool,
@@ -450,20 +446,6 @@ pub struct GrpcHttpServerConfig {
 }
 
 impl GrpcHttpServerConfig {
-    /// Resolve the deprecated gRPC v1 compatibility flag from the
-    /// `PROXIMADB_GRPC_V1_COMPAT` environment variable. Defaults to `false`
-    /// (v1 compat services not registered) when unset or unparseable.
-    /// Accepts `1`/`true`/`yes`/`on` (case-insensitive) as truthy.
-    pub fn v1_compat_from_env() -> bool {
-        std::env::var("PROXIMADB_GRPC_V1_COMPAT")
-            .ok()
-            .map(|v| {
-                let v = v.trim().to_ascii_lowercase();
-                matches!(v.as_str(), "1" | "true" | "yes" | "on")
-            })
-            .unwrap_or(false)
-    }
-
     /// Check if TLS is enabled
     pub fn is_tls_enabled(&self) -> bool {
         self.tls_cert_file.is_some() && self.tls_key_file.is_some()
@@ -580,8 +562,6 @@ impl Default for MultiServerConfig {
                 enable_grpc: true,
                 max_message_size: 64 * 1024 * 1024, // 64MB for bulk vector inserts with Avro
                 enable_reflection: true,
-                // Deprecated v1 compat adapters off by default; env opt-in.
-                enable_grpc_v1_compat: GrpcHttpServerConfig::v1_compat_from_env(),
                 compression: true,
                 tls_cert_file: None,
                 tls_key_file: None,
@@ -607,6 +587,8 @@ impl Default for MultiServerConfig {
             unified_bind_address: "0.0.0.0".to_string(),
             uds_socket_dir: None,    // TCP mode by default; portless opt-in only
             admin_ui_enabled: false, // read-only /admin dashboard off by default; opt-in via TOML
+            admin_ui_auto_refresh: false, // dashboard auto-refresh off by default; opt-in via TOML
+            admin_ui_refresh_interval_seconds: 30, // default poll cadence (seconds)
             // Cluster mode defaults
             #[cfg(feature = "cluster")]
             cluster_config: None, // Cluster mode disabled by default
@@ -823,8 +805,10 @@ mod tests {
 
     #[test]
     fn test_server_config_multi_port() {
-        let mut config = MultiServerConfig::default();
-        config.unified_mode = false;
+        let mut config = MultiServerConfig {
+            unified_mode: false,
+            ..Default::default()
+        };
 
         // Verify each protocol gets its own port
         let http_addr = config.http_bind_address();
@@ -866,8 +850,10 @@ mod tests {
     fn test_protocol_detection() {
         // Test the unified mode protocol detection configuration
         // (actual TCP-level detection happens at runtime, but we verify the config wiring)
-        let mut config = MultiServerConfig::default();
-        config.unified_mode = true;
+        let config = MultiServerConfig {
+            unified_mode: true,
+            ..Default::default()
+        };
 
         // In unified mode, all protocols share one address
         let unified = config.unified_bind_address();
@@ -929,7 +915,6 @@ mod tests {
             enable_grpc: true,
             max_message_size: 64 * 1024 * 1024,
             enable_reflection: true,
-            enable_grpc_v1_compat: false,
             compression: true,
             tls_cert_file: None,
             tls_key_file: None,

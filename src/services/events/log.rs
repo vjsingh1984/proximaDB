@@ -8,23 +8,30 @@
 //! EventLog service that manages asynchronous indexing coordination
 //! Similar to CollectionService, this is a standalone service that recovers on startup
 
-use anyhow::{Context, Result};
+#[cfg(feature = "axis")]
+use anyhow::Context;
+use anyhow::Result;
 use dashmap::DashMap;
 use std::sync::Arc;
+#[cfg(feature = "axis")]
 use tracing::{debug, info, warn};
 
 use crate::core::types::StorageEngineType;
+#[cfg(feature = "axis")]
 use crate::index::axis::eventlog::{
     EventLogConfig, EventLogService as EventLogServiceTrait, EventLogServiceFactory, ServiceMode,
 };
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+#[cfg(feature = "axis")]
 use proximadb_storage_ports::StorageEventLogPort;
 
 /// EventLog service that coordinates between storage and AXIS indexing
 /// This is initialized at server startup like CollectionService and VectorOperationsService
 pub struct EventLogService {
-    /// The actual event log service implementation
+    /// The actual event log service implementation (AXIS-gated; absent off, in which
+    /// case the service is never constructed — `event_log_service()` returns `None`).
+    #[cfg(feature = "axis")]
     inner: Arc<dyn EventLogServiceTrait>,
 
     /// Reference to collection cache (shared with other services)
@@ -36,6 +43,7 @@ pub struct EventLogService {
     filesystem_factory: Arc<FilesystemFactory>,
 }
 
+#[cfg(feature = "axis")]
 impl EventLogService {
     /// Create and initialize EventLog service
     ///
@@ -242,7 +250,45 @@ impl EventLogService {
     }
 }
 
+/// AXIS-compiled-out stub: the service is never constructed (no `new`, and
+/// `event_log_service()` returns `None`), so these are never called — they exist
+/// only so the engine-integration call sites (`event_log.notify_flush(...)` inside
+/// `if let Some(_) = event_log_service()`) type-check.
+#[cfg(not(feature = "axis"))]
+impl EventLogService {
+    pub async fn notify_flush(
+        &self,
+        _collection_id: &str,
+        _flushed_files: Vec<String>,
+        _vector_count: usize,
+        _has_quantized: bool,
+        _has_fp32: bool,
+        _storage_engine: StorageEngineType,
+    ) -> Result<()> {
+        Ok(())
+    }
+    pub fn notify_compaction(
+        &self,
+        _collection_id: &str,
+        _output_files: Vec<String>,
+        _vector_count: usize,
+        _storage_engine: StorageEngineType,
+    ) {
+    }
+    pub async fn can_compact(&self, _collection_id: &str, _file_path: &str) -> bool {
+        true
+    }
+    pub async fn cleanup_compacted_files(
+        &self,
+        _collection_id: &str,
+        _deleted_files: Vec<String>,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[async_trait::async_trait]
+#[cfg(feature = "axis")]
 impl StorageEventLogPort for EventLogService {
     async fn notify_flush(
         &self,
@@ -353,6 +399,7 @@ pub fn unregister_collection_from_cache(collection_id: &str) {
 ///
 /// This function is idempotent - if already initialized, returns Ok without error.
 /// This allows multiple embedded database instances to share the same EventLog service.
+#[cfg(feature = "axis")]
 pub async fn initialize_event_log_service(
     collection_cache: Arc<DashMap<String, Arc<Collection>>>,
     filesystem_factory: Arc<FilesystemFactory>,
@@ -381,6 +428,17 @@ pub async fn initialize_event_log_service(
             Ok(())
         }
     }
+}
+
+/// AXIS-compiled-out no-op: the EventLog service is an AXIS-indexing substrate, so
+/// a PAX-exact-scan build leaves it uninitialized (`event_log_service()` → `None`).
+#[cfg(not(feature = "axis"))]
+pub async fn initialize_event_log_service(
+    _collection_cache: Arc<DashMap<String, Arc<Collection>>>,
+    _filesystem_factory: Arc<FilesystemFactory>,
+    _base_storage_url: Option<String>,
+) -> Result<()> {
+    Ok(())
 }
 
 /// Get the global EventLog service instance

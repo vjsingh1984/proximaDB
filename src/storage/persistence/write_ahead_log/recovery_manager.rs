@@ -17,8 +17,7 @@ use tracing::{debug, info, trace, warn};
 use crate::storage::BatchId;
 use crate::storage::persistence::write_ahead_log::{
     WALFlushCoordinator, WalFileInfo, WriteAheadLogDiskManager,
-    recovery_thread_pool::get_recovery_thread_pool, serialization::SerializationFormat,
-    serialization::SerializerFactory,
+    recovery_thread_pool::get_recovery_thread_pool, serialization::SerializerFactory,
 };
 use crate::storage::traits::UnifiedStorageFormat;
 
@@ -155,6 +154,9 @@ impl RecoveryManager {
             "🔄 Starting WAL recovery using global manifest (mode: {:?})",
             self.recovery_mode
         );
+        // TD-WAL-1 S6: measure this boot's replay wall-clock for the
+        // `proximadb_wal_replay_duration_seconds` gauge.
+        let replay_started_at = std::time::Instant::now();
 
         // Get the recovery thread pool
         let thread_pool = get_recovery_thread_pool();
@@ -174,12 +176,6 @@ impl RecoveryManager {
             all_entries.len()
         );
 
-        if all_entries.is_empty() {
-            info!("📝 No active WAL entries to recover (manifest is empty or all entries flushed)");
-            recovery_guard.complete(0, 0).await;
-            return Ok(WalRecoveryStats::default());
-        }
-
         info!(
             "📂 Found {} WAL batches across collections (sorted by global LSN)",
             all_entries.len()
@@ -196,10 +192,14 @@ impl RecoveryManager {
         }
 
         // Group by collection for organized recovery
-        let collections_to_recover: std::collections::HashSet<String> = all_entries
+        let mut collections_to_recover: std::collections::HashSet<String> = all_entries
             .iter()
             .map(|e| e.collection_id.clone())
             .collect();
+        // The manifest is only a cache. Catalog boot registers engines before
+        // recovery, so their canonical collection ids must also be LISTed even
+        // when the async manifest pointer is empty.
+        collections_to_recover.extend(self.storage_engines.read().await.keys().cloned());
         let collections: Vec<String> = collections_to_recover.into_iter().collect();
         info!(
             "Found {} collections to recover using {} threads",
@@ -210,6 +210,9 @@ impl RecoveryManager {
         if collections.is_empty() {
             // Recovery phase complete
             recovery_guard.complete(0, 0).await;
+            crate::metrics::wal_flush_metrics::set_replay_duration(
+                replay_started_at.elapsed().as_secs_f64(),
+            );
             return Ok(WalRecoveryStats::default());
         }
 
@@ -330,6 +333,9 @@ impl RecoveryManager {
             info!("🧹 Removed {} flushed manifest entries", removed);
         }
 
+        crate::metrics::wal_flush_metrics::set_replay_duration(
+            replay_started_at.elapsed().as_secs_f64(),
+        );
         Ok(stats)
     }
 
@@ -405,204 +411,414 @@ impl RecoveryManager {
             collection_id, recovery_mode
         );
 
-        if recovery_mode == RecoveryMode::DirectToStorage {
-            let engines = storage_engines.read().await;
-            trace!(
-                "Checking WAL recovery storage engine registration for collection {} across {} engines",
-                collection_id,
-                engines.len()
-            );
+        Self::recover_collection_authoritative(
+            collection_id,
+            disk_manager.clone(),
+            storage_engines.clone(),
+            recovery_mode,
+            &progress_callback,
+        )
+        .await
+    }
 
-            if !engines.contains_key(collection_id) {
-                warn!(
-                    "⏭️ Skipping recovery for collection {}: No storage engine registered. \
-                    Collection will be initialized fresh if accessed.",
-                    collection_id
-                );
-                // Return 0 vectors recovered instead of error - allows graceful degradation
-                return Ok((0, 0));
-            }
-            trace!(
-                "Storage engine found for WAL recovery collection {}",
-                collection_id
+    async fn recover_collection_authoritative(
+        collection_id: &str,
+        disk_manager: Arc<WriteAheadLogDiskManager>,
+        storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
+        _recovery_mode: RecoveryMode,
+        progress_callback: &Option<RecoveryProgressCallback>,
+    ) -> Result<(u64, u64)> {
+        if !storage_engines.read().await.contains_key(collection_id) {
+            anyhow::bail!(
+                "no storage engine registered for WAL recovery collection {collection_id}"
             );
         }
-
-        // Get entries from global manifest
-        let entries =
+        let manifest_entries =
             crate::storage::persistence::write_ahead_log::manifest::get_collection_entries(
                 collection_id,
             )
             .await;
-        debug!(
-            "Found {} WAL manifest entries for collection {}",
-            entries.len(),
-            collection_id
+
+        // Issue #1125: the write path roots each collection's WAL under its
+        // catalog-assigned base_location (load-balanced across the configured
+        // storage locations), while this recovery manager's disk_manager is
+        // rooted at the single configured write-buffer directory. Listing only
+        // that one base silently missed fsync'd, manifest-Active WAL objects
+        // (restart data loss: "0 vectors from 0 files" with the .bcwal on disk).
+        // List every candidate base — the catalog assignment, every distinct
+        // manifest storage_url, and the configured base — and union the results.
+        let catalog_base =
+            crate::storage::persistence::write_ahead_log::list_collections_from_catalog()
+                .await
+                .into_iter()
+                .find(|collection| collection.id == collection_id)
+                .and_then(|collection| collection.storage_assignment)
+                .map(|assignment| assignment.base_location);
+        let manifest_bases: Vec<String> = manifest_entries
+            .iter()
+            .map(|entry| entry.storage_url.clone())
+            .collect();
+        let candidate_bases = Self::wal_candidate_bases(
+            catalog_base.as_deref(),
+            &manifest_bases,
+            disk_manager.get_base_wal_url(),
         );
-
-        let mut vectors_recovered = 0u64;
-        let mut files_recovered = 0u64;
-
-        for (idx, e) in entries.iter().enumerate() {
-            trace!(
-                "Processing WAL entry {}/{}: batch_id={}, lsn={}, size={}",
-                idx + 1,
-                entries.len(),
-                e.batch_id,
-                e.global_lsn,
-                e.size_bytes
-            );
-
-            // Use full_url() from manifest entry (includes storage_url + file_path)
-            let file_url = e.full_url();
-
-            // Convert string format to SerializationFormat
-            let format = match e.format.as_str() {
-                "proto" => SerializationFormat::ProtocolBuffers,
-                "bincode" => SerializationFormat::Bincode,
-                "avro" => SerializationFormat::Avro,
-                _ => SerializationFormat::ProtocolBuffers, // Default fallback
-            };
-
-            let file_info = WalFileInfo {
-                collection_id: collection_id.to_string(),
-                batch_id: BatchId::from_base62(&e.batch_id).unwrap_or_default(),
-                file_url: file_url.clone(),
-                size_bytes: e.size_bytes,
-                format,
-                encryption_metadata: None, // Recovery doesn't have encryption metadata
-            };
-
-            debug!(
-                "🔄 Recovering WAL batch {} from {} (LSN: {}, {} bytes)",
-                e.batch_id, file_url, e.global_lsn, e.size_bytes
-            );
-
-            match disk_manager.read_batch(&file_info).await {
-                Ok(data) => {
-                    trace!("Read {} bytes from WAL file {}", data.len(), file_url);
-                    let checksum = proximadb_kernel::checksum::Crc32::checksum(&data);
-                    if checksum != e.checksum_crc32 {
-                        warn!("Checksum mismatch for {}, skipping", file_info.file_url);
-                        continue;
-                    }
-
-                    let serializer = SerializerFactory::create(file_info.format);
-                    let vectors = serializer
-                        .deserialize_batch(&data)
-                        .context("Failed to deserialize WAL data")?;
-                    let count = vectors.len() as u64;
-
-                    let result = Self::flush_recovered_vectors(
-                        &file_info,
-                        vectors,
-                        &disk_manager,
-                        &storage_engines,
-                        recovery_mode,
-                        &e.storage_url,
-                    )
-                    .await?;
-
-                    if result.success {
-                        files_recovered += 1;
-                        vectors_recovered += count;
-
-                        // CRITICAL: Mark as flushed BEFORE deleting WAL file
-                        // This ensures manifest is updated even if deletion fails
-                        match crate::storage::persistence::write_ahead_log::manifest::mark_flushed(
-                            std::slice::from_ref(&e.batch_id),
-                        )
-                        .await
-                        {
-                            Ok(_) => {
-                                debug!("✅ Marked batch {} as Flushed in manifest", e.batch_id);
-
-                                // Only delete WAL file after successful manifest update
-                                if let Err(e) =
-                                    disk_manager.delete_wal_file_url(&file_info.file_url).await
-                                {
-                                    warn!(
-                                        "Failed to delete WAL file {} after successful recovery: {}",
-                                        file_info.file_url, e
-                                    );
-                                    // Continue - data is safely recovered and manifest is updated
-                                } else {
-                                    debug!("🗑️ Deleted WAL file {}", file_info.file_url);
-                                }
-
-                                info!(
-                                    "✅ Recovered and flushed batch {} (LSN: {}, {} vectors) - marked as Flushed",
-                                    e.batch_id, e.global_lsn, count
-                                );
-                            }
-                            Err(err) => {
-                                // CRITICAL: If manifest update fails, DO NOT delete WAL file
-                                // File will be recovered again on next restart
-                                warn!(
-                                    "❌ Failed to mark batch {} as Flushed in manifest: {}. Keeping WAL file for retry.",
-                                    e.batch_id, err
-                                );
-                                warn!(
-                                    "⚠️  WAL file {} will be recovered again on next server restart",
-                                    file_info.file_url
-                                );
-                            }
-                        }
-                    }
-                    if let Some(cb) = &progress_callback {
-                        cb(RecoveryProgress {
-                            current_file: idx + 1,
-                            total_files: entries.len(),
-                            current_collection: collection_id.to_string(),
-                            vectors_recovered,
-                            bytes_processed: e.size_bytes,
-                        });
-                    }
-                }
-                Err(read_err) => {
-                    // WAL file doesn't exist or can't be read
-                    warn!(
-                        "⚠️  Failed to read WAL file {} for collection {}: {}. \
-                          This may indicate the file was already deleted or flushed in a previous recovery.",
-                        file_info.file_url, collection_id, read_err
-                    );
-
-                    // Check if this entry is already marked as Flushed in manifest
-                    // If so, this is expected. If not, this is a problem.
-                    if e.status == crate::storage::persistence::write_ahead_log::manifest::WalEntryStatus::Active {
-                        warn!("⚠️  WARNING: WAL file missing but manifest shows status=Active. \
-                              Data may have been lost if storage engine flush didn't complete.");
-                    }
-                }
-            }
+        let listed =
+            Self::list_wal_files_across_bases(&disk_manager, &candidate_bases, collection_id)
+                .await?;
+        if listed.is_empty() {
+            return Ok((0, 0));
         }
 
-        // Process non-manifest files as best-effort
-        let listed = disk_manager
-            .list_collection_files(collection_id)
-            .await
-            .unwrap_or_default();
-        for fi in listed {
-            if let Some(name) = fi.file_url.split('/').next_back()
-                && entries.iter().any(|m| m.file_path.ends_with(name))
+        struct ReplayObject {
+            file: WalFileInfo,
+            data: Vec<u8>,
+            token: Option<crate::storage::persistence::write_ahead_log::RecoveryToken>,
+            manifest_lsn: Option<u64>,
+            manifested: bool,
+            checksum: u32,
+            records: Vec<proximadb_records::ProximaRecord>,
+        }
+
+        let manifests_by_name: HashMap<_, _> = manifest_entries
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .file_path
+                    .split('/')
+                    .next_back()
+                    .map(|name| (name.to_string(), entry))
+            })
+            .collect();
+        let mut replay = Vec::with_capacity(listed.len());
+        for file in listed {
+            let file_name = file.file_url.split('/').next_back().unwrap_or("");
+            let manifest = manifests_by_name.get(file_name).copied();
+            if let Some(entry) = manifest
+                && entry.status
+                    != crate::storage::persistence::write_ahead_log::manifest::WalEntryStatus::Active
             {
+                // Flushed is the cache's durable skip-list: materialization
+                // committed before this status was published. Never replay it,
+                // because later compaction may legitimately consume the original
+                // deterministic L0 segment while a failed WAL delete leaves this
+                // object behind.
+                if matches!(
+                    entry.status,
+                    crate::storage::persistence::write_ahead_log::manifest::WalEntryStatus::Flushed
+                        | crate::storage::persistence::write_ahead_log::manifest::WalEntryStatus::Archived
+                        | crate::storage::persistence::write_ahead_log::manifest::WalEntryStatus::RolledBack
+                ) && let Err(error) = disk_manager.delete_wal_file_url(&file.file_url).await
+                {
+                    warn!(file = %file.file_url, %error, "failed to retire skipped WAL object");
+                }
                 continue;
             }
-            let count =
-                Self::recover_file_internal(&fi, &disk_manager, &storage_engines, recovery_mode)
-                    .await?;
-            vectors_recovered += count;
-            files_recovered += 1;
+            let read = disk_manager.read_batch_with_envelope(&file).await?;
+            if let Some(entry) = manifest
+                && read.checksum_crc32 != entry.checksum_crc32
+            {
+                anyhow::bail!("manifest checksum mismatch for {}", file.file_url);
+            }
+            let records = SerializerFactory::create(file.format)
+                .deserialize_batch(&read.data)
+                .with_context(|| format!("deserializing {}", file.file_url))?;
+            if !read.record_ordinals.is_empty() && read.record_ordinals.len() != records.len() {
+                anyhow::bail!("record ordinal count mismatch for {}", file.file_url);
+            }
+            replay.push(ReplayObject {
+                file,
+                data: read.data,
+                token: read.recovery_token,
+                manifest_lsn: manifest.map(|entry| entry.global_lsn),
+                manifested: manifest.is_some(),
+                checksum: read.checksum_crc32,
+                records,
+            });
+        }
+        if replay.is_empty() {
+            return Ok((0, 0));
         }
 
-        // Note: Global manifest cleanup is handled separately via checkpoint system
-        // No need for per-collection manifest compaction
+        let storage_url = Self::storage_base_from_wal_url(&replay[0].file)?;
+        if replay
+            .iter()
+            .any(|object| object.token.is_none() && !object.manifested)
+        {
+            let fresh = replay.len() == 1
+                && manifest_entries.is_empty()
+                && !Self::collection_has_segments(collection_id, &storage_url, &disk_manager)
+                    .await?;
+            if !fresh {
+                anyhow::bail!(
+                    "tokenless orphan WAL for collection {collection_id} overlaps existing WAL/segments; explicit operator ordering is required"
+                );
+            }
+        }
 
-        info!(
-            "✅ Recovered {} vectors from {} files for collection {}",
-            vectors_recovered, files_recovered, collection_id
-        );
-        Ok((vectors_recovered, files_recovered))
+        if let Some(tenant_id) = replay
+            .iter()
+            .filter_map(|object| object.token.as_ref())
+            .map(|token| token.tenant_id.as_str())
+            .find(|tenant| !tenant.is_empty())
+        {
+            if let Some(manager) = crate::cluster::partition_lease::global_partition_lease_manager()
+            {
+                if !manager
+                    .begin_writer_incarnation(
+                        tenant_id,
+                        collection_id,
+                        chrono::Utc::now().timestamp_millis(),
+                    )
+                    .await?
+                {
+                    anyhow::bail!("collection {collection_id} recovery is fenced by another pod");
+                }
+            } else if crate::storage::persistence::write_ahead_log::recovery_token::certified_mode()
+            {
+                anyhow::bail!("certified recovery has no partition lease manager");
+            }
+        }
+
+        replay.sort_by(|left, right| match (&left.token, &right.token) {
+            (None, None) => left.manifest_lsn.cmp(&right.manifest_lsn),
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (Some(left), Some(right)) => left.cmp(right),
+        });
+
+        use sha2::{Digest, Sha256};
+        let mut digest = Sha256::new();
+        let mut latest_by_oid: HashMap<String, (usize, proximadb_records::ProximaRecord)> =
+            HashMap::new();
+        let mut order = 0usize;
+        // TD-DELVEC-1 WI-5 P1: retain each record's durable per-batch manifest_lsn
+        // (the dedup map drops the batch→record association) so the post-flush
+        // reconciliation pass can re-mark DV bits at the correct generation.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let mut oid_to_lsn: HashMap<String, u64> = HashMap::new();
+        for object in &replay {
+            if let Some(token) = &object.token {
+                digest.update(token.epoch.to_be_bytes());
+                digest.update(token.sequence.to_be_bytes());
+            } else {
+                digest.update(object.manifest_lsn.unwrap_or_default().to_be_bytes());
+            }
+            digest.update(&object.data);
+            for record in &object.records {
+                // Latest mutation wins in durable token order. Tombstones remain
+                // materialized so they continue suppressing values in older segments.
+                latest_by_oid.insert(record.oid.clone(), (order, record.clone()));
+                #[cfg(feature = "cold-deletion-vectors")]
+                if let Some(lsn) = object.manifest_lsn {
+                    oid_to_lsn.insert(record.oid.clone(), lsn);
+                }
+                order = order.saturating_add(1);
+            }
+        }
+        let mut ordered = latest_by_oid.into_values().collect::<Vec<_>>();
+        ordered.sort_by_key(|(record_order, _)| *record_order);
+        let vectors = ordered
+            .into_iter()
+            .map(|(_, record)| record)
+            .collect::<Vec<_>>();
+        // TD-DELVEC-1 WI-5 P1: collect the recovery tombstones (with their durable
+        // manifest_lsn) so the post-flush pass can re-mark any DV bits a crash
+        // stranded between the WAL append and mark_deleted.
+        #[cfg(feature = "cold-deletion-vectors")]
+        let recovery_tombstones: Vec<(String, u64)> = vectors
+            .iter()
+            .filter(|r| r.valid_to_ns == Some(0) && r.origin.as_deref() == Some("delete"))
+            .filter_map(|r| oid_to_lsn.get(&r.oid).map(|&lsn| (r.oid.clone(), lsn)))
+            .collect();
+        let digest = format!("{:x}", digest.finalize());
+        let range = match (
+            replay.first().and_then(|object| object.token.as_ref()),
+            replay.last().and_then(|object| object.token.as_ref()),
+        ) {
+            (Some(first), Some(last)) => format!(
+                "{:020}-{:020}_{:020}-{:020}",
+                first.epoch, first.sequence, last.epoch, last.sequence
+            ),
+            _ => format!("legacy-{}", replay[0].file.batch_id.to_base62()),
+        };
+        let materialization_id = format!("{range}-{digest}");
+        let batch_ids = replay.iter().map(|object| object.file.batch_id).collect();
+        let result = Self::flush_recovered_range(
+            collection_id,
+            vectors.clone(),
+            batch_ids,
+            &storage_engines,
+            &storage_url,
+            &materialization_id,
+            &digest,
+        )
+        .await?;
+        if !result.success {
+            anyhow::bail!("recovery materialization failed for collection {collection_id}");
+        }
+
+        // TD-DELVEC-1 WI-5 P1: re-mark deletion-vector bits for the recovery
+        // tombstones (a crash may have stranded them between the WAL append and
+        // mark_deleted). The just-flushed `L0_recovery_*` segments now exist on
+        // disk, so resolve_oid_positions can find the target rows. Disk-authoritative:
+        // the recovery engine's marks persist to `{segment}.dv`, which the canonical
+        // serving engine reads. Best-effort — failure logs + continues.
+        #[cfg(feature = "cold-deletion-vectors")]
+        if !recovery_tombstones.is_empty()
+            && let Some(engine) = storage_engines.read().await.get(collection_id).cloned()
+            && let Err(e) = engine
+                .reconcile_deletion_vectors(collection_id, &recovery_tombstones)
+                .await
+        {
+            tracing::warn!("recovery DV reconcile failed for {collection_id}: {e:?}");
+        }
+
+        // Test-only crash-point seam (default unset ⇒ normal retirement, no runtime cost
+        // on the hot path — recovery is infrequent). Simulates a process crash at a
+        // precise point in the post-materialization retirement sequence so the two
+        // recovery double-replay crash windows are deterministically reproducible in the
+        // full-server restart harness (TD-OBJSTORE-4 S3). `after_materialize` = crash right
+        // after the segment `write_if_absent` commit, before the manifest is marked flushed
+        // (W1: next boot re-replays → `AlreadyExists` idempotency).
+        let recovery_crash_point =
+            std::env::var("PROXIMADB_TEST_RECOVERY_CRASH_POINT").unwrap_or_default();
+        if recovery_crash_point == "after_materialize" {
+            warn!(
+                collection = %collection_id,
+                "PROXIMADB_TEST_RECOVERY_CRASH_POINT=after_materialize: skipping manifest \
+                 mark-flushed and WAL retirement to simulate a crash after materialization"
+            );
+            return Ok((vectors.len() as u64, replay.len() as u64));
+        }
+
+        if crate::storage::persistence::write_ahead_log::manifest::get_service().is_some() {
+            for object in replay.iter().filter(|object| !object.manifested) {
+                let file_name = object
+                    .file
+                    .file_url
+                    .split('/')
+                    .next_back()
+                    .unwrap_or("")
+                    .to_string();
+                let entry =
+                crate::storage::persistence::write_ahead_log::manifest::GlobalManifestEntry::new(
+                    0,
+                    collection_id.to_string(),
+                    &object.file.batch_id,
+                    file_name,
+                    object.data.len() as u64,
+                    object.checksum,
+                    object.file.format,
+                    object.records.len() as u64,
+                    storage_url.clone(),
+                );
+                crate::storage::persistence::write_ahead_log::manifest::append_sync(entry).await?;
+            }
+            let batch_id_strings = replay
+                .iter()
+                .map(|object| object.file.batch_id.to_base62())
+                .collect::<Vec<_>>();
+            crate::storage::persistence::write_ahead_log::manifest::mark_flushed(&batch_id_strings)
+                .await?;
+        } else if crate::storage::persistence::write_ahead_log::recovery_token::certified_mode() {
+            anyhow::bail!("certified recovery cannot repair an uninitialized manifest cache");
+        }
+        // W2: crash after the manifest is marked flushed but before WAL retirement — next
+        // boot sees the WAL present + manifest `Flushed` and skips it via the durable
+        // skip-list, retiring the stranded object. Test-only (default unset ⇒ normal path).
+        if recovery_crash_point == "after_mark_flushed" {
+            warn!(
+                collection = %collection_id,
+                "PROXIMADB_TEST_RECOVERY_CRASH_POINT=after_mark_flushed: skipping WAL \
+                 retirement to simulate a crash after mark-flushed"
+            );
+            return Ok((vectors.len() as u64, replay.len() as u64));
+        }
+        for object in &replay {
+            if let Err(error) = disk_manager
+                .delete_wal_file_url(&object.file.file_url)
+                .await
+            {
+                warn!(file = %object.file.file_url, %error, "recovery committed; WAL retirement will retry next boot");
+            }
+        }
+        if let Some(callback) = progress_callback {
+            callback(RecoveryProgress {
+                current_file: replay.len(),
+                total_files: replay.len(),
+                current_collection: collection_id.to_string(),
+                vectors_recovered: vectors.len() as u64,
+                bytes_processed: replay.iter().map(|object| object.data.len() as u64).sum(),
+            });
+        }
+        Ok((vectors.len() as u64, replay.len() as u64))
+    }
+
+    /// Issue #1125: assemble the ordered, deduplicated list of WAL base URLs a
+    /// collection's files may live under. Priority: the catalog-assigned
+    /// base_location (what the write path uses), then every distinct manifest
+    /// storage_url (where files were actually recorded), then the configured
+    /// primary base (this recovery manager's disk_manager root). Trailing
+    /// slashes are normalized so `file:///x/` and `file:///x` dedupe.
+    fn wal_candidate_bases(
+        catalog_base: Option<&str>,
+        manifest_bases: &[String],
+        primary_base: &str,
+    ) -> Vec<String> {
+        let mut bases: Vec<String> = Vec::new();
+        let push_base = |bases: &mut Vec<String>, base: &str| {
+            let normalized = base.trim_end_matches('/').to_string();
+            if !normalized.is_empty() && !bases.contains(&normalized) {
+                bases.push(normalized);
+            }
+        };
+        // ADR-069 S1: when an opt-in local WAL root is set (PROXIMADB_WAL_LOCAL_DIR),
+        // the write path roots the WAL there — prepend it as a candidate base so
+        // replay lists it (otherwise the .bcwal on /waldisk is missed → restart data
+        // loss). Listed FIRST so a present local WAL short-circuits the union.
+        if let Some(local) = crate::storage::persistence::write_ahead_log::local_wal_dir_env() {
+            push_base(&mut bases, &local);
+        }
+        if let Some(base) = catalog_base {
+            push_base(&mut bases, base);
+        }
+        for base in manifest_bases {
+            push_base(&mut bases, base);
+        }
+        push_base(&mut bases, primary_base);
+        bases
+    }
+
+    /// Issue #1125: list a collection's WAL files across every candidate base,
+    /// unioned and deduplicated by file URL. Listing failures stay fail-closed
+    /// (`?`), preserving the TD-OBJSTORE-4 posture: an unlistable base aborts
+    /// recovery rather than silently dropping data.
+    async fn list_wal_files_across_bases(
+        disk_manager: &Arc<WriteAheadLogDiskManager>,
+        candidate_bases: &[String],
+        collection_id: &str,
+    ) -> Result<Vec<WalFileInfo>> {
+        let primary_base = disk_manager.get_base_wal_url().trim_end_matches('/');
+        let mut listed: Vec<WalFileInfo> = Vec::new();
+        let mut seen_file_urls: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for base in candidate_bases {
+            let base_manager = if base == primary_base {
+                disk_manager.clone()
+            } else {
+                Arc::new(WriteAheadLogDiskManager::new(
+                    disk_manager.filesystem_factory().clone(),
+                    base.clone(),
+                ))
+            };
+            for file in base_manager.list_collection_files(collection_id).await? {
+                if seen_file_urls.insert(file.file_url.clone()) {
+                    listed.push(file);
+                }
+            }
+        }
+        Ok(listed)
     }
 
     /// Recover a single WAL file (public API)
@@ -693,6 +909,82 @@ impl RecoveryManager {
         }
 
         Ok(vector_count)
+    }
+
+    fn storage_base_from_wal_url(file: &WalFileInfo) -> Result<String> {
+        file.file_url
+            .split(&format!("/{}/wal/", file.collection_id))
+            .next()
+            .filter(|base| !base.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("cannot derive storage base from {}", file.file_url))
+    }
+
+    async fn collection_has_segments(
+        collection_id: &str,
+        storage_url: &str,
+        disk_manager: &Arc<WriteAheadLogDiskManager>,
+    ) -> Result<bool> {
+        let data_url = format!(
+            "{}/{}/data/",
+            storage_url.trim_end_matches('/'),
+            collection_id
+        );
+        let filesystem = disk_manager
+            .filesystem_factory()
+            .get_filesystem(&data_url)?;
+        let entries =
+            WriteAheadLogDiskManager::list_prefix_entries(&*filesystem, &data_url).await?;
+        Ok(entries.iter().any(|entry| {
+            let name = entry.name.to_ascii_lowercase();
+            name.ends_with(".pax") || name.ends_with(".sst") || name.ends_with(".arrow")
+        }))
+    }
+
+    async fn flush_recovered_range(
+        collection_id: &str,
+        vectors: Vec<proximadb_records::ProximaRecord>,
+        batch_ids: Vec<BatchId>,
+        storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
+        storage_url: &str,
+        materialization_id: &str,
+        content_digest: &str,
+    ) -> Result<crate::storage::traits::FlushResult> {
+        let engines = storage_engines.read().await;
+        let engine = engines.get(collection_id).ok_or_else(|| {
+            anyhow::anyhow!("No storage engine registered for collection {collection_id}")
+        })?;
+        let collection_config =
+            if let Some(collection) = super::resolve_collection_from_catalog(collection_id).await {
+                Some(collection)
+            } else {
+                Self::create_minimal_collection_config(collection_id, storage_url)
+            };
+        let mut hints = HashMap::new();
+        hints.insert(
+            "recovery_materialization_id".to_string(),
+            serde_json::Value::String(materialization_id.to_string()),
+        );
+        hints.insert(
+            "recovery_content_digest".to_string(),
+            serde_json::Value::String(content_digest.to_string()),
+        );
+        hints.insert(
+            "suppress_compaction_until_wal_retired".to_string(),
+            serde_json::Value::Bool(true),
+        );
+        let params = crate::storage::traits::FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            collection_config,
+            force: true,
+            synchronous: true,
+            vector_records: vectors,
+            batch_ids,
+            hints,
+            trigger_compaction: false,
+            ..Default::default()
+        };
+        engine.do_flush(&params).await
     }
 
     /// Flush recovered vectors to storage engine
@@ -1142,6 +1434,118 @@ mod tests {
         assert_eq!(stats.total_files_recovered, 3);
     }
 
+    /// Issue #1125 regression: candidate bases must union the catalog-assigned
+    /// base, every manifest storage_url, and the configured primary base —
+    /// deduplicated with trailing slashes normalized.
+    #[test]
+    fn wal_candidate_bases_unions_catalog_manifest_and_primary() {
+        let bases = RecoveryManager::wal_candidate_bases(
+            Some("file:///tmp/pdb/d2/"),
+            &[
+                "file:///tmp/pdb/d2".to_string(),
+                "file:///tmp/pdb/d3".to_string(),
+                String::new(),
+            ],
+            "file:///tmp/pdb/wal-primary",
+        );
+        assert_eq!(
+            bases,
+            vec![
+                "file:///tmp/pdb/d2".to_string(),
+                "file:///tmp/pdb/d3".to_string(),
+                "file:///tmp/pdb/wal-primary".to_string(),
+            ],
+            "catalog base first, manifest bases next, primary last; dedup + slash-normalized"
+        );
+
+        // No catalog / no manifest degrades to the primary base only (pre-#1125 behavior).
+        let primary_only =
+            RecoveryManager::wal_candidate_bases(None, &[], "file:///tmp/pdb/wal-primary");
+        assert_eq!(
+            primary_only,
+            vec!["file:///tmp/pdb/wal-primary".to_string()]
+        );
+    }
+
+    /// Issue #1125 regression: a WAL batch written under a NON-primary base
+    /// (the collection's assigned storage location — e.g. `d2` of a multi-disk
+    /// config) must be found by the cross-base listing. The single-base listing
+    /// this replaces returned zero files for exactly this layout, so an
+    /// acknowledged fsync'd batch was silently dropped on restart.
+    #[tokio::test]
+    async fn recovery_lists_wal_written_under_non_primary_base() {
+        let (primary_disk_manager, _flush_coordinator, _recovery_manager, primary_dir) =
+            create_test_managers().await;
+        let collection_id = "c1125";
+
+        // Simulate the write path: the collection's WAL lands under its
+        // assigned base_location (a different directory from the recovery
+        // manager's configured base).
+        let assigned_dir = TempDir::new().expect("Failed to create assigned dir");
+        let assigned_base = assigned_dir.path().to_str().unwrap().to_string();
+        let write_disk_manager = Arc::new(WriteAheadLogDiskManager::new(
+            primary_disk_manager.filesystem_factory().clone(),
+            assigned_base.clone(),
+        ));
+
+        use crate::storage::persistence::write_ahead_log::serialization::{
+            ProtocolBuffersSerializer, VectorBatchSerializer,
+        };
+        let serializer = ProtocolBuffersSerializer::new();
+        let vector = create_test_vector("r1125");
+        let data = serializer
+            .serialize_batch(std::slice::from_ref(&vector))
+            .expect("Failed to serialize");
+        write_disk_manager
+            .write_batch(
+                collection_id,
+                &BatchId::new(),
+                &data,
+                SerializationFormat::ProtocolBuffers,
+                1,
+            )
+            .await
+            .expect("Failed to write batch");
+
+        // Old behavior (primary base only): the batch is invisible.
+        let primary_only = RecoveryManager::list_wal_files_across_bases(
+            &primary_disk_manager,
+            &RecoveryManager::wal_candidate_bases(
+                None,
+                &[],
+                primary_disk_manager.get_base_wal_url(),
+            ),
+            collection_id,
+        )
+        .await
+        .expect("primary-only listing failed");
+        assert!(
+            primary_only.is_empty(),
+            "sanity: the batch does NOT live under the primary base"
+        );
+
+        // Fixed behavior: the assigned base (as the catalog/manifest would
+        // report it) is included, so the batch is found exactly once.
+        let unioned = RecoveryManager::list_wal_files_across_bases(
+            &primary_disk_manager,
+            &RecoveryManager::wal_candidate_bases(
+                Some(&assigned_base),
+                &[assigned_base.clone()], // manifest repeats it — must dedupe
+                primary_disk_manager.get_base_wal_url(),
+            ),
+            collection_id,
+        )
+        .await
+        .expect("cross-base listing failed");
+        assert_eq!(
+            unioned.len(),
+            1,
+            "the non-primary-base WAL batch must be listed exactly once (deduped)"
+        );
+        assert_eq!(unioned[0].collection_id, collection_id);
+        drop(primary_dir);
+    }
+
     // Mock storage engine for testing
     fn create_mock_storage_engine() -> Arc<dyn UnifiedStorageFormat> {
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
@@ -1226,10 +1630,6 @@ mod tests {
                 _query_context: &crate::storage::traits::StorageQueryContext,
             ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
                 Ok(Vec::new())
-            }
-
-            fn get_filesystem_factory(&self) -> &FilesystemFactory {
-                &self.filesystem_factory
             }
         }
 

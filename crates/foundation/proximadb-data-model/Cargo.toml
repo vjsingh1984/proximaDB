@@ -19,3 +19,6 @@ arrow-schema = { workspace = true, default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 rmp-serde = "1.1"
+proximadb-proto.workspace = true
+proximadb-interner.workspace = true
+prost-types.workspace = true

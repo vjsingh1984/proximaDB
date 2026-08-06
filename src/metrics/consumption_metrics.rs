@@ -24,15 +24,21 @@ use tracing::error;
 // sanctioned panic site per vec type instead of repeating it at every metric.
 fn registered_counter_vec(name: &'static str, help: &'static str, labels: &[&str]) -> CounterVec {
     register_counter_vec!(Opts::new(name, help), labels).unwrap_or_else(|err| {
-        error!("failed to register {}: {}", name, err);
-        CounterVec::new(Opts::new(name, ""), labels).unwrap()
+        // No-panic mandate #4: registration can fail (e.g. a duplicate name).
+        // The fallback MUST NOT reuse an empty help — prometheus rejects that
+        // too, so the old `""` here panicked the tokio worker on the first
+        // search (an unregistered-but-usable vec is the correct degradation).
+        error!("failed to register {name} (using unregistered fallback): {err}");
+        CounterVec::new(Opts::new(name, help), labels)
+            .expect("counter descriptor with non-empty help is always valid")
     })
 }
 
 fn registered_gauge_vec(name: &'static str, help: &'static str, labels: &[&str]) -> GaugeVec {
     register_gauge_vec!(Opts::new(name, help), labels).unwrap_or_else(|err| {
-        error!("failed to register {}: {}", name, err);
-        GaugeVec::new(Opts::new(name, ""), labels).unwrap()
+        error!("failed to register {name} (using unregistered fallback): {err}");
+        GaugeVec::new(Opts::new(name, help), labels)
+            .expect("gauge descriptor with non-empty help is always valid")
     })
 }
 
@@ -41,6 +47,60 @@ lazy_static! {
         "proximadb_object_store_ops_total",
         "Total number of object store I/O operations (put, get, list, delete)",
         &["tenant_id", "operation"]
+    );
+    /// TD-IOTRACE-2: per-tenant physical object-store ranged GETs — the accurate
+    /// per-query GET count from the io-trace snapshot (post-#1081 single-source
+    /// counting, e.g. 51/query @ SIFT1M not 102). The billing input for the
+    /// physical part of the two-part KRU rate (TD-IOTRACE-3). Neutral count only;
+    /// AnvaiOps (control plane) applies the $/rate-card.
+    pub static ref OBJECT_STORE_GETS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_object_store_gets_total",
+        "Per-tenant physical object-store ranged GETs (TD-IOTRACE-2, KRU physical)",
+        &["tenant_id"]
+    );
+    /// TD-IOTRACE-2: per-tenant physical object-store bytes read — the accurate
+    /// per-query read bytes from the io-trace snapshot (post-#1081). Companion to
+    /// [`OBJECT_STORE_GETS_TOTAL`]; the bytes side of the KRU physical rate input.
+    /// Neutral count only; AnvaiOps applies the $/rate-card.
+    pub static ref OBJECT_STORE_BYTES_READ_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_object_store_bytes_read_total",
+        "Per-tenant physical object-store bytes read (TD-IOTRACE-2, KRU physical)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_CELLS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_cells_total",
+        "Persisted-IVF cells considered by vector queries (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_CELLS_PROBED_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_cells_probed_total",
+        "Persisted-IVF cells probed by vector queries (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_PROBED_ROWS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_probed_rows_total",
+        "Rows covered by persisted-IVF probes (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_REGION_A_BYTES_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_region_a_bytes_read_total",
+        "Physical PAX Region-A (RaBitQ) bytes read by vector queries (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_REGION_B_BYTES_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_region_b_bytes_read_total",
+        "Physical PAX Region-B (SQ8) bytes read by vector queries (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_FETCH_ROUNDS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_fetch_rounds_total",
+        "Coalesced Region-A probe ranged-read runs (TD-RDSTRAT-8)",
+        &["tenant_id"]
+    );
+    pub static ref IVF_WHOLE_REGION_FALLBACK_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_ivf_whole_region_fallback_total",
+        "Armed v3 probes that fell back to a whole Region-A scan (TD-RDSTRAT-8)",
+        &["tenant_id"]
     );
     pub static ref STORAGE_BYTES_SECONDS: GaugeVec = registered_gauge_vec(
         "proximadb_storage_bytes_seconds",
@@ -96,6 +156,18 @@ lazy_static! {
         "proximadb_object_store_write_bytes_by_tier_total",
         "Bytes written to object storage per tenant by access tier (write-time; the cold-tier cost lever)",
         &["tenant_id", "tier"]
+    );
+    /// TD-WLP-8 (ADR-061 D4): resident in-memory **working-set** bytes of a
+    /// `Churn` collection — the unflushed WAL/memtable delta it keeps hot for
+    /// immediate-freshness reads. A level gauge (current resident bytes),
+    /// sampled at the `Churn` read seam; the companion soft ceiling
+    /// (`PROXIMADB_CHURN_WORKING_SET_MB`) makes an over-budget collection
+    /// observable so it degrades gracefully instead of silently OOMing.
+    /// Emitted only for `Churn` collections (`AppendBulk` never samples).
+    pub static ref CHURN_WORKING_SET_BYTES: GaugeVec = registered_gauge_vec(
+        "proximadb_churn_collection_working_set_bytes",
+        "Resident in-memory working-set bytes of a Churn collection (unflushed WAL/memtable delta)",
+        &["tenant_id", "collection_id"]
     );
 }
 
@@ -574,6 +646,17 @@ pub fn record_storage_bytes(tenant_id: Option<&str>, storage_type: &str, bytes: 
         .set(bytes);
 }
 
+/// TD-WLP-8: set the `Churn` collection working-set level gauge. Called from
+/// the `Churn` read seam with the collection's current unflushed byte count;
+/// pure gauge `.set()` (the soft-ceiling decision lives at the call site,
+/// which owns the env). An absent/empty tenant is attributed to `"default"`.
+pub fn record_churn_working_set_bytes(tenant_id: Option<&str>, collection_id: &str, bytes: u64) {
+    let t_id = tenant_id.unwrap_or("default");
+    CHURN_WORKING_SET_BYTES
+        .with_label_values(&[t_id, collection_id])
+        .set(bytes as f64);
+}
+
 /// ADR-030 **KSU**: snapshot per-tenant *resident* storage bytes from the live
 /// collection set and `.set()` the `STORAGE_BYTES_SECONDS` **level** gauge
 /// (Prometheus integrates the level to byte-seconds downstream — KSU is an
@@ -593,14 +676,9 @@ pub fn record_storage_snapshot(
 }
 
 /// One tenant's aggregated **resident** storage at snapshot time — the unit the
-/// durable per-tenant `_metering` writer (TD-161) persists and the OTLP push
-/// emitter ships. Serializable so it is the on-disk record shape under
-/// `DrResolvedPath::metering_subprefix()`.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct TenantStorageUsage {
-    pub tenant_id: String,
-    pub resident_bytes: u64,
-}
+/// Pre-extracted to `proximadb-tenant` (foundation) for the observability crate
+/// extraction. Re-exported here so all existing callers are unchanged.
+pub use proximadb_tenant::TenantStorageUsage;
 
 /// Pure aggregation backing [`record_storage_snapshot`]: sum
 /// `stats.data_size_bytes` per owning tenant across the live collection set.
@@ -651,11 +729,45 @@ pub fn record_task_execution_time(tenant_id: Option<&str>, engine: &str, duratio
 /// route-cost observer. Idempotent / replaceable in tests.
 pub fn install_billing_observer() {
     crate::observability::io_trace::set_billing_observer(Some(Box::new(|snap, tenant_id| {
+        let t_id = tenant_id.unwrap_or("default");
         // KRU (read-compute): per-(tenant, engine), straight from the engine-keyed
         // compute_ms map — no extra attribution needed.
         for (engine, ms) in &snap.compute_ms {
             if *ms > 0 {
                 record_task_execution_time(tenant_id, engine, *ms as f64);
+            }
+        }
+        // TD-IOTRACE-2: the physical object-store meters — the accurate per-query
+        // ranged-GET count + bytes (post-#1081 single-source io-trace). These are
+        // the billing input for the physical part of the two-part KRU rate
+        // (TD-IOTRACE-3). Neutral counts; AnvaiOps applies the $/rate-card.
+        if snap.range_gets > 0 {
+            OBJECT_STORE_GETS_TOTAL
+                .with_label_values(&[t_id])
+                .inc_by(snap.range_gets as f64);
+        }
+        if snap.bytes_read > 0 {
+            OBJECT_STORE_BYTES_READ_TOTAL
+                .with_label_values(&[t_id])
+                .inc_by(snap.bytes_read as f64);
+        }
+        // TD-RDSTRAT-8 PR-C1: persisted-IVF coarse-probe physical meters (neutral
+        // counts; AnvaiOps applies the $/rate-card). Region-A/B bytes are the
+        // tier-split physical read cost the probe paid.
+        for (counter, value) in [
+            (&*IVF_CELLS_TOTAL, snap.ivf_cells_total),
+            (&*IVF_CELLS_PROBED_TOTAL, snap.ivf_cells_probed),
+            (&*IVF_PROBED_ROWS_TOTAL, snap.ivf_probed_rows),
+            (&*IVF_REGION_A_BYTES_TOTAL, snap.ivf_region_a_bytes),
+            (&*IVF_REGION_B_BYTES_TOTAL, snap.ivf_region_b_bytes),
+            (&*IVF_FETCH_ROUNDS_TOTAL, snap.ivf_fetch_rounds),
+            (
+                &*IVF_WHOLE_REGION_FALLBACK_TOTAL,
+                snap.ivf_whole_region_fallback,
+            ),
+        ] {
+            if value > 0 {
+                counter.with_label_values(&[t_id]).inc_by(value as f64);
             }
         }
     })));
@@ -817,6 +929,35 @@ mod tests {
         );
     }
 
+    /// TD-WLP-8: the Churn working-set gauge round-trips per (tenant, collection)
+    /// and attributes an absent tenant to "default" (fail-closed).
+    #[test]
+    fn churn_working_set_gauge_round_trips() {
+        record_churn_working_set_bytes(Some("ksu_wlp8"), "col_hot", 4096);
+        assert_eq!(
+            CHURN_WORKING_SET_BYTES
+                .with_label_values(&["ksu_wlp8", "col_hot"])
+                .get(),
+            4096.0
+        );
+        // A later sample overwrites the level (gauge, not counter).
+        record_churn_working_set_bytes(Some("ksu_wlp8"), "col_hot", 2048);
+        assert_eq!(
+            CHURN_WORKING_SET_BYTES
+                .with_label_values(&["ksu_wlp8", "col_hot"])
+                .get(),
+            2048.0
+        );
+        // Absent tenant → "default".
+        record_churn_working_set_bytes(None, "col_unowned", 512);
+        assert_eq!(
+            CHURN_WORKING_SET_BYTES
+                .with_label_values(&["default", "col_unowned"])
+                .get(),
+            512.0
+        );
+    }
+
     #[test]
     fn provider_inferred_from_url_scheme() {
         assert_eq!(CloudProvider::from_url_scheme("s3"), CloudProvider::Aws);
@@ -968,6 +1109,64 @@ mod tests {
             map.classify("192.168.9.9".parse().unwrap()),
             KouLocality::Unknown
         );
+    }
+
+    #[tokio::test]
+    async fn billing_observer_emits_physical_object_store_meters() {
+        // TD-IOTRACE-2: the always-on billing observer must emit the accurate
+        // per-query range_gets + bytes_read as per-tenant neutral counters (the
+        // physical part of the two-part KRU rate). A fresh tenant id keeps the
+        // CounterVec children at their 0 baseline so the assertion is exact.
+        install_billing_observer();
+        let tenant = "test-iotrace2-physical-meters";
+        io_trace::instrument(Some(tenant.to_string()), "test.iotrace2", async {
+            io_trace::record_range_gets(7);
+            io_trace::record_bytes_read(4096);
+            io_trace::record_ivf_coarse_probe(64, 8, 4096, 3, false);
+            io_trace::record_ivf_coarse_probe(0, 0, 0, 0, true); // armed-but-missed fallback
+            io_trace::record_pax_region_bytes(200_000, 800_000);
+        })
+        .await;
+        assert_eq!(
+            OBJECT_STORE_GETS_TOTAL.with_label_values(&[tenant]).get(),
+            7.0
+        );
+        assert_eq!(
+            OBJECT_STORE_BYTES_READ_TOTAL
+                .with_label_values(&[tenant])
+                .get(),
+            4096.0
+        );
+        // TD-RDSTRAT-8 PR-C1: IVF coarse-probe physical meters.
+        assert_eq!(IVF_CELLS_TOTAL.with_label_values(&[tenant]).get(), 64.0);
+        assert_eq!(
+            IVF_CELLS_PROBED_TOTAL.with_label_values(&[tenant]).get(),
+            8.0
+        );
+        assert_eq!(
+            IVF_PROBED_ROWS_TOTAL.with_label_values(&[tenant]).get(),
+            4096.0
+        );
+        assert_eq!(
+            IVF_REGION_A_BYTES_TOTAL.with_label_values(&[tenant]).get(),
+            200_000.0
+        );
+        assert_eq!(
+            IVF_REGION_B_BYTES_TOTAL.with_label_values(&[tenant]).get(),
+            800_000.0
+        );
+        assert_eq!(
+            IVF_FETCH_ROUNDS_TOTAL.with_label_values(&[tenant]).get(),
+            3.0
+        );
+        assert_eq!(
+            IVF_WHOLE_REGION_FALLBACK_TOTAL
+                .with_label_values(&[tenant])
+                .get(),
+            1.0
+        );
+        // Restore global observer state for the rest of the suite.
+        io_trace::set_billing_observer(None);
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! can delegate to real business logic without importing root-crate concrete types.
 //!
 //! Phase 9.9: this impl unblocks all nine `/api/v1/unified/*` endpoints in
-//! `crates/platform/proximadb-api/src/rest/v1/multimodal_query.rs`.
+//! `crates/platform/proximadb-api/src/rest/canonical/multimodal_query.rs`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -740,7 +740,7 @@ impl UnifiedQueryPort for UnifiedQueryPortImpl {
 
 /// Convert a multi-model query JSON to a federated SQL string.
 ///
-/// Mirrors the logic in `src/network/rest/v1/multimodal_query::convert_multi_model_to_sql`.
+/// Mirrors the logic in `src/network/rest/canonical/multimodal_query::convert_multi_model_to_sql`.
 /// Returns `None` when the request cannot be converted.
 fn json_to_multi_model_sql(req: &serde_json::Value) -> Option<String> {
     let components = req.get("components")?.as_array()?;

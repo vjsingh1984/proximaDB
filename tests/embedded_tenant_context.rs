@@ -7,7 +7,7 @@
 //! the collection-keyed on-disk layout is unchanged (non-breaking — embedded
 //! vector storage is not tenant-keyed).
 
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 use tempfile::TempDir;
 
 fn insert_one(db: &EmbeddedProximaDB, coll: &str) {

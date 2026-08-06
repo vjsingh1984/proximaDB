@@ -41,15 +41,14 @@
 pub mod distance;
 pub mod index;
 pub mod quantization;
-pub mod search;
-pub mod service;
 pub mod transform_index;
 
-// Re-export common types for convenience
-pub use distance::{
-    DistanceComputeProvider, DistanceMetric, DistanceMode, MetricProperties, SimilarityResult,
-    UnifiedDistanceCompute, cosine_distance, dot_product, euclidean_distance, manhattan_distance,
-};
+// Re-export common types for convenience. The duplicate distance/search
+// engine (SimilarityResult, UnifiedDistanceCompute, BruteForceSearch,
+// VectorServiceImpl) was removed under TD-SEARCH-1 — the canonical compute
+// lives in `proximadb-distance-kernel`; this crate keeps only the metric
+// enum + proto conversions.
+pub use distance::DistanceMetric;
 
 pub use quantization::{
     QuantizationConfig, QuantizationLevel, QuantizationType, QuantizedVectorData,
@@ -60,14 +59,6 @@ pub use index::{
     VectorIndexConfig,
 };
 
-pub use search::{
-    BruteForceSearch, SearchConfig, SearchError, SearchParams, SearchParams as VectorSearchParams,
-    SearchStats, VectorSearchEngine,
-};
-
-// Re-export Phase 3 service implementation
-pub use service::VectorServiceImpl;
-
 pub use transform_index::{DisentangledVectorProjection, TransformProjectionSpec};
 
 #[cfg(test)]
@@ -77,34 +68,18 @@ mod tests {
     #[test]
     fn test_vector_module_imports() {
         let _metric = DistanceMetric::Euclidean;
-        let _engine = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
     }
 
     #[test]
-    fn test_distance_calculations() {
-        let a = vec![1.0, 2.0, 3.0];
-        let b = vec![4.0, 5.0, 6.0];
-
-        let euclidean = euclidean_distance(&a, &b);
-        assert!((euclidean - 5.196).abs() < 0.01);
-
-        let cosine = cosine_distance(&a, &a);
-        assert!((cosine - 0.0).abs() < 1e-6);
-
-        let dot = dot_product(&a, &b);
-        assert_eq!(dot, 32.0);
-
-        let manhattan = manhattan_distance(&a, &b);
-        assert_eq!(manhattan, 9.0);
-    }
-
-    #[test]
-    fn test_engine() {
-        let engine = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
-        let a = vec![1.0, 2.0, 3.0];
-        let b = vec![4.0, 5.0, 6.0];
-
-        let result = engine.calculate_distance(&a, &b, &DistanceMetric::Euclidean);
-        assert!(result.raw_distance > 0.0);
+    fn proto_metric_conversion_round_trips() {
+        for metric in [
+            DistanceMetric::Cosine,
+            DistanceMetric::Euclidean,
+            DistanceMetric::DotProduct,
+            DistanceMetric::Manhattan,
+        ] {
+            let proto = distance::internal_distance_to_proto(metric);
+            assert_eq!(distance::proto_distance_to_internal(proto), metric);
+        }
     }
 }

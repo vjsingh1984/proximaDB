@@ -86,6 +86,10 @@ pub struct MetricsService {
 impl MetricsService {
     /// Create new metrics service
     pub fn new(config: MetricsServiceConfig, metrics_collector: Arc<MetricsCollector>) -> Self {
+        // TD-METRICS-1: force-register every lazy operational-metric family so
+        // /metrics/prometheus scrapes them as 0 before their first event
+        // (absent-vs-zero ambiguity cost a diagnostic cycle in the ratchet run).
+        crate::metrics::operational_metrics::touch();
         Self {
             config,
             metrics_collector,
@@ -96,9 +100,15 @@ impl MetricsService {
     pub fn create_router(&self) -> Router {
         let mut router = Router::new();
 
-        // Main metrics endpoint (supports multiple formats)
+        // TD-METRICS-2: the bare `/metrics` route (struct-exporter only, no real
+        // prometheus registries) was removed — it rendered stale/zero counters
+        // and misled operators. Redirect to the real endpoint; all consumers
+        // (admin UI included) use `/metrics/prometheus` + `/metrics/json`.
         if self.config.enable_prometheus || self.config.enable_json {
-            router = router.route("/", get(metrics_endpoint));
+            router = router.route(
+                "/",
+                get(|| async { axum::response::Redirect::permanent("/metrics/prometheus") }),
+            );
         }
 
         // JSON-specific metrics endpoint
@@ -124,28 +134,6 @@ impl MetricsService {
         }
 
         router.with_state(self.metrics_collector.clone())
-    }
-}
-
-/// Main metrics endpoint with format detection
-async fn metrics_endpoint(
-    Query(params): Query<MetricsQuery>,
-    State(metrics_collector): State<Arc<MetricsCollector>>,
-) -> Result<String, StatusCode> {
-    let format = params.format.unwrap_or_else(|| "prometheus".to_string());
-
-    match format.as_str() {
-        "json" => {
-            let metrics = metrics_collector.current_metrics().await;
-            serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-        }
-        _ => {
-            let metrics = metrics_collector.current_metrics().await;
-            let exporter = PrometheusExporter::new();
-            exporter
-                .export_system_metrics(&metrics)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-        }
     }
 }
 
@@ -199,6 +187,43 @@ async fn prometheus_metrics_endpoint(
             text.push('\n');
         }
         text.push_str(&wal_scan_text);
+    }
+    // ADR-069 / TD-WAL-1: append the WAL flush-optimizer family
+    // (proximadb_wal_flush_*, proximadb_wal_size_bytes, watermark + backpressure
+    // gauges). Empty until the first flush/size emit, so the response stays valid
+    // for binaries that never flush.
+    let wal_flush_text = crate::metrics::wal_flush_metrics::scrape_text();
+    if !wal_flush_text.is_empty() {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&wal_flush_text);
+    }
+    // Append the DEFAULT prometheus registry. The per-tenant CONSUMPTION families
+    // (`proximadb_object_store_ops_total`, `proximadb_kou_bytes_total`,
+    // `proximadb_storage_bytes_seconds`, `proximadb_object_store_write_bytes_by_tier_total`, …)
+    // register there via `register_*_vec!` in `crate::metrics::consumption_metrics`, and were
+    // otherwise registered-but-never-scraped (they are NOT in the hand-written system exporter
+    // above, and the precision/rank/wal-scan blocks each use their OWN `Registry`, so nothing is
+    // double-counted; the system exporter's `proximadb_storage_bytes` does not collide with the
+    // consumption `proximadb_storage_bytes_seconds`). Neutral usage telemetry only — pricing lives
+    // in the commercial control plane, never OSS.
+    let default_registry_text = {
+        use prometheus::Encoder;
+        let families = prometheus::gather();
+        let mut buf = Vec::new();
+        let encoder = prometheus::TextEncoder::new();
+        if encoder.encode(&families, &mut buf).is_ok() {
+            String::from_utf8(buf).unwrap_or_default()
+        } else {
+            String::new()
+        }
+    };
+    if !default_registry_text.is_empty() {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&default_registry_text);
     }
     Ok(text)
 }

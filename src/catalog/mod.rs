@@ -26,32 +26,38 @@ pub mod traits {
 }
 
 // Partition pruning for query optimization
-pub mod partition_pruning;
+pub use proximadb_catalog::partition_pruning;
 
 // CATALOG_OBJECT_MODEL #3 read-port: catalog adapter for AXIS index-location resolution.
+#[cfg(feature = "axis")]
 pub mod index_location_resolver;
 
 // ADR-035 / TD-SC-1: per-tenant system-catalog hot read cache (byte-bounded,
 // TTL'd, corpus-version-stamped) — fronts the canonical catalog so metadata
 // reads avoid the 1+N+M object-store round-trips.
-pub mod syscat_cache;
+pub use proximadb_catalog::syscat_cache;
 
 // ADR-035 / TD-SC-2: on-disk warm tier between the hot cache and the canonical
 // catalog (OS page cache instead of object-store round-trips on a hot miss).
-pub mod syscat_warm;
+pub use proximadb_catalog::syscat_warm;
 
 // Internal schema registry (multi-model unified catalog)
-pub mod internal;
+pub use proximadb_catalog::internal;
 
-// Iceberg REST catalog server — service layer translating internal ↔ Iceberg REST types
-pub mod iceberg_rest_service;
+// Iceberg REST catalog server — service layer translating internal ↔ Iceberg REST types.
+// Moved to proximadb-catalog (unblocked by the `ObjectStoreBridge` contract descending
+// into that crate); re-exported so `crate::catalog::iceberg_rest_service::*` is unchanged.
+pub use proximadb_catalog::iceberg_rest_service;
 
-// PAX segment registry — bridges write path (gRPC v2) with Iceberg REST snapshot stats
-pub mod segment_registry;
+// PAX segment registry — bridges write path (gRPC v2) with Iceberg REST snapshot stats.
+// Moved to proximadb-catalog (unblocked by `SegmentMeta` moving into proximadb-block-format).
+pub use proximadb_catalog::segment_registry;
 pub use segment_registry::SegmentRegistry;
 
-// Catalog federation (unified view across internal and external catalogs)
-pub mod federation;
+// Catalog federation (unified view across internal and external catalogs).
+// Moved to proximadb-catalog (Slice 3); re-exported so `crate::catalog::federation::*`
+// paths are unchanged.
+pub use proximadb_catalog::federation;
 
 // Tenant tier store — per-tenant policy + budget + feature flags (LLD §3, §4).
 pub mod tenant_tier;
@@ -61,7 +67,7 @@ pub use tenant_tier::{
 };
 
 // Recall probe gate — gating logic for the quantized route default-on (LLD §5).
-pub mod recall_probe;
+pub use proximadb_catalog::recall_probe;
 pub use recall_probe::{ProbeConfig, ProbeOutcome, ProbeScope, ProbeState, RecallProbeGate};
 
 /// Soft-cap budget guard — gateway-side check returning structured rejection.
@@ -92,11 +98,11 @@ pub use corpus_version::CorpusVersionRegistry;
 // Relocated to the proximadb-catalog crate; re-exported here for source compatibility.
 pub use proximadb_catalog::corpus_version;
 
+pub use corpus_version_fs_store::FileSystemCorpusVersionStore;
 /// File-backed CorpusVersionStore — first concrete durable backend
 /// for single-node deployments. Other backends (catalog row, KV)
 /// can implement the trait independently.
-pub mod corpus_version_fs_store;
-pub use corpus_version_fs_store::FileSystemCorpusVersionStore;
+pub use proximadb_catalog::corpus_version_fs_store;
 
 // Feature-gated catalog backends — canonical impls live in `proximadb-catalog`.
 #[cfg(feature = "delta-lake")]
@@ -108,14 +114,6 @@ pub use proximadb_catalog::polaris::PolarisCatalog;
 #[cfg(feature = "unity-catalog")]
 pub use proximadb_catalog::unity::UnityCatalog;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use anyhow::{Result, anyhow};
-use parking_lot::Mutex;
-use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
-use tracing::info;
-
 pub use self::partition_pruning::{
     PartitionInfo, PartitionPruner, PruningResult, parse_partition_path,
 };
@@ -126,698 +124,25 @@ pub use proximadb_catalog::*;
 // (which is also pulled in via `pub use proximadb_catalog::*`).
 pub use self::traits::{Catalog, CatalogHealth};
 
-/// TD-110 S1: per-table, non-reentrant, in-process DML operation lock registry.
-///
-/// The durable DML lock (`crate::cluster::partition_lease::DmlLockService`)
-/// serializes DML *across pods* but is deliberately re-entrant within a pod: a
-/// pod re-acquiring its own table lease *renews* it, and the in-memory check
-/// skips same-pod/same-scope as compatible. Embedded and single-pod deployments
-/// therefore need a separate, *non-reentrant* in-process lock to serialize
-/// concurrent connections that touch the same table during a referential-action
-/// critical section (ON DELETE CASCADE/RESTRICT child scan → child mutation →
-/// parent tombstone). Without it, a child row inserted by connection B while
-/// connection A's parent DELETE is mid-flight can be orphaned (B's row survives
-/// referencing a now-deleted parent).
-///
-/// Each `(namespace, table)` key maps to a binary semaphore (1 permit);
-/// `acquire_owned` yields an owned permit held across the critical section and
-/// released on drop. Multi-table critical sections (a cascading DELETE) acquire
-/// the whole set in a deterministic `(namespace, name)` order to avoid
-/// self-deadlock — single-table acquirers (INSERT/UPDATE) cannot form a cycle
-/// with a sorted multi-table acquirer.
-#[derive(Default)]
-pub struct TableOpLockRegistry {
-    locks: Mutex<HashMap<TableIdentifier, Arc<Semaphore>>>,
-}
-
-impl TableOpLockRegistry {
-    /// Create an empty registry.
-    pub fn new() -> Self {
-        Self {
-            locks: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// Resolve (lazily creating) the binary semaphore for a table.
-    fn semaphore_for(&self, table_id: &TableIdentifier) -> Arc<Semaphore> {
-        // Sync lock held only for the map get/insert — never across an await.
-        let mut locks = self.locks.lock();
-        locks
-            .entry(table_id.clone())
-            .or_insert_with(|| Arc::new(Semaphore::new(1)))
-            .clone()
-    }
-
-    /// Acquire the (non-reentrant) operation lock for one table, blocking until
-    /// free. The returned permit is released on drop.
-    pub async fn acquire(&self, table_id: &TableIdentifier) -> Result<OwnedSemaphorePermit> {
-        self.semaphore_for(table_id)
-            .acquire_owned()
-            .await
-            .map_err(|_| {
-                anyhow!(
-                    "operation lock for table '{}/{}' was closed unexpectedly",
-                    table_id.namespace.join("."),
-                    table_id.name
-                )
-            })
-    }
-
-    /// Acquire operation locks for a set of tables in deterministic `(namespace,
-    /// name)` order (de-duplicated), blocking until all are held. The returned
-    /// permits are released on drop, so bind them to a guard that outlives the
-    /// critical section.
-    pub async fn acquire_sorted(
-        &self,
-        mut tables: Vec<TableIdentifier>,
-    ) -> Result<Vec<OwnedSemaphorePermit>> {
-        tables.sort_by(|a, b| {
-            a.namespace
-                .cmp(&b.namespace)
-                .then_with(|| a.name.cmp(&b.name))
-        });
-        tables.dedup();
-        let mut permits = Vec::with_capacity(tables.len());
-        for table_id in &tables {
-            permits.push(self.acquire(table_id).await?);
-        }
-        Ok(permits)
-    }
-}
-
-impl std::fmt::Debug for TableOpLockRegistry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TableOpLockRegistry")
-            .finish_non_exhaustive()
-    }
-}
-
-/// Catalog manager - manages multiple catalog instances
-pub struct CatalogManager {
-    /// Registered catalogs by name
-    catalogs: RwLock<HashMap<String, Arc<dyn Catalog>>>,
-    /// Default catalog name
-    default_catalog: RwLock<Option<String>>,
-    /// Catalog cache for metadata
-    cache: Arc<CatalogCache>,
-    /// TD-110 S1: per-table, non-reentrant in-process DML operation locks used
-    /// to serialize referential-action critical sections within a single pod.
-    /// See [`TableOpLockRegistry`].
-    op_locks: TableOpLockRegistry,
-}
-
-impl CatalogManager {
-    /// Create a new catalog manager
-    pub fn new() -> Self {
-        Self {
-            catalogs: RwLock::new(HashMap::new()),
-            default_catalog: RwLock::new(None),
-            cache: Arc::new(CatalogCache::new(10000, 300)), // 10K entries, 5min TTL
-            op_locks: TableOpLockRegistry::new(),
-        }
-    }
-
-    /// Create a new catalog manager with custom cache settings
-    pub fn with_cache(max_entries: usize, ttl_seconds: u64) -> Self {
-        Self {
-            catalogs: RwLock::new(HashMap::new()),
-            default_catalog: RwLock::new(None),
-            cache: Arc::new(CatalogCache::new(max_entries, ttl_seconds)),
-            op_locks: TableOpLockRegistry::new(),
-        }
-    }
-
-    /// TD-110 S1: per-table, non-reentrant in-process DML operation locks.
-    /// Hosted on `CatalogManager` because it is the single object shared across
-    /// all per-connection `DmlService` instances (pgwire builds a fresh
-    /// `DmlService` per connection), so a registry here is the one place
-    /// concurrent connections actually contend.
-    pub fn op_locks(&self) -> &TableOpLockRegistry {
-        &self.op_locks
-    }
-
-    /// Register a pre-created catalog
-    pub async fn register(&self, catalog: Arc<dyn Catalog>) -> Result<()> {
-        let name = catalog.name().to_string();
-        info!(
-            "Registering catalog: {} (type: {})",
-            name,
-            catalog.catalog_type()
-        );
-
-        let mut catalogs = self.catalogs.write().await;
-        catalogs.insert(name.clone(), catalog);
-
-        // Set as default if first catalog
-        let mut default = self.default_catalog.write().await;
-        if default.is_none() {
-            *default = Some(name);
-        }
-
-        Ok(())
-    }
-
-    /// Create and register a native catalog
-    pub async fn create_native_catalog(
-        &self,
-        name: &str,
-        storage_url: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        use proximadb_catalog::native::NativeCatalogConfig;
-
-        let config = NativeCatalogConfig {
-            storage_url: storage_url.to_string(),
-            ..Default::default()
-        };
-
-        // TD-CAT-1b (S0): object-store catalog URLs (s3://, gs://, az://) persist
-        // durably by routing all catalog I/O through an injected `FileSystem`
-        // backend resolved from the configured backends. `file://` (and bare
-        // local paths) keep the local-`tokio::fs` path (`fs = None`) so the
-        // on-disk layout and existing tests are byte-identical — the object-store
-        // branch only *relaxes* `NativeCatalog::parse_storage_url`'s fail-closed
-        // bail, it does not change the local path. A cloud scheme whose backend
-        // feature isn't compiled in surfaces a clear `UnsupportedScheme` error
-        // (still strictly safer than silently caching the catalog under /tmp).
-        let is_object_store = storage_url.starts_with("s3://")
-            || storage_url.starts_with("gs://")
-            || storage_url.starts_with("az://");
-
-        let catalog = if is_object_store {
-            let factory =
-                crate::storage::persistence::filesystem::FilesystemFactory::create_default()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("filesystem factory init failed: {e}"))?;
-            let fs = factory.get_filesystem(storage_url).map_err(|e| {
-                anyhow::anyhow!("no filesystem backend for catalog url '{storage_url}': {e}")
-            })?;
-            proximadb_catalog::native::NativeCatalog::new_with_filesystem(
-                name.to_string(),
-                config,
-                self.cache.clone(),
-                Some(fs),
-            )
-            .await?
-        } else {
-            proximadb_catalog::native::NativeCatalog::new(
-                name.to_string(),
-                config,
-                self.cache.clone(),
-            )
-            .await?
-        };
-
-        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
-        self.register(catalog.clone()).await?;
-        Ok(catalog)
-    }
-
-    /// Create and register a Hive Metastore catalog
-    pub async fn create_hive_catalog(
-        &self,
-        name: &str,
-        thrift_uri: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        use proximadb_catalog::hive::HiveCatalogConfig;
-
-        let config = HiveCatalogConfig {
-            thrift_uri: thrift_uri.to_string(),
-            ..Default::default()
-        };
-
-        let catalog =
-            proximadb_catalog::hive::HiveCatalog::new(name.to_string(), config, self.cache.clone())
-                .await?;
-
-        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
-        self.register(catalog.clone()).await?;
-        Ok(catalog)
-    }
-
-    /// Create and register an Iceberg catalog
-    pub async fn create_iceberg_catalog(
-        &self,
-        name: &str,
-        uri: &str,
-        warehouse: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        use proximadb_catalog::iceberg::IcebergCatalogConfig;
-
-        let config = IcebergCatalogConfig {
-            uri: uri.to_string(),
-            warehouse: warehouse.to_string(),
-            ..Default::default()
-        };
-
-        let catalog = proximadb_catalog::iceberg::IcebergCatalog::new(
-            name.to_string(),
-            config,
-            self.cache.clone(),
-        )
-        .await?;
-
-        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
-        self.register(catalog.clone()).await?;
-        Ok(catalog)
-    }
-
-    /// Create and register an AWS Glue catalog
-    ///
-    /// Requires the `aws` feature flag to be enabled.
-    ///
-    /// # Arguments
-    /// * `name` - Catalog name
-    /// * `region` - AWS region (e.g., "us-east-1")
-    /// * `catalog_id` - AWS account ID (optional, uses default account if empty)
-    ///
-    /// # Example
-    /// ```ignore
-    /// let catalog = manager.create_glue_catalog("glue", "us-east-1", "123456789012").await?;
-    /// ```
-    #[cfg(feature = "aws")]
-    pub async fn create_glue_catalog(
-        &self,
-        name: &str,
-        region: &str,
-        catalog_id: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        use proximadb_catalog::glue::GlueCatalogConfig;
-
-        let config = GlueCatalogConfig {
-            region: region.to_string(),
-            catalog_id: catalog_id.to_string(),
-            ..Default::default()
-        };
-
-        let catalog =
-            proximadb_catalog::glue::GlueCatalog::new(name.to_string(), config, self.cache.clone())
-                .await?;
-
-        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
-        self.register(catalog.clone()).await?;
-        Ok(catalog)
-    }
-
-    /// Create and register an AWS Glue catalog (stub for non-AWS builds)
-    #[cfg(not(feature = "aws"))]
-    pub async fn create_glue_catalog(
-        &self,
-        _name: &str,
-        _region: &str,
-        _catalog_id: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        Err(anyhow!(
-            "AWS Glue catalog requires the 'aws' feature flag. \
-             Build with: cargo build --features aws"
-        ))
-    }
-
-    /// Create and register a Databricks Unity catalog
-    ///
-    /// Requires the `unity-catalog` feature flag to be enabled.
-    ///
-    /// # Arguments
-    /// * `name` - Catalog name
-    /// * `workspace_url` - Databricks workspace URL (e.g., "https://xxx.cloud.databricks.com")
-    /// * `token` - Personal access token or OAuth token
-    /// * `catalog_name` - Unity catalog name within the workspace
-    ///
-    /// # Example
-    /// ```ignore
-    /// let catalog = manager.create_unity_catalog(
-    ///     "unity",
-    ///     "https://my-workspace.cloud.databricks.com",
-    ///     "dapi123...",
-    ///     "main"
-    /// ).await?;
-    /// ```
-    #[cfg(feature = "unity-catalog")]
-    pub async fn create_unity_catalog(
-        &self,
-        name: &str,
-        workspace_url: &str,
-        token: &str,
-        catalog_name: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        use proximadb_catalog::unity::UnityCatalogConfig;
-
-        let config = UnityCatalogConfig {
-            workspace_url: workspace_url.to_string(),
-            token: token.to_string(),
-            catalog_name: catalog_name.to_string(),
-            ..Default::default()
-        };
-
-        let catalog = proximadb_catalog::unity::UnityCatalog::new(
-            name.to_string(),
-            config,
-            self.cache.clone(),
-        )
-        .await?;
-
-        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
-        self.register(catalog.clone()).await?;
-        Ok(catalog)
-    }
-
-    /// Create and register a Unity catalog (stub for non-Unity builds)
-    #[cfg(not(feature = "unity-catalog"))]
-    pub async fn create_unity_catalog(
-        &self,
-        _name: &str,
-        _workspace_url: &str,
-        _token: &str,
-        _catalog_name: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        Err(anyhow!(
-            "Databricks Unity catalog requires the 'unity-catalog' feature flag. \
-             Build with: cargo build --features unity-catalog"
-        ))
-    }
-
-    /// Create and register an Apache Polaris catalog (Iceberg REST)
-    ///
-    /// Requires the `polaris-catalog` feature flag to be enabled.
-    ///
-    /// # Arguments
-    /// * `name` - Catalog name
-    /// * `uri` - Polaris server URI
-    /// * `warehouse` - Warehouse name
-    /// * `credential` - OAuth credential (client_id:client_secret format)
-    ///
-    /// # Example
-    /// ```ignore
-    /// let catalog = manager.create_polaris_catalog(
-    ///     "polaris",
-    ///     "https://polaris.example.com",
-    ///     "my_warehouse",
-    ///     "client_id:client_secret"
-    /// ).await?;
-    /// ```
-    #[cfg(feature = "polaris-catalog")]
-    pub async fn create_polaris_catalog(
-        &self,
-        name: &str,
-        uri: &str,
-        warehouse: &str,
-        credential: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        use proximadb_catalog::polaris::PolarisCatalogConfig;
-
-        let config = PolarisCatalogConfig {
-            uri: uri.to_string(),
-            warehouse: warehouse.to_string(),
-            credential: credential.to_string(),
-            ..Default::default()
-        };
-
-        let catalog = proximadb_catalog::polaris::PolarisCatalog::new(
-            name.to_string(),
-            config,
-            self.cache.clone(),
-        )
-        .await?;
-
-        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
-        self.register(catalog.clone()).await?;
-        Ok(catalog)
-    }
-
-    /// Create and register a Polaris catalog (stub for non-Polaris builds)
-    #[cfg(not(feature = "polaris-catalog"))]
-    pub async fn create_polaris_catalog(
-        &self,
-        _name: &str,
-        _uri: &str,
-        _warehouse: &str,
-        _credential: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        Err(anyhow!(
-            "Apache Polaris catalog requires the 'polaris-catalog' feature flag. \
-             Build with: cargo build --features polaris-catalog"
-        ))
-    }
-
-    /// Create and register a Delta Lake catalog
-    ///
-    /// Requires the `delta-lake` feature flag to be enabled.
-    ///
-    /// # Arguments
-    /// * `name` - Catalog name
-    /// * `storage_url` - Storage URL (s3://bucket/path, file:///path, etc.)
-    ///
-    /// # Example
-    /// ```ignore
-    /// let catalog = manager.create_delta_catalog(
-    ///     "delta",
-    ///     "s3://my-bucket/delta-tables"
-    /// ).await?;
-    /// ```
-    #[cfg(feature = "delta-lake")]
-    pub async fn create_delta_catalog(
-        &self,
-        name: &str,
-        storage_url: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        use proximadb_catalog::delta::DeltaCatalogConfig;
-
-        let config = DeltaCatalogConfig {
-            storage_url: storage_url.to_string(),
-            ..Default::default()
-        };
-
-        let catalog = proximadb_catalog::delta::DeltaCatalog::new(
-            name.to_string(),
-            config,
-            self.cache.clone(),
-        )
-        .await?;
-
-        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
-        self.register(catalog.clone()).await?;
-        Ok(catalog)
-    }
-
-    /// Create and register a Delta Lake catalog (stub for non-Delta builds)
-    #[cfg(not(feature = "delta-lake"))]
-    pub async fn create_delta_catalog(
-        &self,
-        _name: &str,
-        _storage_url: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        Err(anyhow!(
-            "Delta Lake catalog requires the 'delta-lake' feature flag. \
-             Build with: cargo build --features delta-lake"
-        ))
-    }
-
-    /// Create and register an OLTP catalog (PostgreSQL / Neon / Supabase / MariaDB / SQLite).
-    ///
-    /// The OLTP catalog stores ONLY catalog metadata — record data always stays in ProximaDB's
-    /// internal engines (stacked durability mandate). Use for collections < 1 GB.
-    ///
-    /// Connection string formats:
-    /// - `postgres://user:pw@host/db` — PostgreSQL, Neon, Supabase, CockroachDB
-    /// - `mysql://user:pw@host/db` — MariaDB, MySQL, TiDB
-    /// - `sqlite:///path/catalog.db` — SQLite
-    pub async fn create_oltp_catalog(
-        &self,
-        name: &str,
-        connection_string: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        let config = proximadb_catalog::oltp::OltpCatalogConfig {
-            connection_string: connection_string.to_string(),
-            ..Default::default()
-        };
-
-        let catalog =
-            proximadb_catalog::oltp::OltpCatalog::new(name.to_string(), config, self.cache.clone())
-                .await?;
-
-        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
-        self.register(catalog.clone()).await?;
-        Ok(catalog)
-    }
-
-    /// Select the appropriate catalog based on estimated table size.
-    ///
-    /// - `size_bytes < threshold` → OLTP catalog (if registered)
-    /// - `size_bytes >= threshold` → default catalog (lakehouse / native)
-    pub async fn catalog_for_size(
-        &self,
-        size_bytes: u64,
-        oltp_threshold_bytes: u64,
-    ) -> Result<Arc<dyn Catalog>> {
-        let oltp_candidate = if size_bytes < oltp_threshold_bytes {
-            let catalogs = self.catalogs.read().await;
-            catalogs
-                .values()
-                .find(|c| c.catalog_type().starts_with("oltp-"))
-                .cloned()
-        } else {
-            None
-        };
-
-        if let Some(cat) = oltp_candidate {
-            return Ok(cat);
-        }
-        self.default_catalog().await
-    }
-
-    /// Get a catalog by name
-    pub async fn get_catalog(&self, name: &str) -> Result<Arc<dyn Catalog>> {
-        let catalogs = self.catalogs.read().await;
-        catalogs
-            .get(name)
-            .cloned()
-            .ok_or_else(|| anyhow!("Catalog '{}' not found", name))
-    }
-
-    /// Get the default catalog
-    pub async fn default_catalog(&self) -> Result<Arc<dyn Catalog>> {
-        let default = self.default_catalog.read().await;
-        let name = default
-            .as_ref()
-            .ok_or_else(|| anyhow!("No default catalog configured"))?;
-
-        self.get_catalog(name).await
-    }
-
-    /// Set the default catalog
-    pub async fn set_default_catalog(&self, name: &str) -> Result<()> {
-        // Verify catalog exists
-        let catalogs = self.catalogs.read().await;
-        if !catalogs.contains_key(name) {
-            return Err(anyhow!("Catalog '{}' not found", name));
-        }
-        drop(catalogs);
-
-        let mut default = self.default_catalog.write().await;
-        *default = Some(name.to_string());
-        Ok(())
-    }
-
-    /// List all registered catalogs
-    pub async fn list_catalogs(&self) -> Vec<String> {
-        let catalogs = self.catalogs.read().await;
-        catalogs.keys().cloned().collect()
-    }
-
-    /// Unregister a catalog
-    pub async fn unregister_catalog(&self, name: &str) -> Result<bool> {
-        let mut catalogs = self.catalogs.write().await;
-        let removed = catalogs.remove(name).is_some();
-
-        // Clear default if it was this catalog
-        if removed {
-            let mut default = self.default_catalog.write().await;
-            if default.as_deref() == Some(name) {
-                *default = catalogs.keys().next().cloned();
-            }
-        }
-
-        Ok(removed)
-    }
-
-    /// Resolve a fully-qualified table name (catalog.namespace.table)
-    pub async fn resolve_table(&self, fqn: &str) -> Result<(Arc<dyn Catalog>, TableIdentifier)> {
-        let parts: Vec<&str> = fqn.split('.').collect();
-
-        match parts.len() {
-            1 => {
-                // Just table name - use default catalog and namespace
-                let catalog = self.default_catalog().await?;
-                let id = TableIdentifier::new(vec!["default".to_string()], parts[0].to_string());
-                Ok((catalog, id))
-            }
-            2 => {
-                // namespace.table - use default catalog
-                let catalog = self.default_catalog().await?;
-                let id = TableIdentifier::new(vec![parts[0].to_string()], parts[1].to_string());
-                Ok((catalog, id))
-            }
-            3 => {
-                // catalog.namespace.table
-                let catalog = self.get_catalog(parts[0]).await?;
-                let id = TableIdentifier::new(vec![parts[1].to_string()], parts[2].to_string());
-                Ok((catalog, id))
-            }
-            _ => {
-                // catalog.ns1.ns2...nsN.table
-                let catalog = self.get_catalog(parts[0]).await?;
-                let namespace: Vec<String> = parts[1..parts.len() - 1]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
-                let table = parts
-                    .last()
-                    .ok_or_else(|| anyhow!("Invalid table name: missing table component"))?
-                    .to_string();
-                let id = TableIdentifier::new(namespace, table);
-                Ok((catalog, id))
-            }
-        }
-    }
-
-    /// Resolve a table name within a tenant scope (TD-064). Delegates to
-    /// [`Self::resolve_table`] for the catalog + base identifier, then
-    /// tenant-prefixes the namespace so each tenant's schema row is distinct
-    /// (`orders` → namespace `[tenant, "default"]`). An empty/None tenant
-    /// resolves identically to [`Self::resolve_table`] (single-tenant).
-    pub async fn resolve_table_scoped(
-        &self,
-        fqn: &str,
-        tenant: Option<&str>,
-    ) -> Result<(Arc<dyn Catalog>, TableIdentifier)> {
-        // Structural system-catalog isolation (validate input first): the tenant
-        // id becomes `namespace[0]`, so a tenant must never shadow a reserved
-        // control-plane / per-tenant system subtree. Those are the
-        // underscore-prefixed segments (`_operator`, `_metering`, `_trace`,
-        // `_branches`, `_manifests` — see `DrPathBuilder::RESERVED_SYSTEM_SEGMENTS`).
-        // The physical path resolver already rejects them via `validate_id`;
-        // mirror that at the logical catalog-resolution boundary so DDL/DML cannot
-        // address the system catalog by passing a `_`-prefixed tenant.
-        if let Some(tenant) = tenant.filter(|tenant| !tenant.is_empty())
-            && tenant.starts_with('_')
-        {
-            anyhow::bail!(
-                "tenant '{tenant}' is invalid: tenant identifiers must not begin with '_' \
-                 (reserved for system/control-plane catalog subtrees)"
-            );
-        }
-        let (catalog, id) = self.resolve_table(fqn).await?;
-        match tenant {
-            Some(tenant) if !tenant.is_empty() => {
-                let mut namespace = Vec::with_capacity(id.namespace.len() + 1);
-                namespace.push(tenant.to_string());
-                namespace.extend(id.namespace.iter().cloned());
-                Ok((catalog, TableIdentifier::new(namespace, id.name)))
-            }
-            _ => Ok((catalog, id)),
-        }
-    }
-
-    /// Get cache reference for direct access
-    pub fn cache(&self) -> Arc<CatalogCache> {
-        self.cache.clone()
-    }
-}
-
-impl Default for CatalogManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// `TableIdentifier` lives in `proximadb_catalog` and is re-exported via
-// `pub use self::types::*` above. The previous duplicate definition
-// here shadowed the canonical type and caused the in-flight catalog
-// trait migration to keep "two TableIdentifier" type-identity errors.
-// Removed as part of Option B consolidation.
+// CatalogManager + TableOpLockRegistry + the CatalogFilesystemResolver port now
+// live in `proximadb-catalog` (decomposition Slice 2). Re-exported so all
+// `crate::catalog::CatalogManager` / `::TableOpLockRegistry` paths are unchanged.
+// Object-store catalog URLs route through the injected resolver port (no
+// catalog->storage up-edge); the root composition root injects a
+// `FilesystemFactory`-backed impl.
+pub use proximadb_catalog::{CatalogFilesystemResolver, CatalogManager, TableOpLockRegistry};
+
+// Root half of the CatalogFilesystemResolver dependency inversion: a lazily-
+// initialized `FilesystemFactory` wrapper. The composition root injects this
+// into `CatalogManager` so object-store catalog URLs resolve without a
+// catalog→storage up-edge.
+pub mod filesystem_resolver;
+pub use filesystem_resolver::LazyFilesystemResolver;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     // TD-108: the local `types` shim (`pub use proximadb_catalog::*`) was deleted.
     // Alias the canonical crate so the existing `types::Catalog*` test paths keep
     // resolving to exactly what the shim pointed at — no test churn.
@@ -989,6 +314,27 @@ mod tests {
                 "unexpected error for tenant {tenant}: {err}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn resolve_table_scoped_does_not_double_prefix_explicit_tenant_namespace() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = CatalogManager::new();
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let (_, table_id) = manager
+            .resolve_table_scoped("native.acmecorp.analytics.events", Some("acmecorp"))
+            .await
+            .expect("resolve table");
+
+        assert_eq!(
+            table_id.namespace,
+            vec!["acmecorp".to_string(), "analytics".to_string()]
+        );
+        assert_eq!(table_id.name, "events");
     }
 
     #[tokio::test]

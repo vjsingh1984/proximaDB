@@ -128,12 +128,24 @@ wt_for_branch() {
 #      remote branch required, only the local develop ref.
 branch_in_develop() {
   local main br; main="$(repo_main)"; br="$1"
-  git -C "$main" merge-base --is-ancestor "$br" "$REMOTE/$BASE_DEFAULT" 2>/dev/null && return 0
-  local mb tree synth; mb="$(git -C "$main" merge-base "$REMOTE/$BASE_DEFAULT" "$br" 2>/dev/null)" || return 1
+  local dev; dev="$(git -C "$main" rev-parse --verify -q "$REMOTE/$BASE_DEFAULT" 2>/dev/null)" || return 1
+  # A branch whose tip is IDENTICAL to develop's tip has done no work of its own:
+  # it is a freshly-created worktree — possibly mid-build, holding uncommitted or
+  # gitignored WIP (e.g. target/) that `git status --porcelain` cannot see.
+  # `merge-base --is-ancestor` treats a commit as an ancestor of ITSELF, so
+  # tip-equality would falsely read as "merged" and target an ACTIVE worktree for
+  # deletion (incident 2026-07-30: a `clean` run deleted a worktree mid-build).
+  # Treat tip-equality as explicitly NOT landed. (A branch later fast-forwarded
+  # so develop == its tip is also protected — remove it with `worktree.sh rm`.
+  # Squash- and merge-commit-merged branches have a distinct tip and are still
+  # detected below, so automatic reclamation of those is unchanged.)
+  [ "$(git -C "$main" rev-parse --verify -q "$br" 2>/dev/null)" != "$dev" ] || return 1
+  git -C "$main" merge-base --is-ancestor "$br" "$dev" 2>/dev/null && return 0
+  local mb tree synth; mb="$(git -C "$main" merge-base "$dev" "$br" 2>/dev/null)" || return 1
   [ -n "$mb" ] || return 1
   tree="$(git -C "$main" rev-parse "$br^{tree}" 2>/dev/null)" || return 1
   synth="$(git -C "$main" commit-tree "$tree" -p "$mb" -m _ 2>/dev/null)" || return 1
-  [ "$(git -C "$main" cherry "$REMOTE/$BASE_DEFAULT" "$synth" 2>/dev/null | head -1 | cut -c1)" = "-" ]
+  [ "$(git -C "$main" cherry "$dev" "$synth" 2>/dev/null | head -1 | cut -c1)" = "-" ]
 }
 
 cmd_rm() {
@@ -164,7 +176,25 @@ cmd_clean() {
   while read -r dir; do
     [ "$dir" = "$(repo_main)" ] && continue
     local br; br="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo)"
-    [ -n "$br" ] || continue
+    # A detached worktree reports the literal string "HEAD", which
+    # branch_in_develop resolves against the MAIN checkout (= the develop
+    # branch) — so it always looks "merged" and the worktree gets deleted even
+    # when its commit is not in develop. Skip detached worktrees (mirroring
+    # cmd_doctor); reattach to a branch or remove explicitly via `worktree.sh rm`.
+    if [ -z "$br" ] || [ "$br" = "HEAD" ]; then
+      [ "$br" = "HEAD" ] && printf 'skip (detached HEAD — reattach or `worktree.sh rm`): %s\n' "$dir" >&2
+      continue
+    fi
+    # DEFENSE (incident 2026-07-30): never reclaim a worktree whose branch has
+    # not diverged from develop (tip == develop). It is fresh/active — possibly
+    # mid-build with gitignored target/ WIP that is invisible to status
+    # --porcelain. branch_in_develop() also rejects tip-equality, but we print an
+    # explicit "protect" line here so `clean` is transparent about what it skips.
+    local _dev; _dev="$(git -C "$(repo_main)" rev-parse --verify -q "$REMOTE/$BASE_DEFAULT" 2>/dev/null)" || _dev=""
+    if [ -n "$_dev" ] && [ "$(git -C "$dir" rev-parse --verify -q HEAD 2>/dev/null)" = "$_dev" ]; then
+      printf 'protect (fresh/active - branch tip == develop, no own commits): %s (%s)\n' "$dir" "$br" >&2
+      continue
+    fi
     branch_in_develop "$br" || continue
     if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
       printf 'skip (dirty): %s (%s)\n' "$dir" "$br" >&2; continue

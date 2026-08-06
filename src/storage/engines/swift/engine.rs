@@ -406,17 +406,14 @@ impl SwiftEngine {
         // Configure storage quantization for SWIFT (SST-based engine)
         let storage_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
-                primary_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(16),
-                ),
+                primary_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::pq8(
+                    16,
+                )),
                 filter_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::binary(),
+                    proximadb_quantization_model::UnifiedQuantizationLevel::binary(),
                 ),
-                fast_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
-                ),
-                distance_metric:
-                    proximadb_distance_kernel::engine::DistanceMetric::Cosine,
+                fast_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::int8()),
+                distance_metric: proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                 enable_progressive: true,
                 filter_threshold: 100.0,
                 candidate_multiplier: 10,
@@ -1101,12 +1098,6 @@ impl UnifiedStorageFormat for SwiftEngine {
     fn strategy(&self) -> StorageFormatStrategy {
         // SWIFT is a hierarchical superblock strategy with row-based optimization
         StorageFormatStrategy::Swift
-    }
-
-    fn get_filesystem_factory(
-        &self,
-    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        &self.filesystem
     }
 
     // =============================================================================
@@ -1876,6 +1867,15 @@ impl UnifiedStorageFormat for SwiftEngine {
                 | "compression"
                 | "batch_operations"
         )
+    }
+}
+
+#[allow(deprecated)] // SwiftEngine is #[deprecated] (experimental); accessing its own field is intentional
+impl crate::storage::traits::EngineFilesystemAccess for SwiftEngine {
+    fn get_filesystem_factory(
+        &self,
+    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+        &self.filesystem
     }
 }
 

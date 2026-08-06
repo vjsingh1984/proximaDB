@@ -473,6 +473,19 @@ impl CollectionPartition {
         vectors
     }
 
+    /// Return every physical record still held by this unflushed partition.
+    ///
+    /// Unlike [`Self::get_all_vectors`], this intentionally performs no MVCC
+    /// winner selection and no tombstone/TTL filtering. Cross-source readers
+    /// need the complete delta so a delete in WAL can suppress an older live
+    /// copy that has already been flushed.
+    fn get_all_vectors_raw(&self) -> Vec<ProximaRecord> {
+        self.wal_batches
+            .values()
+            .flat_map(|batch| batch.vector_records.iter().cloned())
+            .collect()
+    }
+
     /// Rebuild the deduped, time-ordered [`ScanIndex`] from `wal_batches`.
     ///
     /// Winner selection per oid uses the SAME MVCC rule as
@@ -957,6 +970,17 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Search for similar vectors within a specific collection using configurable distance metric
+    /// Brute-force memtable search over a collection's unflushed batches.
+    ///
+    /// TD-SEARCH-1: the LIVE serving path is
+    /// `WriteAheadLogManager::search_unflushed_vectors` (write_ahead_log/mod.rs),
+    /// which scans `get_unflushed_batches` with deferred materialization and
+    /// tombstone handling. This method is retained as the unit-test harness for
+    /// the partition-level MVCC/tombstone/TTL semantics exercised by this
+    /// module's tests; the consolidation direction is one shared scoring core.
+    /// The dead wrappers that used to sit above it (per-strategy
+    /// `search_vectors_similarity`, `WALBehaviorWrapper::search_unflushed_vectors`)
+    /// were removed — do not reintroduce a parallel search path here.
     pub async fn search_vectors(
         &self,
         query_vector: &[f32],
@@ -1039,6 +1063,22 @@ impl GlobalPartitionedMemtable {
         } else {
             Ok(Vec::new())
         }
+    }
+
+    /// Return the raw physical WAL/memtable delta for a collection.
+    ///
+    /// This is deliberately narrower than `get_collection_vectors`: callers
+    /// must perform their own cross-source winner selection and dead filtering.
+    pub async fn get_collection_vectors_raw(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<ProximaRecord>> {
+        let collections = self.collections.read().await;
+
+        Ok(collections
+            .get(collection_id)
+            .map(CollectionPartition::get_all_vectors_raw)
+            .unwrap_or_default())
     }
 
     /// Paginated, deduped, time-ordered scan of a collection's unflushed records.
@@ -1413,7 +1453,12 @@ impl GlobalPartitionedMemtable {
 
             // Remove from vector index
             for vector_record in removed_batch.vector_records.iter() {
-                if !vector_record.oid.is_empty() {
+                if !vector_record.oid.is_empty()
+                    && partition
+                        .vector_id_index
+                        .get(&vector_record.oid)
+                        .is_some_and(|indexed_batch| indexed_batch == batch_id)
+                {
                     partition.vector_id_index.remove(&vector_record.oid);
                 }
             }
@@ -1442,6 +1487,74 @@ impl GlobalPartitionedMemtable {
             batch_id,
             collection_id
         ))
+    }
+
+    /// Remove an exact set of batches after a flush has durably published.
+    ///
+    /// The complete set is validated before mutation, so a stale or foreign
+    /// claim cannot partially clear a collection. Concurrently appended batches
+    /// have different IDs and are preserved.
+    pub async fn remove_batches_exact(
+        &self,
+        collection_id: &str,
+        batch_ids: &[String],
+    ) -> Result<usize> {
+        let mut collections = self.collections.write().await;
+        let Some(partition) = collections.get_mut(collection_id) else {
+            anyhow::bail!("collection '{}' has no WAL partition", collection_id);
+        };
+        if let Some(missing) = batch_ids
+            .iter()
+            .find(|batch_id| !partition.wal_batches.contains_key(*batch_id))
+        {
+            anyhow::bail!(
+                "claimed batch '{}:{}' is absent from the WAL partition",
+                collection_id,
+                missing
+            );
+        }
+
+        let mut removed_records = 0usize;
+        for batch_id in batch_ids {
+            let removed_batch = partition.wal_batches.remove(batch_id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "claimed batch '{}:{}' disappeared during exact retirement",
+                    collection_id,
+                    batch_id
+                )
+            })?;
+            removed_records += removed_batch.vector_records.len();
+            partition.vector_count = partition
+                .vector_count
+                .saturating_sub(removed_batch.vector_records.len());
+            partition.total_size = partition
+                .total_size
+                .saturating_sub(removed_batch.total_size_bytes);
+            partition.batch_count = partition.batch_count.saturating_sub(1);
+
+            for record in removed_batch.vector_records.iter() {
+                if !record.oid.is_empty()
+                    && partition
+                        .vector_id_index
+                        .get(&record.oid)
+                        .is_some_and(|indexed_batch| indexed_batch == batch_id)
+                {
+                    partition.vector_id_index.remove(&record.oid);
+                }
+            }
+        }
+        partition.scan_index = None;
+        drop(collections);
+
+        let mut metrics = self.metrics.write().await;
+        metrics.entry_count = metrics.entry_count.saturating_sub(removed_records);
+        tracing::debug!(
+            collection_id,
+            batches = batch_ids.len(),
+            removed_records,
+            "retired exact WAL batch set after flush"
+        );
+        Ok(removed_records)
     }
 
     /// Clear all vectors and batches
@@ -1972,6 +2085,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(oids(&page), vec!["live".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn raw_collection_scan_retains_tombstones_expiry_and_versions() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "raw-delta";
+        let now_ns = test_now_ns();
+
+        m.add_wal_batch(c, batch_of(vec![rec_at("d1", 10, 1, None)]))
+            .await
+            .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("d1", 20, 2, Some(0))]))
+            .await
+            .unwrap();
+        m.add_wal_batch(
+            c,
+            batch_of(vec![rec_at("expired", 30, 1, Some(now_ns - 1))]),
+        )
+        .await
+        .unwrap();
+
+        let live = m.get_collection_vectors(c).await.unwrap();
+        assert!(live.is_empty(), "normal scans remain dead-filtered");
+
+        let mut raw = m.get_collection_vectors_raw(c).await.unwrap();
+        raw.sort_by_key(|record| record.updated_at_ns);
+        assert_eq!(raw.len(), 3);
+        assert_eq!(raw[0].record_version, 1);
+        assert_eq!(raw[1].valid_to_ns, Some(0));
+        assert_eq!(raw[2].oid, "expired");
     }
 
     #[tokio::test]

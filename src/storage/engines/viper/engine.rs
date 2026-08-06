@@ -30,7 +30,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, trace, warn};
 
 // Import UnifiedQuantizationLevel
-use crate::compute::quantization::types::UnifiedQuantizationLevel;
+use proximadb_quantization_model::UnifiedQuantizationLevel;
 
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::{
@@ -403,21 +403,6 @@ impl ViperEngine {
         Self::from_caching_filesystem_and_factory(core_config, unified_fs, filesystem).await
     }
 
-    /// Deprecated: Use new() instead - engines should be stateless
-    #[deprecated(note = "Use new() - engines should be stateless")]
-    pub async fn new_with_location(
-        collection_id: String,
-        core_config: crate::core::config::ViperConfig,
-        filesystem: Arc<FilesystemFactory>,
-        distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
-        _base_location: String, // Ignored
-    ) -> Result<Self> {
-        // Just call the stateless new() method
-        _ = collection_id; // Ignore collection_id
-        _ = _base_location; // Ignore base_location
-        Self::new_with_config(core_config, filesystem, distance_compute).await
-    }
-
     /// Internal constructor with both configs
     ///
     /// ## Initialization Process:
@@ -466,20 +451,17 @@ impl ViperEngine {
         let storage_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 // PQ8 with 32 subquantizers - achieves 32x compression for 768D vectors
-                primary_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(32),
-                ),
+                primary_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::pq8(
+                    32,
+                )),
                 // Binary quantization for initial filtering - 32x reduction
                 filter_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::binary(),
+                    proximadb_quantization_model::UnifiedQuantizationLevel::binary(),
                 ),
                 // INT8 for intermediate precision - 4x reduction with 98% recall
-                fast_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
-                ),
+                fast_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::int8()),
                 // Cosine is default, but can be overridden per collection
-                distance_metric:
-                    proximadb_distance_kernel::engine::DistanceMetric::Cosine,
+                distance_metric: proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                 // Enable Binary→INT8→PQ→FP32 progressive refinement
                 enable_progressive: true,
                 // Initial filter returns 100x final k for refinement
@@ -1525,7 +1507,7 @@ impl ViperEngine {
 
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector.to_vec()),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             ..SearchParams::default()
         });
 
@@ -1791,7 +1773,7 @@ impl ViperEngine {
         operation_context: &str,
         collection_size: Option<usize>,
     ) -> bool {
-        crate::compute::quantization::selection::QuantizationSelector::should_use_persistent_quantization_simple(
+        crate::storage::compute_bridge::selection::QuantizationSelector::should_use_persistent_quantization_simple(
             operation_context,
             collection_size,
         )
@@ -1806,7 +1788,7 @@ impl ViperEngine {
         if self.should_use_persistent_quantization(operation_context, collection_size) {
             // Use global quantization cache for persistent operations
             if let Some(global_cache) =
-                crate::compute::quantization::global_cache::GlobalQuantizationCache::instance()
+                crate::storage::compute_bridge::global_cache::GlobalQuantizationCache::instance()
             {
                 global_cache
                     .get_or_create_engine("default_collection".to_string())
@@ -2012,10 +1994,10 @@ impl UnifiedStorageFormat for ViperEngine {
             "engine_name".to_string(),
             serde_json::Value::String("VIPER".to_string()),
         );
-        // Step 3: Notify EventLog for async AXIS indexing (synchronous acknowledgment)
-        let flush_handler =
-            crate::storage::engines::viper::eventlog_flush::ViperFlushNotifier::new();
-        // Extract the file path from engine_metrics
+        // Step 3: index the just-flushed vectors into AXIS directly (ADR-078).
+        // Previously this published a metadata event to the AXIS queue, whose
+        // consumer re-read these same vectors back out of storage — the records
+        // are already in hand on `params`, so that round-trip bought nothing.
         let file_paths = if let Some(path_value) = flush_result.engine_metrics.get("parquet_files")
             && let serde_json::Value::String(path) = path_value
         {
@@ -2023,18 +2005,12 @@ impl UnifiedStorageFormat for ViperEngine {
         } else {
             vec![]
         };
-        if let Err(e) = flush_handler
-            .notify_flush_complete(params, file_paths, &vector_records_v1)
-            .await
-        {
-            // Log but don't fail the flush - EventLog notification is best-effort
-            warn!(
-                "⚠️ VIPER: Failed to notify EventLog for AXIS indexing: {}",
-                e
-            );
-        } else {
-            info!("✅ VIPER: Successfully notified EventLog for AXIS indexing");
-        }
+        crate::storage::common::axis_flush_hook::index_flushed_into_axis(
+            self.axis_manager().cloned(),
+            params,
+            file_paths,
+        )
+        .await;
         Ok(flush_result)
     }
 
@@ -2081,7 +2057,16 @@ impl UnifiedStorageFormat for ViperEngine {
         });
 
         let params = crate::storage::traits::FlushParameters {
-            collection_id: Some(collection_id.to_string()),
+            collection_id: Some(
+                collection_id
+                    .parse::<u64>()
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "VIPER bulk ingest requires a numeric catalog object id, got {collection_id:?}: {error}"
+                        )
+                    })?
+                    .to_string(),
+            ),
             force: true,
             synchronous: true,
             hints: std::collections::HashMap::new(),
@@ -2632,7 +2617,7 @@ impl UnifiedStorageFormat for ViperEngine {
         let _search_params = crate::core::search::SearchParams {
             query_vectors: None,
             vector: Some(query_vector.to_vec()),
-            top_k: Some(k),
+            top_k: Some(k as u16),
             filter_expression: filter_expression.cloned(),
             distance_metric: Some(distance_metric),
             filters: None,
@@ -2651,9 +2636,7 @@ impl UnifiedStorageFormat for ViperEngine {
             block_prune: crate::core::search::BlockPruneConfig::default(),
             requires_ordering: None,
             enable_progressive_search: None,
-            progressive_scenario: None,
             progressive_recalls: None,
-            optimization_hint: None,
             search_mode: crate::core::search::SearchMode::default(),
             hybrid_mode: crate::core::search::HybridSearchMode::default(),
             text_query: None,
@@ -2683,11 +2666,9 @@ impl UnifiedStorageFormat for ViperEngine {
                 ),
                 filterable_columns: Vec::new(), // Populated from collection config at query time
                 available_quantization: vec![
-                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(
-                    32,
-                ),
-                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
-            ],
+                    proximadb_quantization_model::UnifiedQuantizationLevel::pq8(32),
+                    proximadb_quantization_model::UnifiedQuantizationLevel::int8(),
+                ],
                 storage_info: crate::core::search::search_interface::StorageInfo {
                     is_cloud_storage: true,
                     storage_type: "VIPER".to_string(),
@@ -3047,12 +3028,6 @@ impl UnifiedStorageFormat for ViperEngine {
         reader.read_all_records(0, None).await
     }
 
-    fn get_filesystem_factory(
-        &self,
-    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        &self.filesystem_factory
-    }
-
     /// Convenient compact_collection method for CompactionCoordinator integration
     /// Returns enhanced result with vector tracking for AXIS integration
     /// Compact a specific collection - returns standard CompactionResult
@@ -3118,6 +3093,14 @@ impl UnifiedStorageFormat for ViperEngine {
         })
     }
 } // End of impl UnifiedStorageFormat for ViperEngine
+
+impl crate::storage::traits::EngineFilesystemAccess for ViperEngine {
+    fn get_filesystem_factory(
+        &self,
+    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+        &self.filesystem_factory
+    }
+}
 
 /// Implementation of UniversallyOptimized trait for VIPER engine
 #[async_trait::async_trait]

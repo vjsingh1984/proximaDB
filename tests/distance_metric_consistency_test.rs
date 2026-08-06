@@ -111,9 +111,10 @@ async fn search(
     let ctx = StorageQueryContext {
         search_params: Arc::new(SearchParams {
             query_vectors: Some(vec![QUERY.to_vec()]),
-            top_k: Some(TOP_K),
+            top_k: Some(TOP_K as u16),
             distance_metric: Some(metric),
             block_prune: BlockPruneConfig {
+                radius_k: 0.0,
                 force_exact: true, // exact scan — exercise the distance compute path
                 mode: BlockPruneMode::Ratio,
                 ratio: 1.0,

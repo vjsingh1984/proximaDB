@@ -1,0 +1,392 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-SEARCH-3: Per-operation PAX reads are fragmented and mis-metered
+:status: In Progress
+:dim: D1
+:pillar: PERF
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+
+| Status
+| **In Progress.** The physical-operation counter and bounded prefix read are
+implemented. The SIFT1M cloud/restart evidence gate is still open; projected
+GET reductions are not recorded as measured results.
+
+| Priority
+| **P1.** Operation count is a direct Hot-tier Blob cost and latency multiplier.
+Byte amplification remains a separate latency, bandwidth, scanned-byte, and
+possible egress concern.
+
+| Component
+| `src/storage/engines/sst/segment_format.rs`;
+`src/storage/engines/sst/search/mod.rs`;
+`crates/storage/proximadb-storage-filesystem-types/src/counting.rs`
+
+| Trigger
+| The SIFT1M investigation reported 205 GETs/query, but the benchmark and
+counter were not first-principles sound: `read_ranges()` counted one logical
+batch even when its default implementation issued one physical `read_range()`
+per element. The original TD also assumed physical adjacencies that do not
+exist in the v3 layout.
+|===
+
+== Cost model: operations and bytes are different axes
+
+For the Azure Blob **flat Blob endpoint** used by active PAX segments, every
+HTTP ranged GET is a read transaction. Hot-tier pricing has no separate
+per-GB *data retrieval* fee, so a 72-byte and a 24-MiB range each contribute
+one read operation. The exact transaction rate is region, redundancy, and
+account dependent; `$0.005/10K` must not be described as a universal Azure
+price.
+
+That does **not** make bytes free:
+
+* larger ranges consume network/NIC and memory bandwidth and can increase
+  tail latency;
+* cross-region/public transfer can incur bandwidth/egress charges;
+* ProximaDB's own scanned-byte KRU term still meters bytes;
+* Cool/Cold/Archive tiers add data-retrieval charges;
+* hierarchical-namespace/Data Lake endpoints can have different transaction
+  categorization and must not be conflated with the flat Blob endpoint.
+
+Therefore a merge is admissible only when the saved round trip is worth its
+bounded gap over-read. Optimizing GET count without a byte cap merely moves
+the cost.
+
+== Actual v3 layout and dependency chain
+
+The persisted order is:
+
+[source,text]
+----
+[fixed header, 72 B]
+[A0 coarse model + cell directory, variable]
+[Region A: RaBitQ header + presence bitmap + cell-major codes]
+[Region B: SQ8 params/codes]
+[optional OID-position resolver]
+[Region D blocks: OIDs, metadata, optional f32 stripes]
+[footer index, variable][footer_len][magic]
+----
+
+The fixed header is at byte zero and mirrors all region offsets, including
+`footer_off/footer_len`. This is deliberate: the reader can discover the
+footer with the first ranged GET and does **not** need an object-store `HEAD`
+plus tail seek.
+
+The footer is variable because it contains the block table, schema/encoding
+map, and optional resolver metadata that are known only after blocks are
+written. Keeping it at the tail preserves streaming assembly and mixed-version
+readability. Moving it beside the header would require a second-pass rewrite
+or a bounded reserved hole and would not eliminate the need for the fixed
+header. Duplicating the entire footer in a prefix would also make format
+evolution and integrity reconciliation harder.
+
+The efficient policy is:
+
+* keep the fixed routing header at byte zero;
+* keep the authoritative variable footer at the tail;
+* retain both in `SegmentInvariantsCache` and persistent L2;
+* populate them from writer-owned bytes only after atomic publication.
+
+Thus header/footer placement is not the steady-state GET problem. A working
+warm tier makes their steady-state object GET count zero.
+
+== Correct adjacency analysis
+
+The prior version made three incorrect assumptions.
+
+. **A0 is not always “a few KB.”** Its exact size is
+  `fixed + 4*dim + 4*ncomp*dim + 4*k*ncomp + 4*k + 72*k + checksum`.
+  It grows with dimension and cell count.
+. **A0 is not generally adjacent to the first selected cell.** Region A has
+  its own header and presence bitmap, and the nearest probed cell may occur
+  after codes for unselected cells. Joining them can require gap over-read.
+. **The footer is not adjacent to the last Region-B survivor range.** The
+  optional resolver and Region-D blocks lie between Region B and the footer.
+  A `B+footer` merge would read most of Region D and is rejected.
+
+Adjacent *selected cell extents* can still be coalesced, and non-adjacent
+extents can be joined when both `max_gap_bytes` and `max_range_bytes` admit the
+over-read. Logical selected slices remain unchanged, so recall is invariant.
+
+== Implemented remediation
+
+=== S1: physical GET accounting
+
+`CountingFileSystem::read_ranges(path, ranges)` now adds `ranges.len()` physical
+range operations because the trait's default implementation issues exactly
+that many `read_range()` calls. The recorder receives the physical count too.
+This fixes the unencrypted local/object-store benchmark route's under-counting.
+The encryption wrapper is a documented exception: an encrypted batch can
+materialize the encrypted object once and slice it locally. HTTP-boundary
+instrumentation is still required before calling this counter universally
+physical for encrypted deployments. A future true one-request multi-range
+backend likewise needs an explicit physical-operation report.
+
+The invariant is:
+
+[source,text]
+----
+unencrypted current backends:
+physical ranged requests == counted range operations
+----
+
+A Rust function call named `read_ranges` is not evidence of one cloud request.
+
+=== S2: bounded prefix read
+
+On a cold invariants miss, the reader now fetches a bounded prefix:
+
+* default: 1 MiB;
+* `PROXIMADB_PAX_PREFIX_PREFETCH_BYTES=0`: kill switch;
+* explicit values are clamped to 8 MiB.
+
+The same byte buffer supplies the fixed header and, when fully covered, A0,
+the RaBitQ control header, and early selected-cell ranges. No bytes are
+reinterpreted: every consumer takes its original exact logical slice.
+
+This speculative prefix is intentionally bounded. If A0 or a selected cell
+does not fit, the reader performs the normal exact ranged read. The expected
+cold saving is workload/layout dependent and must be measured; it is not
+asserted as “one GET per segment” for every segment.
+
+=== S3: existing selected-range coalescer
+
+`plan_probe_cell_ranges()` remains the correct cell-data seam. It sorts extents
+in file order and merges only under `ObjectRangeCoalescePolicy` gap/range
+bounds. It never changes `nprobe`, selected rows, or ranking inputs.
+
+Region A now derives its unset policy from the same backend IOP target as
+Regions B/D: `max_gap = max(target/4, 64 KiB)` and
+`max_range = target`. The Azure profile is therefore a 1 MiB maximum gap and
+4 MiB maximum range; local SSD remains 256 KiB/1 MiB. The two registered env
+mirrors can override either value, including `0` for exact-adjacency/unbounded
+diagnostics.
+
+=== S4: remove the redundant PAX-as-SST1 magic probe
+
+The first passing release run after the persistent-tier implementation reported
+exactly 2 physical GETs/query and 16 bytes/query in the local-disk-warm phase
+with exactly 2 PAX segments. The source was not PAX header/footer loading.
+Two generic legacy-SST helpers could perform an 8-byte `SST1` magic probe for
+every discovered file before returning “not a legacy SST” for PAX:
+`load_sst_header_centroid()` during file pruning and
+`segment_vector_count()` during the adaptive exact-route decision. Removing
+the centroid probe reduced the object-cold total, but a release rerun retained
+exactly 2 GETs/query and 16 bytes/query; that isolated the adaptive count probe.
+
+Discovery already classifies current PAX segments by the durable `.pax` suffix,
+and PAX stores its partition model in A0 rather than a legacy SST header.
+Both helpers therefore return `None` for `.pax` before acquiring a filesystem
+or reading bytes. Unknown and legacy paths retain the magic sniff, so
+mixed-format reads are unchanged. Regression tests use a nonexistent `.pax`
+object to prove both PAX branches perform no I/O and a nonexistent `.sst`
+object to prove both fallbacks still probe.
+
+Expected effect for the measured two-segment geometry is local-disk-warm
+2→0 GETs/query and object-cold approximately 42→40. This expectation is not
+promoted as evidence until the release benchmark is rerun.
+
+=== S5: preserve recall before minimizing nprobe
+
+The settled one-segment SIFT1M file has 30 persisted A0 cells. A controlled
+release sweep found that the old geometric default
+`ceil(sqrt(30) * 1.0) = 6` missed the recall@10 ratchet on independent
+1,000-query slices. Raising nprobe while enabling the bounded Azure planner
+showed that recall and operations can both satisfy their gates:
+
+[cols="1,1,1,1,1,1"]
+|===
+| nprobe/profile | Query slice | recall@10 | GET/query | MB/query | p50
+
+| 6, local planner
+| 6000..6999
+| 0.9795
+| 26.69
+| 24.66
+| 23.91 ms
+
+| 7, Azure planner
+| 7000..7999
+| 0.9790
+| 11.00
+| 33.35
+| 26.79 ms
+
+| 11, Azure planner
+| 2000..2999
+| 0.9822
+| 15.90
+| 48.82
+| 36.90 ms
+
+| 11, persistent-local warm
+| 1000..1999
+| 0.9803
+| 0
+| 0
+| 47.72 ms
+|===
+
+These are diagnostic sweeps over the immutable acceptance segment, not the
+final post-change evidence run. They justify changing the default multiplier
+to `2.0` (11 cells at `k_c=30`) while preserving the canonical
+`recall@10 >= 0.98` ratchet. The byte increase is explicit: Azure Hot read-op
+COGS falls with fewer operations, but scanned bytes and latency remain
+separate constraints.
+
+== Cell-count / nprobe scale matrix
+
+The writer's natural cell law is IOP-derived, not `sqrt(N)`:
+
+----
+k_c = clamp(floor(N_usable * dim / 4 MiB), 2, 4096)
+----
+
+For 128-dimensional SIFT this yields approximately:
+
+[cols="1,1,2"]
+|===
+| Rows in one settled segment | Natural `k_c` | Role in the experiment
+
+| 100 / 1K / 10K
+| 2 (minimum clamp)
+| Degenerate/fallback correctness; not an asymptotic data point.
+
+| 100K
+| 3
+| Small natural geometry plus a forced-`k_c` calibration sweep.
+
+| 1M
+| 30
+| Current acceptance and cost point.
+
+| 3.3M
+| 100 (measured)
+| First scale-validation point above 1M; one PAX v3 L1 segment.
+
+| 10M
+| approximately 305
+| Extrapolation gate before claiming one calibrated rule scales.
+|===
+
+The planned matrix therefore separates corpus scale from query confidence:
+
+. SIFT100K prefixes at 100/1K/10K/100K validate training floors, clamps,
+  empty cells, and exact fallback. At 100K, force
+  `k_c={2,4,8,16,32}` and sweep absolute `nprobe=1..k_c` to map the geometry
+  rather than repeatedly observing the two-cell floor.
+. SIFT1M uses the natural 30-cell geometry and at least 1,000 independent
+  queries per reported slice.
+. BIGANN/SIFT10M uses natural 3.3M/10M points (measured 100 / expected
+  approximately 305 cells) with the same selected policy; 10M is a validation
+  set, not another place to retune.
+. Every subset needs ground truth generated against exactly that corpus
+  prefix. `sift1m_get_reduction.py` now rejects `--rows` when the declared
+  ground-truth scope differs, preventing full-SIFT1M neighbors from being
+  misreported as subset recall. `scripts/bench/sift_exact_groundtruth.py`
+  generates exact L2 ivecs blockwise and emits a SHA-256 manifest for these
+  subset runs.
+
+For each point record cell row-count skew, empty-cell fraction, radius
+distribution, training sample/cell, normalized `nprobe/k_c`, probed-row
+fraction, Region A/B/D reads and bytes, recall, and latency. Query counts
+(100/1K/10K) narrow confidence intervals; they do not define geometry.
+
+The geometric multiplier remains a deterministic default. The likely
+successor is query-adaptive stopping using the persisted centroid distances,
+radii, and cell row counts: continue probing until an admissible lower bound
+or covered-mass criterion proves another cell cannot improve top-k. That model
+must first be calibrated by the matrix above.
+
+== Measured 3.3M validation point (2026-07-31)
+
+The first scale point above 1M is now measured, not projected. BIGANN/SIFT
+3.3M, 128d L2, one trained PAX v3 L1 segment, natural `k_c=100`, release
+arm64 binary, Azurite through the production Azure HTTP backend, 1,000 diverse
+queries per point, fresh process and empty DRAM/result caches for every
+`(nprobe, top_k)` pair:
+
+[cols="1,1,1,1,1", options="header"]
+|===
+| Result size | Minimum passing nprobe | Recall | Physical GET/query | p50
+
+| top-10 | 11 | 0.9800 | 24.478 | 256.04 ms
+| top-20 | 12 | 0.9812 | 27.320 | 298.93 ms
+|===
+
+The current `ceil(2 * sqrt(k_c))` policy selects 20 probes. At top-20 it
+measured recall 0.9959, 41.12 GET/query, and 452.19 ms p50. Selecting the
+minimum passing 12 probes therefore removes 33.6% of physical GETs and 33.9%
+of median latency while preserving the 0.98 ratchet. It still needs about a
+27% operation reduction to reach 20 GET/query; bounded coalescing and
+singleflight remain necessary.
+
+The scale relationship is sublinear, not a fixed probe fraction. The joint
+floors at natural cell counts are `3/3`, `5/10`, `7/30`, and `12/100` for
+100K, 330K, 1M, and 3.3M. A four-scale fit predicts about 18 top-20 probes at
+an expected 10M `k_c` near 305, but that is only a validation schedule until
+10M is measured. See
+link:../../_internal/status/BIGANN_NPROBE_GEOMETRY_100K_3M3_2026_07_31.adoc[the
+dated evidence artifact] for the full curves, hashes, shape distribution, and
+the single-segment 10M memory limitation.
+
+== Partial 10M natural-knee evidence (2026-08-04)
+
+A later spill-enabled run produced one 10M PAX v3 segment with natural
+`k_c=305`. Five provenance-identical interruption-safe checkpoints contain 7
+of 20 unique planned `(nprobe, top_k)` points. The measured top-10 physical-GET,
+byte, p50, and p95 knees all select `nprobe=30`: recall 0.9744, 66.119 GET/query,
+163.04 MB/query, and 558.37 ms local-Azurite p50. The best sampled recall is
+0.9782 at nprobe 64, so the 0.98 target is explicitly unattained in the partial
+curve. Top-20 has only one point and no defensible knee.
+
+This changes the interpretation, not the quality ratchet. The economy knee is
+an observed cost/recall bend; the quality floor is the first point attaining an
+explicit target. They must not share one field, and neither is a production
+default without its own policy. The prior four-scale quality fit remains useful
+as a validation schedule but did not predict a passing 10M point. See
+link:../../_internal/status/BIGANN_NPROBE_GEOMETRY_100K_10M_2026_08_04.adoc[the
+five-scale partial evidence artifact] for source hashes, coverage, fits, charts,
+and remaining measurement gates.
+
+== Remaining inefficiencies
+
+* The filesystem trait's generic `read_ranges()` is bounded-concurrent but
+  still N physical GETs. Concurrency reduces latency waves, not billable
+  operations.
+* Concurrent identical misses can race through the cache and issue duplicate
+  object GETs. Singleflight by immutable `(path, offset, len)` is the next
+  operation-only reduction.
+* Exact range keys miss when one request asks for a subrange of a cached parent.
+  The write-time SQ8 seed now has an explicit parent-range lookup; the general
+  cache can later grow interval containment if evidence warrants it.
+* `nprobe` multiplies both Region-A and Region-B work. A fixed reduction failed
+  the current recall ratchet; radius/row-aware adaptive stopping is the safer
+  path to fewer cells.
+* Segment count remains the outer multiplier. Coalescing does not substitute
+  for higher-level consolidation.
+
+== Verification gate
+
+Close this TD only with a benchmark that records, for the same fully
+materialized segment geometry:
+
+. physical GETs/query by PAX region/tier;
+. bytes/query;
+. cold and local-disk-warm p50/p95;
+. segment count and level distribution;
+. recall@10 (must not regress below the ratchet);
+. prefix disabled (`0`) versus 1 MiB versus a justified alternative.
+
+The benchmark must wait for flush/compaction quiescence and prove that all
+1M vectors are searchable from materialized segments before restarting.
+
+== Related
+
+link:TD-COMPACT-10-l2-segment-consolidation-gap.adoc[TD-COMPACT-10],
+link:../../12-design/adr/ADR-080-vector-search-compaction-tuning.adoc[ADR-080],
+link:../../12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc[ADR-065],
+link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052].

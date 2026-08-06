@@ -1056,6 +1056,7 @@ impl GraphOperationsService {
                     graph_id.to_string(),
                     self.base_storage_url.clone(),
                     true, // Enable WAL
+                    crate::graph::unified_wal_factory(),
                 )
                 .await?;
                 engine.recover().await?;
@@ -2715,12 +2716,12 @@ impl GraphOperationsService {
 
             // Step 2: Check if sequential validation is requested
             let sequential =
-                std::env::var("PROXIMADB_SEQUENTIAL_VALIDATION").unwrap_or_default() == "1";
+                std::env::var("PROXIMADB_GRAPH_SEQUENTIAL_VALIDATION").unwrap_or_default() == "1";
 
             if sequential {
                 // Sequential validation (original implementation for comparison)
                 tracing::warn!(
-                    "TEST MODE: Using sequential validation via PROXIMADB_SEQUENTIAL_VALIDATION=1"
+                    "TEST MODE: Using sequential validation via PROXIMADB_GRAPH_SEQUENTIAL_VALIDATION=1"
                 );
                 for (edge, from, to) in &validation_data {
                     self.enforce_schema_on_edge(graph_id, edge, &from.labels, &to.labels)
@@ -3530,5 +3531,24 @@ mod tests {
         // Missing node returns NotFound.
         let missing = service.graph_step(graph_id, "no-such-node", None, 10).await;
         assert!(missing.is_err(), "missing node should error");
+    }
+}
+
+// Slice D — GraphOperationsPort impl: exposes the 2-method graph-collection
+// surface that observability's telemetry-graph-linker needs as a DI port, so
+// observability can hold Arc<dyn GraphOperationsPort> instead of the concrete
+// GraphOperationsService. Delegates to the inherent methods (fully-qualified,
+// no recursion). See crates/storage/proximadb-storage-ports/src/lib.rs.
+#[async_trait::async_trait]
+impl proximadb_storage_ports::GraphOperationsPort for GraphOperationsService {
+    async fn list_graphs(&self) -> anyhow::Result<Vec<String>> {
+        Ok(GraphOperationsService::list_graphs(self).await?)
+    }
+
+    async fn create_graph_collection(
+        &self,
+        request: proximadb_proto::proximadb_v1::CreateGraphRequest,
+    ) -> anyhow::Result<std::sync::Arc<proximadb_proto::proximadb_v1::GraphCollection>> {
+        Ok(GraphOperationsService::create_graph_collection(self, request).await?)
     }
 }

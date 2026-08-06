@@ -50,12 +50,23 @@ impl Default for GlobalManifestServiceConfig {
     }
 }
 
-/// Request to append a manifest entry
+/// Request sent to the background manifest worker.
+///
+/// Issue #1126 (L1): the worker batches appends (write-behind), so readers of
+/// `entries` could race in-flight appends — a shutdown flush inside the
+/// batching window under-marked the freshest batch, leaving live WAL files
+/// that the next boot re-materialized as duplicate `L0_recovery_*` segments.
+/// `Barrier` lets a caller force the worker to drain its pending batch and
+/// ack, making "append happened-before lookup" enforceable.
 #[derive(Debug)]
-struct AppendRequest {
-    entry: GlobalManifestEntry,
-    /// Optional response channel for synchronous append
-    response: Option<tokio::sync::oneshot::Sender<Result<()>>>,
+enum AppendRequest {
+    Append {
+        entry: GlobalManifestEntry,
+        /// Optional response channel for synchronous append
+        response: Option<tokio::sync::oneshot::Sender<Result<()>>>,
+    },
+    /// Flush the worker's pending batch, then ack. Never enters the batch.
+    Barrier(tokio::sync::oneshot::Sender<()>),
 }
 
 /// Global manifest service - centralized singleton for all collections
@@ -140,13 +151,26 @@ impl GlobalManifestService {
                 tokio::select! {
                     // Receive append requests
                     Some(request) = append_rx.recv() => {
-                        pending_batch.push(request);
-
-                        // Force write if batch is full
-                        if pending_batch.len() >= config.max_batch_size
-                            && let Err(e) = service.flush_pending_batch(&mut pending_batch).await {
-                                error!("❌ Failed to flush manifest batch: {}", e);
+                        match request {
+                            AppendRequest::Barrier(ack) => {
+                                // Issue #1126 L1: drain everything queued ahead of
+                                // the barrier so post-barrier readers see it all.
+                                if !pending_batch.is_empty()
+                                    && let Err(e) = service.flush_pending_batch(&mut pending_batch).await {
+                                        error!("❌ Failed to flush manifest batch at barrier: {}", e);
+                                    }
+                                let _ = ack.send(());
                             }
+                            append @ AppendRequest::Append { .. } => {
+                                pending_batch.push(append);
+
+                                // Force write if batch is full
+                                if pending_batch.len() >= config.max_batch_size
+                                    && let Err(e) = service.flush_pending_batch(&mut pending_batch).await {
+                                        error!("❌ Failed to flush manifest batch: {}", e);
+                                    }
+                            }
+                        }
                     }
 
                     // Periodic batch write
@@ -183,9 +207,15 @@ impl GlobalManifestService {
 
         debug!("💾 Flushing {} manifest entries to disk", batch.len());
 
-        // Extract entries and sort by LSN
-        let mut entries_to_write: Vec<GlobalManifestEntry> =
-            batch.iter().map(|req| req.entry.clone()).collect();
+        // Extract entries and sort by LSN (the batch only ever holds Append
+        // requests — Barriers are handled inline by the worker loop).
+        let mut entries_to_write: Vec<GlobalManifestEntry> = batch
+            .iter()
+            .filter_map(|req| match req {
+                AppendRequest::Append { entry, .. } => Some(entry.clone()),
+                AppendRequest::Barrier(_) => None,
+            })
+            .collect();
         entries_to_write.sort_by_key(|e| e.global_lsn);
 
         // Write to staging file first (crash safety)
@@ -203,13 +233,21 @@ impl GlobalManifestService {
 
         // Send responses to synchronous callers
         for request in batch.drain(..) {
-            if let Some(tx) = request.response {
-                // Convert Result to cloneable form
-                let response = match &write_result {
-                    Ok(()) => Ok(()),
-                    Err(e) => Err(anyhow::anyhow!("{}", e)),
-                };
-                let _ = tx.send(response);
+            match request {
+                AppendRequest::Append {
+                    response: Some(tx), ..
+                } => {
+                    // Convert Result to cloneable form
+                    let response = match &write_result {
+                        Ok(()) => Ok(()),
+                        Err(e) => Err(anyhow::anyhow!("{}", e)),
+                    };
+                    let _ = tx.send(response);
+                }
+                AppendRequest::Append { response: None, .. } => {}
+                AppendRequest::Barrier(ack) => {
+                    let _ = ack.send(());
+                }
             }
         }
 
@@ -384,7 +422,7 @@ impl GlobalManifestService {
             deduped
                 .entry(entry.batch_id.clone())
                 .and_modify(|existing| {
-                    if entry.global_lsn > existing.global_lsn {
+                    if should_replace_manifest_entry(existing, &entry) {
                         *existing = entry.clone();
                     }
                 })
@@ -438,21 +476,26 @@ impl GlobalManifestService {
         Ok(())
     }
 
-    /// Append an entry asynchronously (high performance, no blocking)
-    pub async fn append_async(&self, mut entry: GlobalManifestEntry) -> Result<()> {
+    /// Append an entry asynchronously (the LSN is allocated synchronously; the
+    /// entry is persisted by the background worker). Returns the allocated durable
+    /// `global_lsn` — TD-DELVEC-1 WI-5 P0 keys deletion-vector bits on this LSN so
+    /// the DV generation shares the read side's `snapshot_lsn` number space
+    /// (correct MVCC) and is recoverable.
+    pub async fn append_async(&self, mut entry: GlobalManifestEntry) -> Result<u64> {
         // Allocate global LSN
         entry.global_lsn = self.lsn_allocator.allocate().await;
+        let global_lsn = entry.global_lsn;
 
         // Send to background worker (non-blocking)
         self.append_tx
-            .send(AppendRequest {
+            .send(AppendRequest::Append {
                 entry,
                 response: None,
             })
             .await
             .context("Failed to send append request")?;
 
-        Ok(())
+        Ok(global_lsn)
     }
 
     /// Append an entry synchronously (waits for disk write)
@@ -465,7 +508,7 @@ impl GlobalManifestService {
 
         // Send to background worker
         self.append_tx
-            .send(AppendRequest {
+            .send(AppendRequest::Append {
                 entry,
                 response: Some(tx),
             })
@@ -511,11 +554,32 @@ impl GlobalManifestService {
         self.latest_checkpoint.read().await.clone()
     }
 
+    /// Issue #1126 L1: drain the worker's write-behind queue so every append
+    /// enqueued before this call is visible in `entries`. Errors are swallowed:
+    /// a gone worker means the channel is closed and nothing is pending.
+    pub async fn drain_pending(&self) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if self
+            .append_tx
+            .send(AppendRequest::Barrier(tx))
+            .await
+            .is_ok()
+        {
+            let _ = rx.await;
+        }
+    }
+
     /// Mark entries as flushed
     ///
     /// Cloud-optimized: Writes status update as new manifest segment
     /// instead of editing existing files (append-only for S3/Azure/GCS)
     pub async fn mark_flushed(&self, batch_ids: &[String]) -> Result<()> {
+        // Issue #1126 L1: the append path is write-behind; without this
+        // barrier a flush racing the batching window under-marks the
+        // freshest batch → leftover WAL → duplicate L0_recovery segments
+        // on the next boot.
+        self.drain_pending().await;
+
         // Update in-memory state
         let mut entries = self.entries.write().await;
         let mut status_updates = Vec::new();
@@ -556,6 +620,12 @@ impl GlobalManifestService {
         if batch_ids.is_empty() {
             return Ok(0);
         }
+
+        // Issue #1126 L1: drain the write-behind queue BEFORE the lookup —
+        // otherwise a batch appended moments ago is invisible here, its WAL
+        // file survives, and the next boot re-materializes it as a duplicate
+        // L0_recovery segment.
+        self.drain_pending().await;
 
         // Collect file URLs before marking as flushed (need Active status entries)
         let file_urls: Vec<String> = {
@@ -988,6 +1058,58 @@ impl GlobalManifestService {
     }
 }
 
+fn status_rank(status: WalEntryStatus) -> u8 {
+    match status {
+        WalEntryStatus::Active => 0,
+        WalEntryStatus::Flushed => 1,
+        WalEntryStatus::Archived | WalEntryStatus::RolledBack => 2,
+    }
+}
+
+fn should_replace_manifest_entry(
+    existing: &GlobalManifestEntry,
+    incoming: &GlobalManifestEntry,
+) -> bool {
+    incoming.global_lsn > existing.global_lsn
+        || (incoming.global_lsn == existing.global_lsn
+            && status_rank(incoming.status) > status_rank(existing.status))
+}
+
+#[cfg(test)]
+mod manifest_status_tests {
+    use super::*;
+    use crate::storage::persistence::write_ahead_log::BatchId;
+    use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
+
+    fn entry(status: WalEntryStatus) -> GlobalManifestEntry {
+        let mut entry = GlobalManifestEntry::new(
+            7,
+            "collection".to_string(),
+            &BatchId::new(),
+            "batch.bcwal".to_string(),
+            1,
+            1,
+            SerializationFormat::Bincode,
+            1,
+            "file:///tmp".to_string(),
+        );
+        entry.status = status;
+        entry
+    }
+
+    #[test]
+    fn equal_lsn_flushed_supersedes_active() {
+        assert!(should_replace_manifest_entry(
+            &entry(WalEntryStatus::Active),
+            &entry(WalEntryStatus::Flushed)
+        ));
+        assert!(!should_replace_manifest_entry(
+            &entry(WalEntryStatus::Flushed),
+            &entry(WalEntryStatus::Active)
+        ));
+    }
+}
+
 /// Vector Object Economy `FreshnessLsnSource` adapter backed by the
 /// global manifest service's LSN allocator.
 ///
@@ -1022,6 +1144,128 @@ impl crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource
 {
     async fn current_lsn(&self, _collection_id: &str) -> u64 {
         self.manifest.current_lsn().await
+    }
+}
+
+#[cfg(test)]
+mod barrier_tests {
+    use super::*;
+    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::storage::persistence::write_ahead_log::manifest::types::WalEntryStatus;
+    use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
+
+    /// Issue #1126 L1 regression: an entry appended via the WRITE-BEHIND path
+    /// must be visible to `mark_flushed_and_delete_files` immediately — the
+    /// drain barrier makes append happen-before the flush-time lookup. Without
+    /// the barrier this test flakes/fails whenever the worker's batch window
+    /// (batch_interval_ms) hasn't elapsed — which was the restart data-loss
+    /// trigger (leftover WAL → duplicate L0_recovery segments on next boot).
+    #[tokio::test]
+    async fn write_behind_append_visible_to_flush_lookup_without_sleep() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_url = format!("file://{}", temp_dir.path().display());
+        let fs_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .expect("fs factory"),
+        );
+        let service = GlobalManifestService::new(
+            GlobalManifestServiceConfig::default(),
+            fs_factory,
+            wal_url.clone(),
+        )
+        .await
+        .expect("service");
+
+        let entry = GlobalManifestEntry {
+            global_lsn: 0, // allocated by append_async
+            collection_id: "c1".to_string(),
+            batch_id: "b1126".to_string(),
+            file_path: "c1/wal/b1126.bcwal".to_string(),
+            storage_url: wal_url.clone(),
+            size_bytes: 42,
+            checksum_crc32: 0,
+            timestamp_ms: 1,
+            format: SerializationFormat::Bincode,
+            vector_count: 1,
+            status: WalEntryStatus::Active,
+            checkpoint_id: None,
+        };
+
+        // Async (write-behind) append, then IMMEDIATELY mark — no sleep.
+        service.append_async(entry).await.expect("append");
+        service
+            .mark_flushed_and_delete_files(&["b1126".to_string()])
+            .await
+            .expect("mark+delete");
+
+        let entries = service.get_collection_entries("c1").await;
+        assert_eq!(entries.len(), 1, "entry must be visible post-barrier");
+        assert_eq!(
+            entries[0].status,
+            WalEntryStatus::Flushed,
+            "freshly appended batch must be marked Flushed, not missed"
+        );
+    }
+
+    /// TD-DELVEC-1 WI-5 P0: `append_async` returns the durable per-batch
+    /// `global_lsn` it allocated (previously a discarded `()`), so the cold-delete
+    /// path can key deletion-vector bits on a generation in the read side's
+    /// `snapshot_lsn` number space. The LSN is allocated synchronously, monotonic
+    /// across appends, and matches `current_lsn`.
+    #[tokio::test]
+    async fn append_async_returns_durable_global_lsn() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_url = format!("file://{}", temp_dir.path().display());
+        let fs_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .expect("fs factory"),
+        );
+        let service = GlobalManifestService::new(
+            GlobalManifestServiceConfig::default(),
+            fs_factory,
+            wal_url.clone(),
+        )
+        .await
+        .expect("service");
+
+        let mk_entry = |batch_id: &str| GlobalManifestEntry {
+            global_lsn: 0, // allocated by append_async
+            collection_id: "c1".to_string(),
+            batch_id: batch_id.to_string(),
+            file_path: format!("c1/wal/{batch_id}.bcwal"),
+            storage_url: wal_url.clone(),
+            size_bytes: 42,
+            checksum_crc32: 0,
+            timestamp_ms: 1,
+            format: SerializationFormat::Bincode,
+            vector_count: 1,
+            status: WalEntryStatus::Active,
+            checkpoint_id: None,
+        };
+
+        let lsn1 = service
+            .append_async(mk_entry("b1"))
+            .await
+            .expect("append b1");
+        let lsn2 = service
+            .append_async(mk_entry("b2"))
+            .await
+            .expect("append b2");
+        assert!(
+            lsn1 > 0,
+            "append_async must return an allocated LSN, got {lsn1}"
+        );
+        assert!(
+            lsn2 > lsn1,
+            "returned LSNs must be monotonic: {lsn1} then {lsn2}"
+        );
+        assert_eq!(
+            service.current_lsn().await,
+            lsn2,
+            "the returned LSN must match the manifest's current_lsn"
+        );
     }
 }
 

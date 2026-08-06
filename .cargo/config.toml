@@ -38,6 +38,10 @@ test-coverage-safe = "tarpaulin --skip-clean --timeout 600 --avoid-cfg-tarpaulin
 # Fast check (syntax only, no codegen) — typed-syntax loop, no linking
 check-fast = "check --all-targets --jobs 3"
 check-lib  = "check --lib --jobs 3"   # even tighter; library-only
+# L2 dev-fast lane: check with deps at -O1 (opt-in profile, see Cargo.toml
+# [profile.dev-fast]). Faster than the default dev/test check for dep-heavy
+# edits; artifacts are NOT shared with the test profile, so toggling recompiles.
+check-dev-fast = "check --profile dev-fast"
 
 # Parallel test run (for unit tests that don't share state).
 # Overrides the RUST_TEST_THREADS=1 from [env] via the inner --test-threads flag.
@@ -50,11 +54,33 @@ nx     = "nextest run --profile default"
 nxlib  = "nextest run --lib --profile unit"
 nxint  = "nextest run --profile integration"
 
+# Perf evidence-ledger harnesses (TD-OLAP-4) — the CANONICAL invocations.
+# Release build (wall/compute numbers are only admissible from release) with
+# the in-process DuckDB baseline compiled in BY DEFAULT, so every ledger run
+# carries all engine permutations (native/DataFusion/DuckDB). The `duckdb`
+# cargo feature stays opt-in for library builds (bundled C++ is too heavy for
+# CI/dev defaults) — these aliases are where it is always on. Knobs via env:
+# TPC_PERF_SCALE / TPC_PERF_SKIP_NATIVE / TPC_PERF_QUERY_TIMEOUT_MS /
+# CLICKBENCH_PARQUET / CLICKBENCH_QUERY_TIMEOUT_MS / *_LEDGER_OUT.
+ledger-tpc        = "test --release --features duckdb --test tpc_perf_ledger_e2e -- --ignored --nocapture"
+ledger-clickbench = "test --release --features duckdb --test clickbench_ledger_e2e clickbench_ledger -- --ignored --nocapture"
+
 [target.aarch64-apple-darwin]
-# Apple Silicon specific optimizations
+# Apple Silicon build flags.
+# NOTE: `target-cpu=native` was removed here (2026-07). It broke two things on
+# aarch64-apple-darwin:
+#   1. Distributable wheels — `native` bakes the *builder's* exact CPU features
+#      into the artifact, so a wheel built on one Mac can SIGILL (illegal
+#      instruction) on another. proximadb_embedded ships Apple-Silicon wheels
+#      (TD-EMBED-1), which MUST be portable across M-series chips.
+#   2. `ring 0.17.x` — its darwin.rs const-assertion `CAPS_STATIC ==
+#      MIN_STATIC_FEATURES` fails to compile when `native` enables features
+#      beyond Apple's guaranteed baseline (the exact E0080 the macOS wheel build
+#      hit; see ci.yml's GPU job note about avoiding macos-14 for ring).
+# rustc's default target-cpu for this triple is the portable Apple baseline
+# (NEON/AES/SHA2 already on) — optimized for Apple Silicon AND portable/ring-safe.
 rustflags = [
     "-C", "codegen-units=4",
-    "-C", "target-cpu=native",
 ]
 
 [target.x86_64-unknown-linux-gnu]

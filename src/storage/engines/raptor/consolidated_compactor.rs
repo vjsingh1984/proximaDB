@@ -12,6 +12,7 @@ use super::common::{RaptorFileMetadata, RowGroup, RowGroupMetadata, SchemaDescri
 use super::config::RaptorConfig;
 use super::consolidated_reader::RaptorReader;
 use super::smart_rowgroup_sizing::BalancedMatrixTrinitySizing;
+#[cfg(feature = "axis")]
 use crate::index::axis::clustering::{
     AxisClusteringEngine as AxisClustering, ClusteringConfig as AxisClusteringConfig,
     ReusableClusteringEngine,
@@ -304,6 +305,7 @@ impl RaptorCompactor {
 
     /// Run fast-converging K-means++ clustering for high-dimensional data
     /// Uses the same algorithm as the writer for consistency
+    #[cfg(feature = "axis")]
     #[allow(dead_code)]
     fn cluster_vectors(&self, vectors: &[VectorRecord], k: usize) -> Result<Vec<usize>> {
         // Use AXIS clustering engine with K-means++ initialization

@@ -261,11 +261,13 @@ impl<E: UnifiedStorageFormat + 'static> InternalFormat for InternalFormatAdapter
         // Extract collection_id from path (path format: {base}/{collection_id}/data)
         let collection_id = extract_collection_id_from_path(path)?;
 
-        // Use engine's vector_by_id method
+        // Use engine's point_lookup method (batch-capable; identity None for now)
         match self
             .engine
-            .vector_by_id(&collection_id, path, vector_id)
+            .point_lookup(&collection_id, path, &[vector_id.to_string()], None)
             .await?
+            .into_iter()
+            .next()
         {
             Some(record) => {
                 // Convert canonical ProximaRecord to the legacy VectorBatch adapter shape.
@@ -561,6 +563,7 @@ pub type NovaFormatAdapter = InternalFormatAdapter<crate::storage::engines::nova
 pub type SwiftFormatAdapter = InternalFormatAdapter<crate::storage::engines::swift::SwiftEngine>;
 
 /// Type alias for RAPTOR format adapter
+#[cfg(feature = "experimental-engines")]
 #[allow(deprecated)]
 pub type RaptorFormatAdapter = InternalFormatAdapter<crate::storage::engines::raptor::RaptorEngine>;
 
@@ -605,6 +608,7 @@ pub fn create_swift_adapter(
 }
 
 /// Create a RAPTOR format adapter from an existing engine
+#[cfg(feature = "experimental-engines")]
 #[allow(deprecated)]
 pub fn create_raptor_adapter(
     engine: Arc<crate::storage::engines::raptor::RaptorEngine>,

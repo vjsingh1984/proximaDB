@@ -32,73 +32,12 @@ struct PermissionCacheEntry {
     cached_at: DateTime<Utc>,
 }
 
-/// Unified permission model consolidating all permission types
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UnifiedPermission {
-    // === TENANT LEVEL PERMISSIONS ===
-    TenantAdmin,
-    TenantRead,
-    TenantWrite,
-
-    // === DOMAIN LEVEL PERMISSIONS ===
-    DomainCreate,
-    DomainRead(String),
-    DomainWrite(String),
-    DomainAdmin(String),
-
-    // === COLLECTION LEVEL PERMISSIONS ===
-    // Collection management
-    CollectionCreate,
-    CollectionRead(String),
-    CollectionWrite(String),
-    CollectionDelete(String),
-    CollectionAdmin(String),
-
-    // Collection metadata
-    ReadCollectionMetadata(String),
-    UpdateCollectionMetadata(String),
-    ListCollections,
-
-    // === VECTOR LEVEL PERMISSIONS ===
-    VectorInsert(String), // Collection-specific vector operations
-    VectorDelete(String),
-    VectorSearch(String),
-    VectorUpdate(String),
-    VectorRead(String),
-
-    // === ENTITY LEVEL PERMISSIONS ===
-    EntityRead(String),
-    EntityWrite(String),
-    EntityDelete(String),
-
-    // === GRAPH LEVEL PERMISSIONS ===
-    GraphCreateRelations(String), // Collection-specific graph operations
-    GraphDeleteRelations(String),
-    GraphTraverse(String),
-    GraphReadRelations(String),
-
-    // === QUERY LEVEL PERMISSIONS ===
-    ExecuteSqlQueries(String),   // Collection-specific SQL queries
-    ExecuteSksFunctions(String), // SKS function execution
-
-    // === SYSTEM LEVEL PERMISSIONS ===
-    ViewSystemMetrics,
-    ViewSystemHealth,
-    ConfigureSystem,
-    AuditRead,
-    SystemAdmin,
-
-    // === BUSINESS CONTEXT PERMISSIONS ===
-    // (From Enhanced RBAC for business intelligence)
-    RiskDataAccess,
-    FinancialDataAccess,
-    ComplianceDataAccess,
-    CustomerDataAccess,
-
-    // === SPECIAL PERMISSIONS ===
-    FieldLevelRead(String, String), // (collection, field)
-    FieldLevelWrite(String, String),
-}
+/// Unified permission model consolidating all permission types.
+///
+/// Hoisted to the `proximadb-tenant` foundation crate (Slice D root-crate
+/// shrinkage) — re-exported here so all existing `crate::security::rbac_service`
+/// call sites resolve unchanged. See [`proximadb_tenant::UnifiedPermission`].
+pub use proximadb_tenant::UnifiedPermission;
 
 /// Unified role definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,32 +52,21 @@ pub struct UnifiedRole {
     pub is_system_role: bool,
 }
 
-/// Unified user context for all authentication methods
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnifiedUserContext {
-    pub user_id: String,
-    pub tenant_id: Option<String>,
-    pub roles: Vec<String>,
-    pub effective_permissions: HashSet<UnifiedPermission>,
-    pub auth_method: UnifiedAuthMethod,
-    pub session_id: String,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub metadata: HashMap<String, String>,
-}
+/// Unified user context for all authentication methods.
+///
+/// Hoisted to the `proximadb-tenant` foundation crate (Slice D root-crate
+/// shrinkage) — re-exported here so all existing `crate::security::rbac_service`
+/// call sites resolve unchanged. See [`proximadb_tenant::UnifiedUserContext`].
+pub use proximadb_tenant::UnifiedUserContext;
 
 /// Authentication method enum for the unified security surface.
 /// This lives in the security/rbac boundary and intentionally differs from
 /// `crate::network::auth::AuthMethod`, which models inbound transport/auth-provider
 /// style handling at the network edge.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum UnifiedAuthMethod {
-    SSO { provider: String },
-    JWT,
-    ApiKey,
-    ClientCertificate,
-    Internal,
-}
+///
+/// Hoisted to the `proximadb-tenant` foundation crate (Slice D) — re-exported
+/// here. See [`proximadb_tenant::UnifiedAuthMethod`].
+pub use proximadb_tenant::UnifiedAuthMethod;
 
 /// Compatibility alias preserved for existing call sites in the security crate.
 pub type AuthMethod = UnifiedAuthMethod;
@@ -916,17 +844,15 @@ pub struct AuthorizationResult {
     pub reason: Option<String>,
 }
 
+/// Tenant context for authorized operations.
+///
+/// Hoisted to the `proximadb-tenant` foundation crate (Slice D root-crate
+/// shrinkage) — re-exported here so all existing `crate::security::rbac_service`
+/// call sites resolve unchanged. See [`proximadb_tenant::RbacTenantContext`].
+pub use proximadb_tenant::RbacTenantContext;
+
 /// Backwards-compat alias for [`RbacTenantContext`].
 pub type TenantContext = RbacTenantContext;
-
-/// Tenant context for authorized operations
-#[derive(Debug, Clone)]
-pub struct RbacTenantContext {
-    pub tenant_id: String,
-    pub tenant_name: String,
-    pub security_policy: String,
-    pub compliance_frameworks: Vec<String>,
-}
 
 #[cfg(test)]
 mod tests {
@@ -1016,62 +942,9 @@ mod tests {
     // New infrastructure tests
     // =========================================================================
 
-    #[test]
-    fn test_unified_permission_variants() {
-        // Verify that all UnifiedPermission variants can be constructed
-        // and are distinct via Debug output (compile-time + runtime check).
-        let permissions: Vec<UnifiedPermission> = vec![
-            UnifiedPermission::TenantAdmin,
-            UnifiedPermission::TenantRead,
-            UnifiedPermission::TenantWrite,
-            UnifiedPermission::DomainCreate,
-            UnifiedPermission::DomainRead("d1".into()),
-            UnifiedPermission::DomainWrite("d1".into()),
-            UnifiedPermission::DomainAdmin("d1".into()),
-            UnifiedPermission::CollectionCreate,
-            UnifiedPermission::CollectionRead("c1".into()),
-            UnifiedPermission::CollectionWrite("c1".into()),
-            UnifiedPermission::CollectionDelete("c1".into()),
-            UnifiedPermission::CollectionAdmin("c1".into()),
-            UnifiedPermission::ReadCollectionMetadata("c1".into()),
-            UnifiedPermission::UpdateCollectionMetadata("c1".into()),
-            UnifiedPermission::ListCollections,
-            UnifiedPermission::VectorInsert("c1".into()),
-            UnifiedPermission::VectorDelete("c1".into()),
-            UnifiedPermission::VectorSearch("c1".into()),
-            UnifiedPermission::VectorUpdate("c1".into()),
-            UnifiedPermission::VectorRead("c1".into()),
-            UnifiedPermission::EntityRead("e1".into()),
-            UnifiedPermission::EntityWrite("e1".into()),
-            UnifiedPermission::EntityDelete("e1".into()),
-            UnifiedPermission::GraphCreateRelations("g1".into()),
-            UnifiedPermission::GraphDeleteRelations("g1".into()),
-            UnifiedPermission::GraphTraverse("g1".into()),
-            UnifiedPermission::GraphReadRelations("g1".into()),
-            UnifiedPermission::ExecuteSqlQueries("c1".into()),
-            UnifiedPermission::ExecuteSksFunctions("c1".into()),
-            UnifiedPermission::ViewSystemMetrics,
-            UnifiedPermission::ViewSystemHealth,
-            UnifiedPermission::ConfigureSystem,
-            UnifiedPermission::AuditRead,
-            UnifiedPermission::SystemAdmin,
-            UnifiedPermission::RiskDataAccess,
-            UnifiedPermission::FinancialDataAccess,
-            UnifiedPermission::ComplianceDataAccess,
-            UnifiedPermission::CustomerDataAccess,
-            UnifiedPermission::FieldLevelRead("c1".into(), "field_a".into()),
-            UnifiedPermission::FieldLevelWrite("c1".into(), "field_b".into()),
-        ];
-
-        // Each variant should produce a distinct Debug string
-        let debug_strings: HashSet<String> =
-            permissions.iter().map(|p| format!("{:?}", p)).collect();
-        assert_eq!(
-            debug_strings.len(),
-            permissions.len(),
-            "all permission variants should produce unique Debug representations"
-        );
-    }
+    // NOTE: `test_unified_permission_variants` moved to the `proximadb-tenant`
+    // crate alongside the `UnifiedPermission` type (Slice D hoist — it is a pure
+    // data-type test with no manager behavior).
 
     #[test]
     fn test_data_model_alias() {

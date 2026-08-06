@@ -6,9 +6,11 @@
 pub mod auto_scheduler;
 pub mod bitmap;
 pub mod cache_config;
+pub mod coarse_directory;
 pub mod collection_path;
 pub mod column_projector;
 pub mod columnar_constants;
+pub mod compaction_override;
 pub mod deletion_vector;
 pub mod delta_simd;
 pub mod engine_constants;
@@ -23,23 +25,36 @@ pub mod glob;
 pub mod hierarchical_stats;
 pub mod hilbert_curve;
 pub mod id_index;
+pub mod iops_budget;
 pub mod metadata_collector;
 pub mod mmap_file;
 pub mod native_metadata;
-pub mod object_store_bridge;
+/// Re-export shim — the canonical `ObjectStoreBridge` contract now lives in
+/// `proximadb-catalog` (the cross-layer contract crate this crate already
+/// depends on), so catalog-side services can consume it without a
+/// `catalog -> storage-common` cycle. All historical
+/// `proximadb_storage_common::object_store_bridge::*` paths keep working.
+pub mod object_store_bridge {
+    pub use proximadb_catalog::object_store_bridge::*;
+}
 pub mod observability_cardinality;
 pub mod observability_partitioning;
 pub mod observability_rollups;
+pub mod oid_position_resolver;
 pub mod pax_block;
+pub mod pax_striped_plan;
 pub mod proxima_arrow;
 pub mod proxima_parquet;
 pub mod proxima_schema;
 pub mod query_metrics;
 pub mod ranged_segment;
+pub mod segment_layout;
 pub mod smart_io_metrics;
 pub mod spatial_encoding;
+pub mod spill_regions;
 pub mod storage_error;
 pub mod storage_path;
+pub mod storage_profile;
 pub mod swift_id_index;
 pub mod tenant_performance;
 pub mod tiering_policy;
@@ -73,6 +88,11 @@ pub use columnar_constants::{
     FIELD_SOURCE, FIELD_TIMESTAMP, FIELD_UPDATED_AT, FIELD_VECTOR_FP32, FIELD_VERSION,
     PARQUET_EXTENSION, QUANTIZATION_COLUMNS, QUANTIZATION_PARAMETER_COLUMNS,
     QUANTIZED_VECTOR_COLUMNS, REQUIRED_COLUMNS, TEMPORAL_COLUMNS, VIPER_FILE_EXTENSION,
+};
+pub use compaction_override::{
+    COMPACTION_L0_THRESHOLD_TAG_PREFIX, COMPACTION_TAG_PREFIX, GlobalCompactionGate,
+    L0_COMPACTION_ENABLED_ENV, global_compaction_gate, resolve_compaction_armed,
+    resolve_l0_threshold,
 };
 pub use delta_simd::{delta_decode_f32, delta_decode_i32_prefix_sum, delta_decode_i64_prefix_sum};
 pub use engine_constants::{
@@ -138,6 +158,10 @@ pub use smart_io_metrics::{FileIoMetrics, IoMetrics, IoMetricsSnapshot};
 pub use spatial_encoding::{CodeType, SpatialCode, U512};
 pub use storage_error::{ErrorContext, StorageError, StorageErrorKind};
 pub use storage_path::StoragePath;
+pub use storage_profile::{
+    CHURN_WORKING_SET_MB_ENV, STORAGE_PROFILE_ENV, STORAGE_PROFILE_TAG_PREFIX, StorageProfile,
+    churn_working_set_ceiling_bytes, resolve_storage_profile,
+};
 pub use swift_id_index::{
     BPlusNode, BlockLocation, IdIndex, IndexStats as SwiftIndexStats, RecordLocation,
     TwoLevelIdIndex,

@@ -37,6 +37,7 @@ mod tests {
             prefetch_enabled: false,
             prefetch_size_kb: 64,
             decompression_cache_config: None,
+            ..Default::default()
         }
     }
 
@@ -63,6 +64,8 @@ mod tests {
 
         // Create a compaction task with test files
         let task = CompactionTask {
+            collection_object_id: 1,
+            collection_identity: crate::core::stable_id::CollectionIdentity::default(),
             level: 0,
             input_files: vec![
                 temp_dir.path().join("input1.sstable"),

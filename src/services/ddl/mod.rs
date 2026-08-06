@@ -469,11 +469,20 @@ pub struct DdlService {
     /// Optional rank-services singleton. When present, `CREATE RANK PROFILE`
     /// also compiles + installs the profile into the live registry so SQL
     /// `RERANK(...)` sees it immediately without waiting for the next boot.
-    rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+    rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
     /// Optional durable function catalog (F5). When present, `CREATE FUNCTION`
     /// persists the definition so it is re-registered after a restart; absent
     /// for embedded/test paths (the in-process registration still happens).
     function_store: Option<Arc<dyn crate::services::FunctionStore>>,
+    /// Partition-lease manager for per-collection write authority. When present
+    /// (alongside a registry + pod id), collection/table-scoped DDL consults the
+    /// lease before executing so writes are split-brain-free. `None` ⇒ inert.
+    partition_lease_manager: Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
+    /// Primary-pod registry for write routing; the in-memory fallback consulted
+    /// by the lease check (and the authority when no lease manager is attached).
+    primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
+    /// This pod's identity for write-routing comparisons.
+    self_pod_id: Option<String>,
 }
 
 impl DdlService {
@@ -485,6 +494,9 @@ impl DdlService {
             rank_profile_store: None,
             rank_services: None,
             function_store: None,
+            partition_lease_manager: None,
+            primary_pod_registry: None,
+            self_pod_id: None,
         }
     }
 
@@ -519,10 +531,96 @@ impl DdlService {
     /// requiring a server restart.
     pub fn with_rank_services(
         mut self,
-        services: Arc<crate::network::rest::v1::rank::RankServices>,
+        services: Arc<crate::network::rest::canonical::rank::RankServices>,
     ) -> Self {
         self.rank_services = Some(services);
         self
+    }
+
+    /// Attach the partition-lease manager for per-collection write authority.
+    /// When the lease system is on (a future registered gate; none exists yet), the
+    /// `SharedServices` composition root attaches this so collection/table-scoped
+    /// DDL consults the lease before executing. Inert by default.
+    pub fn with_partition_lease_manager(
+        mut self,
+        manager: Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+    ) -> Self {
+        self.partition_lease_manager = Some(manager);
+        self
+    }
+
+    /// Wire the complete write-lease authority onto an already-assembled DDL
+    /// service. Pgwire builds rank/materializer decorators per connection, so a
+    /// mutating setter avoids rebuilding the service and dropping those handles.
+    pub fn set_write_lease_authority(
+        &mut self,
+        manager: Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) {
+        self.partition_lease_manager = Some(manager);
+        self.primary_pod_registry = Some(registry);
+        self.self_pod_id = Some(self_pod_id);
+    }
+
+    /// Attach the primary-pod registry used for write-routing decisions.
+    pub fn with_primary_pod_registry(
+        mut self,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+    ) -> Self {
+        self.primary_pod_registry = Some(registry);
+        self
+    }
+
+    /// Attach this pod's identity for write-routing comparisons.
+    pub fn with_self_pod_id(mut self, pod_id: String) -> Self {
+        self.self_pod_id = Some(pod_id);
+        self
+    }
+
+    /// Consult the write lease before a collection/table-scoped DDL.
+    ///
+    /// Returns `Ok(())` when the write is allowed, or when lease enforcement is
+    /// not wired (registry or pod-id is `None`). The lease manager is optional:
+    /// present ⇒ lease acquire/renew; absent ⇒ in-memory registry lookup only.
+    /// Returns `Err` naming the target pod when another pod holds authority.
+    ///
+    /// `SystemCatalog` generation-fences catalog snapshot publication, but it
+    /// does not fence external side effects such as a Parquet MATERIALIZE write.
+    /// The renewable partition lease is therefore the authority for these
+    /// table-scoped operations; the post-operation check detects displacement
+    /// before success/catalog-cache publication.
+    async fn check_lease_for_write(&self, tenant: Option<&str>, collection_id: &str) -> Result<()> {
+        use crate::cluster::primary_pod_registry::{
+            WriteRoutingDecision, consult_for_write_leased,
+        };
+        // Inert unless a registry + pod id are wired (the essentials for any
+        // routing decision). The lease manager is optional: present ⇒ lease
+        // acquire/renew; absent ⇒ in-memory registry lookup only.
+        let (registry, pod_id) = match (&self.primary_pod_registry, &self.self_pod_id) {
+            (Some(r), Some(p)) => (r, p),
+            _ => return Ok(()),
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let decision = consult_for_write_leased(
+            registry,
+            self.partition_lease_manager.as_deref(),
+            pod_id,
+            tenant.unwrap_or("default"),
+            collection_id,
+            now_ms,
+        )
+        .await
+        .map_err(|e| anyhow!("DDL lease check failed: {e}"))?;
+        match decision {
+            WriteRoutingDecision::Allow => Ok(()),
+            WriteRoutingDecision::Misrouted { target_pod } => Err(anyhow!(
+                "DDL misrouted: write for collection '{collection_id}' must go to pod '{target_pod}'"
+            )),
+        }
     }
 
     /// Execute a DDL statement
@@ -536,9 +634,10 @@ impl DdlService {
 
     /// Execute a DDL statement within a tenant scope (TD-064). The tenant
     /// scopes table-targeting DDL (CREATE/DROP/ALTER TABLE, CREATE/DROP INDEX)
-    /// onto the same tenant-prefixed catalog namespace the DML path resolves, so
-    /// a tenant's CREATE-then-INSERT address one schema row. `None` ⇒
-    /// single-tenant, identical to the legacy path.
+    /// and explicit namespace creation onto the same tenant-prefixed catalog
+    /// namespace the DML path resolves, so a tenant's CREATE-then-INSERT
+    /// address one schema row. `None` ⇒ single-tenant, identical to the legacy
+    /// path.
     pub async fn execute_scoped(
         &self,
         statement: DdlStatement,
@@ -552,6 +651,7 @@ impl DdlService {
                 if_not_exists,
                 properties,
             } => {
+                self.check_lease_for_write(tenant, &table_name).await?;
                 self.create_table(
                     &table_name,
                     columns,
@@ -566,12 +666,19 @@ impl DdlService {
                 table_name,
                 if_exists,
                 purge,
-            } => self.drop_table(&table_name, if_exists, purge, tenant).await,
+            } => {
+                self.check_lease_for_write(tenant, &table_name).await?;
+                self.drop_table(&table_name, if_exists, purge, tenant).await
+            }
             DdlStatement::AlterTable {
                 table_name,
                 changes,
-            } => self.alter_table(&table_name, changes, tenant).await,
+            } => {
+                self.check_lease_for_write(tenant, &table_name).await?;
+                self.alter_table(&table_name, changes, tenant).await
+            }
             DdlStatement::MaterializeTable { name } => {
+                self.check_lease_for_write(tenant, &name).await?;
                 let materializer = self.materializer.as_ref().ok_or_else(|| {
                     anyhow!(
                         "ALTER TABLE … MATERIALIZE requires a configured warehouse object \
@@ -579,6 +686,16 @@ impl DdlService {
                     )
                 })?;
                 let location = materializer.materialize(&name, tenant).await?;
+                // MATERIALIZE can outlive a lease TTL. Revalidate before
+                // publishing success so a displaced pod cannot bless stale work.
+                self.check_lease_for_write(tenant, &name).await?;
+                // TD-OLAP-4: a re-MATERIALIZE republishes the base at this
+                // location, so any cached table-OPEN discovery (schema/splits/
+                // sizes) for it is now stale — drop it so reads re-discover.
+                #[cfg(feature = "datafusion-integration")]
+                crate::datafusion::engine_adapters::table_open_cache::invalidate_location(
+                    &location,
+                );
                 Ok(DdlResult::success(format!(
                     "Materialized table '{name}' to '{location}'"
                 )))
@@ -590,37 +707,48 @@ impl DdlService {
                 index_type,
                 if_not_exists,
             } => {
-                self.create_index(
-                    &index_name,
-                    &table_name,
-                    columns,
-                    index_type,
-                    if_not_exists,
-                    tenant,
-                )
-                .await
+                self.check_lease_for_write(tenant, &table_name).await?;
+                let result = self
+                    .create_index(
+                        &index_name,
+                        &table_name,
+                        columns,
+                        index_type,
+                        if_not_exists,
+                        tenant,
+                    )
+                    .await?;
+                self.check_lease_for_write(tenant, &table_name).await?;
+                Ok(result)
             }
             DdlStatement::DropIndex {
                 index_name,
                 table_name,
                 if_exists,
             } => {
-                self.drop_index(&index_name, &table_name, if_exists, tenant)
-                    .await
+                self.check_lease_for_write(tenant, &table_name).await?;
+                let result = self
+                    .drop_index(&index_name, &table_name, if_exists, tenant)
+                    .await?;
+                self.check_lease_for_write(tenant, &table_name).await?;
+                Ok(result)
             }
             DdlStatement::CreateNamespace {
                 namespace,
                 if_not_exists,
                 properties,
             } => {
-                self.create_namespace(&namespace, if_not_exists, properties)
+                self.create_namespace(&namespace, if_not_exists, properties, tenant)
                     .await
             }
             DdlStatement::DropNamespace {
                 namespace,
                 if_exists,
                 cascade,
-            } => self.drop_namespace(&namespace, if_exists, cascade).await,
+            } => {
+                self.drop_namespace(&namespace, if_exists, cascade, tenant)
+                    .await
+            }
             DdlStatement::CreateCollection {
                 collection_name,
                 dimension,
@@ -1060,18 +1188,40 @@ impl DdlService {
     // Namespace Operations
     // ========================
 
+    fn tenant_scoped_namespace(namespace: &[String], tenant: Option<&str>) -> Result<Vec<String>> {
+        let Some(tenant) = tenant.filter(|tenant| !tenant.is_empty()) else {
+            return Ok(namespace.to_vec());
+        };
+        if tenant.starts_with('_') {
+            anyhow::bail!(
+                "tenant '{tenant}' is invalid: tenant identifiers must not begin with '_' \
+                 (reserved for system/control-plane catalog subtrees)"
+            );
+        }
+        if namespace.first().is_some_and(|segment| segment == tenant) {
+            return Ok(namespace.to_vec());
+        }
+
+        let mut scoped = Vec::with_capacity(namespace.len() + 1);
+        scoped.push(tenant.to_string());
+        scoped.extend(namespace.iter().cloned());
+        Ok(scoped)
+    }
+
     /// Create a new namespace (schema grouping) in the default catalog.
     async fn create_namespace(
         &self,
         namespace: &[String],
         if_not_exists: bool,
         properties: HashMap<String, String>,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
         let catalog = self.catalog_manager.default_catalog().await?;
+        let namespace = Self::tenant_scoped_namespace(namespace, tenant)?;
         let ns_name = namespace.join(".");
 
         // Check if namespace exists
-        if catalog.namespace_exists(namespace).await? {
+        if catalog.namespace_exists(&namespace).await? {
             if if_not_exists {
                 return Ok(DdlResult::already_exists("Namespace", &ns_name));
             } else {
@@ -1079,8 +1229,20 @@ impl DdlService {
             }
         }
 
-        // Create the namespace
-        catalog.create_namespace(namespace, properties).await?;
+        // Create the namespace. In a tenant-scoped request, persist the owning
+        // tenant so downstream DrPathBuilder users can fail closed on
+        // cross-tenant materialize/read paths instead of treating the namespace
+        // as legacy/unowned.
+        match tenant {
+            Some(tenant) if !tenant.is_empty() => {
+                catalog
+                    .create_namespace_for_tenant(&namespace, properties, Some(tenant))
+                    .await?;
+            }
+            _ => {
+                catalog.create_namespace(&namespace, properties).await?;
+            }
+        }
 
         info!(namespace = %ns_name, "Created namespace");
         Ok(DdlResult::success(format!(
@@ -1095,12 +1257,14 @@ impl DdlService {
         namespace: &[String],
         if_exists: bool,
         cascade: bool,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
         let catalog = self.catalog_manager.default_catalog().await?;
+        let namespace = Self::tenant_scoped_namespace(namespace, tenant)?;
         let ns_name = namespace.join(".");
 
         // Check if namespace exists
-        if !catalog.namespace_exists(namespace).await? {
+        if !catalog.namespace_exists(&namespace).await? {
             if if_exists {
                 return Ok(DdlResult::not_found("Namespace", &ns_name));
             } else {
@@ -1109,7 +1273,7 @@ impl DdlService {
         }
 
         // Drop the namespace
-        catalog.drop_namespace(namespace, cascade).await?;
+        catalog.drop_namespace(&namespace, cascade).await?;
 
         info!(namespace = %ns_name, cascade = cascade, "Dropped namespace");
         Ok(DdlResult::success(format!(
@@ -1281,7 +1445,7 @@ impl DdlService {
         // non-fp32 collection. The property name matches what the
         // proto / REST handler expose. Same string-label dispatch as
         // `apply_proto_enum_workarounds` in
-        // `crates/platform/proximadb-api/src/rest/v1/catalog.rs` so
+        // `crates/platform/proximadb-api/src/rest/canonical/catalog.rs` so
         // mixed-protocol clients see consistent semantics. Unknown
         // values fall back to Fp32 with a warn-level trace rather
         // than failing the CREATE — the legacy fp32 path is the
@@ -1958,6 +2122,29 @@ fn add_open_table_layouts(schema: &mut CatalogTableSchema) -> Result<()> {
         .and_then(|value| parse_authority_mode(value))
         .unwrap_or(CatalogAuthorityMode::ProjectionPublication);
 
+    // Path Isolation (CRITICAL mandate): a table that reads an operator/tenant
+    // supplied external `location` reaches outside `DrPathBuilder`'s
+    // `data/{tenant}/{namespace}/…` tree. Gate it fail-closed behind an operator
+    // allowlist of URI-prefix roots (`PROXIMADB_EXTERNAL_TABLE_ROOTS`) so a
+    // tenant cannot point a table at an arbitrary path. The publication
+    // authorities below synthesize an internal `proximadb://…` location and are
+    // exempt; only the externally-located authorities are validated.
+    let reads_external_location = matches!(
+        ownership,
+        CatalogAuthorityMode::ExternalAuthoritative
+            | CatalogAuthorityMode::ImportedSnapshot
+            | CatalogAuthorityMode::FederatedRead
+    );
+    if reads_external_location && !external_location_allowed(&location) {
+        return Err(anyhow!(
+            "external table '{}': location '{}' is not within an allowlisted root — \
+             set PROXIMADB_EXTERNAL_TABLE_ROOTS to a comma-separated list of permitted \
+             URI-prefix roots to opt in (Path Isolation, fail-closed default)",
+            schema.name,
+            location
+        ));
+    }
+
     let mut layout = match ownership {
         CatalogAuthorityMode::ExternalAuthoritative => {
             if location.is_empty() {
@@ -2022,6 +2209,36 @@ fn add_open_table_layouts(schema: &mut CatalogTableSchema) -> Result<()> {
 
     schema.storage_layouts.push(layout);
     Ok(())
+}
+
+/// Fail-closed allowlist for external-table `location`s (Path Isolation mandate).
+///
+/// A location is permitted only when the operator has set
+/// `PROXIMADB_EXTERNAL_TABLE_ROOTS` to a comma-separated list of URI-prefix roots
+/// and the location falls under one of them. Empty/unset allowlist ⇒ every
+/// external location is rejected (the feature is off by default). Locations
+/// containing `..` are always rejected (no traversal-escape). Matching is on a
+/// path boundary — a root `file:///data/ext` matches `file:///data/ext/a.parquet`
+/// but NOT `file:///data/ext-evil/…`.
+fn external_location_allowed(location: &str) -> bool {
+    let loc = location.trim();
+    if loc.is_empty() || loc.contains("..") {
+        return false;
+    }
+    let Ok(roots) = std::env::var("PROXIMADB_EXTERNAL_TABLE_ROOTS") else {
+        return false;
+    };
+    roots
+        .split(',')
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .any(|root| {
+            // Normalize the root's trailing slash so `file:///x/` and `file:///x`
+            // both denote the same directory: a location is allowed when it IS
+            // the root or sits strictly beneath it (path boundary).
+            let root_norm = root.trim_end_matches('/');
+            loc == root_norm || loc.starts_with(&format!("{root_norm}/"))
+        })
 }
 
 fn parse_physical_format(value: &str) -> Option<CatalogPhysicalFormat> {
@@ -2098,6 +2315,221 @@ mod tests {
         let result = DdlResult::success("Operation completed");
         assert!(result.success);
         assert_eq!(result.affected_count, 1);
+    }
+
+    // --- DDL write-lease enforcement (check_lease_for_write, ADR-032) ---
+    // The lease manager is optional; these exercise the in-memory registry path
+    // (manager = None), which is the routing fallback consult_for_write_leased
+    // uses when no manager is attached.
+    fn lease_ddl() -> DdlService {
+        DdlService::new(std::sync::Arc::new(CatalogManager::new()))
+    }
+
+    #[tokio::test]
+    async fn check_lease_for_write_is_noop_when_not_wired() {
+        // No registry / pod id attached ⇒ inert; every DDL is allowed.
+        let ddl = lease_ddl();
+        ddl.check_lease_for_write(Some("tenant-a"), "coll-1")
+            .await
+            .expect("inert when lease not wired");
+    }
+
+    #[tokio::test]
+    async fn check_lease_for_write_allows_when_self_is_primary() {
+        use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
+        let registry = std::sync::Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "coll-1", "pod-self", AssignmentReason::Create);
+        let ddl = lease_ddl()
+            .with_primary_pod_registry(registry)
+            .with_self_pod_id("pod-self".to_string());
+        ddl.check_lease_for_write(Some("tenant-a"), "coll-1")
+            .await
+            .expect("allowed when self holds the binding");
+    }
+
+    #[tokio::test]
+    async fn check_lease_for_write_rejects_misrouted_ddl() {
+        use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
+        let registry = std::sync::Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "coll-1", "pod-other", AssignmentReason::Create);
+        let ddl = lease_ddl()
+            .with_primary_pod_registry(registry)
+            .with_self_pod_id("pod-self".to_string());
+        let err = ddl
+            .check_lease_for_write(Some("tenant-a"), "coll-1")
+            .await
+            .expect_err("misrouted DDL must be rejected");
+        let msg = format!("{err}");
+        assert!(msg.contains("misrouted"), "unexpected error: {msg}");
+        assert!(
+            msg.contains("pod-other"),
+            "error should name the target pod: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn materialize_and_index_arms_all_apply_the_lease_gate() {
+        use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
+        let registry = std::sync::Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "coll-1", "pod-other", AssignmentReason::Create);
+        let ddl = lease_ddl()
+            .with_primary_pod_registry(registry)
+            .with_self_pod_id("pod-self".to_string());
+
+        let statements = [
+            DdlStatement::MaterializeTable {
+                name: "coll-1".to_string(),
+            },
+            DdlStatement::CreateIndex {
+                index_name: "idx".to_string(),
+                table_name: "coll-1".to_string(),
+                columns: vec!["id".to_string()],
+                index_type: IndexType::BTree,
+                if_not_exists: false,
+            },
+            DdlStatement::DropIndex {
+                index_name: "idx".to_string(),
+                table_name: "coll-1".to_string(),
+                if_exists: false,
+            },
+        ];
+
+        for statement in statements {
+            let err = ddl
+                .execute_scoped(statement, Some("tenant-a"))
+                .await
+                .expect_err("every table-scoped arm must reject a foreign lease");
+            assert!(err.to_string().contains("pod-other"), "{err}");
+        }
+    }
+
+    struct LeaseTakeoverMaterializer {
+        contender: std::sync::Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+    }
+
+    #[async_trait::async_trait]
+    impl TableMaterializer for LeaseTakeoverMaterializer {
+        async fn materialize(&self, table_name: &str, tenant: Option<&str>) -> Result<String> {
+            let future_ms = chrono::Utc::now().timestamp_millis() + 100;
+            assert!(
+                self.contender
+                    .acquire(tenant.unwrap_or("default"), table_name, future_ms)
+                    .await?,
+                "the second pod should acquire after the first lease expires"
+            );
+            Ok("file:///tmp/materialized".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn materialize_revalidates_after_lease_expiry_and_takeover() {
+        use crate::cluster::partition_lease::{PartitionLeaseManager, PartitionLeaseStore};
+        use crate::cluster::primary_pod_registry::PrimaryPodRegistry;
+        use object_store::memory::InMemory;
+        use proximadb_object_store::ProximaObjectStore;
+
+        let backing: std::sync::Arc<dyn object_store::ObjectStore> =
+            std::sync::Arc::new(InMemory::new());
+        let store = std::sync::Arc::new(PartitionLeaseStore::new(
+            ProximaObjectStore::new(backing),
+            "_operator/leases",
+        ));
+        let registry_a = std::sync::Arc::new(PrimaryPodRegistry::new());
+        let registry_b = std::sync::Arc::new(PrimaryPodRegistry::new());
+        let manager_a = std::sync::Arc::new(PartitionLeaseManager::new(
+            store.clone(),
+            registry_a.clone(),
+            "pod-a",
+            10,
+        ));
+        let manager_b =
+            std::sync::Arc::new(PartitionLeaseManager::new(store, registry_b, "pod-b", 10));
+        let ddl = lease_ddl()
+            .with_primary_pod_registry(registry_a)
+            .with_self_pod_id("pod-a".to_string())
+            .with_partition_lease_manager(manager_a)
+            .with_materializer(std::sync::Arc::new(LeaseTakeoverMaterializer {
+                contender: manager_b,
+            }));
+
+        let err = ddl
+            .execute_scoped(
+                DdlStatement::MaterializeTable {
+                    name: "coll-1".to_string(),
+                },
+                Some("tenant-a"),
+            )
+            .await
+            .expect_err("post-operation lease validation must detect takeover");
+        assert!(err.to_string().contains("pod-b"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn check_lease_for_write_with_manager_acquires_and_allows() {
+        // With a PartitionLeaseManager attached (the production wiring when the
+        // lease system is on), check_lease_for_write acquires the lease and
+        // allows the write when there is no contention — the manager-attached
+        // path the registry-only tests above do not cover.
+        use crate::cluster::partition_lease::{PartitionLeaseManager, PartitionLeaseStore};
+        use crate::cluster::primary_pod_registry::PrimaryPodRegistry;
+        use object_store::memory::InMemory;
+        use proximadb_object_store::ProximaObjectStore;
+
+        let backing: std::sync::Arc<dyn object_store::ObjectStore> =
+            std::sync::Arc::new(InMemory::new());
+        let store = PartitionLeaseStore::new(ProximaObjectStore::new(backing), "_operator/leases");
+        let registry = std::sync::Arc::new(PrimaryPodRegistry::new());
+        let manager = std::sync::Arc::new(PartitionLeaseManager::new(
+            std::sync::Arc::new(store),
+            registry.clone(),
+            "pod-self",
+            10_000,
+        ));
+        let ddl = lease_ddl()
+            .with_primary_pod_registry(registry)
+            .with_self_pod_id("pod-self".to_string())
+            .with_partition_lease_manager(manager);
+        ddl.check_lease_for_write(Some("tenant-a"), "coll-1")
+            .await
+            .expect("manager acquires the lease (no contention) => Allow");
+    }
+
+    // External-location allowlist (Path Isolation, fail-closed). Serialized by
+    // the shared env var; nextest's process-per-test isolation keeps these from
+    // racing other tests.
+    #[test]
+    fn external_location_allowlist_is_fail_closed_and_boundary_aware() {
+        // Unset ⇒ everything rejected (feature off by default).
+        unsafe { std::env::remove_var("PROXIMADB_EXTERNAL_TABLE_ROOTS") };
+        assert!(!external_location_allowed("file:///data/ext/a.parquet"));
+
+        unsafe {
+            std::env::set_var(
+                "PROXIMADB_EXTERNAL_TABLE_ROOTS",
+                "file:///data/ext/, s3://bucket/warehouse/",
+            )
+        };
+        // Within an allowlisted root.
+        assert!(external_location_allowed("file:///data/ext/a.parquet"));
+        assert!(external_location_allowed(
+            "s3://bucket/warehouse/hits/part-0.parquet"
+        ));
+        // Exact-root match is allowed.
+        assert!(external_location_allowed("file:///data/ext"));
+        // Path-boundary escape must NOT match a prefix of a sibling dir.
+        assert!(!external_location_allowed(
+            "file:///data/ext-evil/secret.parquet"
+        ));
+        // Outside any root.
+        assert!(!external_location_allowed("file:///etc/passwd"));
+        // Traversal is always rejected, even under an allowlisted root.
+        assert!(!external_location_allowed(
+            "file:///data/ext/../../etc/passwd"
+        ));
+        // Empty is rejected.
+        assert!(!external_location_allowed("  "));
+
+        unsafe { std::env::remove_var("PROXIMADB_EXTERNAL_TABLE_ROOTS") };
     }
 
     #[test]
@@ -2274,6 +2706,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scoped_create_namespace_records_owning_tenant() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute_scoped(
+            DdlStatement::CreateNamespace {
+                namespace: vec!["analytics".to_string()],
+                if_not_exists: false,
+                properties: HashMap::new(),
+            },
+            Some("acmecorp"),
+        )
+        .await
+        .expect("tenant-scoped create namespace");
+
+        let catalog = manager.default_catalog().await.expect("default catalog");
+        let ns = catalog
+            .get_namespace(&["acmecorp".to_string(), "analytics".to_string()])
+            .await
+            .expect("get tenant-scoped namespace");
+
+        assert_eq!(ns.tenant_id.as_deref(), Some("acmecorp"));
+        assert!(ns.namespace_id.is_some());
+        assert!(ns.is_dr_addressable(), "namespace must be DR-addressable");
+    }
+
+    #[tokio::test]
+    async fn scoped_drop_namespace_uses_tenant_prefixed_namespace() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute_scoped(
+            DdlStatement::CreateNamespace {
+                namespace: vec!["analytics".to_string()],
+                if_not_exists: false,
+                properties: HashMap::new(),
+            },
+            Some("acmecorp"),
+        )
+        .await
+        .expect("tenant-scoped create namespace");
+
+        ddl.execute_scoped(
+            DdlStatement::DropNamespace {
+                namespace: vec!["analytics".to_string()],
+                if_exists: false,
+                cascade: false,
+            },
+            Some("acmecorp"),
+        )
+        .await
+        .expect("tenant-scoped drop namespace");
+
+        let catalog = manager.default_catalog().await.expect("default catalog");
+        assert!(
+            !catalog
+                .namespace_exists(&["acmecorp".to_string(), "analytics".to_string()])
+                .await
+                .expect("namespace_exists"),
+            "tenant-scoped DROP NAMESPACE must remove the tenant-prefixed namespace"
+        );
+    }
+
+    #[tokio::test]
     async fn test_pgwire_table_options_shape_oltp_olap_htap_and_open_table_layouts() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let manager = Arc::new(CatalogManager::new());
@@ -2445,8 +2951,15 @@ mod tests {
 
     async fn create_with_precision_property(value: &str) -> proximadb_records::EmbeddingScalarType {
         let manager = Arc::new(CatalogManager::new());
+        // Unique tempdir per test (SOLID test-hygiene mandate 17c): the four
+        // precision-variant tests run as THREADS under plain `cargo test`, and
+        // a shared /tmp catalog path made whoever created it second panic —
+        // a schedule-sensitive flake. Leak the dir: the catalog outlives this fn.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let url = format!("file://{}", tmp.path().display());
+        std::mem::forget(tmp);
         manager
-            .create_native_catalog("default", "file:///tmp/proximadb-ddl-precision-test")
+            .create_native_catalog("default", &url)
             .await
             .expect("create catalog");
         let service = DdlService::new(manager.clone());
@@ -2572,11 +3085,12 @@ mod tests {
         // No WITH option set → legacy fp32 (no behavior change for
         // existing CREATE TABLE statements).
         let manager = Arc::new(CatalogManager::new());
+        // Unique tempdir (mandate 17c) — see create_with_precision_property.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let url = format!("file://{}", tmp.path().display());
+        std::mem::forget(tmp);
         manager
-            .create_native_catalog(
-                "default",
-                "file:///tmp/proximadb-ddl-precision-test-default",
-            )
+            .create_native_catalog("default", &url)
             .await
             .expect("create catalog");
         let service = DdlService::new(manager.clone());
@@ -2623,10 +3137,10 @@ mod tests {
 
     fn rank_pipeline_for_tests() -> (
         Arc<dyn crate::services::RankProfileStore>,
-        Arc<crate::network::rest::v1::rank::RankServices>,
+        Arc<crate::network::rest::canonical::rank::RankServices>,
     ) {
         use crate::core::search::hybrid::FusionStrategy;
-        use crate::network::rest::v1::rank::{
+        use crate::network::rest::canonical::rank::{
             HybridCoordinatorAdapter, MockRangeCandidateProvider, RankServices,
         };
         use crate::services::record_store::TableWalAppender;
@@ -2642,7 +3156,7 @@ mod tests {
         // `with_rank_services` builder has a working stub to attach. The
         // candidates aren't exercised by these DDL tests; only the registry
         // + blueprint factory matter.
-        let candidates: Arc<dyn crate::network::rest::v1::rank::CandidateProvider> =
+        let candidates: Arc<dyn crate::network::rest::canonical::rank::CandidateProvider> =
             Arc::new(MockRangeCandidateProvider::default());
         // The HybridCoordinatorAdapter isn't used here but matches the
         // production wiring shape so the test stays close to production.
@@ -2657,7 +3171,7 @@ mod tests {
     struct NoopHybridBackend;
 
     #[async_trait::async_trait]
-    impl crate::network::rest::v1::rank::HybridSearchBackend for NoopHybridBackend {
+    impl crate::network::rest::canonical::rank::HybridSearchBackend for NoopHybridBackend {
         async fn bm25_search(
             &self,
             _collection: &str,

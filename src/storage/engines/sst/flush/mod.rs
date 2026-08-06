@@ -31,7 +31,7 @@ pub mod optimizer;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::collections::HashMap;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, ArrowBlockWriter};
@@ -41,7 +41,6 @@ use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::{FlushParameters, FlushResult};
 use crate::storage::transaction_coordinator::{StagingConfig, TransactionStageType};
 use proximadb_records::ProximaRecord;
-use proximadb_storage_common::storage_path::StoragePath;
 
 pub use coordinator::FlushCoordinator;
 pub use operations::FlushOperations;
@@ -59,25 +58,16 @@ impl SstEngine {
     /// (Synchronous) or runs in the background. There is no double-index risk —
     /// the live write path does not populate AXIS, so flush is the first
     /// indexing point.
+    /// ADR-078: the guard + call now live in one place shared by every engine
+    /// (`storage::common::axis_flush_hook`); SST passes the handle it already
+    /// holds, and the shared hook falls back to the boot-registered global.
     async fn index_flushed_into_axis(&self, params: &FlushParameters, files_created: Vec<String>) {
-        let Some(axis_manager) = self.axis_manager() else {
-            return;
-        };
-        let Some(collection_id) = params.collection_id.as_ref() else {
-            return;
-        };
-        if params.vector_records.is_empty() {
-            return;
-        }
-        if let Err(e) = axis_manager
-            .handle_flushed_vectors(collection_id, params.vector_records.clone(), files_created)
-            .await
-        {
-            tracing::warn!(
-                "TD-112: AXIS index-on-flush failed for collection {collection_id}: {e} \
-                 (post-flush search will fall back to a segment scan)"
-            );
-        }
+        crate::storage::common::axis_flush_hook::index_flushed_into_axis(
+            self.axis_manager(),
+            params,
+            files_created,
+        )
+        .await
     }
 
     /// Main flush operation for SST engine
@@ -128,7 +118,15 @@ impl SstEngine {
             collection_storage_url, collection_id
         );
 
+        // ADR-081 D3: admission is the first vector-path boundary. Direct
+        // `do_flush` callers reach this check here; the WAL materializer also
+        // invokes the same preflight before it claims/clones source records.
+        self.preflight_flush_implementation(params).await?;
+
         // Sort canonical records for optimal SSTable encoding.
+        #[cfg(test)]
+        self.flush_sort_invocations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (sorted_vectors, sort_stats) = self
             .sort_vectors_for_sstable_encoding(params.vector_records.clone())
             .await?;
@@ -150,7 +148,7 @@ impl SstEngine {
         // M1-3 (ADR-049): PAX is the ONLY vector write format — the legacy v1
         // streaming path (`write_sorted_proxima_records` → ProximaBlocks `.sst`) is
         // retired from flush. A non-Arrow collection ALWAYS writes a `.pax`
-        // segment; the global kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE`
+        // segment; the global kill-switch `PROXIMADB_PAX_QUANT_DISABLE`
         // and the per-collection `pax_vector_format:off` tag no longer force
         // legacy `.sst` — they select the recall-exact RawF32 quant instead (see
         // `resolve_pax_vector_quant`), so such a segment is exact-scan searchable
@@ -169,7 +167,18 @@ impl SstEngine {
                     (BlockFormat::PaxBlock, "pax")
                 }
             };
-        let sst_filename = codec.generate(0, file_extension); // Level 0 for flush
+        let sst_filename = params
+            .hints
+            .get("recovery_materialization_id")
+            .and_then(|value| value.as_str())
+            .map(|id| {
+                let safe_id: String = id
+                    .chars()
+                    .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+                    .collect();
+                format!("L0_recovery_{safe_id}.{file_extension}")
+            })
+            .unwrap_or_else(|| codec.generate(0, file_extension)); // Level 0 for flush
         debug!(
             "🔧 SST: Creating {} file: {} for collection: {}",
             if block_format == BlockFormat::ArrowBlock {
@@ -192,9 +201,13 @@ impl SstEngine {
             )
             .await?;
 
-        // Train/update PCA model for Z-Order spatial encoding
-        // This is done after flush to ensure collection-level PCA model is up-to-date
-        if params.vector_records.len() >= 100 {
+        // Train/update PCA model for Z-Order spatial encoding.
+        // TD-IVF-1: skip during recovery flushes (collection_config absent) — the segments
+        // already have the persisted PCA/IVF model in the A0 region, and re-training loads
+        // the entire dataset into RAM (5.7 GB for 1M vectors, 100% CPU for minutes).
+        // The cascade reader loads centroids lazily from A0 at search time.
+        let needs_flush_pca = crate::storage::common::axis_flush_hook::axis_needed(params);
+        if params.vector_records.len() >= 100 && needs_flush_pca {
             // Only train with enough samples
             match self
                 .train_and_cache_pca_model(
@@ -251,13 +264,21 @@ impl SstEngine {
             if let Some(ref assignment) = collection.storage_assignment {
                 info!("   - Base location: {}", assignment.base_location);
                 info!("   - Collection ID: {:?}", params.collection_id);
-                let storage_url = StoragePath::collection_data_path(
-                    &assignment.base_location,
-                    params
-                        .collection_id
-                        .as_ref()
-                        .unwrap_or(&"unknown".to_string()),
-                );
+                let collection_id = params.collection_id.as_deref().ok_or_else(|| {
+                    SstError::InvalidArgument("Collection ID is required".to_string())
+                })?;
+                let identity =
+                    crate::storage::trait_components::path_resolver::typed_path_identity(
+                     crate::storage::trait_components::path_resolver::typed_identity_from_storage_assignment(
+                         Some(assignment),
+                     ),
+                 );
+                let storage_url =
+                    crate::storage::trait_components::path_resolver::collection_data_path_typed(
+                        &assignment.base_location,
+                        collection_id,
+                        identity,
+                    );
                 debug!(
                     "🔍 SST FLUSH: Using storage URL from params: {}",
                     storage_url
@@ -274,6 +295,85 @@ impl SstEngine {
 
     // Removed duplicate sort_vectors_for_sstable_encoding method - using the one from utils.rs
 
+    /// ADR-081 D3: bounded metadata-only admission for an SST flush.
+    ///
+    /// This method must remain independent of `vector_records`: the WAL
+    /// materializer calls it before claiming or cloning record payloads.
+    pub(crate) async fn preflight_flush_implementation(
+        &self,
+        params: &FlushParameters,
+    ) -> Result<()> {
+        let recovery_materialization = params
+            .hints
+            .get("recovery_materialization_id")
+            .and_then(|value| value.as_str());
+
+        // Recovery must complete even while the normal live L0 backlog is at
+        // STOP, otherwise boot can deadlock before compaction workers run.
+        if self.compaction_manager().is_none() || recovery_materialization.is_some() {
+            return Ok(());
+        }
+
+        let cfg = self.config();
+        let stop_trigger = std::env::var("PROXIMADB_L0_STOP_TRIGGER")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(cfg.l0_stop_trigger);
+        let slowdown_trigger = std::env::var("PROXIMADB_L0_SLOWDOWN_TRIGGER")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(cfg.l0_slowdown_trigger);
+        if stop_trigger == 0 && slowdown_trigger == 0 {
+            return Ok(());
+        }
+
+        let storage_url = Self::get_collection_storage_url_from_params(params)?;
+        let files = self
+            .discover_sstable_files(&storage_url)
+            .await
+            .map_err(|error| {
+                SstError::Flush(format!(
+                    "ADR-081: cannot evaluate L0 admission for '{}': {}",
+                    storage_url, error
+                ))
+            })?;
+        // ADR-081 corrects TD-COMPACT-7's all-level count. The admission
+        // backlog is L0 only; stable L1/L2 objects must not stall new flushes.
+        let l0_count = files
+            .iter()
+            .filter(|path| {
+                path.rsplit('/')
+                    .next()
+                    .is_some_and(|name| name.starts_with("L0_"))
+            })
+            .count() as u32;
+
+        if stop_trigger > 0 && l0_count >= stop_trigger {
+            tracing::warn!(
+                collection = %storage_url,
+                l0_count,
+                stop_trigger,
+                "ADR-081: L0 admission STOP before record materialization"
+            );
+            return Err(SstError::Flush(format!(
+                "ADR-081: L0 admission stop — {l0_count} L0 files >= stop_trigger \
+                 {stop_trigger}; flush rejected before record materialization"
+            ))
+            .into());
+        }
+
+        if slowdown_trigger > 0 && l0_count >= slowdown_trigger {
+            tracing::debug!(
+                collection = %storage_url,
+                l0_count,
+                slowdown_trigger,
+                "ADR-081: L0 admission SLOWDOWN before record materialization"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        Ok(())
+    }
+
     /// Perform atomic flush operation with staging
     async fn perform_atomic_flush(
         &self,
@@ -283,6 +383,11 @@ impl SstEngine {
         params: &FlushParameters,
         block_format: BlockFormat,
     ) -> Result<FlushResult> {
+        let recovery_materialization = params
+            .hints
+            .get("recovery_materialization_id")
+            .and_then(|value| value.as_str());
+
         // Begin atomic operation
         let staging_config = StagingConfig {
             base_url: storage_url.to_string(),
@@ -296,17 +401,54 @@ impl SstEngine {
 
         tracing::debug!(storage_url = %storage_url, filename = %filename, "Starting flush operation");
 
-        let atomic_op = self
-            .atomic_coordinator()
-            .begin_atomic_operation(&staging_config)
-            .await
-            .context("Failed to begin atomic flush operation")?;
+        let atomic_op = if recovery_materialization.is_some() {
+            // Recovery publishes directly to the deterministic final object via
+            // write_if_absent. Track it as zero-copy managed so abort only removes
+            // coordinator metadata and never tries to delete an object-store
+            // staging prefix that was intentionally never created.
+            self.atomic_coordinator()
+                .begin_zero_copy_managed_operation(&staging_config)
+                .await
+                .context("Failed to begin recovery publication")?
+        } else {
+            self.atomic_coordinator()
+                .begin_atomic_operation(&staging_config)
+                .await
+                .context("Failed to begin atomic flush operation")?
+        };
 
         tracing::debug!(staging_url = %atomic_op.staging_url, final_url = %atomic_op.final_url, "Atomic operation initialized");
 
-        // Write to staging using appropriate writer based on block format
-        let staging_url = format!("{}/{}", atomic_op.staging_url, filename);
+        // PAX/Arrow writers materialize through a local path. During recovery the
+        // resulting bytes are published directly to the deterministic object name
+        // with write_if_absent, so using the object-store transaction staging URL
+        // here would create a local `adls:/...` path and then try to read an object
+        // that was never uploaded. Keep a scoped local directory alive until the
+        // conditional publication completes. Normal flushes retain their existing
+        // transaction-coordinator staging path.
+        let recovery_staging = if recovery_materialization.is_some() {
+            Some(tempfile::tempdir().context("creating local recovery staging directory")?)
+        } else {
+            None
+        };
+        let staging_url = if let Some(directory) = recovery_staging.as_ref() {
+            format!("file://{}", directory.path().join(filename).display())
+        } else {
+            format!("{}/{}", atomic_op.staging_url, filename)
+        };
         tracing::debug!(staging_path = %staging_url, "Full staging path constructed");
+
+        // TD-OBJSTORE-4 defect 6 (normal-flush arm): the segment writers below are
+        // LOCAL-file writers. Stage through `StagedSegmentWrite` so a CLOUD staging
+        // URL gets a real local scratch file + an upload on finalize — instead of a
+        // literal local `az:...` directory, a promote that stages nothing, and a
+        // false-success that lets WAL deletion destroy the only durable copy. The
+        // recovery path's `file://{tempdir}` and plain local bases take the direct
+        // zero-copy arm (finalize is a no-op).
+        let staged =
+            crate::storage::engines::sst::staged_write::StagedSegmentWrite::begin(&staging_url)
+                .await
+                .context("Failed to prepare staged segment write")?;
 
         // Count entries for writing
         let entries_written = sorted_vectors.len() as u64;
@@ -318,7 +460,17 @@ impl SstEngine {
         // (`write_pax_segment_full` returns `PaxSegmentMeta`, not
         // `SstableWriteOutcome`). Kept wired so the directory hook revives
         // unchanged when that lands.
-        let write_outcome: Option<crate::storage::engines::sst::writer::SstableWriteOutcome> = None;
+        // TD-RDSTRAT-5 S2: set from the PAX write when block clustering produced
+        // per-block centroids, so the object-economy directory emission below fires
+        // (write-through of the vector zone-map). Stays `None` when clustering is
+        // off (empty centroids) ⇒ no emission — S2 is default-OFF via the S1 flag.
+        let mut write_outcome: Option<crate::storage::engines::sst::writer::SstableWriteOutcome> =
+            None;
+        let cache_on_write = std::env::var("PROXIMADB_CACHE_ON_WRITE")
+            .ok()
+            .and_then(|value| crate::core::config::CacheOnWritePolicy::parse(&value))
+            .unwrap_or(self.config().cache_on_write);
+        let mut pax_cache_seed: Option<proximadb_storage_common::pax_block::PaxCacheSeed> = None;
 
         match block_format {
             BlockFormat::ArrowBlock => {
@@ -340,8 +492,9 @@ impl SstEngine {
 
                 tracing::debug!(entries_written, dimension, "Writing vectors to Arrow block");
 
-                // Convert staging URL to local path for ArrowBlockWriter
-                let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
+                // Local write path from the staged write (uploaded on finalize
+                // when the staging URL is remote).
+                let staging_path = staged.local_path();
 
                 // Ensure parent directory exists
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
@@ -377,8 +530,12 @@ impl SstEngine {
                 // object-store) URL. Reads are mixed-format-safe via
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
-                use crate::storage::engines::sst::segment_format::write_pax_segment_full;
-                let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
+                use crate::storage::engines::sst::segment_format::{
+                    write_pax_segment_full, write_pax_segment_full_with_cache_seed,
+                };
+                // Local write path from the staged write (uploaded on finalize
+                // when the staging URL is remote).
+                let staging_path = staged.local_path();
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
                     tokio::fs::create_dir_all(parent)
                         .await
@@ -420,22 +577,51 @@ impl SstEngine {
                     .map(|cfg| cfg.tags.as_slice())
                     .unwrap_or(&[]);
                 let rerank_quant = resolve_pax_rerank_quant(rerank_tags);
-                let meta = write_pax_segment_full(
-                    std::path::Path::new(staging_path),
-                    &records,
-                    collection_id,
-                    embedding_count,
-                    quant,
-                    rerank_quant,
-                    f32_tier,
-                    target_block,
-                )
-                .context("Failed to write PAX vector segment")?;
+                let meta = if cache_on_write.includes_invariants() {
+                    let write = write_pax_segment_full_with_cache_seed(
+                        std::path::Path::new(staging_path),
+                        &records,
+                        collection_id,
+                        embedding_count,
+                        quant,
+                        rerank_quant,
+                        f32_tier,
+                        target_block,
+                        cache_on_write.includes_survivors(),
+                    )
+                    .context("Failed to write PAX vector segment")?;
+                    pax_cache_seed = write.cache_seed;
+                    write.meta
+                } else {
+                    write_pax_segment_full(
+                        std::path::Path::new(staging_path),
+                        &records,
+                        collection_id,
+                        embedding_count,
+                        quant,
+                        rerank_quant,
+                        f32_tier,
+                        target_block,
+                    )
+                    .context("Failed to write PAX vector segment")?
+                };
                 tracing::debug!(blocks = meta.block_count, "PAX segment write completed");
-                // write_outcome stays None — PAX doesn't expose SstableWriteOutcome yet
-                // (block-directory emission is the ProximaBlocks-only path, like Arrow).
+                // TD-RDSTRAT-5 S2: when block clustering produced per-block centroids,
+                // build an outcome from the segment metadata so the directory emission
+                // below fires with the real vector zone-map. Empty centroids (clustering
+                // off) ⇒ no outcome ⇒ no emission (default-OFF).
+                if !meta.block_centroids.is_empty() {
+                    write_outcome = Some(pax_write_outcome(&meta));
+                }
             }
         }
+
+        // Promote the locally staged bytes to the (possibly remote) staging URL
+        // so the atomic commit has a real file to move.
+        let _staged_bytes = staged
+            .finalize(self.filesystem())
+            .await
+            .context("Failed to upload staged segment to the staging URL")?;
 
         // Get actual bytes written from the filesystem
         let fs = self.filesystem().get_filesystem(&staging_url)?;
@@ -453,12 +639,63 @@ impl SstEngine {
         });
         let bytes_written = file_metadata.size;
 
-        // Commit the atomic operation
-        tracing::debug!(operation_id = %atomic_op.operation_id, "Committing atomic operation");
-        self.atomic_coordinator()
-            .finalize_atomic_operation(&atomic_op.operation_id)
-            .await
-            .context("Failed to commit atomic flush operation")?;
+        let mut already_materialized = false;
+        if recovery_materialization.is_some() {
+            // The deterministic segment object is the recovery commit record.
+            // Create-only publication closes the crash window between flush and
+            // WAL retirement without a second marker object.
+            let staged_bytes = fs
+                .read(&staging_url)
+                .await
+                .context("reading staged recovery segment")?;
+            let final_url = format!("{}/{}", atomic_op.final_url, filename);
+            let final_fs = self.filesystem().get_filesystem(&final_url)?;
+            match final_fs
+                .write_if_absent(
+                    &final_url,
+                    &staged_bytes,
+                    Some(crate::storage::persistence::filesystem::FileOptions {
+                        create_dirs: true,
+                        overwrite: false,
+                        ..Default::default()
+                    }),
+                )
+                .await
+            {
+                Ok(()) => {}
+                Err(crate::storage::persistence::filesystem::FilesystemError::AlreadyExists(_)) => {
+                    let existing = final_fs
+                        .read(&final_url)
+                        .await
+                        .context("verifying existing recovery segment")?;
+                    if existing != staged_bytes {
+                        anyhow::bail!(
+                            "recovery segment collision at {final_url}: deterministic name exists with different bytes"
+                        );
+                    }
+                    already_materialized = true;
+                }
+                Err(error) => return Err(error).context("publishing recovery segment"),
+            }
+            if let Err(error) = self
+                .atomic_coordinator()
+                .finalize_atomic_operation(&atomic_op.operation_id)
+                .await
+            {
+                // TD-FLUSH-6: print the full source chain (`{:#}`) so the inner
+                // object-store cause is visible, not just the outer wrapper.
+                tracing::warn!(
+                    "failed to finalize recovery publication tracking: {:#}",
+                    error
+                );
+            }
+        } else {
+            tracing::debug!(operation_id = %atomic_op.operation_id, "Committing atomic operation");
+            self.atomic_coordinator()
+                .finalize_atomic_operation(&atomic_op.operation_id)
+                .await
+                .context("Failed to commit atomic flush operation")?;
+        }
         tracing::debug!(
             final_url = %atomic_op.final_url,
             filename = %filename,
@@ -533,8 +770,171 @@ impl SstEngine {
 
         let final_file_path = format!("{}/{}", atomic_op.final_url, filename);
 
-        // Check if compaction should be triggered
-        let should_trigger_compaction = self.should_trigger_compaction(storage_url).await?;
+        if let Some(seed) = pax_cache_seed {
+            crate::storage::engines::sst::segment_format::install_pax_cache_seed(
+                &final_file_path,
+                seed,
+                self.segment_invariants_cache.as_deref(),
+                self.survivor_cache.as_deref(),
+            )
+            .await;
+        }
+
+        if already_materialized {
+            return Ok(FlushResult {
+                success: true,
+                collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+                entries_flushed: Some(entries_written),
+                bytes_written: Some(bytes_written),
+                files_created: Some(0),
+                file_paths: vec![final_file_path],
+                duration_ms: Some(0),
+                completed_at: Utc::now(),
+                engine_metrics: HashMap::from([
+                    (
+                        "engine".to_string(),
+                        serde_json::Value::String("SST".to_string()),
+                    ),
+                    (
+                        "already_materialized".to_string(),
+                        serde_json::Value::Bool(true),
+                    ),
+                ]),
+                compaction_triggered: false,
+                compaction_error: None,
+                flushed_batch_ids: params.batch_ids.clone(),
+            });
+        }
+
+        // Check if compaction should be triggered (per-collection tag cascade,
+        // TD-WLP-2 — the global env stays the master kill-switch).
+        let collection_tags: &[String] = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.tags.as_slice())
+            .unwrap_or(&[]);
+        let suppress_recovery_compaction = params
+            .hints
+            .get("suppress_compaction_until_wal_retired")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let compaction_due_threshold = if suppress_recovery_compaction {
+            None
+        } else {
+            self.should_trigger_compaction(storage_url, collection_tags)
+                .await?
+        };
+
+        // TD-WLP-7 (ADR-061 D3): actually EXECUTE compaction when armed. Before
+        // this, the flush only set `compaction_triggered` and nothing scheduled
+        // the compactor (the post-flush hook was a historical stub), so the
+        // TD-WLP-4 armed-by-default re-cluster never ran and the read-side prune
+        // it unlocks stayed dark. Run it inline (awaited) via the atomic-swap
+        // path (ADR-046 LSN-coherent read across the segment swap) — synchronous
+        // so it is deterministic and spawns no background worker thread. The
+        // segment this flush wrote is already committed at its final URL above,
+        // so the merge reads a consistent L0 set. Best-effort: a compaction
+        // failure is recorded on the result but never fails the flush.
+        let mut compaction_error: Option<String> = None;
+        let mut compaction_ran = false;
+        if let Some(due_threshold) = compaction_due_threshold
+            && let Some(cid) = params.collection_id.as_deref()
+            && let Some(compaction) = self.compaction_manager()
+        {
+            let collection_dir = std::path::Path::new(storage_url);
+            // The gate's effective threshold: the per-collection count value,
+            // or 1 when the TD-COMPACT-5 training arm fired (so the executor
+            // compacts the few large untrained L0s instead of declining).
+            let l0_threshold = due_threshold;
+            // TD-COMPACT-8 / TD-COMPACT-6 D1: mark training in-flight BEFORE
+            // enqueuing. Only for the training arm (threshold <= 1). On the
+            // async path the flag is NOT cleared here — the background worker
+            // clears it (via release_task_state) once the compaction completes,
+            // covering the entire queue→run window. This is what lets
+            // `should_trigger_compaction` skip re-arming across rapid flushes
+            // (eliminating the redundant re-training loop). self.training_in_flight
+            // is the same Arc the Compaction's workers hold.
+            let is_training = due_threshold <= 1;
+            if is_training && let Ok(mut guard) = self.training_in_flight.lock() {
+                guard.insert(storage_url.to_string());
+            }
+            // TD-COMPACT-6 D1 (ADR-076): ENQUEUE to the background worker pool
+            // instead of executing inline. Flush returns immediately (~1s after
+            // the L0 write, not ~35s blocked on the re-cluster training). The
+            // producer/consumer rate-control loop is closed by the L0 admission
+            // watermarks (TD-COMPACT-7) checked above; the dedup + the
+            // training_in_flight guard above prevent redundant work. The worker
+            // clears training_in_flight on completion (Ok or Err).
+            let precision_hint = params
+                .collection_config
+                .as_ref()
+                .and_then(|collection| collection.config.as_ref())
+                .and_then(|config| config.canonical_embedding_precision)
+                .and_then(|precision| {
+                    use crate::proto::proximadb_v1::EmbeddingPrecision;
+                    match EmbeddingPrecision::try_from(precision) {
+                        Ok(EmbeddingPrecision::Fp16) => {
+                            Some(proximadb_records::EmbeddingScalarType::Fp16)
+                        }
+                        Ok(EmbeddingPrecision::Bf16) => {
+                            Some(proximadb_records::EmbeddingScalarType::Bf16)
+                        }
+                        Ok(EmbeddingPrecision::Int8) => {
+                            Some(proximadb_records::EmbeddingScalarType::Int8Scalar)
+                        }
+                        Ok(EmbeddingPrecision::Uint8) => {
+                            Some(proximadb_records::EmbeddingScalarType::UInt8Scalar)
+                        }
+                        Ok(EmbeddingPrecision::Unspecified | EmbeddingPrecision::Fp32) | Err(_) => {
+                            None
+                        }
+                    }
+                });
+            let enqueue_result = match params.get_collection_object_id() {
+                Ok(collection_object_id) => {
+                    compaction
+                        .enqueue_due_compaction(
+                            collection_object_id,
+                            params.get_collection_identity(),
+                            collection_dir,
+                            l0_threshold,
+                            precision_hint,
+                        )
+                        .await
+                }
+                Err(error) => Err(crate::core::StorageError::SstEngine(format!(
+                    "compaction admission requires a catalog-resolved collection object id for {cid:?}: {error}"
+                ))),
+            };
+            match enqueue_result {
+                Ok(true) => {
+                    compaction_ran = true;
+                    info!(
+                        "✅ SST Flush: re-cluster compaction enqueued (async) for collection {cid}"
+                    );
+                }
+                Ok(false) => {
+                    debug!("SST Flush: compaction armed but nothing due for collection {cid}");
+                    // Nothing was due, so no worker will run to clear the guard
+                    // — clear it here so the training arm can re-arm next flush.
+                    if is_training && let Ok(mut guard) = self.training_in_flight.lock() {
+                        guard.remove(storage_url);
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "SST Flush: re-cluster compaction enqueue failed for {cid} (best-effort, \
+                         flush succeeded): {e}"
+                    );
+                    compaction_error = Some(e.to_string());
+                    // Enqueue failed — no worker will clear the guard; do it here.
+                    if is_training && let Ok(mut guard) = self.training_in_flight.lock() {
+                        guard.remove(storage_url);
+                    }
+                }
+            }
+        }
 
         // TD-112: index the just-flushed vectors into AXIS so post-flush search is
         // served by the ANN index rather than a brute-force segment scan.
@@ -577,44 +977,137 @@ impl SstEngine {
                     "filename".to_string(),
                     serde_json::Value::String(filename.to_string()),
                 );
+                // TD-WLP-7: whether the armed re-cluster compaction actually
+                // executed on this flush (distinct from `compaction_triggered`,
+                // which only means "armed + over threshold"). The integration
+                // gate asserts on this.
+                metrics.insert(
+                    "compaction_ran".to_string(),
+                    serde_json::Value::Bool(compaction_ran),
+                );
                 metrics
             },
-            compaction_triggered: should_trigger_compaction,
-            compaction_error: None,
+            compaction_triggered: compaction_due_threshold.is_some(),
+            compaction_error,
             flushed_batch_ids: params.batch_ids.clone(),
         })
     }
 
-    /// Whether L0→base compaction should be triggered after this flush (TD-114).
+    /// Whether L0→base compaction should be triggered after this flush (TD-114,
+    /// per-collection override TD-WLP-2 / ADR-061 D5).
     ///
-    /// Default-OFF: the trigger only arms when `PROXIMADB_L0_COMPACTION_ENABLED`
-    /// is set, so the live flush path is byte-for-byte unchanged unless an
-    /// operator opts in. When armed, it reuses the existing segment discovery to
-    /// count L0 segments and arms once the orchestrator threshold is reached.
-    /// Discovery errors are treated as "not yet" (best-effort, never fails flush).
-    async fn should_trigger_compaction(&self, storage_url: &str) -> Result<bool> {
-        if !l0_compaction_enabled() {
-            return Ok(false);
+    /// Default-OFF: absent a per-collection `compaction:on` tag the trigger only
+    /// arms when `PROXIMADB_L0_COMPACTION_ENABLED` is truthy, so the untagged
+    /// flush path is byte-for-byte unchanged. A tagged collection may arm (at
+    /// its own `l0_threshold:N`) while the global gate is unset; an explicitly
+    /// falsy global env is the master kill-switch nothing can override. When
+    /// armed, it reuses the existing segment discovery to count L0 segments and
+    /// arms once the effective threshold is reached. Discovery errors are
+    /// treated as "not yet" (best-effort, never fails flush).
+    /// Returns the effective L0 threshold to compact with, or `None` when
+    /// nothing is due. Two arms:
+    /// - COUNT (original): `l0_count >= per-collection threshold` → compact at
+    ///   that threshold.
+    /// - TRAINING (TD-COMPACT-5): any L0 segment is UNTRAINED (header
+    ///   `layout_version != 3 || a0_len == 0` — no A0 coarse directory) and at
+    ///   least `PROXIMADB_TRAINING_COMPACTION_MIN_MB` (default 32) on disk →
+    ///   compact at threshold 1, so the flush-floor's few-large-segments
+    ///   layout still receives its IVF training pass (`
+    ///   write_pax_segment_compacted` emits the trained v3/A0 layout; the
+    ///   condition self-clears because the output is trained). Measured
+    ///   stake: untrained cold queries pay ~180 GETs/104 MB vs 20–51
+    ///   GETs/24–30 MB trained (TD-FLUSH-4 adjudication evals).
+    async fn should_trigger_compaction(
+        &self,
+        storage_url: &str,
+        tags: &[String],
+    ) -> Result<Option<usize>> {
+        if !proximadb_storage_common::resolve_compaction_armed(tags) {
+            return Ok(None);
         }
-        let l0_count = self
+        let threshold =
+            proximadb_storage_common::resolve_l0_threshold(tags, L0_COMPACTION_THRESHOLD);
+        let files = self
             .discover_sstable_files(storage_url)
             .await
-            .map(|files| files.len())
-            .unwrap_or(0);
-        Ok(l0_count >= L0_COMPACTION_THRESHOLD)
+            .unwrap_or_default();
+        if files.len() >= threshold {
+            return Ok(Some(threshold));
+        }
+        // TD-COMPACT-5 training arm — only meaningful when the A0-emitting
+        // trainer is enabled (`PROXIMADB_PAX_WRITE_A0_TRAIN`, default ON).
+        // Without it compaction outputs stay layout v1, the untrained condition
+        // never self-clears, and the arm would fire on every flush.
+        if !crate::storage::engines::sst::block_cluster::ivf_probe_enabled() {
+            return Ok(None);
+        }
+        // TD-COMPACT-8: skip re-arming while a training compaction is in-flight
+        // for this collection (prevents the redundant re-training loop — up to
+        // N-1 wasted cycles per ingest batch, each costing N GETs + PCA + PUT +
+        // DELETEs). TD-COMPACT-6 D1 (async path): the flag is set by the flush
+        // caller before `enqueue_due_compaction` and cleared by the background
+        // worker once the compaction completes (covers the full queue→run
+        // window); the flush caller also clears it on the no-worker paths
+        // (nothing-due Ok(false), or enqueue Err).
+        if self
+            .training_in_flight
+            .lock()
+            .is_ok_and(|guard| guard.contains(storage_url))
+        {
+            tracing::debug!(
+                "TD-COMPACT-8: training compaction already in-flight for \
+                 {storage_url} — skipping arm"
+            );
+            return Ok(None);
+        }
+        // Best-effort header sniffing (72 bytes/file); any error means "not
+        // yet", never fails the flush.
+        let min_bytes = std::env::var("PROXIMADB_TRAINING_COMPACTION_MIN_MB")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(32)
+            .saturating_mul(1024 * 1024);
+        for path in &files {
+            if !path.ends_with(".pax") {
+                continue;
+            }
+            if let Ok(true) = self.segment_is_untrained(path, min_bytes).await {
+                tracing::info!(
+                    segment = %path,
+                    "TD-COMPACT-5: untrained L0 segment above size floor — arming training compaction"
+                );
+                return Ok(Some(1));
+            }
+        }
+        Ok(None)
+    }
+
+    /// TD-COMPACT-5: is this segment untrained (no A0 coarse directory) and
+    /// big enough to be worth a training pass? One stat + one 72-byte read.
+    async fn segment_is_untrained(&self, path: &str, min_bytes: u64) -> Result<bool> {
+        use proximadb_storage_common::segment_layout::{
+            SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentHeaderPrefix,
+        };
+        let fs = self.filesystem().get_filesystem(path)?;
+        let meta = fs.metadata(path).await?;
+        if meta.size < min_bytes {
+            return Ok(false);
+        }
+        let header_bytes = fs
+            .read_range(path, 0, (SEG_HEADER_PREFIX_V3_LEN as u64).min(meta.size))
+            .await?;
+        Ok(match SegmentHeaderPrefix::parse(&header_bytes) {
+            Ok(h) => h.layout_version != SEG_LAYOUT_VERSION_TWO_LEVEL || h.a0_len == 0,
+            // Not a coalesced segment (legacy layout) — training does not
+            // apply; leave it to the count arm.
+            Err(_) => false,
+        })
     }
 }
 
 /// L0 segment count at which compaction arms. Mirrors
 /// `OrchestratorCompactionConfig::level0_threshold` (default 5).
 const L0_COMPACTION_THRESHOLD: usize = 5;
-
-/// Reads the `PROXIMADB_L0_COMPACTION_ENABLED` opt-in flag (default OFF).
-fn l0_compaction_enabled() -> bool {
-    std::env::var("PROXIMADB_L0_COMPACTION_ENABLED")
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "yes"))
-        .unwrap_or(false)
-}
 
 /// Statistics from vector sorting operation
 // Using SortingStats from utils.rs instead of local SortStats
@@ -753,18 +1246,12 @@ fn tokenize_into(text: &str, out: &mut Vec<String>) {
 // retired legacy `.sst` streaming format.
 // ---------------------------------------------------------------------------
 
-/// Explicit per-deployment PAX opt-in env. M1-3: vestigial — PAX is always the
-/// write format now, so this no longer gates anything. Retained for back-compat
-/// (a deployment that still sets it is a no-op, not an error); tests reference it
-/// to keep the process env clean.
-const PAX_VECTOR_SEGMENTS_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS";
-
 /// Global kill-switch. Any truthy value selects the recall-exact `RawF32` quant
 /// for EVERY collection (M1-3: it used to force legacy `.sst`; with the streaming
 /// write path retired it now means RawF32-PAX, exact-scan searchable via
 /// `search_pax_file_exact`). Follows the `PROXIMADB_DISABLE_*` convention
 /// (`PROXIMADB_DISABLE_SYSTEM_CATALOG`, `PROXIMADB_DISABLE_WAL`).
-const PAX_VECTOR_SEGMENTS_DISABLE_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE";
+const PAX_VECTOR_SEGMENTS_DISABLE_ENV: &str = "PROXIMADB_PAX_QUANT_DISABLE";
 
 /// Tag key prefix encoding the per-collection PAX-format override on
 /// `CollectionConfig.tags` — mirrors the `recall_target:` convention
@@ -812,7 +1299,7 @@ fn collection_pax_format_tag(
 }
 
 /// Resolve the PAX vector-quantization strategy. M1-3 (ADR-049): the global
-/// kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE` and the per-collection
+/// kill-switch `PROXIMADB_PAX_QUANT_DISABLE` and the per-collection
 /// `pax_vector_format:off` tag are no longer FORMAT escapes (flush always writes
 /// PAX) — they select the recall-exact `RawF32` quant instead, so such a segment
 /// is exact-scan searchable (`search_pax_file_exact`) rather than
@@ -935,6 +1422,119 @@ fn resolve_pax_rerank_quant(tags: &[String]) -> proximadb_block_format::VectorQu
     })
 }
 
+/// TD-RDSTRAT-5 S2: build an [`SstableWriteOutcome`] from a freshly-written PAX
+/// segment's [`SegmentMeta`], so the Vector Object Economy directory emission can
+/// fire with real per-block centroids. The PAX writer lives in a lower crate and
+/// can't construct `IndexEntry` (defined here), so we assemble the entries at the
+/// flush seam from the metadata the writer already returned:
+///
+/// * per-block **offset** = cumulative sum of `block_stats[..i].block_size_bytes`
+///   (blocks are written contiguously from offset 0), **size** = that block's bytes;
+/// * per-block **centroid** = `block_centroids[i]` (the S1 vector zone-map);
+/// * **block_index_offset** = Σ block sizes (the segment index starts after the
+///   last block), **block_index_size** = `size_bytes − Σ − len(SEGMENT_MAGIC)`.
+///
+/// Only the fields the directory consumes are set; the rest default (PAX carries
+/// no key bloom / key ranges — those are the retired ProximaBlocks path's).
+fn pax_write_outcome(
+    meta: &proximadb_storage_common::pax_block::SegmentMeta,
+) -> crate::storage::engines::sst::writer::SstableWriteOutcome {
+    use crate::storage::engines::sst::{IndexEntry, VectorFormat};
+    let mut entries = Vec::with_capacity(meta.block_stats.len());
+    // ADR-062/065: in the coalesced layout the Region D data blocks begin after
+    // the header-prefix + RaBitQ region (A) + SQ8 region (B)
+    // (`rabitq_off + rabitq_len + sq8_len`); for the legacy layout all are 0, so
+    // blocks start at offset 0 (unchanged). Block offsets recorded here are
+    // absolute file offsets (the VOE directory / read path).
+    let mut offset = meta.rabitq_off + meta.rabitq_len + meta.sq8_len;
+    for (block_id, stats) in meta.block_stats.iter().enumerate() {
+        let centroid = meta
+            .block_centroids
+            .get(block_id)
+            .cloned()
+            .unwrap_or_default();
+        let vector_format = if centroid.is_empty() {
+            VectorFormat::Variable
+        } else {
+            VectorFormat::Fixed {
+                dimension: centroid.len(),
+            }
+        };
+        // Lever-3: per-block RMS radius (0.0 when the writer didn't compute
+        // centroids, or for a Fp32-less block) — 1:1 with block_centroids.
+        let block_radius = meta.block_radii.get(block_id).copied().unwrap_or(0.0);
+        entries.push(IndexEntry {
+            offset,
+            size: stats.block_size_bytes,
+            block_id: block_id as u32,
+            block_centroid: centroid,
+            block_radius,
+            vector_format,
+            ..Default::default()
+        });
+        offset += stats.block_size_bytes as u64;
+    }
+    // `offset` is now Σ block sizes = where the segment index begins.
+    let block_index_offset = offset;
+    let magic = proximadb_storage_common::pax_block::SEGMENT_MAGIC.len() as u64;
+    let block_index_size = meta.size_bytes.saturating_sub(block_index_offset + magic) as u32;
+    crate::storage::engines::sst::writer::SstableWriteOutcome {
+        index_entries: entries,
+        block_index_offset,
+        block_index_size,
+        file_size_bytes: meta.size_bytes,
+        record_count: meta.row_count,
+    }
+}
+
+#[cfg(test)]
+mod pax_write_outcome_tests {
+    use super::pax_write_outcome;
+    use proximadb_block_format::BlockStats;
+    use proximadb_storage_common::pax_block::SegmentMeta;
+
+    fn stats(size: u32) -> BlockStats {
+        // `from_metas` with no column metas yields a BlockStats carrying just the
+        // row/size framing this helper reads (BlockStats has no Default).
+        BlockStats::from_metas(2, size, 0, 0, &[])
+    }
+
+    /// The outcome carries one IndexEntry per block with cumulative offsets, the
+    /// S1 centroids threaded through, and a self-consistent segment-index frame
+    /// (Σ sizes + index + 8-byte magic == file size).
+    #[test]
+    fn builds_entries_with_cumulative_offsets_and_centroids() {
+        let meta = SegmentMeta {
+            path: std::path::PathBuf::from("seg.pax"),
+            size_bytes: 100 + 8 + 12, // Σ(40+60) blocks + 12 index + 8 magic
+            block_count: 2,
+            row_count: 4,
+            block_stats: vec![stats(40), stats(60)],
+            block_centroids: vec![vec![1.0, 1.0], vec![2.0, 2.0]],
+            block_radii: vec![0.5, 1.5],
+            rabitq_off: 0,
+            rabitq_len: 0,
+            sq8_off: 0,
+            sq8_len: 0,
+        };
+        let out = pax_write_outcome(&meta);
+        assert_eq!(out.index_entries.len(), 2);
+        assert_eq!(out.index_entries[0].offset, 0);
+        assert_eq!(out.index_entries[0].size, 40);
+        assert_eq!(out.index_entries[1].offset, 40, "cumulative from block 0");
+        assert_eq!(out.index_entries[1].size, 60);
+        assert_eq!(out.index_entries[0].block_centroid, vec![1.0, 1.0]);
+        assert_eq!(out.index_entries[1].block_centroid, vec![2.0, 2.0]);
+        // TD-WLP-3: the per-block RMS radius is carried 1:1 into the entries.
+        assert_eq!(out.index_entries[0].block_radius, 0.5);
+        assert_eq!(out.index_entries[1].block_radius, 1.5);
+        assert_eq!(out.block_index_offset, 100, "Σ block sizes");
+        assert_eq!(out.block_index_size, 12, "size − Σ − 8 magic");
+        assert_eq!(out.file_size_bytes, 120);
+        assert_eq!(out.record_count, 4);
+    }
+}
+
 #[cfg(test)]
 mod statistics_observe_tests {
     use super::{scalar_text, tokenize_into};
@@ -1005,6 +1605,10 @@ mod tests {
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
+        create_test_engine_with_config(config).await
+    }
+
+    async fn create_test_engine_with_config(config: SstConfig) -> SstEngine {
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
@@ -1032,11 +1636,153 @@ mod tests {
         }
     }
 
+    #[test]
+    fn flush_storage_path_matches_search_layout_policy() {
+        use crate::proto::proximadb_v1::{Collection, StorageAssignment};
+        use crate::storage::trait_components::path_resolver::{
+            collection_data_path_typed, typed_identity_from_storage_assignment, typed_path_identity,
+        };
+
+        let assignment = StorageAssignment {
+            base_location: "file:///base".to_string(),
+            typed_account_id: Some(7),
+            typed_namespace_id: Some(11),
+            typed_collection_id: Some(13),
+            ..Default::default()
+        };
+        let params = FlushParameters {
+            collection_id: Some("13".to_string()),
+            collection_config: Some(Collection {
+                id: "13".to_string(),
+                storage_assignment: Some(assignment.clone()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let expected = collection_data_path_typed(
+            &assignment.base_location,
+            "13",
+            typed_path_identity(typed_identity_from_storage_assignment(Some(&assignment))),
+        );
+        assert_eq!(
+            SstEngine::get_collection_storage_url_from_params(&params).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn flush_storage_path_preserves_legacy_collection_layout() {
+        use crate::proto::proximadb_v1::{Collection, StorageAssignment};
+
+        let assignment = StorageAssignment {
+            base_location: "file:///base".to_string(),
+            ..Default::default()
+        };
+        let params = FlushParameters {
+            collection_id: Some("legacy-id".to_string()),
+            collection_config: Some(Collection {
+                id: "legacy-id".to_string(),
+                storage_assignment: Some(assignment.clone()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            SstEngine::get_collection_storage_url_from_params(&params).unwrap(),
+            proximadb_storage_common::storage_path::StoragePath::collection_data_path(
+                &assignment.base_location,
+                "legacy-id"
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn adr081_l0_stop_rejects_before_sort_and_ignores_stable_levels() {
+        use crate::proto::proximadb_v1::{
+            Collection, CollectionConfig, StorageAssignment, StorageEngine,
+        };
+        use crate::storage::traits::UnifiedStorageFormat;
+
+        let mut config = SstConfig::default();
+        config.l0_stop_trigger = 1;
+        config.l0_slowdown_trigger = 0;
+        config.background_thread_count = 1;
+        let engine = create_test_engine_with_config(config).await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let collection_id = "adr081_preflight";
+        let data_dir = proximadb_storage_common::storage_path::StoragePath::collection_data_path(
+            temp_dir.path().to_string_lossy().as_ref(),
+            collection_id,
+        );
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(
+            std::path::Path::new(&data_dir).join("L1_20260729T000000_stable.pax"),
+            b"stable",
+        )
+        .unwrap();
+
+        let collection = Collection {
+            id: collection_id.to_string(),
+            config: Some(CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 2,
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: temp_dir.path().to_string_lossy().into_owned(),
+                engine: StorageEngine::Sst as i32,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            vector_records: vec![create_test_vector("v0", vec![1.0, 0.0])],
+            force: true,
+            synchronous: true,
+            collection_config: Some(collection),
+            ..Default::default()
+        };
+
+        engine
+            .preflight_flush(&params)
+            .await
+            .expect("a stable L1 segment must not consume the L0 admission budget");
+        std::fs::write(
+            std::path::Path::new(&data_dir).join("L0_20260729T000001_blocked.pax"),
+            b"l0",
+        )
+        .unwrap();
+
+        let before = engine
+            .flush_sort_invocations
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let error = engine
+            .do_flush(&params)
+            .await
+            .expect_err("L0 stop watermark must reject the flush");
+        let after = engine
+            .flush_sort_invocations
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            error.to_string().contains("L0 admission stop"),
+            "unexpected rejection: {error:#}"
+        );
+        assert_eq!(
+            after, before,
+            "admission rejection must occur before vector sorting"
+        );
+    }
+
     /// TD-112: the LIVE flush path (`do_flush` -> `flush_implementation`) must
     /// register flushed vectors into the per-collection AXIS index, so post-flush
     /// search is served by the ANN index instead of a brute-force segment scan.
     /// (The `FlushCoordinator` is test-only scaffolding; the hook lives on the
     /// real path exercised here.)
+    #[cfg(feature = "axis")]
     #[tokio::test]
     async fn td112_live_flush_indexes_vectors_into_axis() {
         use crate::index::axis::management::manager::AxisManager;
@@ -1067,6 +1813,9 @@ mod tests {
                 dimension: 4,
                 distance_metric: Some(DistanceMetric::Cosine as i32),
                 storage_engine: Some(StorageEngine::Sst as i32),
+                // This test asserts flush indexes into AXIS, so declare an
+                // explicit collection index. Format tags are not index intent.
+                index_configs: vec![crate::proto::proximadb_v1::IndexConfig::default()],
                 ..Default::default()
             }),
             storage_assignment: Some(StorageAssignment {
@@ -1106,6 +1855,77 @@ mod tests {
             3,
             "the live flush path must index all flushed vectors into AXIS (TD-112)"
         );
+    }
+
+    #[tokio::test]
+    async fn recovery_materialization_is_idempotent() {
+        use crate::proto::proximadb_v1::{
+            Collection, CollectionConfig, StorageAssignment, StorageEngine,
+        };
+        use crate::storage::traits::UnifiedStorageFormat;
+
+        let engine = create_test_engine().await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let collection_id = "recovery_idempotence";
+        let collection = Collection {
+            id: collection_id.to_string(),
+            config: Some(CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 4,
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: temp_dir.path().to_string_lossy().into_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut hints = std::collections::HashMap::new();
+        hints.insert(
+            "recovery_materialization_id".to_string(),
+            serde_json::Value::String("00000000000000000001-00000000000000000007-digest".into()),
+        );
+        hints.insert(
+            "recovery_content_digest".to_string(),
+            serde_json::Value::String("digest".into()),
+        );
+        hints.insert(
+            "suppress_compaction_until_wal_retired".to_string(),
+            serde_json::Value::Bool(true),
+        );
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            vector_records: vec![
+                create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
+                create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
+            ],
+            force: true,
+            synchronous: true,
+            hints,
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config: Some(collection),
+            estimated_size: 0,
+        };
+
+        let first = engine
+            .do_flush(&params)
+            .await
+            .expect("first materialization");
+        assert_eq!(first.files_created, Some(1));
+
+        let replay = engine.do_flush(&params).await.expect("idempotent replay");
+        assert_eq!(replay.files_created, Some(0));
+        assert_eq!(
+            replay
+                .engine_metrics
+                .get("already_materialized")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(replay.file_paths, first.file_paths);
     }
 
     // ---- Phase C: per-collection PAX opt-out tag + global kill-switch ----
@@ -1233,7 +2053,6 @@ mod tests {
         // nextest isolates each test in its own process; `set_var`/`remove_var`
         // are `unsafe` (edition 2024).
         unsafe {
-            std::env::remove_var(PAX_VECTOR_SEGMENTS_ENV);
             std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
         }
         let engine = create_test_engine().await;

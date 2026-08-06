@@ -24,12 +24,18 @@ use std::ops::Range;
 use anyhow::{Result, bail};
 
 use crate::{
-    reader::{decode_f32_vec_v2, decode_i64_with_encoding},
+    reader::{
+        RankMetric, decode_f32_vec_v2, decode_i64_with_encoding, decode_str_with_encoding,
+        parse_rabitq_codes, score_rerank_rows_from_stripe,
+    },
+    record::col_id,
     rowgroup::RowGroupBlock,
     stripe::{COLUMN_META_SIZE, ColumnMeta},
-    vparam::{QUANT_SQ8, VectorParamBlock},
+    vparam::{QUANT_FP16, QUANT_RABITQ, QUANT_SQ8, VectorParamBlock},
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
+use proximadb_codec::functions::rabitq;
+use proximadb_codec::{RaBitQCode, RaBitQParams, functions};
 
 /// Byte range of the trailing [`BlockFooter`] for an object of `object_size`.
 pub fn footer_tail_range(object_size: u64) -> Result<Range<u64>> {
@@ -174,6 +180,12 @@ impl BlockLayout {
         end_row: u32,
     ) -> Option<Range<u64>> {
         let entry = self.vparams.get(column_id)?;
+        if self.vparams.transform(column_id).is_some() {
+            // Transformed stripes are microchunk-addressable rather than
+            // fixed-stride. Until the planner consumes the codec directory,
+            // callers must fetch the full (smaller) stripe.
+            return None;
+        }
         let m = self.meta(column_id)?;
         let n = self.footer.n_rows;
         if start_row > end_row || end_row > n {
@@ -193,7 +205,16 @@ impl BlockLayout {
         let m = self
             .meta(column_id)
             .ok_or_else(|| anyhow::anyhow!("column {column_id} not in block"))?;
-        decode_i64_with_encoding(stripe_bytes, m.encoding_id, self.footer.n_rows as usize)
+        let row_count = self.footer.n_rows as usize;
+        if m.stripe_len == 0 && m.null_count as usize == row_count {
+            return Ok(vec![i64::MIN; row_count]);
+        }
+        let payload = if m.is_lz4_compressed {
+            functions::lossless_compression::decompress_lz4(stripe_bytes)?
+        } else {
+            stripe_bytes.to_vec()
+        };
+        decode_i64_with_encoding(&payload, m.encoding_id, row_count)
     }
 
     /// Decode an f32 vector column from its (range-fetched) stripe bytes.
@@ -206,7 +227,117 @@ impl BlockLayout {
             .vparams
             .get(column_id)
             .ok_or_else(|| anyhow::anyhow!("no vector params for column {column_id}"))?;
-        decode_f32_vec_v2(stripe_bytes, self.footer.n_rows as usize, entry)
+        decode_f32_vec_v2(
+            stripe_bytes,
+            self.footer.n_rows as usize,
+            entry,
+            self.vparams.transform(column_id),
+        )
+    }
+
+    /// Decode a string column (e.g. `col_id::OID`) from its range-fetched stripe
+    /// bytes — the ranged analogue of [`crate::reader::PaxBlockReader::decode_str_stripe`],
+    /// used to attach ids to the ranked candidate rows.
+    pub fn decode_str_column(
+        &self,
+        column_id: i32,
+        stripe_bytes: &[u8],
+    ) -> Option<Vec<Option<String>>> {
+        let meta = self.meta(column_id)?;
+        let row_count = self.footer.n_rows as usize;
+        if meta.stripe_len == 0 && meta.null_count as usize == row_count {
+            return Some(vec![None; row_count]);
+        }
+        let payload = if meta.is_lz4_compressed {
+            functions::lossless_compression::decompress_lz4(stripe_bytes).ok()?
+        } else {
+            stripe_bytes.to_vec()
+        };
+        decode_str_with_encoding(&payload, meta.encoding_id, row_count).ok()
+    }
+
+    // ── Ranged RaBitQ cascade (ADR-057 / TD-RDSTRAT-3 S1b) ──────────────────────
+    // Stage-1 rank + Stage-2 rerank on RANGE-FETCHED stripe bytes, mirroring
+    // `PaxBlockReader::{rabitq_rank,rerank_rows}` (which operate on the whole
+    // in-memory block) so the selective striped read returns byte-identical
+    // candidates + reranked order. Parity is asserted against the whole-block
+    // reader in the tests.
+
+    /// Decode this block's RaBitQ codes from the range-fetched `EMBED_BASE` codes
+    /// stripe. Returns `None` when the column isn't RaBitQ-quantized. Mirrors
+    /// [`crate::reader::PaxBlockReader::decode_rabitq_codes`] but takes the fetched
+    /// stripe bytes (no whole-block read).
+    pub fn decode_rabitq_codes(
+        &self,
+        column_id: i32,
+        codes_stripe: &[u8],
+    ) -> Option<(RaBitQParams, Vec<Option<RaBitQCode>>)> {
+        let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind != QUANT_RABITQ {
+            return None;
+        }
+        let col = self.vparams.rabitq_column(column_id)?;
+        let n = self.footer.n_rows as usize;
+        let codes = parse_rabitq_codes(codes_stripe, n, entry.dim as usize).ok()?;
+        let params = RaBitQParams {
+            dim: entry.dim as usize,
+            seed: col.seed,
+            centroid: col.centroid.clone(),
+        };
+        Some((params, codes))
+    }
+
+    /// Stage-1 RaBitQ candidate ranking on the range-fetched `EMBED_BASE` codes
+    /// stripe: decode codes, rotate the query once, return up to `pool` row indices
+    /// nearest-first. `None` if the column isn't RaBitQ-quantized. Byte-identical to
+    /// [`crate::reader::PaxBlockReader::rabitq_rank`].
+    pub fn rabitq_rank(
+        &self,
+        query: &[f32],
+        pool: usize,
+        metric: RankMetric,
+        codes_stripe: &[u8],
+    ) -> Option<Vec<usize>> {
+        let (params, codes) = self.decode_rabitq_codes(col_id::EMBED_BASE, codes_stripe)?;
+        let rotation = rabitq::build_rotation_cached(params.dim, params.seed);
+        let q_rotated = rabitq::rotate_query(query, &params, &rotation);
+        Some(match metric {
+            RankMetric::L2 => rabitq::rank_candidates(&q_rotated, &codes, pool),
+            RankMetric::Cosine => rabitq::rank_candidates_ip(&q_rotated, &codes, pool),
+            // DotProduct ranks by the same IP proxy as Cosine (max inner product).
+            RankMetric::DotProduct => rabitq::rank_candidates_ip(&q_rotated, &codes, pool),
+        })
+    }
+
+    /// Stage-2 rerank of RaBitQ candidate `rows` against the range-fetched rerank
+    /// column stripe (SQ8 or FP16), returning `(row, distance)` nearest-first. The
+    /// caller fetches only the needed slice of the stripe (the bitmap prefix + the
+    /// candidate rows via [`Self::vector_row_range`]); here `stripe_bytes` is the
+    /// full rerank stripe (bitmap + payload) for a whole-stripe fetch, matching
+    /// [`crate::reader::PaxBlockReader::rerank_rows`] byte-for-byte. `None` if the
+    /// column is absent or not SQ8/FP16 (caller falls back to the RaBitQ order).
+    pub fn rerank_candidate_rows(
+        &self,
+        column_id: i32,
+        query: &[f32],
+        rows: &[usize],
+        metric: RankMetric,
+        stripe_bytes: &[u8],
+    ) -> Option<Vec<(usize, f32)>> {
+        let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind != QUANT_SQ8 && entry.quant_kind != QUANT_FP16 {
+            return None;
+        }
+        score_rerank_rows_from_stripe(
+            entry,
+            self.vparams.transform(column_id),
+            stripe_bytes,
+            self.footer.n_rows as usize,
+            query,
+            rows,
+            metric,
+        )
+        .ok()
     }
 }
 
@@ -269,6 +400,73 @@ mod tests {
                 .unwrap();
         }
         w.flush().unwrap()
+    }
+
+    /// Build a RaBitQ (+ SQ8 rerank) PAX block: `EMBED_BASE` carries RaBitQ codes,
+    /// `RERANK_BASE` the co-located SQ8 rerank column — the cascade's two columns.
+    fn build_rabitq_block(n: usize, dim: usize) -> Vec<u8> {
+        let mut w = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "c", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ);
+        for i in 0..n {
+            let v: Vec<f32> = (0..dim)
+                .map(|d| ((i * 7 + d * 3) % 97) as f32 * 0.01)
+                .collect();
+            w.add_record(&rec_with_vec(&format!("r{i}"), 1000 + i as i64, v))
+                .unwrap();
+        }
+        w.flush().unwrap()
+    }
+
+    /// Assemble a `BlockLayout` from a whole in-memory block (test helper): the
+    /// footer-first ranged plan, with the metadata regions sliced from `block`.
+    fn layout_of(block: &[u8]) -> BlockLayout {
+        let sz = block.len() as u64;
+        let fr = footer_tail_range(sz).unwrap();
+        let footer = BlockFooter::from_bytes(&block[fr.start as usize..fr.end as usize]).unwrap();
+        let mr = metadata_ranges(&footer, sz);
+        let col_meta = block[mr.col_meta.start as usize..mr.col_meta.end as usize].to_vec();
+        let vparam = mr
+            .vparam
+            .as_ref()
+            .map(|r| block[r.start as usize..r.end as usize].to_vec());
+        let rgdir = mr
+            .rgdir
+            .as_ref()
+            .map(|r| block[r.start as usize..r.end as usize].to_vec());
+        BlockLayout::assemble(footer, &col_meta, vparam.as_deref(), rgdir.as_deref()).unwrap()
+    }
+
+    /// TD-RDSTRAT-3 S1b Slice A parity: the ranged `BlockLayout` cascade
+    /// (`rabitq_rank` + `rerank_candidate_rows` on RANGE-FETCHED stripes) must
+    /// return byte-identical candidates + reranked order to the whole-block
+    /// `PaxBlockReader` — the correctness contract of the selective striped read.
+    #[test]
+    fn ranged_rabitq_cascade_matches_whole_block() {
+        use crate::reader::RankMetric;
+        let block = build_rabitq_block(300, 64);
+        let reader = PaxBlockReader::open(&block).unwrap();
+        let layout = layout_of(&block);
+
+        // Whole-stripe fetches (byte-identical to what the reader reads internally).
+        let cr = layout.column_stripe_range(col_id::EMBED_BASE).unwrap();
+        let codes = block[cr.start as usize..cr.end as usize].to_vec();
+        let rr = layout.column_stripe_range(col_id::RERANK_BASE).unwrap();
+        let rerank = block[rr.start as usize..rr.end as usize].to_vec();
+
+        for metric in [RankMetric::L2, RankMetric::Cosine] {
+            let query: Vec<f32> = (0..64).map(|d| (d as f32 * 0.03).sin()).collect();
+            // whole-block reference
+            let cand_w = reader.rabitq_rank(&query, 64, metric).unwrap();
+            let rer_w = reader.rerank_rows(0, &query, &cand_w, metric).unwrap();
+            // ranged
+            let cand_r = layout.rabitq_rank(&query, 64, metric, &codes).unwrap();
+            let rer_r = layout
+                .rerank_candidate_rows(col_id::RERANK_BASE, &query, &cand_r, metric, &rerank)
+                .unwrap();
+
+            assert_eq!(cand_r, cand_w, "ranged rabitq_rank diverged ({metric:?})");
+            assert_eq!(rer_r, rer_w, "ranged rerank diverged ({metric:?})");
+        }
     }
 
     /// Footer-first ranged open + decode of one column equals the whole-block

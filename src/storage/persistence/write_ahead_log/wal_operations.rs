@@ -23,7 +23,11 @@ use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample};
 use crate::storage::document::DocumentRecord;
 use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb_graph_model::{GraphWalEntry, GraphWalRecord};
 use proximadb_records::ProximaRecord;
+use proximadb_storage_ports::{
+    CanonicalWalReaderPort, FilesystemPort, GraphWalFactory, GraphWalPort, GraphWalReaderPort,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -84,13 +88,12 @@ pub enum UnifiedWALOperation {
 }
 
 /// Non-data marker kinds carried in [`UnifiedWALOperation::GraphMarker`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MarkerKind {
-    /// "Every engine-WAL frame after this marker was emitted after the canonical
-    /// layer durably checkpointed at `lsn`." Recovery skips frames at/before the
-    /// latest such marker whose `lsn` ≤ the recovered canonical checkpoint LSN.
-    CanonicalEmission(u64),
-}
+///
+/// Definition moved to the `proximadb-graph-model` foundation leaf (named by
+/// the `GraphWalPort` contract + the ORION graph engine); re-exported here so
+/// existing `crate::storage::persistence::write_ahead_log::...::MarkerKind`
+/// references resolve unchanged.
+pub use proximadb_graph_model::MarkerKind;
 
 /// TD-066 (c) Part 2 feature gate (default OFF per the storage-format-migration
 /// mandate). When enabled, `flush_wal` emits `CanonicalEmission` marker frames
@@ -459,7 +462,7 @@ impl UnifiedWALWriter {
 
         // Discover existing WAL files to resume from max sequence number and
         // the highest existing segment index.
-        let mut max_seq: u64 = 0;
+        let mut next_seq: u64 = 0;
         let mut segment_count: u64 = 0;
         // TD-066 (d): track the HIGHEST existing segment index, not just the
         // count. After an LSN-bounded prefix truncation the surviving segments
@@ -484,9 +487,25 @@ impl UnifiedWALWriter {
                     if parts.len() >= 4
                         && let Ok(seq) = parts[3].parse::<u64>()
                     {
-                        max_seq = max_seq.max(seq);
+                        next_seq = next_seq.max(seq.saturating_add(1));
                     }
                 }
+            }
+        }
+
+        // The current `wal_{segment}.log` filename carries no sequence range.
+        // Recover the allocator from frame contents; otherwise every reopen
+        // restarts at zero and duplicates sequence numbers within one WAL.
+        if max_segment_index.is_some() {
+            let reader = UnifiedWALReader::new(base_url.clone()).await?;
+            if let Some(last_seq) = reader
+                .read_all()
+                .await?
+                .into_iter()
+                .map(|entry| entry.sequence_number)
+                .max()
+            {
+                next_seq = next_seq.max(last_seq.saturating_add(1));
             }
         }
 
@@ -498,15 +517,19 @@ impl UnifiedWALWriter {
                 "WAL recovery: found {} segments (next index {}), resuming from sequence {}",
                 segment_count,
                 segment_counter,
-                max_seq
+                next_seq
             );
         } else {
             tracing::debug!("WAL writer initialized fresh for path: {}", base_path);
         }
 
         Ok(Self {
-            base_path,
-            sequence_number: std::sync::atomic::AtomicU64::new(max_seq),
+            // Store the SCHEME-QUALIFIED url, never the bare path: every
+            // segment path is joined from this, and no site below may
+            // re-prepend `file://` — on an object-store base that yields
+            // invalid `file://s3://…` URLs (TD-OBJSTORE-1, #960).
+            base_path: base_url,
+            sequence_number: std::sync::atomic::AtomicU64::new(next_seq),
             filesystem,
             current_segment_path: None,
             current_segment_data: Vec::new(),
@@ -585,17 +608,39 @@ impl UnifiedWALWriter {
         if let Some(ref path) = self.current_segment_path
             && !self.current_segment_data.is_empty()
         {
-            let url = format!("file://{}", path);
+            // `path` is already scheme-qualified (joined from the normalized
+            // base_path by `open_new_segment`).
+            let url = path.clone();
             let fs = self.filesystem.get_filesystem(&url)?;
 
-            // WAL segments are append-only. Avoid read-modify-write here:
-            // cached reads can lag behind recent writes, and rewriting the
-            // segment risks dropping entries that were already durable.
-            fs.append(&url, &self.current_segment_data).await?;
-            fs.sync_file(&url).await?;
+            if self.base_path.starts_with("file://") {
+                // Local: WAL segments are append-only. Avoid
+                // read-modify-write here: cached reads can lag behind recent
+                // writes, and rewriting the segment risks dropping entries
+                // that were already durable.
+                fs.append(&url, &self.current_segment_data).await?;
+                fs.sync_file(&url).await?;
 
-            // Clear buffer after successful write
-            self.current_segment_data.clear();
+                // Clear buffer after successful write
+                self.current_segment_data.clear();
+            } else {
+                // Object store (s3://, adls://, …): block/immutable blobs
+                // reject append, so the buffer holds the WHOLE segment
+                // (bounded by max_segment_size and cleared on rotation) and
+                // each flush overwrites the segment object with the full
+                // contents. The byte layout is identical to the appended
+                // local segment, so recovery reads both the same way
+                // (TD-OBJSTORE-1, #960).
+                let options = crate::storage::persistence::filesystem::FileOptions {
+                    create_dirs: true,
+                    overwrite: true,
+                    ..Default::default()
+                };
+                fs.write(&url, &self.current_segment_data, Some(options))
+                    .await?;
+                // Buffer intentionally NOT cleared: it is the durable
+                // segment image until rotation.
+            }
         }
         Ok(())
     }
@@ -606,8 +651,9 @@ impl UnifiedWALWriter {
         self.current_segment_path = Some(filename.clone());
         self.current_segment_data.clear();
 
-        // Ensure the file exists
-        let url = format!("file://{}", filename);
+        // Ensure the file exists. `filename` is already scheme-qualified
+        // (base_path is normalized in `new`).
+        let url = filename;
         let fs = self.filesystem.get_filesystem(&url)?;
         if !fs.exists(&url).await? {
             // Create empty file
@@ -699,12 +745,15 @@ impl UnifiedWALWriter {
         // first. The marker's segment and everything above it are kept.
         let mut reclaimed = 0u64;
         for seg in indices.into_iter().filter(|&s| s < marker_segment) {
-            let url = format!("file://{}/wal_{:08}.log", self.base_path, seg);
+            let url = format!("{}/wal_{:08}.log", base_url, seg);
             fs.delete(&url).await?;
             reclaimed += 1;
             tracing::debug!(segment = seg, lsn, "TD-066 (d): reclaimed WAL segment");
         }
 
+        // TD-WAL-1 S6: observe segments reclaimed (operator aggregate; per-tenant
+        // durable attribution lives in the io_trace warehouse, ADR-066).
+        crate::metrics::wal_flush_metrics::inc_truncation_segments_reclaimed(reclaimed);
         Ok(reclaimed)
     }
 
@@ -714,6 +763,107 @@ impl UnifiedWALWriter {
     pub fn set_max_segment_size_for_test(&mut self, bytes: usize) {
         self.max_segment_size = bytes;
     }
+}
+
+/// The unified WAL writer is the composition-root-provided sink for the ORION
+/// graph engine: it implements [`GraphWalPort`] by wrapping graph operations /
+/// markers into the unified operation enum, so ORION can append through the
+/// port without naming the concrete writer or the unified operation type.
+#[async_trait::async_trait]
+impl GraphWalPort for UnifiedWALWriter {
+    async fn append_graph_op(&mut self, op: GraphOperation) -> anyhow::Result<u64> {
+        self.append(UnifiedWALOperation::GraphOp(op)).await
+    }
+
+    async fn append_graph_marker(&mut self, marker: MarkerKind) -> anyhow::Result<u64> {
+        self.append(UnifiedWALOperation::GraphMarker(marker)).await
+    }
+
+    async fn flush(&mut self) -> anyhow::Result<()> {
+        UnifiedWALWriter::flush(self).await
+    }
+
+    async fn truncate_through_canonical_marker(
+        &mut self,
+        checkpoint_lsn: u64,
+    ) -> anyhow::Result<u64> {
+        UnifiedWALWriter::truncate_through_canonical_marker(self, checkpoint_lsn).await
+    }
+}
+
+/// The unified WAL reader is the composition-root-provided recovery source for
+/// the ORION graph engine: it implements [`GraphWalReaderPort`] by projecting
+/// graph operations / markers out of the unified entry stream, so ORION can
+/// replay through the port without naming the concrete reader or the unified
+/// operation/entry types.
+#[async_trait::async_trait]
+impl GraphWalReaderPort for UnifiedWALReader {
+    async fn read_all_graph(&self) -> anyhow::Result<Vec<GraphWalEntry>> {
+        let entries = self.read_all().await?;
+        let mut out = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let record = match entry.operation {
+                UnifiedWALOperation::GraphOp(op) => GraphWalRecord::Op(Box::new(op)),
+                UnifiedWALOperation::GraphMarker(marker) => GraphWalRecord::Marker(marker),
+                // Non-graph unified ops (Document/Observability/Hybrid/…) are
+                // not part of a graph engine's stream — filtered out.
+                _ => continue,
+            };
+            out.push(GraphWalEntry {
+                sequence_number: entry.sequence_number,
+                record,
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// Composition-root factory for a graph engine's WAL writer + reader: the single
+/// place the concrete `UnifiedWALWriter` / `UnifiedWALReader` are named, so the
+/// ORION engine can obtain its [`GraphWalPort`] / [`GraphWalReaderPort`] through
+/// the [`GraphWalFactory`] port without naming these types itself.
+#[derive(Default)]
+pub struct UnifiedWalFactory;
+
+#[async_trait::async_trait]
+impl GraphWalFactory for UnifiedWalFactory {
+    async fn make_writer(
+        &self,
+        wal_path: &str,
+    ) -> anyhow::Result<Arc<tokio::sync::Mutex<dyn GraphWalPort>>> {
+        let writer = UnifiedWALWriter::new(wal_path.to_string()).await?;
+        let writer: Arc<tokio::sync::Mutex<dyn GraphWalPort>> =
+            Arc::new(tokio::sync::Mutex::new(writer));
+        Ok(writer)
+    }
+
+    async fn make_reader(&self, wal_path: &str) -> anyhow::Result<Arc<dyn GraphWalReaderPort>> {
+        let reader = UnifiedWALReader::new(wal_path.to_string()).await?;
+        let reader: Arc<dyn GraphWalReaderPort> = Arc::new(reader);
+        Ok(reader)
+    }
+
+    async fn make_filesystem(&self) -> anyhow::Result<Arc<dyn FilesystemPort>> {
+        let fs = FilesystemFactory::create_default()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create default filesystem: {e}"))?;
+        let fs: Arc<dyn FilesystemPort> = Arc::new(fs);
+        Ok(fs)
+    }
+
+    async fn make_canonical_wal_reader(&self) -> anyhow::Result<Arc<dyn CanonicalWalReaderPort>> {
+        Ok(Arc::new(
+            crate::services::canonical_wal::CanonicalWalReaderBridge,
+        ))
+    }
+}
+
+/// Convenience constructor for the default (unified) graph WAL factory, erased
+/// to the [`GraphWalFactory`] port. Composition-root callers (and tests) inject
+/// this into the ORION engine constructors; it is the only symbol outside this
+/// module that needs to name a concrete graph WAL type.
+pub fn unified_wal_factory() -> Arc<dyn GraphWalFactory> {
+    Arc::new(UnifiedWalFactory)
 }
 
 /// WAL reader for recovery
@@ -732,16 +882,25 @@ impl UnifiedWALReader {
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?,
         );
 
+        // Normalize to a scheme-qualified url once, mirroring the writer:
+        // object-store bases (s3://, adls://, …) pass through untouched
+        // (TD-OBJSTORE-1, #960).
+        let base_url = if base_path.contains("://") {
+            base_path
+        } else {
+            format!("file://{}", base_path)
+        };
+
         Ok(Self {
-            base_path,
+            base_path: base_url,
             filesystem,
         })
     }
 
     /// Read all WAL entries from a segment
     pub async fn read_segment(&self, segment_number: u32) -> anyhow::Result<Vec<UnifiedWALEntry>> {
-        let filename = format!("{}/wal_{:08}.log", self.base_path, segment_number);
-        let url = format!("file://{}", filename);
+        // base_path is scheme-qualified (normalized in `new`).
+        let url = format!("{}/wal_{:08}.log", self.base_path, segment_number);
         let fs = self.filesystem.get_filesystem(&url)?;
 
         if !fs.exists(&url).await? {
@@ -1198,6 +1357,34 @@ mod tests {
             1,
             "new append must open a fresh segment past the max"
         );
+    }
+
+    #[tokio::test]
+    async fn writer_reopen_resumes_sequence_after_current_format_segments() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap().to_string();
+
+        let mut writer = UnifiedWALWriter::new(path.clone()).await.unwrap();
+        assert_eq!(writer.append(node_op("g", "a")).await.unwrap(), 0);
+        assert_eq!(writer.append(node_op("g", "b")).await.unwrap(), 1);
+        writer.flush().await.unwrap();
+        drop(writer);
+
+        let mut reopened = UnifiedWALWriter::new(path.clone()).await.unwrap();
+        assert_eq!(
+            reopened.append(node_op("g", "c")).await.unwrap(),
+            2,
+            "the current wal_NNNNNNNN.log format must restore the next sequence"
+        );
+        reopened.flush().await.unwrap();
+
+        let entries = UnifiedWALReader::new(path)
+            .await
+            .unwrap()
+            .read_all()
+            .await
+            .unwrap();
+        assert_eq!(seqs(&entries), vec![0, 1, 2]);
     }
 
     /// A stale/missing checkpoint marker must never delete live frames: truncate

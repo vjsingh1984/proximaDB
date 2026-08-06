@@ -10,7 +10,7 @@ use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 use tracing::info;
 
-use crate::config::{EmbedRoute, EmbeddingConfig};
+use crate::config::{EmbedRoute, EmbedRouteIdentity, EmbeddingConfig};
 use crate::models::ModelRegistry;
 use crate::scheduler::{EmbedScheduler, EmbedSchedulerConfig, IngestMode, SchedulerStats};
 use crate::tokenizer::SharedTokenizer;
@@ -41,6 +41,10 @@ pub struct EmbedBatch {
 pub struct EmbedResult {
     pub vectors: Vec<Vec<f32>>,
     pub route: EmbedRoute,
+    /// The external provider's **real** token usage for this batch, when reported
+    /// (TD-SANDHI-1 / ADR-067). `None` for local BGE and BYO — callers keep the
+    /// compute-based estimate for those.
+    pub usage: Option<crate::models::EmbedUsage>,
 }
 
 /// INT-2.5c result for the precision-aware embed path
@@ -132,6 +136,25 @@ impl EmbeddingService {
         self.default_config.route.clone()
     }
 
+    /// Resolve the executable route for durable work that already pinned a
+    /// credential-free identity. A fresh live route wins; if the cache TTL
+    /// elapsed, the last cached route remains usable only when its identity
+    /// still matches the admitted job. This keeps queue delay independent of
+    /// the routing-cache TTL without allowing model or endpoint drift.
+    pub fn resolve_admitted_route(
+        &self,
+        tenant_id: &str,
+        admitted: &EmbedRouteIdentity,
+    ) -> Option<EmbedRoute> {
+        let live = self.resolve_route(tenant_id);
+        if EmbedRouteIdentity::from(&live) == *admitted {
+            return Some(live);
+        }
+        self.tenant_cache.get(tenant_id).and_then(|cached| {
+            (EmbedRouteIdentity::from(&cached.route) == *admitted).then(|| cached.route.clone())
+        })
+    }
+
     /// Refresh the cached route for a tenant. Typically called after a
     /// tenant registry lookup.
     pub fn update_tenant_route(&self, tenant_id: impl Into<String>, route: EmbedRoute) {
@@ -156,15 +179,31 @@ impl EmbeddingService {
             self.resolve_route(&batch.records[0].tenant_id)
         };
 
+        self.embed_sync_with_route(batch, route).await
+    }
+
+    /// Embed with a route already resolved by the caller. Durable async
+    /// producers use this to ensure execution honors the route admitted when
+    /// the work was accepted, even if the tenant's live route changes before
+    /// the queue is drained.
+    pub async fn embed_sync_with_route(
+        self: &Arc<Self>,
+        batch: EmbedBatch,
+        route: EmbedRoute,
+    ) -> Result<EmbedResult> {
         let service = self.clone();
         let texts: Vec<String> = batch.records.iter().map(|r| r.text.clone()).collect();
         let route_inner = route.clone();
         let rx = self
             .scheduler
-            .submit_sync(move || service.models.embed_batch(&route_inner, &texts))?;
+            .submit_sync(move || service.models.embed_batch_with_usage(&route_inner, &texts))?;
         rx.await
             .map_err(|_| EmbeddingError::Other(anyhow::anyhow!("scheduler dropped")))?
-            .map(|vectors| EmbedResult { vectors, route })
+            .map(|(vectors, usage)| EmbedResult {
+                vectors,
+                route,
+                usage,
+            })
     }
 
     /// INT-2.5c: synchronous embed at a caller-declared canonical
@@ -228,8 +267,12 @@ impl EmbeddingService {
             let texts: Vec<String> = batch.records.iter().map(|r| r.text.clone()).collect();
             let outcome = service
                 .models
-                .embed_batch(&route_inner, &texts)
-                .map(|vectors| EmbedResult { vectors, route });
+                .embed_batch_with_usage(&route_inner, &texts)
+                .map(|(vectors, usage)| EmbedResult {
+                    vectors,
+                    route,
+                    usage,
+                });
             on_complete(outcome);
             Ok(())
         })

@@ -73,8 +73,13 @@ impl DiscoveryJobExecutor {
         // *this* collection's manifest high-water-mark. No vector_ops (walking
         // skeleton / lightweight tests) => baseline stays 0.
         if let Some(vops) = self.vector_ops.as_ref() {
-            let internal_id = vops.resolve_collection_id(&job.collection_id).await;
-            job.collection_write_lsn = self.coordinator.collection_write_lsn(&internal_id).await;
+            let object_id = vops
+                .resolve_collection_object_id(&job.collection_id)
+                .await?;
+            job.collection_write_lsn = self
+                .coordinator
+                .collection_write_lsn(&object_id.to_string())
+                .await;
         }
         self.registry.upsert(job.clone());
 
@@ -154,7 +159,13 @@ pub fn spawn_discovery_executor(
                     }
                 }
                 _ = tokio::time::sleep(interval) => {
-                    while executor.run_once().await.is_some() {}
+                    // TD-LIFECYCLE-1: re-check shutdown between drained jobs so
+                    // a queued backlog cannot extend teardown.
+                    while executor.run_once().await.is_some() {
+                        if *shutdown.borrow() {
+                            break;
+                        }
+                    }
                 }
             }
         }

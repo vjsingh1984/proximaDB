@@ -779,6 +779,9 @@ impl MultiModalQueryExecutor {
                     top_k,
                     filters.cloned(),
                     Some(search_config),
+                    None,
+                    None,
+                    proximadb_tenant::AuthClass::Anonymous,
                 )
                 .await?
             } else {
@@ -1637,7 +1640,7 @@ impl MultiModalQueryExecutor {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "axis"))]
 mod executor_tests {
     use super::*;
     use crate::graph::GraphOperationsService;
@@ -2072,12 +2075,6 @@ mod executor_tests {
             {
                 Ok(vec![])
             }
-            fn get_filesystem_factory(
-                &self,
-            ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-                // Deferred: Placeholder for test - FilesystemFactory::new is async
-                unimplemented!("Test method - requires async FilesystemFactory::new")
-            }
         }
         let engine = Arc::new(NoopEngine) as Arc<dyn crate::storage::traits::UnifiedStorageFormat>;
         let store = Arc::new(ProximaEntityStore::new(
@@ -2260,24 +2257,10 @@ mod executor_tests {
         let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
         // Create WAL manager with default config
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-        use crate::storage::persistence::write_ahead_log::{WALBatchFactory, WALConfig};
-        let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(
-            FilesystemFactory::create(fs_config)
-                .await
-                .expect("Failed to create filesystem"),
-        );
+        use crate::storage::persistence::write_ahead_log::WALConfig;
         let wal_config = WALConfig::default();
-        let strategy = WALBatchFactory::create_batch_serialization_strategy(
-            wal_config.strategy_type,
-            &wal_config,
-            filesystem,
-        )
-        .await
-        .expect("Failed to create WAL strategy");
         let wal_manager = Arc::new(
-            WriteAheadLogManager::new(strategy, wal_config)
+            WriteAheadLogManager::new(wal_config)
                 .await
                 .expect("Failed to create WAL manager"),
         );
@@ -2343,24 +2326,10 @@ mod executor_tests {
         let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
         // Create WAL manager with default config
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-        use crate::storage::persistence::write_ahead_log::{WALBatchFactory, WALConfig};
-        let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(
-            FilesystemFactory::create(fs_config)
-                .await
-                .expect("Failed to create filesystem"),
-        );
+        use crate::storage::persistence::write_ahead_log::WALConfig;
         let wal_config = WALConfig::default();
-        let strategy = WALBatchFactory::create_batch_serialization_strategy(
-            wal_config.strategy_type,
-            &wal_config,
-            filesystem,
-        )
-        .await
-        .expect("Failed to create WAL strategy");
         let wal_manager = Arc::new(
-            WriteAheadLogManager::new(strategy, wal_config)
+            WriteAheadLogManager::new(wal_config)
                 .await
                 .expect("Failed to create WAL manager"),
         );

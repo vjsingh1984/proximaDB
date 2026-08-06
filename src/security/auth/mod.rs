@@ -3,7 +3,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 pub mod ldap;
-pub mod oidc;
 
 /// Identity Provider trait for external authentication sources
 #[async_trait]

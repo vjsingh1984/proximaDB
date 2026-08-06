@@ -11,7 +11,7 @@ use tracing::error;
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::proto::proximadb_v1 as v1;
 
 /// Progressive search handler - now uses protobuf types directly
@@ -42,7 +42,7 @@ pub async fn progressive_search_handler(
     // Delegate directly to unified v1 handler
     let resp = state
         .api_handlers
-        .handle_vector_search_v1_for_tenant(request, Some(&tenant.tenant_id))
+        .handle_vector_search_v1_for_tenant(request, proximadb_runtime::PortIdentity::from(&tenant))
         .await
         .map_err(|e| {
             error!(

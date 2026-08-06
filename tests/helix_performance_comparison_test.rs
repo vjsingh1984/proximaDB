@@ -202,7 +202,7 @@ mod performance_comparison_tests {
             let query_start = Instant::now();
             let search_params = Arc::new(proximadb::core::search::SearchParams {
                 query_vectors: Some(vec![query.clone()]),
-                top_k: Some(K_NEIGHBORS),
+                top_k: Some(K_NEIGHBORS as u16),
                 distance_metric: Some(DistanceMetric::Euclidean),
                 filter_expression: None,
                 // Enable block pruning with sensible minimum to avoid expensive PCA on small datasets
@@ -655,7 +655,7 @@ mod performance_comparison_tests {
         for chunk in vectors.chunks(1000) {
             let flush_params = FlushParameters {
                 collection_id: Some("test_collection".to_string()),
-                vector_records: chunk.iter().cloned().collect(),
+                vector_records: chunk.to_vec(),
                 force: true,
                 synchronous: true,
                 hints: HashMap::new(),

@@ -393,7 +393,7 @@ impl IntegratedSearchOptimizer {
 
         // Limit to requested k
         if let Some(k) = params.top_k {
-            results.truncate(k);
+            results.truncate(k as usize);
         }
 
         // Note: Rank is not a field in SearchResult anymore

@@ -53,7 +53,7 @@ impl MvccResolver {
 
         for record in records {
             let oid = &record.oid;
-            if oid.is_empty() || oid == "null" || oid == "none" || oid.trim().is_empty() {
+            if is_append_only_oid(oid) {
                 append_only.push(record);
             } else {
                 id_groups.entry(oid.clone()).or_default().push(record);
@@ -127,6 +127,95 @@ impl MvccResolver {
         resolved
     }
 
+    /// Resolve an owned compaction batch with bounded auxiliary memory.
+    ///
+    /// The general query-path resolver above intentionally accepts arbitrary
+    /// input order, but its `HashMap<String, Vec<...>>` shape is pathological
+    /// for compaction: a 10M-row segment with unique OIDs allocates 10M map
+    /// entries and 10M one-element vectors while the full input remains live.
+    /// Compaction already owns the entire batch, so it can sort by OID and scan
+    /// contiguous version groups instead.
+    ///
+    /// This implementation:
+    ///
+    /// * sorts records in place with the allocation-free unstable sorter;
+    /// * marks at most one winner per versioned OID in a one-byte-per-row mask;
+    /// * compacts winners in the original allocation with `Vec::retain`;
+    /// * never clones an embedding, OID, property tree, or record.
+    ///
+    /// Output is deterministic by OID. Within an OID, effective version then
+    /// creation/update time provide the tie-break order; append-only rows use
+    /// the same deterministic temporal order. The MVCC rules match
+    /// [`Self::resolve_batch`].
+    pub fn resolve_sorted_batch(&self, mut records: Vec<ProximaRecord>) -> Vec<ProximaRecord> {
+        records.sort_unstable_by(|left, right| {
+            left.oid
+                .cmp(&right.oid)
+                .then_with(|| effective_version(left).cmp(&effective_version(right)))
+                .then_with(|| left.created_at_ns.cmp(&right.created_at_ns))
+                .then_with(|| left.updated_at_ns.cmp(&right.updated_at_ns))
+        });
+
+        let mut keep = vec![false; records.len()];
+        let mut group_start = 0usize;
+        while group_start < records.len() {
+            let group_oid = records[group_start].oid.as_str();
+            let mut group_end = group_start + 1;
+            while group_end < records.len() && records[group_end].oid == group_oid {
+                group_end += 1;
+            }
+
+            if is_append_only_oid(group_oid) {
+                for index in group_start..group_end {
+                    keep[index] = !self.is_expired(&records[index]);
+                }
+                group_start = group_end;
+                continue;
+            }
+
+            // Any expired version is a deletion marker for the entire OID.
+            if records[group_start..group_end]
+                .iter()
+                .any(|record| self.is_expired(record))
+            {
+                group_start = group_end;
+                continue;
+            }
+
+            let start_version = effective_version(&records[group_start]);
+            if start_version > 1 {
+                group_start = group_end;
+                continue;
+            }
+
+            let mut expected = start_version;
+            let mut winner = None;
+            for (offset, record) in records[group_start..group_end].iter().enumerate() {
+                let version = effective_version(record);
+                if version == expected {
+                    winner = Some(group_start + offset);
+                    expected += 1;
+                } else if version > expected {
+                    break;
+                }
+                // version < expected is an older duplicate of a version that
+                // already won through the deterministic timestamp ordering.
+            }
+            if let Some(index) = winner {
+                keep[index] = true;
+            }
+            group_start = group_end;
+        }
+
+        let mut index = 0usize;
+        records.retain(|_| {
+            let retain = keep[index];
+            index += 1;
+            retain
+        });
+        records
+    }
+
     /// Return `true` if the record's TTL has elapsed.
     pub fn is_expired(&self, record: &ProximaRecord) -> bool {
         record
@@ -161,12 +250,17 @@ impl MvccResolver {
 
 /// Treat `record_version == 0` as version 1 for historical stored records.
 #[inline]
-fn effective_version(r: &ProximaRecord) -> u64 {
+pub(crate) fn effective_version(r: &ProximaRecord) -> u64 {
     if r.record_version == 0 {
         1
     } else {
         r.record_version
     }
+}
+
+#[inline]
+pub(crate) fn is_append_only_oid(oid: &str) -> bool {
+    oid.is_empty() || oid == "null" || oid == "none" || oid.trim().is_empty()
 }
 
 impl Default for MvccResolver {
@@ -369,5 +463,76 @@ mod tests {
 
         assert!(resolver.compare_records(&valid, &expired));
         assert!(!resolver.compare_records(&expired, &valid));
+    }
+
+    /// TD-COMPACT-2: the compaction resolver must not allocate one HashMap
+    /// entry plus one Vec allocation per OID. The sort-and-scan path is
+    /// behavior-equivalent to the general query-path resolver for mixed MVCC
+    /// inputs, including append-only rows and expiry.
+    #[test]
+    fn sorted_batch_matches_general_resolver() {
+        let resolver = MvccResolver::with_timestamp(1000);
+        let records = vec![
+            create_record(Some("id2"), 3, 350, None),
+            create_record(None, 0, 130, None),
+            create_record(Some("id1"), 2, 200, None),
+            create_record(Some("id3"), 1, 100, Some(500)),
+            create_record(Some("id2"), 1, 150, None),
+            create_record(Some("id1"), 1, 100, None),
+            create_record(Some("id2"), 1, 140, None),
+            create_record(Some("id2"), 2, 250, None),
+            create_record(Some("null"), 0, 300, None),
+        ];
+
+        let mut general: Vec<(String, u64, i64)> = resolver
+            .resolve_batch(records.clone())
+            .into_iter()
+            .map(|record| (record.oid, record.record_version, record.created_at_ns))
+            .collect();
+        general.sort();
+
+        let mut sorted: Vec<(String, u64, i64)> = resolver
+            .resolve_sorted_batch(records)
+            .into_iter()
+            .map(|record| (record.oid, record.record_version, record.created_at_ns))
+            .collect();
+        sorted.sort();
+
+        assert_eq!(sorted, general);
+    }
+
+    /// Moving through low-memory MVCC must preserve the embedding allocation.
+    /// A pointer change here exposes a hidden full-vector clone even when the
+    /// logical record is unchanged.
+    #[test]
+    fn sorted_batch_moves_embedding_without_cloning() {
+        let resolver = MvccResolver::with_timestamp(1000);
+        let record = create_record(Some("owned"), 1, 100, None);
+        let original_ptr = record.embeddings[0]
+            .values
+            .as_fp32_slice()
+            .map(<[f32]>::as_ptr);
+
+        let resolved = resolver.resolve_sorted_batch(vec![record]);
+        let resolved_ptr = resolved[0].embeddings[0]
+            .values
+            .as_fp32_slice()
+            .map(<[f32]>::as_ptr);
+
+        assert_eq!(resolved_ptr, original_ptr);
+    }
+
+    #[test]
+    fn sorted_batch_output_is_deterministic_by_oid() {
+        let resolver = MvccResolver::with_timestamp(1000);
+        let records = vec![
+            create_record(Some("z"), 1, 100, None),
+            create_record(Some("a"), 1, 100, None),
+            create_record(Some("m"), 1, 100, None),
+        ];
+
+        let resolved = resolver.resolve_sorted_batch(records);
+        let ids: Vec<&str> = resolved.iter().map(|record| record.oid.as_str()).collect();
+        assert_eq!(ids, vec!["a", "m", "z"]);
     }
 }

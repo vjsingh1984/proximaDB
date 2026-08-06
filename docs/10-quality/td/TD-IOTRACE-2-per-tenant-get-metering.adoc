@@ -6,8 +6,8 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open**
-| Severity | Medium — the co-design KOU (outgress / object-store-request dimension) is not metered per-tenant, even though the io-trace now captures it.
+| Status | **Resolved (2026-07-18, #1091).** `object_store_gets` + `object_store_bytes_read` flow live: the always-on Prometheus billing observer (`src/metrics/consumption_metrics.rs`) emits them per tenant from the io-trace snapshot; `build_kru` emits them on `MeteringEvent` (aligned to `range_gets`, the accurate post-#1081 single-source count, not `get_ops`); and they ride `SearchPlanTrace`. The interim-$0 under-return rule for the physical KRU term can retire downstream. Durable trace ETL is deliberately separate and remains TD-TRACE-2 scope.
+| Severity | **High** (raised 2026-07-16, was Medium) — downstream re-pricing (AnvaiOps ADR-0041) made the per-query physical counters this TD emits (`object_store_gets`, `object_store_bytes_read`) the **billing input for the physical part of the two-part KRU rate** ($/TB physically scanned). Until this lands, that meter bills $0 (downstream under-return rule — never estimated), i.e. this TD is now revenue-blocking, not just an observability gap. Originally: the co-design KOU (outgress / object-store-request dimension) is not metered per-tenant, even though the io-trace now captures it.
 | Component | Metering — `src/observability/metering_event.rs`
 | Tracked-by | link:../../12-design/STORAGE_FORMAT_DECISION_FRAMEWORK_2026_06_29.adoc[Storage-Format Decision Framework] (PR #553)
 | Pillar | COST, SUS

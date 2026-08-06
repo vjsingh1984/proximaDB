@@ -33,12 +33,17 @@ use crate::index::axis::management::manager::{
 // so these are `From` impls; orphan rule satisfied).
 // ---------------------------------------------------------------------------
 
-impl From<IndexSearchEffort> for SearchEffort {
-    fn from(e: IndexSearchEffort) -> Self {
-        match e {
-            IndexSearchEffort::Exact => SearchEffort::Exact,
-            IndexSearchEffort::Approximate { hint } => SearchEffort::Approximate { hint },
-        }
+/// Convert the slim DTO [`IndexSearchEffort`] (from `proximadb-index-traits`)
+/// into the search-params [`SearchEffort`] (from `proximadb-search-types`).
+///
+/// This is a free function rather than a `From` impl because neither type is
+/// defined in this crate (orphan rule): `IndexSearchEffort` lives in
+/// `proximadb-index-traits`, `SearchEffort` was hoisted to
+/// `proximadb-search-types` (root-crate decomposition, gap 1).
+fn index_effort_to_search(e: IndexSearchEffort) -> SearchEffort {
+    match e {
+        IndexSearchEffort::Exact => SearchEffort::Exact,
+        IndexSearchEffort::Approximate { hint } => SearchEffort::Approximate { hint },
     }
 }
 
@@ -104,7 +109,7 @@ impl From<IndexHybridQuery> for AxisHybridQuery {
             id_filters: q.id_filters,
             top_k: q.top_k,
             include_expired: q.include_expired,
-            search_effort: q.search_effort.map(Into::into),
+            search_effort: q.search_effort.map(index_effort_to_search),
             // Storage never sets these on the query path (verified at the call
             // sites); the AXIS query path defaults them. Keeping them here makes
             // the "DTO is lossless for storage" property explicit.

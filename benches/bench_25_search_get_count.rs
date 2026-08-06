@@ -20,7 +20,7 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 use proximadb_storage_filesystem_types::counting::global_counters;
 use tempfile::TempDir;
 

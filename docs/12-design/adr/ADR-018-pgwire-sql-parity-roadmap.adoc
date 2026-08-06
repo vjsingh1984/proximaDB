@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 3
 :icons: font
-:last-updated: 2026-05-28
+:last-updated: 2026-07-15
 
 == Status
 
@@ -23,6 +23,12 @@ transaction semantics require the TD-110 foundation first: xCatalog constraint m
 native row/delta commit, primary-key/unique/check/foreign-key enforcement, MVCC visibility,
 Volcano strong-freshness execution, DataFusion snapshot-plus-delta reads, and distributed
 consistency gates.
+
+2026-07-15 safety amendment: until the transaction gates in Phase 2/3 pass, pgwire is explicitly
+autocommit-only. All transaction-control statements return SQLSTATE `0A000`. In the simple-query
+protocol, a batch containing transaction control is rejected before any statement executes. This
+supersedes the earlier Phase 1 no-op command-tag posture, which allowed clients to infer atomicity
+that the storage layer could not provide.
 
 == Context
 
@@ -99,9 +105,9 @@ feature is honest about its behaviour.
 |===
 | Item | Status | Where | Effort
 
-| 1.1 Silent transaction bug — multi-statement split, BEGIN /
-COMMIT / ROLLBACK tags, autocommit warning, savepoint 0A000
-| **Done** (ac969aa12)
+| 1.1 Silent transaction bug — multi-statement split plus whole-batch
+transaction-control rejection (`0A000`) before execution
+| **Done** (safety posture strengthened 2026-07-15)
 | `src/network/postgres/protocol.rs`
 | 0.5d
 
@@ -419,8 +425,8 @@ Effort: 7–10d.
    tests.** Without `pg_class` + `pg_attribute`, every modern ORM
    refuses to connect on first probe.
 3. **Phase 2's real transactions (P2.D) gate any multi-statement
-   write workflow.** Until P2.D lands, every transactional client
-   sees a `WARNING` log every time it sends BEGIN.
+   write workflow.** Until P2.D lands, every transaction-control
+   statement fails with SQLSTATE `0A000`; clients must not infer atomicity.
 4. **Phase 3's MVCC (P3.B) gates real concurrent workloads.**
    Until P3.B, ProximaDB is functionally an autocommit database —
    fine for read-mostly workloads, unsafe for write-contended ones.

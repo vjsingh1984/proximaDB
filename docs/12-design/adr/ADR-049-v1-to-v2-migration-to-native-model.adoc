@@ -38,6 +38,14 @@ So the migration is **convergence, not a rewrite** — finish the spokes that st
 
 **D5. ADR-019 closure at M4.** When the ratchet reads ≈ 0, delete `proto/proximadb/v1/`, the conversion seam (`proxima_record_to_vector`), and the v1 edge adapters in one final PR (the TD-121 gate).
 
+**D6. Adjacent implementation work moves toward v2/native, never deeper into
+v1.** A feature that encounters a v1 DTO or port must not add new identity or
+cache semantics to that DTO. It either uses the existing adapter temporarily or
+introduces a bounded native/v2 seam, and the no-regression ratchet must remain
+green. Catalog `object_id: u64` is the authoritative collection identity;
+string `Collection.id` fields are transitional views, not a second authority.
+This rule does not waive mixed-read support for durable v1 segment bytes.
+
 == Considered alternatives (rejected)
 
 * **Big-bang rewrite.** Re-implement storage/API on v2 from scratch, cutover on a flag-day. Rejected: violates the no-flag-day constraint; legacy on-disk v1 SST files demand mixed-read for years; ~2,940 references make a single coherent change un-reviewable; and the converged PAX/block-format write path would be discarded.
@@ -64,7 +72,7 @@ So the migration is **convergence, not a rewrite** — finish the spokes that st
 
 * **M0-a (this PR):** revive `scripts/check_v1_proto_usage.py` (TD-123 downward-only ratchet), wire `v1-proto-usage-no-regression` into `ci-success.needs`, and refresh the baseline once to the post-ADR-048 floor (the prior open ratchet was red only because its baseline predated the catalog-authoritative PRs #606/#609/#612 — drift, not regression). This refresh is the *only* non-ratcheted refresh; subsequent ones require explicit justification or the gate loses meaning.
 * **M0-b (follow-on PR):** proto-deprecate all 17 v1 services (`option deprecated = true` + this ADR / TD-121 comment) — advisory only; v1 stays working through M4.
-* **M0-c (follow-on PR):** gate REST `/api/v1/*` behind `PROXIMADB_REST_V1_COMPAT` (on-default for now; off → 410 Gone + `Deprecation`/`Sunset`), mirroring the gRPC v1 gate.
+* **M0-c (✅ landed):** REST `/api/v1/*` is gated behind `PROXIMADB_REST_V1_COMPAT` (on by default; off → `410 Gone` + RFC 8594 `Deprecation`/`Link`/optional `Sunset` headers), mirroring the gRPC v1 gate. Implemented as `network::middleware::v1_sunset` applied at both REST router-assembly sites; `/api/v2/*` is never affected. Optional `PROXIMADB_REST_V1_SUNSET` sets the `Sunset` HTTP-date.
 
 == Consequences
 

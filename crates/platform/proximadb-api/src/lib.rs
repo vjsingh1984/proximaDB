@@ -35,16 +35,9 @@ pub use pgwire::{PostgresServer, PostgresSession};
 
 // Re-export common types
 pub use grpc::{GrpcApiHandler, GrpcRequest, GrpcResponse};
-pub use grpc::{GrpcServiceBuilder, GrpcServiceConfig, GrpcServiceFactory, GrpcServices};
 pub use rest::{RestApiHandler, RestRequest, RestResponse};
 
-// Re-export v1 handlers
-pub use grpc::v1::{
-    CollectionServiceImpl, DocumentServiceImpl, EntityServiceImpl, GraphServiceImpl,
-    HybridSearchServiceImpl, ObservabilityServiceImpl, QueryServiceImpl, SecurityServiceImpl,
-    StreamingServiceImpl, VectorServiceImpl,
-};
-pub use rest::v1::{
+pub use rest::canonical::{
     AnalyticsHandler, AqlHandler, CatalogHandler, CollectionHandler, DocumentHandler,
     DocumentQueryHandler, EntityHandler, GraphHandler, GraphTraversalHandler, HybridSearchHandler,
     LogsHandler, MetricsHandler, ProgressiveSearchHandler, VectorHandler,
@@ -84,7 +77,7 @@ pub(crate) mod test_support {
     };
     use proximadb_runtime::{
         ApiHandlersPort, CollectionPort, CollectionSchemaMetadata, CollectionSchemaUpdate,
-        QueryAdapterPort, UnifiedHandlers, VectorOpsPort,
+        PortIdentity, QueryAdapterPort, SqlExecutionResult, UnifiedHandlers, VectorOpsPort,
     };
     use serde_json::Value as JsonValue;
 
@@ -125,6 +118,10 @@ pub(crate) mod test_support {
             query: String,
             parameter_count: Option<usize>,
             collection: Option<String>,
+            tenant_id: Option<String>,
+            subject: Option<String>,
+            tenant_stable_id: Option<u64>,
+            auth_class: proximadb_tenant::AuthClass,
         },
         Hybrid,
     }
@@ -208,8 +205,9 @@ pub(crate) mod test_support {
         async fn handle_vector_search_v1_for_tenant(
             &self,
             request: VectorSearchRequest,
-            tenant_id: Option<&str>,
+            identity: PortIdentity<'_>,
         ) -> Result<VectorOperationResponse> {
+            let tenant_id = identity.tenant_id;
             self.calls.lock().unwrap().push(ApiCall::VectorSearch {
                 tenant_id: tenant_id.map(ToOwned::to_owned),
                 collection_id: request.collection_id,
@@ -274,14 +272,58 @@ pub(crate) mod test_support {
             query: String,
             parameters: Option<Vec<ProximaValue>>,
             collection: Option<String>,
-            _tenant_id: Option<&str>,
+            identity: proximadb_runtime::PortIdentity<'_>,
         ) -> Result<ExecuteQueryResponse> {
             self.calls.lock().unwrap().push(ApiCall::Sql {
                 query,
                 parameter_count: parameters.as_ref().map(Vec::len),
                 collection,
+                tenant_id: identity.tenant_id.map(ToOwned::to_owned),
+                subject: identity.subject.map(ToOwned::to_owned),
+                tenant_stable_id: identity.tenant_stable_id,
+                auth_class: identity.auth_class,
             });
             Ok(self.sql_response.lock().unwrap().clone())
+        }
+
+        async fn execute_sql(
+            &self,
+            query: String,
+            parameters: Option<Vec<ProximaValue>>,
+            collection: Option<String>,
+            identity: proximadb_runtime::PortIdentity<'_>,
+        ) -> Result<SqlExecutionResult> {
+            self.calls.lock().unwrap().push(ApiCall::Sql {
+                query,
+                parameter_count: parameters.as_ref().map(Vec::len),
+                collection,
+                tenant_id: identity.tenant_id.map(ToOwned::to_owned),
+                subject: identity.subject.map(ToOwned::to_owned),
+                tenant_stable_id: identity.tenant_stable_id,
+                auth_class: identity.auth_class,
+            });
+            let response = self.sql_response.lock().unwrap().clone();
+            Ok(SqlExecutionResult {
+                columns: response.columns,
+                column_types: response.column_types,
+                rows: response
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        row.fields
+                            .iter()
+                            .map(|field| {
+                                field.value.as_ref().map_or(ProximaValue::Null, |value| {
+                                    proximadb_records::conversions::sql_value_to_proxima(value)
+                                })
+                            })
+                            .collect()
+                    })
+                    .collect(),
+                rows_scanned: response.rows_scanned,
+                execution_time_ms: response.execution_time_ms,
+                ..Default::default()
+            })
         }
     }
 
@@ -342,7 +384,7 @@ pub(crate) mod test_support {
         async fn search(
             &self,
             _request: VectorSearchRequest,
-            _tenant_id: Option<&str>,
+            _identity: PortIdentity<'_>,
         ) -> Result<VectorOperationResponse> {
             Ok(VectorOperationResponse::default())
         }
@@ -397,8 +439,9 @@ pub(crate) mod test_support {
             &self,
             _query: String,
             _collection: Option<String>,
-        ) -> Result<JsonValue> {
-            Ok(JsonValue::Array(Vec::new()))
+            _identity: PortIdentity<'_>,
+        ) -> Result<SqlExecutionResult> {
+            Ok(SqlExecutionResult::default())
         }
     }
 
@@ -417,7 +460,7 @@ mod tests {
         CollectionConfig, CollectionOperation, CollectionRequest, HybridSearchRequest,
         VectorBatchRequest, VectorRecord, VectorSearchRequest,
     };
-    use proximadb_runtime::ApiHandlersPort;
+    use proximadb_runtime::{ApiHandlersPort, PortIdentity};
 
     use super::test_support::{ApiCall, RecordingApiPort, noop_unified_handlers};
 
@@ -428,6 +471,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // Deliberately exercises the deprecated v1 ExecuteHybridQuery dispatch (TD-143).
+    #[allow(deprecated)]
     async fn recording_api_port_captures_all_protocol_dispatch_shapes() {
         let port = RecordingApiPort::new();
 
@@ -452,7 +497,7 @@ mod tests {
                 collection_id: "tenant_docs".to_string(),
                 ..VectorSearchRequest::default()
             },
-            Some("tenant-a"),
+            PortIdentity::for_tenant("tenant-a"),
         )
         .await
         .unwrap();
@@ -479,7 +524,7 @@ mod tests {
             "select * from docs".to_string(),
             None,
             Some("docs".to_string()),
-            None,
+            proximadb_runtime::PortIdentity::anonymous(),
         )
         .await
         .unwrap();
@@ -519,6 +564,10 @@ mod tests {
                     query: "select * from docs".to_string(),
                     parameter_count: None,
                     collection: Some("docs".to_string()),
+                    tenant_id: None,
+                    subject: None,
+                    tenant_stable_id: None,
+                    auth_class: proximadb_tenant::AuthClass::Anonymous,
                 },
             ]
         );
@@ -595,7 +644,7 @@ mod tests {
         assert!(
             handlers
                 .vector_ops
-                .search(VectorSearchRequest::default(), None)
+                .search(VectorSearchRequest::default(), PortIdentity::anonymous())
                 .await
                 .unwrap()
                 .results
@@ -637,10 +686,15 @@ mod tests {
             .unwrap();
         assert!(
             query
-                .execute_sql("select 1".to_string(), Some("docs".to_string()))
+                .execute_sql(
+                    "select 1".to_string(),
+                    Some("docs".to_string()),
+                    PortIdentity::anonymous(),
+                )
                 .await
                 .unwrap()
-                .is_array()
+                .rows
+                .is_empty()
         );
     }
 }

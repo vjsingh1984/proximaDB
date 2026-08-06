@@ -190,10 +190,26 @@ impl Default for MemoryConfig {
 
 impl Default for DiskCacheConfig {
     fn default() -> Self {
+        // The disk-cache location + size are env-drivable with known defaults so a
+        // deployment can point the cache at instance-local NVMe. Overridable via
+        // `PROXIMADB_DISK_CACHE_PATH` / `PROXIMADB_DISK_CACHE_MAX_GB` (TOML may set
+        // the same fields where a [cache] section is wired). The path is a
+        // filesystem location today; the caching layer resolves it through the
+        // FilesystemFactory, keeping the seam open for other schemes later.
+        let path = std::env::var("PROXIMADB_DISK_CACHE_PATH")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp/proximadb_cache"));
+        let max_size_gb = std::env::var("PROXIMADB_DISK_CACHE_MAX_GB")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .filter(|&g| g > 0)
+            .unwrap_or(10);
         Self {
             enabled: true,
-            path: PathBuf::from("/tmp/proximadb_cache"),
-            max_size_gb: 10,
+            path,
+            max_size_gb,
             max_file_size_mb: 100,
             tier: StorageTier::SSD,
         }
@@ -422,6 +438,20 @@ impl UnifiedCacheConfig {
 
         if total != 100 {
             return Err(ConfigError::InvalidMemoryDistribution(total));
+        }
+
+        // The disk cache is local by design (its whole point is to sit in
+        // front of remote storage). Reject URL-shaped paths fail-fast
+        // instead of creating a literal `s3:`/`adls:` directory
+        // (TD-OBJSTORE-1, #960).
+        if self.disk.enabled && self.disk.path.to_string_lossy().contains("://") {
+            return Err(ConfigError::InvalidPath(
+                self.disk.path.clone(),
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "disk cache path must be a local directory, not an object-store URL",
+                ),
+            ));
         }
 
         if self.disk.enabled && !self.disk.path.exists() {

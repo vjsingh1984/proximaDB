@@ -298,13 +298,13 @@ mod tests {
     fn test_file_encryption_round_trip() {
         unsafe {
             std::env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
         let key_manager =
-            std::sync::Arc::new(KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap());
+            std::sync::Arc::new(KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY").unwrap());
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
 
         let layer = FileEncryptionLayer::new(key_version_manager.clone(), true, 4096);
@@ -326,13 +326,13 @@ mod tests {
     fn test_large_file_chunking() {
         unsafe {
             std::env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
         let key_manager =
-            std::sync::Arc::new(KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap());
+            std::sync::Arc::new(KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY").unwrap());
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
 
         let chunk_size = 100;
@@ -366,13 +366,13 @@ mod tests {
     fn test_file_encryption_disabled() {
         unsafe {
             std::env::set_var(
-                "TEST_PROXIMADB_MASTER_KEY",
+                "TEST_PROXIMADB_CRYPTO_MASTER_KEY",
                 "test-master-key-32-bytes-long-here!!",
             );
         }
 
         let key_manager =
-            std::sync::Arc::new(KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap());
+            std::sync::Arc::new(KeyManager::from_env("TEST_PROXIMADB_CRYPTO_MASTER_KEY").unwrap());
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
 
         let layer = FileEncryptionLayer::new(key_version_manager.clone(), false, 4096);

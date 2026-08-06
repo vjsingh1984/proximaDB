@@ -11,7 +11,7 @@
 
     <name>ProximaDB Embedded</name>
     <description>In-process vector database for Java with zero network overhead</description>
-    <url>https://github.com/vjsingh1984/proximadb</url>
+    <url>https://github.com/anvai-labs/proximaDB</url>
 
     <licenses>
         <license>
@@ -24,14 +24,14 @@
         <developer>
             <id>vjsingh1984</id>
             <name>Vijaykumar Singh</name>
-            <email>singhvjd@gmail.com</email>
+            <email>vijay@anvaiops.com</email>
         </developer>
     </developers>
 
     <scm>
-        <connection>scm:git:git://github.com/vjsingh1984/proximadb.git</connection>
-        <developerConnection>scm:git:ssh://github.com/vjsingh1984/proximadb.git</developerConnection>
-        <url>https://github.com/vjsingh1984/proximadb</url>
+        <connection>scm:git:git://github.com/anvai-labs/proximaDB.git</connection>
+        <developerConnection>scm:git:ssh://github.com/anvai-labs/proximaDB.git</developerConnection>
+        <url>https://github.com/anvai-labs/proximaDB</url>
     </scm>
 
     <properties>

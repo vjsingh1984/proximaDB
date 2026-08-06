@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::errors::{ApiError, ApiResult};
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::services::discovery::{DiscoveryJob, DiscoveryJobKind, DiscoveryService};
 
 /// Request body for creating a discovery job. `kind` defaults to `dedup`.
