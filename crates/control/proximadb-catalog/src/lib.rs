@@ -30,6 +30,8 @@ pub mod canonical_precision;
 pub mod corpus_version_fs_store;
 #[cfg(feature = "fc-metamodel")]
 pub mod fc_metamodel;
+#[cfg(feature = "fc-metamodel")]
+pub mod grants;
 pub mod internal;
 pub mod partition_pruning;
 #[cfg(feature = "fc-metamodel")]
