@@ -138,6 +138,7 @@ members = [
     "crates/query/proximadb-query-fusion",
     "crates/query/proximadb-rl-reward",
     "crates/query/proximadb-batch-group-cache",
+    "crates/query/proximadb-query-cache",
     "crates/query/proximadb-query-filter",
     "crates/query/proximadb-uql",
     "crates/query/proximadb-vector-query",
@@ -459,6 +460,7 @@ proximadb-query-clauses = { path = "crates/query/proximadb-query-clauses" }
 proximadb-query-fusion = { path = "crates/query/proximadb-query-fusion" }
 proximadb-rl-reward = { path = "crates/query/proximadb-rl-reward" }
 proximadb-batch-group-cache = { path = "crates/query/proximadb-batch-group-cache" }
+proximadb-query-cache = { path = "crates/query/proximadb-query-cache" }
 proximadb-query-filter = { path = "crates/query/proximadb-query-filter" }
 proximadb-uql = { path = "crates/query/proximadb-uql" }
 proximadb-vector-query = { path = "crates/query/proximadb-vector-query" }

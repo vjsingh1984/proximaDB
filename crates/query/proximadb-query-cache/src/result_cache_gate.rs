@@ -18,10 +18,8 @@
 
 use std::time::Duration;
 
-use crate::query::cache::mismatch_cost::{
-    MismatchCostLearner, MismatchDecision, Region as MismatchRegion,
-};
-use crate::query::cache::per_category_policy::{CategoryPolicy, PerCategoryPolicy};
+use crate::mismatch_cost::{MismatchCostLearner, MismatchDecision, Region as MismatchRegion};
+use crate::per_category_policy::{CategoryPolicy, PerCategoryPolicy};
 
 /// Input to the gate: caller supplies the runtime-side inputs (similarity,
 /// age, current values) and the gate looks up the per-category policy +
@@ -116,7 +114,7 @@ fn classify_reject(reason: &'static str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::cache::mismatch_cost::MismatchConfig;
+    use crate::mismatch_cost::MismatchConfig;
     use std::collections::HashMap;
     use std::time::Duration;
 

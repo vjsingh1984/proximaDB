@@ -1,0 +1,17 @@
+[package]
+name = "proximadb-query-cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Query cache policy utilities (per-category policy, mismatch cost, category classifier, result cache gate) — extracted from root query/cache (TD-DECOMP-29)"
+
+[lib]
+name = "proximadb_query_cache"
+path = "src/lib.rs"
+
+[dependencies]
+tokio.workspace = true

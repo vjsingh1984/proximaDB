@@ -6702,6 +6702,7 @@ dependencies = [
  "proximadb-cache",
  "proximadb-catalog",
  "proximadb-catalog-introspection",
+ "proximadb-catapult",
  "proximadb-cdc",
  "proximadb-cks-local",
  "proximadb-clustering-kernel",
@@ -6755,6 +6756,7 @@ dependencies = [
  "proximadb-quantization-model",
  "proximadb-quantization-types",
  "proximadb-query",
+ "proximadb-query-cache",
  "proximadb-query-capability",
  "proximadb-query-clauses",
  "proximadb-query-filter",
@@ -7905,6 +7907,13 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-query-cache"
+version = "0.2.0"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]
