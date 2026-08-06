@@ -11,14 +11,18 @@ class TestCollectionConfigEdgeCases:
     """Test edge cases in CollectionConfig"""
 
     def test_collection_name_validation_edge_case(self):
-        """Test collection name validation at boundary"""
-        # Test exactly 8 characters (should pass)
-        config = CollectionConfig(name="testcoll", dimension=128)  # exactly 8 chars
+        """Test collection name validation at boundary (8-char minimum relaxed, #1113)."""
+        # 8-character names work
+        config = CollectionConfig(name="testcoll", dimension=128)
         assert config.name == "testcoll"
 
-        # Test 7 characters (should fail)
-        with pytest.raises(Exception, match="String should have at least 8 characters"):
-            CollectionConfig(name="test123", dimension=128)  # only 7 chars
+        # Short (7-char) names are now accepted — the 8-char minimum was relaxed
+        # for relational-DDL tables; the SDK must not be stricter than the server.
+        assert CollectionConfig(name="test123", dimension=128).name == "test123"
+
+        # Empty names are still rejected (Pydantic min_length=1)
+        with pytest.raises(Exception):
+            CollectionConfig(name="", dimension=128)
 
     def test_index_config_property_none(self):
         """Test index_config property when no configs exist"""
