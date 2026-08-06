@@ -350,6 +350,35 @@ pub fn tenant_stable_id<T>(request: &Request<T>) -> Option<u64> {
         .and_then(|context| context.tenant_stable_id)
 }
 
+/// L0.3 (ADR-090): the ONE construction of a port identity from gRPC auth
+/// state. Composes the three extraction primitives above — it deliberately
+/// re-derives NOTHING, so it cannot drift from them — and owns the single
+/// auth-class rule for this surface: gRPC subjects come only from the
+/// authenticated [`GrpcAuthContext`] (there is no assertion path), so subject
+/// presence decides `Authenticated` vs `Anonymous`.
+///
+/// Replaces the four hand-built `PortIdentity { .. }` literals in
+/// `grpc/v2/record_service.rs`, each of which repeated that ternary inline
+/// (ADR-090 appendix A gap 13).
+pub fn port_identity<T>(
+    request: &Request<T>,
+) -> Result<proximadb_runtime::OwnedPortIdentity, Status> {
+    let tenant_id = resolved_tenant_id(request)?;
+    let subject = user_id(request);
+    let tenant_stable_id = tenant_stable_id(request);
+    let auth_class = if subject.is_some() {
+        proximadb_tenant::AuthClass::Authenticated
+    } else {
+        proximadb_tenant::AuthClass::Anonymous
+    };
+    Ok(proximadb_runtime::OwnedPortIdentity {
+        tenant_id: Some(tenant_id),
+        subject,
+        tenant_stable_id,
+        auth_class,
+    })
+}
+
 pub fn enforce_data_plane_request<T>(
     request: &Request<T>,
     operation: &str,
@@ -562,6 +591,50 @@ fn grpc_status_code(code: Code) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    // --- L0.3 port_identity spec (ADR-090) -------------------------------
+
+    fn authed_request(user: &str, stable: Option<u64>) -> Request<()> {
+        let mut request = Request::new(());
+        let mut user_context = proximadb_tenant::UnifiedUserContext::anonymous();
+        user_context.user_id = user.to_string();
+        request.extensions_mut().insert(GrpcAuthContext {
+            user_context,
+            capability: None,
+            resolved_tenant: Some("tenant-a".to_string()),
+            tenant_stable_id: stable,
+        });
+        request
+    }
+
+    /// Subject present ⇒ Authenticated, with tenant + stable id mapped through
+    /// the SAME primitives the individual helpers expose.
+    #[test]
+    fn port_identity_authenticated_when_subject_present() {
+        let request = authed_request("alice", Some(7));
+        let identity = port_identity(&request).expect("identity");
+        assert_eq!(identity.subject.as_deref(), Some("alice"));
+        assert_eq!(identity.tenant_stable_id, Some(7));
+        assert!(identity.tenant_id.is_some());
+        assert!(matches!(
+            identity.auth_class,
+            proximadb_tenant::AuthClass::Authenticated
+        ));
+    }
+
+    /// Empty user id ⇒ no subject ⇒ Anonymous (gRPC has no assertion path;
+    /// the class comes ONLY from authenticated context presence).
+    #[test]
+    fn port_identity_anonymous_when_subject_absent() {
+        let request = authed_request("", None);
+        let identity = port_identity(&request).expect("identity");
+        assert_eq!(identity.subject, None);
+        assert_eq!(identity.tenant_stable_id, None);
+        assert!(matches!(
+            identity.auth_class,
+            proximadb_tenant::AuthClass::Anonymous
+        ));
+    }
+
     use super::*;
     use std::collections::HashMap;
 
