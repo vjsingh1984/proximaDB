@@ -157,6 +157,30 @@ def require_config_port(config: Path, expected_port: int) -> None:
         )
 
 
+# Local-filesystem metadata recorded while materialising the geometry snapshot.
+# These describe OUR copy of the segment, not the segment itself, and are
+# regenerated on every materialisation, so they must not take part in the
+# immutable-provenance comparison. Segment identity is already pinned by
+# blob_etag + bytes + path.
+_VOLATILE_SEGMENT_KEYS = ("mtime_ns",)
+
+
+def stable_geometry(geometry: dict) -> dict:
+    """Drop locally-derived, per-materialisation fields from a geometry dict.
+
+    `materialize()` re-downloads the segment into the run's `pax-snapshot/`
+    directory, so the snapshot's mtime differs on every invocation. Including it
+    in `checkpoint_identity` made resume impossible: the identity could never
+    match, even for a byte-identical segment on the same binary and bed.
+    """
+    stable = dict(geometry)
+    stable["segments"] = [
+        {k: v for k, v in segment.items() if k not in _VOLATILE_SEGMENT_KEYS}
+        for segment in geometry.get("segments", [])
+    ]
+    return stable
+
+
 def checkpoint_identity(result: dict) -> dict:
     """Return the immutable provenance/configuration of a matrix run."""
     matrix = result["matrix"]
@@ -169,7 +193,7 @@ def checkpoint_identity(result: dict) -> dict:
         "dataset": result["dataset"],
         "filesystem_profile": result["filesystem_profile"],
         "compute_profile": result["compute_profile"],
-        "settled_geometry": result["settled_geometry"],
+        "settled_geometry": stable_geometry(result["settled_geometry"]),
         "matrix_config": {
             "nprobes": matrix["nprobes"],
             "top_k_values": matrix["top_k_values"],
