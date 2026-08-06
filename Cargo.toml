@@ -106,6 +106,7 @@ members = [
     "crates/storage/proximadb-storage-encryption",
     "crates/storage/proximadb-block-format",
     "crates/storage/proximadb-object-store",
+    "crates/storage/proximadb-record-buffer-pool",
     "crates/storage/proximadb-iceberg-engine",
     "crates/storage/proximadb-storage-kv",
     "crates/storage/proximadb-storage-operations",
@@ -407,6 +408,7 @@ proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-object-store = { path = "crates/storage/proximadb-object-store" }
+proximadb-record-buffer-pool = { path = "crates/storage/proximadb-record-buffer-pool" }
 proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
 proximadb-storage-operations = { path = "crates/storage/proximadb-storage-operations" }
