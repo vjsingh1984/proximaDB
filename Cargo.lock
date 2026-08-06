@@ -6696,12 +6696,14 @@ dependencies = [
  "proximadb-audit",
  "proximadb-auth-sso",
  "proximadb-automl",
+ "proximadb-axis-tunnel",
  "proximadb-batch-group-cache",
  "proximadb-block-format",
  "proximadb-bloom",
  "proximadb-cache",
  "proximadb-catalog",
  "proximadb-catalog-introspection",
+ "proximadb-catapult",
  "proximadb-cdc",
  "proximadb-cks-local",
  "proximadb-clustering-kernel",
@@ -6957,6 +6959,10 @@ dependencies = [
  "tokio",
  "tracing",
 ]
+
+[[package]]
+name = "proximadb-axis-tunnel"
+version = "0.2.0"
 
 [[package]]
 name = "proximadb-batch-group-cache"
