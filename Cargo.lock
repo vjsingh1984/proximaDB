@@ -6708,6 +6708,7 @@ dependencies = [
  "proximadb-cache",
  "proximadb-catalog",
  "proximadb-catalog-introspection",
+ "proximadb-catapult",
  "proximadb-cdc",
  "proximadb-cks-local",
  "proximadb-clustering-kernel",
@@ -8320,10 +8321,13 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "proximadb-kernel",
+ "ring",
  "serde",
  "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
