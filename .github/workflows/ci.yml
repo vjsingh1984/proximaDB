@@ -2059,7 +2059,10 @@ jobs:
       matrix:
         # 3.9 dropped: the package declares requires-python ">=3.10".
         python-version: ["3.10", "3.11", "3.12"]
-    if: ${{ !inputs.skip_tests && needs.changes.outputs.extensive == 'true' }}
+    # medium_tier (base qa OR main), not extensive (base main only): the ~5min
+    # Python SDK suite runs at develop->qa too, so SDK regressions block one
+    # stage earlier instead of only surfacing at the qa->main boundary.
+    if: ${{ !inputs.skip_tests && needs.changes.outputs.medium_tier == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

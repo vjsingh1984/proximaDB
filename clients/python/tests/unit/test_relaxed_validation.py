@@ -101,35 +101,35 @@ class TestRelaxedValidation:
         assert DistanceMetric.BRAY_CURTIS == "bray_curtis"
         assert DistanceMetric.HELLINGER == "hellinger"
 
-    def test_strict_name_validation(self):
-        """Test that collection name validation enforces 8+ character minimum"""
-        # Valid names (8+ characters) should work
-        config = CollectionConfig(name="valid_collection_name", dimension=128)
-        assert config.name == "valid_collection_name"
+    def test_relaxed_name_validation(self):
+        """Collection names are no longer required to be 8+ characters.
 
-        # Exactly 8 characters should work
-        config = CollectionConfig(name="exactly8", dimension=128)
-        assert config.name == "exactly8"
+        The former 8-char minimum was a vector-collection-era constraint the
+        server relaxed for relational-DDL tables (part / orders / region); the
+        SDK must not be stricter than the server (#1113, TD-SDK-1). Only
+        empty / whitespace-only names are rejected.
+        """
+        # 8+ character names still work
+        assert (
+            CollectionConfig(name="valid_collection_name", dimension=128).name
+            == "valid_collection_name"
+        )
+        assert CollectionConfig(name="exactly8", dimension=128).name == "exactly8"
 
-        # Short names should fail (< 8 characters)
-        with pytest.raises(ValueError, match="at least 8 characters"):
-            CollectionConfig(name="short", dimension=128)
+        # Short names are now ACCEPTED (relational tables)
+        assert CollectionConfig(name="short", dimension=128).name == "short"
+        assert CollectionConfig(name="a", dimension=128).name == "a"
 
-        # Very short names should fail
-        with pytest.raises(ValueError, match="at least 8 characters"):
-            CollectionConfig(name="a", dimension=128)
+        # Surrounding whitespace is stripped; the short result is still accepted
+        assert CollectionConfig(name="  short  ", dimension=128).name == "short"
 
-        # Empty names should fail (Pydantic catches this)
+        # Empty names still fail (Pydantic min_length=1)
         with pytest.raises(ValidationError):
             CollectionConfig(name="", dimension=128)
 
-        # Whitespace-only names should fail (Pydantic min_length catches this too)
+        # Whitespace-only names still fail (validator rejects empty-after-strip)
         with pytest.raises(ValidationError):
             CollectionConfig(name="   ", dimension=128)
-
-        # Names with whitespace that become < 8 chars after strip should fail
-        with pytest.raises(ValueError, match="at least 8 characters"):
-            CollectionConfig(name="  short  ", dimension=128)
 
     def test_relaxed_dimension_validation(self):
         """Test that dimension validation is relaxed"""
