@@ -423,6 +423,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Deterministic local-spill compaction under independent RAM and scratch admission
 | Proposed (2026-08-02)
 | Adds a default-OFF alternate construction plan for compactions that cannot fit ADR-086's RAM envelope: block-ranged input, external MVCC and IVF orderings, and disk-backed PAX A/B/D/resolver construction under independent process-wide RAM and local-scratch reservations. The PAX format is unchanged; only the final segment is uploaded and published atomically. OSS owns the correctness mechanism and neutral meters, while Anvaiops owns tenant/economic placement policy. Tracked: TD-COMPACT-11.
+
+| link:ADR-089-filter-aware-pax-cascade.adoc[ADR-089]
+| Filter-aware PAX cascade — metadata-first cell/block pruning composed with the geometric probe
+| Proposed (2026-08-06)
+| Filtered vector search on the PAX path is a whole-object brute-force scan (the coalesced cascade is UNFILTERED-only, `search/mod.rs:420`) — measured 38x slower than Qdrant at 80k rows and O(N)-widening, with zero recall benefit. The format already carries parquet-grade pruning metadata (ColumnMeta min/max + dictionaries + string blooms + row-group index in Region-D blocks; reserved footer StatsKind; exact row-ordinal↔cell↔block addressing per ADR-065) and a live pruning kernel (`prune.rs`, record-store path). Decision: make the metadata predicate a pre-stage of the cascade — footer/cell stats prune cells/blocks, intersect with the A0 geometric probe, RaBitQ/SQ8 run only over surviving rows, residual per-record filter at D-resolve as the conservative-pruning backstop; selectivity policy from measured stats (HLL/null counts) subsumes the AXIS PreFilter/Inline/PostFilter modes. Completes ADR-026's VIPER-ideas fold on the read side; lifts the ADR-062 D5 zone-map deferral. Unfiltered path unchanged. Tracked: TD-FPRUNE-1 (P1 wire-existing → P2 footer stats → P3 per-cell stats → P4 selectivity policy), evidence-gated by the TD-CTXCORR-1 harness + io_trace byte/GET counters.
 | link:ADR-0083-consolidated-catalog-identity-model.adoc[ADR-0083]
 | Consolidated catalog identity model — the composite is the SOLE canonical identity; retire the global u64
 | Accepted — Revision 2 (2026-07-30)
