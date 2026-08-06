@@ -9,6 +9,9 @@ use super::rbac_service::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserConte
 use crate::audit::logger::AuditLogger;
 use crate::auth::{EnterpriseAuthManager, EnterpriseUserContext, SSOToken};
 use crate::network::auth::{JwtService, TokenPair};
+use proximadb_catalog::principal_registry::{
+    FileSystemPrincipalRegistry, KEY_PREFIX as REGISTRY_KEY_PREFIX,
+};
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -150,6 +153,11 @@ pub struct UnifiedAuthService {
     /// API key store
     api_keys: Arc<DashMap<String, ApiKeyInfo>>,
 
+    /// ADR-090 L0: catalog-resident principal/key registry. When present it is
+    /// AUTHORITATIVE for the `pxk_` key namespace; the config-table keys above
+    /// remain only as the legacy bootstrap path.
+    principal_registry: Option<Arc<FileSystemPrincipalRegistry>>,
+
     /// Configuration
     config: AuthenticationConfig,
 
@@ -166,6 +174,7 @@ impl std::fmt::Debug for UnifiedAuthService {
             .field("has_enterprise_auth", &self.enterprise_auth.is_some())
             .field("has_jwt_service", &self.jwt_service.is_some())
             .field("api_key_count", &self.api_keys.len())
+            .field("has_principal_registry", &self.principal_registry.is_some())
             .field("has_ca_cert", &self.ca_cert_der.is_some())
             .finish()
     }
@@ -189,6 +198,7 @@ impl UnifiedAuthService {
             enterprise_auth: None,
             jwt_service: None,
             api_keys: Arc::new(DashMap::new()),
+            principal_registry: None,
             config: config.clone(),
             audit_logger: None,
             ca_cert_der,
@@ -364,6 +374,35 @@ impl UnifiedAuthService {
                 success: false,
                 error_message: Some("API key authentication disabled".to_string()),
                 requires_mfa: false,
+            });
+        }
+
+        // ADR-090 L0: the `pxk_` namespace is REGISTRY-AUTHORITATIVE. A key that
+        // *looks like* a registry key never falls through to the config table —
+        // with no registry attached, or on any resolve failure (unknown, wrong
+        // secret, revoked, expired, principal disabled), it fails closed with
+        // the same uniform error. This makes a config-table entry that mimics
+        // the registry format a spoof attempt, not an alternate authority.
+        if api_key.starts_with(REGISTRY_KEY_PREFIX) {
+            let resolved = self
+                .principal_registry
+                .as_ref()
+                .and_then(|registry| registry.resolve_key(api_key));
+            return Ok(match resolved {
+                Some(ref key) => AuthenticationResult {
+                    user_context: self.registry_key_to_unified(key),
+                    auth_method: UnifiedAuthMethod::ApiKey,
+                    success: true,
+                    error_message: None,
+                    requires_mfa: false,
+                },
+                None => AuthenticationResult {
+                    user_context: UnifiedUserContext::anonymous(),
+                    auth_method: UnifiedAuthMethod::ApiKey,
+                    success: false,
+                    error_message: Some("Invalid API key".to_string()),
+                    requires_mfa: false,
+                },
             });
         }
 
@@ -793,6 +832,33 @@ impl UnifiedAuthService {
     }
 
     /// Convert API key info to unified context
+    /// Attach the ADR-090 catalog principal registry. Once attached, keys in
+    /// the `pxk_` namespace resolve exclusively through it (fail-closed).
+    pub fn set_principal_registry(&mut self, registry: Arc<FileSystemPrincipalRegistry>) {
+        self.principal_registry = Some(registry);
+    }
+
+    /// Build the identity for a registry-resolved key. Permissions are
+    /// deliberately EMPTY: under ADR-090 the credential proves who you are
+    /// (subject + tenant); what you may do comes from grants/ABAC (L1/L2),
+    /// not from strings stored next to the key.
+    fn registry_key_to_unified(
+        &self,
+        resolved: &proximadb_catalog::principal_registry::ResolvedApiKey,
+    ) -> UnifiedUserContext {
+        UnifiedUserContext {
+            user_id: resolved.subject.0.clone(),
+            tenant_id: Some(resolved.tenant_id.clone()),
+            roles: vec!["api_user".to_string()],
+            effective_permissions: std::collections::HashSet::new(),
+            auth_method: UnifiedAuthMethod::ApiKey,
+            session_id: format!("apikey_{}", uuid::Uuid::new_v4()),
+            expires_at: None,
+            created_at: Utc::now(),
+            metadata: HashMap::new(),
+        }
+    }
+
     fn convert_api_key_to_unified(&self, api_key_info: ApiKeyInfo) -> UnifiedUserContext {
         // Convert string permissions to UnifiedPermission enum.
         // A bare `"*"` in the config is the "all permissions" shorthand
@@ -979,6 +1045,105 @@ fn create_auth_audit_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn api_key_test_config(api_keys: HashMap<String, ApiKeyInfo>) -> AuthenticationConfig {
+        AuthenticationConfig {
+            enabled: true,
+            methods: vec![AuthenticationMethod::ApiKey],
+            require_authentication: false,
+            default_session_timeout_minutes: 480,
+            api_keys,
+            jwt: JwtConfig {
+                enabled: false,
+                secret: "test-secret".to_string(),
+                access_token_expiration_minutes: 15,
+                refresh_token_expiration_days: 7,
+                issuer: "test".to_string(),
+                audience: "test".to_string(),
+                algorithm: "HS256".to_string(),
+            },
+            sso: SSOConfig {
+                enabled: false,
+                providers: vec![],
+                token_cache_ttl_minutes: 5,
+                aws_iam: None,
+                azure_ad: None,
+            },
+            mtls: MtlsConfig::default(),
+        }
+    }
+
+    /// ADR-090 L0.1 wiring spec: a registry-minted key authenticates through
+    /// the service and yields the tenant-bound user identity — with EMPTY
+    /// permissions (authorization is grants/ABAC, not credential strings).
+    #[tokio::test]
+    async fn registry_key_authenticates_with_tenant_bound_identity() {
+        use proximadb_catalog::fc_metamodel::SubjectId;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = Arc::new(FileSystemPrincipalRegistry::open(dir.path()).expect("open"));
+        registry
+            .create_principal(SubjectId("alice".into()), "tenant-a", None)
+            .expect("create");
+        let minted = registry.mint_key("tenant-a", "alice", None).expect("mint");
+
+        let mut svc = UnifiedAuthService::new(api_key_test_config(HashMap::new())).expect("svc");
+        svc.set_principal_registry(registry.clone());
+
+        let out = svc.authenticate_api_key(&minted.key).await.expect("auth");
+        assert!(out.success);
+        assert_eq!(out.user_context.user_id, "alice");
+        assert_eq!(out.user_context.tenant_id.as_deref(), Some("tenant-a"));
+        assert!(
+            out.user_context.effective_permissions.is_empty(),
+            "registry keys must not carry config-style permission strings"
+        );
+
+        // Revocation is honored through the service, not just the registry.
+        registry.revoke_key(&minted.key_id).expect("revoke");
+        let out = svc.authenticate_api_key(&minted.key).await.expect("auth2");
+        assert!(!out.success, "revoked key must fail through the service");
+    }
+
+    /// The `pxk_` namespace is registry-authoritative: a config-table entry
+    /// that mimics the registry format must NOT authenticate — whether a
+    /// registry is attached (empty registry ⇒ fail-closed) or not (no
+    /// registry ⇒ still fail-closed, never the config fallback).
+    #[tokio::test]
+    async fn pxk_namespace_never_falls_through_to_the_config_table() {
+        let spoof_key = format!("{REGISTRY_KEY_PREFIX}deadbeefdeadbeef.{}", "a".repeat(64));
+        let mut keys = HashMap::new();
+        keys.insert(
+            spoof_key.clone(),
+            ApiKeyInfo {
+                user_id: "mallory".to_string(),
+                tenant_id: Some("tenant-x".to_string()),
+                permissions: vec!["*".to_string()],
+                created_at: None,
+                expires_at: None,
+                rate_limit_per_minute: None,
+                ip_restrictions: vec![],
+            },
+        );
+
+        // No registry attached: the pxk_ key still must not hit the config table.
+        let svc = UnifiedAuthService::new(api_key_test_config(keys.clone())).expect("svc");
+        let out = svc.authenticate_api_key(&spoof_key).await.expect("auth");
+        assert!(
+            !out.success,
+            "config-table spoof of a registry key authenticated (no registry)"
+        );
+
+        // Empty registry attached: same fail-closed outcome.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = Arc::new(FileSystemPrincipalRegistry::open(dir.path()).expect("open"));
+        let mut svc = UnifiedAuthService::new(api_key_test_config(keys)).expect("svc2");
+        svc.set_principal_registry(registry);
+        let out = svc.authenticate_api_key(&spoof_key).await.expect("auth2");
+        assert!(
+            !out.success,
+            "config-table spoof authenticated (empty registry)"
+        );
+    }
 
     #[tokio::test]
     async fn test_auth_service_service_creation() {
