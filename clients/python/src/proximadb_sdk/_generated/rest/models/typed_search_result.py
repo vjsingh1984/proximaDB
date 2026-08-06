@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -27,15 +29,15 @@ class TypedSearchResult:
         id (str): Record ID
         props (TypedSearchResultProps): Rich properties from the record
         score (float): Similarity score (0.0 - 1.0 for cosine, distance for L2)
-        text_fields (Union[None, Unset, list['TextFieldOutput']]): TEXT fields (if include_text is true)
-        vector (Union[None, Unset, list[float]]): Vector embedding (if requested)
+        text_fields (list[TextFieldOutput] | None | Unset): TEXT fields (if include_text is true)
+        vector (list[float] | None | Unset): Vector embedding (if requested)
     """
 
     id: str
-    props: "TypedSearchResultProps"
+    props: TypedSearchResultProps
     score: float
-    text_fields: Union[None, Unset, list["TextFieldOutput"]] = UNSET
-    vector: Union[None, Unset, list[float]] = UNSET
+    text_fields: list[TextFieldOutput] | None | Unset = UNSET
+    vector: list[float] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,7 +50,7 @@ class TypedSearchResult:
 
         score = self.score
 
-        text_fields: Union[None, Unset, list[dict[str, Any]]]
+        text_fields: list[dict[str, Any]] | None | Unset
         if isinstance(self.text_fields, Unset):
             text_fields = UNSET
         elif isinstance(self.text_fields, list):
@@ -60,7 +62,7 @@ class TypedSearchResult:
         else:
             text_fields = self.text_fields
 
-        vector: Union[None, Unset, list[float]]
+        vector: list[float] | None | Unset
         if isinstance(self.vector, Unset):
             vector = UNSET
         elif isinstance(self.vector, list):
@@ -97,9 +99,7 @@ class TypedSearchResult:
 
         score = d.pop("score")
 
-        def _parse_text_fields(
-            data: object,
-        ) -> Union[None, Unset, list["TextFieldOutput"]]:
+        def _parse_text_fields(data: object) -> list[TextFieldOutput] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -117,13 +117,13 @@ class TypedSearchResult:
                     text_fields_type_0.append(text_fields_type_0_item)
 
                 return text_fields_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union[None, Unset, list["TextFieldOutput"]], data)
+            return cast(list[TextFieldOutput] | None | Unset, data)
 
         text_fields = _parse_text_fields(d.pop("text_fields", UNSET))
 
-        def _parse_vector(data: object) -> Union[None, Unset, list[float]]:
+        def _parse_vector(data: object) -> list[float] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -134,9 +134,9 @@ class TypedSearchResult:
                 vector_type_0 = cast(list[float], data)
 
                 return vector_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union[None, Unset, list[float]], data)
+            return cast(list[float] | None | Unset, data)
 
         vector = _parse_vector(d.pop("vector", UNSET))
 

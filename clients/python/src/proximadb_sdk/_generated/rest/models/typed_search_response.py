@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -26,27 +28,27 @@ class TypedSearchResponse:
     Attributes:
         latency_ms (int): Search latency in milliseconds
         request_id (str): Request ID for tracing
-        results (list['TypedSearchResult']): Search results
-        explain (Union[Unset, Any]): Human-readable explain summary derived from the SearchPlanTrace.
+        results (list[TypedSearchResult]): Search results
+        explain (Any | Unset): Human-readable explain summary derived from the SearchPlanTrace.
             Only emitted when the request sets `debug=true` — gives an on-call
             operator a one-glance view of the plan, cache result, and any
             actionable hints (high scan fraction, repair triggered, ...).
-        predicate_shortfall (Union['PredicateShortfallWire', None, Unset]):
-        search_plan_trace (Union[Unset, Any]): SearchPlanTrace (LLD §10) — the per-query telemetry envelope that
+        predicate_shortfall (None | PredicateShortfallWire | Unset):
+        search_plan_trace (Any | Unset): SearchPlanTrace (LLD §10) — the per-query telemetry envelope that
             upstream gateways consume for metering and planner-v2 training.
             Phase 0 emits a stub trace populated from request_id + latency; later
             phases fill in the per-stage counters. Only emitted when the request
             sets `debug=true` (LLD §1 contract).
-        total_matches (Union[None, Unset, int]): Total number of matching documents (before top_k limit)
+        total_matches (int | None | Unset): Total number of matching documents (before top_k limit)
     """
 
     latency_ms: int
     request_id: str
-    results: list["TypedSearchResult"]
-    explain: Union[Unset, Any] = UNSET
-    predicate_shortfall: Union["PredicateShortfallWire", None, Unset] = UNSET
-    search_plan_trace: Union[Unset, Any] = UNSET
-    total_matches: Union[None, Unset, int] = UNSET
+    results: list[TypedSearchResult]
+    explain: Any | Unset = UNSET
+    predicate_shortfall: None | PredicateShortfallWire | Unset = UNSET
+    search_plan_trace: Any | Unset = UNSET
+    total_matches: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,7 +66,7 @@ class TypedSearchResponse:
 
         explain = self.explain
 
-        predicate_shortfall: Union[None, Unset, dict[str, Any]]
+        predicate_shortfall: dict[str, Any] | None | Unset
         if isinstance(self.predicate_shortfall, Unset):
             predicate_shortfall = UNSET
         elif isinstance(self.predicate_shortfall, PredicateShortfallWire):
@@ -74,7 +76,7 @@ class TypedSearchResponse:
 
         search_plan_trace = self.search_plan_trace
 
-        total_matches: Union[None, Unset, int]
+        total_matches: int | None | Unset
         if isinstance(self.total_matches, Unset):
             total_matches = UNSET
         else:
@@ -121,7 +123,7 @@ class TypedSearchResponse:
 
         def _parse_predicate_shortfall(
             data: object,
-        ) -> Union["PredicateShortfallWire", None, Unset]:
+        ) -> None | PredicateShortfallWire | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -132,9 +134,9 @@ class TypedSearchResponse:
                 predicate_shortfall_type_1 = PredicateShortfallWire.from_dict(data)
 
                 return predicate_shortfall_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["PredicateShortfallWire", None, Unset], data)
+            return cast(None | PredicateShortfallWire | Unset, data)
 
         predicate_shortfall = _parse_predicate_shortfall(
             d.pop("predicate_shortfall", UNSET)
@@ -142,12 +144,12 @@ class TypedSearchResponse:
 
         search_plan_trace = d.pop("search_plan_trace", UNSET)
 
-        def _parse_total_matches(data: object) -> Union[None, Unset, int]:
+        def _parse_total_matches(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         total_matches = _parse_total_matches(d.pop("total_matches", UNSET))
 

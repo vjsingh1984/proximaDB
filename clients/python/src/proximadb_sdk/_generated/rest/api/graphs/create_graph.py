@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -19,7 +20,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     body: CreateGraphRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -30,9 +31,8 @@ def _get_kwargs(
         "url": "/api/v2/graphs",
     }
 
-    _body = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
-    _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
@@ -40,16 +40,18 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[ErrorResponse, GraphCollectionResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorResponse | GraphCollectionResponse | None:
     if response.status_code == 200:
         response_200 = GraphCollectionResponse.from_dict(response.json())
 
         return response_200
+
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -57,8 +59,8 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[ErrorResponse, GraphCollectionResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ErrorResponse | GraphCollectionResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -69,14 +71,14 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateGraphRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, GraphCollectionResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | GraphCollectionResponse]:
     """Create a graph collection.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateGraphRequest):
 
     Raises:
@@ -84,7 +86,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, GraphCollectionResponse]]
+        Response[ErrorResponse | GraphCollectionResponse]
     """
 
     kwargs = _get_kwargs(
@@ -101,14 +103,14 @@ def sync_detailed(
 
 def sync(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateGraphRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, GraphCollectionResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | GraphCollectionResponse | None:
     """Create a graph collection.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateGraphRequest):
 
     Raises:
@@ -116,7 +118,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, GraphCollectionResponse]
+        ErrorResponse | GraphCollectionResponse
     """
 
     return sync_detailed(
@@ -128,14 +130,14 @@ def sync(
 
 async def asyncio_detailed(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateGraphRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, GraphCollectionResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | GraphCollectionResponse]:
     """Create a graph collection.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateGraphRequest):
 
     Raises:
@@ -143,7 +145,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, GraphCollectionResponse]]
+        Response[ErrorResponse | GraphCollectionResponse]
     """
 
     kwargs = _get_kwargs(
@@ -158,14 +160,14 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateGraphRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, GraphCollectionResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | GraphCollectionResponse | None:
     """Create a graph collection.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateGraphRequest):
 
     Raises:
@@ -173,7 +175,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, GraphCollectionResponse]
+        ErrorResponse | GraphCollectionResponse
     """
 
     return (

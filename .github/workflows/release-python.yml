@@ -47,8 +47,8 @@ jobs:
     name: Build SDK (proximadb)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Build wheel + sdist
@@ -57,7 +57,7 @@ jobs:
           python -m pip install --upgrade pip build twine
           python -m build --outdir dist
           twine check dist/*
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdk-dist
           path: clients/python/dist/*
@@ -107,8 +107,8 @@ jobs:
           - os: windows-2022
             target: x86_64
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       # Build the native `proximadb_embedded` wheel from the ROOT maturin package.
@@ -137,7 +137,7 @@ jobs:
             elif command -v microdnf >/dev/null 2>&1; then
               microdnf install -y perl-core
             fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: embedded-wheels-${{ matrix.os }}-${{ matrix.target }}
           path: dist/*.whl
@@ -146,13 +146,13 @@ jobs:
     name: Build embedded sdist (proximadb_embedded)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build sdist (maturin, root package)
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: embedded-sdist
           path: dist/*.tar.gz
@@ -169,7 +169,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: staging
       - name: Stage all distributions
@@ -196,7 +196,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sdk-dist
           path: dist
@@ -217,7 +217,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: staging
       - name: Stage embedded wheels + sdist

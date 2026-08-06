@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -21,35 +23,35 @@ class TraverseRequest:
 
         Attributes:
             start_node_id (str):
-            algorithm (Union[None, Unset, str]): bfs | dfs | shortest_path
-            edge_types (Union[Unset, list[str]]):
-            limit (Union[None, Unset, int]):
-            max_depth (Union[Unset, int]):  Default: 3.
-            node_labels (Union[Unset, list[str]]):
+            algorithm (None | str | Unset): bfs | dfs | shortest_path
+            edge_types (list[str] | Unset):
+            limit (int | None | Unset):
+            max_depth (int | Unset):  Default: 3.
+            node_labels (list[str] | Unset):
     """
 
     start_node_id: str
-    algorithm: Union[None, Unset, str] = UNSET
-    edge_types: Union[Unset, list[str]] = UNSET
-    limit: Union[None, Unset, int] = UNSET
-    max_depth: Union[Unset, int] = 3
-    node_labels: Union[Unset, list[str]] = UNSET
+    algorithm: None | str | Unset = UNSET
+    edge_types: list[str] | Unset = UNSET
+    limit: int | None | Unset = UNSET
+    max_depth: int | Unset = 3
+    node_labels: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         start_node_id = self.start_node_id
 
-        algorithm: Union[None, Unset, str]
+        algorithm: None | str | Unset
         if isinstance(self.algorithm, Unset):
             algorithm = UNSET
         else:
             algorithm = self.algorithm
 
-        edge_types: Union[Unset, list[str]] = UNSET
+        edge_types: list[str] | Unset = UNSET
         if not isinstance(self.edge_types, Unset):
             edge_types = self.edge_types
 
-        limit: Union[None, Unset, int]
+        limit: int | None | Unset
         if isinstance(self.limit, Unset):
             limit = UNSET
         else:
@@ -57,7 +59,7 @@ class TraverseRequest:
 
         max_depth = self.max_depth
 
-        node_labels: Union[Unset, list[str]] = UNSET
+        node_labels: list[str] | Unset = UNSET
         if not isinstance(self.node_labels, Unset):
             node_labels = self.node_labels
 
@@ -86,23 +88,23 @@ class TraverseRequest:
         d = dict(src_dict)
         start_node_id = d.pop("start_node_id")
 
-        def _parse_algorithm(data: object) -> Union[None, Unset, str]:
+        def _parse_algorithm(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         algorithm = _parse_algorithm(d.pop("algorithm", UNSET))
 
         edge_types = cast(list[str], d.pop("edge_types", UNSET))
 
-        def _parse_limit(data: object) -> Union[None, Unset, int]:
+        def _parse_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         limit = _parse_limit(d.pop("limit", UNSET))
 

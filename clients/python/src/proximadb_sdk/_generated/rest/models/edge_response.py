@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,19 +25,19 @@ class EdgeResponse:
     """
     Attributes:
         id (str):
-        edge_type (Union[None, Unset, str]):
-        from_node_id (Union[Unset, str]):
-        properties (Union['EdgeResponsePropertiesType0', None, Unset]):
-        to_node_id (Union[Unset, str]):
-        weight (Union[None, Unset, float]):
+        edge_type (None | str | Unset):
+        from_node_id (str | Unset):
+        properties (EdgeResponsePropertiesType0 | None | Unset):
+        to_node_id (str | Unset):
+        weight (float | None | Unset):
     """
 
     id: str
-    edge_type: Union[None, Unset, str] = UNSET
-    from_node_id: Union[Unset, str] = UNSET
-    properties: Union["EdgeResponsePropertiesType0", None, Unset] = UNSET
-    to_node_id: Union[Unset, str] = UNSET
-    weight: Union[None, Unset, float] = UNSET
+    edge_type: None | str | Unset = UNSET
+    from_node_id: str | Unset = UNSET
+    properties: EdgeResponsePropertiesType0 | None | Unset = UNSET
+    to_node_id: str | Unset = UNSET
+    weight: float | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,7 +45,7 @@ class EdgeResponse:
 
         id = self.id
 
-        edge_type: Union[None, Unset, str]
+        edge_type: None | str | Unset
         if isinstance(self.edge_type, Unset):
             edge_type = UNSET
         else:
@@ -51,7 +53,7 @@ class EdgeResponse:
 
         from_node_id = self.from_node_id
 
-        properties: Union[None, Unset, dict[str, Any]]
+        properties: dict[str, Any] | None | Unset
         if isinstance(self.properties, Unset):
             properties = UNSET
         elif isinstance(self.properties, EdgeResponsePropertiesType0):
@@ -61,7 +63,7 @@ class EdgeResponse:
 
         to_node_id = self.to_node_id
 
-        weight: Union[None, Unset, float]
+        weight: float | None | Unset
         if isinstance(self.weight, Unset):
             weight = UNSET
         else:
@@ -94,12 +96,12 @@ class EdgeResponse:
         d = dict(src_dict)
         id = d.pop("id")
 
-        def _parse_edge_type(data: object) -> Union[None, Unset, str]:
+        def _parse_edge_type(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         edge_type = _parse_edge_type(d.pop("edge_type", UNSET))
 
@@ -107,7 +109,7 @@ class EdgeResponse:
 
         def _parse_properties(
             data: object,
-        ) -> Union["EdgeResponsePropertiesType0", None, Unset]:
+        ) -> EdgeResponsePropertiesType0 | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -118,20 +120,20 @@ class EdgeResponse:
                 properties_type_0 = EdgeResponsePropertiesType0.from_dict(data)
 
                 return properties_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["EdgeResponsePropertiesType0", None, Unset], data)
+            return cast(EdgeResponsePropertiesType0 | None | Unset, data)
 
         properties = _parse_properties(d.pop("properties", UNSET))
 
         to_node_id = d.pop("to_node_id", UNSET)
 
-        def _parse_weight(data: object) -> Union[None, Unset, float]:
+        def _parse_weight(data: object) -> float | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, float], data)
+            return cast(float | None | Unset, data)
 
         weight = _parse_weight(d.pop("weight", UNSET))
 

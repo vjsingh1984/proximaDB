@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -24,7 +26,7 @@ class CollectionV2Summary:
         engine (str): Storage engine
         name (str): Collection name
         proxima_record_enabled (bool): Whether ProximaRecord is enabled
-        record_count (Union[None, Unset, int]): Record count (if include_stats is true)
+        record_count (int | None | Unset): Record count (if include_stats is true)
     """
 
     collection_id: str
@@ -32,7 +34,7 @@ class CollectionV2Summary:
     engine: str
     name: str
     proxima_record_enabled: bool
-    record_count: Union[None, Unset, int] = UNSET
+    record_count: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,7 +48,7 @@ class CollectionV2Summary:
 
         proxima_record_enabled = self.proxima_record_enabled
 
-        record_count: Union[None, Unset, int]
+        record_count: int | None | Unset
         if isinstance(self.record_count, Unset):
             record_count = UNSET
         else:
@@ -81,12 +83,12 @@ class CollectionV2Summary:
 
         proxima_record_enabled = d.pop("proxima_record_enabled")
 
-        def _parse_record_count(data: object) -> Union[None, Unset, int]:
+        def _parse_record_count(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         record_count = _parse_record_count(d.pop("record_count", UNSET))
 

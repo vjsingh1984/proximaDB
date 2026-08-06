@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -37,13 +39,13 @@ class TypedFilter:
                 - "starts_with": String starts with prefix
                 - "ends_with": String ends with suffix
             value (Any): Filter value (type depends on field type)
-            value_upper (Union[Unset, Any]): Upper bound for "between" operator
+            value_upper (Any | Unset): Upper bound for "between" operator
     """
 
     field: str
     op: str
     value: Any
-    value_upper: Union[Unset, Any] = UNSET
+    value_upper: Any | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

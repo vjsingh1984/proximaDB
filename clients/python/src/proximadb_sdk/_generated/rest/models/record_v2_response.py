@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -26,18 +28,18 @@ class RecordV2Response:
     Attributes:
         id (str): Record ID
         props (RecordV2ResponseProps): Rich properties from the record
-        text_fields (Union[None, Unset, list['TextFieldOutput']]): TEXT fields (if include_text is true)
-        timestamp (Union[None, Unset, int]): Record timestamp
-        vector (Union[None, Unset, list[float]]): Vector embedding (if requested)
-        version (Union[None, Unset, int]): Record version
+        text_fields (list[TextFieldOutput] | None | Unset): TEXT fields (if include_text is true)
+        timestamp (int | None | Unset): Record timestamp
+        vector (list[float] | None | Unset): Vector embedding (if requested)
+        version (int | None | Unset): Record version
     """
 
     id: str
-    props: "RecordV2ResponseProps"
-    text_fields: Union[None, Unset, list["TextFieldOutput"]] = UNSET
-    timestamp: Union[None, Unset, int] = UNSET
-    vector: Union[None, Unset, list[float]] = UNSET
-    version: Union[None, Unset, int] = UNSET
+    props: RecordV2ResponseProps
+    text_fields: list[TextFieldOutput] | None | Unset = UNSET
+    timestamp: int | None | Unset = UNSET
+    vector: list[float] | None | Unset = UNSET
+    version: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,7 +50,7 @@ class RecordV2Response:
 
         props = self.props.to_dict()
 
-        text_fields: Union[None, Unset, list[dict[str, Any]]]
+        text_fields: list[dict[str, Any]] | None | Unset
         if isinstance(self.text_fields, Unset):
             text_fields = UNSET
         elif isinstance(self.text_fields, list):
@@ -60,13 +62,13 @@ class RecordV2Response:
         else:
             text_fields = self.text_fields
 
-        timestamp: Union[None, Unset, int]
+        timestamp: int | None | Unset
         if isinstance(self.timestamp, Unset):
             timestamp = UNSET
         else:
             timestamp = self.timestamp
 
-        vector: Union[None, Unset, list[float]]
+        vector: list[float] | None | Unset
         if isinstance(self.vector, Unset):
             vector = UNSET
         elif isinstance(self.vector, list):
@@ -75,7 +77,7 @@ class RecordV2Response:
         else:
             vector = self.vector
 
-        version: Union[None, Unset, int]
+        version: int | None | Unset
         if isinstance(self.version, Unset):
             version = UNSET
         else:
@@ -110,9 +112,7 @@ class RecordV2Response:
 
         props = RecordV2ResponseProps.from_dict(d.pop("props"))
 
-        def _parse_text_fields(
-            data: object,
-        ) -> Union[None, Unset, list["TextFieldOutput"]]:
+        def _parse_text_fields(data: object) -> list[TextFieldOutput] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -130,22 +130,22 @@ class RecordV2Response:
                     text_fields_type_0.append(text_fields_type_0_item)
 
                 return text_fields_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union[None, Unset, list["TextFieldOutput"]], data)
+            return cast(list[TextFieldOutput] | None | Unset, data)
 
         text_fields = _parse_text_fields(d.pop("text_fields", UNSET))
 
-        def _parse_timestamp(data: object) -> Union[None, Unset, int]:
+        def _parse_timestamp(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         timestamp = _parse_timestamp(d.pop("timestamp", UNSET))
 
-        def _parse_vector(data: object) -> Union[None, Unset, list[float]]:
+        def _parse_vector(data: object) -> list[float] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -156,18 +156,18 @@ class RecordV2Response:
                 vector_type_0 = cast(list[float], data)
 
                 return vector_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union[None, Unset, list[float]], data)
+            return cast(list[float] | None | Unset, data)
 
         vector = _parse_vector(d.pop("vector", UNSET))
 
-        def _parse_version(data: object) -> Union[None, Unset, int]:
+        def _parse_version(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         version = _parse_version(d.pop("version", UNSET))
 

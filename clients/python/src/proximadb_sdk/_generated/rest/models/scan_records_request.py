@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -20,25 +22,25 @@ class ScanRecordsRequest:
     schema; all fields optional so an empty `{}` returns the first page.
 
         Attributes:
-            cursor (Union[None, Unset, str]): Opaque continuation token returned as `next_cursor` from a
+            cursor (None | str | Unset): Opaque continuation token returned as `next_cursor` from a
                 prior page. Omit / null to start from the beginning.
-            filter_ (Union[Unset, Any]): Metadata filter applied (before the limit) to the scanned page.
+            filter_ (Any | Unset): Metadata filter applied (before the limit) to the scanned page.
                 Accepts either the typed list form `[{field,op,value}]` (mirrors
                 `searchRecords.filters`) or a simple equality map `{field: value}`.
-            include_text (Union[None, Unset, bool]):
-            include_vector (Union[None, Unset, bool]):
-            limit (Union[None, Unset, int]): Max records to return in this page. Server enforces upper bound.
+            include_text (bool | None | Unset):
+            include_vector (bool | None | Unset):
+            limit (int | None | Unset): Max records to return in this page. Server enforces upper bound.
     """
 
-    cursor: Union[None, Unset, str] = UNSET
-    filter_: Union[Unset, Any] = UNSET
-    include_text: Union[None, Unset, bool] = UNSET
-    include_vector: Union[None, Unset, bool] = UNSET
-    limit: Union[None, Unset, int] = UNSET
+    cursor: None | str | Unset = UNSET
+    filter_: Any | Unset = UNSET
+    include_text: bool | None | Unset = UNSET
+    include_vector: bool | None | Unset = UNSET
+    limit: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        cursor: Union[None, Unset, str]
+        cursor: None | str | Unset
         if isinstance(self.cursor, Unset):
             cursor = UNSET
         else:
@@ -46,19 +48,19 @@ class ScanRecordsRequest:
 
         filter_ = self.filter_
 
-        include_text: Union[None, Unset, bool]
+        include_text: bool | None | Unset
         if isinstance(self.include_text, Unset):
             include_text = UNSET
         else:
             include_text = self.include_text
 
-        include_vector: Union[None, Unset, bool]
+        include_vector: bool | None | Unset
         if isinstance(self.include_vector, Unset):
             include_vector = UNSET
         else:
             include_vector = self.include_vector
 
-        limit: Union[None, Unset, int]
+        limit: int | None | Unset
         if isinstance(self.limit, Unset):
             limit = UNSET
         else:
@@ -84,41 +86,41 @@ class ScanRecordsRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
 
-        def _parse_cursor(data: object) -> Union[None, Unset, str]:
+        def _parse_cursor(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         cursor = _parse_cursor(d.pop("cursor", UNSET))
 
         filter_ = d.pop("filter", UNSET)
 
-        def _parse_include_text(data: object) -> Union[None, Unset, bool]:
+        def _parse_include_text(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         include_text = _parse_include_text(d.pop("include_text", UNSET))
 
-        def _parse_include_vector(data: object) -> Union[None, Unset, bool]:
+        def _parse_include_vector(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         include_vector = _parse_include_vector(d.pop("include_vector", UNSET))
 
-        def _parse_limit(data: object) -> Union[None, Unset, int]:
+        def _parse_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         limit = _parse_limit(d.pop("limit", UNSET))
 

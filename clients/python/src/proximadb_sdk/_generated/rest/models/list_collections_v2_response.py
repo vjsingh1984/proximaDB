@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,14 +25,14 @@ class ListCollectionsV2Response:
     """Response for listing collections
 
     Attributes:
-        collections (list['CollectionV2Summary']): List of collections
+        collections (list[CollectionV2Summary]): List of collections
         has_more (bool): Whether there are more results
         limit (int): Limit used in this request
         offset (int): Offset used in this request
         total (int): Total count of collections
     """
 
-    collections: list["CollectionV2Summary"]
+    collections: list[CollectionV2Summary]
     has_more: bool
     limit: int
     offset: int

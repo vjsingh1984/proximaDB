@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -16,7 +17,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -32,12 +33,13 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[HealthResponse]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> HealthResponse | None:
     if response.status_code == 200:
         response_200 = HealthResponse.from_dict(response.json())
 
         return response_200
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -45,7 +47,7 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+    *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> Response[HealthResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
@@ -57,13 +59,13 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
 ) -> Response[HealthResponse]:
     """Get server health.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -86,13 +88,13 @@ def sync_detailed(
 
 def sync(
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[HealthResponse]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> HealthResponse | None:
     """Get server health.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -110,13 +112,13 @@ def sync(
 
 async def asyncio_detailed(
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
 ) -> Response[HealthResponse]:
     """Get server health.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,13 +139,13 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[HealthResponse]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> HealthResponse | None:
     """Get server health.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,35 +25,35 @@ T = TypeVar("T", bound="TraverseResponse")
 class TraverseResponse:
     """
     Attributes:
-        edges (Union[Unset, list['EdgeResponse']]):
-        nodes (Union[Unset, list['NodeResponse']]):
-        paths (Union[Unset, list[list[str]]]):
+        edges (list[EdgeResponse] | Unset):
+        nodes (list[NodeResponse] | Unset):
+        paths (list[list[str]] | Unset):
     """
 
-    edges: Union[Unset, list["EdgeResponse"]] = UNSET
-    nodes: Union[Unset, list["NodeResponse"]] = UNSET
-    paths: Union[Unset, list[list[str]]] = UNSET
+    edges: list[EdgeResponse] | Unset = UNSET
+    nodes: list[NodeResponse] | Unset = UNSET
+    paths: list[list[str]] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.edge_response import EdgeResponse
         from ..models.node_response import NodeResponse
 
-        edges: Union[Unset, list[dict[str, Any]]] = UNSET
+        edges: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.edges, Unset):
             edges = []
             for edges_item_data in self.edges:
                 edges_item = edges_item_data.to_dict()
                 edges.append(edges_item)
 
-        nodes: Union[Unset, list[dict[str, Any]]] = UNSET
+        nodes: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.nodes, Unset):
             nodes = []
             for nodes_item_data in self.nodes:
                 nodes_item = nodes_item_data.to_dict()
                 nodes.append(nodes_item)
 
-        paths: Union[Unset, list[list[str]]] = UNSET
+        paths: list[list[str]] | Unset = UNSET
         if not isinstance(self.paths, Unset):
             paths = []
             for paths_item_data in self.paths:
@@ -77,26 +79,32 @@ class TraverseResponse:
         from ..models.node_response import NodeResponse
 
         d = dict(src_dict)
-        edges = []
         _edges = d.pop("edges", UNSET)
-        for edges_item_data in _edges or []:
-            edges_item = EdgeResponse.from_dict(edges_item_data)
+        edges: list[EdgeResponse] | Unset = UNSET
+        if _edges is not UNSET:
+            edges = []
+            for edges_item_data in _edges:
+                edges_item = EdgeResponse.from_dict(edges_item_data)
 
-            edges.append(edges_item)
+                edges.append(edges_item)
 
-        nodes = []
         _nodes = d.pop("nodes", UNSET)
-        for nodes_item_data in _nodes or []:
-            nodes_item = NodeResponse.from_dict(nodes_item_data)
+        nodes: list[NodeResponse] | Unset = UNSET
+        if _nodes is not UNSET:
+            nodes = []
+            for nodes_item_data in _nodes:
+                nodes_item = NodeResponse.from_dict(nodes_item_data)
 
-            nodes.append(nodes_item)
+                nodes.append(nodes_item)
 
-        paths = []
         _paths = d.pop("paths", UNSET)
-        for paths_item_data in _paths or []:
-            paths_item = cast(list[str], paths_item_data)
+        paths: list[list[str]] | Unset = UNSET
+        if _paths is not UNSET:
+            paths = []
+            for paths_item_data in _paths:
+                paths_item = cast(list[str], paths_item_data)
 
-            paths.append(paths_item)
+                paths.append(paths_item)
 
         traverse_response = cls(
             edges=edges,

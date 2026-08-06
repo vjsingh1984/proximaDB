@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -30,17 +32,17 @@ class SchemaResponse:
             Defines the typed columns and enforcement rules for ProximaRecord support.
         schema_id (str): Schema ID (UUID)
         schema_version (str): Schema version (semantic versioning)
-        parent_schema_id (Union[None, Unset, str]): Parent schema ID (for evolution tracking)
-        updated_at (Union[None, Unset, str]): Last update timestamp
+        parent_schema_id (None | str | Unset): Parent schema ID (for evolution tracking)
+        updated_at (None | str | Unset): Last update timestamp
     """
 
     collection_id: str
     created_at: str
-    schema: "SchemaDefinition"
+    schema: SchemaDefinition
     schema_id: str
     schema_version: str
-    parent_schema_id: Union[None, Unset, str] = UNSET
-    updated_at: Union[None, Unset, str] = UNSET
+    parent_schema_id: None | str | Unset = UNSET
+    updated_at: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,13 +58,13 @@ class SchemaResponse:
 
         schema_version = self.schema_version
 
-        parent_schema_id: Union[None, Unset, str]
+        parent_schema_id: None | str | Unset
         if isinstance(self.parent_schema_id, Unset):
             parent_schema_id = UNSET
         else:
             parent_schema_id = self.parent_schema_id
 
-        updated_at: Union[None, Unset, str]
+        updated_at: None | str | Unset
         if isinstance(self.updated_at, Unset):
             updated_at = UNSET
         else:
@@ -101,21 +103,21 @@ class SchemaResponse:
 
         schema_version = d.pop("schema_version")
 
-        def _parse_parent_schema_id(data: object) -> Union[None, Unset, str]:
+        def _parse_parent_schema_id(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         parent_schema_id = _parse_parent_schema_id(d.pop("parent_schema_id", UNSET))
 
-        def _parse_updated_at(data: object) -> Union[None, Unset, str]:
+        def _parse_updated_at(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         updated_at = _parse_updated_at(d.pop("updated_at", UNSET))
 

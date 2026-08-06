@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -25,14 +27,14 @@ class ScanRecordsResponse:
     `RecordResponse` schema (same shape used by `getRecord`).
 
         Attributes:
-            records (list['RecordV2Response']):
-            next_cursor (Union[None, Unset, str]):
-            scanned_count (Union[None, Unset, int]):
+            records (list[RecordV2Response]):
+            next_cursor (None | str | Unset):
+            scanned_count (int | None | Unset):
     """
 
-    records: list["RecordV2Response"]
-    next_cursor: Union[None, Unset, str] = UNSET
-    scanned_count: Union[None, Unset, int] = UNSET
+    records: list[RecordV2Response]
+    next_cursor: None | str | Unset = UNSET
+    scanned_count: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,13 +45,13 @@ class ScanRecordsResponse:
             records_item = records_item_data.to_dict()
             records.append(records_item)
 
-        next_cursor: Union[None, Unset, str]
+        next_cursor: None | str | Unset
         if isinstance(self.next_cursor, Unset):
             next_cursor = UNSET
         else:
             next_cursor = self.next_cursor
 
-        scanned_count: Union[None, Unset, int]
+        scanned_count: int | None | Unset
         if isinstance(self.scanned_count, Unset):
             scanned_count = UNSET
         else:
@@ -81,21 +83,21 @@ class ScanRecordsResponse:
 
             records.append(records_item)
 
-        def _parse_next_cursor(data: object) -> Union[None, Unset, str]:
+        def _parse_next_cursor(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         next_cursor = _parse_next_cursor(d.pop("next_cursor", UNSET))
 
-        def _parse_scanned_count(data: object) -> Union[None, Unset, int]:
+        def _parse_scanned_count(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         scanned_count = _parse_scanned_count(d.pop("scanned_count", UNSET))
 
