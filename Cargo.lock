@@ -6802,6 +6802,7 @@ dependencies = [
  "proximadb-utility-scorer",
  "proximadb-vector",
  "proximadb-vector-query",
+ "proximadb-wal-segment-header",
  "rand 0.8.6",
  "rand_chacha 0.3.1",
  "rand_distr",
@@ -8663,6 +8664,15 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "tokio",
+]
+
+[[package]]
+name = "proximadb-wal-segment-header"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb-records",
+ "serde",
 ]
 
 [[package]]

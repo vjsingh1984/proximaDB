@@ -115,7 +115,7 @@ pub mod simple_atomic_sync;
 pub mod wal_operations; // WAL operations for vector and graph
 
 // Embedding-precision rollout (PR 4 of EMBEDDING_PRECISION_LLD_2026_05_22).
-pub mod v2_segment_header;
+pub use proximadb_wal_segment_header::v2_segment_header;
 // RETIRED (#1270 + TD-CONFIG-CONSOLIDATE-1 step 3): optimized_path_resolver +
 // atomic_write_buffer_sync modules + their files deleted. They used the removed
 // assignment_service and were commented out ('MARKED FOR REMOVAL') since #1270;
