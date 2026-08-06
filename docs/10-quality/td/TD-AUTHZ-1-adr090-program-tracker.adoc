@@ -1,0 +1,117 @@
+= TD-AUTHZ-1: ADR-090 program tracker — identity, grants, BYOB (layered burn-down)
+:status: Open
+:dim: D5
+:pillar: SEC
+
+== Problem
+
+link:../../12-design/adr/ADR-090-identity-grants-and-byob-storage.adoc[ADR-090] (Proposed)
+re-derives the security/tenancy architecture: authorize on catalog metadata via ABAC
+(with cross-tenant grants), subject-parameterized row/vector predicates, BYOB storage
+bindings, and catalog-resident identity. The three 2026-08-06 audits behind it produced a
+**53-gap inventory** (ADR-090 appendices A–C, every item file:line-evidenced). This TD is
+the program tracker: slices, order, and gates. One initiative, one prefix — follow-on
+slices file as TD-AUTHZ-2, -3, … referencing this tracker.
+
+== Ground rules (from the ADR)
+
+* Each slice lands independently green; enforcement flips are **default-OFF** behind
+  registry-documented gates (`ENV_GATE_REGISTRY.adoc`) until the matching e2e ratchet
+  exists. Ratchets only go up (mandate #10).
+* Fail-closed everywhere: missing subject attribute ⇒ deny; absent grant ⇒ deny once the
+  gate flips; credential that resolves no tenant ⇒ reject under `MultiTenant`.
+* The two tests that lock in cross-tenant impossibility
+  (`abac context.rs:492 another_tenants_binding_cannot_authorize_this_read`, `:504`)
+  are **deliberately rewritten** in the L1 grant slice — reviewers must see that called
+  out, not discover it.
+
+== Layer L0 — identity (prerequisite for everything)
+
+. **L0.1** Catalog user + API-key registries (hashed keys, mint/revoke/rotate admin API);
+  collapse the three key tables (`security/auth_service.rs:30`,
+  `network/middleware/auth.rs:35`, `network/auth/mod.rs:239`) onto it.
+. **L0.2** `key→user` and `user→tenant` become required; mTLS/JWT must resolve a tenant
+  or reject under `MultiTenant`; `X-Tenant-ID` demoted to cross-check.
+. **L0.3** All four surfaces adopt `resolve_request_identity` (finishes TD-ABAC-6 PR-B);
+  gRPC gets a `From<&GrpcAuthContext> for PortIdentity` bridge (kills the 4 hand-built
+  sites in `grpc/v2/record_service.rs`).
+. **L0.4** pgwire authenticates (password/SCRAM mapped to keys) or is a registry-gated
+  dev surface; retire the DEFAULT_TENANT pre-gate short-circuit (`protocol.rs:653-658`).
+. **L0.5** Delete the dead `account_id` string tier (`middleware/tenant.rs:73`);
+  document account ≡ tenant (`tenant_stable_id`) as final (ADR-0083 P5).
+. **L0.6** Server-resolved `SubjectAttributes` populated at resolution; subject reaches
+  catalog operations (attribution + the L1 decision input).
+
+== Layer L1 — catalog-seam authorization + grants (sharing)
+
+. **L1.1** `Grant` catalog object (model: the dead `tenant_access::CollectionSharing`,
+  `services/tenant_access/mod.rs:44-49`) — durable, tenant-partitioned, serde-compat
+  shim + legacy round-trip test per ADR-024 rollout doctrine.
+. **L1.2** Collection-open gate enforces (replace the TODO log at
+  `vectors/legacy.rs:838-845`); LIST filters to authorized resources; DDL actions
+  evaluated. Default-OFF gate + provision/permit/deny/revoke e2e ratchet (pattern:
+  the TD-ABAC-11 live-transport ratchets).
+. **L1.3** Cross-tenant grant path: foreign grantee admits at open, capability carries
+  the owner's path + grant predicate/mask; rewrite the two locking tests to the new
+  invariant ("foreign access only via explicit grant, never via bindings").
+. **L1.4** Delete `services/tenant_access` (superseded) and the unused `tenant_access`
+  cargo feature.
+
+== Layer L2 — row/vector: one subject-parameterized model
+
+. **L2.1** `$subject.<attr>` substitution in `compile_security_filter`
+  (`abac/compile.rs:277-302`) sourcing `SubjectAttributes::load_bearing()` only;
+  missing attribute ⇒ deny (mirror the missing-ref compile at `compile.rs:45-58`).
+  Harvest parameterization semantics from legacy RLS (`rls/service.rs:294-470`), then
+  retire `rls/policy.rs` + `secure_operations.rs`.
+. **L2.2** Close the six `System` bypasses: `graph/hybrid/mod.rs:1406`,
+  `rest/canonical/analytics.rs:170`, `query/unified/executor.rs:447`,
+  `services/search/streaming.rs:345`, `vectors/legacy.rs:6512` (port impl),
+  `fusion_service.rs:775` (graph leg).
+. **L2.3** Tenant-partition the predicate-object store (honor the trait contract at
+  `compile.rs:62-64`; today cross-tenant deref resolves).
+. **L2.4** Vector path passes the real namespace (`legacy.rs:683` hardcoded `0`) so
+  `Scope::Namespace` applies uniformly.
+. **L2.5** Retire the parallel channels: `permitted_principals` enforcement
+  (fail-open `is_accessible_by`, `RlsRecordPredicate`, fusion leg) → grants/predicates;
+  drop dead `rls_policy_id` at the next record-schema revision; wire or delete
+  `FieldMask` column masking; durable policy epochs (replace `InMemoryPolicyEpochs`,
+  `shared_services.rs:657`).
+
+== Layer L3 — BYOB storage bindings (parallel to L1/L2, gated on L0)
+
+. **L3.1** `StorageBinding` catalog object + secret-store `credential_ref` (complete the
+  inert `CatalogCredentials` / `FilesystemAuthConfig` shapes). **First: validate the
+  `storage_config.storage_path` back door** (`collection/manager.rs:1057-1073`) —
+  scheme check + binding allowlist before any network exposure.
+. **L3.2** Factory re-keyed `(scheme, authority, credential_ref)` at the chokepoint
+  `FilesystemFactory::get_filesystem` (`filesystem/mod.rs:539`); `ObjectStoreBridge`
+  becomes `bridge_for(tenant, collection)`; writes stop stripping scheme/authority
+  (`table_write_executor.rs:661-667`); warehouse root becomes a `StorageLocation`
+  (kills the `format!("file://…")` at `multi_server.rs:904`).
+. **L3.3** Placement policy: collection create resolves `base_location` from tenant
+  bindings; `StoragePoolClass::Dedicated` routes; replace `choose(rng)`
+  (`engine.rs:826-833`).
+. **L3.4** Per-tenant location policy replaces `PROXIMADB_EXTERNAL_TABLE_ROOTS`;
+  add **read-time revalidation** of layout URIs (closes the read/write asymmetry at
+  `object_store_parquet_reader.rs:557-560`); SSRF guard (deny `file://`/`http://` for
+  tenant-supplied URLs on network surfaces).
+. **L3.5** Unify the two path conventions (DrPath tree vs
+  `{base}/tenants/{t}/{c}/data`, `storage_path.rs:8-40`) and teach the tenant-path
+  guard about store routing, or file its limits explicitly.
+
+== Gates / evidence
+
+Per-layer e2e ratchets modeled on the ABAC live-transport suites; grant lifecycle
+(provision→permit→deny→revoke) across pgwire/REST/gRPC/Flight; BYOB round-trip against
+the cloud-emulator suite (Azurite/MinIO); recall unaffected (the standing
+`vector_ann_recall_e2e` gate). Performance claims, if any, via `BENCHMARK_EVIDENCE.toml`
+(mandate #6) — note ADR-090 claims none.
+
+== Deps
+
+* ADR-090 (this program's decision record); ADR-0083 P5 (account ≡ tenant);
+  ADR-024 rollout doctrine (durable schema changes).
+* TD-TENANT-2 (per-row predicate retirement — L1/L2 supersede its interim state);
+  TD-ABAC-6 (orchestrator adoption, finished by L0.3); TD-SDK-2 unaffected.
+* The 53-gap inventory: ADR-090 appendices A–C.
