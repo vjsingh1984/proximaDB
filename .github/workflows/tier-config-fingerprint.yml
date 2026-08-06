@@ -43,7 +43,7 @@ jobs:
     timeout-minutes: 2
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run fingerprint check
         run: bash scripts/check_tier_config_fingerprint.sh

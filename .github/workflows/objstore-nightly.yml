@@ -21,8 +21,8 @@ jobs:
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Install system deps
         run: |
           sudo apt-get update
@@ -30,8 +30,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-objstore-nightly"
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-nightly-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
