@@ -68,6 +68,8 @@ proximadb-proto = { workspace = true }
 proximadb-storage-filesystem-types = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
+rand.workspace = true
 sqlx = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "fs", "io-util", "time", "macros", "rt"] }
