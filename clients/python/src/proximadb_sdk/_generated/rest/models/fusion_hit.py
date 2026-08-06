@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -21,7 +23,7 @@ class FusionHit:
         oid (str):
         score (float):
         source_count (int):
-        labels (Union[Unset, list[str]]): Graph node label(s) of the reached node. Exposed so cross-modal-joint
+        labels (list[str] | Unset): Graph node label(s) of the reached node. Exposed so cross-modal-joint
             consumers can correlate a fused hit by its graph label without a separate
             node lookup (#485). The expansion already reaches the node, so this is
             near-free to fill. Additive + back-compat (empty until populated).
@@ -30,7 +32,7 @@ class FusionHit:
     oid: str
     score: float
     source_count: int
-    labels: Union[Unset, list[str]] = UNSET
+    labels: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,7 +42,7 @@ class FusionHit:
 
         source_count = self.source_count
 
-        labels: Union[Unset, list[str]] = UNSET
+        labels: list[str] | Unset = UNSET
         if not isinstance(self.labels, Unset):
             labels = self.labels
 

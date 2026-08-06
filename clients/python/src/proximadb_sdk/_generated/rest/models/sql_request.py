@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -24,25 +26,25 @@ class SqlRequest:
 
         Attributes:
             query (str):
-            collection (Union[None, Unset, str]): Optional collection context used by vector/graph SQL extensions.
-            timeout_ms (Union[None, Unset, int]): Per-request deadline. Defaults to 30 seconds and is capped at 5 minutes.
+            collection (None | str | Unset): Optional collection context used by vector/graph SQL extensions.
+            timeout_ms (int | None | Unset): Per-request deadline. Defaults to 30 seconds and is capped at 5 minutes.
     """
 
     query: str
-    collection: Union[None, Unset, str] = UNSET
-    timeout_ms: Union[None, Unset, int] = UNSET
+    collection: None | str | Unset = UNSET
+    timeout_ms: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
 
-        collection: Union[None, Unset, str]
+        collection: None | str | Unset
         if isinstance(self.collection, Unset):
             collection = UNSET
         else:
             collection = self.collection
 
-        timeout_ms: Union[None, Unset, int]
+        timeout_ms: int | None | Unset
         if isinstance(self.timeout_ms, Unset):
             timeout_ms = UNSET
         else:
@@ -67,21 +69,21 @@ class SqlRequest:
         d = dict(src_dict)
         query = d.pop("query")
 
-        def _parse_collection(data: object) -> Union[None, Unset, str]:
+        def _parse_collection(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         collection = _parse_collection(d.pop("collection", UNSET))
 
-        def _parse_timeout_ms(data: object) -> Union[None, Unset, int]:
+        def _parse_timeout_ms(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         timeout_ms = _parse_timeout_ms(d.pop("timeout_ms", UNSET))
 

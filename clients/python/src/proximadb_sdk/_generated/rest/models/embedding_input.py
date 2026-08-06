@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -19,25 +21,25 @@ class EmbeddingInput:
     """
     Attributes:
         vector (list[float]):
-        modality (Union[None, Unset, str]):
-        model_id (Union[None, Unset, str]):
+        modality (None | str | Unset):
+        model_id (None | str | Unset):
     """
 
     vector: list[float]
-    modality: Union[None, Unset, str] = UNSET
-    model_id: Union[None, Unset, str] = UNSET
+    modality: None | str | Unset = UNSET
+    model_id: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         vector = self.vector
 
-        modality: Union[None, Unset, str]
+        modality: None | str | Unset
         if isinstance(self.modality, Unset):
             modality = UNSET
         else:
             modality = self.modality
 
-        model_id: Union[None, Unset, str]
+        model_id: None | str | Unset
         if isinstance(self.model_id, Unset):
             model_id = UNSET
         else:
@@ -62,21 +64,21 @@ class EmbeddingInput:
         d = dict(src_dict)
         vector = cast(list[float], d.pop("vector"))
 
-        def _parse_modality(data: object) -> Union[None, Unset, str]:
+        def _parse_modality(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         modality = _parse_modality(d.pop("modality", UNSET))
 
-        def _parse_model_id(data: object) -> Union[None, Unset, str]:
+        def _parse_model_id(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         model_id = _parse_model_id(d.pop("model_id", UNSET))
 

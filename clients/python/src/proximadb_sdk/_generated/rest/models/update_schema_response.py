@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,7 +25,7 @@ class UpdateSchemaResponse:
     """Schema update response
 
     Attributes:
-        changes (list['SchemaChange']): List of applied changes
+        changes (list[SchemaChange]): List of applied changes
         previous_schema_id (str): Previous schema ID (for rollback)
         schema_id (str): Updated schema ID
         schema_version (str): New schema version
@@ -31,7 +33,7 @@ class UpdateSchemaResponse:
         warnings (list[str]): Warnings about the update
     """
 
-    changes: list["SchemaChange"]
+    changes: list[SchemaChange]
     previous_schema_id: str
     schema_id: str
     schema_version: str

@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -27,16 +29,16 @@ class QueryRequest:
     Attributes:
         language (QueryLanguage):
         query (str):
-        collection (Union[None, Unset, str]):
-        limit (Union[None, Unset, int]):
-        parameters (Union[None, Unset, list['QueryRequestParametersType0Item']]):
+        collection (None | str | Unset):
+        limit (int | None | Unset):
+        parameters (list[QueryRequestParametersType0Item] | None | Unset):
     """
 
     language: QueryLanguage
     query: str
-    collection: Union[None, Unset, str] = UNSET
-    limit: Union[None, Unset, int] = UNSET
-    parameters: Union[None, Unset, list["QueryRequestParametersType0Item"]] = UNSET
+    collection: None | str | Unset = UNSET
+    limit: int | None | Unset = UNSET
+    parameters: list[QueryRequestParametersType0Item] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,19 +50,19 @@ class QueryRequest:
 
         query = self.query
 
-        collection: Union[None, Unset, str]
+        collection: None | str | Unset
         if isinstance(self.collection, Unset):
             collection = UNSET
         else:
             collection = self.collection
 
-        limit: Union[None, Unset, int]
+        limit: int | None | Unset
         if isinstance(self.limit, Unset):
             limit = UNSET
         else:
             limit = self.limit
 
-        parameters: Union[None, Unset, list[dict[str, Any]]]
+        parameters: list[dict[str, Any]] | None | Unset
         if isinstance(self.parameters, Unset):
             parameters = UNSET
         elif isinstance(self.parameters, list):
@@ -100,27 +102,27 @@ class QueryRequest:
 
         query = d.pop("query")
 
-        def _parse_collection(data: object) -> Union[None, Unset, str]:
+        def _parse_collection(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         collection = _parse_collection(d.pop("collection", UNSET))
 
-        def _parse_limit(data: object) -> Union[None, Unset, int]:
+        def _parse_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         limit = _parse_limit(d.pop("limit", UNSET))
 
         def _parse_parameters(
             data: object,
-        ) -> Union[None, Unset, list["QueryRequestParametersType0Item"]]:
+        ) -> list[QueryRequestParametersType0Item] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -138,11 +140,9 @@ class QueryRequest:
                     parameters_type_0.append(parameters_type_0_item)
 
                 return parameters_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(
-                Union[None, Unset, list["QueryRequestParametersType0Item"]], data
-            )
+            return cast(list[QueryRequestParametersType0Item] | None | Unset, data)
 
         parameters = _parse_parameters(d.pop("parameters", UNSET))
 

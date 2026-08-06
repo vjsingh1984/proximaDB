@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -24,18 +26,18 @@ class ListGraphsResponse:
     containing the graph collections.
 
         Attributes:
-            data (Union[Unset, list['GraphCollectionResponse']]):
-            success (Union[Unset, bool]):
+            data (list[GraphCollectionResponse] | Unset):
+            success (bool | Unset):
     """
 
-    data: Union[Unset, list["GraphCollectionResponse"]] = UNSET
-    success: Union[Unset, bool] = UNSET
+    data: list[GraphCollectionResponse] | Unset = UNSET
+    success: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.graph_collection_response import GraphCollectionResponse
 
-        data: Union[Unset, list[dict[str, Any]]] = UNSET
+        data: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.data, Unset):
             data = []
             for data_item_data in self.data:
@@ -59,12 +61,14 @@ class ListGraphsResponse:
         from ..models.graph_collection_response import GraphCollectionResponse
 
         d = dict(src_dict)
-        data = []
         _data = d.pop("data", UNSET)
-        for data_item_data in _data or []:
-            data_item = GraphCollectionResponse.from_dict(data_item_data)
+        data: list[GraphCollectionResponse] | Unset = UNSET
+        if _data is not UNSET:
+            data = []
+            for data_item_data in _data:
+                data_item = GraphCollectionResponse.from_dict(data_item_data)
 
-            data.append(data_item)
+                data.append(data_item)
 
         success = d.pop("success", UNSET)
 

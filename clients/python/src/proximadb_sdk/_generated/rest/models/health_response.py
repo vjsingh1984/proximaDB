@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -18,14 +20,14 @@ T = TypeVar("T", bound="HealthResponse")
 class HealthResponse:
     """
     Attributes:
-        status (Union[Unset, str]):
-        uptime_seconds (Union[Unset, float]):
-        version (Union[Unset, str]):
+        status (str | Unset):
+        uptime_seconds (float | Unset):
+        version (str | Unset):
     """
 
-    status: Union[Unset, str] = UNSET
-    uptime_seconds: Union[Unset, float] = UNSET
-    version: Union[Unset, str] = UNSET
+    status: str | Unset = UNSET
+    uptime_seconds: float | Unset = UNSET
+    version: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

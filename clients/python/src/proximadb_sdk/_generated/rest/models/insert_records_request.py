@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -55,18 +57,18 @@ class InsertRecordsRequest:
     see also `docs/SUPPORTED_SURFACE.adoc` "Not Supported in v0.2".
 
         Attributes:
-            records (list['ProximaRecordInput']): Records to insert
-            upsert (Union[None, Unset, bool]): Whether existing records with the same ID should be replaced.
+            records (list[ProximaRecordInput]): Records to insert
+            upsert (bool | None | Unset): Whether existing records with the same ID should be replaced.
 
                 The current durable record write path is idempotent/upsert-oriented; this
                 field is accepted so SDKs can expose explicit upsert intent without
                 leaving the OpenAPI contract.
-            validate_schema (Union[None, Unset, bool]): Whether to validate against collection schema (default: true)
+            validate_schema (bool | None | Unset): Whether to validate against collection schema (default: true)
     """
 
-    records: list["ProximaRecordInput"]
-    upsert: Union[None, Unset, bool] = UNSET
-    validate_schema: Union[None, Unset, bool] = UNSET
+    records: list[ProximaRecordInput]
+    upsert: bool | None | Unset = UNSET
+    validate_schema: bool | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -77,13 +79,13 @@ class InsertRecordsRequest:
             records_item = records_item_data.to_dict()
             records.append(records_item)
 
-        upsert: Union[None, Unset, bool]
+        upsert: bool | None | Unset
         if isinstance(self.upsert, Unset):
             upsert = UNSET
         else:
             upsert = self.upsert
 
-        validate_schema: Union[None, Unset, bool]
+        validate_schema: bool | None | Unset
         if isinstance(self.validate_schema, Unset):
             validate_schema = UNSET
         else:
@@ -115,21 +117,21 @@ class InsertRecordsRequest:
 
             records.append(records_item)
 
-        def _parse_upsert(data: object) -> Union[None, Unset, bool]:
+        def _parse_upsert(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         upsert = _parse_upsert(d.pop("upsert", UNSET))
 
-        def _parse_validate_schema(data: object) -> Union[None, Unset, bool]:
+        def _parse_validate_schema(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         validate_schema = _parse_validate_schema(d.pop("validate_schema", UNSET))
 

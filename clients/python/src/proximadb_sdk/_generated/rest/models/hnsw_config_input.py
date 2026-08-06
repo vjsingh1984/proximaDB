@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -19,30 +21,30 @@ class HnswConfigInput:
     """REST input for HNSW index params (mirrors proto `HnswConfig`).
 
     Attributes:
-        ef_construction (Union[None, Unset, int]):
-        ef_search (Union[None, Unset, int]):
-        m (Union[None, Unset, int]):
+        ef_construction (int | None | Unset):
+        ef_search (int | None | Unset):
+        m (int | None | Unset):
     """
 
-    ef_construction: Union[None, Unset, int] = UNSET
-    ef_search: Union[None, Unset, int] = UNSET
-    m: Union[None, Unset, int] = UNSET
+    ef_construction: int | None | Unset = UNSET
+    ef_search: int | None | Unset = UNSET
+    m: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        ef_construction: Union[None, Unset, int]
+        ef_construction: int | None | Unset
         if isinstance(self.ef_construction, Unset):
             ef_construction = UNSET
         else:
             ef_construction = self.ef_construction
 
-        ef_search: Union[None, Unset, int]
+        ef_search: int | None | Unset
         if isinstance(self.ef_search, Unset):
             ef_search = UNSET
         else:
             ef_search = self.ef_search
 
-        m: Union[None, Unset, int]
+        m: int | None | Unset
         if isinstance(self.m, Unset):
             m = UNSET
         else:
@@ -64,30 +66,30 @@ class HnswConfigInput:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
 
-        def _parse_ef_construction(data: object) -> Union[None, Unset, int]:
+        def _parse_ef_construction(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         ef_construction = _parse_ef_construction(d.pop("ef_construction", UNSET))
 
-        def _parse_ef_search(data: object) -> Union[None, Unset, int]:
+        def _parse_ef_search(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         ef_search = _parse_ef_search(d.pop("ef_search", UNSET))
 
-        def _parse_m(data: object) -> Union[None, Unset, int]:
+        def _parse_m(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         m = _parse_m(d.pop("m", UNSET))
 

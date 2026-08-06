@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -20,23 +22,23 @@ class QuantizationConfigInput:
     gRPC-v2 parity with `V2QuantizationConfig`).
 
         Attributes:
-            enabled (Union[None, Unset, bool]): Enable quantization for this collection.
-            strategy (Union[None, Unset, str]): Strategy: "smart_defaults" (default) | "minimal" | "aggressive" |
+            enabled (bool | None | Unset): Enable quantization for this collection.
+            strategy (None | str | Unset): Strategy: "smart_defaults" (default) | "minimal" | "aggressive" |
                 "custom_levels".
     """
 
-    enabled: Union[None, Unset, bool] = UNSET
-    strategy: Union[None, Unset, str] = UNSET
+    enabled: bool | None | Unset = UNSET
+    strategy: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        enabled: Union[None, Unset, bool]
+        enabled: bool | None | Unset
         if isinstance(self.enabled, Unset):
             enabled = UNSET
         else:
             enabled = self.enabled
 
-        strategy: Union[None, Unset, str]
+        strategy: None | str | Unset
         if isinstance(self.strategy, Unset):
             strategy = UNSET
         else:
@@ -56,21 +58,21 @@ class QuantizationConfigInput:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
 
-        def _parse_enabled(data: object) -> Union[None, Unset, bool]:
+        def _parse_enabled(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         enabled = _parse_enabled(d.pop("enabled", UNSET))
 
-        def _parse_strategy(data: object) -> Union[None, Unset, str]:
+        def _parse_strategy(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         strategy = _parse_strategy(d.pop("strategy", UNSET))
 

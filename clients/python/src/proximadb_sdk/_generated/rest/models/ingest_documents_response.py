@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,13 +25,13 @@ class IngestDocumentsResponse:
     """
     Attributes:
         mode (str):
-        records (list['IngestedRecord']):
-        retry_after_ms (Union[None, Unset, int]):
+        records (list[IngestedRecord]):
+        retry_after_ms (int | None | Unset):
     """
 
     mode: str
-    records: list["IngestedRecord"]
-    retry_after_ms: Union[None, Unset, int] = UNSET
+    records: list[IngestedRecord]
+    retry_after_ms: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,7 +44,7 @@ class IngestDocumentsResponse:
             records_item = records_item_data.to_dict()
             records.append(records_item)
 
-        retry_after_ms: Union[None, Unset, int]
+        retry_after_ms: int | None | Unset
         if isinstance(self.retry_after_ms, Unset):
             retry_after_ms = UNSET
         else:
@@ -75,12 +77,12 @@ class IngestDocumentsResponse:
 
             records.append(records_item)
 
-        def _parse_retry_after_ms(data: object) -> Union[None, Unset, int]:
+        def _parse_retry_after_ms(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         retry_after_ms = _parse_retry_after_ms(d.pop("retry_after_ms", UNSET))
 

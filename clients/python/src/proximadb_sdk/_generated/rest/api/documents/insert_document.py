@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -20,7 +21,7 @@ def _get_kwargs(
     collection: str,
     *,
     body: InsertDocumentBody,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -29,13 +30,12 @@ def _get_kwargs(
     _kwargs: dict[str, Any] = {
         "method": "post",
         "url": "/api/v2/document-collections/{collection}/documents".format(
-            collection=collection,
+            collection=quote(str(collection), safe=""),
         ),
     }
 
-    _body = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
-    _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
@@ -43,16 +43,18 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[ErrorResponse, InsertDocumentResponse200]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorResponse | InsertDocumentResponse200 | None:
     if response.status_code == 200:
         response_200 = InsertDocumentResponse200.from_dict(response.json())
 
         return response_200
+
     if response.status_code == 404:
         response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -60,8 +62,8 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[ErrorResponse, InsertDocumentResponse200]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ErrorResponse | InsertDocumentResponse200]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -73,15 +75,15 @@ def _build_response(
 def sync_detailed(
     collection: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: InsertDocumentBody,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, InsertDocumentResponse200]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | InsertDocumentResponse200]:
     """Insert a document.
 
     Args:
         collection (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (InsertDocumentBody):
 
     Raises:
@@ -89,7 +91,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, InsertDocumentResponse200]]
+        Response[ErrorResponse | InsertDocumentResponse200]
     """
 
     kwargs = _get_kwargs(
@@ -108,15 +110,15 @@ def sync_detailed(
 def sync(
     collection: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: InsertDocumentBody,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, InsertDocumentResponse200]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | InsertDocumentResponse200 | None:
     """Insert a document.
 
     Args:
         collection (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (InsertDocumentBody):
 
     Raises:
@@ -124,7 +126,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, InsertDocumentResponse200]
+        ErrorResponse | InsertDocumentResponse200
     """
 
     return sync_detailed(
@@ -138,15 +140,15 @@ def sync(
 async def asyncio_detailed(
     collection: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: InsertDocumentBody,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, InsertDocumentResponse200]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | InsertDocumentResponse200]:
     """Insert a document.
 
     Args:
         collection (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (InsertDocumentBody):
 
     Raises:
@@ -154,7 +156,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, InsertDocumentResponse200]]
+        Response[ErrorResponse | InsertDocumentResponse200]
     """
 
     kwargs = _get_kwargs(
@@ -171,15 +173,15 @@ async def asyncio_detailed(
 async def asyncio(
     collection: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: InsertDocumentBody,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, InsertDocumentResponse200]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | InsertDocumentResponse200 | None:
     """Insert a document.
 
     Args:
         collection (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (InsertDocumentBody):
 
     Raises:
@@ -187,7 +189,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, InsertDocumentResponse200]
+        ErrorResponse | InsertDocumentResponse200
     """
 
     return (

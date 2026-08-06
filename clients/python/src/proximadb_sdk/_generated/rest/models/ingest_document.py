@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -24,18 +26,18 @@ class IngestDocument:
 
     Attributes:
         id (str):
-        metadata (Union[Unset, IngestDocumentMetadata]): Arbitrary metadata fields. Stored as ProximaRecord props.
-        text (Union[None, Unset, str]): Raw text content. Required when `X-Embed-Source: native` (default);
+        metadata (IngestDocumentMetadata | Unset): Arbitrary metadata fields. Stored as ProximaRecord props.
+        text (None | str | Unset): Raw text content. Required when `X-Embed-Source: native` (default);
             optional when the client also supplied a vector.
-        vector (Union[None, Unset, list[float]]): Optional client-provided vector. When present, the server skips
+        vector (list[float] | None | Unset): Optional client-provided vector. When present, the server skips
             embedding for this record. Use case: SDK that already embedded
             locally (legacy path).
     """
 
     id: str
-    metadata: Union[Unset, "IngestDocumentMetadata"] = UNSET
-    text: Union[None, Unset, str] = UNSET
-    vector: Union[None, Unset, list[float]] = UNSET
+    metadata: IngestDocumentMetadata | Unset = UNSET
+    text: None | str | Unset = UNSET
+    vector: list[float] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,17 +45,17 @@ class IngestDocument:
 
         id = self.id
 
-        metadata: Union[Unset, dict[str, Any]] = UNSET
+        metadata: dict[str, Any] | Unset = UNSET
         if not isinstance(self.metadata, Unset):
             metadata = self.metadata.to_dict()
 
-        text: Union[None, Unset, str]
+        text: None | str | Unset
         if isinstance(self.text, Unset):
             text = UNSET
         else:
             text = self.text
 
-        vector: Union[None, Unset, list[float]]
+        vector: list[float] | None | Unset
         if isinstance(self.vector, Unset):
             vector = UNSET
         elif isinstance(self.vector, list):
@@ -86,22 +88,22 @@ class IngestDocument:
         id = d.pop("id")
 
         _metadata = d.pop("metadata", UNSET)
-        metadata: Union[Unset, IngestDocumentMetadata]
+        metadata: IngestDocumentMetadata | Unset
         if isinstance(_metadata, Unset):
             metadata = UNSET
         else:
             metadata = IngestDocumentMetadata.from_dict(_metadata)
 
-        def _parse_text(data: object) -> Union[None, Unset, str]:
+        def _parse_text(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         text = _parse_text(d.pop("text", UNSET))
 
-        def _parse_vector(data: object) -> Union[None, Unset, list[float]]:
+        def _parse_vector(data: object) -> list[float] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -112,9 +114,9 @@ class IngestDocument:
                 vector_type_0 = cast(list[float], data)
 
                 return vector_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union[None, Unset, list[float]], data)
+            return cast(list[float] | None | Unset, data)
 
         vector = _parse_vector(d.pop("vector", UNSET))
 

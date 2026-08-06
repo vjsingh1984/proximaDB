@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -26,15 +28,15 @@ class NodeInput:
 
         Attributes:
             id (str):
-            embedding (Union[Unset, EmbeddingInput]):
-            labels (Union[Unset, list[str]]):
-            properties (Union[Unset, NodeInputProperties]):
+            embedding (EmbeddingInput | Unset):
+            labels (list[str] | Unset):
+            properties (NodeInputProperties | Unset):
     """
 
     id: str
-    embedding: Union[Unset, "EmbeddingInput"] = UNSET
-    labels: Union[Unset, list[str]] = UNSET
-    properties: Union[Unset, "NodeInputProperties"] = UNSET
+    embedding: EmbeddingInput | Unset = UNSET
+    labels: list[str] | Unset = UNSET
+    properties: NodeInputProperties | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,15 +45,15 @@ class NodeInput:
 
         id = self.id
 
-        embedding: Union[Unset, dict[str, Any]] = UNSET
+        embedding: dict[str, Any] | Unset = UNSET
         if not isinstance(self.embedding, Unset):
             embedding = self.embedding.to_dict()
 
-        labels: Union[Unset, list[str]] = UNSET
+        labels: list[str] | Unset = UNSET
         if not isinstance(self.labels, Unset):
             labels = self.labels
 
-        properties: Union[Unset, dict[str, Any]] = UNSET
+        properties: dict[str, Any] | Unset = UNSET
         if not isinstance(self.properties, Unset):
             properties = self.properties.to_dict()
 
@@ -80,7 +82,7 @@ class NodeInput:
         id = d.pop("id")
 
         _embedding = d.pop("embedding", UNSET)
-        embedding: Union[Unset, EmbeddingInput]
+        embedding: EmbeddingInput | Unset
         if isinstance(_embedding, Unset):
             embedding = UNSET
         else:
@@ -89,7 +91,7 @@ class NodeInput:
         labels = cast(list[str], d.pop("labels", UNSET))
 
         _properties = d.pop("properties", UNSET)
-        properties: Union[Unset, NodeInputProperties]
+        properties: NodeInputProperties | Unset
         if isinstance(_properties, Unset):
             properties = UNSET
         else:

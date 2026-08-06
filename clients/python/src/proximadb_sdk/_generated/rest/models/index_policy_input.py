@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -20,43 +22,43 @@ class IndexPolicyInput:
     `IndexPolicy`; ADR-028).
 
         Attributes:
-            byte_budget (Union[None, Unset, int]): Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+            byte_budget (int | None | Unset): Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
                 for the storage class.
-            mode (Union[None, Unset, str]): Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+            mode (None | str | Unset): Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
                 "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
                 The engine modes force the collection onto that engine/route.
-            nprobe (Union[None, Unset, int]): nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+            nprobe (int | None | Unset): nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
                 `mode = "exact"`.
-            rehydrate (Union[None, Unset, str]): Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+            rehydrate (None | str | Unset): Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
                 Index/auto modes only — rejected when `mode = "exact"`.
     """
 
-    byte_budget: Union[None, Unset, int] = UNSET
-    mode: Union[None, Unset, str] = UNSET
-    nprobe: Union[None, Unset, int] = UNSET
-    rehydrate: Union[None, Unset, str] = UNSET
+    byte_budget: int | None | Unset = UNSET
+    mode: None | str | Unset = UNSET
+    nprobe: int | None | Unset = UNSET
+    rehydrate: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        byte_budget: Union[None, Unset, int]
+        byte_budget: int | None | Unset
         if isinstance(self.byte_budget, Unset):
             byte_budget = UNSET
         else:
             byte_budget = self.byte_budget
 
-        mode: Union[None, Unset, str]
+        mode: None | str | Unset
         if isinstance(self.mode, Unset):
             mode = UNSET
         else:
             mode = self.mode
 
-        nprobe: Union[None, Unset, int]
+        nprobe: int | None | Unset
         if isinstance(self.nprobe, Unset):
             nprobe = UNSET
         else:
             nprobe = self.nprobe
 
-        rehydrate: Union[None, Unset, str]
+        rehydrate: None | str | Unset
         if isinstance(self.rehydrate, Unset):
             rehydrate = UNSET
         else:
@@ -80,39 +82,39 @@ class IndexPolicyInput:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
 
-        def _parse_byte_budget(data: object) -> Union[None, Unset, int]:
+        def _parse_byte_budget(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         byte_budget = _parse_byte_budget(d.pop("byte_budget", UNSET))
 
-        def _parse_mode(data: object) -> Union[None, Unset, str]:
+        def _parse_mode(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         mode = _parse_mode(d.pop("mode", UNSET))
 
-        def _parse_nprobe(data: object) -> Union[None, Unset, int]:
+        def _parse_nprobe(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         nprobe = _parse_nprobe(d.pop("nprobe", UNSET))
 
-        def _parse_rehydrate(data: object) -> Union[None, Unset, str]:
+        def _parse_rehydrate(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         rehydrate = _parse_rehydrate(d.pop("rehydrate", UNSET))
 

@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -25,7 +27,7 @@ class CreateCollectionV2Response:
         engine (str): Selected storage engine
         name (str): Collection name
         proxima_record_enabled (bool): Whether ProximaRecord is enabled
-        schema_id (Union[None, Unset, str]): Schema ID (if schema was defined)
+        schema_id (None | str | Unset): Schema ID (if schema was defined)
     """
 
     collection_id: str
@@ -34,7 +36,7 @@ class CreateCollectionV2Response:
     engine: str
     name: str
     proxima_record_enabled: bool
-    schema_id: Union[None, Unset, str] = UNSET
+    schema_id: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,7 +52,7 @@ class CreateCollectionV2Response:
 
         proxima_record_enabled = self.proxima_record_enabled
 
-        schema_id: Union[None, Unset, str]
+        schema_id: None | str | Unset
         if isinstance(self.schema_id, Unset):
             schema_id = UNSET
         else:
@@ -88,12 +90,12 @@ class CreateCollectionV2Response:
 
         proxima_record_enabled = d.pop("proxima_record_enabled")
 
-        def _parse_schema_id(data: object) -> Union[None, Unset, str]:
+        def _parse_schema_id(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         schema_id = _parse_schema_id(d.pop("schema_id", UNSET))
 

@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -25,15 +27,15 @@ class EntityRelationInput:
         relation_type (str):
         source_entity_id (str):
         target_entity_id (str):
-        properties (Union[Unset, EntityRelationInputProperties]):
-        weight (Union[Unset, float]):
+        properties (EntityRelationInputProperties | Unset):
+        weight (float | Unset):
     """
 
     relation_type: str
     source_entity_id: str
     target_entity_id: str
-    properties: Union[Unset, "EntityRelationInputProperties"] = UNSET
-    weight: Union[Unset, float] = UNSET
+    properties: EntityRelationInputProperties | Unset = UNSET
+    weight: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,7 +49,7 @@ class EntityRelationInput:
 
         target_entity_id = self.target_entity_id
 
-        properties: Union[Unset, dict[str, Any]] = UNSET
+        properties: dict[str, Any] | Unset = UNSET
         if not isinstance(self.properties, Unset):
             properties = self.properties.to_dict()
 
@@ -83,7 +85,7 @@ class EntityRelationInput:
         target_entity_id = d.pop("target_entity_id")
 
         _properties = d.pop("properties", UNSET)
-        properties: Union[Unset, EntityRelationInputProperties]
+        properties: EntityRelationInputProperties | Unset
         if isinstance(_properties, Unset):
             properties = UNSET
         else:

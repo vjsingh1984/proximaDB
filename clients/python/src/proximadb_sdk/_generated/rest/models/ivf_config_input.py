@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -19,22 +21,22 @@ class IvfConfigInput:
     """REST input for IVF index params (mirrors proto `IvfConfig`).
 
     Attributes:
-        n_lists (Union[None, Unset, int]):
-        n_probe (Union[None, Unset, int]):
+        n_lists (int | None | Unset):
+        n_probe (int | None | Unset):
     """
 
-    n_lists: Union[None, Unset, int] = UNSET
-    n_probe: Union[None, Unset, int] = UNSET
+    n_lists: int | None | Unset = UNSET
+    n_probe: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        n_lists: Union[None, Unset, int]
+        n_lists: int | None | Unset
         if isinstance(self.n_lists, Unset):
             n_lists = UNSET
         else:
             n_lists = self.n_lists
 
-        n_probe: Union[None, Unset, int]
+        n_probe: int | None | Unset
         if isinstance(self.n_probe, Unset):
             n_probe = UNSET
         else:
@@ -54,21 +56,21 @@ class IvfConfigInput:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
 
-        def _parse_n_lists(data: object) -> Union[None, Unset, int]:
+        def _parse_n_lists(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         n_lists = _parse_n_lists(d.pop("n_lists", UNSET))
 
-        def _parse_n_probe(data: object) -> Union[None, Unset, int]:
+        def _parse_n_probe(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         n_probe = _parse_n_probe(d.pop("n_probe", UNSET))
 

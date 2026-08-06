@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -22,12 +24,12 @@ T = TypeVar("T", bound="BatchEdgesResponseData")
 class BatchEdgesResponseData:
     """
     Attributes:
-        count (Union[Unset, int]):
-        results (Union[Unset, list['EdgeResponse']]):
+        count (int | Unset):
+        results (list[EdgeResponse] | Unset):
     """
 
-    count: Union[Unset, int] = UNSET
-    results: Union[Unset, list["EdgeResponse"]] = UNSET
+    count: int | Unset = UNSET
+    results: list[EdgeResponse] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,7 +37,7 @@ class BatchEdgesResponseData:
 
         count = self.count
 
-        results: Union[Unset, list[dict[str, Any]]] = UNSET
+        results: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.results, Unset):
             results = []
             for results_item_data in self.results:
@@ -59,12 +61,14 @@ class BatchEdgesResponseData:
         d = dict(src_dict)
         count = d.pop("count", UNSET)
 
-        results = []
         _results = d.pop("results", UNSET)
-        for results_item_data in _results or []:
-            results_item = EdgeResponse.from_dict(results_item_data)
+        results: list[EdgeResponse] | Unset = UNSET
+        if _results is not UNSET:
+            results = []
+            for results_item_data in _results:
+                results_item = EdgeResponse.from_dict(results_item_data)
 
-            results.append(results_item)
+                results.append(results_item)
 
         batch_edges_response_data = cls(
             count=count,

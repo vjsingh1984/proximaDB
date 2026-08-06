@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -26,15 +28,15 @@ class ErrorBody:
         code (int): HTTP status code.
         message (str):
         type_ (str): Stable machine-readable error code (snake_case). Example: collection_not_found.
-        details (Union['ErrorBodyDetailsType0', None, Unset]): Optional structured context (e.g. migration hints).
-        request_id (Union[None, Unset, str]): Correlation id (matches the X-Request-ID header).
+        details (ErrorBodyDetailsType0 | None | Unset): Optional structured context (e.g. migration hints).
+        request_id (None | str | Unset): Correlation id (matches the X-Request-ID header).
     """
 
     code: int
     message: str
     type_: str
-    details: Union["ErrorBodyDetailsType0", None, Unset] = UNSET
-    request_id: Union[None, Unset, str] = UNSET
+    details: ErrorBodyDetailsType0 | None | Unset = UNSET
+    request_id: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,7 +48,7 @@ class ErrorBody:
 
         type_ = self.type_
 
-        details: Union[None, Unset, dict[str, Any]]
+        details: dict[str, Any] | None | Unset
         if isinstance(self.details, Unset):
             details = UNSET
         elif isinstance(self.details, ErrorBodyDetailsType0):
@@ -54,7 +56,7 @@ class ErrorBody:
         else:
             details = self.details
 
-        request_id: Union[None, Unset, str]
+        request_id: None | str | Unset
         if isinstance(self.request_id, Unset):
             request_id = UNSET
         else:
@@ -87,7 +89,7 @@ class ErrorBody:
 
         type_ = d.pop("type")
 
-        def _parse_details(data: object) -> Union["ErrorBodyDetailsType0", None, Unset]:
+        def _parse_details(data: object) -> ErrorBodyDetailsType0 | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -98,18 +100,18 @@ class ErrorBody:
                 details_type_0 = ErrorBodyDetailsType0.from_dict(data)
 
                 return details_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["ErrorBodyDetailsType0", None, Unset], data)
+            return cast(ErrorBodyDetailsType0 | None | Unset, data)
 
         details = _parse_details(d.pop("details", UNSET))
 
-        def _parse_request_id(data: object) -> Union[None, Unset, str]:
+        def _parse_request_id(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         request_id = _parse_request_id(d.pop("request_id", UNSET))
 
