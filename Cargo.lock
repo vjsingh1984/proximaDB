@@ -6746,6 +6746,7 @@ dependencies = [
  "proximadb-audit",
  "proximadb-auth-sso",
  "proximadb-automl",
+ "proximadb-batch-group-cache",
  "proximadb-block-format",
  "proximadb-bloom",
  "proximadb-cache",
@@ -7003,6 +7004,13 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-batch-group-cache"
+version = "0.2.0"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]
