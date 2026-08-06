@@ -1606,16 +1606,38 @@ impl VectorOperationsService {
     pub async fn vector_batch_v1(
         &self,
         req: crate::proto::proximadb_v1::VectorBatchRequest,
+        tenant_id: Option<&str>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let start_time = std::time::Instant::now();
         let collection_id = req.collection_id.clone();
 
         // Convert v1 wire VectorRecord → ProximaRecord at the protocol boundary.
+        //
+        // The v1 `VectorRecord` has no tenant field, so the bridge cannot carry one:
+        // `From<&VectorRecord> for ProximaRecord` leaves `tenant_id` as `String::new()`.
+        // An empty tenant is NOT a safe resting state — the read filters in this file
+        // treat it as matching every tenant, so an untenanted record would be readable
+        // cross-tenant. Isolation must be structural, never a sentinel value that
+        // happens to match (CLAUDE.md mandate #3).
+        //
+        // Fall back to the canonical `DEFAULT_TENANT` for insecure/dev deployments that
+        // run without tenant resolution — the same value REST middleware already assigns
+        // to unauthenticated requests (`network/middleware/tenant.rs`). "Anonymous" is an
+        // explicit tenant that matches only itself, never a wildcard.
+        let resolved_tenant = tenant_id
+            .filter(|t| !t.is_empty())
+            .unwrap_or(proximadb_tenant::DEFAULT_TENANT);
+
         let mut native_vectors: Vec<proximadb_records::ProximaRecord> = req
             .vectors
             .into_iter()
             .map(crate::proto::defaults::vector_record_to_proxima_record)
             .collect();
+
+        // Reuse the canonical stamper rather than assigning inline: it also REJECTS a
+        // record that already carries a different tenant (cross-tenant write attempt),
+        // which a bare assignment would silently overwrite.
+        super::write::ensure_tenant_on_records(&mut native_vectors, resolved_tenant)?;
 
         // Coerce embeddings to the collection's canonical precision so
         // REST / gRPC inserts into a non-fp32 collection produce the
@@ -6521,9 +6543,12 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     async fn batch_upsert(
         &self,
         request: crate::proto::proximadb_v1::VectorBatchRequest,
-        _tenant_id: Option<&str>,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
-        self.vector_batch_v1(request).await
+        // Was `_tenant_id` — the caller's tenant was plumbed the whole way down this
+        // port and then discarded here, so every record inserted through it landed with
+        // an empty `tenant_id`, which the read filters treat as matching every tenant.
+        self.vector_batch_v1(request, tenant_id).await
     }
 
     async fn get_vector(
