@@ -6827,7 +6827,7 @@ dependencies = [
  "sysinfo",
  "tantivy",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "time",
  "tokio",
  "tokio-postgres",
@@ -6865,7 +6865,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -6905,7 +6905,7 @@ dependencies = [
  "proximadb-tenant",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -7058,7 +7058,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "urlencoding",
@@ -7172,7 +7172,7 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7193,7 +7193,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracing",
  "uuid",
 ]
@@ -7238,7 +7238,7 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7255,7 +7255,7 @@ dependencies = [
  "proximadb-records",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -7299,7 +7299,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "uuid",
@@ -7332,7 +7332,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokenizers",
  "tokio",
  "tracing",
@@ -7344,7 +7344,7 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7374,7 +7374,7 @@ dependencies = [
  "arrow-schema",
  "async-trait",
  "futures",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7565,7 +7565,7 @@ dependencies = [
  "rand 0.8.6",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -7676,7 +7676,7 @@ dependencies = [
  "axum",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "toml 0.8.23",
  "tower-http",
@@ -7711,7 +7711,7 @@ dependencies = [
  "proximadb-records",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -7865,7 +7865,7 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7942,7 +7942,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "twox-hash 1.6.3",
@@ -7961,7 +7961,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -7973,7 +7973,7 @@ dependencies = [
  "proximadb-kernel",
  "proximadb-rank-core",
  "smallvec",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7983,7 +7983,7 @@ dependencies = [
  "proximadb-kernel",
  "proximadb-rank-core",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7998,7 +7998,7 @@ dependencies = [
  "proximadb-rank-core",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokenizers",
  "tokio",
  "tracing",
@@ -8016,7 +8016,7 @@ dependencies = [
  "proximadb-rank-features",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "toml 0.8.23",
  "tracing",
@@ -8078,7 +8078,7 @@ dependencies = [
  "proximadb-records",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8111,7 +8111,7 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-relational-types",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8128,7 +8128,7 @@ dependencies = [
  "proximadb-relational-reader",
  "proximadb-relational-types",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
@@ -8145,7 +8145,7 @@ dependencies = [
  "proximadb-relational-types",
  "serde",
  "stacker",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
@@ -8159,7 +8159,7 @@ dependencies = [
  "proximadb-relational-types",
  "serde",
  "sqlparser 0.59.0",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8172,7 +8172,7 @@ dependencies = [
  "proximadb-relational-types",
  "serde",
  "stacker",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8184,7 +8184,7 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-relational-types",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
@@ -8196,7 +8196,7 @@ dependencies = [
  "proximadb-data-model",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8207,7 +8207,7 @@ dependencies = [
  "parking_lot",
  "rand 0.8.6",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -8245,7 +8245,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tonic",
  "tracing",
@@ -8279,7 +8279,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "url",
 ]
@@ -8396,7 +8396,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "toml 0.8.23",
  "tracing",
@@ -8431,7 +8431,7 @@ dependencies = [
  "memmap2",
  "proximadb-kernel",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "url",
 ]
 
@@ -8588,7 +8588,7 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "time",
  "tokio",
  "tokio-rustls 0.26.4",
@@ -8642,7 +8642,7 @@ dependencies = [
  "serde_json",
  "statrs",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]

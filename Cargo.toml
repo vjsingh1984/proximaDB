@@ -248,7 +248,7 @@ serde = { version = "1.0", features = ["derive"] }
 # nested plans (TD-EXEC-2 §1.a). Same primitive rustc/Servo use.
 stacker = "0.1"
 tempfile = "3.0"
-thiserror = "1.0"
+thiserror = "2.0"
 tokio = { version = "1.37", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic = { version = "0.14", features = ["gzip", "tls-native-roots"] }
@@ -588,7 +588,7 @@ aes-gcm = "0.10"  # AEAD encryption for field-level encryption
 
 # TLS/mTLS certificate management
 rcgen = "0.12"                   # Certificate generation
-x509-parser = "0.16"             # Certificate parsing and validation
+x509-parser = "0.18"             # Certificate parsing and validation
 rustls = { version = "0.23" }    # TLS implementation (unified with axum-server 0.7)
 rustls-pemfile = "2.0"           # PEM file parsing (CertificateDer/PrivateKeyDer)
 tokio-rustls = "0.26"            # Async TLS streams (rustls 0.23)
@@ -612,7 +612,7 @@ toml = "0.8"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 proximadb-interner = { path = "crates/foundation/proximadb-interner" }
 proximadb-bloom = { path = "crates/foundation/proximadb-bloom" }
@@ -643,7 +643,7 @@ hostname = "0.3"  # Get hostname for leader election
 # Multi-model storage (Document + Observability)
 tantivy = "0.22"  # Full-text search for documents
 jsonpath-rust = "0.5"  # JSON path queries for document filtering (actively maintained)
-flume = "0.11"  # High-performance MPSC channels for observability
+flume = "0.12"  # High-performance MPSC channels for observability
 
 # PostgreSQL wire protocol compatibility
 pgwire = "0.21"  # PostgreSQL wire protocol for pgvector migration
