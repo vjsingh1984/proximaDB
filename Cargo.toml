@@ -70,6 +70,7 @@ members = [
     "crates/horizontal/proximadb-cross-modal-fusion",
     "crates/horizontal/proximadb-utility-scorer",
     "crates/horizontal/proximadb-auth-sso",
+    "crates/horizontal/proximadb-catapult",
     "crates/platform/proximadb-network-middleware",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-serialization",
@@ -281,6 +282,7 @@ proximadb-audit = { path = "crates/horizontal/proximadb-audit" }
 proximadb-cross-modal-fusion = { path = "crates/horizontal/proximadb-cross-modal-fusion" }
 proximadb-utility-scorer = { path = "crates/horizontal/proximadb-utility-scorer" }
 proximadb-auth-sso = { path = "crates/horizontal/proximadb-auth-sso" }
+proximadb-catapult = { path = "crates/horizontal/proximadb-catapult" }
 proximadb-network-middleware = { path = "crates/platform/proximadb-network-middleware" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
