@@ -384,7 +384,7 @@ jobs:
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt
       - name: Install System Dependencies
@@ -432,7 +432,7 @@ jobs:
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.proto == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           # Match rust-toolchain.toml's declared components + target so `cargo
           # check` doesn't trigger a rustup re-sync that collides installing
@@ -483,7 +483,7 @@ jobs:
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Install System Dependencies
         run: |
           sudo apt-get update
@@ -570,7 +570,7 @@ jobs:
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt
       - name: Install System Dependencies
@@ -652,7 +652,7 @@ jobs:
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Install System Dependencies
         run: |
           sudo apt-get update
@@ -790,7 +790,7 @@ jobs:
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy
       - name: Install System Dependencies
@@ -868,7 +868,7 @@ jobs:
           - { label: "small-crates",         pkg: "proximadb-mongodb-parser proximadb-catalog-introspection", args: "" }
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Install System Dependencies
         # g++ provides libstdc++ for the onnxruntime (ort) build script.
         run: |
@@ -896,7 +896,7 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Run security audit
@@ -986,7 +986,7 @@ jobs:
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust_sdk == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
       - name: Check formatting
@@ -1035,7 +1035,7 @@ jobs:
 
       # Toolchain setup — one branch per matrix cell
       - if: matrix.setup == 'rust'
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.100.0
       - if: matrix.setup == 'rust'
         uses: Swatinem/rust-cache@v2
         with:
@@ -1103,7 +1103,7 @@ jobs:
         kind: [rest, flight]
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Install System Dependencies
         run: |
           sudo apt-get update
@@ -1145,7 +1145,7 @@ jobs:
     if: needs.changes.outputs.spark_jni == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -1320,7 +1320,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1362,7 +1362,7 @@ jobs:
       SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-compile-benches"
@@ -1422,7 +1422,7 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1501,7 +1501,7 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1580,7 +1580,7 @@ jobs:
           # (three-dot, merge-base) resolves across a large develop→main gap.
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1640,7 +1640,7 @@ jobs:
       needs.changes.outputs.object_store_cloud_changes == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Install system deps
         run: |
           sudo apt-get update
@@ -1711,7 +1711,7 @@ jobs:
           sudo swapon /mnt/swapfile-ci
           free -h
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Install system deps
         run: |
           sudo apt-get update
@@ -1755,7 +1755,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-dev"
@@ -1788,7 +1788,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-dev"
@@ -1824,7 +1824,7 @@ jobs:
       RUST_MIN_STACK: "8388608"
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-dev"
@@ -1887,7 +1887,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-dev"
@@ -1919,7 +1919,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-dev"
@@ -1962,7 +1962,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-dev"
@@ -1996,7 +1996,7 @@ jobs:
       SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-coverage"
@@ -2359,7 +2359,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -2400,7 +2400,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -2487,7 +2487,7 @@ jobs:
       (needs.changes.outputs.storage_changes == 'true')
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Install system deps
         run: |
           sudo apt-get update
