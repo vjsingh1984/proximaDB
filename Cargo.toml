@@ -405,6 +405,7 @@ proximadb-audit = { workspace = true }
 proximadb-cross-modal-fusion = { workspace = true }
 proximadb-utility-scorer = { workspace = true }
 proximadb-auth-sso = { workspace = true }
+proximadb-catapult = { workspace = true }
 proximadb-network-middleware = { workspace = true }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
