@@ -46,7 +46,7 @@ twox-hash = "1.6"
 # Serialization for message envelopes + offset metadata
 serde.workspace = true
 serde_json.workspace = true
-bincode = "1.3"
+bincode = "3.0"
 
 # Errors + tracing + metrics
 anyhow.workspace = true
