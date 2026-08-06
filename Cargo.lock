@@ -6767,6 +6767,7 @@ dependencies = [
  "proximadb-rank-profile",
  "proximadb-raptor-common",
  "proximadb-raptor-engine",
+ "proximadb-record-buffer-pool",
  "proximadb-records",
  "proximadb-relational-algebra",
  "proximadb-relational-engine",
@@ -8078,6 +8079,13 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proximadb-record-buffer-pool"
+version = "0.2.0"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]

@@ -194,7 +194,7 @@ pub mod metrics;
 pub mod metrics_integration;
 pub mod orchestrator;
 pub mod performance_optimizer;
-pub mod record_buffer_pool;
+pub use proximadb_record_buffer_pool::record_buffer_pool;
 pub mod specialized;
 pub mod traits;
 pub mod warming;
