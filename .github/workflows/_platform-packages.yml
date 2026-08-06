@@ -51,10 +51,10 @@ jobs:
       built: ${{ steps.build.outputs.success }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Binary from Cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         id: restore
         with:
           path: binary-cache/
@@ -64,7 +64,7 @@ jobs:
 
       - name: Download Binary if Cache Miss
         if: steps.restore.outputs.cache-hit != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binaries-x86_64-unknown-linux-gnu
           path: binary-cache/
@@ -109,7 +109,7 @@ jobs:
 
       - name: Upload RPM Artifact
         if: inputs.upload-artifacts == 'true' && steps.build.outputs.success == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpm-package
           path: "*.rpm"
@@ -117,7 +117,7 @@ jobs:
 
       - name: Save to Cache
         if: steps.build.outputs.success == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: "*.rpm"
           key: rpm-${{ inputs.cache-key }}-${{ github.run_id }}
@@ -132,10 +132,10 @@ jobs:
       built: ${{ steps.build.outputs.success }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Binary from Cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         id: restore
         with:
           path: binary-cache/
@@ -145,7 +145,7 @@ jobs:
 
       - name: Download Binary if Cache Miss
         if: steps.restore.outputs.cache-hit != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binaries-x86_64-unknown-linux-gnu
           path: binary-cache/
@@ -187,7 +187,7 @@ jobs:
 
       - name: Upload DEB Artifact
         if: inputs.upload-artifacts == 'true' && steps.build.outputs.success == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deb-package
           path: "*.deb"
@@ -195,7 +195,7 @@ jobs:
 
       - name: Save to Cache
         if: steps.build.outputs.success == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: "*.deb"
           key: deb-${{ inputs.cache-key }}-${{ github.run_id }}
@@ -210,10 +210,10 @@ jobs:
       built: ${{ steps.build.outputs.success }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Binaries from Cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         id: restore
         with:
           path: binary-cache/
@@ -223,7 +223,7 @@ jobs:
 
       - name: Download Binaries if Cache Miss
         if: steps.restore.outputs.cache-hit != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: binaries-*apple-darwin
           path: binary-cache
@@ -286,7 +286,7 @@ jobs:
 
       - name: Upload DMG Artifact
         if: inputs.upload-artifacts == 'true' && steps.build.outputs.success == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dmg-installer
           path: "*.dmg"
@@ -294,7 +294,7 @@ jobs:
 
       - name: Save to Cache
         if: steps.build.outputs.success == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: "*.dmg"
           key: dmg-${{ inputs.cache-key }}-${{ github.run_id }}
@@ -309,10 +309,10 @@ jobs:
       built: ${{ steps.build.outputs.success }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Binary from Cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         id: restore
         with:
           path: binary-cache/
@@ -322,7 +322,7 @@ jobs:
 
       - name: Download Binary if Cache Miss
         if: steps.restore.outputs.cache-hit != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binaries-x86_64-pc-windows-msvc
           path: binary-cache/
@@ -343,7 +343,7 @@ jobs:
 
       - name: Upload MSI Artifact
         if: inputs.upload-artifacts == 'true' && steps.build.outputs.success == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: msi-installer
           path: "*.msi"
@@ -351,7 +351,7 @@ jobs:
 
       - name: Save to Cache
         if: steps.build.outputs.success == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: "*.msi"
           key: msi-${{ inputs.cache-key }}-${{ github.run_id }}

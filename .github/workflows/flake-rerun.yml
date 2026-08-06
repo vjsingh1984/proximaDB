@@ -33,7 +33,7 @@ jobs:
       github.event.workflow_run.run_attempt == 1
     steps:
       - name: Rerun failed jobs if all failures are runner shutdowns
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const run_id = context.payload.workflow_run.id;
