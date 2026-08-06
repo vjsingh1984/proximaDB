@@ -169,6 +169,7 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_PAX_COALESCE_RANGE` | coalesce max_range override (bytes) | backend profile | ADR-065/073 | `src/storage/engines/sst/segment_format.rs`
 | `PROXIMADB_PAX_DROP_TENANT_COL` | Drops the tenant column from the on-disk PAX block | OFF (`var_os`) | opt-in; — | `crates/storage/proximadb-block-format/src/writer.rs`
 | `PROXIMADB_PAX_F32_TIER` | Emits exact-f32 stripe (Phase D) for exact rerank / include_vectors | OFF (per-collection tag overrides) | opt-in; P3 Phase D | `src/storage/engines/sst/flush/mod.rs`
+| `PROXIMADB_PAX_FILTERED_CASCADE` | Filter-aware cascade: Stage-F metadata row allow-set + row-restricted RaBitQ/SQ8 for filtered PAX queries (vs whole-object exact scan) | OFF (default-OFF-until-baked) | opt-in; ADR-089/TD-FPRUNE-1 P1 | `src/storage/engines/sst/segment_format.rs`
 | `PROXIMADB_PAX_FLUSH_CLUSTER` | Upgrades L0 flush ordering to full PCA+IVF recluster | OFF (`=ivf/pca_ivf/1/...` enables) | eval; TD-WLP-4/WLP-9 | `src/storage/engines/sst/block_cluster.rs`
 | `PROXIMADB_PAX_LOSSLESS_CLUSTERED` | Enables lossless clustered PAX codec path | OFF | eval; — | `src/storage/engines/sst/segment_format.rs`
 | `PROXIMADB_PAX_LOSSLESS_SCALAR` | Enables lossless scalar PAX codec path | OFF | eval; — | `src/storage/engines/sst/segment_format.rs`

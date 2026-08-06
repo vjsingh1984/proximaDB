@@ -407,18 +407,51 @@ impl SstEngine {
         // the in-block RaBitQ cascade below (mixed-read). Any I/O error / `None`
         // also falls through (safe degradation, never an incorrect result).
         //
-        // UNFILTERED only: the coalesced scan ranks by vector distance and does
-        // not apply `filter_expression`, so a filtered query is routed past it to
-        // the exact materialize-and-rank path (which applies the filter) below —
-        // matching the ranged cascade's "unfiltered only" contract.
+        // Filtered queries: with the ADR-089 P1 gate ON, a Stage-F metadata
+        // pre-scan builds a row allow-set and the cascade ranks ONLY matching
+        // rows (row-accurate — same `evaluate_filter_proxima` semantics as the
+        // exact path). Gate OFF (default), a non-coalesced segment, or any
+        // stage-F failure routes the filtered query past the cascade to the
+        // exact materialize-and-rank path below, exactly as before.
         {
-            use crate::storage::engines::sst::segment_format::rabitq_search_segment_coalesced;
+            use crate::storage::engines::sst::segment_format::{
+                pax_filtered_cascade_enabled, pax_filtered_row_allow,
+                rabitq_search_segment_coalesced_allowed,
+            };
+            // ADR-089 / TD-FPRUNE-1 P1: a filtered query builds a predicate
+            // row allow-set from the Region-D metadata (Stage F) and runs the
+            // cascade restricted to matching rows — instead of declining into
+            // the whole-object exact scan. Default-OFF env gate; any stage-F
+            // failure or a non-coalesced segment falls back to the exact path
+            // (fail-safe, never an incorrect result).
+            let row_allow = match filter_expression {
+                Some(filter) if pax_filtered_cascade_enabled() => {
+                    match pax_filtered_row_allow(fs.as_ref(), sstable_path, filter).await {
+                        Ok(Some((allow, _stats))) if allow.is_empty() => {
+                            // Provably zero matching rows in THIS segment —
+                            // an empty per-file result (other segments/WAL
+                            // still contribute via the caller's merge).
+                            return Ok(Some(Vec::new()));
+                        }
+                        Ok(Some((allow, _stats))) => Some(allow),
+                        Ok(None) => None, // non-coalesced → exact fallback
+                        Err(e) => {
+                            tracing::warn!(
+                                "stage-F row allow-set failed for {sstable_path} \
+                                 (falling back to exact scan): {e}"
+                            );
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
             // ADR-065: call the coalesced path directly — it reads the 56 B
             // header-prefix internally (cached) + returns Ok(None) for a non-
             // coalesced segment, so no separate 4 B magic-detection GET is needed
             // (collapses the redundant offset-0 prefix read the FS trace found).
-            if filter_expression.is_none() {
-                let coalesced_hits = rabitq_search_segment_coalesced(
+            if filter_expression.is_none() || row_allow.is_some() {
+                let coalesced_hits = rabitq_search_segment_coalesced_allowed(
                     fs.as_ref(),
                     sstable_path,
                     query_vector,
@@ -426,6 +459,7 @@ impl SstEngine {
                     rank_metric,
                     self.segment_invariants_cache.as_deref(),
                     self.survivor_cache.as_deref(),
+                    row_allow.as_ref(),
                 )
                 .await?;
                 if let Some(hits) = coalesced_hits {
