@@ -35,7 +35,6 @@ pub mod compression_common;
 pub mod performance_optimization;
 
 // Import common types used across the module
-use proximadb_filter_expression::FilterExpression;
 
 /// Backwards-compat alias for [`CoreOpsFilterableColumn`].
 pub type FilterableColumn = CoreOpsFilterableColumn;
@@ -205,7 +204,6 @@ pub use crate::storage::engines::core::search::search_common::{
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::proto::proximadb_v1::VectorRecord;
 use proximadb_distance_kernel::DistanceMetric;
 use proximadb_hardware_caps::HardwareCapabilities;
 
@@ -608,41 +606,6 @@ pub struct CoreOpsPerformanceProfile {
     pub memory_overhead_percent: f32,
     pub storage_overhead_percent: f32,
     pub cpu_efficiency_score: f32,
-}
-
-/// Universal engine operations trait
-#[allow(async_fn_in_trait)]
-pub trait UniversalEngineOperations {
-    /// Core CRUD operations
-    async fn insert_vectors(&self, vectors: Vec<VectorRecord>) -> Result<Vec<String>>;
-    async fn get_vectors(&self, ids: &[String]) -> Result<Vec<Option<VectorRecord>>>;
-    async fn update_vectors(&self, updates: Vec<(String, VectorRecord)>) -> Result<usize>;
-    async fn delete_vectors(&self, ids: &[String]) -> Result<usize>;
-
-    /// Search operations
-    async fn search_vectors(
-        &self,
-        query: &[f32],
-        top_k: usize,
-        filter: Option<FilterExpression>,
-    ) -> Result<Vec<VectorRecord>>;
-
-    /// Batch operations
-    // Deferred: Restore when BatchResult is available
-    // async fn batch_insert(&self, vectors: Vec<VectorRecord>) -> Result<BatchResult>;
-    async fn batch_search(
-        &self,
-        queries: &[Vec<f32>],
-        top_k: usize,
-        filter: Option<FilterExpression>,
-    ) -> Result<Vec<Vec<VectorRecord>>>;
-
-    /// Administrative operations
-    async fn optimize(&self) -> Result<()>;
-    async fn compact(&self) -> Result<()>;
-    // Deferred: Restore when UniversalStatistics is available
-    // async fn get_statistics(&self) -> Result<UniversalStatistics>;
-    async fn health_check(&self) -> Result<HealthStatus>;
 }
 
 /// Engine health status

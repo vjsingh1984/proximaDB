@@ -183,18 +183,61 @@ Retiring that first is **zero disk risk**, lowers the ratchet immediately, and i
 durable-path retirement (which can only complete once legacy `.sst` segments are aged out by
 compaction). Migrating the durable read seam first would touch the highest-risk path for no ratchet gain.
 
-== Phased roadmap (this TD = Slice 1)
+== Phased roadmap
 
-. **S1 (this TD):** internal-only cluster (`core/pca`) + reusable round-trip/recall harness.
-. **S2–Sn:** fan internal migration out per engine/subsystem (viper pipeline, sst compaction, nova,
-  helix, …), each landing green and lowering the ratchet. Independent, parallelizable across worktrees
-  (disjoint files).
-. **S-durable:** convert the legacy SST1 **read seam** to return `ProximaRecord` at the boundary
-  (decode `VectorRecord` → `From` → `ProximaRecord`), mixed-read-safe; resolve OQ-1 and retire
-  `SstEntry::serialize` (`mod.rs:551`/`:924`) if dead.
+NOTE: Superseded 2026-08-06 by the measured surface map — see <<revised-roadmap>>. The original
+sequencing is kept below for provenance. Its two errors: it nominated `core/pca` as the first
+slice (OQ-2 shows it is mid-coupling, not lowest), and it carried an `S-durable` phase that has
+no subject (there is no durable v1 read surface — see the RETRACTED warning above).
+
+[.line-through]
+. *S1 (this TD): internal-only cluster (`core/pca`) + reusable round-trip/recall harness.*
+. *S2–Sn: fan internal migration out per engine/subsystem …*
+. *S-durable: convert the legacy SST1 read seam …*
+. *S-net / Sunset: as below (these two remain valid).*
+
+[[revised-roadmap]]
+=== Revised roadmap (measured 2026-08-06)
+
+The surface is **575 real code refs / 103 files** — and `VectorRecord` is **already fully
+evicted from the upper half of the system**: `src/query`, `graph`, `network`, `core`,
+`datafusion`, `streaming`, `index` and every `crates/*-ports` crate are at **zero**. What
+remains is essentially one subsystem, `src/storage/engines/*`, plus the raptor crates.
+
+Those refs are not independent. They sit downstream of a **sandwich**: canonical records enter,
+are **downgraded at flush** by five `.map(proxima_record_to_vector)` sites, live as
+`VectorRecord` inside the engine, and are **upgraded again at read**. Everything between is
+transient usage that exists only because the engine was handed a v1 record. So the slicing is
+**vertical (per engine)**, not horizontal — and slices stay in disjoint files, so they
+parallelise across worktrees.
+
+. **S0 (this PR):** free deletions — dead traits `UniversalEngineOperations` (0 implementors)
+  and `NovaOperations` (0 implementors), `helix/zone_maps.rs` (0 external references),
+  `swift::build_blocks_from_records` (0 callers), and the dead `fast_parse_data_block` +
+  commented-out `REMOVED_read_data_blocks_from_sstable` corpse in `compaction.rs`.
+. **S1:** the reusable harness **alone** — a *composed* `VectorRecord → ProximaRecord →
+  VectorRecord` round-trip test (none exists today; every current test is a one-hop spot
+  check), asserting each documented lossy edge loses exactly what is documented; plus the
+  OQ-4 `tenant_id` audit.
+. **S2:** shared test fixtures (`tests/common/test_data.rs`,
+  `tests/common/integration_test_helpers.rs`) — the generators feeding most of the ~231
+  test-side refs; converting them unblocks the test tail in one move.
+. **S3–S5:** vertical per-engine slices, ascending blast radius — HELIX, then NOVA, then
+  VIPER/SWIFT/TST/RAPTOR — each removing its downgrade `.map()`, converting the now-mechanical
+  interior, and removing its upgrade-at-read. `core/pca` follows, with its five façades and
+  `tests/spatial_clustering_test.rs` budgeted.
+. **S6:** cross-crate public API — `proximadb-raptor-engine::{scan_vectors_with_strategy,
+  write_vectors}` and `proximadb-raptor-common::RowGroup.vectors` (contained: raptor is behind
+  `experimental-engines`).
+. **S7:** the remaining traits (`SearchableBlock`, `StorageEngineAdapter`) and the output-side
+  downgrade described in <<s-durable-retired>>.
 . **S-net:** migrate the v2-network shims (Bucket D) off `VectorRecord`/`SearchVectorRecord`.
-. **Sunset:** after TD-V1SUNSET-1's REST/gRPC hard-delete, retire the v1 proto `VectorRecord` message
-  (with TD-121/TD-123), once no legacy `.sst` segment and no live v1 caller remains.
+. **Sunset:** after TD-V1SUNSET-1's REST/gRPC hard-delete, retire the v1 proto `VectorRecord`
+  message (with TD-121/TD-123), once no live v1 caller remains.
+
+Out of scope throughout: the generated prost wire types (`proximadb.streaming.v1`,
+`proximadb.cluster.v1`) embed `Vec<VectorRecord>`. Per ADR-024 those are versioned wire edges —
+changing them is a `.proto` + wire-compat decision, not a Rust refactor.
 
 [[reconciliation-2026-08-05]]
 == Reconciliation (2026-08-05) — audit vs `develop`, and the `SstEntry` retirement
@@ -265,10 +308,66 @@ pure subtraction with no format risk:
   `tests/rust/storage/` has no `mod.rs` at all, so both `test_expired_record_*.rs`
   were orphaned. Deleted as dead weight.
 
-CAUTION for the remaining slices: "no production callers" did **not** mean "no
-durable surface". The durable read path survived `SstEntry`'s death because it
-lives in `compaction.rs`. S-durable is still a mixed-read-safe change, and
-mandate #8 still applies to it.
+[WARNING]
+====
+**RETRACTED 2026-08-06 — the CAUTION printed here was wrong.**
+
+It read: *"'no production callers' did not mean 'no durable surface'. The durable
+read path survived `SstEntry`'s death because it lives in `compaction.rs`.
+S-durable is still a mixed-read-safe change, and mandate #8 still applies to it."*
+
+**There is no durable v1 read surface.** Verified directly on `develop`:
+
+* `fast_parse_data_block` (`compaction.rs:2911`) carried `#[allow(dead_code)]` and had
+  **zero callers** — the only two references in the whole repo were its own definition
+  and a `debug!` format string. Its sole historical caller,
+  `REMOVED_read_data_blocks_from_sstable`, was entirely inside a block comment.
+* Its `BLK1` block magic appeared **nowhere else in the tree** — no writer, no reader,
+  no router emitted or dispatched on it, so nothing could produce bytes it would accept.
+* The **live** compaction read path was already fully v2:
+  `read_all_records_from_file_unified` (`compaction.rs:3048`) returns
+  `Vec<ProximaRecord>`; `.pax` inputs route to `segment_format::read_segment_records`,
+  everything else to `SstQueryEngine::read_all_records_for_compaction` — both v2.
+
+Both dead blocks are now **deleted** (this PR).
+
+**Consequence: mandate #8 does not apply to this migration.** There is no legacy on-disk
+`VectorRecord` decode to keep mixed-read-safe — so no magic byte, no env gate, no
+default-OFF rollout, and **no `S-durable` phase** as this TD describes it. See
+<<s-durable-retired>>.
+
+How the error happened, recorded because the failure mode is the interesting part: having
+nearly mis-inferred "no callers ⇒ no durable surface" for `SstEntry` and correctly caught
+it, the opposite assumption was then made about the surviving decode — that it *must* be
+live — without running the same caller check. **Verify liveness in both directions; a
+`grep` that finds a decoder proves the code exists, not that anything calls it.**
+====
+
+[[s-durable-retired]]
+=== S-durable is retired; the real remaining compaction seam points the other way
+
+What actually remains in `compaction.rs` is not a v1→v2 *read* but a gratuitous **v2→v1
+downgrade on the output side**, through the lossy bridge, serving consumers that already
+take v2:
+
+[source,rust]
+----
+// compaction.rs — `records` are ALREADY ProximaRecord (post-MvccResolver)
+MergedVectorTracking::Enabled => records.iter()
+    .filter(|r| !r.embeddings.is_empty())
+    .map(VectorRecord::from)          // lossy downgrade, no v1 consumer
+    .collect(),
+----
+
+Both consumers are already `&[ProximaRecord]`: `storage/common/axis_flush_hook.rs` and
+`storage/persistence/write_ahead_log/compaction_axis_integration.rs`.
+
+It is not merely redundant. `.to_fp32_owned()` force-promotes fp16/int8 to f32, colliding
+with `SstCompactionTask::precision_hint`, whose whole purpose is coercing embedding
+precision; and the ns→ms integer division truncates sub-millisecond ordering while
+`MvccResolver` and the tombstone/expiry comparisons alongside it operate at **ns**
+granularity. Fixing it means typing `merged_vectors` as `Vec<ProximaRecord>` and deleting
+the `.map(VectorRecord::from)` — no production consumer changes.
 
 == Open questions (resolve at slice execution — probe, don't assume)
 
@@ -278,7 +377,22 @@ mandate #8 still applies to it.
   `apps/`). Its companion `SstMetadata` was used solely by it. Both were deleted — this executed the
   "retire `SstEntry::serialize` if dead" branch of S-durable ahead of the rest of that slice, since
   it is pure subtraction. See <<reconciliation-2026-08-05>>.
-* **OQ-2:** Confirm `core/pca` is the lowest-coupling leaf (vs. another candidate) via the same probe.
+* **OQ-2 — ✅ RESOLVED 2026-08-06: `core/pca` is NOT the lowest-coupling leaf, and its path in
+  this TD is wrong.** The path is `src/storage/engines/core/pca`, not `src/core/pca`. It is
+  mid-coupling, not lowest: its `&[VectorRecord]` methods are re-exported through **five**
+  façades (`core/mod.rs`, `sst/pca_manager.rs`, `swift/pca_manager.rs`,
+  `helix/pca_manager.rs`, `helix/pca_impl.rs`) and have live callers including the
+  **out-of-crate** `tests/spatial_clustering_test.rs`, so a signature change breaks a test
+  crate. Lower-coupling candidates, measured: `helix/zone_maps.rs` (zero references anywhere
+  outside its own file — deleted in this PR rather than migrated),
+  `core/ops/mod.rs::UniversalEngineOperations` (zero implementors — deleted),
+  `helix/liquid_clustering.rs` (one caller), `tst/asof_join.rs` (two callers). The revised
+  slice order puts the **whole HELIX clustering cluster** first and `core/pca` after it, with
+  the five façades and the out-of-crate test explicitly budgeted.
+* **OQ-4 (new):** Does any live path convert `VectorRecord → ProximaRecord` and then read
+  `tenant_id`? The bridge sets it to `String::new()`. Under mandate #3 (isolation is
+  structural, never a per-query predicate) that would be a tenant-isolation bug, not a
+  cosmetic loss. Audit before migrating anything — this is now slice 1's first task.
 * **OQ-3:** Does any live READ path surface **raw** `VectorRecord` to the compute layer
   (SQL/pgwire/DataFusion), or is it always bridged to `ProximaRecord` before compute? If always bridged,
   S-durable is cheap; if not, it must precede the v1 proto retirement.

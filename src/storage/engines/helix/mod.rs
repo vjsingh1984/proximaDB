@@ -117,7 +117,6 @@ pub mod unified_metadata_serializer {
     pub use crate::storage::engines::core::proximablocks_format_serializer::*;
 }
 pub mod proximablocks_strategy_reader;
-pub mod zone_maps;
 
 use crate::core::search::SearchMode;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
