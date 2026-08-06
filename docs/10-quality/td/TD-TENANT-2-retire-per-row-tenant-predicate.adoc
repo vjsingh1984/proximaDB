@@ -87,9 +87,38 @@ through the in-memory layer too, and the predicate becomes genuinely redundant.
   and as defense-in-depth; the point is that **reads must not depend on comparing it**.
 * Changing object-store path layout — that half is already correct.
 
+== Addendum (2026-08-06) — cross-tenant sharing sharpens, not weakens, this TD
+
+link:../../12-design/adr/ADR-090-identity-grants-and-byob-storage.adoc[ADR-090] (Proposed)
+adds a requirement this TD's original framing did not anticipate: **a tenant must be able
+to share a collection with another tenant/user** via a catalog-seam `Grant`, evaluated
+once at open/plan time.
+
+Two corrections to this TD's framing follow:
+
+. *"A collection belongs to exactly one tenant"* stands for **ownership** (path, billing,
+  residency) but was over-read as also bounding **access**. The corrected model:
+  **ownership is structural; access is granted.** Within-collection and cross-tenant
+  access are both ABAC decisions on catalog metadata (ADR-090 L1), with row-level
+  predicates at read time (L2).
+. The per-row predicate this TD retires is not merely redundant once ADR-0083 D2 lands —
+  **sharing requires its retirement.** A shared read is by definition a foreign-tenant
+  read; `record.tenant_id == ctx.tenant_id` would return zero rows for every legitimate
+  grantee. The predicate is therefore incompatible with the target model, not just
+  inferior to it.
+
+Sequencing is unchanged and still mandatory: ADR-0083 D2 re-keying **first** (the
+predicate is load-bearing in the string-keyed WAL/memtable layer until then), retirement
+second — now executed as part of ADR-090 L1/L2 (tracker: TD-AUTHZ-1) rather than as a
+standalone step. The regression test this TD calls for (two tenants, same-named
+collections, no cross-observation) remains required and gains a sibling: a granted read
+**must** observe the shared rows.
+
 == Deps
 
 * Blocked by: ADR-0083 D2 re-keying (WAL/memtable/admission on the composite).
+* Superseded-in-part by: ADR-090 L1/L2 (grants + predicate retirement); program tracker
+  TD-AUTHZ-1.
 * Related: CLAUDE.md mandate #3 (structural isolation); ADR-0083 (composite identity);
   TD-TENANT-1 (header trust policy); the ABAC push-down that owns row-level access.
 * Discovered while auditing OQ-4 of
