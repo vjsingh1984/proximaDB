@@ -69,7 +69,14 @@ pub use proximadb_security::{AuditConfig, AuditStorageBackend};
 use anyhow::Result;
 
 /// Initialize security subsystem with configuration
-pub async fn initialize_security(config: SecurityConfig) -> Result<SecurityCoordinator> {
+/// Initialize the security subsystem with the ADR-090 identity registry
+/// opened at `identity_dir` (canonically `<data_dir>/identity`, beside
+/// `<data_dir>/abac`). Registry open failure is FAIL-CLOSED: a security-enabled
+/// boot aborts rather than silently running without the durable key store.
+pub async fn initialize_security_with_identity(
+    config: SecurityConfig,
+    identity_dir: Option<std::path::PathBuf>,
+) -> Result<SecurityCoordinator> {
     // Create consolidated RBAC manager
     let rbac_config = RBACConfig {
         enabled: config.rbac.enabled,
@@ -83,7 +90,19 @@ pub async fn initialize_security(config: SecurityConfig) -> Result<SecurityCoord
     let rbac_manager = ConsolidatedRBACManager::new(rbac_config);
 
     // Create unified auth service
-    let auth_service = UnifiedAuthService::new(config.authentication.clone())?;
+    let mut auth_service = UnifiedAuthService::new(config.authentication.clone())?;
+    if let Some(dir) = identity_dir {
+        let registry =
+            proximadb_catalog::principal_registry::FileSystemPrincipalRegistry::open(&dir)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "failed to open principal registry at {}: {e}",
+                        dir.display()
+                    )
+                })?;
+        auth_service.set_principal_registry(std::sync::Arc::new(registry));
+        tracing::info!(dir = %dir.display(), "principal registry attached (ADR-090 L0)");
+    }
 
     // Create audit logger from the shared audit configuration contract.
     let audit_logger = AuditLogger::new(config.audit.clone()).await?;
@@ -93,4 +112,9 @@ pub async fn initialize_security(config: SecurityConfig) -> Result<SecurityCoord
         SecurityCoordinator::new(auth_service, rbac_manager, audit_logger, config);
 
     Ok(security_coordinator)
+}
+
+/// Back-compat initializer without an identity registry (tests, embedded).
+pub async fn initialize_security(config: SecurityConfig) -> Result<SecurityCoordinator> {
+    initialize_security_with_identity(config, None).await
 }
