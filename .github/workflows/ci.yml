@@ -415,6 +415,12 @@ jobs:
         run: python3 scripts/check_mvp_trust_corridor.py
       - name: Test canonical MVP smoke client
         run: python3 -m unittest discover -s tests/scripts -p 'test_mvp_smoke.py'
+      # Guards the touched-crate fast lane's cost invariant (see the
+      # rust-affected-fast job header): the monolith-dependent closure must keep
+      # excluding crates whose graph pulls in the root crate. Pure-python, no
+      # toolchain needed.
+      - name: Test affected-crate selection
+        run: python3 -m unittest discover -s tests/scripts -p 'test_affected_crates.py'
       - name: Validate context-corridor benchmark contract
         run: make context-benchmark-check
 
@@ -1565,6 +1571,27 @@ jobs:
   # where it pays off — more so as TD-DECOMP-1 follow-ups move logic DOWN into
   # leaf crates. rust-cache only (no sccache): leaf crates are small, and sccache
   # adds the #920 OOM risk for no gain at this scale.
+  #
+  # SKIPPING THE ROOT CRATE BY NAME IS NOT ENOUGH (fixed here). `-p <crate>`
+  # compiles that crate's WHOLE dependency graph, and 8 workspace members
+  # path-depend on the root monolith (the 3 crates/binding/* bindings, the 4
+  # apps/*, and clients/rust `proximadb-sdk` via a non-optional
+  # `proximadb-embedded`). So a diff touching e.g. proximadb-embedded selected
+  # `-p proximadb-embedded` and dragged the entire monolith back in — the exact
+  # cost this lane exists to avoid. Measured: such runs compiled 600+ third-party
+  # crates from cold and were still on tantivy/tokenizers/lalrpop when the
+  # timeout killed them, burning a full runner slot for ZERO signal (~39% of the
+  # runs that actually ran, all at the timeout wall). The cache could never
+  # amortize it either: rust-cache saves only on success, and the ONLY cache a
+  # PR can inherit — the develop-branch one — is written by develop pushes where
+  # `git diff origin/develop...HEAD` is empty by construction, so that cache
+  # holds a cargo registry and no compiled artifacts. Every real run therefore
+  # started at "No cache found."
+  # The fix is to make the selection honor the lane's own name: exclude the root
+  # monolith AND its transitive workspace dependents (9 of 124 crates; 115 stay
+  # eligible), so this lane only ever compiles genuinely cheap graphs. The 9
+  # excluded crates remain covered by the required rust-test job; they become
+  # eligible again as TD-DECOMP-1 moves logic out of the monolith.
   # ============================================================================
   rust-affected-fast:
     name: Rust touched-crate fast check (advisory)
@@ -1572,7 +1599,11 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true        # advisory — never a merge gate (also not in ci-success.needs)
-    timeout-minutes: 15
+    # 10m is a CANARY, not a budget: with the selection fixed this lane is a
+    # cheap leaf compile (observed 58-165s from cold), so ~4x headroom. If a
+    # future dependency edge makes a "leaf" crate heavy again, we want to find
+    # out after 10 wasted minutes, not 15.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1586,6 +1617,10 @@ jobs:
         with:
           prefix-key: "v1-rust-affected-fast"
           shared-key: "build"
+          # A genuine test/compile FAILURE here is the signal this lane exists to
+          # give; saving its (small, leaf-only) target/ means the fix push on the
+          # same PR rebuilds warm instead of repeating the cold compile.
+          cache-on-failure: true
 
       - name: Install Dependencies
         run: |
@@ -1598,26 +1633,22 @@ jobs:
       - name: Affected-only fast unit check
         run: |
           set -euo pipefail
-          pkgs="$(python3 scripts/affected_crates.py origin/develop)"
-          [ -n "$pkgs" ] || { echo 'No crate source changed — skipping.'; exit 0; }
-          # Bare positionals to cargo/nextest are TEST-NAME FILTERS, not package
-          # selectors — turn the space-separated list into -p args. Skip the root
-          # crate (proximadb): a src/** edit maps to it, but compiling its lib is
-          # redundant with rust-test and OOM-prone here (see job header).
-          root_seen=no
-          pkg_args=""
-          for p in $pkgs; do
-            if [ "$p" = "proximadb" ]; then
-              root_seen=yes
-            else
-              pkg_args="$pkg_args -p $p"
-            fi
-          done
-          [ "$root_seen" = "yes" ] && echo "Root crate 'proximadb' changed — covered by the required rust-test job; not re-run in this fast lane."
-          if [ -z "$pkg_args" ]; then
-            echo 'Only the root crate (or nothing leaf) changed — nothing fast to check here.'
+          # --exclude-dependents-of proximadb drops the root monolith AND every
+          # workspace member that transitively depends on it (see job header):
+          # `-p X` compiles X's whole dependency graph, so those crates are never
+          # cheap here. They stay covered by the required rust-test job. The
+          # script names the dropped crates on stderr, so the log still says why.
+          pkgs="$(python3 scripts/affected_crates.py --exclude-dependents-of proximadb origin/develop)"
+          if [ -z "$pkgs" ]; then
+            echo 'No eligible leaf crate changed — nothing fast to check here.'
             exit 0
           fi
+          # Bare positionals to cargo/nextest are TEST-NAME FILTERS, not package
+          # selectors — turn the space-separated list into -p args.
+          pkg_args=""
+          for p in $pkgs; do
+            pkg_args="$pkg_args -p $p"
+          done
           echo "Affected leaf crates:$pkg_args"
           cargo nextest run --lib --profile unit $pkg_args
 

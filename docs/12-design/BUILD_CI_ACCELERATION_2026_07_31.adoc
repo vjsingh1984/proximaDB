@@ -91,6 +91,37 @@ leaf-crate edits (more hits as L1/L1-follow-up move logic down). Companion:
 derive `CARGO_BUILD_JOBS` from runner RAM per lane (leaf lanes can raise it above
 the monolith's jobs=1 — small crates don't OOM).
 
+==== D4 post-implementation correction (2026-08-06)
+
+The lane as shipped skipped the root `proximadb` crate *by name*, which is not
+sufficient: `-p <crate>` compiles that crate's whole dependency graph, and nine
+workspace members (`proximadb` + the three `crates/binding/*`, the four
+`apps/*`, and `clients/rust`'s `proximadb-sdk` via a non-optional
+`proximadb-embedded`) transitively pull the monolith back in. A diff touching
+any of them selected e.g. `-p proximadb-sdk -p proximadb-embedded` and compiled
+600+ third-party crates from cold until the 15-minute timeout killed the job.
+
+Measured over 80 consecutive `ci.yml` runs: 40 skipped, 18 green (58–165s), one
+genuine failure (354s — real signal), and **12 cancelled, 8 of them at exactly
+915–917s — the timeout wall**. So ~39% of the runs that actually ran burned a
+full runner slot for zero signal.
+
+The cache could not amortize it, and structurally never will: `rust-cache` saves
+only on success, so timed-out runs never save; and the only cache a PR can
+inherit — the `develop`-branch one — is written by `develop` pushes, where
+`git diff origin/develop...HEAD` is empty by construction, so the job exits
+having compiled *nothing* and stores a cargo registry with no `target/`
+artifacts. Both the timed-out PR runs and the `develop` push runs log
+`No cache found.`
+
+Fix: `affected_crates.py --exclude-dependents-of proximadb` excludes the
+monolith *and its transitive workspace dependents* (9 of 124 crates; 115 stay
+eligible), so the lane only ever compiles genuinely cheap graphs. Timeout
+tightened 15m → 10m as a canary (~4x headroom over the observed 165s worst
+case). Closure regressions are guarded by `tests/scripts/test_affected_crates.py`.
+The nine excluded crates stay covered by the required `rust-test` job and become
+eligible again as TD-DECOMP-1 moves logic out of the monolith.
+
 === L4 / D5 — deployment shapes  (additive feature bundles — document + validate)
 
 The shapes already exist as Cargo feature bundles (no cfg-divergent impls). This
