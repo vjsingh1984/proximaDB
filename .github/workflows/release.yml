@@ -137,7 +137,7 @@ jobs:
       dry_run: ${{ steps.version.outputs.dry_run }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Extract Version
         id: version
@@ -242,10 +242,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -342,7 +342,7 @@ jobs:
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}.zip" >> $env:GITHUB_ENV
 
       - name: Upload Binary Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: binaries-${{ matrix.target }}
           path: |
@@ -366,10 +366,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -388,7 +388,7 @@ jobs:
       #     python -m build --sdist --outdir dist
 
       - name: Upload sdist Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -406,10 +406,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download Binary Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binaries-x86_64-unknown-linux-gnu
           path: binary
@@ -450,7 +450,7 @@ jobs:
             rpm_build/=/
 
       - name: Upload RPM Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpm-package
           path: "*.rpm"
@@ -462,10 +462,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download Binary Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binaries-x86_64-unknown-linux-gnu
           path: binary
@@ -507,7 +507,7 @@ jobs:
             deb_build/=/
 
       - name: Upload DEB Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deb-package
           path: "*.deb"
@@ -524,10 +524,10 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download Binary Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binaries-x86_64-pc-windows-msvc
           path: binary
@@ -555,7 +555,7 @@ jobs:
           wix build -d "Version=$VERSION" -o "proximadb-$VERSION-x64.msi" deploy\packaging\wix\proximadb.wxs
 
       - name: Upload MSI Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: msi-installer
           path: "*.msi"
@@ -576,7 +576,7 @@ jobs:
       artifact_report: ${{ steps.validate.outputs.report }}
     steps:
       - name: Download All Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -777,10 +777,10 @@ jobs:
     if: needs.prepare.outputs.dry_run != 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download All Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -891,7 +891,7 @@ jobs:
           EOF
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.prepare.outputs.version }}
           name: ProximaDB v${{ needs.prepare.outputs.version }}
@@ -939,21 +939,21 @@ jobs:
           echo "=============================================="
 
       - name: Download Wheel Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: wheel-*
           path: dist
           merge-multiple: true
 
       - name: Download Embedded Wheel Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: embedded-wheel-*
           path: embedded-dist
           merge-multiple: true
 
       - name: Download sdist Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sdist
           path: sdist
@@ -1026,14 +1026,14 @@ jobs:
           echo "=============================================="
 
       - name: Download Wheel Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: wheel-*
           path: dist
           merge-multiple: true
 
       - name: Download sdist Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sdist
           path: sdist
@@ -1086,10 +1086,10 @@ jobs:
           echo "=============================================="
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           toolchain: stable
 
@@ -1127,7 +1127,7 @@ jobs:
     if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Generate Homebrew Formula
         run: |
@@ -1183,7 +1183,7 @@ jobs:
           EOF
 
       - name: Upload Homebrew Formula
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: homebrew-formula
           path: proximadb.rb
@@ -1202,7 +1202,7 @@ jobs:
     if: needs.prepare.outputs.dry_run == 'true'
     steps:
       - name: Download All Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -1328,7 +1328,7 @@ jobs:
         run: sleep 60
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -1338,7 +1338,7 @@ jobs:
           python -c "import proximadb; print(f'ProximaDB version: {proximadb.__version__}')" || true
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           toolchain: stable
 
@@ -1367,7 +1367,7 @@ jobs:
           echo "  Validation: ${{ needs.validate-artifacts.outputs.validation_passed }}"
 
       - name: Delete Workflow Artifacts
-        uses: geekyeggo/delete-artifact@v5
+        uses: geekyeggo/delete-artifact@v6
         with:
           name: |
             binaries-*
