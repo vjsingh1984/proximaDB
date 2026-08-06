@@ -65,6 +65,9 @@ jobs at 3 for OOM safety — don't override upward.
 cargo check-fast                      # alias: cargo check --all-targets — tightest inner loop
 cargo build                           # dev build
 cargo build --profile release-server  # optimized server binary (make build-server)
+# sccache: `scripts/worktree.sh new` wires it for ITS OWN launches, but DIRECT cargo calls
+# (cargo check/build/clippy invoked here) do NOT inherit it — prefix or `export RUSTC_WRAPPER=sccache`
+# to reuse the shared cache (cold rebuild ~30min -> ~4min):  RUSTC_WRAPPER=sccache cargo check -p <crate>
 ```
 
 ### Test (nextest preferred — process-per-test isolation; install: make install-fast-tools)
