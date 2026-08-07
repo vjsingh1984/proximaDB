@@ -960,3 +960,176 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+// ===========================================================================
+// ADR-090 grants admin (TD-AUTHZ-1) — provision/list/revoke the entitlement
+// layer. Same doctrine as the policy endpoints above: operator-gated, 503 when
+// the durable store is absent, tenants arrive as STRINGS and resolve through
+// the catalog resolver (fail-closed on unminted tenants), writes are
+// hot-visible to the live enforcer through the shared Arc.
+// ===========================================================================
+
+/// Grantee as provisioned over the wire: a tenant-wide share, or one user of
+/// a (possibly foreign) tenant. Tenants are strings here; stable ids are
+/// resolved server-side — clients never supply raw stable ids.
+#[derive(Debug, serde::Deserialize)]
+pub struct GrantGranteeRequest {
+    pub tenant: String,
+    #[serde(default)]
+    pub subject: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PostGrantRequest {
+    /// The RESOURCE OWNER tenant (string; resolved + must be minted).
+    pub owner_tenant: String,
+    pub resource: proximadb_catalog::fc_metamodel::Scope,
+    pub grantee: GrantGranteeRequest,
+    pub actions: std::collections::BTreeSet<proximadb_catalog::grants::GrantAction>,
+    #[serde(default)]
+    pub predicate_ref: Option<ObjectId>,
+    #[serde(default)]
+    pub field_mask: Option<proximadb_catalog::fc_metamodel::FieldMask>,
+    #[serde(default)]
+    pub expires_at_ms: Option<i64>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PostGrantResponse {
+    pub grant_id: String,
+    pub owner_tenant_stable_id: u64,
+}
+
+/// Like [`unavailable`] but for a runtime message (store errors carry dynamic
+/// detail); `unavailable` deliberately takes `&'static str` so fixed messages
+/// cannot accidentally interpolate request data.
+fn store_unavailable(
+    error: &'static str,
+    message: String,
+) -> (StatusCode, Json<OperatorErrorResponse>) {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(OperatorErrorResponse {
+            error,
+            message,
+            code: 503,
+        }),
+    )
+}
+
+fn require_grant_store(
+    state: &AppState,
+) -> Result<
+    &Arc<proximadb_catalog::grants::FileSystemGrantStore>,
+    (StatusCode, Json<OperatorErrorResponse>),
+> {
+    state.abac_grant_store.as_ref().ok_or_else(|| {
+        unavailable(
+            "abac_unavailable",
+            "ADR-090 grant store is not available (abac-policy off or no data_dir)",
+        )
+    })
+}
+
+/// `POST /api/v2/abac/grants` — provision a grant. Both the owner tenant and
+/// the grantee tenant must resolve (fail-closed on unminted tenants); the
+/// grantee MAY be a foreign tenant — that is the point of grants (ADR-090 L1).
+/// The grantee SUBJECT is deliberately NOT validated against the principal
+/// registry: a share may be provisioned before its recipient's first login.
+pub async fn post_grant(
+    user_context: Option<Extension<UnifiedUserContext>>,
+    State(state): State<AppState>,
+    Json(body): Json<PostGrantRequest>,
+) -> Result<Json<PostGrantResponse>, (StatusCode, Json<OperatorErrorResponse>)> {
+    let user_id = authorize_operator(user_context.as_ref().map(|e| &e.0))?;
+    let store = require_grant_store(&state)?;
+    let resolver = CatalogTenantStableIdResolver::new(state.catalog_manager.clone());
+    let owner = ensure_tenant(&resolver, &body.owner_tenant)
+        .await
+        .map_err(map_provision_err)?;
+    let grantee_tenant = ensure_tenant(&resolver, &body.grantee.tenant)
+        .await
+        .map_err(map_provision_err)?;
+    let grantee = match &body.grantee.subject {
+        Some(subject) if !subject.trim().is_empty() => proximadb_catalog::grants::Grantee::User {
+            tenant_stable_id: grantee_tenant,
+            subject: proximadb_catalog::fc_metamodel::SubjectId(subject.clone()),
+        },
+        _ => proximadb_catalog::grants::Grantee::Tenant(grantee_tenant),
+    };
+    let grant_id = store
+        .grant(
+            owner,
+            body.resource,
+            grantee,
+            body.actions,
+            body.predicate_ref,
+            body.field_mask,
+            body.expires_at_ms,
+        )
+        .map_err(|e| store_unavailable("grant_store_error", e.to_string()))?;
+    tracing::info!(
+        target: "proximadb.abac_policy.audit",
+        operator = %user_id,
+        owner_tenant = %body.owner_tenant,
+        grantee_tenant = %body.grantee.tenant,
+        grant_id = %grant_id,
+        action = "provision_grant",
+        "ADR-090 grant provisioned"
+    );
+    Ok(Json(PostGrantResponse {
+        grant_id,
+        owner_tenant_stable_id: owner,
+    }))
+}
+
+/// `GET /api/v2/abac/grants/{owner_tenant}` — list an owner's grants (revoked
+/// grants stay listed with `revoked_at_ms` set — the audit trail is the point).
+pub async fn list_grants(
+    user_context: Option<Extension<UnifiedUserContext>>,
+    State(state): State<AppState>,
+    Path(owner_tenant): Path<String>,
+) -> Result<
+    Json<Vec<proximadb_catalog::grants::GrantRecord>>,
+    (StatusCode, Json<OperatorErrorResponse>),
+> {
+    authorize_operator(user_context.as_ref().map(|e| &e.0))?;
+    let store = require_grant_store(&state)?;
+    let resolver = CatalogTenantStableIdResolver::new(state.catalog_manager.clone());
+    let owner = ensure_tenant(&resolver, &owner_tenant)
+        .await
+        .map_err(map_provision_err)?;
+    Ok(Json(store.grants_for_owner(owner)))
+}
+
+/// `DELETE /api/v2/abac/grants/{owner_tenant}/{grant_id}` — revoke. Idempotent
+/// like the sibling deletes: 204 whether the grant existed (and was revoked) or
+/// was already unknown/revoked. Revocation under the WRONG owner cannot even
+/// name the grant (owner-partitioned store).
+pub async fn delete_grant(
+    user_context: Option<Extension<UnifiedUserContext>>,
+    State(state): State<AppState>,
+    Path((owner_tenant, grant_id)): Path<(String, String)>,
+) -> Result<StatusCode, (StatusCode, Json<OperatorErrorResponse>)> {
+    let user_id = authorize_operator(user_context.as_ref().map(|e| &e.0))?;
+    let store = require_grant_store(&state)?;
+    let resolver = CatalogTenantStableIdResolver::new(state.catalog_manager.clone());
+    let owner = ensure_tenant(&resolver, &owner_tenant)
+        .await
+        .map_err(map_provision_err)?;
+    match store.revoke(owner, &grant_id) {
+        Ok(()) => {
+            tracing::info!(
+                target: "proximadb.abac_policy.audit",
+                operator = %user_id,
+                owner_tenant = %owner_tenant,
+                grant_id = %grant_id,
+                action = "revoke_grant",
+                "ADR-090 grant revoked"
+            );
+        }
+        Err(proximadb_catalog::grants::GrantStoreError::UnknownGrant { .. }) => {}
+        Err(e) => return Err(store_unavailable("grant_store_error", e.to_string())),
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
