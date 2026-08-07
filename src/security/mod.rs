@@ -105,7 +105,39 @@ pub async fn initialize_security_with_identity(
     }
 
     // Create audit logger from the shared audit configuration contract.
-    let audit_logger = AuditLogger::new(config.audit.clone()).await?;
+    //
+    // Auditing disabled is MODE-GATED, not blanket-tolerated:
+    //  * Development  -> a no-op sink, so `security.enabled = true` boots with
+    //    the shipped default `enable_audit_logging = false` instead of failing
+    //    hard (today that combination refuses to start, which is a footgun).
+    //  * Production   -> keep failing fast. Security without accountability is
+    //    a misconfiguration there, and booting anyway would hide it.
+    let audit_logger = if config.audit.enable_audit_logging {
+        AuditLogger::new(config.audit.clone()).await?
+    } else if !matches!(config.mode, SecurityMode::Development) {
+        // Written as "not Development" rather than "is Production" on purpose:
+        // Enterprise is production-grade too, and any mode added later must
+        // fail CLOSED here rather than silently inherit the no-op sink.
+        return Err(anyhow::anyhow!(
+            "security is enabled in {:?} mode but audit logging is disabled \
+             (set security.audit.enable_audit_logging = true)",
+            config.mode
+        ));
+    } else {
+        tracing::warn!(
+            "audit logging DISABLED - authentication and authorization events will not be \
+             recorded, and no security alert can fire. Development mode only."
+        );
+        AuditLogger::noop(config.audit.clone())
+    };
+
+    // ADR-090 / TD-SEC-2: give `set_audit_logger` its first production caller.
+    // Until now `auth_service.audit_logger` was always `None`, so the emit hook
+    // in `authenticate()` was dead and NO authentication success or failure was
+    // ever persisted — which also left the brute-force detector querying a
+    // store nothing wrote to.
+    let audit_logger = std::sync::Arc::new(audit_logger);
+    auth_service.set_audit_logger(std::sync::Arc::clone(&audit_logger));
 
     // Create security coordinator
     let security_coordinator =

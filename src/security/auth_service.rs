@@ -36,7 +36,21 @@ pub struct AuthenticationConfig {
     /// mTLS configuration for client certificate authentication
     #[serde(default)]
     pub mtls: MtlsConfig,
+    /// Deny authentication when the audit write fails, instead of proceeding
+    /// unaudited. Default OFF — see the policy note at the emit site: the
+    /// credible audit-write failure is operational (full disk), and denying on
+    /// it converts that into a total authentication outage. Regulated
+    /// deployments that must never serve unaudited traffic opt in here.
+    #[serde(default)]
+    pub audit_fail_closed: bool,
 }
+
+/// Count of audit writes that failed on the authentication path. Exposed so an
+/// operator can alarm on "we are serving unaudited traffic" — the failure is
+/// fail-open by default, so this counter is the ONLY signal that accountability
+/// has been lost.
+pub static AUDIT_WRITE_FAILURES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 /// Authentication methods supported
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -157,6 +171,9 @@ pub struct UnifiedAuthService {
     /// AUTHORITATIVE for the `pxk_` key namespace; the config-table keys above
     /// remain only as the legacy bootstrap path.
     principal_registry: Option<Arc<FileSystemPrincipalRegistry>>,
+    /// Failed-authentication throttle (TD-SEC-2). `None` = no throttling, the
+    /// pre-existing behavior.
+    rate_limiter: Option<Arc<crate::security::advanced_features::RateLimitingService>>,
 
     /// Configuration
     config: AuthenticationConfig,
@@ -199,6 +216,7 @@ impl UnifiedAuthService {
             jwt_service: None,
             api_keys: Arc::new(DashMap::new()),
             principal_registry: None,
+            rate_limiter: None,
             config: config.clone(),
             audit_logger: None,
             ca_cert_der,
@@ -258,9 +276,25 @@ impl UnifiedAuthService {
             let auth_event = match &result {
                 Ok(auth_result) => create_auth_audit_event(&auth_data, auth_result, start_time),
                 Err(_) => {
-                    // Create failed auth event
+                    // Attribute to the credential PRESENTED, never to
+                    // `anonymous()` — see `attempted_principal`.
+                    let mut attempted = UnifiedUserContext::anonymous();
+                    attempted.user_id = attempted_principal(&auth_data);
+                    // Count this failure against the principal's budget. The
+                    // limiter is advisory here (the request already failed);
+                    // exceeding the budget is itself an auditable signal.
+                    if let Some(limiter) = &self.rate_limiter {
+                        let verdict = limiter.record_failed_auth(&attempted.user_id).await;
+                        if !verdict.allowed {
+                            tracing::warn!(
+                                target: "proximadb.security.audit",
+                                principal = %attempted.user_id,
+                                "failed-authentication budget exceeded - possible brute force"
+                            );
+                        }
+                    }
                     let failed_result = AuthenticationResult {
-                        user_context: UnifiedUserContext::anonymous(),
+                        user_context: attempted,
                         auth_method: UnifiedAuthMethod::Internal,
                         success: false,
                         error_message: Some("Authentication failed".to_string()),
@@ -269,7 +303,27 @@ impl UnifiedAuthService {
                     create_auth_audit_event(&auth_data, &failed_result, start_time)
                 }
             };
-            let _ = audit_logger.log_event(auth_event).await;
+            // An audit-write failure must never be silent (this was `let _ =`).
+            // Policy: LOUD, fail-open by default. The credible failure mode is
+            // operational (a full disk — note the retention job has no
+            // production caller), and failing closed converts that into a total
+            // authentication outage for every tenant: a self-inflicted DoS. An
+            // adversary who can break the sink can already rewrite the
+            // unchained history, so failing closed buys no accountability
+            // against them either. What matters is that the loss of
+            // accountability is VISIBLE.
+            if let Err(error) = audit_logger.log_event(auth_event).await {
+                AUDIT_WRITE_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tracing::error!(
+                    target: "proximadb.security.audit",
+                    %error,
+                    "AUDIT WRITE FAILED - proceeding unaudited (fail-open); set \
+                     authentication.audit_fail_closed = true to deny instead"
+                );
+                if self.config.audit_fail_closed {
+                    return Err(anyhow!("authentication unavailable: audit write failed"));
+                }
+            }
         }
 
         result
@@ -834,6 +888,15 @@ impl UnifiedAuthService {
     /// Convert API key info to unified context
     /// Attach the ADR-090 catalog principal registry. Once attached, keys in
     /// the `pxk_` namespace resolve exclusively through it (fail-closed).
+    /// Attach the failed-authentication throttle. Without this the brute-force
+    /// budget is unenforced (today's behavior).
+    pub fn set_rate_limiter(
+        &mut self,
+        limiter: Arc<crate::security::advanced_features::RateLimitingService>,
+    ) {
+        self.rate_limiter = Some(limiter);
+    }
+
     pub fn set_principal_registry(&mut self, registry: Arc<FileSystemPrincipalRegistry>) {
         self.principal_registry = Some(registry);
     }
@@ -979,6 +1042,50 @@ pub struct ClientCertificateData {
 // `crate::security::rbac_service` re-export.
 
 /// Create audit event for authentication attempt
+/// A stable, **non-secret** identifier for the credential that was PRESENTED,
+/// used to attribute failed authentications.
+///
+/// This is what makes per-principal brute-force detection possible at all: the
+/// detector counts recent failures keyed on the audit event's `user_id`, and a
+/// failed authentication has no authenticated user yet. Attributing every
+/// failure to `anonymous()` (the previous behavior) collapses every failure in
+/// the system into ONE bucket, so one account under attack is indistinguishable
+/// from unrelated background noise.
+///
+/// SECRECY RULE: the result is persisted in an audit record, so it must never
+/// contain secret material. A `pxk_` key carries a public key id before the `.`
+/// separator — already public, and the natural attribution. Every other
+/// credential shape offers only the secret itself as an identifier, so we emit
+/// a truncated SHA-256 **fingerprint**: stable enough to count against, useless
+/// to replay.
+fn attempted_principal(auth_data: &AuthenticationData) -> String {
+    fn fingerprint(secret: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(secret.as_bytes());
+        let mut out = String::with_capacity(16);
+        for byte in digest.iter().take(8) {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{byte:02x}");
+        }
+        format!("fp:{out}")
+    }
+
+    match auth_data {
+        AuthenticationData::ApiKey(key) => match key
+            .strip_prefix(REGISTRY_KEY_PREFIX)
+            .and_then(|rest| rest.split_once('.'))
+        {
+            // Registry key: the id before '.' is public by construction.
+            Some((key_id, _secret)) => format!("{REGISTRY_KEY_PREFIX}{key_id}"),
+            // Legacy/config key: no public component exists — fingerprint it.
+            None => fingerprint(key),
+        },
+        AuthenticationData::JWTToken(token) => fingerprint(token),
+        AuthenticationData::SSOToken(_) => "sso:unverified".to_string(),
+        AuthenticationData::ClientCertificate(cert) => format!("cert:{}", cert.subject),
+    }
+}
+
 fn create_auth_audit_event(
     auth_data: &AuthenticationData,
     result: &AuthenticationResult,
@@ -1001,6 +1108,7 @@ fn create_auth_audit_event(
             resource_type: "authentication".to_string(),
             resource_id: result.user_context.session_id.clone(),
             parent_resource: None,
+            resource_tenant_id: None,
         },
         action: "authenticate".to_string(),
         result: if result.success {
@@ -1070,6 +1178,7 @@ mod tests {
                 azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            audit_fail_closed: false,
         }
     }
 
@@ -1170,6 +1279,7 @@ mod tests {
                 azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            audit_fail_closed: false,
         };
 
         let auth_service = UnifiedAuthService::new(config);
@@ -1209,6 +1319,7 @@ mod tests {
                 azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            audit_fail_closed: false,
         };
 
         let auth_service = UnifiedAuthService::new(config).unwrap();
@@ -1258,6 +1369,7 @@ mod tests {
                 azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            audit_fail_closed: false,
         }
     }
 
@@ -1433,6 +1545,7 @@ mod tests {
                 require_client_cert: false,
                 cn_role_mapping,
             },
+            audit_fail_closed: false,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| {
@@ -1480,6 +1593,7 @@ mod tests {
                 require_client_cert: false,
                 cn_role_mapping,
             },
+            audit_fail_closed: false,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());
@@ -1528,6 +1642,7 @@ mod tests {
                 require_client_cert: false,
                 cn_role_mapping,
             },
+            audit_fail_closed: false,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());
@@ -1573,6 +1688,7 @@ mod tests {
                 require_client_cert: true,
                 cn_role_mapping: HashMap::new(),
             },
+            audit_fail_closed: false,
         };
 
         let result = UnifiedAuthService::new(config);
@@ -1611,6 +1727,7 @@ mod tests {
                 require_client_cert: false,
                 cn_role_mapping: HashMap::new(),
             },
+            audit_fail_closed: false,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());
@@ -1634,6 +1751,89 @@ mod tests {
                 .as_deref()
                 .unwrap_or("")
                 .contains("not enabled")
+        );
+    }
+}
+
+// ===========================================================================
+// TD-SEC-2 Slice A spec: the controls that existed but never fired.
+// Each test names the contract clause it pins.
+// ===========================================================================
+#[cfg(test)]
+mod arm_dead_controls_tests {
+    use super::*;
+
+    /// A registry key attributes to its PUBLIC key id — and the secret never
+    /// appears in the attribution (it would otherwise be written to the audit
+    /// record).
+    #[test]
+    fn registry_key_attributes_to_public_id_and_never_the_secret() {
+        let data = AuthenticationData::ApiKey("pxk_abcd1234.SUPERSECRETVALUE".to_string());
+        let principal = attempted_principal(&data);
+        assert_eq!(principal, "pxk_abcd1234");
+        assert!(
+            !principal.contains("SUPERSECRETVALUE"),
+            "secret material must never reach an audit record"
+        );
+    }
+
+    /// A legacy/config key has no public component, so it fingerprints —
+    /// stable (same key ⇒ same attribution, which is what makes counting
+    /// possible) but not the secret itself.
+    #[test]
+    fn legacy_key_fingerprints_stably_without_revealing_it() {
+        let data = AuthenticationData::ApiKey("legacy-secret-key".to_string());
+        let a = attempted_principal(&data);
+        let b = attempted_principal(&AuthenticationData::ApiKey("legacy-secret-key".to_string()));
+        assert_eq!(a, b, "attribution must be stable to be countable");
+        assert!(a.starts_with("fp:"));
+        assert!(!a.contains("legacy-secret-key"));
+    }
+
+    /// THE defect this slice exists to fix: distinct credentials must produce
+    /// distinct attributions. Previously every failure was `anonymous()`, so
+    /// all failures shared one counter bucket and per-principal brute-force
+    /// detection was impossible.
+    #[test]
+    fn distinct_credentials_do_not_share_one_bucket() {
+        let a = attempted_principal(&AuthenticationData::ApiKey("pxk_aaa.s1".to_string()));
+        let b = attempted_principal(&AuthenticationData::ApiKey("pxk_bbb.s2".to_string()));
+        let c = attempted_principal(&AuthenticationData::ApiKey("legacy-one".to_string()));
+        let d = attempted_principal(&AuthenticationData::ApiKey("legacy-two".to_string()));
+        assert_ne!(a, b);
+        assert_ne!(c, d);
+        assert_ne!(a, c);
+    }
+
+    /// The failure budget is enforced per principal, and one principal
+    /// exhausting it must not deny another (isolation).
+    #[tokio::test]
+    async fn failed_auth_budget_is_per_principal() {
+        use crate::security::advanced_features::{RateLimitConfig, RateLimitingService};
+        let limiter = RateLimitingService::new(RateLimitConfig {
+            enabled: true,
+            requests_per_minute_per_user: 1_000,
+            requests_per_minute_per_tenant: 1_000,
+            requests_per_minute_per_ip: 1_000,
+            burst_allowance: 0,
+            cleanup_interval_minutes: 60,
+            failed_auth_per_minute_per_principal: 3,
+        });
+
+        for attempt in 1..=3 {
+            assert!(
+                limiter.record_failed_auth("pxk_victim").await.allowed,
+                "attempt {attempt} is within budget"
+            );
+        }
+        assert!(
+            !limiter.record_failed_auth("pxk_victim").await.allowed,
+            "the 4th failure exceeds a budget of 3"
+        );
+        assert!(
+            limiter.record_failed_auth("pxk_bystander").await.allowed,
+            "another principal must be unaffected — otherwise one attacker \
+             locks out every user"
         );
     }
 }

@@ -115,7 +115,7 @@ impl SecurityCoordinator {
     pub fn new(
         auth_service: UnifiedAuthService,
         rbac_manager: ConsolidatedRBACManager,
-        audit_logger: AuditLogger,
+        audit_logger: Arc<AuditLogger>,
         config: SecurityConfig,
     ) -> Self {
         // Initialize RLS with default config
@@ -147,7 +147,7 @@ impl SecurityCoordinator {
             rls_service: Arc::new(rls_service),
             encryption_service,
             key_store,
-            audit_logger: Arc::new(audit_logger),
+            audit_logger,
             config,
         }
     }
@@ -317,14 +317,29 @@ impl SecurityCoordinator {
             .await?;
 
         if !authorized {
-            // Log authorization failure
-            self.audit_logger
+            // Log the authorization failure. The `?` here used to REPLACE the
+            // permission error with the audit error: the caller was told
+            // "audit write failed" instead of "insufficient permissions",
+            // which both misclassifies the outcome and leaks internal detail
+            // to a caller that was being denied anyway. Record the audit
+            // failure loudly, then always return the permission error.
+            if let Err(error) = self
+                .audit_logger
                 .log_event(create_authorization_failure_event(
                     &user_context,
                     &requested_permission,
                     start_time,
                 ))
-                .await?;
+                .await
+            {
+                crate::security::auth_service::AUDIT_WRITE_FAILURES
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tracing::error!(
+                    target: "proximadb.security.audit",
+                    %error,
+                    "AUDIT WRITE FAILED for an authorization denial - the denial still stands"
+                );
+            }
 
             return Err(anyhow!("Insufficient permissions for requested operation"));
         }
@@ -399,7 +414,12 @@ impl SecurityCoordinator {
         // Create audit logger - config.audit is already AuditConfig
         let audit_logger = AuditLogger::new(config.audit.clone()).await?;
 
-        Ok(Self::new(auth_service, rbac_manager, audit_logger, config))
+        Ok(Self::new(
+            auth_service,
+            rbac_manager,
+            Arc::new(audit_logger),
+            config,
+        ))
     }
 
     /// Health check for security subsystem
@@ -556,6 +576,7 @@ fn create_authorization_failure_event(
             resource_type: "permission".to_string(),
             resource_id: format!("{:?}", requested_permission),
             parent_resource: None,
+            resource_tenant_id: None,
         },
         action: "check_permission".to_string(),
         result: AuditResult::Failure {
@@ -624,6 +645,7 @@ mod tests {
                     azure_ad: None,
                 },
                 mtls: MtlsConfig::default(),
+                audit_fail_closed: false,
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),
