@@ -739,6 +739,166 @@ pub(crate) fn pax_field_to_col(field: &str) -> Option<i32> {
     }
 }
 
+/// ADR-089 / TD-FPRUNE-1 P1: default-OFF gate for the filter-aware cascade.
+/// `PROXIMADB_PAX_FILTERED_CASCADE=1|on|true|yes` routes filtered PAX queries
+/// through the metadata pre-stage + row-restricted cascade instead of the
+/// whole-object exact scan. Mixed-read-safe: OFF preserves today's behavior.
+pub(crate) fn pax_filtered_cascade_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_FILTERED_CASCADE")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "on" | "true" | "yes")
+    )
+}
+
+/// Stage-F observability counters (ADR-089 P1): what the metadata pre-stage
+/// pruned and matched, per segment.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct FilteredRowAllowStats {
+    pub blocks_total: usize,
+    /// Blocks skipped by conservative `ColumnMeta` stats (`evaluate_block`)
+    /// without decoding a row. (P1 prunes DECODE, not fetch — footer-resident
+    /// stats that prune the fetch itself are TD-FPRUNE-1 P2.)
+    pub blocks_pruned: usize,
+    pub rows_matched: usize,
+}
+
+/// ADR-089 / TD-FPRUNE-1 P1 Stage F: build the predicate row allow-set for a
+/// coalesced PAX segment from its Region-D metadata, without touching Regions
+/// A/B and without decoding any vector data.
+///
+/// Reads: header prefix + footer + the D-block bodies (coalesced ranged GETs).
+/// Per block: conservative stats pruning via the shared [`evaluate_block`]
+/// kernel (skips decode; never skips a matching row — `prune.rs` soundness
+/// contract), then a row-accurate `evaluate_filter_proxima` over each row's
+/// props — the SAME evaluator the exact fallback path uses, so match semantics
+/// are identical by construction. Returns `Ok(None)` for a non-coalesced
+/// segment (caller falls back to the exact path, fail-safe).
+pub(crate) async fn pax_filtered_row_allow(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+    filter: &proximadb_filter_expression::FilterExpression,
+) -> Result<Option<(proximadb_block_format::RowAllow, FilteredRowAllowStats)>> {
+    use proximadb_block_format::{PaxBlockReader, RowAllow, evaluate_block, record::FlatRow};
+    use proximadb_storage_common::segment_layout::{
+        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
+    };
+
+    // 1. Header prefix → coalesced? (mirrors the cascade's detection).
+    let size = fs
+        .metadata(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("filtered stage-F stat {path}: {e}"))?
+        .size;
+    if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
+        return Ok(None);
+    }
+    let read_len = (SEG_HEADER_PREFIX_V3_LEN as u64).min(size);
+    let header_bytes = fs
+        .read_range(path, 0, read_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("filtered stage-F header {path}: {e}"))?;
+    let header = match SegmentHeaderPrefix::parse(&header_bytes) {
+        Ok(h) => h,
+        Err(_) => return Ok(None), // not coalesced → exact fallback
+    };
+
+    // 2. Footer → block table (+ cumulative start ordinals).
+    let footer_bytes = fs
+        .read_range(path, header.footer_off, header.footer_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("filtered stage-F footer {path}: {e}"))?;
+    let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+    let mut block_start: Vec<u64> = Vec::with_capacity(footer.blocks.len());
+    let mut acc = 0u64;
+    for b in &footer.blocks {
+        block_start.push(acc);
+        acc += b.row_count as u64;
+    }
+    let n_rows = acc as usize;
+    let mut allow = RowAllow::new(n_rows);
+    let mut stats = FilteredRowAllowStats {
+        blocks_total: footer.blocks.len(),
+        ..Default::default()
+    };
+
+    // 3. Fetch ALL D-block bodies via the same IOP-aligned coalescing the
+    //    cascade's OID resolve uses. (P1 reads the metadata blocks and prunes
+    //    the DECODE via stats; pruning the FETCH needs footer-resident stats —
+    //    TD-FPRUNE-1 P2.) Coalesced D blocks carry no vector stripes (ADR-065),
+    //    so these bytes are scalar/metadata only.
+    let iop_target =
+        proximadb_storage_common::iops_budget::IopsBudget::for_path(path).target_block_bytes();
+    let policy =
+        crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+            max_gap_bytes: env_u64_or(
+                "PROXIMADB_PAX_COALESCE_GAP",
+                (iop_target / 4).max(64 * 1024),
+            ),
+            max_range_bytes: env_u64_or("PROXIMADB_PAX_COALESCE_RANGE", iop_target),
+        };
+    let all_blocks: Vec<usize> = (0..footer.blocks.len()).collect();
+    let fetches = plan_coalesced_block_ranges(&footer, &all_blocks, &policy);
+    for fetch in &fetches {
+        let buf = fs
+            .read_range(path, fetch.start, fetch.end - fetch.start)
+            .await
+            .map_err(|e| anyhow::anyhow!("filtered stage-F blocks {path}: {e}"))?;
+        for &bi in &fetch.blocks {
+            let Some(b) = footer.blocks.get(bi) else {
+                continue;
+            };
+            let Some(rel) = b.offset.checked_sub(fetch.start).map(|r| r as usize) else {
+                continue;
+            };
+            let end = rel + b.size as usize;
+            let Some(block_bytes) = buf.get(rel..end) else {
+                continue;
+            };
+            let reader = PaxBlockReader::open(block_bytes)
+                .map_err(|e| anyhow::anyhow!("filtered stage-F block open {path}: {e}"))?;
+            // Conservative stats prune: provably-no-match blocks skip decode.
+            // NOTE: the `&pax_field_to_col` coercion is a per-call temporary —
+            // a `&dyn Fn` binding held across the fetch `.await` would make
+            // this future (and every async caller up to the REST handlers)
+            // `!Send`.
+            if evaluate_block(&reader, filter, &pax_field_to_col)
+                == proximadb_block_format::PruneResult::Skip
+            {
+                stats.blocks_pruned += 1;
+                continue;
+            }
+            let start_ordinal = block_start[bi] as usize;
+            for (local, flat) in FlatRow::from_block_reader(&reader)
+                .map_err(|e| anyhow::anyhow!("filtered stage-F rows {path}: {e}"))?
+                .into_iter()
+                .enumerate()
+            {
+                let props = flat
+                    .props_tree()
+                    .map_err(|e| anyhow::anyhow!("filtered stage-F props {path}: {e}"))?;
+                if crate::core::search::sql_value_filter::evaluate_filter_proxima(filter, &props) {
+                    allow.insert(start_ordinal + local);
+                    stats.rows_matched += 1;
+                }
+            }
+        }
+    }
+    tracing::debug!(
+        path,
+        blocks_total = stats.blocks_total,
+        blocks_pruned = stats.blocks_pruned,
+        rows_matched = stats.rows_matched,
+        n_rows,
+        "ADR-089 P1 stage-F row allow-set built"
+    );
+    Ok(Some((allow, stats)))
+}
+
 /// Whether the coalesced-RaBitQ layout is engaged for new RaBitQ writes
 /// (ADR-062 / TD-RDSTRAT-6). **Default ON** — coalesced scan-then-rerank is the
 /// canonical PAX RaBitQ path (pre-GA: no serialized legacy data, so no back-compat
@@ -2394,6 +2554,29 @@ pub async fn rabitq_search_segment_coalesced(
     cache: Option<&SegmentInvariantsCache>,
     survivor_cache: Option<&SurvivorRangeCache>,
 ) -> Result<Option<Vec<CascadeHit>>> {
+    rabitq_search_segment_coalesced_allowed(fs, path, query, k, metric, cache, survivor_cache, None)
+        .await
+}
+
+/// ADR-089 / TD-FPRUNE-1 P1: [`rabitq_search_segment_coalesced`] restricted to
+/// an optional predicate row allow-set (global row ordinals). When `Some`,
+/// Stage-1 ranks ONLY allowed rows — the survivor pool holds
+/// predicate-matching candidates, so filtered recall equals the RaBitQ
+/// approximation over the matching rows (same quality bar as the unfiltered
+/// whole-region scan). The geometric coarse probe is bypassed under a filter
+/// for P1 — probe∩filter composition (nprobe policy under selectivity) is the
+/// TD-FPRUNE-1 P3 concern.
+#[allow(clippy::too_many_arguments)]
+pub async fn rabitq_search_segment_coalesced_allowed(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+    query: &[f32],
+    k: usize,
+    metric: RankMetric,
+    cache: Option<&SegmentInvariantsCache>,
+    survivor_cache: Option<&SurvivorRangeCache>,
+    row_allow: Option<&proximadb_block_format::RowAllow>,
+) -> Result<Option<Vec<CascadeHit>>> {
     use proximadb_block_format::{PaxBlockReader, RaBitQRegion, coalesced_sq8, col_id};
     use proximadb_storage_common::segment_layout::{
         SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL,
@@ -2478,7 +2661,10 @@ pub async fn rabitq_search_segment_coalesced(
     //    probe miss falls through, fail-safe, to the whole-region path.
     let probe_armed = header.layout_version == SEG_LAYOUT_VERSION_TWO_LEVEL
         && header.a0_len > 0
-        && coarse_probe_enabled();
+        && coarse_probe_enabled()
+        // ADR-089 P1: filtered queries take the whole-region allowed rank
+        // (see `row_allow` doc above) — never the geometric probe.
+        && row_allow.is_none();
     let probe = if probe_armed {
         coarse_probe_survivors(
             fs,
@@ -2539,9 +2725,23 @@ pub async fn rabitq_search_segment_coalesced(
                 Arc::from(bytes)
             };
         let region = RaBitQRegion::from_bytes(&region_bytes)?;
-        // ADR-062 PR2: adaptive survivor pool — scale M with the segment's rows.
-        let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
-        let survivors = rank_region_morsels(region, query, metric, pool.max(k)).await;
+        let survivors = match row_allow {
+            // ADR-089 P1: rank only predicate-matching rows. The pool scales
+            // with the ALLOWED row count (not the segment total), so selective
+            // filters don't over-fetch SQ8 survivor ranges. Sequential rank is
+            // deliberate: the allowed count is typically well below the morsel
+            // threshold; morsel-parallel allowed rank is a P3 follow-up.
+            Some(allow) => {
+                let pool = pax_rabitq_pool_for_top_k(k, allow.len().max(1));
+                region.rank_allowed(query, metric, pool.max(k), allow)
+            }
+            None => {
+                // ADR-062 PR2: adaptive survivor pool — scale M with the
+                // segment's rows.
+                let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
+                rank_region_morsels(region, query, metric, pool.max(k)).await
+            }
+        };
         (survivors, Some(region_bytes))
     };
     if survivors.is_empty() {
@@ -4004,6 +4204,349 @@ mod tests {
             hits[0].oid, "r137",
             "the query vector itself must be the top hit"
         );
+    }
+
+    /// ADR-089 P1 test helper: a record carrying a `partition` prop (`p{i%8}`),
+    /// mirroring the context-corridor benchmark's filter shape.
+    fn rec_with_partition(i: usize, vec: Vec<f32>) -> ProximaRecord {
+        let mut r = rec(&format!("r{i}"), 1000 + i as i64, vec);
+        r.props.insert(
+            "partition".to_string(),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                format!("p{}", i % 8),
+            )),
+        );
+        r
+    }
+
+    fn partition_filter(value: &str) -> proximadb_filter_expression::FilterExpression {
+        proximadb_filter_expression::FilterExpression::Comparison {
+            field: "partition".to_string(),
+            operator: proximadb_filter_expression::ComparisonOperator::Equals,
+            value: serde_json::Value::String(value.to_string()),
+        }
+    }
+
+    /// ADR-089 / TD-FPRUNE-1 P1: the Stage-F row allow-set is row-accurate —
+    /// exactly the segment rows whose props match the predicate, in global
+    /// (cluster-ordered) row-ordinal space, verified by an independent decode.
+    #[tokio::test]
+    async fn stage_f_row_allow_set_is_exact() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_block_format::{PaxBlockReader, record::FlatRow};
+        use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
+
+        const DIM: usize = 32;
+        const N: usize = 300;
+        let records: Vec<ProximaRecord> = (0..N)
+            .map(|i| {
+                let v: Vec<f32> = (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect();
+                rec_with_partition(i, v)
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        // Small blocks ⇒ multi-block segment (exercises cross-block ordinals).
+        write_pax_segment(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+
+        let filter = partition_filter("p3");
+        let (allow, stats) = pax_filtered_row_allow(&fs, p, &filter)
+            .await
+            .unwrap()
+            .expect("coalesced segment must produce a stage-F allow-set");
+
+        // Independent verification: decode every D-block row in file order and
+        // recompute the expected ordinal set from each row's props.
+        let bytes = std::fs::read(&path).unwrap();
+        let header = SegmentHeaderPrefix::parse(&bytes).unwrap();
+        let footer_off = header.footer_off as usize;
+        let footer =
+            SegmentFooterIndex::parse(&bytes[footer_off..footer_off + header.footer_len as usize])
+                .unwrap();
+        let mut expected = std::collections::BTreeSet::new();
+        let mut g = 0usize;
+        for b in &footer.blocks {
+            let reader = PaxBlockReader::open(
+                &bytes[b.offset as usize..(b.offset + b.size as u64) as usize],
+            )
+            .unwrap();
+            for flat in FlatRow::from_block_reader(&reader).unwrap() {
+                let oid_index: usize = flat.oid.trim_start_matches('r').parse().unwrap();
+                if oid_index % 8 == 3 {
+                    expected.insert(g);
+                }
+                g += 1;
+            }
+        }
+        assert_eq!(g, N, "independent decode covers every row");
+        let got: std::collections::BTreeSet<usize> =
+            (0..N).filter(|&row| allow.contains(row)).collect();
+        assert_eq!(got, expected, "allow-set == filter-matching rows, exactly");
+        assert_eq!(allow.len(), (0..N).filter(|i| i % 8 == 3).count());
+        assert_eq!(stats.rows_matched, allow.len());
+        assert_eq!(stats.blocks_total, footer.blocks.len());
+
+        // A predicate matching nothing yields an empty (but Some) allow-set.
+        let (empty_allow, _) = pax_filtered_row_allow(&fs, p, &partition_filter("p999"))
+            .await
+            .unwrap()
+            .expect("coalesced segment");
+        assert!(empty_allow.is_empty());
+    }
+
+    /// ADR-089 / TD-FPRUNE-1 P1: the row-restricted cascade returns ONLY
+    /// predicate-matching hits, at recall parity with a filtered brute-force
+    /// ground truth (same bar as the unfiltered cascade's recall test).
+    #[tokio::test]
+    async fn filtered_cascade_matches_filtered_bruteforce() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 64;
+        const N: usize = 400;
+        const K: usize = 10;
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec_with_partition(i, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        write_pax_segment(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+
+        let filter = partition_filter("p3");
+        let (allow, _) = pax_filtered_row_allow(&fs, p, &filter)
+            .await
+            .unwrap()
+            .expect("stage-F allow-set");
+        let query = corpus[137].clone();
+        let hits = rabitq_search_segment_coalesced_allowed(
+            &fs,
+            p,
+            &query,
+            K,
+            RankMetric::L2,
+            None,
+            None,
+            Some(&allow),
+        )
+        .await
+        .unwrap()
+        .expect("restricted cascade returns hits");
+        assert!(!hits.is_empty());
+
+        // Every hit satisfies the predicate (row-accurate restriction).
+        for h in &hits {
+            let i: usize = h.oid.trim_start_matches('r').parse().unwrap();
+            assert_eq!(i % 8, 3, "hit {} violates the filter", h.oid);
+        }
+
+        // Recall vs the FILTERED brute-force ground truth.
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+        let mut matching: Vec<usize> = (0..N).filter(|i| i % 8 == 3).collect();
+        matching.sort_by(|&a, &b| {
+            l2(&corpus[a], &query)
+                .partial_cmp(&l2(&corpus[b], &query))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let truth: std::collections::HashSet<String> =
+            matching.iter().take(K).map(|i| format!("r{i}")).collect();
+        let got: std::collections::HashSet<String> = hits.iter().map(|h| h.oid.clone()).collect();
+        let recall = truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32;
+        assert!(
+            recall >= 0.90,
+            "filtered cascade recall@{K} = {recall:.2} vs filtered brute force"
+        );
+
+        // An empty allow-set yields an empty result (not an error).
+        let empty = proximadb_block_format::RowAllow::new(N);
+        let none_hits = rabitq_search_segment_coalesced_allowed(
+            &fs,
+            p,
+            &query,
+            K,
+            RankMetric::L2,
+            None,
+            None,
+            Some(&empty),
+        )
+        .await
+        .unwrap()
+        .expect("cascade runs");
+        assert!(none_hits.is_empty());
+    }
+
+    /// ADR-089 P1: the filter-aware cascade is DEFAULT-OFF (mixed-read-safe).
+    #[test]
+    fn filtered_cascade_gate_defaults_off() {
+        // The suite never sets the gate env, so the default must hold here.
+        assert!(!pax_filtered_cascade_enabled());
+    }
+
+    /// ADR-089 / TD-FPRUNE-1 P1 EVIDENCE HARNESS (engine-level A/B on a real
+    /// segment). Not part of the suite — run explicitly, in release, for the
+    /// before/after timing that gates the phase:
+    ///
+    /// ```text
+    /// cargo test --release -p proximadb --lib -- --ignored p1_evidence --nocapture
+    /// ```
+    ///
+    /// A = today's filtered path over a flushed segment: whole-object read +
+    ///     `read_segment_records` (decode ALL rows) + per-record
+    ///     `evaluate_filter_proxima` + exact scoring of survivors.
+    /// B = P1: Stage-F row allow-set + row-restricted RaBitQ/SQ8 cascade.
+    ///
+    /// Engine-level by design: the end-to-end server path cannot serve segments
+    /// for REST-created collections until the TD-FLUSH-8 catalog-identity skip
+    /// is fixed, and this seam is exactly what ADR-089 P1 changes.
+    #[tokio::test]
+    #[ignore = "evidence harness — run explicitly in release for timing"]
+    async fn p1_evidence_filtered_exact_vs_cascade() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use std::time::Instant;
+
+        const DIM: usize = 128;
+        const N: usize = 80_000;
+        const K: usize = 10;
+        const QUERIES: usize = 15;
+
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec_with_partition(i, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+        let seg_bytes = std::fs::metadata(&path).unwrap().len();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+        let filter = partition_filter("p3");
+
+        // --- A: exact-path emulation (mirrors search_pax_file_exact's shape).
+        let mut a_times = Vec::new();
+        for q in 0..QUERIES {
+            let query = &corpus[(q * 5119) % N];
+            let t = Instant::now();
+            let bytes = std::fs::read(&path).unwrap();
+            let recs = read_segment_records(&bytes, &[], &[], None).unwrap();
+            let mut scored: Vec<(f32, &ProximaRecord)> = recs
+                .iter()
+                .filter(|r| {
+                    crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                        &filter, &r.props,
+                    )
+                })
+                .filter_map(|r| {
+                    r.embeddings.first().map(|e| {
+                        let v = e.as_fp32_slice();
+                        let d: f32 = v.iter().zip(query).map(|(x, y)| (x - y) * (x - y)).sum();
+                        (d, r)
+                    })
+                })
+                .collect();
+            scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            scored.truncate(K);
+            a_times.push(t.elapsed());
+            assert!(!scored.is_empty());
+        }
+
+        // --- B: P1 Stage-F + restricted cascade (allow-set rebuilt per query,
+        //     the worst case — a per-(segment, filter) cache is a P2 lever).
+        let mut b_times = Vec::new();
+        for q in 0..QUERIES {
+            let query = &corpus[(q * 5119) % N];
+            let t = Instant::now();
+            let (allow, _stats) = pax_filtered_row_allow(&fs, p, &filter)
+                .await
+                .unwrap()
+                .expect("stage-F allow-set");
+            let hits = rabitq_search_segment_coalesced_allowed(
+                &fs,
+                p,
+                query,
+                K,
+                RankMetric::L2,
+                None,
+                None,
+                Some(&allow),
+            )
+            .await
+            .unwrap()
+            .expect("restricted cascade");
+            b_times.push(t.elapsed());
+            assert!(!hits.is_empty());
+            for h in &hits {
+                let i: usize = h.oid.trim_start_matches('r').parse().unwrap();
+                assert_eq!(i % 8, 3);
+            }
+        }
+
+        let ms = |d: &std::time::Duration| d.as_secs_f64() * 1e3;
+        let mean = |v: &[std::time::Duration]| {
+            ms(&(v.iter().sum::<std::time::Duration>())) / v.len() as f64
+        };
+        let min = |v: &[std::time::Duration]| v.iter().map(ms).fold(f64::INFINITY, f64::min);
+        println!(
+            "P1 EVIDENCE  N={N} dim={DIM} K={K} queries={QUERIES} segment={:.1}MB",
+            seg_bytes as f64 / 1e6
+        );
+        println!(
+            "  A exact whole-object : mean={:.2}ms  min={:.2}ms",
+            mean(&a_times),
+            min(&a_times)
+        );
+        println!(
+            "  B stage-F + cascade  : mean={:.2}ms  min={:.2}ms",
+            mean(&b_times),
+            min(&b_times)
+        );
+        println!("  speedup: {:.1}x (mean)", mean(&a_times) / mean(&b_times));
     }
 
     /// TD-CACHE-1 S1: `prefetch_segment_invariants` warms the CONTROL plane

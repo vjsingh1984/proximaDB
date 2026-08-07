@@ -1,0 +1,73 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-FLUSH-8: auto-flush skips WAL collections it cannot resolve in the catalog — REST-created collections never reach PAX
+:status: Open
+:dim: D3/D5
+:pillar: REL
+
+Problem (found by the ADR-089 P1 evidence run, 2026-08-06): with the flush
+envelope armed (`memory_flush_size_bytes = 2 MiB`, `flush_floor_predicted_mb =
+0`, `flush_interval_secs = 5`, hermetic storage roots), a REST-v2-created
+collection ingesting ~20k-80k vectors NEVER flushes. The ADR-069 auto-flush
+driver ticks, the size/time triggers fire, and then every cycle logs:
+
+  WARN ⚠️ ADR-069 auto-flush: no catalog metadata for '1', skipping
+  WARN ⚠️ STORAGE_ENGINE: 1 collections failed to flush: [("1", "no catalog metadata")]
+
+Mechanism: the WAL write buffer lists unflushed collections by the id the write
+path keyed the memtable with — here the literal string `'1'` — while
+`list_collections_from_catalog`
+(`src/storage/persistence/write_ahead_log/mod.rs:1097`) walks the **default
+catalog's** namespaces/tables and returns collections whose `.id` is the
+catalog identity. The driver's lookup
+(`src/storage/auto_flush_driver.rs:157`, `catalog.iter().find(|c| &c.id ==
+collection_id)`) never matches, so the flush is skipped **forever** — the
+memtable grows, and every read stays on the WAL/memtable scan path.
+
+This is an ADR-0083-class identity seam ("two identity systems disagree" — the
+same failure family as the #1325 flush-plan regression): the WAL keys one id
+form, the catalog another, and the flush boundary is where they meet.
+
+Consequences:
+* The PAX serving tier (coalesced cascade, ADR-062/065; filter-aware cascade,
+  ADR-089) is **dark end-to-end** for this surface — segments are never
+  produced, so segment-path work cannot be exercised from the public API.
+* All context-corridor benchmark measurements to date (TD-CTXCORR-1, including
+  the 38x filtered-search baseline) were **memtable-scan measurements**, not
+  segment-path measurements. The competitive gap is real but its mechanism is
+  the WAL exact scan, with the segment exact scan measured separately at the
+  engine level (see ADR-089 P1 evidence harness).
+* Durability/RPO: collections in this state accumulate unbounded unflushed
+  windows (the ADR-069 time floor cannot drain them).
+
+Direction (owner, 2026-08-06): **the catalog is the identity authority.** A
+collection that exists MUST be resolvable in the catalog — there is no
+legitimate "catalog-less collection" state, so the fix is proper catalog
+integration at the flush boundary, NOT tolerating unresolvable collections
+(no fallback flush plans for unknown ids, no bypass registration in tests).
+
+Next actions:
+1. Find where the write path derives the WAL collection key (`'1'`) for
+   REST-v2 collections and make the WAL key on the **catalog identity**
+   (ADR-0083: ONE identity, the composite) — or make the flush boundary
+   resolve through the catalog by the same canonical form. The invariant to
+   restore: `WAL key ⇒ catalog-resolvable`, always. If the REST create path
+   is registering the collection under a different catalog (tenant vs default)
+   than `list_collections_from_catalog` walks, fix the walk to be the real
+   catalog surface — the collection IS in the catalog; the lookup must reach it.
+2. Fail loud, not skip-forever: an unflushable-because-unresolvable collection
+   is an identity-invariant violation (durability incident) — escalate
+   (metric + rate-limited error), never spin silently at WARN per tick.
+3. Regression test through the REAL catalog path: REST-create (proper catalog
+   registration) → ingest past the size trigger → assert a `.pax` segment
+   exists under the collection's `DrPathBuilder` path. Test fixtures and
+   benchmark harnesses must create collections via the catalog like
+   production does — no catalog-less shortcuts that mask this class of bug.
+4. Re-run the corridor benchmark end-to-end once fixed, so the segment-path
+   filtered cascade (ADR-089 P1) is measurable from the public API
+   (TD-FPRUNE-1 evidence gate).
+
+Refs: ADR-069 (flush decision boundary), ADR-0083 (consolidated identity),
+ADR-089 / TD-FPRUNE-1 (blocked evidence), TD-FLUSH-2 (small corpora never
+flush — the *threshold* face of the same "never flushes" symptom; this TD is
+the *identity* face).

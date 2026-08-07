@@ -316,6 +316,49 @@ impl RaBitQRegion {
         scored.truncate(pool);
         scored
     }
+
+    /// ADR-089 / TD-FPRUNE-1 P1: rank only the rows in `allow`, returning up to
+    /// `pool` global row indices nearest-first. Restricting *inside* the rank
+    /// (instead of post-filtering the survivor pool) is what preserves filtered
+    /// recall: the pool fills with predicate-matching candidates only.
+    pub fn rank_allowed(
+        &self,
+        query: &[f32],
+        metric: RankMetric,
+        pool: usize,
+        allow: &crate::row_allow::RowAllow,
+    ) -> Vec<usize> {
+        use proximadb_codec::baseline::functions::rabitq::QueryLut;
+        if allow.is_empty() || pool == 0 {
+            return Vec::new();
+        }
+        let params = self.header.to_params();
+        let rotation = build_rotation_cached(params.dim, params.seed);
+        let q_rotated = rotate_query(query, &params, &rotation);
+        let lut = QueryLut::build(&q_rotated);
+        let mut scored: Vec<(usize, f32)> = self
+            .codes
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| allow.contains(*i))
+            .filter_map(|(i, c)| {
+                c.as_ref().map(|c| {
+                    let score = match metric {
+                        RankMetric::L2 => lut.l2_rank_score(c),
+                        RankMetric::Cosine | RankMetric::DotProduct => lut.ip_rank_score(c),
+                    };
+                    (i, score)
+                })
+            })
+            .collect();
+        scored.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        scored.truncate(pool);
+        scored.into_iter().map(|(i, _)| i).collect()
+    }
 }
 
 /// Per-row code stride in a coalesced region: `dist f32 | inv f32 | bits`.
@@ -342,6 +385,21 @@ pub fn rank_probed_rows(
     query: &[f32],
     metric: RankMetric,
     pool: usize,
+) -> Result<Vec<usize>> {
+    rank_probed_rows_allowed(header, runs, query, metric, pool, None)
+}
+
+/// ADR-089 / TD-FPRUNE-1 P1: [`rank_probed_rows`] restricted to an optional
+/// row allow-set — disallowed rows are skipped before scoring, so the survivor
+/// pool holds only predicate-matching candidates. `None` = rank every probed
+/// row (identical to [`rank_probed_rows`]).
+pub fn rank_probed_rows_allowed(
+    header: &CoalescedRaBitQHeader,
+    runs: &[(usize, &[u8])],
+    query: &[f32],
+    metric: RankMetric,
+    pool: usize,
+    allow: Option<&crate::row_allow::RowAllow>,
 ) -> Result<Vec<usize>> {
     let dim = header.dim as usize;
     if dim == 0 {
@@ -375,6 +433,16 @@ pub fn rank_probed_rows(
     let mut scored = Vec::with_capacity(total_rows);
     for &(row_start, bytes) in runs {
         for (local_row, packed) in bytes.chunks_exact(stride).enumerate() {
+            let global_row = row_start
+                .checked_add(local_row)
+                .ok_or_else(|| anyhow::anyhow!("coarse-probe global row overflow"))?;
+            // ADR-089 P1: skip rows the metadata predicate excluded — before
+            // scoring, so the pool fills with matching candidates only.
+            if let Some(allow) = allow
+                && !allow.contains(global_row)
+            {
+                continue;
+            }
             let dist_to_centroid = f32::from_le_bytes(packed[0..4].try_into()?);
             let inv_factor = f32::from_le_bytes(packed[4..8].try_into()?);
             let bits = &packed[8..];
@@ -385,9 +453,6 @@ pub fn rank_probed_rows(
                 }
             }
             .ok_or_else(|| anyhow::anyhow!("coarse-probe packed bit width mismatch"))?;
-            let global_row = row_start
-                .checked_add(local_row)
-                .ok_or_else(|| anyhow::anyhow!("coarse-probe global row overflow"))?;
             scored.push((global_row, score));
         }
     }
@@ -448,6 +513,100 @@ mod tests {
             parsed.code(ranked[0]).is_some(),
             "top survivor must be present"
         );
+    }
+
+    /// ADR-089 P1: rank_allowed returns only allowed rows, and with a full
+    /// pool it equals the unrestricted scored rank filtered to the allow-set
+    /// (identical scoring; restriction happens before pooling).
+    #[test]
+    fn rank_allowed_matches_filtered_full_rank() {
+        const DIM: usize = 64;
+        const N: usize = 256;
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| synth_vec(i as u64, DIM)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let (region, _) = encode_region(&vectors, DIM as u32, RABITQ_SEED_BASE ^ 7).unwrap();
+        let parsed = RaBitQRegion::from_bytes(&region).unwrap();
+        let query = synth_vec(9999, DIM);
+
+        // allow every third row.
+        let mut allow = crate::row_allow::RowAllow::new(N);
+        for row in (0..N).step_by(3) {
+            allow.insert(row);
+        }
+
+        for metric in [RankMetric::L2, RankMetric::Cosine] {
+            let got = parsed.rank_allowed(&query, metric, N, &allow);
+            assert_eq!(
+                got.len(),
+                allow.len(),
+                "full pool returns every allowed row"
+            );
+            assert!(got.iter().all(|&r| allow.contains(r)), "survivors ⊆ allow");
+
+            // Reference: unrestricted scored rank, filtered to the allow-set.
+            let reference: Vec<usize> = parsed
+                .rank_range_scored(&query, metric, N, 0..N)
+                .into_iter()
+                .map(|(r, _)| r)
+                .filter(|r| allow.contains(*r))
+                .collect();
+            assert_eq!(
+                got, reference,
+                "restricted rank == filtered full rank ({metric:?})"
+            );
+
+            // Small pool: the top-p of the restricted rank is the prefix of
+            // the filtered full rank.
+            let top5 = parsed.rank_allowed(&query, metric, 5, &allow);
+            assert_eq!(top5, reference[..5].to_vec());
+        }
+
+        // Empty allow ⇒ no survivors.
+        let empty = crate::row_allow::RowAllow::new(N);
+        assert!(
+            parsed
+                .rank_allowed(&query, RankMetric::L2, N, &empty)
+                .is_empty()
+        );
+    }
+
+    /// ADR-089 P1: rank_probed_rows_allowed(pool=all) equals the unrestricted
+    /// probed rank filtered to the allow-set, and None preserves the original.
+    #[test]
+    fn rank_probed_rows_allowed_matches_filtered_probed_rank() {
+        const DIM: usize = 32;
+        const N: usize = 200;
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| synth_vec(i as u64, DIM)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let (region, _) = encode_region(&vectors, DIM as u32, RABITQ_SEED_BASE ^ 13).unwrap();
+        let header = CoalescedRaBitQHeader::parse(&region).unwrap();
+        let codes = &region[region_header_len(header.dim)..];
+        // Skip the validity bitmap: probed runs carry packed codes only.
+        let bitmap_len = N.div_ceil(8);
+        let runs = [(0usize, &codes[bitmap_len..])];
+        let query = synth_vec(4242, DIM);
+
+        let mut allow = crate::row_allow::RowAllow::new(N);
+        for row in (0..N).filter(|r| r % 4 == 1) {
+            allow.insert(row);
+        }
+
+        let unrestricted = rank_probed_rows(&header, &runs, &query, RankMetric::L2, N).unwrap();
+        let restricted =
+            rank_probed_rows_allowed(&header, &runs, &query, RankMetric::L2, N, Some(&allow))
+                .unwrap();
+        let reference: Vec<usize> = unrestricted
+            .iter()
+            .copied()
+            .filter(|r| allow.contains(*r))
+            .collect();
+        assert_eq!(restricted, reference);
+        assert!(restricted.iter().all(|&r| allow.contains(r)));
+
+        // None = unchanged behavior.
+        let via_none =
+            rank_probed_rows_allowed(&header, &runs, &query, RankMetric::L2, N, None).unwrap();
+        assert_eq!(via_none, unrestricted);
     }
 
     /// TD-FLUSH-5: the parallel pass-2 encode (n >= 4096 -> rayon) must be

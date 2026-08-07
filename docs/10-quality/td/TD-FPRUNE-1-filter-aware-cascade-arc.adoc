@@ -18,18 +18,31 @@ filter as the correctness backstop. This TD tracks the phases.
 
 == Phases (each evidence-gated; mixed-read-safe; default-OFF until baked)
 
-* **P1 — wire what exists (no format change).** At the `mod.rs:420` gate,
-  instead of declining: ranged-read footer + per-block `ColumnMeta`, prune via
-  the existing `evaluate_block`/`evaluate_row_groups` kernel
-  (`crates/storage/proximadb-block-format/src/prune.rs:60-160`; live precedent
-  `read_records_pruned` on the record-store path), map surviving blocks →
-  global-row ranges (footer cumulative row counts), run the cascade restricted
-  to those rows (the coalesced planners already take row lists:
-  `plan_coalesced_row_ranges` `segment_format.rs:853`), residual per-record
-  check at D-resolve (decode props beside OID). Requires **arming P-Shred**
-  (ADR-055) for schema columns marked `filterable` — per-collection opt-in —
-  since user tags live in opaque PROPS msgpack without it. Canonical columns
-  (tenant, timestamps, valid_from/to) prune without shredding.
+* **P1 — wire what exists (no format change): IMPLEMENTED (engine level).**
+  Landed as: `RowAllow` bitset + allow-aware ranking (`rank_allowed`,
+  `rank_probed_rows_allowed`) in `proximadb-block-format`; Stage-F builder
+  `pax_filtered_row_allow` (header/footer → coalesced D-block fetch →
+  conservative `evaluate_block` stats prune (skips DECODE; fetch pruning is
+  P2) → row-accurate `evaluate_filter_proxima` per row — the SAME evaluator as
+  the exact path, so match semantics are identical by construction);
+  `rabitq_search_segment_coalesced_allowed` (pool sized on the allowed count;
+  geometric probe bypassed under a filter — probe∩filter nprobe policy is P3);
+  the `mod.rs:420` gate now routes filtered queries through Stage-F + the
+  restricted cascade behind default-OFF `PROXIMADB_PAX_FILTERED_CASCADE`
+  (fail-safe: any stage-F failure or non-coalesced segment falls back to the
+  exact path; a provably-empty allow-set short-circuits to an empty per-file
+  result). TDD: allow-aware rank equivalence tests (block-format), Stage-F
+  exactness vs an independent decode, filtered-cascade recall vs filtered
+  brute force, gate default-off. Evidence: the engine-level A/B harness
+  (`p1_evidence_filtered_exact_vs_cascade`, ignored — run in release).
+  **P1 residual scope:** P-Shred arming for `filterable` schema columns (user
+  tags live in opaque PROPS msgpack, so stats pruning currently helps only
+  canonical columns — row accuracy comes from the per-row eval either way),
+  and the D-resolve residual check (defense-in-depth; the P1 row set is
+  already row-accurate). **End-to-end server evidence is BLOCKED by
+  TD-FLUSH-8** (auto-flush cannot resolve REST-created collections in the
+  catalog — segments are never produced from the public API, so all corridor
+  measurements to date were memtable-scan measurements).
 * **P2 — footer-resident block stats (zero-GET pruning).** Populate the
   reserved `StatsKind::MinMax`/`BloomOid` slots in the segment footer block
   table (`segment_layout.rs:222-262`; today always `StatsKind::None`,
