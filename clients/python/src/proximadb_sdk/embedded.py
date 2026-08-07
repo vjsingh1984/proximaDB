@@ -1035,6 +1035,7 @@ prefetch_budget = 4
         dimension: int | None = None,
         distance_metric: str = "cosine",
         embedding_model: BaseEmbeddingModel | str | None = None,
+        engine: str | None = None,
     ) -> EmbeddedCollection:
         """Create a new collection.
 
@@ -1042,6 +1043,9 @@ prefetch_budget = 4
             name: Collection name
             dimension: Vector dimension (auto-detected from embedding model if not provided)
             distance_metric: Distance metric (cosine, euclidean, dot)
+            engine: Storage engine ("sst", "helix", "viper", "auto"). Defaults to
+                ``EmbeddedConfig.vector_engine``. Previously never sent, so the
+                server silently applied "auto".
             embedding_model: Embedding model for auto-embedding. Can be:
                 - BaseEmbeddingModel instance
                 - String model name (uses sentence-transformers)
@@ -1088,12 +1092,20 @@ prefetch_budget = 4
         # The canonical v2 endpoint takes a flat body with a STRING distance
         # metric and returns the created collection record (no {success} envelope).
         # An already-existing collection responds 409/CONFLICT, which is benign.
+        # `EmbeddedConfig.vector_engine` existed but was never transmitted, so the
+        # server fell back to `engine = "auto"` and every embedded collection was
+        # created on HELIX regardless of what the caller configured. That is not a
+        # cosmetic default: engine choice gates real capability (for example
+        # `object_economy_eligible` requires "sst"), and PAX-based features such as
+        # the filter-aware cascade only exist on the SST path. Send it.
+        selected_engine = engine or self.config.vector_engine
         async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/collections",
                 json={
                     "name": name,
                     "dimension": dimension,
+                    "engine": selected_engine.lower(),
                     "distance_metric": distance_metric.lower(),
                 },
                 timeout=30.0,
