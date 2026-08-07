@@ -20,3 +20,6 @@ async-trait.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+ring = "0.17"
+base64 = "0.22"
+thiserror.workspace = true

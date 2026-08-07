@@ -8336,10 +8336,13 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "proximadb-kernel",
+ "ring",
  "serde",
  "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

@@ -140,7 +140,7 @@ impl EncryptionKey {
     }
 
     /// Create an AEAD key for encryption/decryption
-    pub(crate) fn to_aead_key(&self) -> Result<LessSafeKey, KeyStoreError> {
+    pub fn to_aead_key(&self) -> Result<LessSafeKey, KeyStoreError> {
         let unbound = UnboundKey::new(&AES_256_GCM, &self.key_material)
             .map_err(|_| KeyStoreError::InvalidKeyMaterial("Failed to create AEAD key".into()))?;
         Ok(LessSafeKey::new(unbound))
