@@ -498,6 +498,8 @@ struct AbacDurableStores {
     authority: Arc<proximadb_abac::FileSystemAttributeAuthority>,
     bindings: Arc<proximadb_abac::FileSystemPolicyBindingStore>,
     predicate_objects: Arc<proximadb_abac::FileSystemPredicateObjectStore>,
+    /// ADR-090 L1.2: the grant (entitlement) store, in the same durable dir.
+    grants: Arc<proximadb_catalog::grants::FileSystemGrantStore>,
 }
 
 impl SharedServices {
@@ -639,10 +641,19 @@ impl SharedServices {
             "abac-policy: durable ABAC stores active at {} (authority + policy binding store + predicate object store)",
             abac_dir.display()
         );
+        let grants = match proximadb_catalog::grants::FileSystemGrantStore::open(&abac_dir) {
+            Ok(store) => Arc::new(store),
+            Err(error) => {
+                tracing::warn!("abac-policy: could not open grant store: {error}");
+                return None;
+            }
+        };
+
         Some(AbacDurableStores {
             authority,
             bindings,
             predicate_objects,
+            grants,
         })
     }
 
@@ -660,7 +671,8 @@ impl SharedServices {
             stores.predicate_objects.clone(),
             Arc::new(InMemoryPolicyEpochs::new()),
         )
-        .with_binding_store(stores.bindings.clone());
+        .with_binding_store(stores.bindings.clone())
+        .with_grant_store(stores.grants.clone());
         Arc::new(enforcer)
     }
 

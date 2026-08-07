@@ -42,6 +42,7 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | Variable | Semantic | Default | Tier; Owner | Declared in
 
 | `PROXIMADB_ADVISOR_OBS_DISK_SIDECAR` | Path to append advisor search observations as JSONL for offline analysis. | OFF (unset = no-op) | opt-in; — | src/services/advisor_observations.rs
+| `PROXIMADB_AUTHZ_REQUIRE_GRANTS` | ADR-090 L1.2: a policy admit additionally requires an applicable Grant (deny > absence-of-grant > grant) at the ABAC read-admission seam (`AbacEnforcer::resolve_read_context`). Armed with no grant store attached fails CLOSED. Grant predicate-ref composition into the row filter is L2; this gate enforces admit/deny only. Flip-precondition: the provision→permit→deny→revoke e2e ratchet (TD-AUTHZ-1 L1.2) is green. | OFF (unset ⇒ policy-only admission, today's behavior) | opt-in; TD-AUTHZ-1 | src/security/rls/abac_adapter.rs
 | `PROXIMADB_AZURE_EMULATOR` | Point the Azure blob backend at the Azurite emulator. | OFF (false) | test-only; — | src/storage/persistence/filesystem/mod.rs
 | `PROXIMADB_AZURE_TEST` | Gate that enables the `#[ignore]`d Azure dual-store integration test. | test skipped unless set | test-only; — | src/index/axis/indexes/dual_store_ivf.rs
 | `PROXIMADB_CACHE_PREFILL` | restart warming replay (0=off) | ON | TD-CACHE-1 | `src/database.rs (+1)`
