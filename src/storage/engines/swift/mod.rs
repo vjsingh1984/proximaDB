@@ -774,11 +774,6 @@ impl SwiftFile {
         Ok(())
     }
 
-    /// Legacy build blocks method (deprecated, use build_blocks_from_records_with_adapters)
-    pub fn build_blocks_from_records(&mut self, records: Vec<VectorRecord>) -> Result<()> {
-        self.build_blocks_from_records_with_compression(records, None)
-    }
-
     /// ✅ REFACTORED: Build blocks with compression using Proxima composition pattern
     pub fn build_blocks_from_records_with_compression(
         &mut self,
