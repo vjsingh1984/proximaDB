@@ -1,6 +1,7 @@
 //! Query fusion + federated optimizer + federated parser utilities.
 //! Extracted from root (plan_calibration/gls: TD-DECOMP-17; federated parser: TD-DECOMP-23).
 
+pub mod execution_result;
 pub mod gls;
 pub mod parser;
 pub mod plan_calibration;
