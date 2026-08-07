@@ -123,3 +123,43 @@ collections, no cross-observation) remains required and gains a sibling: a grant
   TD-TENANT-1 (header trust policy); the ABAC push-down that owns row-level access.
 * Discovered while auditing OQ-4 of
   link:TD-V1SUNSET-2-vectorrecord-to-proximatecord-first-slice.adoc[TD-V1SUNSET-2].
+
+== Addendum (2026-08-07) — VERIFIED: this TD blocks ADR-090's headline capability
+
+While scoping the L1.2 e2e ratchet, the cross-tenant read path was traced end to end. The
+result promotes this TD from "consistency cleanup" to **the blocker for cross-tenant
+sharing**:
+
+Three live vector read paths retain records by comparing the record's stamped tenant against
+the *acting* tenant — `src/services/operations/vectors/legacy.rs:1123`, `:1175`, `:1346`:
+
+[source,rust]
+----
+records.retain(|record| {
+    record.tenant_id.is_empty() || record.tenant_id == tenant_context.tenant_id
+});
+----
+
+Consequence, stated precisely: a foreign grantee reading a shared collection is **authorized
+and then filtered to nothing**. The catalog seam admits them — `evaluate_grants` returns
+`Permit`, and the L1.1 spec test `foreign_grantee_admits_and_only_that_grantee` passes — but
+every row belongs to the owner tenant, so this predicate drops all of them. The grantee
+observes an empty result set indistinguishable from "no data".
+
+**So ADR-090's headline capability is currently authorized but not observable.** Grant
+enforcement is genuinely end-to-end *within* a tenant; cross-tenant sharing is expressible,
+durable, and correctly decided at the catalog seam, and stops at the data path.
+
+This has two consequences for sequencing:
+
+. The L1.2 flip-precondition ratchet splits in two. The **same-tenant**
+  provision → permit → deny → revoke ratchet is reachable today and is what gates arming
+  `PROXIMADB_AUTHZ_REQUIRE_GRANTS` (or a tenant's `Enforce` posture). The **cross-tenant**
+  variant cannot pass until this TD lands, and writing it first would produce a test that
+  fails for a reason unrelated to grants.
+. This TD is now on the critical path for the sharing feature, not adjacent to it.
+
+Note the generalization worth carrying: a capability proven by unit tests at one layer is not
+a capability the system has. `foreign_grantee_admits_and_only_that_grantee` is a true
+statement about `evaluate_grants` and a false statement about ProximaDB. The e2e ratchet
+exists precisely to catch that gap, and it caught this one before the claim reached a user.
