@@ -374,6 +374,12 @@ pub struct SharedServices {
     #[cfg(feature = "abac-policy")]
     pub abac_binding_store: Option<Arc<proximadb_abac::FileSystemPolicyBindingStore>>,
 
+    /// Durable ADR-090 grant store handle (L1.1/L1.2). Shared with the live
+    /// enforcer; the admin grant endpoints write through this handle so a
+    /// grant/revoke is hot-visible without restart. `None` when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_grant_store: Option<Arc<proximadb_catalog::grants::FileSystemGrantStore>>,
+
     /// Durable ABAC predicate-object store handle (TD-ABAC control-plane /
     /// `abac-policy`). Shared with the live enforcer; the admin predicate-object
     /// endpoints register/revoke through this handle. `None` when ABAC is off.
@@ -2999,6 +3005,8 @@ impl SharedServices {
                 abac_authority: abac_stores.as_ref().map(|s| s.authority.clone()),
                 #[cfg(feature = "abac-policy")]
                 abac_binding_store: abac_stores.as_ref().map(|s| s.bindings.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_grant_store: abac_stores.as_ref().map(|s| s.grants.clone()),
                 #[cfg(feature = "abac-policy")]
                 abac_predicate_store: abac_stores.as_ref().map(|s| s.predicate_objects.clone()),
                 #[cfg(feature = "abac-policy")]
