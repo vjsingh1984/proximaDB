@@ -1041,9 +1041,41 @@ def parse_prometheus(text: str) -> dict[str, float]:
     return totals
 
 
+# A settle poll is a LIVENESS probe against a server that is deliberately busy:
+# training compaction is CPU-bound k-means and can stall the metrics handler for
+# far longer than a single request timeout. A 30s ceiling with no retry made one
+# slow response fatal to a multi-hour bed build — observed killing a 3.3M build
+# twice, and again once PROXIMADB_IVF_TRAIN_SAMPLE was doubled (more training =
+# longer stalls). Retry with backoff so a transient stall is survivable, but
+# still raise once the budget is spent so a genuinely dead server fails loudly.
+SCRAPE_TIMEOUT_SECONDS = 120
+SCRAPE_ATTEMPTS = 4
+
+# Graceful-shutdown budget. Scales with collection size because SIGTERM triggers
+# a flush of everything still unflushed; see ServerProcess.stop().
+SHUTDOWN_GRACE_SECONDS = 120
+
+
 def scrape_text(server: str) -> str:
-    with urllib.request.urlopen(server + "/metrics/prometheus", timeout=30) as response:
-        return response.read().decode()
+    last: Exception | None = None
+    for attempt in range(SCRAPE_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(
+                server + "/metrics/prometheus", timeout=SCRAPE_TIMEOUT_SECONDS
+            ) as response:
+                return response.read().decode()
+        except (TimeoutError, OSError, urllib.error.URLError) as error:
+            last = error
+            if attempt + 1 < SCRAPE_ATTEMPTS:
+                print(
+                    f"scrape: transient failure ({error!r}); "
+                    f"retry {attempt + 1}/{SCRAPE_ATTEMPTS - 1}",
+                    flush=True,
+                )
+                time.sleep(5 * (attempt + 1))
+    raise RuntimeError(
+        f"metrics scrape failed after {SCRAPE_ATTEMPTS} attempts: {last!r}"
+    )
 
 
 def scrape(server: str) -> dict[str, float]:
@@ -1471,7 +1503,12 @@ class OwnedServer:
         if self.process.poll() is None:
             self.process.send_signal(signal.SIGTERM)
             try:
-                self.process.wait(timeout=30)
+                # Graceful shutdown flushes unflushed data, so the time needed
+                # scales with collection size — a 30M bed logged "Storage engine
+                # stop timeout" with a collection still draining. SIGKILL during
+                # that drain leaves a half-written bed that only fails later, at
+                # geometry validation, after the ingest cost is already sunk.
+                self.process.wait(timeout=SHUTDOWN_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=10)
