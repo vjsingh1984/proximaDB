@@ -103,6 +103,10 @@ pub struct AbacEnforcer {
     /// visible to the enforcer's next read without a restart (hot-reload,
     /// TD-ABAC control-plane).
     binding_store: Option<Arc<dyn PolicyBindingStore + Send + Sync>>,
+    /// ADR-090 L1.2: the durable grant store (entitlement layer). Shared `Arc`
+    /// for the same hot-reload reason as `binding_store`. Consulted only when
+    /// `PROXIMADB_AUTHZ_REQUIRE_GRANTS` is armed.
+    grant_store: Option<Arc<proximadb_catalog::grants::FileSystemGrantStore>>,
 }
 
 #[cfg(feature = "abac-policy")]
@@ -122,6 +126,7 @@ impl AbacEnforcer {
             epochs,
             bindings: Vec::new(),
             binding_store: None,
+            grant_store: None,
         }
     }
 
@@ -141,6 +146,14 @@ impl AbacEnforcer {
     /// Takes a shared `Arc` so the caller (boot wiring) can retain its own clone
     /// of the same durable store for the admin-provisioning writer — a provision
     /// is then visible to this enforcer without a restart.
+    pub fn with_grant_store(
+        mut self,
+        store: Arc<proximadb_catalog::grants::FileSystemGrantStore>,
+    ) -> Self {
+        self.grant_store = Some(store);
+        self
+    }
+
     pub fn with_binding_store(mut self, store: Arc<dyn PolicyBindingStore + Send + Sync>) -> Self {
         self.binding_store = Some(store);
         self
@@ -198,7 +211,21 @@ impl AbacEnforcer {
             target,
         ) {
             proximadb_abac::ReadDecision::Deny(reason) => Err(reason),
-            proximadb_abac::ReadDecision::Admit(ctx) => Ok(ctx),
+            proximadb_abac::ReadDecision::Admit(ctx) => {
+                // ADR-090 L1.2 (deny > absence-of-grant > grant): with grant
+                // enforcement armed, a policy admit is necessary but not
+                // sufficient — an applicable GRANT must also admit the subject.
+                // Armed with NO store attached fails closed too: "required"
+                // cannot degrade to "optional" because wiring is incomplete.
+                // Grant predicate-ref composition into the row filter is L2
+                // (today only admit/deny is enforced here).
+                if grants_required()
+                    && !grant_admits_read(self.grant_store.as_deref(), tenant, &subject.0, &target)
+                {
+                    return Err(DenyReason::NoApplicableGrant);
+                }
+                Ok(ctx)
+            }
         }
     }
 
@@ -849,5 +876,123 @@ mod tests {
             &bindings,
         );
         assert!(outcome.is_err(), "unbound subject denied");
+    }
+}
+
+/// ADR-090 L1.2 opt-in gate: when `PROXIMADB_AUTHZ_REQUIRE_GRANTS` is truthy,
+/// a policy admit additionally requires an applicable grant (deny > absence >
+/// grant). Default OFF — absent means today's behavior, unchanged.
+#[cfg(feature = "abac-policy")]
+fn grants_required() -> bool {
+    match std::env::var("PROXIMADB_AUTHZ_REQUIRE_GRANTS") {
+        Ok(v) => {
+            let v = v.trim();
+            v == "1"
+                || v.eq_ignore_ascii_case("true")
+                || v.eq_ignore_ascii_case("on")
+                || v.eq_ignore_ascii_case("yes")
+        }
+        Err(_) => false,
+    }
+}
+
+/// ADR-090 L1.2 pure decision: does an applicable grant admit `subject` (a
+/// user of `tenant`) to read `target`? `None` store ⇒ **false** — when
+/// enforcement is armed, "required" cannot degrade to "optional" because
+/// wiring is incomplete.
+#[cfg(feature = "abac-policy")]
+fn grant_admits_read(
+    store: Option<&proximadb_catalog::grants::FileSystemGrantStore>,
+    tenant: u64,
+    subject: &str,
+    target: &Target,
+) -> bool {
+    let Some(store) = store else {
+        return false;
+    };
+    matches!(
+        proximadb_catalog::grants::evaluate_grants(
+            &store.grants_for_owner(tenant),
+            &proximadb_catalog::grants::GrantSubject {
+                tenant_stable_id: tenant,
+                subject,
+            },
+            target,
+            proximadb_catalog::grants::GrantAction::Read,
+            chrono::Utc::now().timestamp_millis(),
+        ),
+        proximadb_catalog::grants::GrantDecision::Permit { .. }
+    )
+}
+
+// ADR-090 L1.2 specification for the seam's NEW logic. The full
+// provision→permit→deny→revoke e2e across live transports is the gate's
+// flip-precondition (registry row) and lands with the admin surface; these
+// pin the decision semantics the seam composes.
+#[cfg(all(test, feature = "abac-policy"))]
+mod grant_gate_tests {
+    use super::*;
+    use proximadb_catalog::grants::{FileSystemGrantStore, GrantAction, Grantee};
+    use std::collections::BTreeSet;
+
+    fn target(table: u32) -> Target {
+        Target {
+            namespace: 0,
+            table,
+            column: None,
+        }
+    }
+
+    /// Armed with NO store ⇒ deny (fail-closed on incomplete wiring).
+    #[test]
+    fn no_store_never_admits() {
+        assert!(!grant_admits_read(None, 7, "alice", &target(10)));
+    }
+
+    /// No applicable grant ⇒ deny; an applicable grant ⇒ admit; revoke ⇒ deny.
+    #[test]
+    fn grant_lifecycle_drives_admission() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FileSystemGrantStore::open(dir.path()).expect("open");
+        assert!(!grant_admits_read(Some(&store), 7, "alice", &target(10)));
+
+        let id = store
+            .grant(
+                7,
+                proximadb_catalog::fc_metamodel::Scope::Table(10),
+                Grantee::User {
+                    tenant_stable_id: 7,
+                    subject: proximadb_catalog::fc_metamodel::SubjectId("alice".into()),
+                },
+                BTreeSet::from([GrantAction::Read]),
+                None,
+                None,
+                None,
+            )
+            .expect("grant");
+        assert!(grant_admits_read(Some(&store), 7, "alice", &target(10)));
+        assert!(
+            !grant_admits_read(Some(&store), 7, "mallory", &target(10)),
+            "another subject must not ride alice's grant"
+        );
+
+        store.revoke(7, &id).expect("revoke");
+        assert!(!grant_admits_read(Some(&store), 7, "alice", &target(10)));
+    }
+
+    /// The env gate parses the standard truthy set and defaults OFF.
+    #[test]
+    fn gate_parsing_defaults_off() {
+        // nextest process-per-test isolation makes set_var safe here (the same
+        // justification as compaction_tests::RecordVersionGate).
+        unsafe { std::env::remove_var("PROXIMADB_AUTHZ_REQUIRE_GRANTS") };
+        assert!(!grants_required());
+        for v in ["1", "true", "ON", "yes"] {
+            unsafe { std::env::set_var("PROXIMADB_AUTHZ_REQUIRE_GRANTS", v) };
+            assert!(grants_required(), "{v} must arm the gate");
+        }
+        unsafe { std::env::set_var("PROXIMADB_AUTHZ_REQUIRE_GRANTS", "0") };
+        assert!(!grants_required());
+        unsafe { std::env::remove_var("PROXIMADB_AUTHZ_REQUIRE_GRANTS") };
     }
 }
