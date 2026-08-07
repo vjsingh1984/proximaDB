@@ -32,6 +32,8 @@ pub mod corpus_version_fs_store;
 pub mod fc_metamodel;
 pub mod internal;
 pub mod partition_pruning;
+#[cfg(feature = "fc-metamodel")]
+pub mod principal_registry;
 pub mod recall_probe;
 pub mod syscat_cache;
 pub mod syscat_warm;

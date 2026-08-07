@@ -385,7 +385,7 @@ proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
-proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-catalog = { path = "crates/control/proximadb-catalog", features = ["fc-metamodel"] }
 proximadb-cdc = { workspace = true }
 proximadb-abac = { path = "crates/control/proximadb-abac", optional = true }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
