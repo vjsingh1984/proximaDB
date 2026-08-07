@@ -1717,6 +1717,7 @@ mod security_initialization_tests {
                     require_client_cert: true,
                     cn_role_mapping: HashMap::new(),
                 },
+                audit_fail_closed: false,
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),
