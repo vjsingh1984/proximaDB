@@ -66,6 +66,15 @@ proximadb-tenant = { path = "../../foundation/proximadb-tenant" }
 # server binary no longer compiles embedded bindings.
 pyo3 = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
+# `python.rs` / `python_dataframe.rs` use these DIRECTLY (`use datafusion::prelude::*`,
+# `tracing_subscriber::…`). Having them only as transitive deps of the root crate is
+# not enough — a transitive dependency is not in scope — so the `python` feature
+# could never compile. Optional + feature-gated so non-Python builds are unaffected.
+datafusion = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+# `python_dataframe.rs` uses `proximadb_storage_common::proxima_schema::ProximaSchema`
+# directly when inferring a DataFrame schema from a collection.
+proximadb-storage-common = { workspace = true, optional = true }
 jni = { version = "0.21", optional = true }
 napi = { version = "2.14", features = ["napi9"], optional = true }
 napi-derive = { version = "2.14", optional = true }
@@ -101,7 +110,18 @@ axis = ["proximadb/axis"]
 # `--features abac-policy,proximadb-embedded/abac-policy`.
 abac-policy = ["proximadb/abac-policy", "dep:proximadb-abac"]
 # Python bindings (PyO3 + zero-copy numpy).
-python = ["dep:pyo3", "dep:numpy"]
+# `arrow/pyarrow` is required by the `arrow::pyarrow::{PyArrowType, ToPyArrow}`
+# conversions in the binding; without it those items are configured out and the
+# feature does not build. It is enabled here rather than on the base `arrow`
+# dependency so non-Python builds do not pull pyo3 in through arrow.
+python = [
+    "dep:pyo3",
+    "dep:numpy",
+    "dep:datafusion",
+    "dep:tracing-subscriber",
+    "dep:proximadb-storage-common",
+    "arrow/pyarrow",
+]
 # Java bindings (JNI).
 java = ["dep:jni"]
 # Node.js bindings (NAPI-RS).

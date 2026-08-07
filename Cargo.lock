@@ -250,6 +250,7 @@ dependencies = [
  "arrow-ipc",
  "arrow-json",
  "arrow-ord",
+ "arrow-pyarrow",
  "arrow-row",
  "arrow-schema",
  "arrow-select",
@@ -431,6 +432,18 @@ dependencies = [
  "arrow-data",
  "arrow-schema",
  "arrow-select",
+]
+
+[[package]]
+name = "arrow-pyarrow"
+version = "58.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d29abdf672a81c1aeb57fd2661457f9918964d49aed0e9f18932535f2a9e49ce"
+dependencies = [
+ "arrow-array",
+ "arrow-data",
+ "arrow-schema",
+ "pyo3",
 ]
 
 [[package]]
@@ -7303,6 +7316,7 @@ dependencies = [
  "bincode",
  "chrono",
  "crc32fast",
+ "datafusion",
  "hostname 0.4.2",
  "jni 0.21.1",
  "libc",
@@ -7317,6 +7331,7 @@ dependencies = [
  "proximadb-hardware",
  "proximadb-records",
  "proximadb-runtime",
+ "proximadb-storage-common",
  "proximadb-tenant",
  "pyo3",
  "serde",
@@ -7325,6 +7340,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
