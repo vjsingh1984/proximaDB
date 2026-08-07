@@ -7942,7 +7942,13 @@ dependencies = [
 name = "proximadb-query-cache"
 version = "0.2.0"
 dependencies = [
+ "arrow",
+ "dashmap",
+ "proximadb-query-fusion",
+ "proximadb-search-types",
+ "thiserror 2.0.19",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

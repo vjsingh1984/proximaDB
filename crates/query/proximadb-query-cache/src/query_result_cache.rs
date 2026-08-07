@@ -41,8 +41,8 @@ use dashmap::DashMap;
 use thiserror::Error;
 use tracing::{debug, info};
 
-use crate::core::search::VectorFreshnessMode;
-use crate::query::federated::ExecutionResult;
+use proximadb_query_fusion::execution_result::ExecutionResult;
+use proximadb_search_types::search_params::VectorFreshnessMode;
 
 /// Unique identifier for a cached query result
 pub type QueryCacheKey = u64;
