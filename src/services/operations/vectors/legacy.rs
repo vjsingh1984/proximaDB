@@ -1312,6 +1312,17 @@ impl VectorOperationsService {
         let storage_records = engine
             .read_all_records(&collection_id, Some(&storage_url))
             .await?;
+        // Both halves are logged because a zero from either is silent by nature: an
+        // empty WAL is normal after a flush, and an empty storage read is normal for a
+        // new collection — but together they mean "this collection looks empty", and
+        // when that is wrong there is otherwise nothing to inspect.
+        tracing::debug!(
+            "list_all_records: collection={} storage_url={} wal_records={} storage_records={}",
+            collection_id,
+            storage_url,
+            wal_records.len(),
+            storage_records.len()
+        );
 
         // Merge by oid: storage baseline, then WAL overrides on >= updated_at_ns
         // so the freshest version (WAL) wins ties.
