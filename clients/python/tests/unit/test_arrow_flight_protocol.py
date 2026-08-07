@@ -156,15 +156,26 @@ def test_metadata_from_exchange_chunk_reads_app_metadata():
 
 
 @pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
-def test_call_options_include_auth_and_tenant_headers():
+def test_call_options_include_auth_and_tenant_headers(monkeypatch):
+    # pyarrow's FlightCallOptions does not expose the headers it was constructed
+    # with, so capture the kwargs the SDK passes to it instead of reading them back.
+    import proximadb_sdk.protocols.arrow_flight as af
+
+    captured = {}
+
+    class _CapturedOptions:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(af.flight, "FlightCallOptions", _CapturedOptions)
+
     client = ArrowFlightClient(
         "localhost:5680", api_key="token-1", tenant_id="tenant-a"
     )
+    client._get_call_options()
 
-    options = client._get_call_options()
-
-    assert (b"authorization", b"API-Key token-1") in options.headers
-    assert (b"x-proximadb-tenant-id", b"tenant-a") in options.headers
+    assert (b"authorization", b"API-Key token-1") in captured["headers"]
+    assert (b"x-proximadb-tenant-id", b"tenant-a") in captured["headers"]
 
 
 @pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")

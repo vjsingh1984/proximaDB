@@ -681,8 +681,12 @@ def test_get_collection_cached(patched_http):
 
 
 def test_get_collection_from_server(patched_http):
+    # get_collection resolves from the LIST endpoint (GET /collections/{name} returns
+    # 200 even for non-existent collections), so mock the flat v2 LIST payload.
     patched_http.responder = staticmethod(
-        lambda v, u, **kw: FakeResp({"collection": {"config": {"dimension": 12}}})
+        lambda v, u, **kw: FakeResp(
+            {"collections": [{"name": "remote", "dimension": 12}]}
+        )
     )
     db = make_started_db()
     got = run(db.get_collection("remote"))
