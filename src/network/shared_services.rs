@@ -380,6 +380,11 @@ pub struct SharedServices {
     #[cfg(feature = "abac-policy")]
     pub abac_grant_store: Option<Arc<proximadb_catalog::grants::FileSystemGrantStore>>,
 
+    /// TD-SEC-2 Slice C: per-tenant security posture store handle.
+    #[cfg(feature = "abac-policy")]
+    pub abac_posture_store:
+        Option<Arc<proximadb_catalog::tenant_posture::FileSystemTenantPostureStore>>,
+
     /// Durable ABAC predicate-object store handle (TD-ABAC control-plane /
     /// `abac-policy`). Shared with the live enforcer; the admin predicate-object
     /// endpoints register/revoke through this handle. `None` when ABAC is off.
@@ -506,6 +511,8 @@ struct AbacDurableStores {
     predicate_objects: Arc<proximadb_abac::FileSystemPredicateObjectStore>,
     /// ADR-090 L1.2: the grant (entitlement) store, in the same durable dir.
     grants: Arc<proximadb_catalog::grants::FileSystemGrantStore>,
+    /// TD-SEC-2 Slice C: per-tenant security posture, same durable dir.
+    posture: Arc<proximadb_catalog::tenant_posture::FileSystemTenantPostureStore>,
 }
 
 impl SharedServices {
@@ -654,12 +661,22 @@ impl SharedServices {
                 return None;
             }
         };
+        let posture = match proximadb_catalog::tenant_posture::FileSystemTenantPostureStore::open(
+            &abac_dir,
+        ) {
+            Ok(store) => Arc::new(store),
+            Err(error) => {
+                tracing::warn!("abac-policy: could not open tenant posture store: {error}");
+                return None;
+            }
+        };
 
         Some(AbacDurableStores {
             authority,
             bindings,
             predicate_objects,
             grants,
+            posture,
         })
     }
 
@@ -678,7 +695,8 @@ impl SharedServices {
             Arc::new(InMemoryPolicyEpochs::new()),
         )
         .with_binding_store(stores.bindings.clone())
-        .with_grant_store(stores.grants.clone());
+        .with_grant_store(stores.grants.clone())
+        .with_posture_store(stores.posture.clone());
         Arc::new(enforcer)
     }
 
@@ -3007,6 +3025,8 @@ impl SharedServices {
                 abac_binding_store: abac_stores.as_ref().map(|s| s.bindings.clone()),
                 #[cfg(feature = "abac-policy")]
                 abac_grant_store: abac_stores.as_ref().map(|s| s.grants.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_posture_store: abac_stores.as_ref().map(|s| s.posture.clone()),
                 #[cfg(feature = "abac-policy")]
                 abac_predicate_store: abac_stores.as_ref().map(|s| s.predicate_objects.clone()),
                 #[cfg(feature = "abac-policy")]

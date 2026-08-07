@@ -81,6 +81,11 @@ pub struct RestCoreServices {
     /// `SharedServices.abac_grant_store` (ADR-090 grants admin).
     #[cfg(feature = "abac-policy")]
     pub abac_grant_store: Option<Arc<proximadb_catalog::grants::FileSystemGrantStore>>,
+
+    /// `SharedServices.abac_posture_store` (TD-SEC-2 per-tenant posture).
+    #[cfg(feature = "abac-policy")]
+    pub abac_posture_store:
+        Option<Arc<proximadb_catalog::tenant_posture::FileSystemTenantPostureStore>>,
 }
 
 impl RestCoreServices {
@@ -112,6 +117,8 @@ impl RestCoreServices {
             abac_predicate_store: services.abac_predicate_store.clone(),
             #[cfg(feature = "abac-policy")]
             abac_grant_store: services.abac_grant_store.clone(),
+            #[cfg(feature = "abac-policy")]
+            abac_posture_store: services.abac_posture_store.clone(),
         }
     }
 }
@@ -293,6 +300,11 @@ pub struct AppState {
     /// `with_abac_grant_store`.
     #[cfg(feature = "abac-policy")]
     pub abac_grant_store: Option<Arc<proximadb_catalog::grants::FileSystemGrantStore>>,
+
+    /// `SharedServices.abac_posture_store` (TD-SEC-2 per-tenant posture).
+    #[cfg(feature = "abac-policy")]
+    pub abac_posture_store:
+        Option<Arc<proximadb_catalog::tenant_posture::FileSystemTenantPostureStore>>,
 }
 
 impl AppState {
@@ -326,6 +338,8 @@ impl AppState {
             abac_predicate_store,
             #[cfg(feature = "abac-policy")]
             abac_grant_store,
+            #[cfg(feature = "abac-policy")]
+            abac_posture_store,
         } = core;
         // Cross-modal fusion port — built once at boot from the vector + graph services and the
         // shared full-text index map (search-surface contract: one retrieval engine, shared port).
@@ -400,6 +414,8 @@ impl AppState {
             abac_predicate_store,
             #[cfg(feature = "abac-policy")]
             abac_grant_store,
+            #[cfg(feature = "abac-policy")]
+            abac_posture_store,
         }
     }
 
@@ -1578,6 +1594,11 @@ fn operator_and_control_v2_routes() -> axum::Router<AppState> {
         .route(
             "/api/v2/abac/policy-bindings/{tenant}",
             axum::routing::get(crate::network::rest::canonical::abac_admin::get_policy_bindings),
+        )
+        .route(
+            "/api/v2/abac/tenant-posture/{tenant}",
+            axum::routing::get(crate::network::rest::canonical::abac_admin::get_tenant_posture)
+                .put(crate::network::rest::canonical::abac_admin::put_tenant_posture),
         )
         .route(
             "/api/v2/abac/grants",

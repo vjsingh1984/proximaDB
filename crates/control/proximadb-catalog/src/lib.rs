@@ -39,6 +39,8 @@ pub mod principal_registry;
 pub mod recall_probe;
 pub mod syscat_cache;
 pub mod syscat_warm;
+#[cfg(feature = "fc-metamodel")]
+pub mod tenant_posture;
 // Catalog runtime manager (Slice 2) — `CatalogManager` + `TableOpLockRegistry`,
 // moved from the root `src/catalog/mod.rs`. Object-store catalog URLs route
 // through the injected `CatalogFilesystemResolver` port (no catalog->storage

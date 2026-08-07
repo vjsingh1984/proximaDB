@@ -1133,3 +1133,105 @@ pub async fn delete_grant(
     }
     Ok(StatusCode::NO_CONTENT)
 }
+
+// ===========================================================================
+// TD-SEC-2 Slice C — per-tenant security posture admin.
+// Same doctrine as the grant/policy endpoints: operator-gated, 503 when the
+// durable store is absent, tenants arrive as STRINGS and resolve through the
+// catalog resolver, writes are hot-visible to the live enforcer.
+// ===========================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct PutPostureRequest {
+    /// `off` | `audit` | `enforce`.
+    pub grant_enforcement: proximadb_catalog::tenant_posture::GrantEnforcement,
+}
+
+fn require_posture_store(
+    state: &AppState,
+) -> Result<
+    &Arc<proximadb_catalog::tenant_posture::FileSystemTenantPostureStore>,
+    (StatusCode, Json<OperatorErrorResponse>),
+> {
+    state.abac_posture_store.as_ref().ok_or_else(|| {
+        unavailable(
+            "abac_unavailable",
+            "tenant posture store is not available (abac-policy off or no data_dir)",
+        )
+    })
+}
+
+/// `PUT /api/v2/abac/tenant-posture/{tenant}` — set a tenant's enforcement mode.
+///
+/// The intended rollout is `Off` → `Audit` (watch the would-be-denial warnings
+/// fall to zero for this tenant) → `Enforce`. Skipping the `Audit` rehearsal is
+/// how an operator breaks a customer's traffic.
+pub async fn put_tenant_posture(
+    user_context: Option<Extension<UnifiedUserContext>>,
+    State(state): State<AppState>,
+    Path(tenant): Path<String>,
+    Json(body): Json<PutPostureRequest>,
+) -> Result<
+    Json<proximadb_catalog::tenant_posture::TenantSecurityPosture>,
+    (StatusCode, Json<OperatorErrorResponse>),
+> {
+    let user_id = authorize_operator(user_context.as_ref().map(|e| &e.0))?;
+    let store = require_posture_store(&state)?;
+    let resolver = CatalogTenantStableIdResolver::new(state.catalog_manager.clone());
+    let tenant_stable_id = ensure_tenant(&resolver, &tenant)
+        .await
+        .map_err(map_provision_err)?;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    store
+        .set(tenant_stable_id, body.grant_enforcement, now_ms)
+        .map_err(|e| store_unavailable("posture_store_error", e.to_string()))?;
+    tracing::info!(
+        target: "proximadb.abac_policy.audit",
+        operator = %user_id,
+        tenant = %tenant,
+        mode = ?body.grant_enforcement,
+        action = "set_tenant_posture",
+        "tenant security posture updated"
+    );
+    Ok(Json(
+        proximadb_catalog::tenant_posture::TenantSecurityPosture {
+            tenant_stable_id,
+            grant_enforcement: body.grant_enforcement,
+            updated_at_ms: now_ms,
+        },
+    ))
+}
+
+/// `GET /api/v2/abac/tenant-posture/{tenant}` — the tenant's EXPLICIT posture.
+///
+/// 404 when the tenant has no record: that is meaningfully different from
+/// `Off`, because an absent record means "inherit the process default", which
+/// may itself be `Enforce` when the env gate is armed.
+pub async fn get_tenant_posture(
+    user_context: Option<Extension<UnifiedUserContext>>,
+    State(state): State<AppState>,
+    Path(tenant): Path<String>,
+) -> Result<
+    Json<proximadb_catalog::tenant_posture::TenantSecurityPosture>,
+    (StatusCode, Json<OperatorErrorResponse>),
+> {
+    authorize_operator(user_context.as_ref().map(|e| &e.0))?;
+    let store = require_posture_store(&state)?;
+    let resolver = CatalogTenantStableIdResolver::new(state.catalog_manager.clone());
+    let tenant_stable_id = ensure_tenant(&resolver, &tenant)
+        .await
+        .map_err(map_provision_err)?;
+    match store.get(tenant_stable_id) {
+        Some(posture) => Ok(Json(posture)),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(OperatorErrorResponse {
+                error: "no_explicit_posture",
+                message: format!(
+                    "tenant '{tenant}' has no explicit posture; it inherits the process default"
+                ),
+                code: 404,
+            }),
+        )),
+    }
+}

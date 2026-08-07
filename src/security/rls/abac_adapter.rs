@@ -107,6 +107,10 @@ pub struct AbacEnforcer {
     /// for the same hot-reload reason as `binding_store`. Consulted only when
     /// `PROXIMADB_AUTHZ_REQUIRE_GRANTS` is armed.
     grant_store: Option<Arc<proximadb_catalog::grants::FileSystemGrantStore>>,
+    /// TD-SEC-2 Slice C: per-tenant security posture. When present it decides
+    /// each tenant's enforcement mode; the env gate below is only the DEFAULT
+    /// for tenants with no explicit record.
+    posture_store: Option<Arc<proximadb_catalog::tenant_posture::FileSystemTenantPostureStore>>,
 }
 
 #[cfg(feature = "abac-policy")]
@@ -127,6 +131,7 @@ impl AbacEnforcer {
             bindings: Vec::new(),
             binding_store: None,
             grant_store: None,
+            posture_store: None,
         }
     }
 
@@ -146,6 +151,14 @@ impl AbacEnforcer {
     /// Takes a shared `Arc` so the caller (boot wiring) can retain its own clone
     /// of the same durable store for the admin-provisioning writer — a provision
     /// is then visible to this enforcer without a restart.
+    pub fn with_posture_store(
+        mut self,
+        store: Arc<proximadb_catalog::tenant_posture::FileSystemTenantPostureStore>,
+    ) -> Self {
+        self.posture_store = Some(store);
+        self
+    }
+
     pub fn with_grant_store(
         mut self,
         store: Arc<proximadb_catalog::grants::FileSystemGrantStore>,
@@ -219,10 +232,47 @@ impl AbacEnforcer {
                 // cannot degrade to "optional" because wiring is incomplete.
                 // Grant predicate-ref composition into the row filter is L2
                 // (today only admit/deny is enforced here).
-                if grants_required()
-                    && !grant_admits_read(self.grant_store.as_deref(), tenant, &subject.0, &target)
-                {
-                    return Err(DenyReason::NoApplicableGrant);
+                // TD-SEC-2 Slice C: the ENFORCEMENT MODE IS PER TENANT.
+                // ADR-090 L1.2 gated this on one process-global env var, which
+                // is the wrong shape for SaaS — an operator cannot flag-day
+                // every customer onto strict authorization at once. The env
+                // gate now supplies only the DEFAULT for tenants that have no
+                // explicit posture, so existing deployments are unchanged.
+                use proximadb_catalog::tenant_posture::PostureDecision;
+                match self.posture_for(tenant) {
+                    PostureDecision::Skip => {}
+                    PostureDecision::AuditOnly => {
+                        // Rehearsal: evaluate, report, ADMIT. This is the ramp
+                        // that makes onboarding a tenant to Enforce safe —
+                        // without it the only choices are "unenforced" and
+                        // "possibly break production", so nobody ever flips it.
+                        if !grant_admits_read(
+                            self.grant_store.as_deref(),
+                            tenant,
+                            &subject.0,
+                            &target,
+                        ) {
+                            tracing::warn!(
+                                target: "proximadb.authz.audit",
+                                tenant,
+                                subject = %subject.0,
+                                table = target.table,
+                                "GRANT AUDIT: this read would be DENIED under Enforce \
+                                 (no applicable grant); admitted because the tenant's \
+                                 posture is Audit"
+                            );
+                        }
+                    }
+                    PostureDecision::Enforce => {
+                        if !grant_admits_read(
+                            self.grant_store.as_deref(),
+                            tenant,
+                            &subject.0,
+                            &target,
+                        ) {
+                            return Err(DenyReason::NoApplicableGrant);
+                        }
+                    }
                 }
                 Ok(ctx)
             }
@@ -876,6 +926,23 @@ mod tests {
             &bindings,
         );
         assert!(outcome.is_err(), "unbound subject denied");
+    }
+}
+
+impl AbacEnforcer {
+    /// The enforcement mode for `tenant`: its explicit posture record when one
+    /// exists, else the process default derived from the env gate.
+    fn posture_for(&self, tenant: u64) -> proximadb_catalog::tenant_posture::PostureDecision {
+        use proximadb_catalog::tenant_posture::GrantEnforcement;
+        let default_mode = if grants_required() {
+            GrantEnforcement::Enforce
+        } else {
+            GrantEnforcement::Off
+        };
+        match &self.posture_store {
+            Some(store) => store.resolve(tenant, default_mode).decision(),
+            None => default_mode.decision(),
+        }
     }
 }
 
