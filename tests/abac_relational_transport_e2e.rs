@@ -1273,3 +1273,170 @@ async fn flight_records_follow_live_row_policy_provision_and_revoke_inner() {
         "the existing Flight client must observe the hot revoke"
     );
 }
+
+// ===========================================================================
+// TD-AUTHZ-1 L1.2 — the GRANT ratchet: provision -> permit -> deny -> revoke
+// over a live server. This is the documented flip-precondition for arming
+// grant enforcement (PROXIMADB_AUTHZ_REQUIRE_GRANTS, or a tenant's `Enforce`
+// posture): enforcement must not be turned on for anyone until this is green.
+//
+// SCOPE — same-tenant, deliberately. The cross-tenant variant is NOT written
+// here because it cannot pass yet: three live read paths still retain rows by
+// `record.tenant_id == tenant_context.tenant_id`
+// (src/services/operations/vectors/legacy.rs:1123/:1175/:1346), so a foreign
+// grantee is admitted by the catalog and then filtered to zero rows. Writing
+// it now would produce a test that fails for reasons unrelated to grants. See
+// the 2026-08-07 addendum in TD-TENANT-2; that predicate is itself load-bearing
+// until the WAL read is tenant-keyed (`get_collection_vectors_raw` takes a bare
+// collection id), so it cannot simply be deleted either.
+// ===========================================================================
+
+/// Set a tenant's grant-enforcement posture through the live admin API
+/// (TD-SEC-2 Slice C). Returns once the write is durable and hot-visible.
+async fn set_tenant_posture(client: &HttpClient, server: &LiveServer, tenant: &str, mode: &str) {
+    let response = client
+        .put(server.admin_url(&format!("/api/v2/abac/tenant-posture/{tenant}")))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Api-Key {OPERATOR_KEY}"),
+        )
+        .json(&json!({ "grant_enforcement": mode }))
+        .send()
+        .await
+        .expect("put tenant posture");
+    assert_admin_success(response, &format!("set posture {mode}")).await;
+}
+
+/// Provision a Read grant over one collection for one subject of `tenant`.
+/// Returns the grant id, so the revoke half of the ratchet can name it.
+async fn provision_read_grant(
+    client: &HttpClient,
+    server: &LiveServer,
+    tenant: &str,
+    subject: &str,
+    table_object_id: u64,
+) -> String {
+    let response = client
+        .post(server.admin_url("/api/v2/abac/grants"))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Api-Key {OPERATOR_KEY}"),
+        )
+        .json(&json!({
+            "owner_tenant": tenant,
+            "resource": { "Table": table_object_id },
+            "grantee": { "tenant": tenant, "subject": subject },
+            "actions": ["Read"],
+        }))
+        .send()
+        .await
+        .expect("post grant");
+    let body = assert_admin_success(response, "provision grant").await;
+    body.get("grant_id")
+        .and_then(|v| v.as_str())
+        .expect("grant_id in response")
+        .to_string()
+}
+
+async fn revoke_grant(client: &HttpClient, server: &LiveServer, tenant: &str, grant_id: &str) {
+    let response = client
+        .delete(server.admin_url(&format!("/api/v2/abac/grants/{tenant}/{grant_id}")))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Api-Key {OPERATOR_KEY}"),
+        )
+        .send()
+        .await
+        .expect("delete grant");
+    assert_eq!(
+        response.status(),
+        StatusCode::NO_CONTENT,
+        "revoke must be idempotent 204"
+    );
+}
+
+#[test]
+fn grant_enforcement_follows_live_provision_permit_deny_revoke() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    runtime.block_on(grant_ratchet_inner());
+}
+
+async fn grant_ratchet_inner() {
+    let server = LiveServer::start().await.expect("start live server");
+    let http = HttpClient::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("HTTP client");
+    let fixture = create_live_record_fixture(&http, &server, "authz_grant_ratchet").await;
+
+    // ABAC is fail-closed, so an unprovisioned principal reads nothing even
+    // before grants exist. Provision the POLICY layer first: grants compose as
+    // deny > absence-of-grant > grant, and the enforcement seam consults grants
+    // only on the policy `Admit` arm — so a policy denial would mask everything
+    // this test is trying to prove.
+    let _policy_path = provision_live_record_policy(&http, &server, 4_100_000_000).await;
+
+    // Baseline: posture is Off (the default), so admission is policy-only and
+    // alice's row is visible. If this fails, every "denied ⇒ empty" assertion
+    // below would pass vacuously against a broken fixture.
+    let baseline = rest_record_search_ids(&http, &server, ALICE_KEY, &fixture.collection).await;
+    assert!(
+        !baseline.is_empty(),
+        "the POLICY layer must admit before enforcement is armed, otherwise the \
+         deny assertions below prove nothing"
+    );
+
+    let pg = connect(&server, "alice").await;
+    let table_object_id = table_object_id(&pg, &fixture.collection).await;
+
+    // 1. ARM: this tenant now requires a grant for every read.
+    set_tenant_posture(&http, &server, TENANT, "Enforce").await;
+
+    // 2. DENY: no grant exists yet, so the read is refused. Enforcement
+    //    manifests as an empty result set — the read path fails CLOSED on
+    //    DenyReason::NoApplicableGrant rather than returning rows.
+    let denied = rest_record_search_ids(&http, &server, ALICE_KEY, &fixture.collection).await;
+    assert!(
+        denied.is_empty(),
+        "with Enforce posture and no grant the read must be denied, got {denied:?}"
+    );
+
+    // 3. PERMIT: provision a Read grant for this subject over this collection.
+    let grant_id = provision_read_grant(&http, &server, TENANT, "alice", table_object_id).await;
+    let permitted = rest_record_search_ids(&http, &server, ALICE_KEY, &fixture.collection).await;
+    assert!(
+        !permitted.is_empty(),
+        "an applicable grant must restore the read (hot-visible, no restart)"
+    );
+    assert_eq!(
+        permitted.len(),
+        baseline.len(),
+        "a Read grant admits the same rows policy-only admission did — the \
+         grant gates ADMISSION, it does not additionally filter rows (row-level \
+         narrowing rides predicate_ref, which is L2)"
+    );
+
+    // 4. REVOKE: the entitlement is withdrawn and the read closes again.
+    revoke_grant(&http, &server, TENANT, &grant_id).await;
+    let revoked = rest_record_search_ids(&http, &server, ALICE_KEY, &fixture.collection).await;
+    assert!(
+        revoked.is_empty(),
+        "revoking the grant must close the read again, got {revoked:?}"
+    );
+
+    // 5. DISARM: returning the tenant to Off restores policy-only admission.
+    //    This is the Slice C guarantee that posture is reversible per tenant.
+    set_tenant_posture(&http, &server, TENANT, "Off").await;
+    let disarmed = rest_record_search_ids(&http, &server, ALICE_KEY, &fixture.collection).await;
+    assert_eq!(
+        disarmed.len(),
+        baseline.len(),
+        "posture Off must restore the pre-enforcement baseline"
+    );
+}
