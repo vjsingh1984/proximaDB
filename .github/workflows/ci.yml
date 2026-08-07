@@ -1825,7 +1825,14 @@ jobs:
     name: Rust Integration Tests (authz e2e)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [changes, rust-build]
+    # `needs: [changes]` ONLY — deliberately not `rust-build`. `rust-build` is
+    # itself gated on the `rust` filter (src/**, crates/**, apps/**, Cargo*),
+    # so depending on it makes this lane inherit that gate transitively and skip
+    # on any PR that changes only tests/** or .github/** — which is precisely
+    # what happened on the first two pushes of #1544. This lane compiles what it
+    # needs via its own `cargo test`, so the dependency bought nothing.
+    # `rust-integration-test-pgwire-accuracy` gets this right and is the model.
+    needs: [changes]
     # The `rust` filter is deliberately NOT ANDed in here: it covers src/**,
     # crates/**, apps/** and the Cargo files, but NOT tests/** or .github/**, so
     # requiring it would skip this lane on exactly the PRs that change the authz
