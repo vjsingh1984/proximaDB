@@ -371,7 +371,7 @@ mod tests {
     fn label_matches_per_category_policy_default_table() {
         // The classifier's bounded label set must include every key in
         // the PerCategoryPolicy default table so lookups never miss.
-        use crate::query::cache::per_category_policy::default_table;
+        use crate::per_category_policy::default_table;
         let table = default_table();
         for label in [
             Category::Code.label(),
