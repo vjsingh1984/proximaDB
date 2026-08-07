@@ -2217,16 +2217,30 @@ impl UnifiedStorageFormat for HelixEngine {
             return Ok(Vec::new());
         };
         let fs = self.filesystem_for_url(storage_url, collection_id)?;
+        // Mirrors the SST engine: a listing failure is reported, not folded into an
+        // empty result that is indistinguishable from an empty collection.
         let mut files = Vec::new();
-        if let Ok(entries) = fs.list(storage_url).await {
-            for entry in &entries {
-                if !entry.metadata.is_directory
-                    && entry
-                        .url
-                        .ends_with(crate::storage::engines::constants::HELIX_FILE_EXT)
-                {
-                    files.push(entry.url.clone());
+        match fs.list(storage_url).await {
+            Ok(entries) => {
+                for entry in &entries {
+                    if !entry.metadata.is_directory
+                        && entry
+                            .url
+                            .ends_with(crate::storage::engines::constants::HELIX_FILE_EXT)
+                    {
+                        files.push(entry.url.clone());
+                    }
                 }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "helix.read_all_records: cannot list segment directory {} ({}); \
+                     reporting no stored records for collection {} — callers will see \
+                     an empty result that reflects the listing failure, not the data",
+                    storage_url,
+                    e,
+                    collection_id
+                );
             }
         }
         if files.is_empty() {
