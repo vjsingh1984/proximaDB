@@ -116,6 +116,7 @@ fn transport_security_config() -> SecurityConfig {
                 azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            audit_fail_closed: false,
         },
         rbac: RBACConfig::default(),
         audit: AuditConfig::default(),

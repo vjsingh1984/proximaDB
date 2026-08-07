@@ -6,7 +6,7 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
+use proximadb_security::{AuditEvent, AuditEventType, AuditResult};
 pub use proximadb_security::{AuditStatistics, AuditStorage};
 use std::path::Path;
 use std::sync::Arc;
@@ -1176,6 +1176,7 @@ mod tests {
 #[cfg(test)]
 mod td_sec_2_query_tests {
     use super::*;
+    use proximadb_security::AuditResource;
 
     /// REGRESSION (TD-SEC-2 A3): `query_events` truncated to `limit` while
     /// iterating the directory and sorted only afterwards, so a bounded query
