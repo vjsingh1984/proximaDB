@@ -28,6 +28,12 @@ crate-type = ["cdylib", "rlib"]
 # apps — the PAX-exact-scan direction (TD-AXIS-4, ADR-082). Because embedded's `axis`
 # feature forwards `proximadb/axis`, embedded's axis cfg is always in sync with the
 # root's, so the flush→AXIS reap's cross-crate type stays consistent in every build.
+#
+# CI cost note: this edge makes `-p proximadb-embedded` compile the whole root
+# monolith, so this crate is excluded from the advisory touched-crate fast lane
+# (`rust-affected-fast` in ci.yml, via `affected_crates.py
+# --exclude-dependents-of proximadb`). It stays covered by the required
+# `rust-test` job. It becomes fast-lane-eligible again if this edge ever goes.
 proximadb = { path = "../../..", default-features = false }
 # FA-b: optional, behind the `abac-policy` feature. Embedded mode is abac-OFF by
 # design (in-process; the host app owns authorization) — this dep exists only so
