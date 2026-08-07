@@ -98,7 +98,7 @@ pub mod flush_integration_simple;
 pub mod index_factory;
 pub mod pattern_analyzer;
 /// Graph-tunneling predicate gate (LLD §4, GateANN arXiv 2603.21466).
-pub mod tunnel;
+pub use proximadb_axis_tunnel::tunnel;
 pub mod types;
 pub mod utils;
 pub mod zero_overhead_vector;
