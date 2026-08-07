@@ -926,7 +926,7 @@ pub struct EffectivePolicy {
 
 /// Does a binding's [`Scope`] cover the [`Target`] (broader-or-equal in the
 /// namespace ⊇ table ⊇ column hierarchy)?
-fn scope_covers(scope: &Scope, target: &Target) -> bool {
+pub(crate) fn scope_covers(scope: &Scope, target: &Target) -> bool {
     match *scope {
         Scope::Namespace(ns) => ns == target.namespace,
         Scope::Table(t) => t == target.table,
