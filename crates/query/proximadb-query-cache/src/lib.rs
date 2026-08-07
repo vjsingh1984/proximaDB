@@ -6,7 +6,9 @@
 //! stay root-side until their root-only deps (ExecutionResult, PlanOutput, QueryCache) extract.
 
 pub mod category_classifier;
+pub mod invalidation;
 pub mod mismatch_cost;
 pub mod per_category_policy;
+pub mod query_result_cache;
 pub mod result_cache_gate;
 // trigger CI

@@ -526,9 +526,9 @@ mod tests {
 
     fn create_test_cache() -> Arc<FederatedQueryResultCache> {
         use super::super::query_result_cache::{QueryKey, QueryResultCacheConfig};
-        use crate::query::federated::ExecutionResult;
         use arrow::array::{ArrayRef, RecordBatch, StringArray};
         use arrow::datatypes::{DataType, Field, Schema};
+        use proximadb_query_fusion::execution_result::ExecutionResult;
 
         let config = QueryResultCacheConfig::default();
         let cache = Arc::new(FederatedQueryResultCache::new(config));

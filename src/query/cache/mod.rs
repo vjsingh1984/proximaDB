@@ -120,12 +120,12 @@
 pub mod adaptive_cache;
 pub use proximadb_batch_group_cache::batch_group;
 pub use proximadb_query_cache::category_classifier;
-pub mod invalidation;
+pub use proximadb_query_cache::invalidation;
 pub mod invalidation_coordinator;
 pub use proximadb_query_cache::mismatch_cost;
 pub use proximadb_query_cache::per_category_policy;
 pub mod plan_cache;
-pub mod query_result_cache;
+pub use proximadb_query_cache::query_result_cache;
 pub use proximadb_query_cache::result_cache_gate;
 
 // Re-export main types
