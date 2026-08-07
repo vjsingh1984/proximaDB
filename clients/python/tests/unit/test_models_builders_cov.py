@@ -235,9 +235,10 @@ def test_collection_config_basic():
     assert cfg.quantization is None
 
 
-def test_collection_config_name_too_short():
-    with pytest.raises(ValueError):
-        models.CollectionConfig(name="short", dimension=128)
+def test_collection_config_name_short_accepted():
+    # The former 8-char minimum was relaxed for relational-DDL tables (#1113);
+    # short names are now accepted (empty/whitespace-only still rejected).
+    assert models.CollectionConfig(name="short", dimension=128).name == "short"
 
 
 def test_collection_config_name_empty():
