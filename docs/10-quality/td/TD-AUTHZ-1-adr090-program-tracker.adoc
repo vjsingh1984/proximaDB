@@ -115,3 +115,22 @@ the cloud-emulator suite (Azurite/MinIO); recall unaffected (the standing
 * TD-TENANT-2 (per-row predicate retirement — L1/L2 supersede its interim state);
   TD-ABAC-6 (orchestrator adoption, finished by L0.3); TD-SDK-2 unaffected.
 * The 53-gap inventory: ADR-090 appendices A–C.
+
+
+== Sequencing update (2026-08-07) — verified blocker on the cross-tenant ratchet
+
+Tracing the cross-tenant read path for the L1.2 e2e ratchet found that
+`src/services/operations/vectors/legacy.rs:1123/:1175/:1346` retain rows by
+`record.tenant_id == tenant_context.tenant_id`, so a foreign grantee is admitted by the
+catalog and then filtered to zero rows. See the 2026-08-07 addendum in TD-TENANT-2.
+
+Revised order for the remaining L1/L2 work:
+
+. **Same-tenant e2e ratchet** (provision → permit → deny → revoke over live transports) —
+  reachable now that the grants admin surface has landed (#1534); this is the flip-precondition
+  for arming enforcement, whether via the env default or a tenant `Enforce` posture (#1537).
+. **TD-TENANT-2** — retire the per-row tenant predicate. Promoted to the critical path: until
+  it lands, cross-tenant sharing is authorized but not observable.
+. **Cross-tenant e2e ratchet** — only meaningful after (2); writing it earlier yields a test
+  that fails for reasons unrelated to grants.
+. Then L2 (`$subject.attr`, the six `System` bypasses, predicate-store tenant partitioning).
