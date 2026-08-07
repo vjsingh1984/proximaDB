@@ -1826,6 +1826,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [changes, rust-build]
+    # The `rust` filter is deliberately NOT ANDed in here: it covers src/**,
+    # crates/**, apps/** and the Cargo files, but NOT tests/** or .github/**, so
+    # requiring it would skip this lane on exactly the PRs that change the authz
+    # tests or this wiring — which is what happened on the first push of #1544.
+    # `authz_changes` already scopes the lane correctly on its own.
     # NOTE: this suite is `#![cfg(feature = "abac-policy")]`, which is NOT a
     # default feature — WITHOUT `--features abac-policy` the file compiles to
     # ZERO tests and the job passes while verifying nothing. That is exactly how
@@ -1834,7 +1839,6 @@ jobs:
     if: |
       !inputs.skip_tests &&
       needs.changes.outputs.test_tier == 'true' &&
-      needs.changes.outputs.rust == 'true' &&
       needs.changes.outputs.authz_changes == 'true'
     steps:
       - uses: actions/checkout@v7
