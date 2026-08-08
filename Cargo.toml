@@ -74,6 +74,7 @@ members = [
     "crates/horizontal/proximadb-axis-tunnel",
     "crates/horizontal/proximadb-filterable-metadata",
     "crates/horizontal/proximadb-usage-event",
+    "crates/horizontal/proximadb-write-intent",
     "crates/platform/proximadb-network-middleware",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-serialization",
@@ -296,6 +297,7 @@ proximadb-catapult = { path = "crates/horizontal/proximadb-catapult" }
 proximadb-axis-tunnel = { path = "crates/horizontal/proximadb-axis-tunnel" }
 proximadb-filterable-metadata = { path = "crates/horizontal/proximadb-filterable-metadata" }
 proximadb-usage-event = { path = "crates/horizontal/proximadb-usage-event" }
+proximadb-write-intent = { path = "crates/horizontal/proximadb-write-intent" }
 proximadb-network-middleware = { path = "crates/platform/proximadb-network-middleware" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
@@ -422,6 +424,7 @@ proximadb-catapult = { workspace = true }
 proximadb-axis-tunnel = { workspace = true }
 proximadb-filterable-metadata = { workspace = true }
 proximadb-usage-event = { workspace = true }
+proximadb-write-intent = { workspace = true }
 proximadb-network-middleware = { workspace = true }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
