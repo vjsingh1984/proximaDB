@@ -106,6 +106,7 @@ jobs:
       storage_changes: ${{ steps.filter.outputs.storage_changes }}
       graph_changes: ${{ steps.filter.outputs.graph_changes }}
       core_changes: ${{ steps.filter.outputs.core_changes }}
+      authz_changes: ${{ steps.filter.outputs.authz_changes }}
       network_changes: ${{ steps.filter.outputs.network_changes }}
       pgwire_accuracy_changes: ${{ steps.filter.outputs.pgwire_accuracy_changes }}
       object_store_cloud_changes: ${{ steps.filter.outputs.object_store_cloud_changes }}
@@ -260,6 +261,20 @@ jobs:
               - 'src/network/**'
               - 'src/api_handlers/**'
               - 'proto/**'
+            # ADR-090 / TD-AUTHZ-1 authorization e2e. Filters track the OUTCOME
+            # (an authorization decision changing) rather than code ownership —
+            # the #1430 lesson, where a recall lane skipped on the very PR that
+            # broke recall because the changed path matched no filter.
+            authz_changes:
+              - 'src/security/**'
+              - 'src/services/operations/vectors/**'
+              - 'crates/control/proximadb-abac/**'
+              - 'crates/control/proximadb-catalog/**'
+              - 'src/network/rest/canonical/abac_admin.rs'
+              - 'src/network/rest/canonical/handlers.rs'
+              - 'src/network/shared_services.rs'
+              - 'tests/abac_*.rs'
+              - '.github/workflows/ci.yml'
             # Multi-modal pgwire value-accuracy e2e suite (TD-182 P0). The suite
             # exercises the SQL/pgwire + relational + DML + cold-path-merge code,
             # so re-run it when any of those change, when the suite files change,
@@ -1806,6 +1821,59 @@ jobs:
             fi
           done
 
+  rust-integration-test-authz:
+    name: Rust Integration Tests (authz e2e)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # `needs: [changes]` ONLY — deliberately not `rust-build`. `rust-build` is
+    # itself gated on the `rust` filter (src/**, crates/**, apps/**, Cargo*),
+    # so depending on it makes this lane inherit that gate transitively and skip
+    # on any PR that changes only tests/** or .github/** — which is precisely
+    # what happened on the first two pushes of #1544. This lane compiles what it
+    # needs via its own `cargo test`, so the dependency bought nothing.
+    # `rust-integration-test-pgwire-accuracy` gets this right and is the model.
+    needs: [changes]
+    # The `rust` filter is deliberately NOT ANDed in here: it covers src/**,
+    # crates/**, apps/** and the Cargo files, but NOT tests/** or .github/**, so
+    # requiring it would skip this lane on exactly the PRs that change the authz
+    # tests or this wiring — which is what happened on the first push of #1544.
+    # `authz_changes` already scopes the lane correctly on its own.
+    # NOTE: this suite is `#![cfg(feature = "abac-policy")]`, which is NOT a
+    # default feature — WITHOUT `--features abac-policy` the file compiles to
+    # ZERO tests and the job passes while verifying nothing. That is exactly how
+    # the suite sat dormant: no lane ran it, and a run without the feature would
+    # have looked green anyway.
+    if: |
+      !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
+      needs.changes.outputs.authz_changes == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-nightly-dev"
+          shared-key: "build"
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - name: Run Authorization E2E (live transports)
+        run: |
+          set -uo pipefail
+          # NOTE: deliberately NOT `set -e` around the capture. With `-e`, a
+          # failing cargo aborts the step BEFORE the echo, so the failure reason
+          # is swallowed and the job reports red with no diagnostic — which is
+          # exactly what happened on the first run of this lane.
+          status=0
+          output=$(cargo test --features abac-policy --test abac_relational_transport_e2e -- --test-threads=1 --nocapture 2>&1) || status=$?
+          echo "$output"
+          if echo "$output" | grep -qE "running 0 tests"; then
+            echo "::error::the authz e2e suite compiled to ZERO tests - the abac-policy feature is not enabled, so this job verified nothing."
+            exit 1
+          fi
+          exit "$status"
+
   rust-integration-test-query:
     name: Rust Integration Tests (query)
     runs-on: ubuntu-latest
@@ -2581,6 +2649,7 @@ jobs:
       - rust-build
       - rust-test
       - rust-integration-test-storage
+      - rust-integration-test-authz
       - rust-integration-test-query
       - rust-integration-test-pgwire-accuracy
       - rust-integration-test-graph
