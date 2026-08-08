@@ -134,3 +134,21 @@ Revised order for the remaining L1/L2 work:
 . **Cross-tenant e2e ratchet** — only meaningful after (2); writing it earlier yields a test
   that fails for reasons unrelated to grants.
 . Then L2 (`$subject.attr`, the six `System` bypasses, predicate-store tenant partitioning).
+
+
+== Sequencing correction (2026-08-08)
+
+The 2026-08-07 note put the cross-tenant ratchet behind "tenant-key the WAL read". Following
+the caller chain one frame further (see TD-TENANT-2, 2026-08-08 addendum) shows the real gate
+is the **catalog seam**: `validate_tenant_collection_access` performs a tenant-scoped
+`get_collection(collection, tenant)` BEFORE the WAL read, so a foreign grantee is rejected
+there and never reaches the per-row filter.
+
+Corrected order for cross-tenant sharing:
+
+. `get_collection(collection, tenant)` resolves grant-admitted foreign collections.
+. The per-row predicate compares against the OWNING tenant (or defers to the grant decision).
+. Cross-tenant e2e ratchet.
+
+Retiring the per-row predicate first would remove a defense-in-depth layer and change nothing
+observable, because the catalog check rejects the grantee before it runs.
