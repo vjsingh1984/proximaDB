@@ -152,3 +152,33 @@ Corrected order for cross-tenant sharing:
 
 Retiring the per-row predicate first would remove a defense-in-depth layer and change nothing
 observable, because the catalog check rejects the grantee before it runs.
+
+
+== Item 3 design note (2026-08-08) — the catalog seam is smaller than feared
+
+Scoping the grant-aware catalog seam (the gate identified in TD-TENANT-2's 2026-08-08
+addendum) turned up two facts that shrink it considerably:
+
+. **The identity carrier already exists at that seam.** `PortIdentity`
+  (`crates/platform/proximadb-runtime/src/service_ports.rs:108`) is declared in the SAME file
+  as `CollectionPort`, carries `subject` alongside tenant, and its own doc comment states it
+  is the intended "carrier rather than parallel tenant/subject parameters". `CollectionPort::
+  get_collection(identifier, tenant_id: Option<&str>)` predates that convention. Grants may be
+  per-USER (`Grantee::User { tenant, subject }`), so tenant alone cannot evaluate them — but
+  the fix is adopting an existing type, not designing a new one.
+. **The blast radius is one call site.** `collection_port.get_collection(` appears exactly
+  once in `src/`, so widening the signature is cheap.
+
+Shape of the slice:
+
+* `get_collection` takes `PortIdentity` (or gains an identity-carrying sibling).
+* When the collection does not resolve for the acting tenant, consult the grant store for an
+  applicable grant from the OWNING tenant to this identity; on `Permit`, resolve the owner's
+  collection. Absent or revoked grant ⇒ unchanged rejection (fail-closed preserved).
+* Then, and only then, TD-TENANT-2 step 2 (the per-row predicate comparing against the OWNING
+  tenant) becomes observable — and the cross-tenant ratchet can be written.
+
+Open question to settle first: `validate_tenant_collection_access` returns the resolved
+collection id used for the subsequent WAL read, so a grant-admitted foreign collection must
+resolve to the OWNER's id. Confirm that downstream readers key off the returned id rather than
+re-deriving one from the acting tenant, or the read will still miss.
