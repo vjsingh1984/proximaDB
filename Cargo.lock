@@ -6822,6 +6822,7 @@ dependencies = [
  "proximadb-tenant",
  "proximadb-tls",
  "proximadb-uql",
+ "proximadb-usage-event",
  "proximadb-utility-scorer",
  "proximadb-vector",
  "proximadb-vector-query",
@@ -8679,6 +8680,17 @@ dependencies = [
  "proximadb-query-fusion",
  "proximadb-vector-query",
  "regex",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-usage-event"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "sandhi-core",
+ "serde",
+ "serde_json",
  "tracing",
 ]
 
