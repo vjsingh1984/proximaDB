@@ -41,7 +41,7 @@ status = "partial"
 notes = "Post-filtered ANN correctness + fallback disclosure (TD-064, a correctness/security surface). Slices 1-5 landed (2026-05-27): FilterableHnswMetadata, search_with_predicate on all 4 AXIS indexes, snapshot v2, ADR-011 routing-mode wiring, predicate-shortfall diagnostics + Prometheus counters. Residual: thread shortfall through service types, IVF inline pushdown (Phase 3), selectivity/projection-freshness diagnostics."
 controlling_td = ["TD-064"]
 evidence = [
-  "src/index/axis/filterable_metadata.rs:1",
+  "crates/horizontal/proximadb-filterable-metadata/src/filterable_metadata.rs:1",
   "docs/12-design/TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc:1",
 ]
 

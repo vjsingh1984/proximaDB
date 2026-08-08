@@ -6743,6 +6743,7 @@ dependencies = [
  "proximadb-engine-core",
  "proximadb-execution-contracts",
  "proximadb-filter-expression",
+ "proximadb-filterable-metadata",
  "proximadb-functions",
  "proximadb-graph",
  "proximadb-graph-arrow",
@@ -7424,6 +7425,18 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-filterable-metadata"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "dashmap",
+ "proximadb-data-model",
+ "proximadb-records",
+ "serde",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

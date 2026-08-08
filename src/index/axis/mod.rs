@@ -80,7 +80,7 @@ pub mod management; // Management and orchestration
 pub mod storage; // Storage and serialization // Integration with other systems
 
 // TD-064: Filterable metadata for predicate-aware HNSW
-pub mod filterable_metadata;
+pub use proximadb_filterable_metadata::filterable_metadata;
 
 // Storage↔index decoupling contract (DIP/ISP): boundary impl of the
 // `proximadb-index-traits` role traits for `AxisManager`.
