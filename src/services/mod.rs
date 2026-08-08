@@ -208,7 +208,7 @@ pub mod system_catalog_state;
 pub mod tenant_access;
 pub mod timeseries_service;
 pub mod transaction;
-pub mod write_intent;
+pub use proximadb_write_intent::write_intent;
 
 // Re-export main service types with cleaner names
 pub use audit_sink::{AuditEventSink, AuditRecord, EventLogAuditSink};
