@@ -1860,13 +1860,19 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Authorization E2E (live transports)
         run: |
-          set -euo pipefail
-          output=$(cargo test --features abac-policy --test abac_relational_transport_e2e -- --test-threads=1 2>&1)
+          set -uo pipefail
+          # NOTE: deliberately NOT `set -e` around the capture. With `-e`, a
+          # failing cargo aborts the step BEFORE the echo, so the failure reason
+          # is swallowed and the job reports red with no diagnostic — which is
+          # exactly what happened on the first run of this lane.
+          status=0
+          output=$(cargo test --features abac-policy --test abac_relational_transport_e2e -- --test-threads=1 --nocapture 2>&1) || status=$?
           echo "$output"
           if echo "$output" | grep -qE "running 0 tests"; then
             echo "::error::the authz e2e suite compiled to ZERO tests - the abac-policy feature is not enabled, so this job verified nothing."
             exit 1
           fi
+          exit "$status"
 
   rust-integration-test-query:
     name: Rust Integration Tests (query)
