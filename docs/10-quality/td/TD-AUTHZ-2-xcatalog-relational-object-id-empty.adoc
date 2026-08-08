@@ -44,6 +44,46 @@ visible in every run's ignored count rather than being silently dropped from the
 must be un-ignored as part of the fix — an ignore that outlives its defect is how a suite goes
 dormant in the first place.
 
+== Investigation 2026-08-08 — five explanations RULED OUT
+
+Static tracing eliminated the cheap explanations. Each is recorded so nobody re-walks them:
+
+. **Positional column drift — RULED OUT.** The helper's `row.get(9)` is correct: the
+  `xcatalog.tables` row is built in
+  `crates/binding/proximadb-catalog-introspection/src/lib.rs:391-427` as
+  `0` catalog, `1` namespace, `2` table_name, `3` schema_kind, `4` storage_engine, `5` layout,
+  `6` table_format, `7` xcatalog_namespace, `8` schema_version, **`9` object_id**. Index 9 IS
+  the object id. (This was the TD's own leading alternative; it is wrong.)
+. **Not persisted — RULED OUT.** `object_id` carries
+  `#[serde(default, skip_serializing_if = "Option::is_none")]`
+  (`crates/control/proximadb-catalog/src/lib.rs:218`), so it round-trips whenever it is `Some`.
+. **Minted after persistence — RULED OUT.** In `NativeCatalog::create_table`
+  (`native.rs:1488`) the mint at `:1507` precedes `save_table` (~`:1551`); the persisted copy
+  therefore carries the id.
+. **SQL DDL bypassing the minting path — RULED OUT.** Both DDL call sites
+  (`src/services/ddl/mod.rs:966`, `:1357`) go through `catalog.create_table`.
+. **Introspection reading a derived/stale source — RULED OUT.** `cataloged_tables`
+  (introspection `lib.rs:1249-1256`) reads `catalog.get_table(&table_id)` directly, and
+  `NativeCatalog::get_table` (`native.rs:~1662`) returns the cached or loaded schema without
+  re-normalizing — so it does not strip the id on read.
+
+The blank is therefore a genuine `schema.object_id == None` reaching
+`unwrap_or_default()`, on a path where all of the above should have set it. That narrows the
+question to something only runtime evidence can answer.
+
+== Next probe (runtime, start here)
+
+. Boot the live server the suite uses, `CREATE TABLE` over pgwire, then log the
+  `CatalogTableSchema` that `get_table` returns for it — is `object_id` `None` at the source,
+  or lost between the catalog and the introspection projection?
+. Confirm which `Catalog` impl is actually serving that server. `NativeCatalog` mints; the
+  external impls (`unity.rs:490`, `polaris.rs:614`) do not. If the live server resolves to a
+  non-native catalog for SQL-created tables, that alone explains the blank and the fix belongs
+  at that seam rather than in the projection.
+. Only if both come back clean, suspect the cache: `get_table` returns
+  `self.cache.get_table(..)` before `load_table`, so a schema cached *before* minting would
+  present exactly this way.
+
 == Next action
 
 . Determine whether `object_id` is unpopulated for relational tables or merely unprojected in
