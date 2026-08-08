@@ -403,10 +403,14 @@ def main() -> int:
     truth_count, truth_width = ACCEPTANCE.count_truth_records(
         groundtruth_path, args.groundtruth_format
     )
-    if args.rows > base_count or dimension != 128:
+    if args.rows > base_count:
         raise RuntimeError(
-            f"invalid base corpus: rows={base_count}, dimension={dimension}"
+            f"base corpus too small: rows={base_count} < requested {args.rows}"
         )
+    # Not pinned to SIFT's 128 — see the matching note in sift1m_get_reduction.py.
+    # Base/query agreement below is the check that protects correctness.
+    if not 2 <= dimension <= 4096:
+        raise RuntimeError(f"implausible base dimension: {dimension}")
     if query_dimension != dimension:
         raise RuntimeError("base and query dimensions differ")
     query_end = args.query_start + args.queries

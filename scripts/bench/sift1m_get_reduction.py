@@ -2302,10 +2302,17 @@ def main() -> int:
     gt_count, truth_width = count_truth_records(
         groundtruth_path, args.groundtruth_format
     )
-    if args.rows > base_count or base_dimension != 128:
+    if args.rows > base_count:
         raise RuntimeError(
-            f"invalid SIFT base: rows={base_count}, dim={base_dimension}"
+            f"base corpus too small: rows={base_count} < requested {args.rows}"
         )
+    # Dimension is validated for plausibility, not pinned to SIFT's 128: the
+    # geometry beds now cover neural-embedding corpora (384/768/1024-d) where
+    # k_c = rows*dim/iop_target and the coarse-PCA width behave very differently.
+    # Base/query agreement is asserted separately below and is the check that
+    # actually protects correctness.
+    if not 2 <= base_dimension <= 4096:
+        raise RuntimeError(f"implausible base dimension: {base_dimension}")
     measured_queries = args.queries * 3
     if measured_queries > query_count or measured_queries > gt_count:
         raise RuntimeError(
