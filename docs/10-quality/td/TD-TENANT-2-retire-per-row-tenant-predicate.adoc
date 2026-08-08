@@ -163,3 +163,43 @@ Note the generalization worth carrying: a capability proven by unit tests at one
 a capability the system has. `foreign_grantee_admits_and_only_that_grantee` is a true
 statement about `evaluate_grants` and a false statement about ProximaDB. The e2e ratchet
 exists precisely to catch that gap, and it caught this one before the claim reached a user.
+
+== Addendum (2026-08-08) — the recorded blocker was imprecise; the real order is two-step
+
+The 2026-08-07 addendum said the per-row predicate is load-bearing "until the WAL read is
+tenant-keyed", because `get_collection_vectors_raw(collection_id: &str)` carries no tenant.
+Tracing the actual caller corrects that.
+
+At `src/services/operations/vectors/legacy.rs:1112`, immediately before the WAL read, the
+path calls `validate_tenant_collection_access(collection_id, tenant_context)` (`:806`), which
+performs a **tenant-scoped catalog lookup** —
+`collection_port.get_collection(collection_id, Some(&tenant_ctx.tenant_id))` — and returns
+`Err("Collection '{}' is not accessible for tenant '{}'")` when the collection does not
+resolve for that tenant.
+
+So the primary isolation boundary is **structural and at the catalog, collection-level**. The
+tenant-unscoped WAL read is only ever reached for a collection the catalog already resolved
+for the acting tenant, and the per-row predicate at `:1123`/`:1175`/`:1346` is
+**defense-in-depth behind it**, not the wall itself. It would be load-bearing only if a single
+collection could hold rows owned by more than one tenant — which is precisely the design
+question that opened this TD, and which the ownership model answers "no".
+
+=== Consequence: cross-tenant sharing needs TWO changes, in this order
+
+. **The catalog seam first.** `get_collection(collection, tenant)` must resolve a collection
+  the acting tenant does not own but has been *granted*. Until it does, a foreign grantee is
+  rejected at `validate_tenant_collection_access` and never reaches the row filter at all —
+  so retiring the per-row predicate on its own would change nothing observable for sharing.
+. **The row predicate second.** Once a grantee can open the collection, the filter must
+  compare against the collection's **owning** tenant rather than the *acting* tenant (or be
+  dropped in favour of the grant decision). Doing this first, without step 1, removes a
+  defense-in-depth layer and buys no capability.
+
+This also revises the sequencing recorded in TD-AUTHZ-1: the cross-tenant ratchet is blocked
+on the **catalog seam**, not on tenant-keying the WAL read. Tenant-keying the WAL read remains
+worthwhile hygiene (it would make the row filter provably redundant rather than
+argumentatively so) but it is not the gate.
+
+NOTE on method: the earlier note was written from the WAL signature alone. Following the
+caller chain one frame further changed the conclusion — the same "verify the live path, don't
+infer from a signature" discipline this TD's own sharing addendum was written to enforce.
