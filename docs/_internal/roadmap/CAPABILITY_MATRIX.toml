@@ -247,7 +247,7 @@ notes = "Catalog-backed pg_catalog views for ORM/driver compatibility (TD-120). 
 controlling_td = ["TD-120"]
 evidence = [
   "src/services/catalog_introspection.rs:1",
-  "src/network/postgres/translator.rs:1",
+  "crates/horizontal/proximadb-pgwire-translator/src/translator.rs:1",
 ]
 
 [[capabilities]]

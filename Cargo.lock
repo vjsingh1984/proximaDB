@@ -6771,6 +6771,7 @@ dependencies = [
  "proximadb-observability-engine",
  "proximadb-observability-query",
  "proximadb-orion-engine",
+ "proximadb-pgwire-translator",
  "proximadb-pipeline-operator",
  "proximadb-proto",
  "proximadb-quantization-kernel",
@@ -7849,6 +7850,15 @@ dependencies = [
  "tokio",
  "tracing",
  "zstd",
+]
+
+[[package]]
+name = "proximadb-pgwire-translator"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "tracing",
 ]
 
 [[package]]
