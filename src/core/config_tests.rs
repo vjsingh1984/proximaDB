@@ -178,7 +178,6 @@ mod tests {
         let wal_config = WriteBufferUserConfig {
             write_buffer_size_mb: 8192,        // 8GB
             memory_flush_size_bytes: 16777216, // 16MB
-            vector_count_threshold: 100_000,   // 100k vectors
             memtable_type: "BTree".to_string(),
             sync_mode: "PerBatch".to_string(),
             write_buffer_directory: "./test_wal".to_string(),
@@ -202,7 +201,6 @@ mod tests {
         let toml_str = r#"
             write_buffer_size_mb = 4096
             memory_flush_size_bytes = 33554432  # 32MB
-            vector_count_threshold = 10000
             memtable_type = "SkipList"
             sync_mode = "Periodic"
             write_buffer_directory = "/tmp/wal"
@@ -213,7 +211,6 @@ mod tests {
 
         assert_eq!(wal_config.write_buffer_size_mb, 4096);
         assert_eq!(wal_config.memory_flush_size_bytes, 33554432); // 32MB
-        assert_eq!(wal_config.vector_count_threshold, 10000);
         assert_eq!(wal_config.memtable_type, "SkipList");
         assert_eq!(wal_config.sync_mode, "Periodic");
         assert_eq!(wal_config.write_buffer_directory, "/tmp/wal");

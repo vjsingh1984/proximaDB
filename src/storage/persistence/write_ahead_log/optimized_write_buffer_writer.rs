@@ -895,7 +895,6 @@ mod tests {
         // Create config with adjusted performance settings for large batch
         let mut config = create_test_wal_config(&temp_dir);
         config.performance.memory_flush_size_bytes = 500 * 1024 * 1024; // 500 MB
-        config.performance.batch_threshold = 10000; // Use batch_threshold field
 
         let config = Arc::new(config);
         let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);

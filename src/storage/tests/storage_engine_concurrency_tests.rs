@@ -71,7 +71,6 @@ mod tests {
         config.wal_config = WriteBufferUserConfig {
             write_buffer_size_mb: 1,
             memory_flush_size_bytes: 1024 * 1024,
-            vector_count_threshold: 100_000,
             memtable_type: "BTree".to_string(),
             sync_mode: "perbatch".to_string(),
             write_buffer_directory: base_path.display().to_string(),

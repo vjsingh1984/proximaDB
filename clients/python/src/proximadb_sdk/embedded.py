@@ -909,7 +909,6 @@ tags = ["embedded"]
 [storage.wal_config]
 enable_wal = true
 memory_flush_size_bytes = {self.config.memory_flush_size_mb * 1024 * 1024}
-vector_count_threshold = 50000
 
 [storage.sst_config]
 cache_size_mb = {self.config.cache_size_mb}

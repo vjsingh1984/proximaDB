@@ -92,9 +92,6 @@ pub struct WalPerformanceConfig {
     /// Number of concurrent flush operations
     pub concurrent_flushes: usize,
 
-    /// Batch write optimization threshold
-    pub batch_threshold: usize,
-
     /// MVCC cleanup interval (seconds)
     pub mvcc_cleanup_interval_secs: u64,
 
@@ -155,11 +152,10 @@ impl Default for WalPerformanceConfig {
             global_flush_threshold: 4 * 1024 * 1024 * 1024, // 4GB global limit - recommended for global memory threshold
             write_buffer_size: 8 * 1024 * 1024, // 8MB write buffer for large vector throughput
             concurrent_flushes: num_cpus::get().min(4), // Max 4 concurrent flushes to avoid I/O contention
-            batch_threshold: 500, // Larger batches for bulk insert optimization
-            mvcc_cleanup_interval_secs: 3600, // Clean up old versions every hour
-            ttl_cleanup_interval_secs: 300, // Check TTL every 5 minutes
+            mvcc_cleanup_interval_secs: 3600,           // Clean up old versions every hour
+            ttl_cleanup_interval_secs: 300,             // Check TTL every 5 minutes
             sync_mode: SyncMode::PerBatch, // Balance safety and bulk insert performance
-            sync_interval_seconds: 60, // Default to 60 seconds for periodic sync
+            sync_interval_seconds: 60,     // Default to 60 seconds for periodic sync
             global_shrink_factor: 0.4, // 40% shrink factor - recommended for global threshold management
             cloud_backup: None,        // Cloud backup disabled by default
             enable_optimized_write_buffer_writer: Some(false), // Disabled by default for gradual rollout
@@ -437,7 +433,6 @@ impl WALConfig {
         config.memtable.memtable_type = MemTableType::HashMap; // Fastest writes for unordered data
         config.compression.algorithm = CompressionAlgorithm::Lz4; // Faster compression
         config.performance.memory_flush_size_bytes = 256 * 1024 * 1024; // 256MB
-        config.performance.batch_threshold = 500; // Larger batches
         config.performance.sync_mode = SyncMode::PerBatch; // Less frequent syncing
         config
     }
@@ -714,11 +709,9 @@ mod tests {
         // Test setting custom limits
         perf_config.memory_flush_size_bytes = 1000 * 1024 * 1024; // 1000MB
         perf_config.disk_segment_size = 2048 * 1024 * 1024; // 2048MB
-        perf_config.batch_threshold = 5000;
 
         assert_eq!(perf_config.memory_flush_size_bytes, 1000 * 1024 * 1024);
         assert_eq!(perf_config.disk_segment_size, 2048 * 1024 * 1024);
-        assert_eq!(perf_config.batch_threshold, 5000);
     }
 
     #[test]
@@ -879,7 +872,6 @@ mod tests {
                 global_flush_threshold: 1024 * 1024 * 1024,
                 write_buffer_size: 16384,
                 concurrent_flushes: 2,
-                batch_threshold: 100,
                 mvcc_cleanup_interval_secs: 1800,
                 cloud_backup: Default::default(),
                 global_shrink_factor: 0.8,
@@ -1361,7 +1353,6 @@ mod tests {
         assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024); // 4GB
         // Note: write_ahead_log_size field doesn't exist in WalPerformanceConfig
         // TODO: Determine correct field to assert or remove this test
-        assert_eq!(config.batch_threshold, 500);
         assert_eq!(config.mvcc_cleanup_interval_secs, 3600); // 1 hour
         assert_eq!(config.ttl_cleanup_interval_secs, 300); // 5 minutes
         assert_eq!(config.sync_mode, SyncMode::PerBatch);
@@ -1381,7 +1372,6 @@ mod tests {
             global_flush_threshold: 1024 * 1024 * 1024, // 1GB
             write_buffer_size: 1024 * 1024,             // 1MB (replaces write_ahead_log_size)
             concurrent_flushes: 8,
-            batch_threshold: 100,
             mvcc_cleanup_interval_secs: 7200, // 2 hours
             ttl_cleanup_interval_secs: 600,   // 10 minutes
             sync_mode: SyncMode::Always,
