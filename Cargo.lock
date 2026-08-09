@@ -6759,6 +6759,7 @@ dependencies = [
  "proximadb-index-types",
  "proximadb-interner",
  "proximadb-kafka-config",
+ "proximadb-kafka-deserializer",
  "proximadb-kernel",
  "proximadb-ledger",
  "proximadb-mcp",
@@ -7616,6 +7617,15 @@ dependencies = [
 name = "proximadb-kafka-config"
 version = "0.2.0"
 dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "proximadb-kafka-deserializer"
+version = "0.2.0"
+dependencies = [
+ "proximadb-kafka-config",
  "serde",
  "serde_json",
 ]
