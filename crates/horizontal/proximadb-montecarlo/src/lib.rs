@@ -9,4 +9,9 @@
 //! options as a UDF and depends only on `rayon`/`rand`, keeping it a clean
 //! horizontal-tier leaf.
 
+// Mirrors the root crate's crate-level allow (src/lib.rs:27): the Monte-Carlo
+// pricer entry points carry several scalar parameters pending a config-struct
+// refactor. Behavior-neutral lint posture, carried verbatim with the code.
+#![allow(clippy::too_many_arguments)]
+
 pub mod montecarlo;
