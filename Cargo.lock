@@ -6758,6 +6758,7 @@ dependencies = [
  "proximadb-index-traits",
  "proximadb-index-types",
  "proximadb-interner",
+ "proximadb-kafka-config",
  "proximadb-kernel",
  "proximadb-ledger",
  "proximadb-mcp",
@@ -7608,6 +7609,14 @@ version = "0.2.0"
 dependencies = [
  "dashmap",
  "proximadb-kernel",
+]
+
+[[package]]
+name = "proximadb-kafka-config"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

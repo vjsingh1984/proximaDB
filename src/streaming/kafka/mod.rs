@@ -57,7 +57,7 @@
 //! }
 //! ```
 
-pub mod config;
+pub use proximadb_kafka_config::config;
 pub mod consumer;
 pub mod deserializer;
 
