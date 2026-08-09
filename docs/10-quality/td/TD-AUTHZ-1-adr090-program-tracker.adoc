@@ -182,3 +182,46 @@ Open question to settle first: `validate_tenant_collection_access` returns the r
 collection id used for the subsequent WAL read, so a grant-admitted foreign collection must
 resolve to the OWNER's id. Confirm that downstream readers key off the returned id rather than
 re-deriving one from the acting tenant, or the read will still miss.
+
+
+== Item 3 prerequisite SETTLED (2026-08-09)
+
+The open question from the 2026-08-08 design note — *does a grant-admitted foreign collection's
+resolved id actually reach the read, or do downstream readers re-derive one from the acting
+tenant?* — is answered: **the resolved id is used.**
+
+Every governed read shadows the parameter with the seam's return value:
+
+[source,rust]
+----
+let collection_id = self
+    .validate_tenant_collection_access(collection_id, tenant_context)
+    .await?
+    .to_string();
+let mut records = self.wal_manager.get_collection_vectors_raw(&collection_id).await?;
+----
+
+So resolving a grant-admitted collection to its **owner's** id inside the seam flows through to
+the storage read without further change. Verified across all three per-row-filter sites:
+`retain@1123` ← `validate@1113`, `retain@1175` ← `validate@1166`, `retain@1346` ←
+`validate@1278` (14 call sites of `validate_tenant_collection_access` in the file; each
+governed read is preceded by one).
+
+That also re-confirms the TD-TENANT-2 finding at full coverage rather than by sample: the
+catalog seam guards **every** read path, so the per-row predicate is defense-in-depth
+throughout — there is no path where it is the sole tenant boundary.
+
+Item 3 is therefore unblocked and fully specified:
+
+* `CollectionPort::get_collection` adopts `PortIdentity` (already declared in the same file and
+  documented as the carrier "rather than parallel tenant/subject parameters"); one call site.
+* On non-resolution for the acting tenant, consult the grant store for an applicable grant from
+  the owning tenant to that identity; on `Permit`, resolve the **owner's** collection id.
+  Absent/expired/revoked ⇒ unchanged rejection, preserving fail-closed.
+* Then TD-TENANT-2 step 2 (predicate against the owning tenant) becomes observable, and the
+  cross-tenant ratchet becomes writable.
+
+METHOD NOTE: while checking this, a `grep | head -6` truncated the call-site list and made one
+read path look unguarded — a security asymmetry that does not exist. Caught before it was
+written down. Truncated search output is evidence of nothing; re-run unbounded before
+asserting an absence.
