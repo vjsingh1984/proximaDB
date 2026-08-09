@@ -6764,6 +6764,7 @@ dependencies = [
  "proximadb-mcp",
  "proximadb-metrics",
  "proximadb-mongodb-parser",
+ "proximadb-montecarlo",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
  "proximadb-network-middleware",
@@ -7702,6 +7703,14 @@ dependencies = [
  "nom 7.1.3",
  "proximadb-proto",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-montecarlo"
+version = "0.2.0"
+dependencies = [
+ "rand 0.8.6",
+ "rayon",
 ]
 
 [[package]]
